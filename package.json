@@ -24,6 +24,7 @@
     "native:stage": "bun run packages/iyon-runtime/scripts/stage-native.ts",
     "native:verify": "bun run packages/iyon-runtime/scripts/verify-native.ts",
     "bench:tui-decision": "bun run packages/iyon-runtime/bench/tui_decision.ts",
+    "bench:tui-perf11v4": "bun run packages/iyon-runtime/bench/perf11v4_comparison.ts",
     "smoke": "bun run packages/iyon-cli/src/index.ts",
     "test": "bun test",
     "t4:check": "cargo run -p api-surface -- check --config tools/api-surface/surface.toml && bun test packages/iyon-runtime/tests packages/iyon-runtime/test packages/iyon-sdk/tests",

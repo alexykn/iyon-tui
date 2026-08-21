@@ -1,5 +1,6 @@
 import { native } from "../src/native.ts";
 import { Tui } from "../src/tui/index.ts";
+import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/tui/native_view_abi.ts";
 import { nodeForDirectBridge, View } from "../src/tui/values/view.ts";
 import { nodeForPerf7v2Bridge, Perf7v2View } from "./perf7v2_direct/view.ts";
 import { buildTracePair, prepareComparisonCase, setComparisonComponentId, type ComparisonMode, type ComparisonWorkload } from "./perf11v4_fixtures.ts";
@@ -108,6 +109,7 @@ async function main(): Promise<void> {
   const forcedFrameSamples: number[] = [];
   let lastRows: readonly string[] = [];
   const traceDistribution: Record<string, number> = {};
+  const routeCounts: Record<string, number> = {};
   const cpuBefore = process.cpuUsage?.();
   const rssBefore = process.memoryUsage().rss;
   try {
@@ -115,6 +117,7 @@ async function main(): Promise<void> {
     for (let repetition = 0; repetition < repeat; repetition += 1) {
       for (let index = 0; index < sampleCount; index += 1) {
         const sampleIndex = repetition * sampleCount + index;
+        if (index >= warmup) resetNativeViewRouteCounters();
         const constructionStarted = now();
         const tracePair = trace ? buildTracePair<View | Perf7v2View>(candidate === "direct_7v2" ? "perf7v2" : "current", sampleIndex) : undefined;
         const next = tracePair?.next ?? prepared!.next(sampleIndex);
@@ -138,6 +141,7 @@ async function main(): Promise<void> {
         const prepareNs = candidate === "native_11v3" ? 0 : nativeStarted - transportStarted;
         const nativeNs = end - nativeStarted;
         if (index >= warmup) {
+          for (const [route, count] of Object.entries(nativeViewRouteSnapshot())) routeCounts[route] = (routeCounts[route] ?? 0) + count;
           if (tracePair !== undefined) traceDistribution[tracePair.category] = (traceDistribution[tracePair.category] ?? 0) + 1;
           totalSamples.push(constructionNs + prepareNs + nativeNs);
           constructionSamples.push(constructionNs);
@@ -201,6 +205,7 @@ async function main(): Promise<void> {
     cpu_system_us: cpuSystemUs,
     rss_delta_bytes: rssDelta,
     last_screen_rows: lastRows,
+    route_counts: routeCounts,
     ...(trace ? { trace_operations: totalSamples.length, trace_distribution: traceDistribution } : {}),
   };
   process.stdout.write(`${JSON.stringify(result)}\n`);

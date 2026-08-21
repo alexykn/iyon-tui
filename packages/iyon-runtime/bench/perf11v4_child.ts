@@ -40,7 +40,10 @@ function commandText(command: string[]): string {
 }
 
 function gitSha(): string { return commandText(["git", "rev-parse", "HEAD"]); }
-function gitDirty(): boolean { return commandText(["git", "status", "--porcelain"]) !== ""; }
+function gitDirty(): boolean {
+  const result = Bun.spawnSync(["git", "status", "--porcelain"]);
+  return new TextDecoder().decode(result.stdout).trim() !== "";
+}
 function sha256(path: string): string { return commandText(["shasum", "-a", "256", path]).split(/\s+/)[0] ?? "unknown"; }
 function now(): number { return Bun.nanoseconds(); }
 

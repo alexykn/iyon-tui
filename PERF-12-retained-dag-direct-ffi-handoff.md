@@ -5633,3 +5633,199 @@ structurally proven at 20/200/2k/10k with flat ~53–87 ns exact renders, and
 covered by nine conformance tests; production boundaries still route through
 Direct until T13, full-schema materializers land in T7, and derivation hints
 in T9.
+
+## T7 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T7 (PERF-12.4b common-node direct materializers)
+parent:       12.4
+sections:     §22 children-first materialization, §23 native constructor
+              semantic-cache-first rule, §32 fixed-arity specialization,
+              §66 generated TypeScript style rules, §67 native ownership
+              split, §75 cycle/work budgets, §50 retained work budget,
+              §51 no-full-tree-diff rule
+supporting:   §63/§64 generator model + validation extension,
+              §65 generated output placement, §25 reuse-before-adding
+```
+
+### 2. Commits
+
+```text
+36a1856  feat(tui): materialize common nodes through monomorphic generated FFI
+```
+
+This record was appended in the immediately following documentation commit.
+The committed benchmark artifact's summary `git_sha` records `50549dc` (the
+implementation commit before the artifact was re-captured and the commit
+amended; tree content identical to `36a1856` except the artifact file), per
+the provenance convention documented in the T6 record.
+
+### 3. Review findings
+
+```text
+finding 1: T5's record (finding 3) anticipated that "the first child-bearing
+       materializer (T7) wires the native side of the §74 status-detail
+       convention." The tranche registry for T7 does not list §74, and the
+       registry is authoritative over prose. Native status-detail cells are
+       therefore NOT wired in T7; row/column materializers are declared with
+       status_detail = "none" (matching actual native behavior) and the
+       child-ref detail cells land with §47 recovery in T12. Recorded as a
+       correction of the T5 forward expectation, not a gap against the gate.
+
+finding 2: the first SHARED_PATH test draft expected a bridge_hint_hits on
+       the stable subtree boundary, but after a Direct-decoded previous root
+       the descendants carry no JS hints (§94 cold-sidecar gap). The correct
+       resolution is one ceiling-gated NodeId->NativeRef promotion at the
+       stable boundary - which is exactly what the implementation does and
+       what the test now asserts (promotion_attempts +1, promotion_hits +1,
+       hint_hits +0). This also exercises the §94 cold-fallback sidecar-gap
+       requirement early.
+
+finding 3: the generated axis lowering initially imported only each
+       materializer's rust_builder; family builders (arity 1..=4) were
+       emitted but not imported. Correction: the builder import set now
+       unions every fixed_arity_axis family member.
+
+finding 4: the generated MaterializeTx interface ({symbols, runtime}) was
+       too narrow once axis lowerings recurse into ensureNative, which
+       requires full transaction state. Correction: when any axis
+       materializer exists, the generated module imports and re-exports the
+       runtime's MaterializeTx type instead of declaring its own; the T5
+       spacer conformance test was updated to construct the real transaction.
+
+finding 5: an initial §23 test probe released the node's only lease before
+       consulting, so the semantic View had expired and the consult
+       correctly missed. The probe now holds the transaction lease while
+       verifying cache-first behavior - documenting that expiry-after-
+       release remains the intended lifetime model (§16), not a bug.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+tools/tui-abi/view_abi.toml
+    [[materializer]] blocks for row and column over the EXISTING
+    view_row_create_0..4 / view_column_create_0..4 family (§25 reuse before
+    adding); no new ABI functions (function_count stays 49)
+tools/tui-abi-gen
+    MaterializerFixedArityAxisSpec (validated shape: axis kinds only,
+    family 1..=8 declared ViewRefResult builders with matching lifetime
+    policy, exactly node-id pair + gap fields); TypeScript renderer emits
+    monomorphic per-kind dispatchers switching on children.length, lowering
+    layoutTrackWord + ensureNative(child) per slot (children-first, §22),
+    throwing RetainedFastFallbackError beyond the specialization arity
+    (§32/§49); 7 new validation tests (24 total)
+crates/iyon-native/src/tui/view_abi.rs
+    §23 semantic-cache-first consult at the top of view_spacer_create,
+    create_small_axis (row/column arity family), and view_axis_create_buffer:
+    a live NodeId returns its ref before payload/child inspection (+ unit
+    test including stale-child recovery through the consult)
+packages/iyon-runtime/src/tui/retained_dag.ts
+    row/column/spacer dispatcher registration; children-visited counting;
+    expected-native-status-to-RetainedFastFallbackError conversion
+tests/perf12_t7_materialize.test.ts (six conformance tests)
+bench/perf12_t7_shared_path.ts + PERF-12-t7-shared-path.jsonl
+addon rebuilt and restaged for the new schema hash:
+    e36d356ded172088d1631ff2301d2d205a031f0841f37bfdc04d338636fc0c94
+```
+
+Deliberately NOT done yet: production routing unchanged until T13; variable
+ref-buffer lanes are T8 (column arity >4 falls back cleanly today);
+derivation hints are T9; text/style/Diff payloads are T11; container/clamp/
+hanging/grid/decorated/component have no constructors and route to fallback
+(§76 allows explicit fallback routing; their materializers or retained ops
+land with T8/T10/T11/T13); native status-detail cells are T12 (finding 1).
+
+### 5. Provenance block
+
+```text
+source revision at capture: 50549dc (tree identical to committed 36a1856
+                            except the artifact file; see Commits note)
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      e36d356ded172088d1631ff2301d2d205a031f0841f37bfdc04d338636fc0c94
+schema BLAKE3:              ac76addefd7312010e808174c6d163abfeadd798561f55f67e731e202ac20740
+generator BLAKE3:           2d8ad3919e8133be4109ee23dc629f20fd29abbe708113532f25015bb77a5881
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Fixed-size kinds materialize through monomorphic FFI:
+   perf12_t7_materialize.test.ts "§32: fixed arities 0..=4 materialize and
+   render like the Direct oracle": rows and columns at arities 0..=4,
+   installed through RetainedRootBoundary.install and rendered via
+   hostRenderRef, produce screen output identical to the Direct-decode
+   oracle across both axis orientations. Generated dispatchers contain a
+   switch per kind - no reflection, no per-node closures, no fresh
+   TypedArrays (§66). PASS.
+
+2. Stable child cuts off before payload access:
+   SHARED_PATH test: previous root = changed branch + stable 200-node
+   subtree rendered via Direct and adopted; next generation rebuilds only
+   the branch. Counters across install(): direct_materializer_calls +2
+   (new root column + new leaf only), node_id_ref_promotion_attempts/hits
+   +1/+1 (one identity resolution at the stable boundary through the
+   ceiling-gated NodeId promotion, since Direct decode seeded no JS hints -
+   §94 shape), bridge_children_visited +2 (the new root's two layout slots,
+   never S's descendants), host_mutations +1. Render parity with a fresh
+   Direct decode asserted. PASS.
+
+3. One representative SHARED_PATH retained case beats or ties direct_7v2
+   total time:
+   PERF-12-t7-shared-path.jsonl (smoke profile, timing build, fresh
+   process, alternating-arm sampling, 60 warmup blocks x 20 ops, CI
+   half-width < 3% met at 80 blocks per arm):
+     direct_7v2        median 189,429 ns/op   p95 198,402 ns
+     retained_dag_ffi  median 186,173 ns/op   p95 196,679 ns
+     ratio retained/direct = 0.9828 -> BEATS.
+   Both arms pay identical JS construction (~3 fresh nodes) and identical
+   host repaint of the 201-node tree; the differential is the changed-
+   frontier transport (three monomorphic FFI constructors + identity cutoff
+   vs N-API property walk). Total wall time decides per §90/§119. PASS.
+
+Section coverage evidence:
+   §22  children-first: generated dispatchers evaluate ensureNative per
+        child slot left-to-right before the parent constructor call;
+        dedupe test proves a shared child referenced from two parents is
+        materialized exactly once per transaction (4 distinct nodes ->
+        4 materializer calls despite 6 edge references).
+   §23  Rust unit test constructor_consults_semantic_cache_before_building_
+        perf12_s23 plus the JS stale-child probe: re-requesting a live
+        NodeId through viewColumnCreate2 with two stale child refs returns
+        the cached ref without resolving them.
+   §32  arity sweep test; >4 falls back cleanly with the old root intact
+        (ref-buffer lane deferred to T8).
+   §75  budgets exercised: nested-column tree exceeding
+        MAX_RETAINED_NEW_NODES falls back via the T6 guards; lease audit
+        shows temporary leases fully drained and the old root still
+        leased/rendering.
+   §50  same test; budget constants unchanged (512 new nodes / depth 256).
+   §51  no-full-tree-diff is structural: resolution touches only hinted,
+        promoted, or newly constructed nodes - the SHARED_PATH counters
+        show zero inspection of the 200-node stable subtree's payload.
+
+Regression battery: perf12_t7_materialize 6/6; view_materialize (T5 slice)
+and perf12_t6_identity suites green; tests directory 78 pass / 1 fail (the
+T2-documented pre-existing cross-file interference, unchanged); tsc clean;
+tui-abi-gen check byte-fresh; tui-abi-gen 24/24; cargo iyon-native 31 lib
+tests green (+§23 test); cargo fmt clean; clippy warning profile identical
+to pre-T7 baseline (sorted counts diff empty).
+```
+
+### 7. Status line
+
+**Tranche T7 status: COMPLETE.** Spacer plus row/column arities 0..=4 now
+materialize through monomorphic generated FFI with children-first ordering,
+native cache-first construction, working-budget fallbacks, and a SHARED_PATH
+gate win (0.9828x of direct_7v2 total time); broader generation continues in
+T8 with borrowed ref-buffer lanes, then derivations (T9), wide edits (T10),
+payload families (T11), recovery hardening (T12), and boundary routing (T13).

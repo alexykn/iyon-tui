@@ -1,3 +1,49 @@
+## Scope guard — read this before acting on any cut below
+
+This document is a diagnosis, not an execution order, and it predates a decision
+that overrides parts of it. Three rules bind any future simplification work:
+
+1. **Genericity is the product, not the bloat.** `iyon-tui` is a generic TUI
+   framework (see the framework boundary rules in `AGENTS.md`). Do not remove or
+   thin generic capability because the Iyon harness alone does not exercise it.
+   The test for a cut is not "does Iyon use this?" but "is this duplicated, dead,
+   or a conversion between two representations that could be one?" Indirection
+   that converts between redundant representations is a target; indirection that
+   abstracts over implementations is framework surface and stays.
+2. **Explicitly sanctioned exception: the generic text IR goes.** Removing the
+   `content/text/` semantic text IR (Block, Inline, TextRun, Annotations,
+   MarkSet, SemanticTag, provenance, visitors/rewriters, TextSelector/TextRole)
+   and its double lowering into the View IR is **wanted and approved**. Content
+   domains render directly into View: Markdown → MarkdownRenderer → View,
+   Diff → DiffRenderer → View, later treesitter likewise, plaintext directly.
+   Theming/styling addresses results by domain-scoped role keys instead of a
+   generic selector model: e.g. `text.muted`, `markdown.h1.bold`,
+   `markdown.code_block`, `diff.addition`. This is not a violation of rule 1:
+   what is removed is a conversion layer between two internal representations,
+   not framework capability. Domain-specific styling keys must remain generic in
+   the sense that any caller can use a markdown/diff/plaintext renderer and its
+   theme namespace; no Iyon-product policy may leak into them (AGENTS.md rule).
+   When in doubt about other "generic-looking" layers, they stay unless
+   explicitly listed here.
+3. **No public-API removals** beyond what item 2 sanctions. There are currently
+   zero external users, but the goal of this pass is compressing internals —
+   making them leaner and more straightforward — not shrinking the framework's
+   capability surface. Public API reshaping beyond the text-IR replacement is a
+   separate, deliberate decision, not a side effect of LOC-reduction work.
+
+Concretely this means: the `~44k / 50%` scenario below is off the table except
+for the sanctioned text-IR replacement (rule 2), and items in the cut list must
+each be re-validated against rules 1–3 before touching them. The realistic
+target under these rules is consolidation of duplication plus the text-IR
+evaporation (estimated ~25-35%, concentrated in `content/text/`, `agent/`,
+stream compile/viewport duplication, host factoring, and redundant tests) — not
+reduction of abstraction depth anywhere else.
+
+The dialogue below is preserved as-is for context, with the understanding that
+statements in it about cutting genericity are superseded by this guard.
+
+---
+
 Now I've got the full map. Here's my diagnosis of exactly where the fat lives:
 
   🗺️ The Redundancy Map

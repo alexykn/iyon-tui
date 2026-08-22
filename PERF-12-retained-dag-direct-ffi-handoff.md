@@ -18,25 +18,83 @@
 
 PERF-12 is a full architecture experiment. The tranches below are intended to be ambitious merge-request-sized units. Do not collapse them into one implementation burst. In particular, do not begin full-schema transport work until the semantic representation, lifetime model, weak-cache cleanup, and common-node FFI path are proven.
 
-| Tranche | Scope | Required result before proceeding |
-|---|---|---|
-| **12.0** | Freeze PERF-11v4 evidence; re-audit source; attribute the current high RSS; measure Bun FFI call floor | Exact baselines frozen; 2.7 GiB behavior classified; no unbounded shared-runtime metadata growth is left unexplained; direct-call floor is compatible with the architecture |
-| **12.1** | Restore a faithful 7v2-style eager immutable `BridgeViewNode` semantic DAG against the current schema | `nodeForBridge()` is a lookup for the normal path; construction remains within the 7v2 gate; full semantic parity tests pass |
-| **12.2** | Harden `NativeViewRuntime`: central publication, paged NativeRef lookup, bounded weak-cache scavenging, diagnostics | One semantic cache; no historical weak metadata accumulation; root-lease and temporary-lease invariants proven |
-| **12.3** | `BridgeNativeHint` sidecar and exact-root fast path | Known root performs one `hostRenderRef` call and zero semantic field reads / structural writes |
-| **12.4** | Generated direct FFI materializers for common fixed-size node kinds | Unknown nodes materialize postorder through monomorphic Bun FFI; stable children cut off before payload access |
-| **12.5** | Borrowed typed-array lanes for variable child/reference payloads | Variable arity uses reusable synchronous `buffer`/`buffer_length` FFI, with no persistent mirror and no retained raw pointers |
-| **12.6** | Derivation hints and retained clone/edit fast lanes | Text-layout/common scalar changes and common structural changes reuse base NativeRefs instead of resending unchanged payload |
-| **12.7** | PersistentSeq / Grid retained structural edits | 2k/10k/100k replace/insert/remove/splice remain logarithmic and do not materialize flat children |
-| **12.8** | Text, styles, Diff, decorations, Unicode, retained payload handling | Stable text/style payload is never resent; changed payload uses best existing 11v3 helpers; streaming remains separate |
-| **12.9** | Multi-branch DAG materialization, temporary lease transaction, stale-ref recovery, failure atomicity | Common ancestors built once; one host mutation; all temporary leases drained on every success/error path |
-| **12.10** | Cold/rebuilt router, runtime-generation recovery, caps/budgets | Retained path does not accidentally walk an entirely rebuilt tree; one bounded recovery; best existing cold path retained |
-| **12.11** | History, ViewSlot, ScrollPane, animation, components, every View-bearing native boundary | No render-only shortcut; production-equivalent boundary behavior and root lease ownership |
-| **12.12** | Differential tests, fuzzing, lifetime stress, long-running memory soak | Full schema and failure semantics proven; live metadata converges after churn; unsafe/borrowed-pointer surface audited |
-| **12.13** | Authoritative performance and memory comparison | `retained_dag_ffi` compared fairly against `direct_7v2` and completed `native_11v3`; raw samples retained |
-| **12.14** | Production selection and cleanup | Only if gates pass: one production-private architecture remains; obsolete pending/recipe machinery is removed or test-gated |
+## Tranche registry
 
-The highest-risk tranches are **12.0, 12.2, 12.7, 12.9, 12.11, and 12.12**.
+This experiment has **16 implementation tranches**. Each tranche below names the exact document sections (`§`) it contains. Do not infer tranche boundaries from prose elsewhere in the handoff. Each tranche ends in its own commit and verification step; related tranches may share an implementation session only when every individual gate still runs independently.
+
+| Tranche | Parent | Exact scope in this document | Required result before proceeding |
+|---|---|---|---|
+| **T1** | 12.0 | Evidence freeze and probes: source freeze `§82`; Bun qualification `§60`; same-image audit `§61`; memory attribution protocol `§57`–`§58`; direct-call floor probe `§83`; baseline record deliverables `§109` | `PERF-12-baseline.md`, `PERF-12-memory-attribution.jsonl`, `PERF-12-ffi-floor.jsonl` committed; 2.7 GiB classified into `§58` buckets; FFI call floor compatible with expected changed-frontier budget. If `§83` fails its decision threshold or `§105` applies, **STOP here** — no further tranches |
+| **T2** | 12.2a | Shared runtime publication: one central `publish_semantic_view` helper `§24`; classify existing 11v3 ABI functions `§25`; NativeRef paged table design/decision `§52`–`§53`; page reclamation `§54`; deliverables checklist `§88` | All transports (Direct, 11v3, V4) route publication through one helper with no identity fork; existing 11v3/Direct regression suites pass unchanged; NativeRef representation chosen by measurement |
+| **T3** | 12.2b | Bounded lifetime: weak-cache scavenging `§55`; maintenance counters `§56`; memory diagnostic ABI `§89`; churn acceptance gate `§59`; slot lease invariant tests `§111` | Post-maintenance weak/slot metadata = O(live + bounded slack); 1M-transient-node churn shows no linear post-GC slope; counters absent or compile-time-free in timing builds `§101` |
+| **T4** | 12.1 | Semantic DAG restoration (no native change): faithful 7v2 reconstruction `§84`; JS representation `§13`; BridgeViewNode shape `§14`; sidecar inventory `§15`; hint-not-lease lifetime rule `§16`; no-FinalizationRegistry rule `§17`; semantic parity suite `§86`; construction gate `§85` | Full-schema semantic parity passes against current production Views; `retained_dag_ffi` construction ≤5% vs faithful Bun 1.4 `direct_7v2` (preferred: within noise); `nodeForBridge` is lookup-only |
+| **T5** | 12.4a | Generator foundation: extend canonical ABI pipeline `§62`; MaterializerSpec model `§63`; generator validation rules `§64`; output placement `§65`; failure status detail `§74`; checked-vs-timing policy `§68`; owner-thread policy `§69` | Generator emits a one-kind vertical slice (spacer or container) end-to-end; conformance tests pass; illegal lifetime declarations fail generation |
+| **T6** | 12.3 | Identity fast paths: root lease protocol `§18`; `ensureNative` core algorithm `§19`; exact-root fast path `§20`; stable subtree cutoff `§21`; runtime generation handling `§48`; BridgeNativeHint sidecar wiring `§15`/`§16`; exact-identity scaling test `§113` | Exact known root = 1 `hostRenderRef`, 0 semantic field reads, 0 buffer writes at 20/200/2k/10k node sizes; timing independent of descendant count; stale generation hints ignored correctly |
+| **T7** | 12.4b | Common-node direct materializers: children-first materialization `§22`; native constructor semantic-cache-first rule `§23`; fixed-arity specialization `§32`; generated TypeScript style rules `§66`; native ownership split `§67`; cycle/work budgets `§75`; retained work budget `§50`; no-full-tree-diff rule `§51` | Fixed-size kinds materialize through monomorphic FFI; stable child cuts off before payload access; one representative SHARED_PATH retained case beats or ties `direct_7v2` total time before broader generation proceeds |
+| **T8** | 12.5 | Variable-arity lanes: borrowed TypedArray transport `§29`; scratch tier policy `§30`; no-mapped-scratch rule `§31`; buffer lifetime tests `§116`; oversize → fallback routing `§50` | Variable-axis/Grid constructors use reusable synchronous `buffer`/`buffer_length`; native never retains a pointer after return; zero-length/max-length/oversize cases pass; no external ArrayBuffer machinery exists |
+| **T9** | 12.6 | Retained clone/edit lanes: derivation hints `§27`–`§28`; text layout mutation `§38` | Wrap/align-only text change sends base NativeRef + NodeId + scalars, never resends payload; common scalar patch reuses base ref; hint-miss degrades cleanly to full materialization |
+| **T10** | 12.7 | Wide retained edits: PersistentSeq preservation `§33`; wide sidecar exception `§34`; wide native edit path `§35`; Grid `§36`; wide benchmark gate `§96` | Replace/insert/remove/splice remain O(log₃₂ N) with counter proof at widths 2k/10k/100k; no flat materialization on the retained one-edit path |
+| **T11** | 12.8 | Payload families: text paths `§37`; strings and embedded NUL `§39`; styles `§40`; Diff `§41`; streaming separation `§42`; string benchmark `§98` | Full `§39` correctness dataset passes; stable text/style payload never resent; stream bytes never enter structural construction; string path chosen by end-to-end measurement |
+| **T12** | 12.9 | Transaction integrity: multi-branch DAG materialization `§43`; temporary lease transaction `§44`; host atomicity rule `§45`; stale hints `§46`; targeted one-retry recovery `§47`; recovery helper `§73`; failure injection suite `§118` | Common ancestors built once across branches; exactly one host mutation; every success/error/failure-injection path drains temporary leases; one bounded retry then authoritative fallback |
+| **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77`; History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
+| **T14** | 12.12 | Hardening: randomized DAG differential testing `§87`; cross-transport identity tests `§112`; fuzzing targets `§117`; full-schema coverage proof `§76`; banned-shortcut review `§107` | 100-seed differential suite, fuzz targets, and full-schema coverage green; no UAF, no retained borrowed pointer, no partial host mutation demonstrated under fault injection |
+| **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
+| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak; obsolete pending/recipe machinery removed or test-gated; final shape matches `§121` ownership map, not a regrown pending state machine |
+
+## Registry rules
+
+- **Parent mapping:** T1=12.0, T2+T3=12.2, T4=12.1, T5+T6/T7=12.3+12.4 (generator first), T8=12.5, T9=12.6, T10=12.7, T11=12.8, T12=12.9, T13=12.10+12.11, T14=12.12, T15=12.13, T16=12.14.
+- **Order is mandatory:** T2/T3 precede everything that touches native state; T4 must prove semantic parity before any FFI materializer lands; T5 precedes all generated transport work; T15 decides; T16 is conditional.
+- **Benchmark cost control:** tranche gates T1–T14 use the smoke profile (`§102.1`), never the full matrix; the incremental benchmark cache (`§102.2`) may skip re-running unchanged candidate arms within a tranche. The full authoritative suite runs exactly once, at T15.
+- **Highest-risk boundaries are isolated:** T1 (stop-or-go), T2/T3 (shared-runtime rewrite affects every transport), T10 (wide asymptotics), T12 (failure atomicity), T13 (boundary completeness), T14 (unsafe-surface audit), and T15 (decision) each require their own commit and may not be merged together with neighbors.
+- **Commit mapping:** `§108` commits 1→T1, 2→T4, 3→T2+T3, 4→T6+T7, 5→T8, 6→T9, 7→T10, 8→T11, 9→T12, 10→T13, 11→T14, 12→T15, 13→T16. Where a commit spans two tranches, run both tranches' gates separately.
+- Any tranche whose gate fails triggers the corresponding stop condition in `§106`. Do not lower a gate because later work depends on it.
+
+## Tranche implementation records (mandatory)
+
+Every completed tranche must append an **implementation record** to this document as a new subsection under `## Tranche implementation records`, titled `### T<N> implementation record`, following the exact convention established by the PERF-11v3 records (`§2.5`–`§2.16` of `PERF-11v3-bun-1.4-zero-encode-native-view-handoff.md`). A tranche without a conforming record is not complete, regardless of whether its code passes tests.
+
+Each record must contain, in order:
+
+```text
+1. Scope statement
+   - tranche ID and parent 12.x mapping
+   - exact § sections implemented
+2. Commits
+   - full or short SHAs with subject lines, as committed on perf-refactor
+3. Review findings
+   - every gap found between the local implementation and this handoff,
+     and how each was corrected (11v3 records name these explicitly;
+     do not silently absorb corrections into "implementation detail")
+4. Implementation summary
+   - what now exists, what changed structurally, what was deliberately
+     NOT done yet (e.g. "production routing remains disabled until T13")
+5. Provenance block
+   - source revision at capture time (full SHA)
+   - bun --version and bun --revision
+   - rustc version and target
+   - native artifact SHA-256 where a rebuilt addon is involved
+   - schema BLAKE3 and generator BLAKE3 where generated ABI is involved
+6. Gate evidence
+   - each Required-result gate from the tranche table, with its actual
+     measured result: test counts, counter values, benchmark medians,
+     memory counters — raw numbers, not adjectives
+   - benchmark records captured from clean working trees and committed
+     under packages/iyon-runtime/bench/ with environment metadata;
+     smoke-profile results marked "profile": "smoke" per §102.1
+7. Status line
+   - one bold terminal line: "**Tranche T<N> status: COMPLETE | PARTIAL |
+     FAILED | STOPPED.**" followed by one or two sentences stating what
+     is claimed and what remains for later tranches. PARTIAL/FAILED/
+     STOPPED states must cite the applicable §106 stop condition if any.
+```
+
+Rules:
+
+- Records are append-only history. Later tranches may correct factual errors in earlier records via an added errata paragraph; they may not rewrite prior claims.
+- A record claiming COMPLETE must show gate evidence for **every** row of that tranche's Required-result column. Missing evidence forces PARTIAL.
+- Timing numbers must state whether they come from the checked or timing build (`§68`) and must not be phase-subtracted claims (`§90`).
+- The final record (T15) additionally links the adoption decision, raw JSONL artifacts, and the published report; the T16 record (if executed) documents exactly which machinery was removed or test-gated.
 
 ---
 
@@ -1726,6 +1784,14 @@ Only add `DiffPayloadRef` if it reduces real repeated work.
 # 42. Streaming text
 
 Streaming text remains outside the structural View bridge.
+
+This separation is not a leftover of an abandoned architecture; it is one of
+the confirmed wins of PERF-8 through PERF-11v3. The native streaming pipeline
+(native `TextStream` append/seal, incremental stream compilation,
+source-rooted offsets/revisions, frozen/live History units) produced visibly
+smoother assistant-stream rendering and is transport-independent: it does not
+touch the View bridge in any candidate. PERF-12 preserves it unchanged, and
+the PERF-11v4 report records this as a keep-regardless outcome.
 
 The structural DAG may contain the View/component that references a stream.
 
@@ -3429,6 +3495,86 @@ geometric mean ratios across heterogeneous workload groups
 
 Do not average unrelated absolute nanoseconds.
 
+## 102.1 Benchmark runtime profiles: smoke vs. authoritative
+
+The full `§102` discipline is expensive (the 11v4-scale matrix takes hours of
+serial, process-isolated sampling). It is required **only once**, for the T15
+authoritative comparison after the implementation is complete. Tranche gates
+must not pay that cost.
+
+Two profiles are defined:
+
+**Smoke profile — default for every tranche gate (T1–T14):**
+
+```text
+case set:      ~20 representative cases, fixed by name in the tranche gate:
+                 exact identity (small), SHARED_PATH depths 4/16/64,
+                 SHARED_DEEP depth 16, one LARGE_SHARED_SUBTREE_CUTOFF,
+                 TEXT_METADATA_PATCH, DECORATION_PATCH,
+                 WIDE_PARENT_ONE_EDIT at width 2,048,
+                 one text case (short Unicode), one diff case,
+                 mixed_realistic at ~200 nodes
+sampling:      adaptive; warm up >= 50, measure until the bootstrap CI
+               half-width of the median drops below 5% or 500 samples,
+               whichever comes first (tiny cases may batch 1,000 ops per
+               timed block and record block medians)
+processes:     same isolation rules as §100 (fresh child per case)
+builds:        timing build only; counter builds only when a structural
+               asymptote itself is the gate (then use §91 counters, not
+               extra timing samples)
+output:        JSONL with the §103 schema, marked "profile": "smoke"
+```
+
+Smoke results decide gate pass/fail and are retained as evidence. They are
+**not** comparable across tranches as performance trends unless the candidate
+and fixtures did not change.
+
+**Authoritative profile — T15 only:**
+
+```text
+full §93 matrix (all workloads × sizes × modes), full §102 sample counts,
+full §102 statistics, both candidates + all completed alternatives,
+fresh native artifact, clean tree, frozen provenance per §82/§60.
+```
+
+Rules:
+
+- Never run the authoritative profile mid-implementation "to see how it looks";
+  it is the decision run and must reflect the final state.
+- If a smoke gate fails in a way that suggests a real regression, fix first,
+  then re-smoke. Escalate to a broader case set only when a smoke pass is
+  ambiguous, not routinely.
+
+## 102.2 Incremental benchmark cache keyed by content hashes
+
+During T5–T14 each tranche normally changes only one candidate's code while
+`direct_7v2`, `native_11v3`, fixtures, and harness definitions remain frozen.
+Re-running unchanged arms of a comparison wastes hours.
+
+Maintain a benchmark result cache keyed by:
+
+```text
+candidate implementation SHA (or content hash of its source files)
+case definition SHA (workload + size + mode + fixture seed)
+bun version AND bun revision
+rustc version + target + native artifact SHA-256 where applicable
+machine identifier
+profile (smoke | authoritative)
+```
+
+Rules:
+
+- A cached result may be reused only on an **exact key match**. Any drift in
+  any key component invalidates that arm.
+- Cached entries must be copied into every new raw JSONL output so each run's
+  artifact is self-contained and carries its full provenance (`§103`). Mark
+  reused records with `"cached": true` plus the original capture SHA/date.
+- The T15 authoritative run must be computed fresh: no cached timing samples
+  from smoke runs may enter the authoritative aggregate. The cache exists for
+  development velocity, never for the decision evidence.
+- The cache lives outside git (e.g. `target/perf12-bench-cache/`); only the
+  JSONL artifacts it helped produce are committed.
+
 ---
 
 # 103. Required result schema
@@ -4378,6 +4524,8 @@ Chromium shared-memory command-buffer caution:
 [ ] style refs reused
 [ ] Diff specialized
 [ ] streaming separate
+[ ] native streaming pipeline (TextStream append/seal, incremental compilation,
+    source-rooted coordinates, History stream units) preserved unchanged
 [ ] PersistentSeq wide edits logarithmic
 [ ] Grid retained edit logarithmic
 [ ] exact root O(1)

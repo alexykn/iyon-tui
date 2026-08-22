@@ -146,6 +146,32 @@ The trace is decisive: changing the transport does not compensate for the
 Candidate A construction/operation shape on this representative application
 sequence.
 
+## Streaming-path note (independent of the architecture verdict)
+
+The PERF-8 through PERF-11v3 generations also rebuilt the assistant streaming
+pipeline: native `TextStream` append/seal, incremental stream compilation,
+source-rooted offsets/revisions, and native History stream units. The 11v4
+realistic trace was dominated by 550/1,000 stream appends and their visibly
+smoother rendering is a direct product of that work. This result is
+**transport-independent**: the specialized native stream path does not route
+text through structural View construction in any candidate (`§42` of PERF-12),
+and it must be preserved regardless of which View bridge architecture wins.
+Specifically:
+
+```text
+keep: native TextStream append/seal/snapshot, incremental stream row
+      compilation, source-rooted StreamOffset/StreamRange/StreamRevision,
+      frozen/live History units, tail promotion, viewport anchoring
+keep: the streaming Markdown projector pipeline that consumes it
+not under test: no 11v4 candidate measured the stream bytes path itself;
+      Candidate A's realistic-trace win comes from semantic construction and
+      tool/component update shape above the stream boundary
+```
+
+PERF-12 inherits this unchanged. If a future tranche touches the stream path,
+it must benchmark it separately; do not fold streaming regressions or gains
+into the View-bridge decision.
+
 ## Route and diagnostic evidence
 
 Timing runs deliberately disabled route counters so per-route JS counter work

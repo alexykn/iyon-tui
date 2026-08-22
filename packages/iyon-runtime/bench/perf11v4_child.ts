@@ -46,8 +46,14 @@ function commandText(command: string[]): string {
 }
 
 function gitSha(): string { return commandText(["git", "rev-parse", "HEAD"]); }
+const benchmarkSourcePaths = [
+  "packages/iyon-runtime/bench/",
+  "packages/iyon-runtime/src/tui/",
+  "crates/iyon-tui/",
+  "crates/iyon-native/",
+] as const;
 function gitDirty(): boolean {
-  const result = Bun.spawnSync(["git", "status", "--porcelain"]);
+  const result = Bun.spawnSync(["git", "status", "--porcelain", "--", ...benchmarkSourcePaths]);
   return new TextDecoder().decode(result.stdout).trim() !== "";
 }
 function sha256(path: string): string { return commandText(["shasum", "-a", "256", path]).split(/\s+/)[0] ?? "unknown"; }

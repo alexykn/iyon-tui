@@ -1,5 +1,6 @@
 import { native } from "../src/native.ts";
 import { Tui } from "../src/tui/index.ts";
+import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/tui/native_view_abi.ts"
 import { nodeForDirectBridge, View } from "../src/tui/values/view.ts";
 import { nodeForPerf7v2Bridge, Perf7v2View } from "./perf7v2_direct/view.ts";
 import { buildTracePair, prepareComparisonCase, setComparisonComponentId, type ComparisonMode, type ComparisonWorkload } from "./perf11v4_fixtures.ts";
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
   if (componentSlot?.componentId() !== null && componentSlot?.componentId() !== undefined) setComparisonComponentId(componentSlot.componentId()!);
   const trace = mode === "REALISTIC_TRACE";
   const prepared = trace ? undefined : prepareComparisonCase<View | Perf7v2View>(candidate === "direct_7v2" ? "perf7v2" : "current", { workload, size, mode: mode as ComparisonMode, label });
+  resetNativeViewRouteCounters();
   if (prepared?.base !== undefined) {
     if (candidate === "native_11v3") tui!.render({ body: prepared.base as View });
     else host!.render(bridgeFor(prepared.base));
@@ -155,6 +157,7 @@ async function main(): Promise<void> {
     tui?.close();
     host?.dispose();
   }
+  const routeCounts = nativeViewRouteSnapshot();
   const cpuAfter = process.cpuUsage?.();
   const cpuUserUs = cpuBefore !== undefined && cpuAfter !== undefined ? (cpuAfter.user - cpuBefore.user) : 0;
   const cpuSystemUs = cpuBefore !== undefined && cpuAfter !== undefined ? (cpuAfter.system - cpuBefore.system) : 0;
@@ -201,6 +204,7 @@ async function main(): Promise<void> {
     cpu_system_us: cpuSystemUs,
     rss_delta_bytes: rssDelta,
     last_screen_rows: lastRows,
+    route_counts: routeCounts,
     ...(trace ? { trace_operations: totalSamples.length, trace_distribution: traceDistribution } : {}),
   };
   process.stdout.write(`${JSON.stringify(result)}\n`);

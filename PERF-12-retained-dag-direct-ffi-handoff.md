@@ -5270,3 +5270,143 @@ transport machinery was removed from the JS layer with this record as its
 documenting commit. Remaining for later tranches: BridgeNativeHint sidecar
 wiring and FFI materialization (T6/T7), wide-edit sidecars (T10), and final
 removal of the dead route code (cleanup tranche).
+
+## T5 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T5 (PERF-12.4a generator foundation)
+parent:       12.4 (T5 precedes all generated transport work)
+sections:     §62 extend canonical ABI pipeline, §63 MaterializerSpec model,
+              §64 generator validation rules, §65 output placement,
+              §74 failure status detail, §68 checked-vs-timing policy,
+              §69 owner-thread policy
+vertical slice: the spacer kind, emitted end-to-end from the canonical
+              schema into generated TypeScript consumed against the shared
+              runtime through a real host
+```
+
+### 2. Commits
+
+```text
+df37cec  feat(generator): emit semantic materializer vertical slice
+```
+
+This record was appended in the immediately following documentation commit.
+
+### 3. Review findings
+
+```text
+finding 1: the §63 model stores roles as validated strings plus a parsed
+       MaterializerFieldRole enum rather than deserializing the enum
+       directly, so serde diagnostics name the exact illegal role string
+       before rejection. deny_unknown_fields is enforced on every
+       materializer type as §63 requires.
+
+finding 2: reference lowerings (child_ref/style_ref/base_ref) and buffer
+       lowerings (ref_buffer/aux_buffer/byte_buffer) are fully modeled and
+       validated (buffer bounds are mandatory) but their RENDERING panics
+       generation with a message naming the owning tranche (T6/T7/T8).
+       Rationale: emitting a materializer that calls an ensureNative that
+       does not exist yet would generate dead or misleading code; the model
+       is complete, the emitted surface is truthful. The T5 slice needs
+       neither.
+
+finding 3: §74 status detail is implemented as the convention layer -
+       status_detail ("none" | "child_ref" | "base_ref") is a validated
+       declaration per materializer, decodeMaterializeStatus() is generated
+       shared surface, and each materializer exports its detail kind
+       constant. Native builders do not emit detail cells yet (no child-ref
+       constructor exists in the ABI); the first child-bearing materializer
+       (T7) wires the native side of this convention.
+
+finding 4: schema BLAKE3 and generator BLAKE3 changed legitimately in this
+       tranche (view_abi.toml gained the materializer section; generator
+       sources gained the renderer and validation rules). New pinned values:
+       schema 2b797eccd4c6c803a51937b1344f29c27e6289ae5b4765a0a76bf082cb201f
+       be, generator 581e146de3ee31e0ceb7b1292ca9a5ca487fb0ada2aa235857505a5
+       5520467fa. The addon was rebuilt and restaged so its embedded
+       handshake matches (SHA below).
+
+finding 5: tui_generated_view_abi's function-count assertion still holds:
+       materializers are declarations over existing ABI functions, not new
+       [[function]] entries - the spacer builder reuses view_spacer_create
+       exactly as §25 (reuse before adding) requires.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+tools/tui-abi/view_abi.toml        [[materializer]] declaration block
+tools/tui-abi-gen/src/model.rs     MaterializerSpec / MaterializerFieldSpec /
+                                   MaterializerResultSpec / role enum
+tools/tui-abi-gen/src/validate.rs  §64 rule set + 9 dedicated failure tests +
+                                   slice declaration test (17 total)
+tools/tui-abi-gen/renderers        view_materialize.ts output + manifest
+                                   materializers section
+generated outputs                  packages/iyon-runtime/src/tui/generated/
+                                   view_materialize.ts (first-class, enforced
+                                   fresh by tui-abi-gen check)
+packages/iyon-runtime/tests/view_materialize.test.ts
+                                   end-to-end conformance for the slice
+```
+
+Deliberately NOT done yet: no ensureNative/BridgeNativeHint (T6), no
+per-kind full-schema coverage beyond the vertical slice (T7+ extends the
+same [[materializer]] blocks), no buffer transport (T8), no native status
+detail cells (first needed by T7).
+
+### 5. Provenance block
+
+```text
+source revision at capture: df37cecaf3695578aefa94d8ad294dd9ce8557cf
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      c5d4acf061a92ef859cf34c094e029fd4d85afeed3be82d204e6891a53c10652
+schema BLAKE3:              2b797eccd4c6c803a51937b1344f29c27e6289ae5b4765a0a76bf082cb201fbe
+generator BLAKE3:           581e146de3ee31e0ceb7b1292ca9a5ca487fb0ada2aa235857505a55520467fa
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Generator emits a one-kind vertical slice end-to-end:
+   view_abi.toml declares materializer "spacer" -> view_spacer_create;
+   cargo run -p tui-abi-gen -- generate emits
+   packages/iyon-runtime/src/tui/generated/view_materialize.ts;
+   view_materialize.test.ts drives it end-to-end: minted ref > 0,
+   NodeId halves match the shared split convention, §23 semantic-cache-first
+   consultation (viewRefForNodeId returns the SAME ref), hostRenderRef
+   renders blank rows through a real NativeTuiHost, release drains cleanly.
+   PASS (3/3 tests).
+
+2. Conformance tests pass:
+   tui-abi-gen 17/17 (incl. snapshot freshness), iyon-native 30 lib +
+   all generated suites green, bun battery 19 suites green including
+   tui_generated_view_abi (function_count 49 unchanged), perf11v4_direct
+   6/6, tui_values 8/8; tui-abi-gen check enforces every generated file is
+   byte-fresh. PASS.
+
+3. Illegal lifetime declarations fail generation:
+   ten dedicated validation tests prove rejection of: unknown bridge kind,
+   missing node_id_high half (§64 u64-narrowing rule), unknown field role,
+   unbounded buffer field, borrow_duration != call (§107 retained-pointer
+   ban), thread_affinity != owner_thread (§69), duplicate materializer name,
+   empty benchmark registration, unknown builder function. PASS.
+```
+
+### 7. Status line
+
+**Tranche T5 status: COMPLETE.** The canonical generator now models,
+validates, and emits semantic materializers with the spacer kind working
+end-to-end through the shared runtime; illegal lifetime declarations fail
+generation with named rules. Full-schema materializers land by extending
+[[materializer]] blocks in T7 once BridgeNativeHint and MaterializeTx
+wiring exist (T6).

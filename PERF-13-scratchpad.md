@@ -1,326 +1,298 @@
 # PERF-13 scratchpad
 
-> Freebies and further-looking optimizations that are independent of whether
-> PERF-12 selects the Direct 7v2 (N-API) path or the Retained DAG Direct FFI
-> candidate. Every idea here improves *any* winner because none depends on the
-> transport architecture — they target the shared runtime, the renderer caches,
-> or the iyon-tui framework's hot data structures.
+> Freebies and further-looking optimizations that are candidates to run after
+> PERF-12 concludes. **PERF-12 status: tranche 3, transport decision
+> (N-API vs Direct FFI) still open; the Retained DAG direction above the
+> transport layer is decided.** Items are tagged accordingly:
+>
+> - `[independent]` — safe to implement now, helps either transport outcome.
+> - `[transport-coupled]` — value or validity depends on which transport wins;
+>   defer until the PERF-12 final benchmark decides.
+>
+> Relevance ratings and code references below were re-verified against the
+> tree on 2026-02 (see "Verification notes" at the end).
 
 ---
 
-## 1. PaintCache key representation
+## 1. PaintCache key construction — `[independent]` — HIGH
 
-`PaintCache` in `crates/iyon-tui/src/presentation/paint/view.rs` uses a
-`HashMap<PaintKey, Arc<Surface>>` with a key that costs more to hash than the
-cache saves — especially on the miss path where hashing is pure waste.
+**Where:** `crates/iyon-tui/src/presentation/paint/view.rs`
 
-### Current key
+**Hot path:** `crates/iyon-tui/src/scene/host.rs:439–441` — every rendered frame
+calls `paint_cache.begin_epoch(theme)` followed by
+`ViewPainter.paint_tree_with_cache(...)`, which descends `paint_node` for every
+layout node (`view.rs:157`). Per painted node:
 
-```rust
-struct PaintKey {
-    view_id: ViewId,
-    rect: Rect,                              // 4 × u16
-    content_rect: Rect,                      // 4 × u16
-    clip_rect: Rect,                         // 4 × u16
-    inherited_style: PhysicalStyle,          // ~several fields
-    resolved_style: PhysicalStyle,           // ~several fields
-    node_context: StyleContextKey,            // Vec<(String, String)> !
-    descendant_context: StyleContextKey,      // Vec<(String, String)> !
-}
-```
+1. `view.rs:170` — `compiler.theme.resolve_text_style(...)` runs unconditionally.
+2. `view.rs:183–192` — **the full `PaintKey` is constructed unconditionally,
+   *before* the `can_cache` check at `view.rs:194`.** This includes two
+   `StyleContextKey::from(...)` conversions, each of which allocates two
+   `Vec<(String, String)>` with a heap `String` clone per entry
+   (`view.rs:26–43`).
+3. Only then does `cache.surface(&key)` probe `current`, then `previous`
+   (`view.rs:82–95`). A previous-generation hit additionally does
+   `key.clone()` (another 4 vector allocations) before inserting into
+   `current`.
 
-`StyleContextKey` is:
+So the worst cost is not SipHash over the 192 bits of rect entropy — it is
+that **non-cacheable nodes pay full key construction including string
+allocation for nothing**, and cache misses pay it too. The original claim
+("hashing costs more than the cache saves") understated this.
 
-```rust
-struct StyleContextKey {
-    inherited_states: Vec<(String, String)>,
-    local_facts: Vec<(String, String)>,
-    focused: bool,
-    focus_within: bool,
-}
-```
+### Ideas, cheapest first
 
-Every lookup hashes **all of the above**, including walking the string tuples
-inside `style_state` vectors. The HashMap also means each `get` computes a full
-hash and probes the table — the Rect fields alone are 12 × u16 = 192 bits of
-entropy being run through SipHash per frame *per paintable node*.
+1. **Guard key construction behind `can_cache`** (`view.rs:194`): move the
+   `PaintKey` construction below the flag check. One-move change, removes all
+   allocation for non-cacheable nodes. Do this first.
+2. **Kill the `String` conversion**: the source `StyleContext`
+   (`presentation/paint/theme.rs:11–16`) already stores
+   `StyleStates`/`StyleFacts` whose backing store is a sorted
+   `Vec<(StyleAtom, StyleAtom)>` with binary-search lookup
+   (`presentation/api/style.rs:286–296`), where `StyleAtom` is
+   `Static(&'static str) | Owned(String)` (`style.rs:401–404`). The key's
+   `From<&StyleContext>` impl needlessly downgrades this to owned
+   `(String, String)`. Key on the atoms directly (they already impl
+   comparison by `as_str`) or intern them — see §2.
+3. **Avoid the promotion clone** (`view.rs:87–91`): when promoting from
+   `previous`, the key is cloned only to insert into `current`; restructuring
+   the two-generation map so promotion moves entries would remove another
+   allocation burst on stable frames.
+4. Larger redesigns (generation-indexed slot map keyed by
+   `(ViewId, epoch_generation)`, pre-computed dense paint index stored on
+   `LayoutNode`) remain possible but require building an ancestor-style-change
+   generation mechanism that does not exist yet. Not a freebie.
+
+### Independence
+
+Entirely inside `iyon-tui` presentation/paint. Untouched by either transport.
+
+---
+
+## 2. StyleContext / StyleContextKey string representation — `[independent]` — HIGH
+
+**Where:**
+- Key conversion allocating strings: `crates/iyon-tui/src/presentation/paint/view.rs:26–43`.
+- Live context types: `crates/iyon-tui/src/presentation/paint/theme.rs:10–47`.
+- Atom storage: `crates/iyon-tui/src/presentation/api/style.rs:222–304, 401–411`.
+
+**Hot path:** same as §1 — `paint_node` calls
+`inherited_context.enter_node(...)` per node (`view.rs:169`), which clones the
+whole `StyleStates` assignment vector per node (`theme.rs:23–32`), then
+`for_descendant()` clones it again (`theme.rs:35–42`). Every one of those
+clones copies the `Vec<(StyleAtom, StyleAtom)>`; then §1's key conversion
+re-materializes it as owned `String`s.
 
 ### Ideas
 
-1. **Replace with a generation-indexed slot map** keyed by `(ViewId,
-   epoch_generation)` where `epoch_generation` bumps when any ancestor's
-   inherited style changes. A miss then falls through to paint immediately
-   without paying the hash. This avoids hashing entirely.
+1. **Interning / static-first atoms**: most keys/values in practice come
+   through `StyleStateKey::from_static` / `StyleStateValue::from_static`
+   (`style.rs:225, 269`). Making the key borrow the source context instead of
+   owning `String`s removes the allocations without any interning machinery.
+   A self-referential key is not needed if the lookup compares against a
+   freshly built key (compare-by-value, no retention), or if the cache stores
+   the key alongside the surface.
+2. If dynamic (owned) state values turn out to be common in profiles, add an
+   intern table mapping `(key_atom, value_atom)` → dense `u32` so the paint
+   key carries integers only.
+3. `Arc<[(StyleAtom, StyleAtom)]>` shared slices are a weaker variant; prefer
+   1–2 first.
 
-2. **Flatten the key** — replace the two `StyleContextKey` vectors with a
-   compact bitmask of active style states (focused, focus_within, and a
-   generation counter for the state/ fact stack). The string-typed
-   `inherited_states` and `local_facts` are already associated with
-   `StyleRef::theme(String)` — the *values* don't need to be in the paint key,
-   only the *identity* of which states are active. A state-stack depth counter
-   combined with a generation tag is O(1) to compare.
+### Independence
 
-3. **Two-phase lookup**: use a trivial array indexed by `view_id mod N` as a
-   bloom filter / fast reject before falling through to a canonical store.
-   Most paint lookups miss anyway (geometry changes every frame); paying a full
-   hash on a miss is the worst case.
-
-4. **Pre-compute a compact cache key** during layout, stored on the
-   `LayoutNode`. Layout already holds the resolved style context; if we assign
-   a dense `PaintCacheIndex` (e.g. a simple u32 counter bumped per
-   view-tree-visible change), the paint cache lookup becomes a single
-   `Arc<Surface>` index compare.
-
-### Independence from PERF-12
-
-The paint cache lives entirely inside `iyon-tui`. Neither candidate touches it.
-The improvement applies whether Views arrive via N-API objects, generated FFI
-constructors, or packed records.
+`iyon-tui` framework internals. Note §1 and §2 overlap heavily: implementing
+this first shrinks the `PaintKey` problem to plain data (rects + styles +
+small vectors of atoms).
 
 ---
 
-## 2. StyleContextKey string vectors
+## 3. `path_nodes` / `path_keys` pruning — `[transport-coupled]` — DEFER
 
-Even outside the paint key, `StyleContextKey` itself carries
-`Vec<(String, String)>` for `inherited_states` and `local_facts`. This
-allocates per-context and the strings are cloned when the context descends
-to children.
+**Correction to the previous revision:** these maps are **not dead code**.
+The TypeScript side actively uses the path machinery in production paths:
+
+- Rust side: `nodes`, `node_refs`, `path_nodes`, `path_keys`, `edit_txns`,
+  `styles`, `style_atoms` all live on `NativeViewRuntime`
+  (`crates/iyon-native/src/tui/view_abi.rs:345–354`); path allocation logic at
+  `view_abi.rs:464–544`, edit transactions at `view_abi.rs:642–697`,
+  `abort_all_edit_txns` at `view_abi.rs:1171`.
+- TS side: `packages/iyon-runtime/src/tui/native_view_abi.ts` imports
+  `pathRoot`/`pathChild` (lines 7–8), resolves them from bootstrap functions
+  (lines 203–204, 289–290), and calls them via `tryNativePathScalarRender`
+  (line 427) and `nativePathRefForLineage` (lines 992, 1006, 1100). Benches
+  exist separately in `packages/iyon-runtime/bench/tui_abi_path.ts` and
+  `tui_abi_transaction.ts`.
+
+Whether this machinery can be pruned depends entirely on whether the FFI /
+Retained DAG transport wins PERF-12 and stops calling the scalar-render and
+transaction ABI exports. **Re-evaluate immediately after the PERF-12 final
+benchmark.** If pruned: ~400 lines of ABI functions plus both maps plus the
+TS callers go away.
+
+---
+
+## 4. `style_atoms` / `styles` handle tables — `[independent]` — LOW
+
+**Where:** `crates/iyon-native/src/tui/view_abi.rs:352–353`;
+monotonic allocation at `view_abi.rs:892–915` (`allocate_style_atom_ref`,
+`STYLE_ATOM_REF_LIMIT` bounded).
+
+Both are monotonic-key tables written during style creation only. Not on the
+per-frame hot path. The paged-table pattern from `NativeRefTable<12>` (see §8)
+is a trivial, mechanical replacement. Do opportunistically, not as dedicated
+work.
+
+---
+
+## 5. `nodes` + `node_refs` semantic identity maps — `[independent]` — MEDIUM
+
+**Where:** `crates/iyon-native/src/tui/view_abi.rs:345–347`
+(`nodes: HashMap<u64, WeakView>`, `node_refs: HashMap<u64, u32>`).
+
+**Hot path:** publication, not painting. `consult_semantic_identity`
+(`view_abi.rs:1028–1066`) is called per published node (call site
+`view_abi.rs:1103`, used by direct and staged publication). It performs:
+
+1. `node_refs.get(node_id)` → on hit, `resolve_ref(reference)` into `nodes`
+   territory, comparing the existing `View` for equality
+   (`SemanticIdentityMatch::SameLiveWithRef` / `Conflict`);
+2. on miss/expired, `nodes.get(node_id)` + `WeakView::upgrade` +
+   full `View` equality;
+3. expired-entry cleanup (`nodes.remove`).
+
+So up to **two HashMap probes plus a `View` deep-equality per published node
+per frame**. Merging into one table halves the probes; the deep equality
+usually dominates anyway, so measure before investing heavily.
 
 ### Ideas
 
-1. **Intern style state keys and values** via a small arena/generation counter.
-   The number of unique style-state key/value pairs in any TUI session is tiny
-   (single-digit). Every node on the paint path clones or re-hashes them.
+1. **Merge into `SemanticEntry { weak: WeakView, reference: Option<u32> }`**
+   in a single map. Straightforward; preserves all current semantics because
+   the two maps are already kept in lockstep by `install_semantic_view`
+   (`view_abi.rs:1069–1079`) and the various `node_refs.remove(&node_id)`
+   sites (e.g. `view_abi.rs:839–896, 1019–1075`).
+2. Frontier-biased small cache or monotonic-ID dense storage are optional
+   extras; NodeIds are allocated monotonically by the JS side, but the map
+   also serves arbitrary lookups (`resolve_ref`, scavenge sweeps), so a hybrid
+   structure must keep the fallback correct.
+3. Caveat: keep the WeakView scavenging / expired-slot accounting
+   (`semantic_cache_expired_seen`, `semantic_cache_entries_removed`,
+   `nodes_inserted_since_full_sweep`) intact through any restructure.
 
-2. **Replace with a small-bitmask approach**: `StyleRef::theme(name)` is
-   called with a `&str`. If the set of possible theme keys is bounded (it
-   practically is — no agent creates 1000 unique style states), a dense index
-   per unique key + a u64 value mask would eliminate all heap state from the
-   style context.
+### Independence
 
-3. **Shared reference-counted slices**: `Arc<[(String, String)]>` instead of
-   `Vec<(String, String)>`. The context is built once per frame and shared
-   down the tree; cloning the Arc is O(1) instead of O(state count + string
-   allocations).
-
-### Independence from PERF-12
-
-Same argument as PaintCache: style context is `iyon-tui` framework internals.
+Shared runtime state consulted by every transport (`consult_semantic_identity`
+is transport-agnostic).
 
 ---
 
-## 3. `path_nodes` / `path_keys` interning
+## 6. LayoutCache — `[independent]` — LOW/MEDIUM (premise partly wrong)
 
-Already classified in T2 as category C: *"path/recipe machinery made redundant
-by the semantic DAG"*. It's still present in `NativeViewRuntime` because the
-old "text layout patch path" and "edit transaction" paths have not been
-removed yet (PERF-12 T16 would do that if Candidate 12 wins).
+**Where:** `crates/iyon-tui/src/presentation/layout/cache.rs`.
+Keys: `MeasureKey { view, component_view, width, intent }` (cache.rs:15–21);
+storage is `current_measure`/`previous_measure` plus the same pair for
+`PrepareKey` (cache.rs:41–43). Epoch rollover swaps generations and clears
+only the new-current generation (cache.rs:48–54) — the previous generation
+survives, so the original claim "rebuilt from scratch every frame" is wrong.
+
+**Hot path:** `scene/host.rs:298` and `:373` call `layout_cache.begin_epoch()`
+per frame; lookups from `presentation/layout/measure.rs:218`
+(`store_measured`) and `presentation/layout/prepare.rs:59–66`
+(`prepared`/`store_prepared`).
+
+### Correction to the proposed fix
+
+A `Vec` indexed by `view_id` does not type-check: `MeasureKey` includes
+`width`, `intent`, and `Option<ViewId>` `component_view`, so there are many
+entries per view per generation (one per measured width/intent combination).
+Any dense replacement needs per-view buckets of (width, intent) entries, which
+is more machinery than the HashMap it replaces. Only pursue if profiling shows
+measure/prep hashing matters relative to measurement itself.
+
+---
+
+## 7. `RUNTIME_HANDLES` / feature-gated struct fields — DROPPED (wrong premise)
+
+**Where:** `RUNTIME_HANDLES` at
+`crates/iyon-native/src/tui/view_abi.rs:1349–1392`.
+
+Two corrections:
+
+- `packed_v3`, `packed_v4`, `fast_slots`, `fast_sessions` are behind
+  `#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]`
+  (`view_abi.rs:374–381` and matching initializers at `view_abi.rs:427–433`).
+  They compile out of production builds entirely — there is no dead padding.
+- The global registry mutex is acquired once per bootstrap and per
+  pointer→handle resolution; negligible.
+
+No action. Kept here only so the idea isn't re-proposed.
+
+---
+
+## 8. `NativeRefTable` pattern spread — `[independent]` — LOW
+
+T2 replaced `HashMap<u32, NativeViewSlot>` with the paged
+`NativeRefTable<12>`. Mechanical application targets (all in
+`crates/iyon-native/src/tui/view_abi.rs`): `style_atoms` (:352), `styles`
+(:353), and post-PERF-12 leftovers `path_nodes` (:348), `path_keys` (:349),
+`edit_txns` (:351) — the latter three only if §3 concludes they survive at
+all. Cleanup-tier work.
+
+---
+
+## 9. Perf-counter vs timing build discipline — procedural note, no code change
+
+Counters are correctly feature-gated
+(`crates/iyon-tui/src/perf.rs:8, 209`;
+`crates/iyon-native/Cargo.toml:11–14`: `perf-counters` ⊂ `perf-packed-timing`
+which enables `iyon-tui/perf-timing`). Inline `perf::inc` sites compile out in
+timing builds. No change needed — just remember: **decision benchmarks run on
+the timing build, counter builds are for ratios/hit-rates only.**
+
+Suggest folding this rule into the PERF-12 tranche-3 benchmark protocol rather
+than tracking it here.
+
+---
+
+## 10. Host raw-pointer validation at the FFI boundary — `[transport-coupled]` — MEDIUM (if FFI wins)
+
+**Where:** `host_render_ref_impl`
+(`crates/iyon-native/src/tui/view_abi.rs:1666–1695`): validates `runtime` via
+`runtime_mut` (magic/thread-id check) but takes `host: *mut NativeHost` and
+only checks null + `host.alive` (`:1677–1680`). Same pattern at
+`view_abi.rs:2094`. The host object itself is `NativeTuiHost`
+(`crates/iyon-native/src/tui.rs:645–651`, `alive: AtomicBool` there vs the
+FFI-facing `NativeHost.alive: AtomicU32` at `view_abi.rs:339`).
+
+A dangling host pointer reads freed memory before any check fires — genuine UB,
+unlike the runtime path which has magic/version/alive defense-in-depth.
 
 ### Idea
 
-Even if Candidate A (Direct 7v2) wins, this machinery could be pruned. The
-text layout patch path was PERF-8/9-era optimization for avoiding full View
-reconstruction. If a retained semantic DAG exists (either the current lazy
-pending style or the full eager 7v2 style), the path interning is unnecessary
-because the semantic DAG already encodes the changed frontier directly.
+Add a `u32 magic` (+ optionally a generation) at offset 0 of the FFI-facing
+host struct and validate it alongside `alive`, mirroring the runtime's
+`ABI_MAGIC`/`ABI_VERSION`/`owner_thread` pattern
+(`view_abi.rs:370–381, 445–450`).
 
-Removing these two `HashMap`s and the associated path-handle allocation
-machinery eliminates ~400 lines of ABI functions, the per-VNode path-key
-hashing, and the `path_nodes` / `path_keys` allocation bookkeeping.
-
-### Independence from PERF-12
-
-The path-ref ABI functions are already behind generated exports; the
-TypeScript side can stop calling them regardless of which transport wins. The
-hash tables are live but the text-patch-path operations are not on the
-hot retained path for either candidate.
+**Timing:** only relevant if the FFI transport wins PERF-12 (these exports
+are the FFI entry surface). Cheap enough to fold into the winner-integration
+work rather than doing speculatively now.
 
 ---
 
-## 4. `style_atoms` / `styles` representation
+## Priority order (revised)
 
-`style_atoms: HashMap<u32, String>` and `styles: HashMap<u32, StyleRef>` are
-both monotonic-allocated handle tables used during style creation. They're
-bounded by unique style count, which is typically small.
+| # | Item | Status | Rating |
+|---|------|--------|--------|
+| 1 | Guard `PaintKey` construction behind `can_cache` (`view.rs:183–194`) | independent | HIGH, near-trivial |
+| 2 | De-stringify `StyleContextKey` (atoms/borrowing, §2.1) | independent | HIGH |
+| 3 | Paint-cache promotion without key clone (`view.rs:87–91`) | independent | MEDIUM |
+| 4 | Merge `nodes`+`node_refs` into one semantic table (§5.1) | independent | MEDIUM |
+| 5 | Host pointer magic validation (§10) | transport-coupled (FFI) | MEDIUM |
+| 6 | Prune path/edit-txn machinery (§3) | transport-coupled | decide after PERF-12 |
+| 7 | Paged tables for `style_atoms`/`styles` (§4, §8) | independent | LOW, opportunistic |
+| 8 | LayoutCache dense structure (§6) | independent | LOW, profile-gated |
+| — | `RUNTIME_HANDLES` / cfg-field padding (§7) | dropped | wrong premise |
 
-### Idea
-
-Since `style_atoms` is keyed by a monotonic `u32` (no holes), it could use the
-same paged-table pattern as `NativeRefTable`. Lookup is `Vec<Option<Box<[...]>>>`
-indexing instead of SipHash. The same applies to `styles`.
-
-The win is modest (style creation is not the hot path), but the replacement is
-trivial and removes two more `HashMap`s from the native bridge.
-
-### Independence from PERF-12
-
-`style_atoms` and `styles` are shared runtime state — every transport uses them
-equally.
-
----
-
-## 5. `nodes: HashMap<u64, WeakView>` in NativeViewRuntime
-
-The semantic cache is the central NodeId→View mapping. It's consulted on every
-publication, every cache hit, every path lookup.
-
-### Idea
-
-`u64` keys don't map as cleanly into a dense paged table as `u32` NativeRefs
-do, because the NodeId space (53-bit semantic IDs) is sparse. However, a few
-approaches could beat HashMap:
-
-1. **Frontier-biased caching**: a small direct-mapped cache of the last N
-   NodeId lookups (like a CPU TLB) in front of the HashMap. Most frame work
-   touches only the ~200 nodes of the current frontier; a 256-entry bloom
-   filter or small associative cache would catch the majority of lookups
-   without touching the HashMap at all.
-
-2. **Monotonic NodeId allocator**: if NodeIds are strictly increasing (they
-   are — the JS allocator never reuses them), a `Vec<Option<WeakView>>` where
-   the index is `(NodeId - 1) mod GROWTH_BLOCK` could replace the HashMap for
-   recently-allocated NodeIds. Older IDs spill to a fallback structure.
-
-3. **Combined `nodes` + `node_refs`**: since every published node has both a
-   `WeakView` in `nodes` and a `u32` NativeRef in `node_refs`, these two maps
-   could be merged into a single value type `SemanticEntry { weak, ref }`
-   stored in one dense structure. Every lookup resolves both questions in one
-   table probe instead of two.
-
-### Independence from PERF-12
-
-The semantic cache is shared across all transports. Direct 7v2, generated FFI,
-packed — all route through `consult_semantic_identity` which reads both maps.
-Improving them helps every candidate equally.
-
----
-
-## 6. LayoutCache key simplicity
-
-`LayoutCache` in `crates/iyon-tui/src/presentation/layout/cache.rs` uses
-`HashMap<MeasureKey, Arc<MeasuredNode>>` where:
-
-```rust
-struct MeasureKey {
-    view: ViewId,
-    component_view: Option<ViewId>,
-    width: u16,
-    intent: WidthIntent,
-}
-```
-
-The key is 4 fields plus an `Option<ViewId>`. This is not as bad as PaintKey,
-but the two-generation swap pattern (swap + clear every epoch) means the
-HashMap is rebuilt from scratch every frame anyway — the old generation is
-simply dropped. This suggests a generation-tagged array might work: if
-`ViewId` is dense enough, a `Vec<Option<(u64 epoch, Arc<MeasuredNode>)>>`
-keyed by `view_id` eliminates hashing and the swap+clear allocation.
-
-### Independence from PERF-12
-
-LayoutCache is `iyon-tui` framework code.
-
----
-
-## 7. `RUNTIME_HANDLES: OnceLock<Mutex<HashMap<usize, ViewRuntimeHandle>>>`
-
-The global N-API environment→runtime handle registry. Every `tuiViewAbiBootstrap`
-and every FFI call that resolves `runtime_mut` from a pointer touches the global
-lock.
-
-### Idea
-
-This is small (one lock acquisition per bootstrap + per N-API call), but the
-feature-gated `packed_v3`, `packed_v4`, `fast_slots`, and `fast_sessions`
-HashMap entries in `NativeViewRuntime` also sit behind feature gates that
-aren't part of the normal build. If those are never enabled in the production
-build, their unused fields in `NativeViewRuntime::new()` are dead struct
-padding.
-
-Not a big win, but a tidy one.
-
----
-
-## 8. `NativeRefTable` — already done in T2, but the pattern can spread
-
-T2 replaced `HashMap<u32, NativeViewSlot>` with `NativeRefTable<12>`. The
-same construction (monotonic key → paged dense table) applies to all the
-handle-based tables in the native bridge.
-
-Potential candidates already listed above: `style_atoms`, `styles`,
-`path_nodes` (if kept), `edit_txns` (if kept), `builders` (if kept).
-
----
-
-## 9. Perf-counter build vs timing build discipline
-
-The PERF-10 handoff §39 noted that the counter build uses atomic increments
-on the hot decoder path and must not be used for authoritative timing. This
-is already documented but the codebase still has:
-
-```rust
-#[cfg(feature = "perf-counters")]
-iyon_tui::perf::inc(iyon_tui::perf::Counter::$counter);
-```
-
-embedded inline in hot functions. Any future perf work that needs clean timing
-must ensure the timing build compiles out all counters. The `cfg` gates already
-exist, so this is just a reminder to *use* the timing build for decision
-benchmarks.
-
----
-
-## 10. Use-after-free / stale-pointer safety in the FFI boundary
-
-Both PERF-12 candidates share the same raw-pointer FFI pattern:
-
-```rust
-unsafe extern "Rust" fn view_spacer_create_impl(
-    runtime: *mut NativeViewRuntime,
-    ...
-)
-```
-
-`runtime_mut` does an `unsafe { pointer.as_mut() }` + thread-ID check. If the
-runtime is deallocated and the pointer is dangling, `as_mut()` returns `None`
-and we get a graceful `FAST_INVALID`. That's fine.
-
-But the `host: *mut NativeHost` in `host_render_ref_impl` and
-`edit_txn_commit_render_impl` is only checked via `host.alive` — there's no
-guarantee the host pointer still points to a valid allocation. A stale host
-pointer would read garbage `alive` and potentially write into freed memory.
-
-### Idea
-
-Add a host-side magic + generation similar to the runtime's `magic`/`abi_version`/
-`alive` pattern. A 4-byte `u32` magic at offset 0 of `NativeTuiHost` would
-let `host_render_ref_impl` sanity-check the pointer before dereferencing
-`host.alive`.
-
-This is a correctness hardening, not a performance optimization, but every
-transport uses the same host-render path.
-
----
-
-## Summary: what to scratch first
-
-Priority order for a hypothetical PERF-13 (always-on freebies):
-
-1. **PaintCache key flattening** — most visible per-frame savings on the
-   `iyon-tui` side, no ABI changes needed.
-2. **StyleContextKey → interned bitmask** — eliminates String clones and
-   Vec allocations per node, cleans up the paint key.
-3. **Merge `nodes` + `node_refs`** into one dense structure — every
-   publication pays two `HashMap` lookups; a combined table halves that.
-4. **Prune `path_nodes`/`path_keys`** — if unused by the chosen winner,
-   delete ~400 lines and two maps.
-5. **Paged table for `style_atoms`/`styles`** — trivial replacement, removes
-   two more HashMaps, predictable cost.
-6. **Pre-computed paint cache index on `LayoutNode`** — eliminates paint
-   cache hash entirely, replaces with a simple slot index comparison.
-7. **Host pointer magic validation** — safety hardening.
-
-None of these require knowing whether PERF-12 picks Direct 7v2 or Retained DAG
-Direct FFI. All of them improve the smoothness the Muppet feels.
-
-Happy scratching! 🐱
+Items 1–4 are safe to start during tranche 3 (they touch only `iyon-tui`
+presentation internals and publication-time native tables, not the transport
+surface being benchmarked). Items 5–6 wait for the PERF-12 verdict.

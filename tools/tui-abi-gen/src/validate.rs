@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use serde_json::Map;
 use thiserror::Error;
 
-use crate::model::{AbiDocument, ConformanceSpec, EnumSpec, PodSpec};
+use crate::model::{
+    AbiDocument, ConformanceSpec, EnumSpec, MaterializerFieldRole, MaterializerFieldSpec,
+    MaterializerSpec, PodSpec,
+};
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -70,6 +73,7 @@ pub fn validate(
         validate_conformance(conformance)?;
     }
 
+    validate_materializers(document, bridge_schema)?;
     for function in &document.functions {
         if !is_snake_case(&function.name) {
             return invalid(format!("function {} must be snake_case", function.name));
@@ -531,6 +535,233 @@ fn primitive_layout(type_name: &str) -> Option<(u32, u32)> {
 
 fn align_up(value: u32, align: u32) -> u32 {
     (value + align - 1) / align * align
+}
+
+/// PERF-12 T5 (§64): generator validation for semantic materializer
+/// declarations. Generation must fail on illegal lifetime declarations,
+/// unknown kinds, narrowed NodeIds, unrepresented child fields, unbounded
+/// buffers, and missing benchmark/conformance registration.
+fn validate_materializers(
+    document: &AbiDocument,
+    bridge_schema: &Map<String, serde_json::Value>,
+) -> Result<(), ValidationError> {
+    let function_names: HashSet<&str> = document
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    let handle_names: HashSet<&str> = document
+        .handles
+        .iter()
+        .map(|handle| handle.name.as_str())
+        .collect();
+    // Scalar ABI types that lower directly as engine-native call arguments.
+    const SCALAR_TYPES: [&str; 6] = ["u32", "i32", "u64", "i64", "f32", "f64"];
+
+    let mut materializer_names = HashSet::new();
+    for materializer in &document.materializers {
+        validate_materializer(
+            document,
+            materializer,
+            &function_names,
+            &handle_names,
+            &SCALAR_TYPES,
+            bridge_schema,
+        )?;
+        if !materializer_names.insert(materializer.name.as_str()) {
+            return invalid(format!("duplicate materializer {}", materializer.name));
+        }
+    }
+    Ok(())
+}
+
+fn validate_materializer(
+    document: &AbiDocument,
+    materializer: &MaterializerSpec,
+    function_names: &HashSet<&str>,
+    handle_names: &HashSet<&str>,
+    scalar_types: &[&str; 6],
+    bridge_schema: &Map<String, serde_json::Value>,
+) -> Result<(), ValidationError> {
+    if !is_snake_case(&materializer.name) {
+        return invalid(format!(
+            "materializer {} must be snake_case",
+            materializer.name
+        ));
+    }
+    if function_names.contains(materializer.name.as_str()) {
+        return invalid(format!(
+            "materializer {} collides with an ABI function name",
+            materializer.name
+        ));
+    }
+    // Unknown BridgeViewNode kind (§64): the kind must exist in the bridge
+    // schema as a view-kind discriminant.
+    let kind_declared = bridge_schema
+        .get(&materializer.bridge_kind)
+        .is_some_and(|value| value.is_i64() || value.is_u64());
+    if !kind_declared || !materializer.bridge_kind.starts_with("view") {
+        return invalid(format!(
+            "materializer {} declares unknown BridgeViewNode kind {}",
+            materializer.name, materializer.bridge_kind
+        ));
+    }
+    // The rust builder must be a declared ABI function returning ViewRefResult.
+    let builder_function = document
+        .functions
+        .iter()
+        .find(|function| function.name == materializer.rust_builder);
+    let Some(builder_function) = builder_function else {
+        return invalid(format!(
+            "materializer {} references unknown builder function {}",
+            materializer.name, materializer.rust_builder
+        ));
+    };
+    if builder_function.return_type != "ViewRefResult" {
+        return invalid(format!(
+            "materializer {} builder {} must return ViewRefResult",
+            materializer.name, materializer.rust_builder
+        ));
+    }
+    // §68/§69: checked-vs-timing policy stays explicit and materializers run
+    // synchronously on the environment owner thread with call-scoped borrows.
+    if materializer.ownership != builder_function.ownership {
+        return invalid(format!(
+            "materializer {} ownership must match its builder function",
+            materializer.name
+        ));
+    }
+    if materializer.borrow_duration != "call" {
+        return invalid(format!(
+            "materializer {} may not retain a borrowed pointer past the call (§107)",
+            materializer.name
+        ));
+    }
+    if materializer.thread_affinity != "owner_thread"
+        || materializer.thread_affinity != builder_function.thread_affinity
+    {
+        return invalid(format!(
+            "materializer {} must run on the environment owner thread (§69)",
+            materializer.name
+        ));
+    }
+    if !matches!(
+        materializer.status_detail.as_str(),
+        "none" | "child_ref" | "base_ref"
+    ) {
+        return invalid(format!(
+            "materializer {} has unsupported status_detail {} (§74)",
+            materializer.name, materializer.status_detail
+        ));
+    }
+    if materializer.benchmark_registration.is_empty() {
+        return invalid(format!(
+            "materializer {} is missing benchmark/conformance registration",
+            materializer.name
+        ));
+    }
+    if materializer.fallback.is_empty() {
+        return invalid(format!(
+            "materializer {} has no fallback declaration",
+            materializer.name
+        ));
+    }
+    if materializer.result.kind != "view_ref" {
+        return invalid(format!(
+            "materializer {} result kind must be view_ref",
+            materializer.name
+        ));
+    }
+
+    // §64: a u64 field must never be narrowed into one u32 - the full 53-bit
+    // safe NodeId requires exactly one low half and one high half.
+    let low_count = materializer
+        .fields
+        .iter()
+        .filter(|field| field.role == "node_id_low")
+        .count();
+    let high_count = materializer
+        .fields
+        .iter()
+        .filter(|field| field.role == "node_id_high")
+        .count();
+    if low_count != 1 || high_count != 1 {
+        return invalid(format!(
+            "materializer {} must declare exactly one node_id_low and one node_id_high field",
+            materializer.name
+        ));
+    }
+
+    let mut seen_fields = HashSet::new();
+    for field in &materializer.fields {
+        validate_materializer_field(field, handle_names, scalar_types)?;
+        if !seen_fields.insert(field.role.as_str()) {
+            return invalid(format!(
+                "materializer {} declares duplicate role {}",
+                materializer.name, field.role
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_materializer_field(
+    field: &MaterializerFieldSpec,
+    handle_names: &HashSet<&str>,
+    scalar_types: &[&str; 6],
+) -> Result<(), ValidationError> {
+    let Some(role) = MaterializerFieldRole::parse(&field.role) else {
+        return invalid(format!(
+            "materializer field {} has unknown role {}",
+            field.name, field.role
+        ));
+    };
+    if field.source.is_empty() {
+        return invalid(format!(
+            "materializer field {} has an empty source",
+            field.name
+        ));
+    }
+    let type_ok = scalar_types.contains(&field.abi_type.as_str())
+        || handle_names.contains(field.abi_type.as_str());
+    if !type_ok {
+        return invalid(format!(
+            "materializer field {} has undeclared ABI type {}",
+            field.name, field.abi_type
+        ));
+    }
+    if role.is_buffer() {
+        // §64: buffer without explicit bounded length fails generation.
+        if field.buffer_length_of.is_none() || field.max_buffer_bytes.is_none() {
+            return invalid(format!(
+                "buffer field {} must declare buffer_length_of and max_buffer_bytes",
+                field.name
+            ));
+        }
+        if field
+            .max_buffer_bytes
+            .is_some_and(|limit| limit > 16 * 1024 * 1024)
+        {
+            return invalid(format!(
+                "buffer field {} exceeds the 16 MiB scratch bound",
+                field.name
+            ));
+        }
+    } else {
+        if field.buffer_length_of.is_some() || field.max_buffer_bytes.is_some() {
+            return invalid(format!(
+                "non-buffer field {} must not declare buffer bounds",
+                field.name
+            ));
+        }
+        if role.is_reference() && field.abi_type != "ViewRef" && field.abi_type != "StyleRef" {
+            return invalid(format!(
+                "reference field {} must lower through ViewRef or StyleRef",
+                field.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn is_snake_case(value: &str) -> bool {

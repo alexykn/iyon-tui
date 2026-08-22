@@ -55,6 +55,8 @@ pub struct AbiDocument {
     pub pods: Vec<PodSpec>,
     #[serde(rename = "function", default)]
     pub functions: Vec<FunctionSpec>,
+    #[serde(rename = "materializer", default)]
+    pub materializers: Vec<MaterializerSpec>,
     #[serde(rename = "conformance", default)]
     pub conformance: Vec<ConformanceSpec>,
 }
@@ -154,6 +156,91 @@ pub struct ArgumentSpec {
     pub lowering: String,
     #[serde(default)]
     pub buffer_length_of: Option<String>,
+}
+
+/// PERF-12 T5 (§63): strongly typed semantic materializer declaration.
+/// Each spec lowers one BridgeViewNode kind into a sequence of generated FFI
+/// constructor arguments, children first, with explicit lifetime policy.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializerSpec {
+    pub name: String,
+    pub bridge_kind: String,
+    pub rust_builder: String,
+    pub fallback: String,
+    pub ownership: String,
+    pub borrow_duration: String,
+    pub thread_affinity: String,
+    /// PERF-12 T5 (§74): `none`, `child_ref`, or `base_ref`. Declares which
+    /// stale-ref detail kind the builder's failure status carries so the JS
+    /// recovery path can identify the offending ref without probing.
+    pub status_detail: String,
+    pub benchmark_registration: String,
+    pub result: MaterializerResultSpec,
+    #[serde(rename = "field", default)]
+    pub fields: Vec<MaterializerFieldSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializerFieldSpec {
+    pub name: String,
+    pub source: String,
+    #[serde(rename = "type")]
+    pub abi_type: String,
+    pub role: String,
+    /// Required for RefBuffer/AuxBuffer/ByteBuffer roles (§64): names the
+    /// builder argument carrying the element length for this buffer.
+    #[serde(default)]
+    pub buffer_length_of: Option<String>,
+    /// Required for buffer roles (§64): explicit upper bound in bytes.
+    #[serde(default)]
+    pub max_buffer_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializerResultSpec {
+    pub kind: String,
+}
+
+/// Strongly typed view of MaterializerFieldSpec.role (§63).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterializerFieldRole {
+    NodeIdLow,
+    NodeIdHigh,
+    Scalar,
+    ChildRef,
+    RefBuffer,
+    AuxBuffer,
+    ByteBuffer,
+    StyleRef,
+    BaseRef,
+}
+
+impl MaterializerFieldRole {
+    pub fn parse(role: &str) -> Option<Self> {
+        Some(match role {
+            "node_id_low" => Self::NodeIdLow,
+            "node_id_high" => Self::NodeIdHigh,
+            "scalar" => Self::Scalar,
+            "child_ref" => Self::ChildRef,
+            "ref_buffer" => Self::RefBuffer,
+            "aux_buffer" => Self::AuxBuffer,
+            "byte_buffer" => Self::ByteBuffer,
+            "style_ref" => Self::StyleRef,
+            "base_ref" => Self::BaseRef,
+            _ => return None,
+        })
+    }
+
+    pub fn is_buffer(self) -> bool {
+        matches!(self, Self::RefBuffer | Self::AuxBuffer | Self::ByteBuffer)
+    }
+
+    pub fn is_reference(self) -> bool {
+        matches!(self, Self::ChildRef | Self::StyleRef | Self::BaseRef)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

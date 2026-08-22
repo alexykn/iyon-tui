@@ -186,6 +186,32 @@ pub fn manifest(
             })
         })
         .collect();
+    let materializers: Vec<Value> = document
+        .materializers
+        .iter()
+        .map(|materializer| {
+            json!({
+                "name": materializer.name,
+                "bridge_kind": materializer.bridge_kind,
+                "rust_builder": materializer.rust_builder,
+                "fallback": materializer.fallback,
+                "ownership": materializer.ownership,
+                "borrow_duration": materializer.borrow_duration,
+                "thread_affinity": materializer.thread_affinity,
+                "status_detail": materializer.status_detail,
+                "benchmark_registration": materializer.benchmark_registration,
+                "result": materializer.result,
+                "fields": materializer.fields.iter().map(|field| json!({
+                    "name": field.name,
+                    "source": field.source,
+                    "type": field.abi_type,
+                    "role": field.role,
+                    "buffer_length_of": field.buffer_length_of,
+                    "max_buffer_bytes": field.max_buffer_bytes,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     let conformance: Vec<Value> = document
         .conformance
         .iter()
@@ -213,6 +239,7 @@ pub fn manifest(
         "enums": enums,
         "pods": document.pods,
         "functions": functions,
+        "materializers": materializers,
         "conformance": conformance,
         "generated_outputs": output_paths,
     });

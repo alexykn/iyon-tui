@@ -29,6 +29,7 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "packages/iyon-runtime/src/tui/generated/view_abi.ts",
     "packages/iyon-runtime/src/tui/generated/view_abi_conformance.ts",
     "packages/iyon-runtime/src/tui/generated/view_calls.ts",
+    "packages/iyon-runtime/src/tui/generated/view_materialize.ts",
     "packages/iyon-runtime/src/tui/generated/view_abi_manifest.json",
     "packages/iyon-runtime/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-runtime/bench/generated/view_abi_cases.ts",
@@ -220,22 +221,26 @@ fn render_outputs(
     );
     outputs.insert(
         GENERATOR_OUTPUTS[8].to_owned(),
-        render_manifest::manifest(&document, &schema_hash, &generator_hash, &output_paths),
+        render_typescript::materialize(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[9].to_owned(),
-        render_typescript::layout_test(&document, &schema_hash, &generator_hash),
+        render_manifest::manifest(&document, &schema_hash, &generator_hash, &output_paths),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[10].to_owned(),
-        render_typescript::benchmark_registry(&document, &schema_hash, &generator_hash),
+        render_typescript::layout_test(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[11].to_owned(),
-        render_rust::layout_tests(&document, &schema_hash, &generator_hash),
+        render_typescript::benchmark_registry(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[12].to_owned(),
+        render_rust::layout_tests(&document, &schema_hash, &generator_hash),
+    );
+    outputs.insert(
+        GENERATOR_OUTPUTS[13].to_owned(),
         render_manifest::human_reference(&document, &schema_hash, &generator_hash),
     );
     Ok(outputs)
@@ -369,6 +374,139 @@ mod tests {
             .find(|argument| argument.lowering == "buffer_length")
             .expect("canonical buffer length");
         length.buffer_length_of = None;
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    fn first_materializer_mut(document: &mut model::AbiDocument) -> &mut model::MaterializerSpec {
+        document
+            .materializers
+            .first_mut()
+            .expect("canonical materializer slice")
+    }
+
+    #[test]
+    fn canonical_schema_declares_the_t5_vertical_slice() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (document, _, _) = model::load(&schema).expect("canonical schema parses");
+        assert_eq!(document.materializers.len(), 1);
+        let spacer = &document.materializers[0];
+        assert_eq!(spacer.name, "spacer");
+        assert_eq!(spacer.bridge_kind, "viewSpacer");
+        assert_eq!(spacer.rust_builder, "view_spacer_create");
+        assert_eq!(spacer.borrow_duration, "call");
+        assert_eq!(spacer.thread_affinity, "owner_thread");
+    }
+
+    #[test]
+    fn validation_rejects_unknown_bridge_kind() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        first_materializer_mut(&mut document).bridge_kind = "viewDoesNotExist".to_owned();
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_missing_node_id_half() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        // §64: a u64 NodeId narrowed into a single u32 half fails generation.
+        first_materializer_mut(&mut document)
+            .fields
+            .retain(|field| field.role != "node_id_high");
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_unknown_field_role() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        first_materializer_mut(&mut document).fields[2].role = "magic_ref".to_owned();
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_unbounded_buffer_field() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        let materializer = first_materializer_mut(&mut document);
+        materializer.fields.push(model::MaterializerFieldSpec {
+            name: "children".to_owned(),
+            source: "children".to_owned(),
+            abi_type: "ViewRef".to_owned(),
+            role: "ref_buffer".to_owned(),
+            buffer_length_of: None,
+            max_buffer_bytes: None,
+        });
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_non_call_borrow_duration() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        // §107: a constructor that can retain a borrowed buffer is illegal.
+        first_materializer_mut(&mut document).borrow_duration = "session".to_owned();
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_owner_thread_violation() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        first_materializer_mut(&mut document).thread_affinity = "any_thread".to_owned();
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_materializer_name() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        let clone = document.materializers[0].clone();
+        document.materializers.push(clone);
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_missing_benchmark_registration() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        first_materializer_mut(&mut document).benchmark_registration = String::new();
+        assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_unknown_builder_function() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        first_materializer_mut(&mut document).rust_builder = "view_not_a_function".to_owned();
         assert!(validate::validate(&document, &bridge).is_err());
     }
 

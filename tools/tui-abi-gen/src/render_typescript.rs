@@ -1,5 +1,5 @@
 use crate::{
-    model::{AbiDocument, ArgumentSpec},
+    model::{AbiDocument, ArgumentSpec, MaterializerFieldRole},
     render_manifest::{banner, typescript_bindings_header, typescript_calls_header},
 };
 
@@ -56,6 +56,117 @@ pub fn conformance_bindings(
         ));
     }
     output.push_str("  } as const);\n}\n");
+    output
+}
+
+/// PERF-12 T5 (§65/§66): generated semantic materializers. One monomorphic
+/// explicit function per declared kind, children first, no reflection. The
+/// T5 vertical slice is the spacer kind; buffer and reference lowerings land
+/// with their owning tranches (T8/T6) and fail generation until then.
+/// PERF-12 T5 (§65/§66): generated semantic materializers. One monomorphic
+/// explicit function per declared kind, children first, no reflection. The
+/// T5 vertical slice is the spacer kind; buffer and reference lowerings land
+/// with their owning tranches (T8/T6) and fail generation until then.
+pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
+    let mut output = typescript_calls_header(schema_hash, generator_hash);
+    // The calls header already imports Pointer; add the builder imports.
+    let mut builders = document
+        .materializers
+        .iter()
+        .map(|m| camel_case(&m.rust_builder))
+        .collect::<Vec<_>>();
+    builders.sort();
+    builders.dedup();
+    output.push_str(&format!(
+        "import {{ {} }} from \"./view_calls\";\n",
+        builders.join(", ")
+    ));
+    output.push_str("import type { ViewAbiSymbols } from \"./view_calls\";\n\n");
+    output.push_str("const ERROR_BIT = 0x8000_0000;\n\n");
+    output
+        .push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: Pointer;\n}\n\n");
+    output
+        .push_str("function splitNodeId(id: number): [number, number] {\n  return [id >>> 0, Math.floor(id / 0x1_0000_0000)];\n}\n\n");
+    // §74: status decoding shared by every materializer caller. A failed
+    // constructor returns its raw u32 status (high bit set or zero); a
+    // success returns the minted NativeRef.
+    output
+        .push_str("export interface MaterializeStatus {\n  readonly ok: boolean;\n  readonly reference: number;\n  readonly status: number;\n}\n\n");
+    output.push_str("export function decodeMaterializeStatus(result: number): MaterializeStatus {\n  if (result === 0 || (result & ERROR_BIT) !== 0) return { ok: false, reference: 0, status: result >>> 0 };\n  return { ok: true, reference: result, status: 0 };\n}\n\n");
+
+    for materializer in &document.materializers {
+        let kind_stem = materializer.bridge_kind.trim_start_matches("view");
+        let node_interface = format!("Bridge{}MaterializeNode", pascal_case(kind_stem));
+        output.push_str(&format!(
+            "export interface {node_interface} {{\n  readonly id: number;\n"
+        ));
+        for field in &materializer.fields {
+            let role = MaterializerFieldRole::parse(&field.role).expect("validated role");
+            match role {
+                MaterializerFieldRole::NodeIdLow | MaterializerFieldRole::NodeIdHigh => {}
+                MaterializerFieldRole::Scalar => {
+                    output.push_str(&format!("  readonly {}: number;\n", field.source));
+                }
+                MaterializerFieldRole::ChildRef
+                | MaterializerFieldRole::StyleRef
+                | MaterializerFieldRole::BaseRef => {
+                    panic!(
+                        "PERF-12: reference lowering lands in T6/T7; materializer {} declares {}",
+                        materializer.name, field.role
+                    );
+                }
+                MaterializerFieldRole::RefBuffer
+                | MaterializerFieldRole::AuxBuffer
+                | MaterializerFieldRole::ByteBuffer => {
+                    panic!(
+                        "PERF-12: buffer lowering lands in T8; materializer {} declares {}",
+                        materializer.name, field.role
+                    );
+                }
+            }
+        }
+        output.push_str("}\n\n");
+
+        let builder_call = camel_case(&materializer.rust_builder);
+        let args_list = materializer
+            .fields
+            .iter()
+            .map(
+                |field| match MaterializerFieldRole::parse(&field.role).expect("validated role") {
+                    MaterializerFieldRole::NodeIdLow => "nodeIdLow".to_owned(),
+                    MaterializerFieldRole::NodeIdHigh => "nodeIdHigh".to_owned(),
+                    _ => format!("node.{}", field.source),
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "/** PERF-12 §74 status detail kind for this materializer: {:?}. */\n",
+            materializer.status_detail
+        ));
+        output.push_str(&format!(
+            "export const {}_STATUS_DETAIL = {:?} as const;\n\n",
+            materializer.name.to_uppercase(),
+            materializer.status_detail
+        ));
+        output.push_str(&format!(
+            "export function materialize{}(node: {}, tx: MaterializeTx): number {{\n",
+            pascal_case(materializer.name.as_str()),
+            node_interface
+        ));
+        output.push_str("  const [nodeIdLow, nodeIdHigh] = splitNodeId(node.id);\n");
+        output.push_str(&format!(
+            "  return {}(tx.symbols, tx.runtime, {});\n}}\n",
+            builder_call, args_list
+        ));
+        if !materializer.fields.is_empty() {
+            output.pop();
+            output.push('\n');
+        }
+    }
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
     output
 }
 
@@ -298,4 +409,17 @@ fn camel_case(value: &str) -> String {
         }
     }
     output
+}
+
+fn pascal_case(value: &str) -> String {
+    value
+        .split('_')
+        .map(|part| {
+            let mut characters = part.chars();
+            match characters.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + characters.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
 }

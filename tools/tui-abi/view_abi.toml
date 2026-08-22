@@ -2901,3 +2901,40 @@ name = "cstring"
 return = "u32"
 operation = "cstring_hash"
 args = ["cstring"]
+
+# PERF-12 T5 (§63): semantic materializer declarations. Each entry lowers one
+# BridgeViewNode kind into generated FFI constructor arguments, children
+# first, with explicit lifetime policy (§64/§68/§69). The T5 vertical slice
+# is the spacer kind end-to-end.
+
+[[materializer]]
+name = "spacer"
+bridge_kind = "viewSpacer"
+rust_builder = "view_spacer_create"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+status_detail = "none"
+benchmark_registration = "materialize.spacer"
+
+[materializer.result]
+kind = "view_ref"
+
+[[materializer.field]]
+name = "node_id_low"
+source = "id_low"
+type = "u32"
+role = "node_id_low"
+
+[[materializer.field]]
+name = "node_id_high"
+source = "id_high"
+type = "u32"
+role = "node_id_high"
+
+[[materializer.field]]
+name = "rows"
+source = "rows"
+type = "u32"
+role = "scalar"

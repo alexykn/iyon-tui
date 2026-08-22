@@ -5829,3 +5829,174 @@ native cache-first construction, working-budget fallbacks, and a SHARED_PATH
 gate win (0.9828x of direct_7v2 total time); broader generation continues in
 T8 with borrowed ref-buffer lanes, then derivations (T9), wide edits (T10),
 payload families (T11), recovery hardening (T12), and boundary routing (T13).
+
+## T8 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T8 (PERF-12.5 variable-arity lanes)
+parent:       12.5
+sections:     §29 borrowed TypedArray transport, §30 scratch tier policy,
+              §31 no-mapped-scratch rule, §116 buffer lifetime tests,
+              §50 oversize -> fallback routing
+supporting:   §63/§64 generator model + validation extension,
+              §66/67 generated/native ownership split, §90 transport
+              preparation visibility (ref_words_written)
+```
+
+### 2. Commits
+
+```text
+cb4843a  feat(tui): lower variable retained children through borrowed FFI buffers
+```
+
+This record was appended in the immediately following documentation commit.
+
+### 3. Review findings
+
+```text
+finding 1: the first dispatcher emission duplicated the retained-cap check
+       in generated code AND in MaterializeTx.axisRefScratch; the duplicate
+       fired first and the §91 cold_fallbacks counter never recorded the
+       refusal (caught by the oversize test). Correction: axisRefScratch is
+       the single enforcement point - it refuses arities above the cap,
+       counts the fallback, and sizes/returns the scratch; the generated
+       code only fills and transports.
+finding 2: AXIS_REF_SCRATCH was initially a WeakMap keyed by runtime
+       Pointer; WeakMap keys must be objects, so every lookup threw.
+       Correction: plain Map keyed by the numeric pointer - at most one
+       live entry per environment.
+finding 3: the emitted buffer call passed `scratch` twice (mirroring the
+       raw symbol's ptr+buffer_length pair); the generated viewAxisCreateBuffer
+       wrapper already duplicates the array internally, so the extra argument
+       was a tsc-visible arity error. Correction: wrapper call takes eight
+       arguments.
+finding 4: the T7 suite's "arity >4 falls back cleanly" test became obsolete:
+       since T8 those arities ride the borrowed-buffer lane. The test was
+       updated to assert the lane (7-child column = 14 ref words) rather
+       than the fallback; the true oversize fallback moved to the T8 suite
+       where the §30/§50 cap lives.
+finding 5: Grid construction has NO native constructor in the current ABI;
+       the tranche gate's "Variable-axis/Grid constructors" therefore binds
+       the variable-axis lane concretely, and new-Grid materialization
+       arrives with the §36 Grid work (T10) riding this same transport lane.
+       Recorded explicitly so the gate wording is not read as a gap.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+tools/tui-abi-gen
+    MaterializerFixedArityAxisSpec.buffer_builder: validated optional
+        borrowed-buffer lane (declared function, ViewRefResult, matching
+        owner-thread/call-borrow lifetime policy, not duplicating family
+        builders); renderer emits the default-arm scratch loop + one
+        viewAxisCreateBuffer call per kind (axis_kind literal from the
+        bridge kind); MAX_DIRECT_AXIS_REFS imported into the generated
+        module; 3 new validation tests (27 total)
+packages/iyon-runtime/src/tui/retained_dag.ts
+    MaterializeTx.axisRefScratch: §30 small-tier reusable scratch - one
+        environment-level Uint32Array sized exactly for the retained cap,
+        allocated once per runtime, reused across transactions; refusal
+        above MAX_DIRECT_AXIS_REFS counted via cold_fallbacks
+    MaterializeTx.noteRefWords: feeds ref_words_written (§90 - transport
+        preparation is counted, never hidden)
+native_view_policy.ts: MAX_DIRECT_AXIS_REFS = 1_024 children (initial
+        §50 candidate; final values from realistic traces at T15)
+tests/perf12_t8_buffers.test.ts: six §116 lifetime tests
+addon rebuilt and restaged for the new schema/generator hashes:
+    32d21a13f1a5c1c37a3c41a4b7e4738cda41c8f6ee3fbdd83a7c2333fe32666c
+```
+
+§31 compliance is structural: there is no pointer-export API, no external
+ArrayBuffer/deallocator context, no arena state machine, and no persistent
+native scratch anywhere in the runtime or JS layer - the scratch is a plain
+JS-owned Uint32Array whose storage native reads only during the synchronous
+call (`resolve_axis_children` collects owned child Views before returning).
+
+Deliberately NOT done yet: medium/byte scratch tiers arrive with T11 byte
+payloads (the small tier covers the entire axis-ref surface);
+new-Grid materialization arrives with §36/T10 on this lane (finding 5);
+production routing unchanged until T13; sanitizer builds skipped (no ASan/
+UBSan harness wired on the darwin host - noted as a stated limitation).
+
+### 5. Provenance block
+
+```text
+source revision at capture: d733020 (tree identical to committed cb4843a
+                            after snap.new cleanup; see Commits note)
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      32d21a13f1a5c1c37a3c41a4b7e4738cda41c8f6ee3fbdd83a7c2333fe32666c
+schema BLAKE3:              fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d
+generator BLAKE3:           e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Variable-axis constructors use reusable synchronous buffer/buffer_length:
+   perf12_t7_materialize "arity beyond the fixed-arity family uses the T8
+   borrowed-buffer lane": a 7-child column installs through the default arm
+   with ref_words_written = 14 (7 track words + 7 child refs). The variable
+   suite exercises arities 5/6/17/100 with mixed layout-child kinds
+   (normal/fixed/flex/contentMax) against Direct-decode render parity.
+   Grid: no native constructor exists; lands with §36/T10 on this lane
+   (finding 5). PASS for the axis surface; Grid documented.
+
+2. Native never retains a pointer after return:
+   structural inspection (resolve_axis_children collects owned Views inside
+   the call) plus two behavioral tests: alternating boundaries reuse the
+   single environment scratch across six installs of distinct trees with
+   correct renders each time, and fully rewritten shared storage backs two
+   successive raw buffer calls yielding distinct correct constructions.
+   PASS.
+
+3. Zero-length/max-length/oversize cases pass:
+   zero-length raw buffer call mints a valid empty axis that participates
+   in the semantic cache; exactly-at-cap transport moves 2,048 ref words
+   through ONE call with only the root node materialized (children resolved
+   by identity); one-over-the-cap refuses before any FFI - cold_fallbacks
+   increments by exactly 1, nothing publishes, old root stays leased and
+   rendering. PASS.
+
+4. No external ArrayBuffer machinery exists:
+   inspection - no pointer export API, no deallocator context, no external
+   memory registration anywhere in iyon-native or the TS layer; the scratch
+   is a JS-owned Uint32Array. Wrong-typed input (non-TypedArray) is
+   rejected by bun:ffi before any native code runs. PASS.
+
+Section coverage evidence:
+   §29  borrowed transport as above; pairs laid out as (track_word,
+        child_ref) matching AxisChildInputV1 (8 bytes, align 4).
+   §30  small tier allocated once, sized for the retained cap, reused
+        across transactions/boundaries; above-cap refusal routes the
+        complete cold path. Medium/byte tiers deferred to T11 payloads.
+   §31  structurally absent machinery (above).
+   §116 six dedicated tests (zero/max/oversize/reuse/wrong-type/no-
+        retention).
+   §50  MAX_DIRECT_AXIS_REFS = 1,024 enforced at the single refusal point
+        with fallback accounting; budgets unchanged otherwise.
+
+Regression battery: tests directory 84 pass / 1 fail (the T2-documented
+pre-existing cross-file interference, unchanged); T7/T6/T5 suites green;
+tsc clean; tui-abi-gen check byte-fresh; tui-abi-gen 27/27; cargo
+iyon-native 31 lib tests green; cargo fmt clean; clippy warning profile
+unchanged from pre-T8 baseline.
+```
+
+### 7. Status line
+
+**Tranche T8 status: COMPLETE.** Variable-axis children now transport
+through the reusable synchronous borrowed-buffer lane with visible ref-word
+accounting, single-point cap enforcement, and proven buffer lifetimes
+(zero/max/oversize/no-retention), with no mapped-scratch machinery anywhere;
+Grid construction and medium/byte tiers follow in T10/T11, production
+routing in T13.

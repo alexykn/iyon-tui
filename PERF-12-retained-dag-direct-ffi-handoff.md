@@ -5830,6 +5830,13 @@ gate win (0.9828x of direct_7v2 total time); broader generation continues in
 T8 with borrowed ref-buffer lanes, then derivations (T9), wide edits (T10),
 payload families (T11), recovery hardening (T12), and boundary routing (T13).
 
+Errata (added by the post-T7/T8 in-depth review): no code or gate changes
+were required for T7. The review re-ran every gate green at the current
+revision and additionally confirmed that the borrowed-buffer lane added in
+T8 inherits count-vs-capacity validation from the generated export layer,
+so the dispatcher transport path satisfies the §68 memory-safety rule
+without per-call-site checks.
+
 ## T8 implementation record
 
 ### 1. Scope statement
@@ -6000,3 +6007,23 @@ accounting, single-point cap enforcement, and proven buffer lifetimes
 (zero/max/oversize/no-retention), with no mapped-scratch machinery anywhere;
 Grid construction and medium/byte tiers follow in T10/T11, production
 routing in T13.
+
+Errata (added by the post-T7/T8 in-depth review):
+
+```text
+finding R1: AXIS_REF_SCRATCH was an unbounded Map keyed by runtime pointer;
+       every environment reset leaked one 8 KiB entry (reachable only via
+       test resets today, but still a leak). Correction: single-slot
+       storage holding the latest runtime's scratch - at most one live
+       NativeViewRuntime exists per environment, so nothing accumulates.
+finding R2: the review verified where count-vs-capacity validation for
+       view_axis_create_buffer actually lives: the generated export layer
+       (generated_buffer_used) rejects used_child_count entries that do
+       not fit inside children_capacity_bytes before the implementation
+       dereferences anything - satisfying the §68 rule that timing
+       builds still validate memory-safety requirements. A dedicated Rust
+       unit test (axis_buffer_rejects_count_larger_than_buffer_bytes_
+       perf12_t8) now proves the rejection and that a matching count on
+       the same buffer shape still validates, strengthening the §116
+       gate evidence recorded above.
+```

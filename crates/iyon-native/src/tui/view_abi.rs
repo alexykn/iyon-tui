@@ -2431,6 +2431,11 @@ pub unsafe extern "Rust" fn view_axis_create_buffer_impl(
     let Ok(gap) = u16::try_from(gap) else {
         return FAST_INVALID;
     };
+    // PERF-12 §68/§116 note: count-vs-capacity validation for this
+    // constructor is enforced by the generated export layer
+    // (generated_buffer_used rejects used_child_count entries that do not
+    // fit inside children_capacity_bytes), so the implementation can rely
+    // on the slice below being in bounds.
     let children = match resolve_axis_children(runtime, children, used_child_count) {
         Ok(children) => children,
         Err(error) => return record_result(runtime, error),
@@ -4185,6 +4190,36 @@ mod tests {
             )
         };
         assert!(path_replaced < 0x8000_0000);
+    }
+
+    #[test]
+    fn axis_buffer_rejects_count_larger_than_buffer_bytes_perf12_t8() {
+        // PERF-12 §68/§116: used_child_count must fit inside the actual
+        // borrowed buffer length; a mismatched count is rejected before any
+        // dereference instead of reading out of bounds.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let child = runtime
+            .publish(500_000, View::spacer(1))
+            .expect("child ref");
+        let mut scratch = [0u32; 8];
+        scratch[1] = child;
+        scratch[3] = child;
+        let children = scratch.as_ptr() as *const AxisChildInputV1;
+        let result = unsafe {
+            generated_exports::iyon_view_axis_create_buffer_v1(
+                pointer, 500_001, 0, 2, 0, children, 16, 4,
+            )
+        };
+        assert!(result >= 0x8000_0000);
+        assert!(!runtime.nodes.contains_key(&500_001));
+        // A matching count on the same buffer shape still validates.
+        let ok = unsafe {
+            generated_exports::iyon_view_axis_create_buffer_v1(
+                pointer, 500_002, 0, 2, 0, children, 16, 2,
+            )
+        };
+        assert!(ok < 0x8000_0000);
     }
 
     #[test]

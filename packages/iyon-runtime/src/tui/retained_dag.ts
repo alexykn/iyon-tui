@@ -51,12 +51,15 @@ const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
 
 /**
  * PERF-12 T8 (§30): environment-level reusable axis-ref scratch (small tier).
- * Keyed by runtime pointer so a re-bootstrapped session allocates fresh
- * storage; native retains no pointer into it after any call returns (§29).
- * A plain Map: runtime pointers are numbers, and there is at most one live
- * entry per environment.
+ * Single-slot: one live NativeViewRuntime per environment, and a stale
+ * pointer's storage is simply replaced at the next allocation, so nothing
+ * accumulates across environment resets. Native retains no pointer into it
+ * after any call returns (§29).
  */
-const AXIS_REF_SCRATCH = new Map<Pointer, Uint32Array>();
+const AXIS_REF_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+  runtime: undefined,
+  array: new Uint32Array(0),
+};
 
 /**
  * Structural counters (§91 subset relevant to T6). Plain field increments on
@@ -167,14 +170,17 @@ export class MaterializeTx {
       );
     }
     const words = childCount * 2;
-    let scratch = AXIS_REF_SCRATCH.get(this.runtime);
-    if (scratch === undefined || scratch.length < words) {
-      // Small tier sized for exactly the retained cap; allocated once.
-      scratch ??= new Uint32Array(MAX_DIRECT_AXIS_REFS * 2);
-      AXIS_REF_SCRATCH.set(this.runtime, scratch);
+    // Small tier sized for exactly the retained cap; allocated once per
+    // runtime generation and reused by every transaction.
+    if (
+      AXIS_REF_SCRATCH.runtime !== this.runtime ||
+      AXIS_REF_SCRATCH.array.length < words
+    ) {
+      AXIS_REF_SCRATCH.runtime = this.runtime;
+      AXIS_REF_SCRATCH.array = new Uint32Array(MAX_DIRECT_AXIS_REFS * 2);
     }
     counters.transport_scratch_reuses += 1;
-    return scratch.subarray(0, words);
+    return AXIS_REF_SCRATCH.array.subarray(0, words);
   }
 
   /** §90: borrowed-buffer preparation is counted, never hidden. */

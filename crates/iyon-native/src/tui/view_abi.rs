@@ -2172,6 +2172,14 @@ pub unsafe extern "Rust" fn view_spacer_create_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: if this NodeId already owns a live
+    // semantic View (cross-transport or recovery path), return its ref
+    // without consuming payload or child refs.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok(rows) = u16::try_from(rows) else {
         return FAST_INVALID;
     };
@@ -2414,6 +2422,12 @@ pub unsafe extern "Rust" fn view_axis_create_buffer_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first (see create_small_axis).
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok(gap) = u16::try_from(gap) else {
         return FAST_INVALID;
     };
@@ -2447,6 +2461,14 @@ fn create_small_axis(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId short-circuits before
+    // any child-ref resolution, so stale children of an already-built node
+    // cannot fail an otherwise-known construction.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok(gap) = u16::try_from(gap) else {
         return FAST_INVALID;
     };
@@ -4163,6 +4185,34 @@ mod tests {
             )
         };
         assert!(path_replaced < 0x8000_0000);
+    }
+
+    #[test]
+    fn constructor_consults_semantic_cache_before_building_perf12_s23() {
+        // PERF-12 §23: a live NodeId short-circuits construction, returning
+        // the cached ref without consuming child refs (which may be stale).
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let first = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 7, 0, 3) };
+        assert!(first < 0x8000_0000);
+        // Same NodeId, different payload and a stale child ref on the axis:
+        // the cache-first consult must win before either is inspected.
+        let again = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 7, 0, 9) };
+        assert_eq!(again, first);
+        // Axis path: build a column normally, then re-request the same
+        // NodeId through a stale child ref - cache-first must win.
+        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 8, 0, 1) };
+        assert!(child < 0x8000_0000);
+        let built =
+            unsafe { generated_exports::iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, child) };
+        assert!(built < 0x8000_0000);
+        let recovered = unsafe {
+            generated_exports::iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, 0x7fff_ff00)
+        };
+        assert_eq!(recovered, built);
+        assert_eq!(built, unsafe {
+            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 9, 0)
+        });
     }
 
     #[test]

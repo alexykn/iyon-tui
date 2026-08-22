@@ -11,6 +11,7 @@ import {
   type BridgeSpacerMaterializeNode,
 } from "../src/tui/generated/view_materialize.ts";
 import { nodeForBridge, nodeIdPair, View } from "../src/tui/values/view.ts";
+import { MaterializeTx } from "../src/tui/retained_dag.ts";
 
 type AbiHost = {
   render(view: object): void;
@@ -37,10 +38,8 @@ describe("PERF-12 T5 generated materializer vertical slice", () => {
     if (session === undefined) return;
     const view = View.spacer(3);
     const node = nodeForBridge(view) as unknown as BridgeSpacerMaterializeNode;
-    const reference = materializeSpacer(node, {
-      symbols: session.symbols,
-      runtime: session.runtime,
-    });
+    const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
+    const reference = materializeSpacer(node, tx);
     expect(reference).toBeGreaterThan(0);
     const decoded = decodeMaterializeStatus(reference);
     expect(decoded.ok).toBe(true);
@@ -55,6 +54,7 @@ describe("PERF-12 T5 generated materializer vertical slice", () => {
     const consulted = viewRefForNodeId(session.symbols, session.runtime, low, high);
     expect(consulted).toBe(reference);
     viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
+    tx.releaseAll();
   });
 
   test("renders the materialized spacer through a real host", () => {
@@ -65,10 +65,8 @@ describe("PERF-12 T5 generated materializer vertical slice", () => {
     try {
       host.render(nodeForBridge(View.spacer(4)));
       const view = View.spacer(2);
-      const reference = materializeSpacer(nodeForBridge(view) as unknown as BridgeSpacerMaterializeNode, {
-        symbols: session.symbols,
-        runtime: session.runtime,
-      });
+      const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
+      const reference = materializeSpacer(nodeForBridge(view) as unknown as BridgeSpacerMaterializeNode, tx);
       expect(hostRenderRef(
         session.symbols,
         session.runtime,
@@ -77,6 +75,7 @@ describe("PERF-12 T5 generated materializer vertical slice", () => {
       )).toBe(0);
       expect(host.screenRows()).toEqual(["        ", "        ", "        ", "        "]);
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
+      tx.releaseAll();
     } finally {
       host.dispose();
     }

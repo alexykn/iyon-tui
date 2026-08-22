@@ -3562,7 +3562,7 @@
     "crates/iyon-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "581e146de3ee31e0ceb7b1292ca9a5ca487fb0ada2aa235857505a55520467fa",
+  "generator_blake3": "2d8ad3919e8133be4109ee23dc629f20fd29abbe708113532f25015bb77a5881",
   "handles": [
     {
       "kind": null,
@@ -3677,6 +3677,86 @@
       "rust_builder": "view_spacer_create",
       "status_detail": "none",
       "thread_affinity": "owner_thread"
+    },
+    {
+      "benchmark_registration": "materialize.row",
+      "borrow_duration": "call",
+      "bridge_kind": "viewRow",
+      "fallback": "direct_decode",
+      "fields": [
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "node_id_low",
+          "role": "node_id_low",
+          "source": "id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "node_id_high",
+          "role": "node_id_high",
+          "source": "id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "gap",
+          "role": "scalar",
+          "source": "gap",
+          "type": "u32"
+        }
+      ],
+      "name": "row",
+      "ownership": "runtime_owned",
+      "result": {
+        "kind": "view_ref"
+      },
+      "rust_builder": "view_row_create_0",
+      "status_detail": "none",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "benchmark_registration": "materialize.column",
+      "borrow_duration": "call",
+      "bridge_kind": "viewColumn",
+      "fallback": "direct_decode",
+      "fields": [
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "node_id_low",
+          "role": "node_id_low",
+          "source": "id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "node_id_high",
+          "role": "node_id_high",
+          "source": "id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "max_buffer_bytes": null,
+          "name": "gap",
+          "role": "scalar",
+          "source": "gap",
+          "type": "u32"
+        }
+      ],
+      "name": "column",
+      "ownership": "runtime_owned",
+      "result": {
+        "kind": "view_ref"
+      },
+      "rust_builder": "view_column_create_0",
+      "status_detail": "none",
+      "thread_affinity": "owner_thread"
     }
   ],
   "pods": [
@@ -3697,5 +3777,5 @@
       "size": 8
     }
   ],
-  "schema_blake3": "2b797eccd4c6c803a51937b1344f29c27e6289ae5b4765a0a76bf082cb201fbe"
+  "schema_blake3": "ac76addefd7312010e808174c6d163abfeadd798561f55f67e731e202ac20740"
 }

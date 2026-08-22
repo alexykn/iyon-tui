@@ -26,9 +26,9 @@
 
 import type { Pointer } from "bun:ffi";
 import {
-  decodeMaterializeStatus,
+  materializeColumn,
+  materializeRow,
   materializeSpacer,
-  type MaterializeTx as GeneratedMaterializeTx,
 } from "./generated/view_materialize.ts";
 import { hostRenderRef, viewRefForNodeId, viewReleaseMany } from "./generated/view_calls.ts";
 import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "./ir.ts";
@@ -116,7 +116,7 @@ export class RetainedCycleError extends Error {
  * Nothing here escapes the call; newly-created refs stay leased until the
  * root is installed, then all non-root leases drain through `viewReleaseMany`.
  */
-export class MaterializeTx implements GeneratedMaterializeTx {
+export class MaterializeTx {
   readonly refs = new Map<BridgeViewNode, number>();
   readonly inProgress = new Set<BridgeViewNode>();
   /** Refs this tx must release unless ownership transfers to the boundary. */
@@ -157,26 +157,62 @@ export class MaterializeTx implements GeneratedMaterializeTx {
 
 type NodeMaterializer = (node: BridgeViewNode, tx: MaterializeTx) => number;
 
-function materializeSpacerNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.spacer) throw new RetainedFastFallbackError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
-  const reference = materializeSpacer(node as unknown as Parameters<typeof materializeSpacer>[0], tx);
-  const decoded = decodeMaterializeStatus(reference);
-  if (!decoded.ok) {
-    // A stale child/base ref reports through status detail in later tranches;
-    // spacer has neither, so any error status is terminal for this tx.
-    throw new RetainedFastFallbackError(`spacer materializer status 0x${decoded.status.toString(16)}`);
-  }
-  return decoded.reference;
+function isExpectedNativeStatus(error: unknown): boolean {
+  return error instanceof Error && /^native ABI status 0x[0-9a-f]+$/u.test(error.message);
 }
 
 /**
- * Per-kind generated materializer dispatch. T6 ships with the generator's
- * vertical slice (spacer); T7 extends the [[materializer]] blocks to the full
- * schema. Unknown kinds fall back instead of guessing (§49).
+ * Runs one generated lowering and converts expected native failure statuses
+ * into a fast fallback so the caller routes the complete cold path (§49).
+ * Unexpected errors propagate.
+ */
+function runMaterializer(kind: string, lower: () => number): number {
+  try {
+    return lower();
+  } catch (error) {
+    if (isExpectedNativeStatus(error)) {
+      throw new RetainedFastFallbackError(`${kind} constructor reported a native failure status`);
+    }
+    throw error;
+  }
+}
+
+function materializeSpacerNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.spacer) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  return runMaterializer("spacer", () =>
+    materializeSpacer(node as unknown as Parameters<typeof materializeSpacer>[0], tx),
+  );
+}
+
+function materializeRowNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.row) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_children_visited += node.children.length;
+  counters.bridge_semantic_nodes_inspected += 1;
+  return runMaterializer("row", () => materializeRow(node as unknown as Parameters<typeof materializeRow>[0], tx));
+}
+
+function materializeColumnNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.column) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_children_visited += node.children.length;
+  counters.bridge_semantic_nodes_inspected += 1;
+  return runMaterializer(
+    "column",
+    () => materializeColumn(node as unknown as Parameters<typeof materializeColumn>[0], tx),
+  );
+}
+
+/**
+ * Per-kind generated materializer dispatch (§22 children-first, §32 fixed
+ * arities). T7 covers spacer plus row/column arities 0..=4; container,
+ * clamp, hanging, grid, text, diff, decorated, and component route to the
+ * complete fallback until their owning tranches land. Unknown kinds fall
+ * back instead of guessing (§49).
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [BRIDGE_VIEW_KIND.spacer, materializeSpacerNode],
+  [BRIDGE_VIEW_KIND.row, materializeRowNode],
+  [BRIDGE_VIEW_KIND.column, materializeColumnNode],
 ]);
 
 /**
@@ -204,10 +240,6 @@ export function deleteBridgeNativeHintForTests(node: BridgeViewNode): void {
 
 function splitNodeId(id: number): [number, number] {
   return [id >>> 0, Math.floor(id / 0x1_0000_0000)];
-}
-
-function isExpectedNativeStatus(error: unknown): boolean {
-  return error instanceof Error && /^native ABI status 0x[0-9a-f]+$/u.test(error.message);
 }
 
 /**

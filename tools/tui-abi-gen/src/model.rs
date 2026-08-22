@@ -179,6 +179,21 @@ pub struct MaterializerSpec {
     pub result: MaterializerResultSpec,
     #[serde(rename = "field", default)]
     pub fields: Vec<MaterializerFieldSpec>,
+    /// PERF-12 T7 (§22/§32): fixed-arity axis shape. When present, the bridge
+    /// node is a layout axis (`children: readonly BridgeLayoutChild[]` plus
+    /// `gap`) and the generated materializer lowers children first through a
+    /// monomorphic fixed-arity constructor family, dispatching on child count.
+    #[serde(default)]
+    pub fixed_arity_axis: Option<MaterializerFixedArityAxisSpec>,
+}
+
+/// PERF-12 T7 (§22/§32): the ordered fixed-arity constructor family for one
+/// axis kind. Entry `i` builds arity `i`; the family length minus one is the
+/// maximum specialization arity (baseline §32: arities 0..=4).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializerFixedArityAxisSpec {
+    pub builders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

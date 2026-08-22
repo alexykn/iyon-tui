@@ -389,7 +389,9 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (document, _, _) = model::load(&schema).expect("canonical schema parses");
-        assert_eq!(document.materializers.len(), 1);
+        // T5 shipped the spacer slice; T7 added the row/column fixed-arity
+        // axis slices on top of it.
+        assert_eq!(document.materializers.len(), 3);
         let spacer = &document.materializers[0];
         assert_eq!(spacer.name, "spacer");
         assert_eq!(spacer.bridge_kind, "viewSpacer");
@@ -519,5 +521,115 @@ mod tests {
             .expect("bridge schema parses");
         document.conformance[0].args[0] = "i32".to_owned();
         assert!(validate::validate(&document, &bridge).is_err());
+    }
+
+    #[test]
+    fn canonical_schema_declares_the_t7_axis_slices() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (document, _, _) = model::load(&schema).expect("canonical schema parses");
+        assert_eq!(document.materializers.len(), 3);
+        let row = document
+            .materializers
+            .iter()
+            .find(|materializer| materializer.name == "row")
+            .expect("row materializer");
+        let axis = row.fixed_arity_axis.as_ref().expect("fixed-arity axis");
+        assert_eq!(axis.builders.len(), 5);
+        assert_eq!(axis.builders[0], "view_row_create_0");
+        assert_eq!(axis.builders[4], "view_row_create_4");
+    }
+
+    /// Builds the canonical document, converts the spacer slice into a
+    /// fixed-arity axis declaration, and applies `mutate` before validating.
+    fn validate_mutated_axis(
+        mutate: impl FnOnce(&mut model::MaterializerSpec),
+    ) -> Result<(), validate::ValidationError> {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
+            .expect("bridge schema parses");
+        let position = document
+            .materializers
+            .iter()
+            .position(|materializer| materializer.name == "row")
+            .expect("canonical row materializer");
+        let materializer = &mut document.materializers[position];
+        materializer.fixed_arity_axis = Some(model::MaterializerFixedArityAxisSpec {
+            builders: [
+                "view_row_create_0",
+                "view_row_create_1",
+                "view_row_create_2",
+                "view_row_create_3",
+                "view_row_create_4",
+            ]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        });
+        mutate(materializer);
+        validate::validate(&document, &bridge)
+    }
+
+    #[test]
+    fn validation_accepts_well_formed_fixed_arity_axis() {
+        if let Err(error) = validate_mutated_axis(|_| {}) {
+            panic!("axis should validate: {error}");
+        }
+    }
+
+    #[test]
+    fn validation_rejects_axis_on_non_axis_kind() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                materializer.bridge_kind = "viewSpacer".to_owned();
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_unknown_family_builder() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
+                axis.builders[2] = "view_not_a_function".to_owned();
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_duplicate_family_builder() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
+                axis.builders[3] = axis.builders[2].clone();
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_family_lifetime_disagreement() {
+        // The family builders are runtime_owned/owner_thread; flipping the
+        // materializer's thread affinity must fail generation (§69).
+        assert!(
+            validate_mutated_axis(|materializer| {
+                materializer.thread_affinity = "any_thread".to_owned();
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_rust_builder_outside_family_base() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                materializer.rust_builder = "view_row_create_2".to_owned();
+            })
+            .is_err()
+        );
     }
 }

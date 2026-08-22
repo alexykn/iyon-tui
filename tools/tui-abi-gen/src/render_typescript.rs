@@ -59,21 +59,26 @@ pub fn conformance_bindings(
     output
 }
 
-/// PERF-12 T5 (§65/§66): generated semantic materializers. One monomorphic
+/// PERF-12 T5/T7 (§65/§66): generated semantic materializers. One monomorphic
 /// explicit function per declared kind, children first, no reflection. The
-/// T5 vertical slice is the spacer kind; buffer and reference lowerings land
-/// with their owning tranches (T8/T6) and fail generation until then.
-/// PERF-12 T5 (§65/§66): generated semantic materializers. One monomorphic
-/// explicit function per declared kind, children first, no reflection. The
-/// T5 vertical slice is the spacer kind; buffer and reference lowerings land
-/// with their owning tranches (T8/T6) and fail generation until then.
+/// T5 vertical slice was the spacer kind; T7 adds fixed-arity axis kinds
+/// (§22/§32), lowering `children` structurally through the constructor
+/// family before the parent call. Buffer lowerings land with T8.
 pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = typescript_calls_header(schema_hash, generator_hash);
     // The calls header already imports Pointer; add the builder imports.
     let mut builders = document
         .materializers
         .iter()
-        .map(|m| camel_case(&m.rust_builder))
+        .flat_map(|materializer| match &materializer.fixed_arity_axis {
+            Some(axis) => axis
+                .builders
+                .iter()
+                .map(|builder| builder.as_str())
+                .collect::<Vec<_>>(),
+            None => vec![materializer.rust_builder.as_str()],
+        })
+        .map(camel_case)
         .collect::<Vec<_>>();
     builders.sort();
     builders.dedup();
@@ -81,10 +86,31 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         "import {{ {} }} from \"./view_calls\";\n",
         builders.join(", ")
     ));
-    output.push_str("import type { ViewAbiSymbols } from \"./view_calls\";\n\n");
+    output.push_str("import type { ViewAbiSymbols } from \"./view_calls\";\n");
+    // PERF-12 T7: axis materializers lower children through the runtime's
+    // identity-first ensureNative (§22) and signal unsupported arities as
+    // fast fallbacks (§32/§49). The import cycle is safe: the generated
+    // module only calls into retained_dag at materialization time.
+    let has_axis = document
+        .materializers
+        .iter()
+        .any(|materializer| materializer.fixed_arity_axis.is_some());
+    if has_axis {
+        output.push_str(
+            "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../ir.ts\";\n",
+        );
+        output.push_str(
+            "import { RetainedFastFallbackError, ensureNative } from \"../retained_dag.ts\";\n",
+        );
+        // Axis lowerings recurse into ensureNative, so the transaction type
+        // is owned by the runtime module; re-exported here for callers.
+        output.push_str("import type { MaterializeTx } from \"../retained_dag.ts\";\n");
+        output.push_str("export type { MaterializeTx };\n\n");
+    } else {
+        output
+            .push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: Pointer;\n}\n\n");
+    }
     output.push_str("const ERROR_BIT = 0x8000_0000;\n\n");
-    output
-        .push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: Pointer;\n}\n\n");
     output
         .push_str("function splitNodeId(id: number): [number, number] {\n  return [id >>> 0, Math.floor(id / 0x1_0000_0000)];\n}\n\n");
     // §74: status decoding shared by every materializer caller. A failed
@@ -94,9 +120,75 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         .push_str("export interface MaterializeStatus {\n  readonly ok: boolean;\n  readonly reference: number;\n  readonly status: number;\n}\n\n");
     output.push_str("export function decodeMaterializeStatus(result: number): MaterializeStatus {\n  if (result === 0 || (result & ERROR_BIT) !== 0) return { ok: false, reference: 0, status: result >>> 0 };\n  return { ok: true, reference: result, status: 0 };\n}\n\n");
 
+    // PERF-12 T7 (§22/§32): layout-child → ABI track word lowering. Track
+    // kind in the low byte (bridge-schema track* discriminants), u16 amount
+    // in bits 8..24; word 0 is the implicit content track.
+    if has_axis {
+        output.push_str(
+            "const TRACK_CONTENT_MAX = 2;\nconst TRACK_FIXED = 3;\nconst TRACK_FLEX = 4;\nconst TRACK_FLEX_MAX = 5;\n\n",
+        );
+        output.push_str(
+            "function layoutTrackWord(child: BridgeLayoutChild): number {\n  switch (child.kind) {\n    case BRIDGE_LAYOUT_CHILD_KIND.normal:\n      return 0;\n    case BRIDGE_LAYOUT_CHILD_KIND.fixed:\n      return TRACK_FIXED | (child.size << 8);\n    case BRIDGE_LAYOUT_CHILD_KIND.flex:\n      return TRACK_FLEX | (1 << 8);\n    case BRIDGE_LAYOUT_CHILD_KIND.flexMax:\n      return TRACK_FLEX_MAX | (child.maxRows << 8);\n    case BRIDGE_LAYOUT_CHILD_KIND.contentMax:\n      return TRACK_CONTENT_MAX | (child.maxRows << 8);\n  }\n}\n\n",
+        );
+    }
+
     for materializer in &document.materializers {
         let kind_stem = materializer.bridge_kind.trim_start_matches("view");
         let node_interface = format!("Bridge{}MaterializeNode", pascal_case(kind_stem));
+        let builder_call = camel_case(&materializer.rust_builder);
+
+        // PERF-12 §74 status detail kind constant (shared shape for all
+        // materializers).
+        output.push_str(&format!(
+            "/** PERF-12 §74 status detail kind for this materializer: {:?}. */\n",
+            materializer.status_detail
+        ));
+        output.push_str(&format!(
+            "export const {}_STATUS_DETAIL = {:?} as const;\n\n",
+            materializer.name.to_uppercase(),
+            materializer.status_detail
+        ));
+
+        if let Some(axis) = &materializer.fixed_arity_axis {
+            // Fixed-arity axis kind (§22/§32): children lowered first through
+            // ensureNative, then one monomorphic family constructor.
+            output.push_str(&format!(
+                "export interface {node_interface} {{\n  readonly id: number;\n  readonly gap: number;\n  readonly children: readonly BridgeLayoutChild[];\n}}\n\n"
+            ));
+            output.push_str(&format!(
+                "export function materialize{}(node: {node_interface}, tx: MaterializeTx): number {{\n",
+                pascal_case(materializer.name.as_str())
+            ));
+            output.push_str("  const [nodeIdLow, nodeIdHigh] = splitNodeId(node.id);\n");
+            output.push_str("  const children = node.children;\n");
+            output.push_str("  switch (children.length) {\n");
+            for (arity, builder_name) in axis.builders.iter().enumerate() {
+                let call = camel_case(builder_name);
+                let mut args = vec![
+                    "tx.symbols".to_owned(),
+                    "tx.runtime".to_owned(),
+                    "nodeIdLow".to_owned(),
+                    "nodeIdHigh".to_owned(),
+                    "node.gap".to_owned(),
+                ];
+                for index in 0..arity {
+                    args.push(format!("layoutTrackWord(children[{index}])"));
+                    args.push(format!("ensureNative(children[{index}].child, tx)"));
+                }
+                output.push_str(&format!(
+                    "    case {arity}: return {call}({});\n",
+                    args.join(", ")
+                ));
+            }
+            output.push_str(&format!(
+                "    default: throw new RetainedFastFallbackError(`{} arity ${{children.length}} exceeds fixed-arity specialization {}`);\n",
+                materializer.bridge_kind,
+                axis.builders.len() - 1
+            ));
+            output.push_str("  }\n}\n\n");
+            continue;
+        }
+
         output.push_str(&format!(
             "export interface {node_interface} {{\n  readonly id: number;\n"
         ));
@@ -111,7 +203,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
                 | MaterializerFieldRole::StyleRef
                 | MaterializerFieldRole::BaseRef => {
                     panic!(
-                        "PERF-12: reference lowering lands in T6/T7; materializer {} declares {}",
+                        "PERF-12: reference lowering lands in T7/T12; materializer {} declares {}",
                         materializer.name, field.role
                     );
                 }
@@ -126,8 +218,6 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             }
         }
         output.push_str("}\n\n");
-
-        let builder_call = camel_case(&materializer.rust_builder);
         let args_list = materializer
             .fields
             .iter()
@@ -141,28 +231,14 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             .collect::<Vec<_>>()
             .join(", ");
         output.push_str(&format!(
-            "/** PERF-12 §74 status detail kind for this materializer: {:?}. */\n",
-            materializer.status_detail
-        ));
-        output.push_str(&format!(
-            "export const {}_STATUS_DETAIL = {:?} as const;\n\n",
-            materializer.name.to_uppercase(),
-            materializer.status_detail
-        ));
-        output.push_str(&format!(
-            "export function materialize{}(node: {}, tx: MaterializeTx): number {{\n",
-            pascal_case(materializer.name.as_str()),
-            node_interface
+            "export function materialize{}(node: {node_interface}, tx: MaterializeTx): number {{\n",
+            pascal_case(materializer.name.as_str())
         ));
         output.push_str("  const [nodeIdLow, nodeIdHigh] = splitNodeId(node.id);\n");
         output.push_str(&format!(
-            "  return {}(tx.symbols, tx.runtime, {});\n}}\n",
-            builder_call, args_list
+            "  return {builder_call}(tx.symbols, tx.runtime, {});\n}}\n\n",
+            args_list
         ));
-        if !materializer.fields.is_empty() {
-            output.pop();
-            output.push('\n');
-        }
     }
     if !output.ends_with('\n') {
         output.push('\n');

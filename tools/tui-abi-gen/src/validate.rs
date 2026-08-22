@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::model::{
     AbiDocument, ConformanceSpec, EnumSpec, MaterializerFieldRole, MaterializerFieldSpec,
-    MaterializerSpec, PodSpec,
+    MaterializerFixedArityAxisSpec, MaterializerSpec, PodSpec,
 };
 
 #[derive(Debug, Error)]
@@ -673,6 +673,11 @@ fn validate_materializer(
         ));
     }
 
+    // PERF-12 T7 (§22/§32): fixed-arity axis shape rules.
+    if let Some(axis) = &materializer.fixed_arity_axis {
+        validate_fixed_arity_axis(document, materializer, axis, scalar_types)?;
+    }
+
     // §64: a u64 field must never be narrowed into one u32 - the full 53-bit
     // safe NodeId requires exactly one low half and one high half.
     let low_count = materializer
@@ -760,6 +765,104 @@ fn validate_materializer_field(
                 field.name
             ));
         }
+    }
+    Ok(())
+}
+
+/// PERF-12 T7 (§22/§32): validation for fixed-arity axis materializers.
+/// The bridge kind must be a layout axis; the constructor family must exist,
+/// return ViewRefResult, and agree with the materializer's lifetime policy;
+/// the field list must be exactly the axis scalars (node id halves + gap) —
+/// children are lowered structurally, never declared as fields.
+fn validate_fixed_arity_axis(
+    document: &AbiDocument,
+    materializer: &MaterializerSpec,
+    axis: &MaterializerFixedArityAxisSpec,
+    scalar_types: &[&str],
+) -> Result<(), ValidationError> {
+    if !matches!(materializer.bridge_kind.as_str(), "viewRow" | "viewColumn") {
+        return invalid(format!(
+            "materializer {} declares fixed_arity_axis on non-axis kind {}",
+            materializer.name, materializer.bridge_kind
+        ));
+    }
+    if axis.builders.is_empty() || axis.builders.len() > 8 {
+        return invalid(format!(
+            "materializer {} fixed-arity family must contain 1 through 8 builders",
+            materializer.name
+        ));
+    }
+    if materializer.rust_builder != axis.builders[0] {
+        return invalid(format!(
+            "materializer {} rust_builder must be the arity-0 family builder {}",
+            materializer.name, axis.builders[0]
+        ));
+    }
+    let mut seen = HashSet::new();
+    for (arity, builder_name) in axis.builders.iter().enumerate() {
+        let Some(builder) = document
+            .functions
+            .iter()
+            .find(|function| function.name == *builder_name)
+        else {
+            return invalid(format!(
+                "materializer {} family builder {} (arity {}) is not a declared ABI function",
+                materializer.name, builder_name, arity
+            ));
+        };
+        if builder.return_type != "ViewRefResult" {
+            return invalid(format!(
+                "materializer {} family builder {} must return ViewRefResult",
+                materializer.name, builder_name
+            ));
+        }
+        if builder.ownership != materializer.ownership
+            || builder.thread_affinity != materializer.thread_affinity
+        {
+            return invalid(format!(
+                "materializer {} family builder {} lifetime policy disagrees with the materializer",
+                materializer.name, builder_name
+            ));
+        }
+        if !seen.insert(builder_name.as_str()) {
+            return invalid(format!(
+                "materializer {} declares duplicate family builder {}",
+                materializer.name, builder_name
+            ));
+        }
+    }
+    // Axis fields: exactly one node_id pair and exactly one scalar (gap).
+    let low_count = materializer
+        .fields
+        .iter()
+        .filter(|field| field.role == "node_id_low")
+        .count();
+    let high_count = materializer
+        .fields
+        .iter()
+        .filter(|field| field.role == "node_id_high")
+        .count();
+    let scalar_fields: Vec<_> = materializer
+        .fields
+        .iter()
+        .filter(|field| field.role == "scalar")
+        .collect();
+    if low_count != 1
+        || high_count != 1
+        || scalar_fields.len() != 1
+        || materializer.fields.len() != 3
+    {
+        return invalid(format!(
+            "materializer {} axis shape requires exactly node_id_low, node_id_high, and one gap scalar",
+            materializer.name
+        ));
+    }
+    let gap = scalar_fields[0];
+    if gap.source != "gap" || !scalar_types.contains(&gap.abi_type.as_str()) {
+        return invalid(format!(
+            "materializer {} axis gap field must source 'gap' as a scalar ABI type",
+            materializer.name
+        ));
     }
     Ok(())
 }

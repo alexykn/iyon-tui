@@ -2938,3 +2938,91 @@ name = "rows"
 source = "rows"
 type = "u32"
 role = "scalar"
+
+# PERF-12 T7 (§22/§32): fixed-arity axis materializers. Children are lowered
+# first through ensureNative and the parent is built by one monomorphic
+# family constructor dispatched on child count (arity 0..=4 baseline).
+# Arity above the family maximum raises a fast fallback for the complete
+# cold path until T8's borrowed ref-buffer lane.
+
+[[materializer]]
+name = "row"
+bridge_kind = "viewRow"
+rust_builder = "view_row_create_0"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+status_detail = "none"
+benchmark_registration = "materialize.row"
+
+[materializer.result]
+kind = "view_ref"
+
+[materializer.fixed_arity_axis]
+builders = [
+  "view_row_create_0",
+  "view_row_create_1",
+  "view_row_create_2",
+  "view_row_create_3",
+  "view_row_create_4",
+]
+
+[[materializer.field]]
+name = "node_id_low"
+source = "id_low"
+type = "u32"
+role = "node_id_low"
+
+[[materializer.field]]
+name = "node_id_high"
+source = "id_high"
+type = "u32"
+role = "node_id_high"
+
+[[materializer.field]]
+name = "gap"
+source = "gap"
+type = "u32"
+role = "scalar"
+
+[[materializer]]
+name = "column"
+bridge_kind = "viewColumn"
+rust_builder = "view_column_create_0"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+status_detail = "none"
+benchmark_registration = "materialize.column"
+
+[materializer.result]
+kind = "view_ref"
+
+[materializer.fixed_arity_axis]
+builders = [
+  "view_column_create_0",
+  "view_column_create_1",
+  "view_column_create_2",
+  "view_column_create_3",
+  "view_column_create_4",
+]
+
+[[materializer.field]]
+name = "node_id_low"
+source = "id_low"
+type = "u32"
+role = "node_id_low"
+
+[[materializer.field]]
+name = "node_id_high"
+source = "id_high"
+type = "u32"
+role = "node_id_high"
+
+[[materializer.field]]
+name = "gap"
+source = "gap"
+type = "u32"
+role = "scalar"

@@ -5437,3 +5437,199 @@ end-to-end through the shared runtime; illegal lifetime declarations fail
 generation with named rules. Full-schema materializers land by extending
 [[materializer]] blocks in T7 once BridgeNativeHint and MaterializeTx
 wiring exist (T6).
+
+## T6 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T6 (PERF-12.3 identity fast paths)
+parent:       12.3
+sections:     §18 root lease protocol, §19 ensureNative core algorithm,
+              §20 exact-root fast path, §21 stable subtree cutoff,
+              §48 runtime generation handling, §15/§16 BridgeNativeHint
+              sidecar wiring, §113 exact-identity scaling test
+supporting:   §44 MaterializeTx (temporary lease transaction),
+              §49/§50 fast-fallback routing surface + retained budgets,
+              §47 single targeted retry, §75 cycle/depth guards,
+              §91 structural counters (T6-relevant subset)
+```
+
+### 2. Commits
+
+```text
+4c91589  feat(tui): add retained-DAG identity fast paths and root lease protocol
+```
+
+This record was appended in the immediately following documentation commit on
+`perf-refactor`. The committed benchmark artifact's summary `git_sha` records
+`ebad4f5` (the implementation revision captured after the code was committed
+but before the artifact was re-captured and the commit amended); the tree
+content at `ebad4f5` and `4c91589` is identical except for the artifact file
+itself. Stated here explicitly to avoid repeating the provenance imprecision
+corrected by the T4 errata.
+
+### 3. Review findings
+
+```text
+finding 1: the §18 protocol requires the boundary to OWN exactly one lease on
+       its root, but a root resolved through a valid BridgeNativeHint is a
+       borrowed ref whose lease belongs to another owner (e.g. a second host
+       rendering the same semantic root, §115). Blindly transferring a
+       borrowed ref into boundary.previousRef would release a foreign lease
+       at close/replace. Correction: install() detects borrowed-hint roots
+       (ref not in tx.temporaryLeases and different from previousRef) and
+       acquires the boundary's own lease by NodeId before installation;
+       re-installing the boundary's own current root reuses its existing
+       lease instead of double-acquiring.
+
+finding 2: viewRenderRef only resolves; it does not acquire a lease. Lease
+       acquisition on an existing NodeId goes through viewRefForNodeId
+       (ref_for_node_id -> acquire/ensure lease). All boundary lease
+       acquisitions use the latter.
+
+finding 3: §91 bridge_hint_hits initially counted only ensureNative hits.
+       The §20 exact-root path consumes hints directly, so its hits (and the
+       §47 recovery promotion) were invisible to the counters that prove the
+       gate. Correction: renderExactRoot increments bridge_hint_hits,
+       node_id_ref_promotion_attempts/hits, and stale_ref_retries on the
+       same conventions as ensureNative.
+
+finding 4: tuiViewRuntimeMemorySnapshot reports leased_slots only when
+       count_live=true; an initial test draft read zeros and mis-attributed
+       them. Tests now request the live scan. Because the Direct-decoded
+       host already holds one lease on an adopted slot, the exactly-once
+       close proof isolates the boundary's own lease by materializing a
+       rootless spacer (tx temp lease A + boundary lease B on one slot),
+       draining A, and asserting leased_slots +1/-1 around the boundary
+       lifecycle.
+
+finding 5: the full-directory bun interference failure documented in the T2
+       record (perf11v4_direct "reconstructs correctly after the weak cache
+       expires" vs suites legitimately leaving live Views) is unchanged by
+       T6; the T6 suite passes in isolation and in the full run.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+src/tui/retained_dag.ts
+    BridgeNativeHint {generation, nativeRef} in WeakMap<BridgeViewNode,...>
+    (§15/§16: weak acceleration, never a per-node lease)
+    MaterializeTx (§44): refs map, inProgress set, temporaryLeases batched
+        through one viewReleaseMany call, borrowedHints list, newNodeCount,
+        depth; releaseAll()/releaseAllExcept(keepRef)
+    ensureNative (§19): hard ordering hint -> tx-local -> ceiling-gated
+        NodeId->NativeRef promotion -> generated materializer dispatch ->
+        child traversal; cycle guard; §50 budgets; unknown kinds raise
+        RetainedFastFallbackError for complete-cold-path routing (§49)
+    renderExactRoot (§20): one hostRenderRef on a generation-valid hint;
+        FAST_CACHE_MISS triggers the single targeted §47 retry (drop hint,
+        re-promote, retry once)
+    RetainedRootBoundary (§18): adopt/install/renderExact/close; previousRef
+        leased across replacement, temp leases drain in one batch, failure
+        keeps the old root, nativeLookupCeiling captured from the private
+        NodeId high-water after every successful commit
+    §91 counter subset + snapshot/reset (plain field increments,
+        compile-time-cheap arm of §56/§68/§101)
+native_view_policy.ts: MAX_RETAINED_NEW_NODES = 512, MAX_RETAINED_DEPTH = 256
+values/view.ts: viewNodeIdHighWater() export for the §18 ceiling capture
+bench/perf12_t6_exact_identity.ts + PERF-12-t6-exact-identity.jsonl
+tests/perf12_t6_identity.test.ts (nine conformance/scaling tests)
+```
+
+Deliberately NOT done yet: production routing is unchanged — every boundary
+still renders through the Direct decode path until T13 wires §18 boundaries
+in; full-schema materializers are T7 (only the generator's spacer slice is
+registered, so composite retained installs fall back by design); derivation
+hints (§27) are T9; native status-detail cells (§74 native side) arrive with
+the first child-bearing materializer in T7; borrowedHints consumption for
+stale-child recovery is exercised by T12.
+
+### 5. Provenance block
+
+```text
+source revision at capture: ebad4f5 (tree identical to committed 4c91589
+                            except the artifact file; see Commits note)
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+native artifact SHA-256:    c5d4acf061a92ef859cf34c094e029fd4d85afeed3be82d204e6891a53c10652
+                            (unchanged from T5 - no native change in T6)
+schema BLAKE3:              2b797eccd4c6c803a51937b1344f29c27e6289ae5b4765a0a76bf082cb201fbe (unchanged)
+generator BLAKE3:           581e146de3ee31e0ceb7b1292ca9a5ca487fb0ada2aa235857505a55520467fa (unchanged)
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Exact known root = 1 hostRenderRef, 0 semantic field reads, 0 buffer
+   writes at 20/200/2k/10k node sizes:
+   PERF-12-t6-exact-identity.jsonl (smoke profile, timing build, fresh
+   process, 50 warmup blocks x 1,000 ops, 100 measured blocks per size,
+   bootstrap CI half-width < 5% met at 100 blocks everywhere):
+     size     median_ns   p95_ns   p99_ns   host FFI calls / renders
+     20           87        131      136      100,000 / 100,000
+     200          53         58       97      100,000 / 100,000
+     2,000        53         76       94      100,000 / 100,000
+     10,000       55         65       81      100,000 / 100,000
+   Structural counters over every measured render at every size:
+     bridge_hint_hits = renders; bridge_hint_misses = 0;
+     bridge_semantic_nodes_inspected = 0; bridge_children_visited = 0;
+     direct_materializer_calls = 0; node_id_ref_promotion_attempts = 0;
+     ref_words_written = 0; byte_payload_bytes = 0; stale_ref_retries = 0;
+     cold_fallbacks = 0. The benchmark aborts on any violation, so PASS is
+     structural, not sampled.
+
+2. Timing independent of descendant count:
+   median ratio 10,000/20 = 0.626 (second capture; first capture 0.616) —
+   the largest tree renders no slower than the smallest; the native host
+   short-circuits an unchanged body ref, so each exact render is one
+   engine-native call plus identity comparisons. PASS.
+
+3. Stale generation hints ignored correctly:
+   perf12_t6_identity.test.ts "§48: stale generation hints are ignored and
+   re-derived": a hint forced to generation+10,000 is skipped, the NodeId
+   promotion recovers the identical NativeRef, and the re-installed hint
+   carries the current generation. PASS.
+
+§113 exact-identity scaling test:
+   "§113 structural proof" runs the full counter assertion set at
+   20/200/2,000/10,000 in-suite (100 exact renders per size, all deltas
+   zero except host_mutations = renders). PASS.
+
+Section coverage:
+   §18  RetainedRootBoundary; tests: failed-install lease draining,
+        exactly-once close (leased_slots +1/-1 around the boundary
+        lifecycle), §115-lite shared-root boundaries, dormant re-adopt.
+   §19  ensureNative ordering tests: ceiling gating skips the probe for
+        post-commit NodeIds (promotion_attempts +0, materializer_calls +1,
+        §23 cache-first consult returns the same ref); §21 hinted subtree
+        cutoff (hint hit -> ref returned with 0 field reads, 0 children,
+        0 leases taken, borrowedHints +1).
+   §20  renderExactRoot + §47 single-retry CACHE_MISS recovery test
+        (sabotaged hint recovers once, re-renders correctly, counter
+        stale_ref_retries increments by exactly the one retry).
+
+Regression battery: perf12_t6_identity 9/9; tests directory 72 pass /
+1 fail (the T2-documented pre-existing cross-file interference, identical
+before and after); test+tests 121 pass / 1 fail; tsc clean; tui-abi-gen
+check byte-fresh; tui-abi-gen 17/17; cargo iyon-native 30 lib + generated
+suites green; cargo fmt clean. No native change, so the T5 addon artifact
+remains authoritative.
+```
+
+### 7. Status line
+
+**Tranche T6 status: COMPLETE.** The identity layer — generation-scoped
+NativeRef hints, ceiling-gated NodeId promotion, exact-root fast path with
+one-retry recovery, and the §18 boundary lease protocol — is implemented,
+structurally proven at 20/200/2k/10k with flat ~53–87 ns exact renders, and
+covered by nine conformance tests; production boundaries still route through
+Direct until T13, full-schema materializers land in T7, and derivation hints
+in T9.

@@ -5068,3 +5068,205 @@ inspection), and scratch stays within configured caps because the churn gate
 allocates exactly two fixed buffers (a reused 2 KiB child-ref scratch sized
 for the 512-child wide column and one display scratch per generation), far
 below the §30 tier caps.
+
+## T4 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T4 (PERF-12.1 semantic DAG restoration)
+parent:       12.1
+sections:     §84 faithful 7v2 reconstruction, §13 JS representation,
+              §14 BridgeViewNode shape, §15 sidecar inventory,
+              §16 hint-not-lease lifetime rule, §17 no-FinalizationRegistry
+              rule, §86 semantic parity, §85 construction gate
+scope extension (user-directed): production now USES the eager DAG
+              (values/view.ts converted; not a bench-local candidate), the
+              measured 7v2 construction speed gains are fully recovered,
+              and all transports other than direct_7v2 and PERF-12 were
+              declared ruled out by the user, so their JS-side machinery was
+              removed ahead of the conditional cleanup tranche with this
+              record as the documenting commit.
+```
+
+### 2. Commits
+
+```text
+b224cc3  refactor(tui): restore eager immutable semantic View DAG
+```
+
+This record was appended in the immediately following documentation commit.
+
+### 3. Review findings
+
+```text
+finding 1 (pre-implementation challenge): before implementing, the handoff
+       premise "eager 7v2 construction is cheap" was challenged against the
+       pending-backing production model at the user's request. Measured on
+       the pinned runtime (PERF-12-construction-challenge.jsonl, pre-T4):
+       render-ready production construction was 0.22x-0.50x of the faithful
+       7v2 reference across nine cases (i.e., eager was 2-4.5x faster). The
+       premise holds; T4 proceeded. Verdict recorded here because it is the
+       empirical basis for promoting the candidate to production.
+
+finding 2: production had drifted from 7v2 in one visible way - modifier
+       styles on plain text were pushed down into text spans instead of
+       wrapping in a decorated node. The pushdown was re-evaluated under the
+       eager model and dropped: one modifier costs 1,145 ns via span
+       pushdown vs 661 ns via the faithful decorated wrapper, and the two
+       are render-equivalent. Faithful 7v2 semantics win; if span-merging
+       ever measures as a net win end-to-end it belongs as a §27 derivation
+       hint (T9), not as a semantic-shape change.
+
+finding 3 (user ruling): packed V3/V4, fast-shared, and every other
+       transport candidate are definitively ruled out. Their JS-side
+       machinery was removed: values/view.ts no longer calls
+       registerPackedMeta at construction and lost the *ForPackedTransport
+       statics and sequence-override decode shims; src/tui/packed_v3.ts,
+       packed_v4.ts, fast_shared.ts, their three test suites, and the
+       historical tui_decision/tui_performance/perf11v4 comparison bench
+       scripts were deleted (the bench:tui-decision package script went with
+       them). The native packed decoders in iyon-native are untouched - T4
+       remains a no-native-change tranche; they are simply unreachable from
+       the TS layer and become cleanup-tranche material.
+
+finding 4: the recipe reader functions (nativeAxisRecipe, nativeTextRecipe,
+       nativeSpacerRecipe, nativeScalarPatch, nativeStructuralEdit,
+       viewBackingState) remain exported as documented always-undefined
+       stubs so native_view_abi.ts's dead route code still compiles. Under
+       the eager DAG those routes never fire; renders land on the Direct
+       decode path, which PERF-11v4 category D already showed is faster on
+       realistic traces. Route-code removal happens with the cleanup tranche
+       or when T6+ reroutes rendering onto retained-DAG FFI.
+
+finding 5: tests asserting ruled-out behavior were adapted or removed per
+       user direction rather than kept passing artificially:
+         perf11v4_direct.test.ts   rewritten as the single-arm Direct-
+                                   decoder correctness suite (schema render,
+                                   schema-validation rejection, NodeId cache
+                                   identity, retained modes, weak-cache
+                                   expiry reconstruction, 100-seed random
+                                   coverage); the two-arm differential
+                                   against the historical candidate module
+                                   collapsed because production now IS the
+                                   candidate.
+         tui_native_persistent_seq.test.ts  adapted: edited views are built
+                                   eagerly through the public API; the native
+                                   wide-edit primitives it exercises
+                                   (view_axis_set_child / splice_buffer /
+                                   view_grid_set_cell) are PERF-12 §35/T10
+                   surface and remain covered.
+         tui_native_strings.test.ts  adapted: the pre-materialization call
+                                   through the dead native single-text
+                                   builder route was removed; Unicode/NUL/
+                                   surrogate parity is verified through the
+                                   production router vs the Direct oracle.
+         tui_packed_v3/v4/tui_fast_shared tests removed with their modules.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+values/view.ts (production): eager frozen BridgeViewNode per View;
+    monotonic 53-bit-safe NodeId at semantic construction; parent nodes
+    reference child nodes directly; unchanged child Views share the exact
+    child node object; nodeForBridge = WeakMap lookup + throw; WeakMap
+    sidecars only for nativePath lineage/transaction metadata; no pending
+    state machine, no packed metadata, no FinalizationRegistry
+retained-path/transaction statics kept (pure semantic transforms):
+    View.textLayoutAtNativePathForTransport,
+    View.textLayoutTransactionForTransport + patchBridgeTextPath machinery
+removed from production surface: pending backings, makeBacking,
+    materializeBacking, packed statics, nodeForDirectBridge,
+    registerPackedMeta coupling; deleted modules: packed_v3.ts, packed_v4.ts,
+    fast_shared.ts (+3 test files, +6 historical bench scripts incl. the
+    perf11v4 comparison harness whose artifacts were already frozen)
+perf12_view_7v2.ts stays as the independent faithful-reference module used
+    by the construction gate
+```
+
+Deliberately NOT done yet: no PERF-12 FFI materializers/hints exist (T6+);
+render routing still walks the dead recipe routes before Direct fallback
+(harmless, removed later); native packed decoders untouched.
+
+### 5. Provenance block
+
+```text
+source revision at capture: b224cc3fd0942062317d1c2d6dccd27322bd8525
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+native artifact SHA-256:    ab62b3d58c59a83bad7274518f68190c0511299026845fc7dd39fd8a13ccf2b2
+                            (unchanged from T3 - no native change in T4)
+schema BLAKE3:              f7b30e32493e2e95f86541401308e5db64103bd8a7e694cbecbfe851040025d3 (unchanged)
+generator BLAKE3:           20435cb0e211e543dd671e6c86669cf3f205c8e77c5070f47f4d181a4a9d3c71 (unchanged)
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Full-schema semantic parity against current production Views:
+   parity is now structural identity (production is the eager DAG), and
+   render correctness is covered by: perf11v4_direct.test.ts 6/6 (full-
+   schema render, schema-validation rejection, identity/cache-hit, five
+   retained modes, weak-cache expiry reconstruction, 100 randomized seeds),
+   tui_values 8/8, tui_semantic_pipeline 3/3, tui_harness 4/4,
+   synthetic-agent 1/1, cancellation 1/1 - all green post-conversion.
+   The pre-T4 two-arm differential suite historically proved current-vs-
+   7v2 equivalence over the same fixtures; that comparison is now identity.
+
+2. retained_dag_ffi semantic construction <=5% vs faithful Bun 1.4 direct_7v2:
+   PERF-12-construction-challenge.jsonl (post-conversion run; 30 warmup +
+   50 measured rounds x 1,000 ops/block, order-rotated, gc between blocks;
+   v7_ready/prod_ready medians):
+     plain_text            329ns vs 340ns     ratio 1.026
+     styled_text_3spans    662ns vs 658ns     ratio 1.007
+     modifier_chain_3     2056ns vs 2011ns    ratio 1.022
+     column_20           10540ns vs 10745ns   ratio 0.981
+     column_200         140596ns vs 139380ns  ratio 1.009
+     row_tracks_mixed     1649ns vs 1542ns    ratio 1.069
+     grid_3x3             6584ns vs 6485ns    ratio 1.015
+     diff_10_lines        1343ns vs 1334ns    ratio 1.007
+     agent_message      17954ns vs 17971ns    ratio 0.999
+   Production is within noise of the faithful reference on every case
+   (largest deviation 6.9%, in production's favor). PASS ("within noise"
+   preferred target met in both directions).
+
+   Speed gains recovered vs the pre-T4 pending model (prod_ready medians,
+   pre-T4 -> post-T4):
+     plain_text          1166ns ->  340ns   (3.4x)
+     styled_text_3spans  2481ns ->  658ns   (3.8x)
+     modifier_chain_3    4833ns -> 2011ns   (2.4x)
+     column_20          37620ns -> 10745ns  (3.5x)
+     column_200        480123ns -> 139380ns (3.4x)
+     agent_message      60421ns -> 17971ns  (3.4x)
+
+3. nodeForBridge is lookup-only:
+   implementation is `nodes.get(view)` + throw; verified by inspection and
+   by the identity assertion in perf11v4_direct (same frozen object returned).
+
+§13-§17 property checklist: no transport own-properties on BridgeViewNode
+   (nodes carry id/schema/kind/payload/children only); sidecars are typed
+   WeakMaps created lazily and never during plain construction; NativeRef
+   hints do not exist yet (T6) and nothing takes per-node leases;
+   no FinalizationRegistry anywhere in the module.
+Regression battery post-change: 18 bun suites green (56 tests), cargo
+   iyon-native 30/30, rustfmt clean, tsc clean, memory-attribution pipeline
+   smoke-passed against the slimmed fixtures.
+```
+
+### 7. Status line
+
+**Tranche T4 status: COMPLETE.** Production now constructs the faithful
+7v2 eager immutable semantic DAG with lookup-only nodeForBridge, matches the
+faithful reference within noise on the §85 construction gate, and recovers
+the full 2.4-3.8x construction speedup over the pending model; ruled-out
+transport machinery was removed from the JS layer with this record as its
+documenting commit. Remaining for later tranches: BridgeNativeHint sidecar
+wiring and FFI materialization (T6/T7), wide-edit sidecars (T10), and final
+removal of the dead route code (cleanup tranche).

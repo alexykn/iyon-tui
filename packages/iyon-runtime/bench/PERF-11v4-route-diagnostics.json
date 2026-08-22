@@ -3,9 +3,14 @@
   "kind": "separate_counter_run",
   "timing_valid": false,
   "perf_native_view_stats": true,
+  "source_sha": "7c670ccd99fb296b18719f62c1aa845a3e3605de",
+  "historical_candidate_sha": "e5292d62c4011610850cbdc1ba4a35f296f78e4f",
+  "native_artifact_sha256": "81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e",
+  "provenance_scope": "benchmark source paths only; markdown-only worktree changes are excluded because they cannot affect measured code paths.",
   "warmup_iterations": 1,
   "measured_iterations": 5,
   "cases": 14,
+  "candidate": "native_11v3",
   "route_counts": {
     "no_op": 12,
     "render_ref": 0,
@@ -24,6 +29,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "COLD",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -42,6 +48,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "FIRST_USE",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -60,6 +67,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "IDENTICAL_IDENTITY",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 6,
         "render_ref": 0,
@@ -78,6 +86,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "SHARED_PATH",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -96,6 +105,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "SHARED_DEEP",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -114,6 +124,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "LARGE_SHARED_SUBTREE_CUTOFF",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -132,6 +143,7 @@
       "workload": "plain_text_column",
       "size": 20,
       "mode": "REBUILT_EQUIVALENT",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -150,6 +162,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "COLD",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -168,6 +181,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "FIRST_USE",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -186,6 +200,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "IDENTICAL_IDENTITY",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 6,
         "render_ref": 0,
@@ -204,6 +219,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "SHARED_PATH",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -222,6 +238,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "SHARED_DEEP",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -240,6 +257,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "LARGE_SHARED_SUBTREE_CUTOFF",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -258,6 +276,7 @@
       "workload": "row_heavy",
       "size": 20,
       "mode": "REBUILT_EQUIVALENT",
+      "candidate": "native_11v3",
       "route_counts": {
         "no_op": 0,
         "render_ref": 0,
@@ -271,9 +290,5 @@
         "recovery": 0
       }
     }
-  ],
-  "git_sha": "7d72f208aee1da8163b240ef5e34c5222253f802",
-  "native_artifact_sha256": "81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e",
-  "bun_version": "1.4.0",
-  "bun_revision": "1.4.0+34cbb9a40"
+  ]
 }

@@ -26,8 +26,9 @@ WeakMap identity, and `nodeForPerf7v2Bridge()` as a lookup-only operation.
 ## Environment and provenance
 
 ```text
-source SHA:             7d72f208aee1da8163b240ef5e34c5222253f802
-working tree at run:    clean
+source SHA:             7c670ccd99fb296b18719f62c1aa845a3e3605de
+benchmark source paths: clean at run
+working tree note:      markdown-only planning/documentation changes were present and excluded from provenance because they cannot affect measured code paths
 Bun:                    1.4.0
 Bun revision:           1.4.0+34cbb9a40
 Rust:                   rustc 1.97.1 (8bab26f4f 2026-07-14)
@@ -35,7 +36,10 @@ target:                 aarch64-apple-darwin
 macOS:                  26.5.2
 CPU:                    MacBookPro18,3
 native artifact SHA:    81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e
+Cargo profile:          release
 Cargo timing feature:   perf-packed-timing
+RUSTFLAGS:              unset
+LTO/codegen overrides:  none (Cargo release defaults)
 ```
 
 `bun run build:iyon` was executed with `ION_NATIVE_FEATURES` unset. The
@@ -63,7 +67,7 @@ Test command:
 
 ```text
 bun test packages/iyon-runtime/tests/perf11v4_direct.test.ts
-5 pass, 0 fail
+7 pass, 0 fail
 ```
 
 ## Matrix and sampling
@@ -72,63 +76,91 @@ The raw artifact retains every sample in
 `packages/iyon-runtime/bench/PERF-11v4-comparison-raw.jsonl`.
 
 ```text
-normal retained:  189 matched cases
+normal retained:  200 matched cases
   9 workloads × 3 sizes (20, 200, 2,000) × 7 modes
-special/text:      24 matched cases
-wide scaling:      15 matched cases
+  9 exact-identity cases at 10,000 nodes
+  targeted plain-text 10,000-node SHARED_DEEP and
+  LARGE_SHARED_SUBTREE_CUTOFF cases (depth 128 / stable cutoff)
+special/text:       24 matched cases
+wide scaling:       15 matched cases
   widths 32, 256, 2,048, 10,000, 100,000 × replace/insert/remove
-realistic trace:    1 matched case, 1,000 operations
-matched total:    229 cases
-raw records:      672
+realistic trace:     1 matched case, 1,000 operations
+matched total:     240 cases
+raw records:       705
 ```
 
 Normal cases used 50 warmups and 1,000 measured samples; exact identity used
-10,000 measured samples. Wide scaling used 10 warmups and 50 samples because
-100,000-child construction is not duration-sensible at the normal sample
-count. Candidate order alternated deterministically between isolated child
-processes. `direct_current` was recorded for all normal/special cases.
+10,000 warmups and 10,000 measured samples. Wide scaling used 10 warmups and
+1,000 measured samples, except 100,000-child cases used 50 because construction
+is not duration-sensible at the normal sample count. Candidate order alternated
+deterministically between isolated child processes. `direct_current` was
+recorded for all normal/special cases. The run retained 705 raw child records
+and froze one source SHA for every child, so concurrent markdown-only commits
+cannot create mixed provenance or affect timing. Each record also includes CPU,
+current RSS delta, peak RSS delta, and heap delta; these are secondary resource
+observations and make no GC claim.
 
 ## End-to-end result
 
 Ratios are `native_11v3 / direct_7v2`; below 1.0 means Native Shadow is
 faster. Aggregation is the geometric mean of matched per-case median ratios.
+The summary also retains each matched pair's percentage difference, p95/p99
+ratios, bootstrap median-ratio CI, and construction/transport/native phases.
 
 | Group | Cases | Ratio | Result |
 |---|---:|---:|---|
-| Normal retained | 189 | 0.843× | 15.7% faster for native in aggregate |
-| Text/special | 24 | 1.235× | Candidate A 23.5% faster |
-| Wide scaling | 15 | 0.796× | 20.4% faster for native |
-| Realistic trace | 1 | 2.561× | Candidate A 61.0% faster |
+| Normal retained | 200 | 0.780× | 22.0% faster for native in aggregate |
+| Text/special | 24 | 1.400× | Candidate A 28.6% faster |
+| Wide scaling | 15 | 0.631× | 36.9% faster for native |
+| Realistic trace | 1 | 1.977× | Candidate A 49.4% faster |
 
 Mode aggregates:
 
 | Mode | Native/A ratio |
 |---|---:|
-| COLD | 1.435× |
-| FIRST_USE | 1.512× |
-| IDENTICAL_IDENTITY | 0.072× |
-| SHARED_PATH | 1.051× |
-| SHARED_DEEP | 1.031× |
-| LARGE_SHARED_SUBTREE_CUTOFF | 1.141× |
-| REBUILT_EQUIVALENT | 1.492× |
-| TEXT_METADATA_PATCH | 0.908× |
-| DECORATION_PATCH | 1.690× |
-| WIDE_PARENT_ONE_EDIT | 0.858× |
-| WIDE_PARENT_INSERT | 0.870× |
-| WIDE_PARENT_REMOVE | 0.676× |
+| COLD | 1.389× |
+| FIRST_USE | 1.242× |
+| IDENTICAL_IDENTITY | 0.099× |
+| SHARED_PATH | 1.049× |
+| SHARED_DEEP | 1.082× |
+| LARGE_SHARED_SUBTREE_CUTOFF | 1.146× |
+| REBUILT_EQUIVALENT | 1.457× |
+| TEXT_METADATA_PATCH | 0.936× |
+| DECORATION_PATCH | 2.519× |
+| WIDE_PARENT_ONE_EDIT | 0.460× |
+| WIDE_PARENT_INSERT | 0.489× |
+| WIDE_PARENT_REMOVE | 1.118× |
 
 Representative phase medians from the raw records:
 
 | Case | Candidate | Construction | Transport prepare | Native/host commit | Total |
 |---|---|---:|---:|---:|---:|
-| small exact identity | direct_7v2 | 42 ns | 42 ns | 708 ns | 791 ns |
-| small exact identity | native_11v3 | 42 ns | 0 ns | 42 ns | 84 ns |
-| small shared path | direct_7v2 | 1,416 ns | 42 ns | 45,208 ns | 46,791 ns |
-| small shared path | native_11v3 | 1,875 ns | 0 ns | 47,083 ns | 49,624 ns |
-| small cold | direct_7v2 | 11,083 ns | 42 ns | 137,500 ns | 149,208 ns |
-| small cold | native_11v3 | 12,042 ns | 0 ns | 142,000 ns | 154,542 ns |
-| realistic trace/op | direct_7v2 | 544,584 ns | 125 ns | 76,250 ns | 625,917 ns |
-| realistic trace/op | native_11v3 | 1,501,333 ns | 0 ns | 88,584 ns | 1,603,125 ns |
+| small exact identity | direct_7v2 | 42 ns | 42 ns | 667 ns | 750 ns |
+| small exact identity | native_11v3 | 42 ns | 42 ns | 42 ns | 124 ns |
+| small shared path | direct_7v2 | 1,625 ns | 83 ns | 45,750 ns | 48,417 ns |
+| small shared path | native_11v3 | 1,833 ns | 83 ns | 47,667 ns | 50,168 ns |
+| small cold | direct_7v2 | 11,792 ns | 83 ns | 140,875 ns | 153,250 ns |
+| small cold | native_11v3 | 12,709 ns | 83 ns | 143,084 ns | 156,292 ns |
+| realistic trace/op | direct_7v2 | 643,000 ns | 122,958 ns | 372,750 ns | 1,182,125 ns |
+| realistic trace/op | native_11v3 | 1,758,042 ns | 129,250 ns | 383,917 ns | 2,337,000 ns |
+
+Scaling checks from the plain-text cases:
+
+| Check | Parameter | direct_7v2 median | native_11v3 median | Native/A |
+|---|---:|---:|---:|---:|
+| Exact identity | 20 nodes | 750 ns | 124 ns | 0.165× |
+| Exact identity | 200 nodes | 750 ns | 124 ns | 0.165× |
+| Exact identity | 2,000 nodes | 750 ns | 124 ns | 0.165× |
+| Exact identity | 10,000 nodes | 751 ns | 124 ns | 0.165× |
+| Shared deep | depth 4 | 112,875 ns | 116,792 ns | 1.035× |
+| Shared deep | depth 16 | 210,999 ns | 259,292 ns | 1.229× |
+| Shared deep | depth 64 | 6,736,251 ns | 8,767,792 ns | 1.302× |
+| Shared deep | depth 128 | 101,561,750 ns | 133,037,291 ns | 1.310× |
+| Stable cutoff | 10,000 nodes | 1,461,667 ns | 1,948,792 ns | 1.333× |
+
+Exact identity is independent of descendant count for both candidates in this
+run; shared-deep cost follows the changed ancestor frontier, and the 10,000-
+node stable subtree remains a cutoff rather than a full descendant walk.
 
 The trace distribution was deterministic and retained in the raw record:
 
@@ -179,12 +211,20 @@ did not distort Candidate A versus Native Shadow timing. The separate
 non-timing diagnostic artifact is
 `packages/iyon-runtime/bench/PERF-11v4-route-diagnostics.json`.
 
-Its 14-case counter run recorded:
+Its 14-case counter run (source SHA
+`7c670ccd99fb296b18719f62c1aa845a3e3605de`) recorded:
 
 ```text
-no_op:          12
-native_builder: 82
-all other named routes: 0
+no_op:             12
+native_builder:    82
+render_ref:         0
+scalar:             0
+shallow_depth:      0
+path_ref:           0
+structural:         0
+edit_transaction:   0
+fallback:           0
+recovery:           0
 ```
 
 These counts are diagnostic only, not timing results.

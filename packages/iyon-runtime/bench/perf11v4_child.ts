@@ -47,7 +47,10 @@ function commandText(command: string[]): string {
 
 function gitSha(): string { return Bun.env.PERF_V4_GIT_SHA ?? commandText(["git", "rev-parse", "HEAD"]); }
 const benchmarkSourcePaths = [
-  "packages/iyon-runtime/bench/",
+  "packages/iyon-runtime/bench/perf11v4_child.ts",
+  "packages/iyon-runtime/bench/perf11v4_comparison.ts",
+  "packages/iyon-runtime/bench/perf11v4_fixtures.ts",
+  "packages/iyon-runtime/bench/perf7v2_direct/",
   "packages/iyon-runtime/src/tui/",
   "crates/iyon-tui/",
   "crates/iyon-native/",

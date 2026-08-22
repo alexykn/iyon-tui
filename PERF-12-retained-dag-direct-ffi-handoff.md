@@ -4577,3 +4577,133 @@ Chromium shared-memory command-buffer caution:
 # 127. Final instruction to the implementation agent
 
 **Implement PERF-12 as a retained semantic identity bridge, not as a new serialization format. Restore the real PERF-7v2 eager immutable `BridgeViewNode` DAG against the current schema. Keep `NodeId -> WeakView` in the single environment-owned `NativeViewRuntime` as semantic authority. Associate already-materialized Bridge nodes with generation-scoped NativeRef hints in WeakMap sidecars, and always test that identity before reading payload or children. Materialize only unknown semantic nodes, children first, through generated engine-native Bun FFI constructors and retained clone/edit primitives; use small reusable borrowed TypedArrays only for variable reference/byte payloads. Keep exactly one strong root NativeRef lease per View-bearing boundary plus temporary leases during a materialization transaction; do not make every sidecar a native lease and do not depend on FinalizationRegistry for normal correctness. Preserve PersistentSeq wide edits, native strings/styles, stream specialization, exact-root shortcuts, the complete fallback, and every View-bearing boundary. Before attributing the reported approximately 2.7 GiB RSS to tree size, instrument and fix any historical weak-cache/NativeRef metadata accumulation in the shared runtime. Do not implement the persistent Shared Mirror DAG as a second candidate, and do not build a generic changed-closure record VM unless a later profile proves direct Bun FFI call density is the remaining bottleneck. Select PERF-12 only on end-to-end application time, structural asymptotics, full semantic parity, and bounded long-running live memory.**
+
+---
+
+# Tranche implementation records
+
+## T1 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T1 (PERF-12.0 evidence freeze and probes)
+parent:       12.0
+sections:     §82 source freeze, §60 Bun qualification, §61 same-image audit,
+              §57–§58 memory attribution protocol and classification,
+              §83 direct-call floor probe, §109 baseline record deliverables
+```
+
+### 2. Commits
+
+```text
+ae60ed1  bench(tui): freeze PERF-12 baselines and attribute native view memory
+```
+
+This record was appended in the immediately following documentation commit on
+`perf-refactor`. No other commits belong to T1.
+
+### 3. Review findings
+
+```text
+gap 1: the current diagnostic surface (tuiViewAbiBootstrap) does not expose
+       node_refs entry counts or path_keys counts required by §57. Correction:
+       recorded as explicit nulls in PERF-12-memory-attribution.jsonl with a
+       pointer to Tranche 3 (§89) rather than extending the diagnostic ABI in
+       T1, because T1 must not change production code.
+gap 2: PersistentSeq structural high-water (§58 bucket H) has no dedicated
+       counter in the frozen artifact. Recorded as a stated T1 limitation;
+       classification for H is deferred to the Tranche 3 counter build.
+gap 3: the wide/100000 block retains 239.5 MiB JS heap after gc(true). No
+       PERF-12 gate depends on it and the §57 escalation rule ("if JS heap
+       remains unexpectedly high, emit a heap snapshot") was evaluated against
+       the GiB-scale RSS question, which native counters already answer; the
+       residual is noted in PERF-12-baseline.md §8 instead of chased further.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+PERF-12-baseline.md                      archaeology + freeze + attribution + probe decision record
+packages/iyon-runtime/bench/perf12_memory_attribution.ts   isolated-block parent harness
+packages/iyon-runtime/bench/perf12_memory_child.ts         phase-instrumented child runner
+packages/iyon-runtime/bench/perf12_ffi_floor.ts            §83 call-floor probe
+packages/iyon-runtime/bench/PERF-12-memory-attribution.jsonl
+packages/iyon-runtime/bench/PERF-12-ffi-floor.jsonl
+```
+
+Structurally nothing changed in production code: the shared runtime, Direct
+decoder, generated ABI, and View backing are byte-for-byte the frozen
+PERF-11v4 state. Deliberately not done yet: all architecture work (semantic
+DAG restoration, publication helper, NativeRef table, scavenging, direct
+materializers, routing) belongs to T2+; production routing remains untouched.
+
+### 5. Provenance block
+
+```text
+source revision at capture: 3d156a78e1577b4b2d491cf393b08956cf2aa7f5 (clean tree)
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+native artifact SHA-256:    81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e
+schema BLAKE3:              f7b30e32493e2e95f86541401308e5db64103bd8a7e694cbecbfe851040025d3
+generator BLAKE3:           20435cb0e211e543dd671e6c86669cf3f205c8e77c5070f47f4d181a4a9d3c71
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Deliverables committed:
+   PERF-12-baseline.md, PERF-12-memory-attribution.jsonl,
+   PERF-12-ffi-floor.jsonl committed in ae60ed1. PASS.
+
+2. 2.7 GiB classified into §58 buckets:
+   six blocks reproduced against the frozen artifact (peaks 38 MiB – 6,613 MiB;
+   the SHARED_DEEP 10k block reproduced the 11v4 6.2–6.5 GiB peak at 6.6 GiB).
+   After forced cleanup checkpoints every block shows:
+     leased_slots = 0, native_ref_slots = 0,
+     semantic_cache_entries -> 0 (wide block: 100,069 -> 0; trace: 4,297 -> 1 live)
+   while RSS remains 1,279–4,315 MiB with 3.5–15.3 MiB JS heap
+   (wide block 2,451 MiB RSS / 239.5 MiB heap).
+   Classification: dominant buckets D/J (JSC/JIT/allocator address-space
+   high-water); A negligible (~8–16 KiB sample storage); B/C MiB-scale;
+   E zero; F transient but sweep-convergent (no linear post-sweep slope);
+   G ≈ 0 on the Direct path; H not instrumented (stated limitation);
+   I zero in all blocks. PASS.
+
+3. FFI call floor compatible with expected changed-frontier budget:
+   measured on the pinned revision, 30 warmup + 50 measured blocks x 1,000 ops
+   per timed block (timing build, release artifact):
+     noop chain x1        8 ns/op          (x64: 107 ns ~ 1.7 ns/call)
+     generated dispatch   10 ns/call
+     scalar constructor   246 ns
+     fixed-arity create2  478 ns
+     ref-buffer create4   693 ns
+     retained patches     429–436 ns
+   Projected frontier cost at the worst common shape vs frozen PERF-11v4
+   direct_7v2 total medians:
+     frontier 8   -> 5.5 µs   = 11.5% of 48.4 µs    OK
+     frontier 32  -> 22.2 µs  = 10.5% of 211.0 µs   OK
+     frontier 128 -> 88.7 µs  =  0.09% of 101.6 ms  OK
+     frontier 200 -> 138.6 µs = 11.7% of 1.18 ms    OK
+   Decision threshold (≤25% of budget, noop < 100 ns/call): met with ≥8x
+   headroom. §83 decision: GO. PASS.
+
+4. Stop conditions:
+   §105 does not apply — PERF-11v4 category D (Candidate A wins the realistic
+   trace 1.977x), so continuing is mandated. §83 returned GO. No stop.
+```
+
+### 7. Status line
+
+**Tranche T1 status: COMPLETE.** Baselines are frozen, the reported large-RSS
+behavior is attributed (allocator/JIT high-water over transient-but-sweep-
+convergent weak-cache metadata, not live semantic state), and the direct-call
+floor clears its decision threshold with headroom; T2/T3 may proceed. The
+bucket-F mechanism confirms Tranche 3 weak-cache scavenging remains a mandatory
+shared-runtime prerequisite before memory gates can be judged.

@@ -229,6 +229,25 @@ recovery:           0
 
 These counts are diagnostic only, not timing results.
 
+## Specification compliance audit
+
+| Required question | Result | Evidence |
+|---|---|---|
+| Is Candidate-A Direct still present? | Yes | Current `crates/iyon-native/src/tui.rs` Direct `ViewDecoder` and `NativeTuiHost.render(Object)` path were traced; the schema-failure smoke test proves execution. |
+| Does the normal build execute Direct? | Yes | `bun run build:iyon` with `ION_NATIVE_FEATURES` unset staged the artifact; valid rendering succeeded and schema `999` failed validation. |
+| Is `direct_7v2` historical Candidate A? | Yes | `perf7v2_direct/view.ts` is benchmark-only, eager/frozen/WeakMap-backed, and `nodeForPerf7v2Bridge()` is lookup-only. `direct_current` remains separate. |
+| Was a second checkout required? | No | Historical source was inspected from `e5292d6`; the faithful builder runs against current Rust, cache, renderer, and Bun. |
+| Are semantic and cache gates complete? | Yes | Full schema parity, 100 deterministic randomized seeds, identity/reuse, retained-path, rebuilt-tree, and weak-cache expiry tests pass. |
+| Are timing gates complete? | Yes | 240 matched cases, 705 raw records, isolated children, alternating order, 10,000-sample exact identity, 1,000-sample p99 paths, phase/resource fields, and separate counters are retained. |
+| Which candidate wins? | Candidate A on the realistic trace | Native/A is 1.977×, meaning Candidate A is 49.4% faster on the 1,000-operation trace; Native Shadow wins exact identity and wide persistent edits. |
+| Was a new transport designed? | No | The changes are benchmark fixtures, validation, provenance, phase/resource reporting, generated artifacts, and the comparison report only. |
+
+The JSON summary contains the dedicated construction table and explicit
+`transport_plus_native_median_ns` values; matched pairs contain percentage
+difference, p95/p99 ratios, and bootstrap confidence intervals. The benchmark
+therefore uses total end-to-end time for the decision while retaining the phase
+and scaling evidence required to explain it.
+
 ## Final classification
 
 **D — Candidate A wins.** Candidate A wins the realistic trace by a large

@@ -218,19 +218,24 @@ describe("PERF-12 T7 common-node direct materializers", () => {
     }
   });
 
-  test("arity beyond the fixed-arity family falls back cleanly", () => {
+  test("arity beyond the fixed-arity family uses the T8 borrowed-buffer lane", () => {
     if (!canRun) return;
     const s = session!;
-    const host = new Host(40, 8, true);
+    const host = new Host(40, 60, true);
     try {
       const old = View.spacer(2);
       host.render(nodeForBridge(old));
       const boundary = new RetainedRootBoundary(s, () => host.tuiViewAbiHostPointer() as never);
       expect(boundary.adopt(old)).toBe(true);
 
-      const five = View.vertical(Array.from({ length: 5 }, (_, index) => View.text(`r${index}`)));
-      expect(boundary.install(five)).toBeUndefined(); // ref-buffer lane is T8
-      expect(boundary.renderExact(old).status).toBe("ok");
+      // Since T8, arities above the fixed family transport through the
+      // reusable borrowed scratch and view_axis_create_buffer.
+      const seven = View.vertical(Array.from({ length: 7 }, (_, index) => View.spacer(index + 1)));
+      const before = retainedIdentityCounterSnapshot();
+      expect(boundary.install(seven)).toBeGreaterThan(0);
+      const after = retainedIdentityCounterSnapshot();
+      // 7 child refs + 7 track words = 14 transported words (§90 visibility).
+      expect(after.ref_words_written - before.ref_words_written).toBe(14);
       boundary.close();
     } finally {
       host.dispose();

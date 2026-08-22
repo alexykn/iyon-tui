@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ac76addefd7312010e808174c6d163abfeadd798561f55f67e731e202ac20740
-// generator_blake3 = 2d8ad3919e8133be4109ee23dc629f20fd29abbe708113532f25015bb77a5881
+// schema_blake3 = fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d
+// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
 import { expect, test } from "bun:test";
 import manifest from "../../src/tui/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {
-  expect(manifest.schema_blake3).toBe("ac76addefd7312010e808174c6d163abfeadd798561f55f67e731e202ac20740");
+  expect(manifest.schema_blake3).toBe("fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d");
   expect(manifest.abi.version).toBe(1);
   expect(manifest.functions.map((item) => item.name)).toEqual([
     "runtime_noop",

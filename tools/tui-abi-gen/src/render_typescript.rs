@@ -71,11 +71,17 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         .materializers
         .iter()
         .flat_map(|materializer| match &materializer.fixed_arity_axis {
-            Some(axis) => axis
-                .builders
-                .iter()
-                .map(|builder| builder.as_str())
-                .collect::<Vec<_>>(),
+            Some(axis) => {
+                let mut family = axis
+                    .builders
+                    .iter()
+                    .map(|builder| builder.as_str())
+                    .collect::<Vec<_>>();
+                if let Some(buffer_builder) = &axis.buffer_builder {
+                    family.push(buffer_builder.as_str());
+                }
+                family
+            }
             None => vec![materializer.rust_builder.as_str()],
         })
         .map(camel_case)
@@ -95,6 +101,12 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         .materializers
         .iter()
         .any(|materializer| materializer.fixed_arity_axis.is_some());
+    let has_axis_buffer = document.materializers.iter().any(|materializer| {
+        materializer
+            .fixed_arity_axis
+            .as_ref()
+            .is_some_and(|axis| axis.buffer_builder.is_some())
+    });
     if has_axis {
         output.push_str(
             "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../ir.ts\";\n",
@@ -102,6 +114,10 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         output.push_str(
             "import { RetainedFastFallbackError, ensureNative } from \"../retained_dag.ts\";\n",
         );
+        if has_axis_buffer {
+            // PERF-12 T8 (§50): retained cap for one borrowed-buffer axis call.
+            output.push_str("import { MAX_DIRECT_AXIS_REFS } from \"../native_view_policy.ts\";\n");
+        }
         // Axis lowerings recurse into ensureNative, so the transaction type
         // is owned by the runtime module; re-exported here for callers.
         output.push_str("import type { MaterializeTx } from \"../retained_dag.ts\";\n");
@@ -180,11 +196,31 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
                     args.join(", ")
                 ));
             }
-            output.push_str(&format!(
-                "    default: throw new RetainedFastFallbackError(`{} arity ${{children.length}} exceeds fixed-arity specialization {}`);\n",
-                materializer.bridge_kind,
-                axis.builders.len() - 1
-            ));
+            match &axis.buffer_builder {
+                None => {
+                    output.push_str(&format!(
+                        "    default: throw new RetainedFastFallbackError(`{} arity ${{children.length}} exceeds fixed-arity specialization {}`);\n",
+                        materializer.bridge_kind,
+                        axis.builders.len() - 1
+                    ));
+                }
+                Some(buffer_builder) => {
+                    // PERF-12 T8 (§29/§32): borrowed-buffer lane. The reusable
+                    // scratch holds (track_word, child_ref) pairs; native reads
+                    // the storage only during this synchronous call and never
+                    // retains a pointer (§29/§107/§116).
+                    let axis_kind_literal = match materializer.bridge_kind.as_str() {
+                        "viewRow" => 1u32,
+                        "viewColumn" => 2u32,
+                        other => panic!("validated axis kind {other}"),
+                    };
+                    let call = camel_case(buffer_builder);
+                    output.push_str(&format!(
+                        "    default: {{\n      // Single enforcement point: axisRefScratch refuses arities above the\n      // retained cap (Sections 30/50) and counts the fallback.\n      const scratch = tx.axisRefScratch(children.length);\n      let offset = 0;\n      for (let index = 0; index < children.length; index++) {{\n        const child = children[index];\n        scratch[offset++] = layoutTrackWord(child);\n        scratch[offset++] = ensureNative(child.child, tx);\n      }}\n      tx.noteRefWords(offset);\n      return {}(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, {}, node.gap, scratch, children.length);\n    }}\n",
+                        call, axis_kind_literal
+                    ));
+                }
+            }
             output.push_str("  }\n}\n\n");
             continue;
         }

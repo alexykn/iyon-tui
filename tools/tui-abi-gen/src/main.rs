@@ -567,6 +567,7 @@ mod tests {
             .iter()
             .map(|name| (*name).to_owned())
             .collect(),
+            buffer_builder: None,
         });
         mutate(materializer);
         validate::validate(&document, &bridge)
@@ -620,6 +621,48 @@ mod tests {
                 materializer.thread_affinity = "any_thread".to_owned();
             })
             .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_unknown_buffer_builder() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                materializer
+                    .fixed_arity_axis
+                    .as_mut()
+                    .expect("axis")
+                    .buffer_builder = Some("view_not_a_function".to_owned());
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_rejects_buffer_builder_lifetime_disagreement() {
+        // view_axis_create_buffer borrows for the call only; flipping the
+        // materializer to a session borrow must fail generation (107).
+        assert!(
+            validate_mutated_axis(|materializer| {
+                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
+                axis.buffer_builder = Some("view_axis_create_buffer".to_owned());
+                materializer.borrow_duration = "session".to_owned();
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn validation_accepts_t8_buffer_lane() {
+        assert!(
+            validate_mutated_axis(|materializer| {
+                materializer
+                    .fixed_arity_axis
+                    .as_mut()
+                    .expect("axis")
+                    .buffer_builder = Some("view_axis_create_buffer".to_owned());
+            })
+            .is_ok()
         );
     }
 

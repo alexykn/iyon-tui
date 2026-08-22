@@ -2967,6 +2967,7 @@ builders = [
   "view_row_create_3",
   "view_row_create_4",
 ]
+buffer_builder = "view_axis_create_buffer"
 
 [[materializer.field]]
 name = "node_id_low"
@@ -3008,6 +3009,7 @@ builders = [
   "view_column_create_3",
   "view_column_create_4",
 ]
+buffer_builder = "view_axis_create_buffer"
 
 [[materializer.field]]
 name = "node_id_low"

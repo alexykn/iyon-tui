@@ -1,12 +1,13 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ac76addefd7312010e808174c6d163abfeadd798561f55f67e731e202ac20740
-// generator_blake3 = 2d8ad3919e8133be4109ee23dc629f20fd29abbe708113532f25015bb77a5881
+// schema_blake3 = fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d
+// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
 import type { Pointer } from "bun:ffi";
 import type { linkViewAbi } from "./view_abi";
-import { viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
+import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
 import type { ViewAbiSymbols } from "./view_calls";
 import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../ir.ts";
 import { RetainedFastFallbackError, ensureNative } from "../retained_dag.ts";
+import { MAX_DIRECT_AXIS_REFS } from "../native_view_policy.ts";
 import type { MaterializeTx } from "../retained_dag.ts";
 export type { MaterializeTx };
 
@@ -78,7 +79,19 @@ export function materializeRow(node: BridgeRowMaterializeNode, tx: MaterializeTx
     case 2: return viewRowCreate2(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx));
     case 3: return viewRowCreate3(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx));
     case 4: return viewRowCreate4(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx), layoutTrackWord(children[3]), ensureNative(children[3].child, tx));
-    default: throw new RetainedFastFallbackError(`viewRow arity ${children.length} exceeds fixed-arity specialization 4`);
+    default: {
+      // Single enforcement point: axisRefScratch refuses arities above the
+      // retained cap (Sections 30/50) and counts the fallback.
+      const scratch = tx.axisRefScratch(children.length);
+      let offset = 0;
+      for (let index = 0; index < children.length; index++) {
+        const child = children[index];
+        scratch[offset++] = layoutTrackWord(child);
+        scratch[offset++] = ensureNative(child.child, tx);
+      }
+      tx.noteRefWords(offset);
+      return viewAxisCreateBuffer(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, 1, node.gap, scratch, children.length);
+    }
   }
 }
 
@@ -100,7 +113,19 @@ export function materializeColumn(node: BridgeColumnMaterializeNode, tx: Materia
     case 2: return viewColumnCreate2(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx));
     case 3: return viewColumnCreate3(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx));
     case 4: return viewColumnCreate4(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx), layoutTrackWord(children[3]), ensureNative(children[3].child, tx));
-    default: throw new RetainedFastFallbackError(`viewColumn arity ${children.length} exceeds fixed-arity specialization 4`);
+    default: {
+      // Single enforcement point: axisRefScratch refuses arities above the
+      // retained cap (Sections 30/50) and counts the fallback.
+      const scratch = tx.axisRefScratch(children.length);
+      let offset = 0;
+      for (let index = 0; index < children.length; index++) {
+        const child = children[index];
+        scratch[offset++] = layoutTrackWord(child);
+        scratch[offset++] = ensureNative(child.child, tx);
+      }
+      tx.noteRefWords(offset);
+      return viewAxisCreateBuffer(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, 2, node.gap, scratch, children.length);
+    }
   }
 }
 

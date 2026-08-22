@@ -16,3 +16,11 @@ export const NATIVE_TEXT_MAX_BYTES = 16_777_216;
  */
 export const MAX_RETAINED_NEW_NODES = 512;
 export const MAX_RETAINED_DEPTH = 256;
+
+/**
+ * PERF-12 T8 (§50): retained cap on children transported through ONE
+ * borrowed-buffer axis call. Above this the retained path falls back to the
+ * complete cold path. Initial candidate per §50; final values come from
+ * realistic traces at T15.
+ */
+export const MAX_DIRECT_AXIS_REFS = 1_024;

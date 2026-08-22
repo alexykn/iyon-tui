@@ -194,6 +194,14 @@ pub struct MaterializerSpec {
 #[serde(deny_unknown_fields)]
 pub struct MaterializerFixedArityAxisSpec {
     pub builders: Vec<String>,
+    /// PERF-12 T8 (§29/§32): borrowed-buffer lane for arities above the
+    /// fixed-arity family. The generated dispatcher fills the reusable JS
+    /// scratch with `(track_word, child_ref)` pairs and makes ONE synchronous
+    /// `buffer`/`buffer_length` call; native reads the storage only for the
+    /// call duration and retains no pointer (§29/§107). Arities above the
+    /// retained cap fall back to the complete cold path (§50).
+    #[serde(default)]
+    pub buffer_builder: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

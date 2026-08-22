@@ -798,6 +798,42 @@ fn validate_fixed_arity_axis(
             materializer.name, axis.builders[0]
         ));
     }
+    // PERF-12 T8 (§29): the borrowed-buffer lane builder must exist, return
+    // ViewRefResult, and agree with the materializer's lifetime policy.
+    if let Some(buffer_builder) = &axis.buffer_builder {
+        let Some(builder) = document
+            .functions
+            .iter()
+            .find(|function| function.name == *buffer_builder)
+        else {
+            return invalid(format!(
+                "materializer {} buffer builder {} is not a declared ABI function",
+                materializer.name, buffer_builder
+            ));
+        };
+        if builder.return_type != "ViewRefResult" {
+            return invalid(format!(
+                "materializer {} buffer builder {} must return ViewRefResult",
+                materializer.name, buffer_builder
+            ));
+        }
+        if builder.ownership != materializer.ownership
+            || builder.thread_affinity != materializer.thread_affinity
+            || builder.borrow_duration != materializer.borrow_duration
+        {
+            return invalid(format!(
+                "materializer {} buffer builder {} lifetime policy disagrees with the materializer",
+                materializer.name, buffer_builder
+            ));
+        }
+        if axis.builders.contains(buffer_builder) {
+            return invalid(format!(
+                "materializer {} buffer builder {} must not duplicate a family builder",
+                materializer.name, buffer_builder
+            ));
+        }
+    }
+
     let mut seen = HashSet::new();
     for (arity, builder_name) in axis.builders.iter().enumerate() {
         let Some(builder) = document

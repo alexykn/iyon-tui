@@ -34,7 +34,11 @@ import { hostRenderRef, viewRefForNodeId, viewReleaseMany } from "./generated/vi
 import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
-import { MAX_RETAINED_DEPTH, MAX_RETAINED_NEW_NODES } from "./native_view_policy.ts";
+import {
+  MAX_DIRECT_AXIS_REFS,
+  MAX_RETAINED_DEPTH,
+  MAX_RETAINED_NEW_NODES,
+} from "./native_view_policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
 export interface BridgeNativeHint {
@@ -44,6 +48,15 @@ export interface BridgeNativeHint {
 
 /** NodeId → NativeRef hints. Values die with the semantic node (§15). */
 const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
+
+/**
+ * PERF-12 T8 (§30): environment-level reusable axis-ref scratch (small tier).
+ * Keyed by runtime pointer so a re-bootstrapped session allocates fresh
+ * storage; native retains no pointer into it after any call returns (§29).
+ * A plain Map: runtime pointers are numbers, and there is at most one live
+ * entry per environment.
+ */
+const AXIS_REF_SCRATCH = new Map<Pointer, Uint32Array>();
 
 /**
  * Structural counters (§91 subset relevant to T6). Plain field increments on
@@ -63,6 +76,7 @@ export interface RetainedIdentityCounters {
   derivation_fast_path_calls: number;
   ref_words_written: number;
   byte_payload_bytes: number;
+  transport_scratch_reuses: number;
   stale_ref_retries: number;
   cold_fallbacks: number;
   host_mutations: number;
@@ -80,6 +94,7 @@ const counters: RetainedIdentityCounters = {
   derivation_fast_path_calls: 0,
   ref_words_written: 0,
   byte_payload_bytes: 0,
+  transport_scratch_reuses: 0,
   stale_ref_retries: 0,
   cold_fallbacks: 0,
   host_mutations: 0,
@@ -135,6 +150,36 @@ export class MaterializeTx {
 
   noteBorrowedHint(node: BridgeViewNode, nativeRef: number): void {
     this.borrowedHints.push({ node, nativeRef });
+  }
+
+  /**
+   * PERF-12 T8 (§29/§30): the reusable borrowed scratch for one variable-axis
+   * transport. The small tier is a single environment-level Uint32Array
+   * allocated once and reused by every transaction (single owner thread, no
+   * pointer outlives the synchronous call). Counts above MAX_DIRECT_AXIS_REFS
+   * refuse the retained path entirely (§30 cap rule / §50).
+   */
+  axisRefScratch(childCount: number): Uint32Array {
+    if (childCount > MAX_DIRECT_AXIS_REFS) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError(
+        `axis arity ${childCount} exceeds the retained buffer cap ${MAX_DIRECT_AXIS_REFS}`,
+      );
+    }
+    const words = childCount * 2;
+    let scratch = AXIS_REF_SCRATCH.get(this.runtime);
+    if (scratch === undefined || scratch.length < words) {
+      // Small tier sized for exactly the retained cap; allocated once.
+      scratch ??= new Uint32Array(MAX_DIRECT_AXIS_REFS * 2);
+      AXIS_REF_SCRATCH.set(this.runtime, scratch);
+    }
+    counters.transport_scratch_reuses += 1;
+    return scratch.subarray(0, words);
+  }
+
+  /** §90: borrowed-buffer preparation is counted, never hidden. */
+  noteRefWords(words: number): void {
+    counters.ref_words_written += words;
   }
 
   /** Releases every temporary lease (failure path / non-root drains). */

@@ -45,7 +45,7 @@ function commandText(command: string[]): string {
   return new TextDecoder().decode(result.stdout).trim() || "unknown";
 }
 
-function gitSha(): string { return commandText(["git", "rev-parse", "HEAD"]); }
+function gitSha(): string { return Bun.env.PERF_V4_GIT_SHA ?? commandText(["git", "rev-parse", "HEAD"]); }
 const benchmarkSourcePaths = [
   "packages/iyon-runtime/bench/",
   "packages/iyon-runtime/src/tui/",
@@ -53,8 +53,12 @@ const benchmarkSourcePaths = [
   "crates/iyon-native/",
 ] as const;
 function gitDirty(): boolean {
-  const result = Bun.spawnSync(["git", "status", "--porcelain", "--", ...benchmarkSourcePaths]);
-  return new TextDecoder().decode(result.stdout).trim() !== "";
+  const status = Bun.spawnSync(["git", "status", "--porcelain", "--", ...benchmarkSourcePaths]);
+  if (new TextDecoder().decode(status.stdout).trim() !== "") return true;
+  const expectedSha = Bun.env.PERF_V4_GIT_SHA;
+  if (expectedSha === undefined) return false;
+  const comparison = Bun.spawnSync(["git", "diff", "--quiet", expectedSha, "--", ...benchmarkSourcePaths]);
+  return comparison.exitCode !== 0;
 }
 function sha256(path: string): string { return commandText(["shasum", "-a", "256", path]).split(/\s+/)[0] ?? "unknown"; }
 function now(): number { return Bun.nanoseconds(); }

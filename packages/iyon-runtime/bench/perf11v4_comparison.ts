@@ -75,7 +75,7 @@ function ratio(left: ChildResult, right: ChildResult): Record<string, unknown> {
 }
 function caseKey(result: { readonly workload: string; readonly size: number; readonly mode: string }): string { return `${result.workload}/${result.size}/${result.mode}`; }
 
-async function runChild(candidate: Candidate, testCase: ComparisonCase, block: number): Promise<ChildResult> {
+async function runChild(candidate: Candidate, testCase: ComparisonCase, block: number, sourceSha: string): Promise<ChildResult> {
   const childPath = new URL("./perf11v4_child.ts", import.meta.url).pathname;
   const environment: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) environment[key] = value;
@@ -87,6 +87,7 @@ async function runChild(candidate: Candidate, testCase: ComparisonCase, block: n
     PERF_V4_MODE: testCase.mode,
     PERF_V4_LABEL: testCase.label,
     PERF_V4_ORDERING_BLOCK: String(block),
+    PERF_V4_GIT_SHA: sourceSha,
     ...(process.env.PERF_V4_WARMUP === undefined ? { PERF_V4_WARMUP: testCase.mode === "IDENTICAL_IDENTITY" ? "10000" : isWide ? "10" : "50" } : {}),
     ...(process.env.PERF_V4_MEASURED === undefined ? { PERF_V4_MEASURED: testCase.mode === "IDENTICAL_IDENTITY" ? "10000" : isWide && testCase.size >= 100_000 ? "50" : "1000" } : {}),
   });
@@ -172,12 +173,13 @@ async function main(): Promise<void> {
   const selected = envList("PERF_V4_CANDIDATES", candidateNames).filter((value): value is Candidate => candidateNames.includes(value as Candidate));
   if (selected.length < 2) throw new Error("PERF_V4_CANDIDATES must contain at least two candidates");
   const cases = buildCases();
+  const sourceSha = commandText(["git", "rev-parse", "HEAD"]);
   const results: ChildResult[] = [];
   let block = 0;
   for (const testCase of cases) {
     const caseCandidates = testCase.mode.startsWith("WIDE_PARENT_") ? selected.filter((candidate) => candidate !== "direct_current") : selected;
     const order = block % 2 === 0 ? caseCandidates : [...caseCandidates].reverse();
-    for (const candidate of order) results.push(await runChild(candidate, testCase, block));
+    for (const candidate of order) results.push(await runChild(candidate, testCase, block, sourceSha));
     block += 1;
   }
 
@@ -219,7 +221,8 @@ async function main(): Promise<void> {
       target: results[0]?.target ?? "unknown",
       macos_version: results[0]?.macos_version ?? "unknown",
       cpu_model: results[0]?.cpu_model ?? "unknown",
-      current_git_sha: results[0]?.git_sha ?? commandText(["git", "rev-parse", "HEAD"]),
+      current_git_sha: sourceSha,
+      provenance_scope: "benchmark source paths only; markdown-only worktree changes are excluded because they cannot affect measured code paths.",
       historical_candidate_sha: "e5292d62c4011610850cbdc1ba4a35f296f78e4f",
       native_artifact_sha256: results[0]?.native_artifact_sha256 ?? "unknown",
       all_children_clean: results.every((result) => !result.git_dirty),

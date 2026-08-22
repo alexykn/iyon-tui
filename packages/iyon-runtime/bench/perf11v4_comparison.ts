@@ -147,6 +147,7 @@ function publishedRatio(direct: ChildResult, native: ChildResult): Record<string
     direct_7v2_median_ns: direct.median_ns,
     native_11v3_median_ns: native.median_ns,
     native_over_direct_median_ratio: median,
+    native_over_direct_percentage_difference: (median - 1) * 100,
     native_over_direct_p95_ratio: native.p95_ns / Math.max(1, direct.p95_ns),
     native_over_direct_p99_ratio: native.p99_ns / Math.max(1, direct.p99_ns),
     native_over_direct_median_ratio_ci95: bootstrapRatio(direct.samples_ns, native.samples_ns),
@@ -214,7 +215,15 @@ async function main(): Promise<void> {
     grouped.set(group, [...(grouped.get(group) ?? []), { ratio: ratioValue }]);
     modes.set(mode, [...(modes.get(mode) ?? []), { ratio: ratioValue }]);
   }
-  const constructionRows = results.map((result) => ({ case: caseKey(result), candidate: result.candidate, construction: result.construction, transport_prepare: result.transport_prepare, native_commit: result.native_commit, forced_frame: result.forced_frame }));
+  const constructionRows = results.map((result) => ({
+    case: caseKey(result),
+    candidate: result.candidate,
+    construction: result.construction,
+    transport_prepare: result.transport_prepare,
+    native_commit: result.native_commit,
+    transport_plus_native_median_ns: phaseMedian(result.transport_prepare) + phaseMedian(result.native_commit),
+    forced_frame: result.forced_frame,
+  }));
   const traceRatio = grouped.get("realistic_trace")?.[0]?.ratio ?? 0;
   const summary = {
     benchmark_version: "PERF-11v4",

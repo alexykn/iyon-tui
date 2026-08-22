@@ -146,6 +146,39 @@ export interface NativeAddon {
   echoString(value: string): string;
   echoBuffer(value: Buffer): Buffer;
   tuiSmoke(): string;
+  tuiViewAbiMaintain?: (full?: boolean) => {
+    full: boolean;
+    semantic_cache_entries: number;
+    native_ref_slots: number;
+    scavenge_queue_len: number;
+    scavenge_processed: number;
+    semantic_cache_full_sweeps: number;
+  };
+  tuiViewRuntimeMemorySnapshot?: (countLive?: boolean) => {
+    semantic_cache_entries: number;
+    semantic_cache_live: number;
+    native_ref_slots: number;
+    native_ref_pages: number;
+    native_ref_pages_freed: number;
+    leased_slots: number;
+    unleased_live_slots: number;
+    node_ref_entries: number;
+    path_nodes: number;
+    path_keys: number;
+    builders: number;
+    edit_txns: number;
+    style_refs: number;
+    string_bytes: number | null;
+    scavenge_queue: number;
+    scavenge_processed: number;
+    semantic_cache_expired_seen: number;
+    semantic_cache_full_sweeps: number;
+    semantic_cache_entries_removed: number;
+    native_ref_expired_slots_removed: number;
+    nodes_inserted_since_full_sweep: number;
+    generation: number;
+    alive: boolean;
+  };
   tuiViewAbiBootstrap?: (pruneExpired?: boolean) => NativeViewAbiBootstrap;
   tuiPerfAbiProbe?(): {
     noop_ptr: number;

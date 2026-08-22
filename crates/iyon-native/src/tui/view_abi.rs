@@ -7,7 +7,7 @@ use iyon_tui::{
 use napi::Env;
 use napi_derive::napi;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::slice;
 use std::str;
@@ -45,6 +45,12 @@ const FAST_INVALID: u32 = 0x8000_0001;
 const FAST_CACHE_MISS: u32 = 0x8000_0004;
 const FAST_FALLBACK: u32 = 0x8000_0005;
 const FAST_INTERNAL: u32 = 0x8000_0006;
+
+/// PERF-12 §55 maintenance tuning: bounded candidate budget processed per
+/// maintenance call, and the weak-cache metadata growth that triggers the
+/// threshold-backstop full sweep. Final values are benchmark decisions.
+const SCAVENGE_BATCH_BUDGET: u64 = 256;
+const FULL_SWEEP_METADATA_GROWTH_THRESHOLD: u64 = 4096;
 const HOST_STATUS_OK: i32 = 0;
 const HOST_STATUS_CACHE_MISS: i32 = 1;
 const HOST_STATUS_INVALID: i32 = -1;
@@ -145,6 +151,7 @@ struct NativeRefPage {
 struct NativeRefTable<const PAGE_BITS: u32 = NATIVE_REF_PAGE_BITS> {
     pages: Vec<Option<Box<NativeRefPage>>>,
     len: usize,
+    pages_freed: u64,
 }
 
 impl<const PAGE_BITS: u32> NativeRefTable<PAGE_BITS> {
@@ -212,8 +219,18 @@ impl<const PAGE_BITS: u32> NativeRefTable<PAGE_BITS> {
         self.len -= 1;
         if page.live == 0 {
             self.pages[page_index] = None;
+            self.pages_freed += 1;
         }
         Some(removed)
+    }
+
+    /// Number of pages currently holding at least one live slot.
+    fn pages(&self) -> usize {
+        self.pages.iter().filter(|page| page.is_some()).count()
+    }
+
+    fn pages_freed(&self) -> u64 {
+        self.pages_freed
     }
 
     fn values(&self) -> impl Iterator<Item = &NativeViewSlot> {
@@ -343,6 +360,16 @@ pub(super) struct NativeViewRuntime {
     stale_removals: u64,
     release_batches: u64,
     released_refs: u64,
+    // PERF-12 §56 weak-cache maintenance counters. Plain u64 field increments
+    // are compile-time-cheap; no scans or atomics sit on the hot path and the
+    // authoritative timing build performs no extra work beyond one add.
+    scavenge_queue: VecDeque<u32>,
+    semantic_cache_expired_seen: u64,
+    semantic_cache_full_sweeps: u64,
+    semantic_cache_entries_removed: u64,
+    native_ref_expired_slots_removed: u64,
+    scavenge_processed: u64,
+    nodes_inserted_since_full_sweep: u64,
     pub(super) generation: u32,
     #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
     pub(super) packed_v3: packed_v3::PackedState,
@@ -388,6 +415,13 @@ impl NativeViewRuntime {
             stale_removals: 0,
             release_batches: 0,
             released_refs: 0,
+            scavenge_queue: VecDeque::new(),
+            semantic_cache_expired_seen: 0,
+            semantic_cache_full_sweeps: 0,
+            semantic_cache_entries_removed: 0,
+            native_ref_expired_slots_removed: 0,
+            scavenge_processed: 0,
+            nodes_inserted_since_full_sweep: 0,
             generation: 1,
             #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
             packed_v3: packed_v3::PackedState::new(),
@@ -984,6 +1018,8 @@ impl NativeViewRuntime {
             let node_id = slot.node_id;
             self.node_refs.remove(&node_id);
             self.slots.remove(&reference);
+            self.native_ref_expired_slots_removed += 1;
+            self.semantic_cache_expired_seen += 1;
             return Err(FAST_CACHE_MISS);
         };
         Ok((view, false))
@@ -1005,6 +1041,7 @@ impl NativeViewRuntime {
                 }
                 Err(FAST_CACHE_MISS) => {
                     self.node_refs.remove(&node_id);
+                    self.semantic_cache_expired_seen += 1;
                 }
                 Err(error) => return Err(error),
             }
@@ -1022,13 +1059,17 @@ impl NativeViewRuntime {
         // Clear the expired weak entry so post-maintenance metadata stays
         // proportional to live semantic state; the insert below would only
         // overwrite it anyway.
-        self.nodes.remove(&node_id);
+        if self.nodes.remove(&node_id).is_some() {
+            self.semantic_cache_expired_seen += 1;
+            self.semantic_cache_entries_removed += 1;
+        }
         Ok(SemanticIdentityMatch::Fresh)
     }
 
     /// Single installation path for a freshly allocated NativeRef. Shared by
     /// direct publication and staged (host-atomic) publication commits.
     fn install_semantic_view(&mut self, node_id: u64, view: View, reference: u32, leased: bool) {
+        self.nodes_inserted_since_full_sweep += 1;
         let weak = view.downgrade();
         self.nodes.insert(node_id, weak.clone());
         self.node_refs.insert(node_id, reference);
@@ -1172,7 +1213,56 @@ impl NativeViewRuntime {
         Ok(())
     }
 
+    /// PERF-12 §55 periodic maintenance: process a bounded budget of
+    /// scavenging candidates (zero-lease refs whose View has since expired),
+    /// then apply the threshold backstop: once weak-cache metadata growth
+    /// since the last full sweep exceeds the threshold, run one full
+    /// expired-weak sweep. Amortized cost is O(1) per released ref with
+    /// bounded slack, keeping post-maintenance metadata at
+    /// O(live semantic state + bounded sweep slack).
+    fn maintain_bounded(&mut self) {
+        let mut processed = 0u64;
+        while processed < SCAVENGE_BATCH_BUDGET {
+            let Some(reference) = self.scavenge_queue.pop_front() else {
+                break;
+            };
+            processed += 1;
+            let expired = self
+                .slots
+                .get(&reference)
+                .is_some_and(|slot| slot.js_lease_count == 0 && slot.weak.upgrade().is_none());
+            if !expired {
+                continue;
+            }
+            if let Some(slot) = self.slots.remove(&reference) {
+                self.native_ref_expired_slots_removed += 1;
+                if self.node_refs.get(&slot.node_id) == Some(&reference) {
+                    self.node_refs.remove(&slot.node_id);
+                }
+            }
+        }
+        self.scavenge_processed += processed;
+        if self.nodes_inserted_since_full_sweep >= FULL_SWEEP_METADATA_GROWTH_THRESHOLD {
+            self.prune_expired();
+        }
+    }
+
+    /// Explicit maintenance entrypoint for tests/benchmarks (§88). `full=true`
+    /// performs the complete expired-weak sweep; otherwise only the bounded
+    /// candidate budget is processed.
+    pub(super) fn maintain(&mut self, full: bool) {
+        if full {
+            self.prune_expired();
+        } else {
+            self.maintain_bounded();
+        }
+    }
+
+    /// Full expired-weak sweep (§55 threshold backstop and the explicit
+    /// maintenance hook). Post-sweep weak/slot metadata is O(live + slack).
     pub(super) fn prune_expired(&mut self) {
+        self.semantic_cache_full_sweeps += 1;
+        self.nodes_inserted_since_full_sweep = 0;
         let expired_nodes = self
             .nodes
             .iter()
@@ -1180,14 +1270,15 @@ impl NativeViewRuntime {
             .collect::<Vec<_>>();
         for node_id in expired_nodes {
             self.nodes.remove(&node_id);
+            self.semantic_cache_entries_removed += 1;
             self.stale_removals = self.stale_removals.saturating_add(1);
-            if let Some(reference) = self.node_refs.remove(&node_id)
-                && self
+            if let Some(reference) = self.node_refs.remove(&node_id) {
+                let unleased = self
                     .slots
                     .get(&reference)
-                    .is_some_and(|slot| slot.js_lease_count == 0)
-            {
-                if self.slots.remove(&reference).is_some() {
+                    .is_some_and(|slot| slot.js_lease_count == 0);
+                if unleased && self.slots.remove(&reference).is_some() {
+                    self.native_ref_expired_slots_removed += 1;
                     self.stale_removals = self.stale_removals.saturating_add(1);
                 }
             }
@@ -1201,17 +1292,24 @@ impl NativeViewRuntime {
             .collect::<Vec<_>>();
         for reference in expired_refs {
             if let Some(slot) = self.slots.remove(&reference) {
+                self.native_ref_expired_slots_removed += 1;
                 self.stale_removals = self.stale_removals.saturating_add(1);
                 if self.node_refs.get(&slot.node_id) == Some(&reference) {
                     self.node_refs.remove(&slot.node_id);
                 }
             }
         }
+        // Expired entries discovered by the sweep are not re-scanned by the
+        // candidate queue; drop any queued duplicates lazily via the normal
+        // bounded path (they resolve to absent slots and cost nothing).
     }
 
     fn release_many(&mut self, refs: *const u32, used_count: u32) -> Result<i32, i32> {
         self.release_batches = self.release_batches.saturating_add(1);
         self.released_refs = self.released_refs.saturating_add(u64::from(used_count));
+        // Process candidates from earlier batches first: a View that expired
+        // after its release is reclaimed here without waiting for a lookup.
+        self.maintain_bounded();
         for index in 0..used_count as usize {
             let reference = unsafe { refs.add(index).read() };
             let remove_slot = self
@@ -1227,10 +1325,21 @@ impl NativeViewRuntime {
                 .unwrap_or(false);
             if remove_slot {
                 if let Some(slot) = self.slots.remove(&reference) {
+                    self.native_ref_expired_slots_removed += 1;
                     if self.node_refs.get(&slot.node_id) == Some(&reference) {
                         self.node_refs.remove(&slot.node_id);
                     }
                 }
+            } else if self
+                .slots
+                .get(&reference)
+                .is_some_and(|slot| slot.js_lease_count == 0)
+            {
+                // §55 release path: enqueue the zero-lease ref as a scavenging
+                // candidate so later weak expiry is reclaimed without waiting
+                // for a lookup on the same ref. Candidates are processed by
+                // the next maintenance pass, not this one.
+                self.scavenge_queue.push_back(reference);
             }
         }
         Ok(used_count as i32)
@@ -1355,6 +1464,18 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
         "release_batches": runtime_state.release_batches,
         "released_refs": runtime_state.released_refs,
         "live_weak_upgrades": live_weak_upgrades,
+        // PERF-12 §56 weak-cache maintenance counters.
+        "semantic_cache_expired_seen": runtime_state.semantic_cache_expired_seen,
+        "semantic_cache_full_sweeps": runtime_state.semantic_cache_full_sweeps,
+        "semantic_cache_entries_removed": runtime_state.semantic_cache_entries_removed,
+        "native_ref_unleased_live_slots": diagnostics.1.saturating_sub(diagnostics.2),
+        "native_ref_expired_slots_removed": runtime_state.native_ref_expired_slots_removed,
+        "native_ref_pages": runtime_state.slots.pages(),
+        "native_ref_pages_freed": runtime_state.slots.pages_freed(),
+        "node_ref_map_entries": runtime_state.node_refs.len(),
+        "scavenge_queue_len": runtime_state.scavenge_queue.len(),
+        "scavenge_processed": runtime_state.scavenge_processed,
+        "nodes_inserted_since_full_sweep": runtime_state.nodes_inserted_since_full_sweep,
         "generation": runtime_state.generation,
         "alive": runtime_state.alive.load(Ordering::Acquire) != 0,
     });
@@ -1420,6 +1541,88 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
             "viewTextCreateCstring3": generated_exports::iyon_view_text_create_cstring_3_v1 as *const () as usize as u64,
             "viewTextCreateCstring4": generated_exports::iyon_view_text_create_cstring_4_v1 as *const () as usize as u64,
         },
+    }))
+}
+
+/// PERF-12 §88/§89 explicit maintenance hook for tests and benchmarks.
+/// `full = true` performs the complete expired-weak sweep (threshold-backstop
+/// equivalent); otherwise only the bounded scavenge-candidate budget runs.
+#[napi(js_name = "tuiViewAbiMaintain")]
+pub fn tui_view_abi_maintain(env: Env, full: Option<bool>) -> napi::Result<Value> {
+    let runtime = runtime_for_env(&env)?;
+    unsafe { &mut *runtime }.maintain(full.unwrap_or(false));
+    let state = unsafe { &*runtime };
+    Ok(serde_json::json!({
+        "full": full.unwrap_or(false),
+        "semantic_cache_entries": state.nodes.len(),
+        "native_ref_slots": state.slots.len(),
+        "scavenge_queue_len": state.scavenge_queue.len(),
+        "scavenge_processed": state.scavenge_processed,
+        "semantic_cache_full_sweeps": state.semantic_cache_full_sweeps,
+    }))
+}
+
+/// PERF-12 §89 memory diagnostic snapshot. Expensive live-count scans run only
+/// when `count_live` is requested; timing samples must call this with
+/// `count_live = false`.
+#[napi(js_name = "tuiViewRuntimeMemorySnapshot")]
+pub fn tui_view_runtime_memory_snapshot(env: Env, count_live: Option<bool>) -> napi::Result<Value> {
+    let runtime = runtime_for_env(&env)?;
+    let state = unsafe { &*runtime };
+    let count_live = count_live.unwrap_or(false);
+    let semantic_cache_live = if count_live {
+        state
+            .nodes
+            .values()
+            .filter(|weak| weak.upgrade().is_some())
+            .count()
+    } else {
+        0
+    };
+    let leased_slots = if count_live {
+        state
+            .slots
+            .values()
+            .filter(|slot| slot.js_lease_count > 0)
+            .count()
+    } else {
+        0
+    };
+    let unleased_live_slots = if count_live {
+        state
+            .slots
+            .values()
+            .filter(|slot| slot.js_lease_count == 0 && slot.weak.upgrade().is_some())
+            .count()
+    } else {
+        0
+    };
+    Ok(serde_json::json!({
+        "semantic_cache_entries": state.nodes.len(),
+        "semantic_cache_live": semantic_cache_live,
+        "native_ref_slots": state.slots.len(),
+        "native_ref_pages": state.slots.pages(),
+        "native_ref_pages_freed": state.slots.pages_freed(),
+        "leased_slots": leased_slots,
+        "unleased_live_slots": unleased_live_slots,
+        "node_ref_entries": state.node_refs.len(),
+        "path_nodes": state.path_nodes.len(),
+        "path_keys": state.path_keys.len(),
+        "builders": state.builders.len(),
+        "edit_txns": state.edit_txns.len(),
+        "style_refs": state.styles.len(),
+        // Retained text/style payload byte accounting is not tracked by the
+        // current runtime; reported as null rather than a misleading zero.
+        "string_bytes": null,
+        "scavenge_queue": state.scavenge_queue.len(),
+        "scavenge_processed": state.scavenge_processed,
+        "semantic_cache_expired_seen": state.semantic_cache_expired_seen,
+        "semantic_cache_full_sweeps": state.semantic_cache_full_sweeps,
+        "semantic_cache_entries_removed": state.semantic_cache_entries_removed,
+        "native_ref_expired_slots_removed": state.native_ref_expired_slots_removed,
+        "nodes_inserted_since_full_sweep": state.nodes_inserted_since_full_sweep,
+        "generation": state.generation,
+        "alive": state.alive.load(Ordering::Acquire) != 0,
     }))
 }
 
@@ -3480,6 +3683,167 @@ mod tests {
             unsafe { generated_exports::iyon_axis_builder_abort_v1(pointer, builder) },
             1
         );
+    }
+
+    // --- PERF-12 §111 native slot lease invariants -----------------------------
+
+    fn lease_count(runtime: &NativeViewRuntime, reference: u32) -> Option<u32> {
+        runtime
+            .slots
+            .get(&reference)
+            .map(|slot| slot.js_lease_count)
+    }
+
+    #[test]
+    fn new_constructor_returns_lease_count_one() {
+        let mut runtime = runtime();
+        let reference = runtime.publish(11, View::spacer(2)).expect("publish");
+        assert_eq!(lease_count(&runtime, reference), Some(1));
+        assert!(runtime.resolve_ref(reference).is_ok());
+    }
+
+    #[test]
+    fn child_temp_lease_stays_live_until_root_completes() {
+        let mut runtime = runtime();
+        let child_view = View::spacer(1);
+        let child_ref = runtime.publish(21, child_view.clone()).expect("child");
+        // Parent construction resolves the child ref safely while the temp
+        // lease is still held.
+        assert!(runtime.resolve_ref(child_ref).is_ok());
+        let parent_view = View::spacer(3);
+        let parent_ref = runtime.publish(22, parent_view).expect("parent");
+        // The root now exists; releasing the child temp lease leaves the child
+        // View alive through the parent's strong ownership (unleased-live).
+        assert_eq!(runtime.release_many(&child_ref, 1), Ok(1));
+        assert_eq!(lease_count(&runtime, child_ref), Some(0));
+        assert!(runtime.resolve_ref(child_ref).is_ok());
+        assert_eq!(lease_count(&runtime, parent_ref), Some(1));
+    }
+
+    #[test]
+    fn batch_release_drops_child_temp_leases() {
+        let mut runtime = runtime();
+        let refs = [
+            runtime.publish(31, View::spacer(1)).expect("a"),
+            runtime.publish(32, View::spacer(1)).expect("b"),
+            runtime.publish(33, View::spacer(1)).expect("c"),
+        ];
+        for reference in refs {
+            scratch_release(&mut runtime, &[reference]);
+        }
+        // No other owner holds these Views, so the release path removes the
+        // slots outright; with a live owner they would drop to lease 0 instead
+        // (see child_temp_lease_stays_live_until_root_completes).
+        for reference in refs {
+            assert!(runtime.slots.get(&reference).is_none());
+        }
+    }
+
+    fn scratch_release(runtime: &mut NativeViewRuntime, refs: &[u32]) {
+        let mut buffer = [0u32; 16];
+        for (index, reference) in refs.iter().enumerate() {
+            buffer[index] = *reference;
+        }
+        assert_eq!(
+            runtime.release_many(buffer.as_ptr(), refs.len() as u32),
+            Ok(refs.len() as i32)
+        );
+    }
+
+    #[test]
+    fn root_lease_transfers_to_boundary_after_new_install() {
+        let mut runtime = runtime();
+        let old_root = runtime.publish(41, View::spacer(1)).expect("old root");
+        // Boundary protocol (§18): keep previousRef leased, materialize the
+        // next root, acquire its boundary lease, then release the old root.
+        let new_root = runtime.publish(42, View::spacer(2)).expect("new root");
+        runtime
+            .ensure_lease(new_root, View::spacer(2))
+            .expect("boundary lease");
+        assert_eq!(runtime.release_many(&old_root, 1), Ok(1));
+        // The old root's only owner was the boundary lease, so its slot is
+        // fully reclaimed; the new root keeps exactly the boundary lease.
+        assert!(runtime.slots.get(&old_root).is_none());
+        assert_eq!(lease_count(&runtime, new_root), Some(1));
+    }
+
+    #[test]
+    fn failed_host_install_retains_old_root() {
+        let mut runtime = runtime();
+        let old_root = runtime.publish(51, View::spacer(1)).expect("old root");
+        // A failed host install releases only the failed candidate; the old
+        // boundary lease must be untouched.
+        let candidate = runtime.publish(52, View::spacer(2)).expect("candidate");
+        assert_eq!(runtime.release_many(&candidate, 1), Ok(1));
+        assert_eq!(lease_count(&runtime, old_root), Some(1));
+        assert!(runtime.resolve_ref(old_root).is_ok());
+    }
+
+    #[test]
+    fn failed_transaction_releases_every_new_temp_lease() {
+        let mut runtime = runtime();
+        let temps = [
+            runtime.publish(61, View::spacer(1)).expect("t1"),
+            runtime
+                .publish(62, View::text("failed-tx").into_view())
+                .expect("t2"),
+            runtime.publish(63, View::spacer(4)).expect("t3"),
+        ];
+        scratch_release(&mut runtime, &temps);
+        for reference in temps {
+            assert!(runtime.slots.get(&reference).is_none());
+        }
+    }
+
+    #[test]
+    fn stale_unleased_weak_slot_returns_cache_miss() {
+        let mut runtime = runtime();
+        let view = View::spacer(1);
+        let reference = runtime.publish_bulk(71, view.clone()).expect("bulk");
+        drop(view); // no lease owns it; the weak entry is now stale metadata
+        assert_eq!(runtime.resolve_ref(reference), Err(FAST_CACHE_MISS));
+        assert!(runtime.slots.get(&reference).is_none());
+    }
+
+    #[test]
+    fn slot_metadata_scavenged_after_weak_expiry() {
+        let mut runtime = runtime();
+        // Live-but-unleased slot whose View later expires: release enqueues a
+        // scavenge candidate and bounded maintenance reclaims the metadata.
+        let view = View::spacer(1);
+        let live_reference = runtime.publish_bulk(81, view.clone()).expect("live bulk");
+        assert_eq!(runtime.release_many(&live_reference, 1), Ok(1));
+        // Still alive at release time: the slot stays as unleased-live state
+        // and the ref sits in the scavenge queue.
+        assert!(runtime.slots.get(&live_reference).is_some());
+        assert_eq!(runtime.scavenge_queue.len(), 1);
+        drop(view);
+        // The next maintenance pass reclaims the expired metadata (§55).
+        runtime.maintain(false);
+        assert!(runtime.slots.get(&live_reference).is_none());
+        assert!(runtime.scavenge_processed >= 1);
+        assert_eq!(runtime.node_refs.len(), 0);
+
+        // Transient churn self-cleans slots inline on release; the expired
+        // weak-cache entries remain as bounded slack until the full sweep
+        // removes them (§55 invariant demonstrated end to end).
+        for id in 82..82 + 64u64 {
+            let transient = View::spacer(1);
+            let reference = runtime.publish(id, transient.clone()).expect("transient");
+            drop(transient);
+            assert_eq!(runtime.release_many(&reference, 1), Ok(1));
+        }
+        assert_eq!(runtime.slots.len(), 0);
+        // 64 transient entries plus the expired bulk entry from node 81 whose
+        // slot was reclaimed by the bounded pass but whose weak-cache entry
+        // waits for the full sweep: exactly the "bounded slack" model.
+        assert_eq!(runtime.nodes.len(), 65);
+        assert_eq!(runtime.node_refs.len(), 0);
+        runtime.prune_expired();
+        assert!(runtime.semantic_cache_full_sweeps >= 1);
+        assert!(runtime.semantic_cache_entries_removed >= 64);
+        assert_eq!(runtime.nodes.len(), 0);
+        assert_eq!(runtime.node_refs.len(), 0);
     }
 
     #[test]

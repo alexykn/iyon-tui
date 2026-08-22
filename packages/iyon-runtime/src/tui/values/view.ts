@@ -1,3 +1,33 @@
+/**
+ * PERF-12 T4: eager immutable semantic View DAG (PERF-12 handoff §13/§14/§84).
+ *
+ * Production has been restored to the historical 7v2 semantic model
+ * (e5292d62c4011610850cbdc1ba4a35f296f78e4f), mechanically adapted to the
+ * current schema. NodeId assignment, freezing, child identity sharing, and
+ * the lookup-only nodeForBridge are exactly 7v2. The post-7v2 text-span
+ * style pushdown was evaluated and dropped: under the eager model it is
+ * slower than the 7v2 decorated wrapper at construction (measured 1,145 ns
+ * vs 661 ns for one modifier) and is render-equivalent, so faithful 7v2
+ * semantics win; a cheaper form can return as a PERF-12 §27 derivation hint
+ * in the T9 tranche if it ever measures as a net win.
+ *
+ * The pending create/patch backings and the packed-transport metadata
+ * coupling (registerPackedMeta at construction, *ForPackedTransport statics,
+ * sequence overrides) have been removed: every transport candidate except
+ * direct_7v2 and PERF-12 retained-DAG FFI was ruled out by PERF-11v4
+ * category D, so their JS-side machinery is no longer kept alive. The native
+ * packed decoders remain in iyon-native untouched (T4 is a no-native-change
+ * tranche); they are simply unreachable from this module.
+ *
+ * The recipe reader functions (nativeAxisRecipe, nativeTextRecipe,
+ * nativeSpacerRecipe, nativeScalarPatch, viewBackingState) are retained as
+ * always-undefined stubs so the generated-route code in native_view_abi.ts
+ * keeps compiling; under the eager DAG those routes never fire and every
+ * render lands on the Direct decode path (measured faster on realistic
+ * traces by PERF-11v4). Their removal happens with the route code in the
+ * PERF-12 cleanup tranche.
+ */
+
 import type { NativeHandleId } from "../types.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
@@ -23,13 +53,12 @@ import {
   type BridgeOverflowIndicatorNode,
   type BridgeViewNode,
   type BridgeViewNodeDraft,
-  type ColorNode,
   type TextSpanNode,
+  type ColorNode,
   type DecorationNode,
   type DiffHunkNode,
   type DiffLineNode,
   type GridTrackNode,
-  type InsetsNode,
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
@@ -37,62 +66,17 @@ import {
 import { insets, Insets } from "./geometry.ts";
 import { StyleSpec } from "./style.ts";
 import { TextSpan, type HorizontalAlign, type WrapMode } from "./text.ts";
-import { packedMeta, registerPackedMeta, setPackedGridCells, setPackedSequence, type PackedGridCell, type PackedLineage, type PackedMetaSeed } from "../packed_v3_meta.ts";
-import { PersistentSeq } from "../persistent_seq.ts";
 
 type ChildBuilder = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
+const NODE_ID_COUNTER = Symbol.for("iyon:tui:private-view-node-counter");
+const globalRoot = globalThis as typeof globalThis & { [NODE_ID_COUNTER]?: CounterBox };
+const nodeIdCounter = globalRoot[NODE_ID_COUNTER] ??= { next: 1 };
 
-type PendingCreateKind = "text" | "spacer" | "axis";
-type PendingPatchKind = "textLayout" | "common";
-
-type PendingAxisChild = Readonly<{
-  view: View;
-  kind: BridgeLayoutChild["kind"];
-  value?: number;
-}>;
-
-/**
- * Stable-shape private semantic backing. Pending values carry only the compact
- * recipe needed by the generated/native route; BridgeViewNode is materialized
- * lazily by nodeForBridge for the cold/direct compatibility path.
- */
-interface ViewBacking {
-  readonly state: 0 | 1 | 2;
-  readonly nodeId: number;
-  readonly nodeIdLow: number;
-  readonly nodeIdHigh: number;
-  readonly nodeIdPair: readonly [number, number];
-  readonly node?: BridgeViewNode;
-  readonly createKind?: PendingCreateKind;
-  readonly spans?: readonly TextSpanNode[];
-  readonly rows?: number;
-  readonly axisHorizontal?: boolean;
-  readonly axisGap?: number;
-  readonly axisChildren?: readonly PendingAxisChild[];
-  readonly wrap?: number;
-  readonly align?: number;
-  readonly patchKind?: PendingPatchKind;
-  readonly base?: View;
-  readonly mask?: number;
-  readonly paddingTopRight?: number;
-  readonly paddingBottomLeft?: number;
-  readonly widthRule?: number;
-  readonly heightRule?: number;
-  readonly minWidth?: number;
-  readonly maxWidth?: number;
-  readonly minHeight?: number;
-  readonly maxHeight?: number;
+function nextNodeId(): number {
+  if (nodeIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI View node identity exhausted");
+  return nodeIdCounter.next++;
 }
-
-const PATCH_PADDING = 4;
-const PATCH_WIDTH = 8;
-const PATCH_HEIGHT = 16;
-const PATCH_MIN_WIDTH = 32;
-const PATCH_MAX_WIDTH = 64;
-const PATCH_MIN_HEIGHT = 128;
-const PATCH_MAX_HEIGHT = 256;
-const kBacking = Symbol("iyon:tui:view-backing");
 
 export interface NativeTextLayoutPatch {
   readonly kind: "textLayout";
@@ -129,19 +113,14 @@ export interface NativePathStep {
   readonly selector: number;
 }
 
+/** Lineage metadata for retained-path constructions; references NodeIds only. */
 export interface NativePathLineage {
-  /** Full JS semantic NodeId of the previous root; no View is retained. */
   readonly baseNodeId: number;
   readonly parent?: NativePathLineage;
   readonly step?: NativePathStep;
   readonly depth: number;
 }
 
-/**
- * Construction-time metadata for a native typed text-layout transaction.
- * `nodeIds` is ordered from the changed leaf toward the final changed root;
- * render lowers these values into the fixed generated NodeId lanes.
- */
 export interface NativeTextLayoutTransactionEdit {
   readonly lineage: NativePathLineage;
   readonly nodeIds: readonly number[];
@@ -157,7 +136,6 @@ export const NATIVE_PATH_VIEW_KIND = Object.freeze({
   hanging: 5,
   container: 6,
   clampRows: 7,
-  rowViewport: 8,
 });
 
 export const NATIVE_PATH_STEP = Object.freeze({
@@ -171,110 +149,6 @@ export const NATIVE_PATH_STEP = Object.freeze({
   hangingContinuation: 8,
   hangingBody: 9,
 });
-const NODE_ID_COUNTER = Symbol.for("iyon:tui:private-view-node-counter");
-const globalRoot = globalThis as typeof globalThis & { [NODE_ID_COUNTER]?: CounterBox };
-const nodeIdCounter = globalRoot[NODE_ID_COUNTER] ??= { next: 1 };
-
-function nextNodeId(): number {
-  if (nodeIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI View node identity exhausted");
-  return nodeIdCounter.next++;
-}
-
-function makeBacking(
-  state: 0 | 1 | 2,
-  nodeId: number,
-  fields: Partial<ViewBacking> = {},
-): ViewBacking {
-  return Object.freeze({
-    state,
-    nodeId,
-    nodeIdLow: nodeId >>> 0,
-    nodeIdHigh: Math.floor(nodeId / 0x1_0000_0000),
-    nodeIdPair: Object.freeze([nodeId >>> 0, Math.floor(nodeId / 0x1_0000_0000)] as const),
-    node: fields.node,
-    createKind: fields.createKind,
-    spans: fields.spans,
-    rows: fields.rows,
-    axisHorizontal: fields.axisHorizontal,
-    axisGap: fields.axisGap,
-    axisChildren: fields.axisChildren,
-    wrap: fields.wrap,
-    align: fields.align,
-    patchKind: fields.patchKind,
-    base: fields.base,
-    mask: fields.mask,
-    paddingTopRight: fields.paddingTopRight,
-    paddingBottomLeft: fields.paddingBottomLeft,
-    widthRule: fields.widthRule,
-    heightRule: fields.heightRule,
-    minWidth: fields.minWidth,
-    maxWidth: fields.maxWidth,
-    minHeight: fields.minHeight,
-    maxHeight: fields.maxHeight,
-  });
-}
-
-function pendingTextBacking(spans: readonly TextSpanNode[], wrap: number, align: number): ViewBacking {
-  return makeBacking(1, nextNodeId(), {
-    createKind: "text",
-    spans,
-    wrap,
-    align,
-  });
-}
-
-function pendingSpacerBacking(rows: number): ViewBacking {
-  return makeBacking(1, nextNodeId(), { createKind: "spacer", rows });
-}
-
-function pendingAxisBacking(
-  horizontal: boolean,
-  gap: number,
-  children: readonly PendingAxisChild[],
-): ViewBacking {
-  return makeBacking(1, nextNodeId(), {
-    createKind: "axis",
-    axisHorizontal: horizontal,
-    axisGap: gap,
-    axisChildren: Object.freeze(children.map((child) => Object.freeze({ ...child }))),
-  });
-}
-
-function pendingTextPatchBacking(base: View, wrap: number, align: number): ViewBacking {
-  return makeBacking(2, nextNodeId(), {
-    patchKind: "textLayout",
-    base,
-    wrap,
-    align,
-  });
-}
-
-function pendingCommonPatchBacking(
-  base: View,
-  mask: number,
-  paddingTopRight: number,
-  paddingBottomLeft: number,
-  widthRule: number,
-  heightRule: number,
-  minWidth: number,
-  maxWidth: number,
-  minHeight: number,
-  maxHeight: number,
-): ViewBacking {
-  return makeBacking(2, nextNodeId(), {
-    patchKind: "common",
-    base,
-    mask,
-    paddingTopRight,
-    paddingBottomLeft,
-    widthRule,
-    heightRule,
-    minWidth,
-    maxWidth,
-    minHeight,
-    maxHeight,
-  });
-}
 
 export type OverflowIndicator =
   | { readonly kind: "none" }
@@ -334,51 +208,33 @@ export class GridBuilder {
 }
 
 export class ChildrenBuilder {
-  private readonly nativeChildren: PendingAxisChild[] = [];
+  private readonly entries: BridgeLayoutChild[] = [];
   private layoutGap = 0;
-  get children(): BridgeLayoutChild[] {
-    return this.nativeChildren.map((entry) => bridgeLayoutChild(entry));
-  }
-  get nativeAxisChildren(): readonly PendingAxisChild[] { return this.nativeChildren; }
-  child(view: View): this {
-    this.nativeChildren.push({ view, kind: BRIDGE_LAYOUT_CHILD_KIND.normal });
-    return this;
-  }
+  get children(): BridgeLayoutChild[] { return this.entries; }
+  child(view: View): this { this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(view) }); return this; }
   childrenOf(views: readonly View[]): this { for (const view of views) this.child(view); return this; }
   gap(value: number): this { this.layoutGap = validateU16(value, "gap"); return this; }
   fixed(size: number, view: View): this {
-    this.nativeChildren.push({ view, kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, value: validateU16(size, "size") });
+    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: validateU16(size, "size"), child: nodeForBridge(view) });
     return this;
   }
-  flex(view: View): this {
-    this.nativeChildren.push({ view, kind: BRIDGE_LAYOUT_CHILD_KIND.flex, value: 1 });
-    return this;
-  }
+  flex(view: View): this { this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child: nodeForBridge(view) }); return this; }
   flexMax(maxRows: number, view: View): this {
-    this.nativeChildren.push({ view, kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, value: validateU16(maxRows, "maxRows") });
+    validateU16(maxRows, "maxRows");
+    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows, child: nodeForBridge(view) });
     return this;
   }
   contentMax(maxRows: number, view: View): this {
-    this.nativeChildren.push({ view, kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, value: validateU16(maxRows, "maxRows") });
+    validateU16(maxRows, "maxRows");
+    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows, child: nodeForBridge(view) });
     return this;
   }
   gapValue(): number { return this.layoutGap; }
 }
 
-function withIdentity(
-  node: BridgeViewNode | BridgeViewNodeDraft,
-  id: number,
-  lineage?: PackedLineage,
-  seed?: PackedMetaSeed,
-): BridgeViewNode {
+function withPrivateIdentity(node: BridgeViewNode | BridgeViewNodeDraft): BridgeViewNode {
   const { id: _oldId, schema: _oldSchema, ...draft } = node as BridgeViewNode;
-  const result = freezeBridgeNode({ id, schema: VIEW_BRIDGE_SCHEMA_VERSION, ...draft } as BridgeViewNode);
-  registerPackedMeta(result, lineage, seed);
-  return result;
-}
-
-function withPrivateIdentity(node: BridgeViewNode | BridgeViewNodeDraft, lineage?: PackedLineage, seed?: PackedMetaSeed): BridgeViewNode {
-  return withIdentity(node, nextNodeId(), lineage, seed);
+  return freezeBridgeNode({ id: nextNodeId(), schema: VIEW_BRIDGE_SCHEMA_VERSION, ...draft } as BridgeViewNode);
 }
 
 function freezeColor(color: ColorNode | undefined): void {
@@ -470,21 +326,9 @@ function freezeBridgeNode(node: BridgeViewNode): BridgeViewNode {
 
 export class View {
   readonly kind = "view" as const;
-  readonly [kBacking]: ViewBacking;
 
-  private constructor(
-    nodeOrBacking: BridgeViewNode | BridgeViewNodeDraft | ViewBacking,
-    lineage?: PackedLineage,
-    seed?: PackedMetaSeed,
-    nativePath?: NativePathLineage,
-  ) {
-    const identity = isViewBacking(nodeOrBacking) ? undefined : withPrivateIdentity(nodeOrBacking, lineage, seed);
-    const backing = isViewBacking(nodeOrBacking)
-      ? nodeOrBacking
-      : makeBacking(0, identity!.id, { node: identity });
-    this[kBacking] = backing;
-    if (backing.node !== undefined) nodes.set(this, backing.node);
-    if (nativePath !== undefined) nativePathLineages.set(this, nativePath);
+  private constructor(node: BridgeViewNode | BridgeViewNodeDraft) {
+    nodes.set(this, withPrivateIdentity(node));
     Object.freeze(this);
   }
 
@@ -499,39 +343,29 @@ export class View {
 
   static text(value: string): View {
     if (typeof value !== "string") throw new TypeError("View.text requires a string");
-    return new View(pendingTextBacking(
-      Object.freeze([{ text: value }]),
-      BRIDGE_WRAP_MODE.wordThenGrapheme,
-      BRIDGE_HORIZONTAL_ALIGN.start,
-    ));
+    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: [{ text: value }], wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
   }
 
   static styledText(spans: readonly TextSpan[]): View {
-    const values = spans.map((span) => ({
+    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: spans.map((span) => ({
       ...span.value,
       style: span.value.style === undefined ? undefined : cloneStyle(span.value.style),
-    }));
-    Object.freeze(values);
-    return new View(pendingTextBacking(
-      values,
-      BRIDGE_WRAP_MODE.wordThenGrapheme,
-      BRIDGE_HORIZONTAL_ALIGN.start,
-    ));
+    })), wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
   }
 
   static spacer(rows: number): View {
     validateU16(rows, "rows");
-    return new View(pendingSpacerBacking(rows));
+    return new View({ kind: BRIDGE_VIEW_KIND.spacer, rows });
   }
 
   static horizontal(children: ChildBuilder): View {
     const builder = buildChildren(children);
-    return new View(pendingAxisBacking(true, builder.gapValue(), builder.nativeAxisChildren));
+    return new View({ kind: BRIDGE_VIEW_KIND.row, children: builder.children, gap: builder.gapValue() });
   }
 
   static vertical(children: ChildBuilder): View {
     const builder = buildChildren(children);
-    return new View(pendingAxisBacking(false, builder.gapValue(), builder.nativeAxisChildren));
+    return new View({ kind: BRIDGE_VIEW_KIND.column, children: builder.children, gap: builder.gapValue() });
   }
 
   static hanging(prefix: View, continuation: View, body: View): View {
@@ -574,104 +408,6 @@ export class View {
     return new View({ kind: BRIDGE_VIEW_KIND.component, handle: (nativeId ?? handle.id) as NativeHandleId });
   }
 
-  static replaceAxisChildForPackedTransport(view: View, index: number, child: View): View {
-    const node = nodeForBridge(view);
-    if (node.kind !== BRIDGE_VIEW_KIND.row && node.kind !== BRIDGE_VIEW_KIND.column) throw new TypeError("packed axis replacement requires a row or column");
-    const current = packedMeta(node).sequence ?? PersistentSeq.from(node.children);
-    const item = current.get(index);
-    if (item === undefined) throw new RangeError("packed axis replacement index out of range");
-    const sequence = current.set(index, { ...item, child: nodeForBridge(child) });
-    const next = new View({ ...node, children: node.children }, { kind: "axis", base: node }, { sequence });
-    setPackedSequence(nodeForBridge(next), sequence);
-    nativeStructuralEdits.set(next, Object.freeze({
-      kind: "axisSet",
-      base: view,
-      child,
-      index,
-      trackWord: bridgeAxisTrackWord(item),
-    }));
-    return next;
-  }
-
-  static spliceAxisChildrenForPackedTransport(view: View, index: number, removeCount: number, children: readonly View[]): View {
-    const node = nodeForBridge(view);
-    if (node.kind !== BRIDGE_VIEW_KIND.row && node.kind !== BRIDGE_VIEW_KIND.column) throw new TypeError("packed axis splice requires a row or column");
-    const current = packedMeta(node).sequence ?? PersistentSeq.from(node.children);
-    const items = children.map((child) => ({ kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(child) }));
-    const sequence = current.splice(index, removeCount, ...items);
-    const next = new View({ ...node, children: node.children }, { kind: "axis", base: node }, { sequence });
-    setPackedSequence(nodeForBridge(next), sequence);
-    nativeStructuralEdits.set(next, Object.freeze({
-      kind: "axisSplice",
-      base: view,
-      children: Object.freeze(children.map((child, childIndex) => Object.freeze({ view: child, trackWord: bridgeAxisTrackWord(items[childIndex]!) }))),
-      index,
-      removeCount,
-    }));
-    return next;
-  }
-
-  static replaceGridCellForPackedTransport(view: View, row: number, column: number, child: View): View {
-    const node = nodeForBridge(view);
-    if (node.kind !== BRIDGE_VIEW_KIND.grid) throw new TypeError("packed grid replacement requires a grid");
-    if (!Number.isInteger(row) || row < 0 || row >= node.rows.length) throw new RangeError("packed grid row out of range");
-    if (!Number.isInteger(column) || column < 0) throw new RangeError("packed grid column out of range");
-    const baseMeta = packedMeta(node);
-    const current = baseMeta.gridCells;
-    if (current === undefined || baseMeta.gridCellOffsets === undefined) throw new Error("packed grid sequence is unavailable");
-    const index = baseMeta.gridCellOffsets.get(`${row}:${column}`);
-    if (index === undefined) throw new RangeError("packed grid cell index is unavailable");
-    const cell = current.get(index);
-    if (cell === undefined) throw new RangeError("packed grid cell out of range");
-    const sequence = current.set(index, { ...cell, view: nodeForBridge(child) } satisfies PackedGridCell);
-    const next = new View(
-      { ...node, rows: node.rows },
-      { kind: "grid", base: node },
-      { gridCells: sequence, gridCellOffsets: baseMeta.gridCellOffsets },
-    );
-    setPackedGridCells(nodeForBridge(next), sequence);
-    nativeStructuralEdits.set(next, Object.freeze({ kind: "gridCell", base: view, child, row, column }));
-    return next;
-  }
-
-  bold(): View { return this.textAttribute("bold"); }
-  dim(): View { return this.textAttribute("dim"); }
-  italic(): View { return this.textAttribute("italic"); }
-  underline(): View { return this.textAttribute("underline"); }
-  reversed(): View { return this.textAttribute("reversed"); }
-  strikethrough(): View { return this.textAttribute("strikethrough"); }
-  textAttribute(name: string, enabled = true): View { return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } }); }
-  padding(value: number | Insets): View { return this.decorate({ padding: insets(value) }); }
-  background(color: ColorNode): View { return this.decorate({ background: color }); }
-  foreground(color: ColorNode): View { return this.decorate({ foreground: color }); }
-  border(border: BorderNode): View { return this.decorate({ border }); }
-  style(style: StyleSpec): View { return this.decorate({ style: mergeStyles(emptyStyle(), style.value) }); }
-
-  styleState(key: string, value: string): View {
-    if (key.length === 0 || value.length === 0) throw new RangeError("style state key and value cannot be empty");
-    const decorated = this.decoratedNode();
-    const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
-    const child = decorated?.child ?? nodeForBridge(this);
-    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [key]: value } } }, { kind: "decoration", base: nodeForBridge(this) });
-  }
-
-  container(): View { return new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
-  clampRows(maxRows: number, overflow: OverflowIndicator = { kind: "none" }): View {
-    validateU16(maxRows, "maxRows");
-    return new View({ kind: BRIDGE_VIEW_KIND.clamp, child: nodeForBridge(this), maxRows, overflow: bridgeOverflow(overflow) });
-  }
-  fitWidth(): View { return this.decorate({ width: "fit" }); }
-  fillWidth(): View { return this.decorate({ width: "fill" }); }
-  fitHeight(): View { return this.decorate({ height: "fit" }); }
-  fillHeight(): View { return this.decorate({ height: "fill" }); }
-  minWidth(value: number): View { return this.decorate({ minWidth: validateU16(value, "minWidth") }); }
-  maxWidth(value: number): View { return this.decorate({ maxWidth: validateU16(value, "maxWidth") }); }
-  minHeight(value: number): View { return this.decorate({ minHeight: validateU16(value, "minHeight") }); }
-  maxHeight(value: number): View { return this.decorate({ maxHeight: validateU16(value, "maxHeight") }); }
-  wrap(mode: WrapMode): View { return this.textLayoutPatch(wrapCode(mode), undefined); }
-  noWrap(): View { return this.wrap("noWrap"); }
-  textAlign(align: HorizontalAlign): View { return this.textLayoutPatch(undefined, horizontalAlignCode(align)); }
-
   /** Internal retained-path constructor; not part of the public semantic API. */
   static textLayoutAtNativePathForTransport(
     view: View,
@@ -683,13 +419,15 @@ export class View {
     const nextNode = patchBridgeTextPath(nodeForBridge(view), steps, wrapCode(wrap), horizontalAlignCode(align));
     let lineage: NativePathLineage = Object.freeze({ baseNodeId: nodeForBridge(view).id, depth: 0 });
     for (const step of steps) lineage = nativePathChildLineage(view, lineage, step);
-    return new View(nextNode, undefined, undefined, lineage);
+    const result = new View(nextNode);
+    nativePathLineages.set(result, freezeNativePathLineage(lineage));
+    return result;
   }
 
   /**
    * Internal retained-transport constructor for multiple independent text
-   * edits. The final JS value retains only fixed scalar NodeId metadata; the
-   * generated transaction call rebuilds the changed-path trie natively.
+   * edits. Builds complete eagerly-materialized path-patched nodes and
+   * records typed transaction metadata for the generated transaction call.
    */
   static textLayoutTransactionForTransport(
     view: View,
@@ -711,24 +449,47 @@ export class View {
       node = patchBridgeTextPath(node, edit.steps, wrapCode(edit.wrap), horizontalAlignCode(edit.align));
     }
     const result = new View(node);
-    const finalNode = nodeForBridge(result);
-    const transaction = edits.map((edit) => {
-      const nodes = bridgePathNodesForTransaction(finalNode, edit.steps);
-      if (nodes === undefined || nodes[nodes.length - 1]?.kind !== BRIDGE_VIEW_KIND.text) {
-        throw new TypeError("native text transaction path does not terminate at text");
-      }
-      let lineage: NativePathLineage = Object.freeze({ baseNodeId: viewNodeId(view), depth: 0 });
-      for (const step of edit.steps) lineage = nativePathChildLineage(view, lineage, step);
-      return Object.freeze({
-        lineage,
-        nodeIds: Object.freeze(nodes.slice().reverse().map((entry) => entry.id)),
-        wrap: wrapCode(edit.wrap),
-        align: horizontalAlignCode(edit.align),
-      });
-    });
-    nativeTextLayoutTransactions.set(result, Object.freeze(transaction));
+    nativeTextLayoutTransactions.set(result, buildTransactionEdits(view, nodeForBridge(result), edits));
     return result;
   }
+
+  bold(): View { return this.textAttribute("bold"); }
+  dim(): View { return this.textAttribute("dim"); }
+  italic(): View { return this.textAttribute("italic"); }
+  underline(): View { return this.textAttribute("underline"); }
+  reversed(): View { return this.textAttribute("reversed"); }
+  strikethrough(): View { return this.textAttribute("strikethrough"); }
+  textAttribute(name: string, enabled = true): View { return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } }); }
+  padding(value: number | Insets): View { return this.decorate({ padding: insets(value) }); }
+  background(color: ColorNode): View { return this.decorate({ background: color }); }
+  foreground(color: ColorNode): View { return this.decorate({ foreground: color }); }
+  border(border: BorderNode): View { return this.decorate({ border }); }
+  style(style: StyleSpec): View { return this.decorate({ style: mergeStyles(emptyStyle(), style.value) }); }
+
+  styleState(key: string, value: string): View {
+    if (key.length === 0 || value.length === 0) throw new RangeError("style state key and value cannot be empty");
+    const decorated = this.decoratedNode();
+    const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
+    const child = decorated?.child ?? nodeForBridge(this);
+    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [key]: value } } });
+  }
+
+  container(): View { return new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
+  clampRows(maxRows: number, overflow: OverflowIndicator = { kind: "none" }): View {
+    validateU16(maxRows, "maxRows");
+    return new View({ kind: BRIDGE_VIEW_KIND.clamp, child: nodeForBridge(this), maxRows, overflow: bridgeOverflow(overflow) });
+  }
+  fitWidth(): View { return this.decorate({ width: "fit" }); }
+  fillWidth(): View { return this.decorate({ width: "fill" }); }
+  fitHeight(): View { return this.decorate({ height: "fit" }); }
+  fillHeight(): View { return this.decorate({ height: "fill" }); }
+  minWidth(value: number): View { return this.decorate({ minWidth: validateU16(value, "minWidth") }); }
+  maxWidth(value: number): View { return this.decorate({ maxWidth: validateU16(value, "maxWidth") }); }
+  minHeight(value: number): View { return this.decorate({ minHeight: validateU16(value, "minHeight") }); }
+  maxHeight(value: number): View { return this.decorate({ maxHeight: validateU16(value, "maxHeight") }); }
+  wrap(mode: WrapMode): View { return this.textLayoutPatch(wrapCode(mode), undefined); }
+  noWrap(): View { return this.wrap("noWrap"); }
+  textAlign(align: HorizontalAlign): View { return this.textLayoutPatch(undefined, horizontalAlignCode(align)); }
 
   private decoratedNode(): Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }> | undefined {
     const node = nodeForBridge(this);
@@ -736,234 +497,28 @@ export class View {
   }
 
   private decorate(decoration: Partial<DecorationNode>): View {
-    const textRecipe = pendingTextRecipe(this);
-    const stylePatch = pendingTextStylePatch(decoration);
-    if (textRecipe !== undefined && stylePatch !== undefined) {
-      const spans = Object.freeze(textRecipe.spans.map((span) => Object.freeze({
-        ...span,
-        style: mergeStyles(span.style ?? emptyStyle(), stylePatch),
-      })));
-      return new View(pendingTextBacking(spans, textRecipe.wrap, textRecipe.align));
-    }
-    const scalar = scalarCommonFields(decoration);
-    if (scalar !== undefined && this[kBacking].state !== 0) {
-      const existing = nativeScalarPatch(this);
-      if (existing?.kind === "common") {
-        return new View(pendingCommonPatchBacking(
-          existing.base,
-          existing.mask | scalar.mask,
-          scalar.mask & PATCH_PADDING ? scalar.paddingTopRight : existing.paddingTopRight,
-          scalar.mask & PATCH_PADDING ? scalar.paddingBottomLeft : existing.paddingBottomLeft,
-          scalar.mask & PATCH_WIDTH ? scalar.widthRule : existing.widthRule,
-          scalar.mask & PATCH_HEIGHT ? scalar.heightRule : existing.heightRule,
-          scalar.mask & PATCH_MIN_WIDTH ? scalar.minWidth : existing.minWidth,
-          scalar.mask & PATCH_MAX_WIDTH ? scalar.maxWidth : existing.maxWidth,
-          scalar.mask & PATCH_MIN_HEIGHT ? scalar.minHeight : existing.minHeight,
-          scalar.mask & PATCH_MAX_HEIGHT ? scalar.maxHeight : existing.maxHeight,
-        ));
-      }
-      return new View(pendingCommonPatchBacking(
-        this,
-        scalar.mask,
-        scalar.paddingTopRight,
-        scalar.paddingBottomLeft,
-        scalar.widthRule,
-        scalar.heightRule,
-        scalar.minWidth,
-        scalar.maxWidth,
-        scalar.minHeight,
-        scalar.maxHeight,
-      ));
-    }
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
     const child = decorated?.child ?? nodeForBridge(this);
     const next: DecorationNode = { ...current, ...decoration, style: decoration.style === undefined ? current.style : mergeStyles(current.style, decoration.style) };
-    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) }, { kind: "decoration", base: nodeForBridge(this) });
+    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) });
   }
 
   private textLayoutPatch(wrap: number | undefined, align: number | undefined): View {
-    const recipe = pendingTextRecipe(this);
-    if (recipe !== undefined) {
-      return new View(pendingTextPatchBacking(
-        recipe.base,
-        wrap ?? recipe.wrap,
-        align ?? recipe.align,
-      ));
-    }
     const node = nodeForBridge(this);
     if (node.kind === BRIDGE_VIEW_KIND.text) {
-      return new View({ ...node, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) }, { kind: "text", base: node });
+      return new View({ ...node, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) });
     }
     if (node.kind === BRIDGE_VIEW_KIND.decorated && node.child.kind === BRIDGE_VIEW_KIND.text) {
       const decorated = node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }>;
-      return new View({ ...decorated, child: { ...decorated.child, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) } }, { kind: "text", base: node });
+      return new View({ ...decorated, child: { ...decorated.child, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) } });
     }
     return this;
   }
 }
 
-function isViewBacking(value: unknown): value is ViewBacking {
-  if (value === null || typeof value !== "object") return false;
-  const candidate = value as Partial<ViewBacking>;
-  const nodeId = candidate.nodeId;
-  return (candidate.state === 0 || candidate.state === 1 || candidate.state === 2)
-    && Number.isSafeInteger(nodeId)
-    && nodeId !== undefined
-    && nodeId > 0;
-}
-
-function pendingTextRecipe(view: View): { readonly base: View; readonly spans: readonly TextSpanNode[]; readonly wrap: number; readonly align: number } | undefined {
-  const backing = view[kBacking];
-  if (backing.state === 1 && backing.createKind === "text" && backing.spans !== undefined && backing.wrap !== undefined && backing.align !== undefined) {
-    return { base: view, spans: backing.spans, wrap: backing.wrap, align: backing.align };
-  }
-  if (backing.state === 2 && backing.patchKind === "textLayout" && backing.base !== undefined && backing.wrap !== undefined && backing.align !== undefined) {
-    const base = pendingTextRecipe(backing.base);
-    return base === undefined ? undefined : { base: base.base, spans: base.spans, wrap: backing.wrap, align: backing.align };
-  }
-  return undefined;
-}
-
-function pendingTextStylePatch(decoration: Partial<DecorationNode>): StyleNode | undefined {
-  if (decoration.border !== undefined || decoration.padding !== undefined || decoration.styleStates !== undefined) return undefined;
-  const style = decoration.style;
-  const patch: StyleNode = {
-    ...(style?.theme === undefined ? {} : { theme: style.theme }),
-    ...(decoration.foreground === undefined && style?.foreground === undefined
-      ? {}
-      : { foreground: decoration.foreground ?? style?.foreground }),
-    ...(decoration.background === undefined && style?.background === undefined
-      ? {}
-      : { background: decoration.background ?? style?.background }),
-    attributes: { ...(style?.attributes ?? {}) },
-  };
-  if (
-    patch.theme === undefined
-    && patch.foreground === undefined
-    && patch.background === undefined
-    && Object.keys(patch.attributes).length === 0
-  ) return undefined;
-  return patch;
-}
-
-function scalarCommonFields(decoration: Partial<DecorationNode>): Omit<NativeCommonPatch, "kind" | "base"> | undefined {
-  if (
-    decoration.background !== undefined
-    || decoration.foreground !== undefined
-    || decoration.border !== undefined
-    || (decoration.style !== undefined && (
-      decoration.style.theme !== undefined
-      || decoration.style.foreground !== undefined
-      || decoration.style.background !== undefined
-      || Object.keys(decoration.style.attributes).length > 0
-    ))
-    || (decoration.styleStates !== undefined && Object.keys(decoration.styleStates).length > 0)
-  ) return undefined;
-  let mask = 0;
-  let paddingTopRight = 0;
-  let paddingBottomLeft = 0;
-  if (decoration.padding !== undefined) {
-    mask |= PATCH_PADDING;
-    paddingTopRight = (decoration.padding.top | (decoration.padding.right << 16)) >>> 0;
-    paddingBottomLeft = (decoration.padding.bottom | (decoration.padding.left << 16)) >>> 0;
-  }
-  if (decoration.width !== undefined) mask |= PATCH_WIDTH;
-  if (decoration.height !== undefined) mask |= PATCH_HEIGHT;
-  if (decoration.minWidth !== undefined) mask |= PATCH_MIN_WIDTH;
-  if (decoration.maxWidth !== undefined) mask |= PATCH_MAX_WIDTH;
-  if (decoration.minHeight !== undefined) mask |= PATCH_MIN_HEIGHT;
-  if (decoration.maxHeight !== undefined) mask |= PATCH_MAX_HEIGHT;
-  if (mask === 0) return undefined;
-  return {
-    mask,
-    paddingTopRight,
-    paddingBottomLeft,
-    widthRule: decoration.width === "fit" ? 1 : decoration.width === "fill" ? 2 : 0,
-    heightRule: decoration.height === "fit" ? 1 : decoration.height === "fill" ? 2 : 0,
-    minWidth: decoration.minWidth ?? 0,
-    maxWidth: decoration.maxWidth ?? 0,
-    minHeight: decoration.minHeight ?? 0,
-    maxHeight: decoration.maxHeight ?? 0,
-  };
-}
-
-function materializeBacking(view: View, backing: ViewBacking): BridgeViewNode {
-  if (backing.state === 0 && backing.node !== undefined) return backing.node;
-  if (backing.state === 1 && backing.createKind === "text") {
-    if (backing.spans === undefined || backing.wrap === undefined || backing.align === undefined) throw new TypeError("invalid pending text backing");
-    return withIdentity(
-      { kind: BRIDGE_VIEW_KIND.text, spans: backing.spans, wrap: backing.wrap, align: backing.align },
-      backing.nodeId,
-    );
-  }
-  if (backing.state === 1 && backing.createKind === "spacer") {
-    if (backing.rows === undefined) throw new TypeError("invalid pending spacer backing");
-    return withIdentity({ kind: BRIDGE_VIEW_KIND.spacer, rows: backing.rows }, backing.nodeId);
-  }
-  if (backing.state === 1 && backing.createKind === "axis") {
-    if (backing.axisHorizontal === undefined || backing.axisGap === undefined || backing.axisChildren === undefined) {
-      throw new TypeError("invalid pending axis backing");
-    }
-    return withIdentity({
-      kind: backing.axisHorizontal ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column,
-      children: backing.axisChildren.map(bridgeLayoutChild),
-      gap: backing.axisGap,
-    }, backing.nodeId);
-  }
-  if (backing.state === 2 && backing.patchKind === "textLayout") {
-    if (backing.base === undefined || backing.wrap === undefined || backing.align === undefined) throw new TypeError("invalid pending text patch backing");
-    const base = nodeForBridge(backing.base);
-    if (base.kind !== BRIDGE_VIEW_KIND.text) throw new TypeError("pending text patch base is not text");
-    return withIdentity(
-      { ...base, wrap: backing.wrap, align: backing.align },
-      backing.nodeId,
-      { kind: "text", base },
-    );
-  }
-  if (backing.state === 2 && backing.patchKind === "common") {
-    if (
-      backing.base === undefined
-      || backing.mask === undefined
-      || backing.paddingTopRight === undefined
-      || backing.paddingBottomLeft === undefined
-      || backing.widthRule === undefined
-      || backing.heightRule === undefined
-      || backing.minWidth === undefined
-      || backing.maxWidth === undefined
-      || backing.minHeight === undefined
-      || backing.maxHeight === undefined
-    ) throw new TypeError("invalid pending common patch backing");
-    const decoration: DecorationNode = {
-      style: emptyStyle(),
-      ...(backing.mask & PATCH_PADDING ? {
-        padding: Object.freeze({
-          top: backing.paddingTopRight & 0xffff,
-          right: backing.paddingTopRight >>> 16,
-          bottom: backing.paddingBottomLeft & 0xffff,
-          left: backing.paddingBottomLeft >>> 16,
-        }),
-      } : {}),
-      ...(backing.mask & PATCH_WIDTH ? { width: backing.widthRule === 1 ? "fit" as const : "fill" as const } : {}),
-      ...(backing.mask & PATCH_HEIGHT ? { height: backing.heightRule === 1 ? "fit" as const : "fill" as const } : {}),
-      ...(backing.mask & PATCH_MIN_WIDTH ? { minWidth: backing.minWidth } : {}),
-      ...(backing.mask & PATCH_MAX_WIDTH ? { maxWidth: backing.maxWidth } : {}),
-      ...(backing.mask & PATCH_MIN_HEIGHT ? { minHeight: backing.minHeight } : {}),
-      ...(backing.mask & PATCH_MAX_HEIGHT ? { maxHeight: backing.maxHeight } : {}),
-    };
-    const base = nodeForBridge(backing.base);
-    return withIdentity(
-      { kind: BRIDGE_VIEW_KIND.decorated, child: base, decoration },
-      backing.nodeId,
-      { kind: "decoration", base },
-    );
-  }
-  throw new TypeError("invalid View backing");
-}
-
 const nodes = new WeakMap<View, BridgeViewNode>();
 const nativePathLineages = new WeakMap<View, NativePathLineage>();
-const nativeStructuralEdits = new WeakMap<View, NativeStructuralEdit>();
 const nativeTextLayoutTransactions = new WeakMap<View, readonly NativeTextLayoutTransactionEdit[]>();
 
 function freezeNativePathLineage(lineage: NativePathLineage): NativePathLineage {
@@ -995,94 +550,47 @@ export function attachNativePathLineage(view: View, lineage: NativePathLineage):
   nativePathLineages.set(view, freezeNativePathLineage(lineage));
 }
 
-/** Returns the full semantic NodeId without materializing a bridge node. */
+/** Returns the full semantic NodeId of the View's frozen semantic node. */
 export function viewNodeId(view: View): number {
-  return view[kBacking].nodeId;
+  return nodeForBridge(view).id;
 }
 
-/** Internal benchmark/diagnostic view of the compact backing state. */
-export function viewBackingState(view: View): 0 | 1 | 2 {
-  return view[kBacking].state;
+/** Diagnostic placeholder: the eager DAG has no backing states; always 0. */
+export function viewBackingState(_view: View): 0 | 1 | 2 {
+  return 0;
 }
 
-/** Returns the compact axis recipe used by the native builder route. */
-export function nativeAxisRecipe(view: View): {
+/** Always undefined under the eager DAG; retained until the cleanup tranche removes the dead native-builder routes. */
+export function nativeAxisRecipe(_view: View): {
   readonly horizontal: boolean;
   readonly gap: number;
   readonly children: readonly { readonly view: View; readonly trackWord: number }[];
 } | undefined {
-  const backing = view[kBacking];
-  if (
-    backing.state !== 1
-    || backing.createKind !== "axis"
-    || backing.axisHorizontal === undefined
-    || backing.axisGap === undefined
-    || backing.axisChildren === undefined
-  ) return undefined;
-  return {
-    horizontal: backing.axisHorizontal,
-    gap: backing.axisGap,
-    children: backing.axisChildren.map((child) => ({ view: child.view, trackWord: axisTrackWord(child) })),
-  };
+  return undefined;
 }
 
-/** Returns a pending text recipe without materializing its bridge node. */
-export function nativeTextRecipe(view: View): {
+/** Always undefined under the eager DAG; see nativeAxisRecipe. */
+export function nativeTextRecipe(_view: View): {
   readonly spans: readonly TextSpanNode[];
   readonly wrap: number;
   readonly align: number;
 } | undefined {
-  const recipe = pendingTextRecipe(view);
-  return recipe === undefined ? undefined : {
-    spans: recipe.spans,
-    wrap: recipe.wrap,
-    align: recipe.align,
-  };
+  return undefined;
 }
 
-/** Returns a pending spacer recipe without materializing its bridge node. */
-export function nativeSpacerRecipe(view: View): number | undefined {
-  const backing = view[kBacking];
-  return backing.state === 1 && backing.createKind === "spacer" ? backing.rows : undefined;
+/** Always undefined under the eager DAG; see nativeAxisRecipe. */
+export function nativeSpacerRecipe(_view: View): number | undefined {
+  return undefined;
 }
 
-/** Returns the compact pending/native patch, if this value has one. */
-export function nativeScalarPatch(view: View): NativeScalarPatch | undefined {
-  const backing = view[kBacking];
-  if (backing.state !== 2 || backing.base === undefined || backing.patchKind === undefined) return undefined;
-  if (backing.patchKind === "textLayout") {
-    if (backing.wrap === undefined || backing.align === undefined) return undefined;
-    return { kind: "textLayout", base: backing.base, wrap: backing.wrap, align: backing.align };
-  }
-  if (
-    backing.mask === undefined
-    || backing.paddingTopRight === undefined
-    || backing.paddingBottomLeft === undefined
-    || backing.widthRule === undefined
-    || backing.heightRule === undefined
-    || backing.minWidth === undefined
-    || backing.maxWidth === undefined
-    || backing.minHeight === undefined
-    || backing.maxHeight === undefined
-  ) return undefined;
-  return {
-    kind: "common",
-    base: backing.base,
-    mask: backing.mask,
-    paddingTopRight: backing.paddingTopRight,
-    paddingBottomLeft: backing.paddingBottomLeft,
-    widthRule: backing.widthRule,
-    heightRule: backing.heightRule,
-    minWidth: backing.minWidth,
-    maxWidth: backing.maxWidth,
-    minHeight: backing.minHeight,
-    maxHeight: backing.maxHeight,
-  };
+/** Always undefined under the eager DAG; see nativeAxisRecipe. */
+export function nativeScalarPatch(_view: View): NativeScalarPatch | undefined {
+  return undefined;
 }
 
-/** Returns the retained structural operation, if one was recorded at construction. */
-export function nativeStructuralEdit(view: View): NativeStructuralEdit | undefined {
-  return nativeStructuralEdits.get(view);
+/** Always undefined under the eager DAG; see nativeAxisRecipe. */
+export function nativeStructuralEdit(_view: View): NativeStructuralEdit | undefined {
+  return undefined;
 }
 
 /** Returns construction-time typed transaction metadata without rebuilding it. */
@@ -1090,26 +598,23 @@ export function nativeTextLayoutTransaction(view: View): readonly NativeTextLayo
   return nativeTextLayoutTransactions.get(view);
 }
 
-/** Returns the cached u32 halves of a View's full safe-integer NodeId. */
+/** Returns the u32 halves of a View's full safe-integer NodeId. */
 export function nodeIdPair(view: View): readonly [number, number] {
-  return view[kBacking].nodeIdPair;
+  const id = nodeForBridge(view).id;
+  return [id >>> 0, Math.floor(id / 0x1_0000_0000)];
 }
 
 /** Private bridge access; the retained DAG is never part of the public API. */
 export function nodeForBridge(view: View): BridgeViewNode {
-  const cached = nodes.get(view);
-  if (cached !== undefined) return cached;
-  const backing = view[kBacking];
-  const node = materializeBacking(view, backing);
-  nodes.set(view, node);
+  const node = nodes.get(view);
+  if (node === undefined) throw new TypeError("view is not a runtime semantic value");
   return node;
 }
 
 /**
  * Builds a path-aware immutable value for retained-path differential tests and
  * future structural builders. Construction assigns a fresh NodeId to the
- * changed leaf and every rebuilt ancestor; render only passes those cached
- * scalar halves to the generated depth specialization.
+ * changed leaf and every rebuilt ancestor.
  */
 export function textLayoutAtNativePathForTransport(
   view: View,
@@ -1118,6 +623,31 @@ export function textLayoutAtNativePathForTransport(
   align: HorizontalAlign,
 ): View {
   return View.textLayoutAtNativePathForTransport(view, steps, wrap, align);
+}
+
+function buildTransactionEdits(
+  base: View,
+  finalNode: BridgeViewNode,
+  edits: readonly {
+    readonly steps: readonly NativePathStep[];
+    readonly wrap: WrapMode;
+    readonly align: HorizontalAlign;
+  }[],
+): readonly NativeTextLayoutTransactionEdit[] {
+  return Object.freeze(edits.map((edit) => {
+    const nodes_ = bridgePathNodesForTransaction(finalNode, edit.steps);
+    if (nodes_ === undefined || nodes_[nodes_.length - 1]?.kind !== BRIDGE_VIEW_KIND.text) {
+      throw new TypeError("native text transaction path does not terminate at text");
+    }
+    let lineage: NativePathLineage = Object.freeze({ baseNodeId: viewNodeId(base), depth: 0 });
+    for (const step of edit.steps) lineage = nativePathChildLineage(base, lineage, step);
+    return Object.freeze({
+      lineage,
+      nodeIds: Object.freeze(nodes_.slice().reverse().map((entry) => entry.id)),
+      wrap: wrapCode(edit.wrap),
+      align: horizontalAlignCode(edit.align),
+    });
+  }));
 }
 
 function patchBridgeTextPath(
@@ -1192,7 +722,7 @@ function bridgePathNodesForTransaction(
   root: BridgeViewNode,
   steps: readonly NativePathStep[],
 ): BridgeViewNode[] | undefined {
-  const nodes = [root];
+  const collected = [root];
   let current = root;
   for (const step of steps) {
     if (bridgePathViewKind(current.kind) !== step.expectedViewKind) return undefined;
@@ -1233,9 +763,9 @@ function bridgePathNodesForTransaction(
         break;
       default: return undefined;
     }
-    nodes.push(current);
+    collected.push(current);
   }
-  return nodes;
+  return collected;
 }
 
 function bridgePathViewKind(kind: number): number {
@@ -1250,81 +780,6 @@ function bridgePathViewKind(kind: number): number {
     case BRIDGE_VIEW_KIND.contentMax: return NATIVE_PATH_VIEW_KIND.clampRows;
     default: return 0;
   }
-}
-
-/**
- * Materializes only Packed V3 sequence overrides for the legacy direct bridge.
- * Ordinary Views return their frozen node unchanged; direct decoding of a
- * retained sequence operation gets an exact array-shaped semantic object.
- */
-export function nodeForDirectBridge(view: View): BridgeViewNode {
-  const node = nodeForBridge(view);
-  return packedMeta(node).containsSequenceOverride ? materializeDirectNode(node) : node;
-}
-
-function materializeDirectNode(node: BridgeViewNode): BridgeViewNode {
-  if (node.kind === BRIDGE_VIEW_KIND.grid && packedMeta(node).sequenceOverride) {
-    const sequence = packedMeta(node).gridCells;
-    if (sequence === undefined) return node;
-    let index = 0;
-    const rows = node.rows.map((row) => ({
-      ...row,
-      cells: row.cells.map((cell) => {
-        const next = sequence.get(index++)!;
-        return { ...cell, view: materializeDirectNode(next.view) };
-      }),
-    }));
-    return { ...node, rows };
-  }
-  if ((node.kind === BRIDGE_VIEW_KIND.row || node.kind === BRIDGE_VIEW_KIND.column) && packedMeta(node).sequenceOverride) {
-    const sequence = packedMeta(node).sequence;
-    if (sequence === undefined) return node;
-    return { ...node, children: [...sequence].map((child) => ({ ...child, child: materializeDirectNode(child.child) })) };
-  }
-  switch (node.kind) {
-    case BRIDGE_VIEW_KIND.hanging: {
-      const prefix = materializeDirectNode(node.prefix);
-      const continuation = materializeDirectNode(node.continuation);
-      const body = materializeDirectNode(node.body);
-      return prefix === node.prefix && continuation === node.continuation && body === node.body ? node : { ...node, prefix, continuation, body };
-    }
-    case BRIDGE_VIEW_KIND.container:
-    case BRIDGE_VIEW_KIND.clamp:
-    case BRIDGE_VIEW_KIND.contentMax: {
-      const child = materializeDirectNode(node.child);
-      return child === node.child ? node : { ...node, child };
-    }
-    case BRIDGE_VIEW_KIND.decorated: {
-      const child = materializeDirectNode(node.child);
-      return child === node.child ? node : { ...node, child };
-    }
-    case BRIDGE_VIEW_KIND.grid: {
-      let changed = false;
-      const rows = node.rows.map((row) => {
-        const cells = row.cells.map((cell) => {
-          const view = materializeDirectNode(cell.view);
-          changed ||= view !== cell.view;
-          return view === cell.view ? cell : { ...cell, view };
-        });
-        return cells === row.cells ? row : { ...row, cells };
-      });
-      return changed ? { ...node, rows } : node;
-    }
-    default: return node;
-  }
-}
-
-/** Internal retained-transport operation: replace one axis child via a persistent sequence path. */
-export function replaceAxisChildForPackedTransport(view: View, index: number, child: View): View {
-  return View.replaceAxisChildForPackedTransport(view, index, child);
-}
-
-export function spliceAxisChildrenForPackedTransport(view: View, index: number, removeCount: number, children: readonly View[]): View {
-  return View.spliceAxisChildrenForPackedTransport(view, index, removeCount, children);
-}
-
-export function replaceGridCellForPackedTransport(view: View, row: number, column: number, child: View): View {
-  return View.replaceGridCellForPackedTransport(view, row, column, child);
 }
 
 export function textRowsForHarness(view: View): string[] { return rows(nodeForBridge(view)); }
@@ -1383,39 +838,6 @@ function bridgeGridTrack(track: GridTrackNode): BridgeGridTrackNode {
     case "fixed": return { kind: BRIDGE_GRID_TRACK_KIND.fixed, size: track.size };
     case "flex": return { kind: BRIDGE_GRID_TRACK_KIND.flex };
     case "flexMax": return { kind: BRIDGE_GRID_TRACK_KIND.flexMax, max: track.max };
-  }
-}
-
-function bridgeLayoutChild(entry: PendingAxisChild): BridgeLayoutChild {
-  switch (entry.kind) {
-    case BRIDGE_LAYOUT_CHILD_KIND.normal: return { kind: entry.kind, child: nodeForBridge(entry.view) };
-    case BRIDGE_LAYOUT_CHILD_KIND.fixed: return { kind: entry.kind, size: entry.value ?? 0, child: nodeForBridge(entry.view) };
-    case BRIDGE_LAYOUT_CHILD_KIND.flex: return { kind: entry.kind, child: nodeForBridge(entry.view) };
-    case BRIDGE_LAYOUT_CHILD_KIND.flexMax: return { kind: entry.kind, maxRows: entry.value ?? 0, child: nodeForBridge(entry.view) };
-    case BRIDGE_LAYOUT_CHILD_KIND.contentMax: return { kind: entry.kind, maxRows: entry.value ?? 0, child: nodeForBridge(entry.view) };
-    default: throw new TypeError("unknown axis child kind");
-  }
-}
-
-function bridgeAxisTrackWord(entry: BridgeLayoutChild): number {
-  switch (entry.kind) {
-    case BRIDGE_LAYOUT_CHILD_KIND.normal: return 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.contentMax: return (2 | ((entry.maxRows ?? 0) << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.fixed: return (3 | ((entry.size ?? 0) << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.flex: return (4 | (1 << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.flexMax: return (5 | ((entry.maxRows ?? 0) << 8)) >>> 0;
-    default: throw new TypeError("unknown axis child kind");
-  }
-}
-
-function axisTrackWord(entry: PendingAxisChild): number {
-  switch (entry.kind) {
-    case BRIDGE_LAYOUT_CHILD_KIND.normal: return 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.contentMax: return (2 | ((entry.value ?? 0) << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.fixed: return (3 | ((entry.value ?? 0) << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.flex: return (4 | (1 << 8)) >>> 0;
-    case BRIDGE_LAYOUT_CHILD_KIND.flexMax: return (5 | ((entry.value ?? 0) << 8)) >>> 0;
-    default: throw new TypeError("unknown axis child kind");
   }
 }
 

@@ -19,7 +19,7 @@
 
 import { native } from "../src/native.ts";
 import { appendFileSync as appendSync } from "node:fs";
-import { nodeForDirectBridge, View } from "../src/tui/values/view.ts";
+import { nodeForBridge, View } from "../src/tui/values/view.ts";
 import { History } from "../src/tui/history.ts";
 import { TextStream } from "../src/tui/stream.ts";
 import { buildTracePair, prepareComparisonCase, setComparisonComponentId, type ComparisonMode, type ComparisonWorkload } from "./perf11v4_fixtures.ts";
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   const isTrace = config.kind === "trace";
   const prepared = config.kind === "trace"
     ? undefined
-    : prepareComparisonCase<View>("current", { workload: config.workload!, size: config.size!, mode: config.mode!, label: config.label });
+    : prepareComparisonCase<View>({ workload: config.workload!, size: config.size!, mode: config.mode!, label: config.label });
   const traceHistory = isTrace ? new History() : undefined;
   let traceStream: TextStream | undefined;
   if (traceHistory !== undefined) {
@@ -166,14 +166,14 @@ async function main(): Promise<void> {
     host.setHistory(traceHistory.nativeObject());
     mark("history seeded");
   }
-  const componentSlot = isTrace ? host.createViewSlot(nodeForDirectBridge(View.spacer(0))) : undefined;
+  const componentSlot = isTrace ? host.createViewSlot(nodeForBridge(View.spacer(0))) : undefined;
   if (componentSlot?.componentId() !== null && componentSlot?.componentId() !== undefined) setComparisonComponentId(componentSlot.componentId()!);
   mark("slot created");
 
   let fixtureRoots: readonly object[] = [];
   if (prepared?.base !== undefined) {
-    host.render(nodeForDirectBridge(prepared.base));
-    fixtureRoots = [nodeForDirectBridge(prepared.base)];
+    host.render(nodeForBridge(prepared.base));
+    fixtureRoots = [nodeForBridge(prepared.base)];
   }
   const fixturesSnapshot = snapshot({
     fixture_live_bridge_objects: fixtureRoots.reduce((sum, root) => sum + countLiveBridgeObjects(root), 0),
@@ -189,10 +189,10 @@ async function main(): Promise<void> {
         ? new (native.NativeTuiHost as unknown as new(width: number, height: number, headless: boolean) => NativeHost)(80, 24, true)
         : host;
       const started = now();
-      const pair = isTrace ? buildTracePair<View>("current", index) : undefined;
+      const pair = isTrace ? buildTracePair<View>(index) : undefined;
       const next = pair?.next ?? prepared!.next(index);
       const constructionNs = now() - started;
-      if (!pair?.cold && pair !== undefined) iterationHost.render(nodeForDirectBridge(pair.base));
+      if (!pair?.cold && pair !== undefined) iterationHost.render(nodeForBridge(pair.base));
       const transportStarted = now();
       if (pair?.category === "stream_append") {
         traceStream?.append(`stream-${index} αβ\n`);
@@ -202,10 +202,10 @@ async function main(): Promise<void> {
         traceStream = new TextStream();
         traceHistory?.pushStream(traceStream);
       } else if (pair?.category === "component_update") {
-        componentSlot?.setView?.(nodeForDirectBridge(View.text(`status-${index}`)));
+        componentSlot?.setView?.(nodeForBridge(View.text(`status-${index}`)));
       }
       const nativeStarted = now();
-      iterationHost.render(nodeForDirectBridge(next));
+      iterationHost.render(nodeForBridge(next));
       const end = now();
       iterationHost.advanceTime?.(0);
       lastRows = iterationHost.screenRows();

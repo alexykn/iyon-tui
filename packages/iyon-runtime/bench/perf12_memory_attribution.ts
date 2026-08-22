@@ -8,7 +8,9 @@
  * numbers.
  */
 
-import { type ComparisonMode, type ComparisonWorkload } from "./perf11v4_fixtures.ts";
+/** Workload/mode unions inlined from the removed PERF-11v4 fixtures module. */
+type ComparisonMode = "COLD" | "FIRST_USE" | "IDENTICAL_IDENTITY" | "SHARED_PATH" | "SHARED_DEEP" | "LARGE_SHARED_SUBTREE_CUTOFF" | "REBUILT_EQUIVALENT" | "TEXT_METADATA_PATCH" | "DECORATION_PATCH" | "WIDE_PARENT_ONE_EDIT" | "WIDE_PARENT_INSERT" | "WIDE_PARENT_REMOVE";
+type ComparisonWorkload = "plain_text_column" | "styled_span_heavy" | "row_heavy" | "column_track_heavy" | "grid_heavy" | "decoration_heavy" | "diff_heavy" | "component_heavy" | "mixed_realistic" | "long_text_wrap_only" | "long_text_one_span_edit" | "large_diff_one_hunk_edit" | "large_decoration_only_change";
 
 interface Block {
   readonly label: string;

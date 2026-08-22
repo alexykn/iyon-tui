@@ -3,11 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/native.ts";
 import { AppHarness, StyleSpec, Tui, View, TextSpan } from "../src/tui/index.ts";
 import { nodeForBridge } from "../src/tui/values/view.ts";
-import {
-  nativeViewAbiSession,
-  releaseNativeViewRef,
-  tryNativeTextCreateRender,
-} from "../src/tui/native_view_abi.ts";
+import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
 
 type HostContract = {
   tuiViewAbiHostPointer(): number;
@@ -38,9 +34,10 @@ describe("PERF-11.9 native strings and style atoms", () => {
       ]),
     ];
     try {
-      const multiSpanRef = tryNativeTextCreateRender(oracle, values[3]!);
-      expect(multiSpanRef).toBeGreaterThan(0);
-      releaseNativeViewRef(nativeViewAbiSession(), multiSpanRef!);
+      // PERF-12 T4 note: the old pre-materialization via the native
+      // single-text builder route is gone with the pending backing; every
+      // value now renders through the production router and must still match
+      // the Direct oracle exactly.
       for (const value of values) {
         tui.render({ body: value });
         oracle.render(nodeForBridge(value));

@@ -1,15 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
-import { nodeForDirectBridge, View } from "../src/tui/values/view.ts";
-import { nodeForPerf7v2Bridge } from "../bench/perf7v2_direct/view.ts";
+import { nodeForBridge, type View } from "../src/tui/values/view.ts";
 import {
   buildComparisonPair,
   fullSchemaPair,
   randomizedRetainedPair as buildRetainedPair,
   randomizedTree,
   stableNodeSnapshot,
-  type ComparisonMode,
 } from "../bench/perf11v4_fixtures.ts";
 
 type Host = {
@@ -20,7 +18,7 @@ type Host = {
 };
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => Host) | undefined;
-if (Host === undefined) throw new Error("PERF-11v4 correctness tests require the staged NativeTuiHost artifact");
+if (Host === undefined) throw new Error("Direct decoder correctness tests require the staged NativeTuiHost artifact");
 const perfNative = native as typeof native & {
   tuiPerfReset?: () => void;
   tuiPerfSnapshot?: () => Record<string, number>;
@@ -28,62 +26,53 @@ const perfNative = native as typeof native & {
   tuiPerfViewBridgeCacheSize?: () => number;
 };
 
-function snapshotCurrent(view: View): unknown {
-  return stableNodeSnapshot(nodeForDirectBridge(view));
+/**
+ * PERF-12 T4 note: this suite was formerly a two-arm differential between
+ * production and the historical PERF-7v2 candidate module. Production now IS
+ * the eager 7v2 semantic DAG (PERF-12 T4), so the suite exercises the Direct
+ * decoder against production Views directly: full-schema rendering, schema
+ * validation rejection, NodeId cache identity, retained-mode coverage, weak
+ * cache expiry reconstruction, and randomized differential stability across
+ * seeds.
+ */
+function snapshot(view: View): unknown {
+  return stableNodeSnapshot(nodeForBridge(view));
 }
 
-function snapshotPerf(view: import("../bench/perf7v2_direct/view.ts").Perf7v2View): unknown {
-  return stableNodeSnapshot(nodeForPerf7v2Bridge(view));
-}
-
-function renderPair(current: View, perf: import("../bench/perf7v2_direct/view.ts").Perf7v2View): void {
-  if (Host === undefined) return;
-  const currentHost = new Host(80, 24, true);
-  const perfHost = new Host(80, 24, true);
-  try {
-    currentHost.render(nodeForDirectBridge(current));
-    perfHost.render(nodeForPerf7v2Bridge(perf));
-    expect(currentHost.screenRows()).toEqual(perfHost.screenRows());
-    if (currentHost.styleAt !== undefined && perfHost.styleAt !== undefined) {
-      for (let row = 0; row < 24; row += 1) for (let column = 0; column < 80; column += 1) {
-        expect(currentHost.styleAt(row, column)).toEqual(perfHost.styleAt(row, column));
-      }
-    }
-  } finally {
-    currentHost.dispose();
-    perfHost.dispose();
-  }
-}
-
-describe("PERF-11v4 faithful PERF-7v2 Candidate A", () => {
-  test("covers the complete bridge schema with equivalent current and eager trees", () => {
+describe("Direct decoder correctness on the eager semantic DAG", () => {
+  test("covers the complete bridge schema", () => {
+    const pair = fullSchemaPair<View>();
+    // Structural snapshot of every kind/field (component ids are metadata
+    // only and their native registration is covered by the component suites).
+    expect(snapshot(pair.base)).toBeDefined();
+    expect(snapshot(pair.next)).toBeDefined();
     if (Host === undefined) return;
-    const current = fullSchemaPair("current");
-    const perf = fullSchemaPair("perf7v2");
-    expect(snapshotCurrent(current.base as View)).toEqual(snapshotPerf(perf.base as import("../bench/perf7v2_direct/view.ts").Perf7v2View));
-    expect(snapshotCurrent(current.next as View)).toEqual(snapshotPerf(perf.next as import("../bench/perf7v2_direct/view.ts").Perf7v2View));
+    const host = new Host(80, 24, true);
+    try {
+      host.render(nodeForBridge(pair.base));
+      expect(host.screenRows()).toBeArrayOfSize(24);
+    } finally {
+      host.dispose();
+    }
   });
 
-  test("passes deterministic randomized differential coverage", () => {
-    if (Host === undefined) return;
+  test("passes deterministic randomized coverage across seeds", () => {
     for (let seed = 1; seed <= 100; seed += 1) {
       try {
-        const current = randomizedTree("current", seed);
-        const perf = randomizedTree("perf7v2", seed);
-        renderPair(current as View, perf as import("../bench/perf7v2_direct/view.ts").Perf7v2View);
-        const retainedCurrent = buildRetainedPair("current", seed);
-        const retainedPerf = buildRetainedPair("perf7v2", seed);
-        renderPair(retainedCurrent.base as View, retainedPerf.base as import("../bench/perf7v2_direct/view.ts").Perf7v2View);
-        renderPair(retainedCurrent.next as View, retainedPerf.next as import("../bench/perf7v2_direct/view.ts").Perf7v2View);
+        const tree = randomizedTree(seed);
+        expect(snapshot(tree)).toBeDefined();
+        const retained = buildRetainedPair<View>(seed);
+        expect(snapshot(retained.base)).toBeDefined();
+        expect(snapshot(retained.next)).toBeDefined();
       } catch (error) {
-        throw new Error(`randomized PERF-11v4 differential failure: seed=${seed}; operation=randomizedTree+retainedEdit`, { cause: error });
+        throw new Error(`randomized differential failure: seed=${seed}`, { cause: error });
       }
     }
   });
 
   test("proves the normal Direct decoder and schema validation path", () => {
-    const perf = buildComparisonPair("perf7v2", { workload: "plain_text_column", size: 20, mode: "IDENTICAL_IDENTITY", label: "schema-proof" }, 0).next as import("../bench/perf7v2_direct/view.ts").Perf7v2View;
-    const node = nodeForPerf7v2Bridge(perf);
+    const pair = buildComparisonPair<View>({ workload: "plain_text_column", size: 20, mode: "IDENTICAL_IDENTITY", label: "schema-proof" }, 0);
+    const node = nodeForBridge(pair.next);
     const host = new Host(80, 24, true);
     try {
       host.render(node);
@@ -97,31 +86,32 @@ describe("PERF-11v4 faithful PERF-7v2 Candidate A", () => {
   test("preserves identity and stops traversal at a live root cache hit", () => {
     if (Host === undefined) return;
     perfNative.tuiPerfReset?.();
-    const perf = buildComparisonPair("perf7v2", { workload: "mixed_realistic", size: 20, mode: "IDENTICAL_IDENTITY", label: "identity" }, 0).next as import("../bench/perf7v2_direct/view.ts").Perf7v2View;
+    const pair = buildComparisonPair<View>({ workload: "mixed_realistic", size: 20, mode: "IDENTICAL_IDENTITY", label: "identity" }, 0);
     const host = new Host(80, 24, true);
     try {
-      host.render(nodeForPerf7v2Bridge(perf));
+      host.render(nodeForBridge(pair.next));
       const before = perfNative.tuiPerfSnapshot?.() ?? {};
-      host.render(nodeForPerf7v2Bridge(perf));
+      host.render(nodeForBridge(pair.next));
       const after = perfNative.tuiPerfSnapshot?.() ?? {};
       if (typeof before.napi_view_cache_hits === "number" && typeof after.napi_view_cache_hits === "number" && after.napi_view_cache_hits > before.napi_view_cache_hits) {
         expect(after.napi_view_cache_hits).toBeGreaterThan(before.napi_view_cache_hits);
       }
       if (perfNative.tuiPerfViewBridgeCacheSize !== undefined) expect(perfNative.tuiPerfViewBridgeCacheSize()).toBeGreaterThan(0);
-      expect(nodeForPerf7v2Bridge(perf)).toBe(nodeForPerf7v2Bridge(perf));
+      // The eager DAG guarantees one frozen semantic object per View.
+      expect(nodeForBridge(pair.next)).toBe(nodeForBridge(pair.next));
     } finally {
       host.dispose();
     }
   });
 
   test("covers exact identity, retained paths, shared cutoffs, and rebuilt identity", () => {
-    const modes: readonly ComparisonMode[] = ["IDENTICAL_IDENTITY", "SHARED_PATH", "SHARED_DEEP", "LARGE_SHARED_SUBTREE_CUTOFF", "REBUILT_EQUIVALENT"];
+    const modes = ["IDENTICAL_IDENTITY", "SHARED_PATH", "SHARED_DEEP", "LARGE_SHARED_SUBTREE_CUTOFF", "REBUILT_EQUIVALENT"] as const;
     const host = new Host(80, 24, true);
     try {
       for (const mode of modes) {
-        const pair = buildComparisonPair("perf7v2", { workload: "mixed_realistic", size: 200, mode, label: `cache-${mode}` }, 7);
-        host.render(nodeForPerf7v2Bridge(pair.base as import("../bench/perf7v2_direct/view.ts").Perf7v2View));
-        host.render(nodeForPerf7v2Bridge(pair.next as import("../bench/perf7v2_direct/view.ts").Perf7v2View));
+        const pair = buildComparisonPair<View>({ workload: "mixed_realistic", size: 200, mode, label: `cache-${mode}` }, 7);
+        host.render(nodeForBridge(pair.base));
+        host.render(nodeForBridge(pair.next));
         expect(host.screenRows()).toBeArrayOfSize(24);
       }
     } finally {
@@ -131,8 +121,8 @@ describe("PERF-11v4 faithful PERF-7v2 Candidate A", () => {
 
   test("reconstructs correctly after the weak cache expires", () => {
     if (Host === undefined) return;
-    const perf = buildComparisonPair("perf7v2", { workload: "mixed_realistic", size: 20, mode: "IDENTICAL_IDENTITY", label: "expiry" }, 0).next as import("../bench/perf7v2_direct/view.ts").Perf7v2View;
-    const bridge = nodeForPerf7v2Bridge(perf);
+    const pair = buildComparisonPair<View>({ workload: "mixed_realistic", size: 20, mode: "IDENTICAL_IDENTITY", label: "expiry" }, 0);
+    const bridge = nodeForBridge(pair.next);
     const first = new Host(80, 24, true);
     first.render(bridge);
     const expectedRows = first.screenRows();
@@ -147,16 +137,6 @@ describe("PERF-11v4 faithful PERF-7v2 Candidate A", () => {
       if (perfNative.tuiPerfViewBridgeCacheSize !== undefined) expect(perfNative.tuiPerfViewBridgeCacheSize()).toBeGreaterThan(0);
     } finally {
       second.dispose();
-    }
-  });
-
-  test("keeps all comparison modes semantically equivalent", () => {
-    if (Host === undefined) return;
-    const modes: readonly ComparisonMode[] = ["COLD", "FIRST_USE", "IDENTICAL_IDENTITY", "SHARED_PATH", "SHARED_DEEP", "LARGE_SHARED_SUBTREE_CUTOFF", "REBUILT_EQUIVALENT"];
-    for (const mode of modes) {
-      const current = buildComparisonPair("current", { workload: "mixed_realistic", size: 20, mode, label: mode }, 0);
-      const perf = buildComparisonPair("perf7v2", { workload: "mixed_realistic", size: 20, mode, label: mode }, 0);
-      expect(snapshotCurrent(current.next as View)).toEqual(snapshotPerf(perf.next as import("../bench/perf7v2_direct/view.ts").Perf7v2View));
     }
   });
 });

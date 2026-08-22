@@ -5260,6 +5260,33 @@ Regression battery post-change: 18 bun suites green (56 tests), cargo
    smoke-passed against the slimmed fixtures.
 ```
 
+Errata (added by the post-T4/T5 end-to-end review; no code changes required,
+all gates re-verified green at the review revision):
+
+```text
+eratum 1: the §85 case list above does not consistently follow its own
+   "v7_ready/prod_ready" column header. The plain_text row lists production
+   first (329 ns prod_ready, ~340 ns v7_ready) while column_20 lists v7
+   first (10,540 ns v7_ready, 10,745 ns prod_ready). The authoritative
+   figures are the committed v7_ready_over_prod_ready_median_ratio values in
+   PERF-12-construction-challenge.jsonl (range 0.981-1.069; worst-case
+   production regression 1.9% at column_20, inside the <=5% gate; several
+   cases show production faster).
+eratum 2: the JSONL summary line's git_sha records 741ac6a because the
+   post-conversion construction-gate run was captured on that base commit
+   with the values/view.ts conversion applied but not yet committed. The
+   case rows are the post-conversion measurements cited above (prod ≈ v7),
+   not the pre-conversion 0.22x-0.50x challenge run, which the diff in
+   b224cc3 replaced.
+review note: `bun test` across suite directories reports one failure -
+   perf11v4_direct "reconstructs correctly after the weak cache expires"
+   asserts live_weak_upgrades == 0 while tui_demo, tui_native_persistent_seq,
+   and tui_native_transaction legitimately leave live Views in the shared
+   per-environment runtime. This is the same pre-existing cross-file
+   interference bisected and documented in the T2 record; the suite passes
+   in isolation and was left unchanged.
+```
+
 ### 7. Status line
 
 **Tranche T4 status: COMPLETE.** Production now constructs the faithful

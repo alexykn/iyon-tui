@@ -604,6 +604,16 @@ export function nodeIdPair(view: View): readonly [number, number] {
   return [id >>> 0, Math.floor(id / 0x1_0000_0000)];
 }
 
+/**
+ * Current high-water of the private monotonic NodeId allocator (§18).
+ * View-bearing boundaries capture this after each successful commit as
+ * `nativeLookupCeiling`: only NodeIds at or below it may already exist in the
+ * native semantic cache and are eligible for NodeId→NativeRef promotion.
+ */
+export function viewNodeIdHighWater(): number {
+  return nodeIdCounter.next - 1;
+}
+
 /** Private bridge access; the retained DAG is never part of the public API. */
 export function nodeForBridge(view: View): BridgeViewNode {
   const node = nodes.get(view);

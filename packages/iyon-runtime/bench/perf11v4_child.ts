@@ -148,6 +148,7 @@ async function main(): Promise<void> {
   const cpuBefore = process.cpuUsage?.();
   const memoryBefore = process.memoryUsage();
   const rssBefore = memoryBefore.rss;
+  const peakRssBefore = (process.resourceUsage?.().maxRSS ?? 0) * 1024;
   const heapBefore = memoryBefore.heapUsed;
   try {
     const sampleCount = warmup + measured;
@@ -219,6 +220,7 @@ async function main(): Promise<void> {
   const cpuUserUs = cpuBefore !== undefined && cpuAfter !== undefined ? (cpuAfter.user - cpuBefore.user) : 0;
   const cpuSystemUs = cpuBefore !== undefined && cpuAfter !== undefined ? (cpuAfter.system - cpuBefore.system) : 0;
   const rssDelta = Math.max(0, process.memoryUsage().rss - rssBefore);
+  const peakRssAfter = (process.resourceUsage?.().maxRSS ?? 0) * 1024;
   const nativeArtifact = new URL("../native/iyon-native.node", import.meta.url).pathname;
   const result = {
     benchmark_version: "PERF-11v4",
@@ -261,6 +263,7 @@ async function main(): Promise<void> {
     cpu_user_us: cpuUserUs,
     cpu_system_us: cpuSystemUs,
     rss_delta_bytes: rssDelta,
+    peak_rss_delta_bytes: Math.max(0, peakRssAfter - peakRssBefore),
     heap_delta_bytes: Math.max(0, process.memoryUsage().heapUsed - heapBefore),
     last_screen_rows: lastRows,
     route_counts: routeCounts,

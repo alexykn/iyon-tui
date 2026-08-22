@@ -109,6 +109,13 @@ function buildCases(): ComparisonCase[] {
   ]) as ComparisonWorkload[];
   const sizes = envNumbers("PERF_V4_SIZES", [20, 200, 2_000]);
   const cases = comparisonCases(workloads, sizes);
+  if (!sizes.includes(10_000)) {
+    for (const workload of workloads) cases.push({ workload, size: 10_000, mode: "IDENTICAL_IDENTITY", label: `${workload}/10000/IDENTICAL_IDENTITY` });
+    if (workloads.includes("plain_text_column")) {
+      cases.push({ workload: "plain_text_column", size: 10_000, mode: "SHARED_DEEP", label: "plain_text_column/10000/SHARED_DEEP" });
+      cases.push({ workload: "plain_text_column", size: 10_000, mode: "LARGE_SHARED_SUBTREE_CUTOFF", label: "plain_text_column/10000/LARGE_SHARED_SUBTREE_CUTOFF" });
+    }
+  }
   if (Bun.env.PERF_V4_INCLUDE_SPECIAL !== "0") {
     const specialWorkloads: readonly ComparisonWorkload[] = ["long_text_wrap_only", "long_text_one_span_edit", "large_diff_one_hunk_edit", "large_decoration_only_change"];
     const specialSizes = envNumbers("PERF_V4_SPECIAL_SIZES", [20, 2_000]);
@@ -223,6 +230,11 @@ async function main(): Promise<void> {
       cpu_model: results[0]?.cpu_model ?? "unknown",
       current_git_sha: sourceSha,
       provenance_scope: "benchmark source paths only; markdown-only worktree changes are excluded because they cannot affect measured code paths.",
+      cargo_profile: "release",
+      cargo_features: "perf-packed-timing",
+      rustflags: process.env.RUSTFLAGS ?? "unset",
+      lto: "Cargo release profile default (no override)",
+      codegen_units: "Cargo release profile default (no override)",
       historical_candidate_sha: "e5292d62c4011610850cbdc1ba4a35f296f78e4f",
       native_artifact_sha256: results[0]?.native_artifact_sha256 ?? "unknown",
       all_children_clean: results.every((result) => !result.git_dirty),

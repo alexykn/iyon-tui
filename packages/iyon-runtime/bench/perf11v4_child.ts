@@ -1,5 +1,7 @@
 import { native } from "../src/native.ts";
 import { Tui } from "../src/tui/index.ts";
+import { History } from "../src/tui/history.ts";
+import { TextStream } from "../src/tui/stream.ts";
 import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/tui/native_view_abi.ts"
 import { nodeForDirectBridge, View } from "../src/tui/values/view.ts";
 import { nodeForPerf7v2Bridge, Perf7v2View } from "./perf7v2_direct/view.ts";
@@ -20,7 +22,10 @@ interface NativeHost {
   render(view: object): void;
   screenRows(): string[];
   dispose(): void;
-  createViewSlot(initial: object): { componentId(): number | null; dispose?(): void };
+  advanceTime?(milliseconds: number): void;
+  history(): object;
+  setHistory(history: object): void;
+  createViewSlot(initial: object): { componentId(): number | null; setView?(view: object): void; dispose?(): void };
 }
 
 function requiredEnv(name: string): string {
@@ -47,6 +52,17 @@ function gitDirty(): boolean {
 }
 function sha256(path: string): string { return commandText(["shasum", "-a", "256", path]).split(/\s+/)[0] ?? "unknown"; }
 function now(): number { return Bun.nanoseconds(); }
+
+function forceFrame(host: NativeHost | undefined, tui: Tui | undefined): number {
+  const started = now();
+  if (tui !== undefined) tui.advance(0);
+  else host?.advanceTime?.(0);
+  return now() - started;
+}
+
+function renderProduction(tui: Tui, view: View, history: History | undefined): void {
+  tui.render(history === undefined ? { body: view } : { body: view, history });
+}
 
 function percentile(samples: readonly number[], percentage: number): number {
   const sorted = [...samples].sort((left, right) => left - right);
@@ -91,16 +107,25 @@ function bridgeFor(view: View | Perf7v2View): object {
 }
 
 async function main(): Promise<void> {
-  const host = candidate === "native_11v3" ? undefined : createHost();
-  const tui = candidate === "native_11v3" ? await Tui.open({ width: 80, height: 24, headless: true }) : undefined;
-  const componentHost = candidate === "native_11v3" ? (tui as unknown as { readonly host: NativeHost }).host : host;
-  const componentSlot = workload === "component_heavy" ? componentHost!.createViewSlot(nodeForDirectBridge(View.spacer(0))) : undefined;
-  if (componentSlot?.componentId() !== null && componentSlot?.componentId() !== undefined) setComparisonComponentId(componentSlot.componentId()!);
+  const firstUse = mode === "FIRST_USE";
+  const host = candidate === "native_11v3" || firstUse ? undefined : createHost();
+  const tui = candidate === "native_11v3" && !firstUse ? await Tui.open({ width: 80, height: 24, headless: true }) : undefined;
+  const componentHost = !firstUse && candidate === "native_11v3" ? (tui as unknown as { readonly host: NativeHost }).host : !firstUse ? host : undefined;
   const trace = mode === "REALISTIC_TRACE";
+  const componentSlot = !firstUse && (workload === "component_heavy" || trace) ? componentHost!.createViewSlot(nodeForDirectBridge(View.spacer(0))) : undefined;
+  if (componentSlot?.componentId() !== null && componentSlot?.componentId() !== undefined) setComparisonComponentId(componentSlot.componentId()!);
   const prepared = trace ? undefined : prepareComparisonCase<View | Perf7v2View>(candidate === "direct_7v2" ? "perf7v2" : "current", { workload, size, mode: mode as ComparisonMode, label });
+  const traceHistory = trace ? candidate === "native_11v3" ? tui!.createHistory() : new History() : undefined;
+  let traceStream: TextStream | undefined;
+  if (traceHistory !== undefined) {
+    for (let index = 0; index < 32; index += 1) traceHistory.push(View.text(`history-${index}-stable`));
+    traceStream = new TextStream();
+    traceHistory.pushStream(traceStream);
+    if (candidate !== "native_11v3") host!.setHistory(traceHistory.nativeObject());
+  }
   resetNativeViewRouteCounters();
   if (prepared?.base !== undefined) {
-    if (candidate === "native_11v3") tui!.render({ body: prepared.base as View });
+    if (candidate === "native_11v3") renderProduction(tui!, prepared.base as View, undefined);
     else host!.render(bridgeFor(prepared.base));
   }
   const totalSamples: number[] = [];
@@ -111,44 +136,66 @@ async function main(): Promise<void> {
   let lastRows: readonly string[] = [];
   const traceDistribution: Record<string, number> = {};
   const cpuBefore = process.cpuUsage?.();
-  const rssBefore = process.memoryUsage().rss;
+  const memoryBefore = process.memoryUsage();
+  const rssBefore = memoryBefore.rss;
+  const heapBefore = memoryBefore.heapUsed;
   try {
     const sampleCount = warmup + measured;
     for (let repetition = 0; repetition < repeat; repetition += 1) {
       for (let index = 0; index < sampleCount; index += 1) {
         const sampleIndex = repetition * sampleCount + index;
+        const sampleHost = firstUse && candidate !== "native_11v3" ? createHost() : host;
+        const sampleTui = firstUse && candidate === "native_11v3" ? await Tui.open({ width: 80, height: 24, headless: true }) : tui;
+        const sampleComponentHost = firstUse && candidate === "native_11v3" ? (sampleTui as unknown as { readonly host: NativeHost }).host : firstUse ? sampleHost : componentHost;
+        const sampleComponentSlot = firstUse && (workload === "component_heavy" || trace) ? sampleComponentHost!.createViewSlot(nodeForDirectBridge(View.spacer(0))) : undefined;
+        if (sampleComponentSlot?.componentId() !== null && sampleComponentSlot?.componentId() !== undefined) setComparisonComponentId(sampleComponentSlot.componentId()!);
         const constructionStarted = now();
         const tracePair = trace ? buildTracePair<View | Perf7v2View>(candidate === "direct_7v2" ? "perf7v2" : "current", sampleIndex) : undefined;
         const next = tracePair?.next ?? prepared!.next(sampleIndex);
         const constructionNs = now() - constructionStarted;
         if (tracePair !== undefined && !tracePair.cold) {
-          if (candidate === "native_11v3") tui!.render({ body: tracePair.base as View });
-          else host!.render(bridgeFor(tracePair.base));
+          if (candidate === "native_11v3") renderProduction(sampleTui!, tracePair.base as View, traceHistory);
+          else sampleHost!.render(bridgeFor(tracePair.base));
         }
         const transportStarted = now();
-        let nativeStarted = transportStarted;
+        if (tracePair?.category === "stream_append") {
+          traceStream?.append(`stream-${sampleIndex} αβ\n`);
+        } else if (tracePair?.category === "history_update") {
+          if (traceStream !== undefined) traceHistory?.sealStream(traceStream);
+          traceHistory?.push(View.text(`history-insert-${sampleIndex}`));
+          traceStream = new TextStream();
+          traceHistory?.pushStream(traceStream);
+        } else if (tracePair?.category === "component_update") {
+          (sampleComponentSlot ?? componentSlot)?.setView?.(nodeForDirectBridge(View.text(`status-${sampleIndex}`)));
+        }
+        let nativeStarted: number;
         if (candidate === "native_11v3") {
-          const commitStarted = now();
-          tui!.render({ body: next as View });
-          nativeStarted = commitStarted;
+          nativeStarted = now();
+          renderProduction(sampleTui!, next as View, traceHistory);
         } else {
           const bridged = bridgeFor(next);
           nativeStarted = now();
-          host!.render(bridged);
+          sampleHost!.render(bridged);
         }
         const end = now();
-        const prepareNs = candidate === "native_11v3" ? 0 : nativeStarted - transportStarted;
+        const prepareNs = nativeStarted - transportStarted;
         const nativeNs = end - nativeStarted;
+        const forcedFrameNs = forceFrame(sampleHost, sampleTui);
         if (index >= warmup) {
           if (tracePair !== undefined) traceDistribution[tracePair.category] = (traceDistribution[tracePair.category] ?? 0) + 1;
           totalSamples.push(constructionNs + prepareNs + nativeNs);
           constructionSamples.push(constructionNs);
           prepareSamples.push(prepareNs);
           nativeSamples.push(nativeNs);
-          forcedFrameSamples.push(nativeNs);
+          forcedFrameSamples.push(forcedFrameNs);
         }
         if (index === sampleCount - 1) {
-          lastRows = candidate === "native_11v3" ? tui!.screenRows() : host!.screenRows();
+          lastRows = candidate === "native_11v3" ? sampleTui!.screenRows() : sampleHost!.screenRows();
+        }
+        if (firstUse) {
+          sampleComponentSlot?.dispose?.();
+          sampleTui?.close();
+          sampleHost?.dispose();
         }
       }
     }
@@ -189,6 +236,7 @@ async function main(): Promise<void> {
     transport_prepare_samples_ns: prepareSamples,
     native_samples_ns: nativeSamples,
     forced_frame_samples_ns: forcedFrameSamples,
+    forced_frame_ns: forcedFrameSamples,
     ...stats(totalSamples),
     construction: stats(constructionSamples),
     transport_prepare: stats(prepareSamples),
@@ -203,6 +251,7 @@ async function main(): Promise<void> {
     cpu_user_us: cpuUserUs,
     cpu_system_us: cpuSystemUs,
     rss_delta_bytes: rssDelta,
+    heap_delta_bytes: Math.max(0, process.memoryUsage().heapUsed - heapBefore),
     last_screen_rows: lastRows,
     route_counts: routeCounts,
     ...(trace ? { trace_operations: totalSamples.length, trace_distribution: traceDistribution } : {}),

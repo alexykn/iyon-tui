@@ -1,5 +1,6 @@
 [package]
 name = "tui-abi-gen"
+license = "MIT"
 version.workspace = true
 edition.workspace = true
 publish = false

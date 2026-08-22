@@ -1,5 +1,6 @@
 [package]
 name = "iyon-api"
+license = "MIT"
 version.workspace = true
 edition.workspace = true
 

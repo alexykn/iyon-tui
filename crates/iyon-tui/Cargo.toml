@@ -1,5 +1,6 @@
 [package]
 name = "iyon-tui"
+license = "MIT"
 version.workspace = true
 edition.workspace = true
 

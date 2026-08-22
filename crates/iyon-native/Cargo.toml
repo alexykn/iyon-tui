@@ -1,5 +1,6 @@
 [package]
 name = "iyon-native"
+license = "MIT"
 version.workspace = true
 edition.workspace = true
 publish = false

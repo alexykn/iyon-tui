@@ -1,5 +1,6 @@
 [package]
 name = "api-surface"
+license = "MIT"
 version.workspace = true
 edition.workspace = true
 

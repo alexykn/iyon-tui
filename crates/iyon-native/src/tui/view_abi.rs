@@ -99,6 +99,145 @@ struct NativeViewSlot {
     kind: NativeViewKindTag,
 }
 
+/// Dense paged backing for NativeRef slots (PERF-12 §52–§54).
+///
+/// Replaces the former `HashMap<u32, NativeViewSlot>` for the hottest handle
+/// lookup: page = ref >> NATIVE_REF_PAGE_BITS, offset = ref & mask, so common
+/// resolution pays vector bounds + page pointer + slot index instead of a hash.
+/// Refs are monotonic and never recycled inside one runtime generation (§53),
+/// so pages carry no ABA generation state. A page is physical metadata only:
+/// when its live count reaches zero the page allocation is dropped (§54) while
+/// the outer directory keeps its high-water length; a stale JS ref into a
+/// dropped page is simply a cache miss.
+const NATIVE_REF_PAGE_BITS: u32 = 12;
+
+/// Outcome of applying the shared semantic identity rules (PERF-12 §24)
+/// to one candidate publication.
+#[derive(Debug)]
+enum SemanticIdentityMatch {
+    /// A live NativeRef already maps to this exact View.
+    SameLiveWithRef(View),
+    /// The weak cache holds this exact live View but no live NativeRef
+    /// (for example a decode-only transport saw it first).
+    SameLiveWithoutRef,
+    /// A different live View owns this NodeId: impossible identity conflict.
+    Conflict,
+    /// No live View for this NodeId; stale metadata was cleared.
+    Fresh,
+}
+
+/// Lease mode requested from the central semantic publication helper
+/// (PERF-12 handoff §24). `Leased` publications return a caller-owned lease
+/// (generated constructors); `Weak` publications only record semantic identity
+/// without keeping the View alive (bulk/decode-style transports).
+pub(super) enum PublicationLease {
+    Leased,
+    Weak,
+}
+
+#[derive(Default)]
+struct NativeRefPage {
+    slots: Box<[Option<NativeViewSlot>]>,
+    live: u32,
+}
+
+#[derive(Default)]
+struct NativeRefTable<const PAGE_BITS: u32 = NATIVE_REF_PAGE_BITS> {
+    pages: Vec<Option<Box<NativeRefPage>>>,
+    len: usize,
+}
+
+impl<const PAGE_BITS: u32> NativeRefTable<PAGE_BITS> {
+    fn page_slot(reference: u32) -> Option<(usize, usize)> {
+        let index = reference as usize;
+        if index == 0 {
+            return None;
+        }
+        Some((index >> PAGE_BITS, index & ((1 << PAGE_BITS) - 1)))
+    }
+
+    fn get(&self, reference: &u32) -> Option<&NativeViewSlot> {
+        let (page, offset) = Self::page_slot(*reference)?;
+        self.pages.get(page)?.as_ref()?.slots.get(offset)?.as_ref()
+    }
+
+    fn get_mut(&mut self, reference: &u32) -> Option<&mut NativeViewSlot> {
+        let (page, offset) = Self::page_slot(*reference)?;
+        self.pages
+            .get_mut(page)?
+            .as_mut()?
+            .slots
+            .get_mut(offset)?
+            .as_mut()
+    }
+
+    fn contains_key(&self, reference: &u32) -> bool {
+        self.get(reference).is_some()
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn insert(&mut self, reference: u32, slot: NativeViewSlot) -> Option<NativeViewSlot> {
+        let (page_index, offset) = Self::page_slot(reference)?;
+        if page_index >= self.pages.len() {
+            self.pages.resize_with(page_index + 1, || None);
+        }
+        if self.pages[page_index].is_none() {
+            let page_size = 1usize << PAGE_BITS;
+            let mut slots: Vec<Option<NativeViewSlot>> = Vec::with_capacity(page_size);
+            slots.resize_with(page_size, || None);
+            self.pages[page_index] = Some(Box::new(NativeRefPage {
+                slots: slots.into_boxed_slice(),
+                live: 0,
+            }));
+        }
+        let page = self.pages[page_index]
+            .as_mut()
+            .expect("page just allocated");
+        let replaced = page.slots[offset].replace(slot);
+        if replaced.is_none() {
+            page.live += 1;
+            self.len += 1;
+        }
+        replaced
+    }
+
+    fn remove(&mut self, reference: &u32) -> Option<NativeViewSlot> {
+        let (page_index, offset) = Self::page_slot(*reference)?;
+        let page = self.pages.get_mut(page_index)?.as_mut()?;
+        let removed = page.slots[offset].take()?;
+        page.live -= 1;
+        self.len -= 1;
+        if page.live == 0 {
+            self.pages[page_index] = None;
+        }
+        Some(removed)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &NativeViewSlot> {
+        self.pages
+            .iter()
+            .flatten()
+            .flat_map(|page| page.slots.iter().flatten())
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (u32, &NativeViewSlot)> {
+        self.pages
+            .iter()
+            .enumerate()
+            .flat_map(|(page_index, page)| {
+                let base = (page_index << PAGE_BITS) as u32;
+                page.iter()
+                    .flat_map(|page| page.slots.iter().enumerate())
+                    .filter_map(move |(offset, slot)| {
+                        slot.as_ref().map(|slot| (base | offset as u32, slot))
+                    })
+            })
+    }
+}
+
 // PathRefs occupy a disjoint valid-handle range so a ViewRef can never be
 // accepted as a path handle (and vice versa).
 const PATH_ROOT_REF: u32 = 0x4000_0001;
@@ -187,7 +326,7 @@ pub(super) struct NativeViewRuntime {
     // not by a transport or host. All direct, packed, FastShared, and
     // generated paths publish through this map.
     pub(super) nodes: HashMap<u64, iyon_tui::WeakView>,
-    slots: HashMap<u32, NativeViewSlot>,
+    slots: NativeRefTable,
     node_refs: HashMap<u64, u32>,
     path_nodes: HashMap<u32, PathNode>,
     path_keys: HashMap<PathKey, u32>,
@@ -225,7 +364,7 @@ impl NativeViewRuntime {
             status: FastStatusCell::new(),
             owner_thread: std::thread::current().id(),
             nodes: HashMap::new(),
-            slots: HashMap::new(),
+            slots: NativeRefTable::default(),
             node_refs: HashMap::new(),
             path_nodes: HashMap::from([(
                 PATH_ROOT_REF,
@@ -711,19 +850,7 @@ impl NativeViewRuntime {
                 }
                 continue;
             }
-            let weak = entry.view.downgrade();
-            self.nodes.insert(entry.node_id, weak.clone());
-            self.node_refs.insert(entry.node_id, entry.reference);
-            self.slots.insert(
-                entry.reference,
-                NativeViewSlot {
-                    node_id: entry.node_id,
-                    weak,
-                    leased: is_root.then_some(entry.view),
-                    js_lease_count: u32::from(is_root),
-                    kind: NativeViewKindTag::View,
-                },
-            );
+            self.install_semantic_view(entry.node_id, entry.view, entry.reference, is_root);
         }
         root_ref
     }
@@ -862,38 +989,47 @@ impl NativeViewRuntime {
         Ok((view, false))
     }
 
-    fn publish(&mut self, node_id: u64, view: View) -> Result<u32, u32> {
-        if node_id == 0 {
-            return Err(FAST_INVALID);
-        }
+    fn consult_semantic_identity(
+        &mut self,
+        node_id: u64,
+        view: &View,
+    ) -> Result<SemanticIdentityMatch, u32> {
         if let Some(reference) = self.node_refs.get(&node_id).copied() {
             match self.resolve_ref(reference) {
-                Ok((existing, _)) if existing == view => {
-                    // Every generated constructor returns a caller-owned
-                    // lease, including re-materialization of an existing
-                    // semantic NodeId. Do not collapse that lease with an
-                    // already-live owner.
-                    self.acquire_lease(reference, existing)?;
-                    return Ok(reference);
+                Ok((existing, _)) => {
+                    return Ok(if existing == *view {
+                        SemanticIdentityMatch::SameLiveWithRef(existing)
+                    } else {
+                        SemanticIdentityMatch::Conflict
+                    });
                 }
-                Ok(_) => return Err(FAST_INVALID),
                 Err(FAST_CACHE_MISS) => {
                     self.node_refs.remove(&node_id);
                 }
                 Err(error) => return Err(error),
             }
         }
-
-        let reference = self.allocate_ref().ok_or(FAST_FALLBACK)?;
-        let weak = view.downgrade();
         if let Some(existing) = self
             .nodes
             .get(&node_id)
             .and_then(iyon_tui::WeakView::upgrade)
-            && existing != view
         {
-            return Err(FAST_INVALID);
+            if existing == *view {
+                return Ok(SemanticIdentityMatch::SameLiveWithoutRef);
+            }
+            return Ok(SemanticIdentityMatch::Conflict);
         }
+        // Clear the expired weak entry so post-maintenance metadata stays
+        // proportional to live semantic state; the insert below would only
+        // overwrite it anyway.
+        self.nodes.remove(&node_id);
+        Ok(SemanticIdentityMatch::Fresh)
+    }
+
+    /// Single installation path for a freshly allocated NativeRef. Shared by
+    /// direct publication and staged (host-atomic) publication commits.
+    fn install_semantic_view(&mut self, node_id: u64, view: View, reference: u32, leased: bool) {
+        let weak = view.downgrade();
         self.nodes.insert(node_id, weak.clone());
         self.node_refs.insert(node_id, reference);
         self.slots.insert(
@@ -901,54 +1037,65 @@ impl NativeViewRuntime {
             NativeViewSlot {
                 node_id,
                 weak,
-                leased: Some(view),
-                js_lease_count: 1,
+                leased: leased.then_some(view),
+                js_lease_count: u32::from(leased),
                 kind: NativeViewKindTag::View,
             },
         );
+    }
+
+    /// The central semantic publication helper (PERF-12 handoff §24). Every
+    /// transport that mints or re-associates a NativeRef for a semantic NodeId
+    /// must route through this function so there is exactly one set of
+    /// identity rules: validate NodeId, reject impossible identity conflicts,
+    /// maintain NodeId -> WeakView, allocate/associate the NativeRef, apply
+    /// the requested lease mode, and keep diagnostics on the shared runtime.
+    fn publish_semantic_view(
+        &mut self,
+        node_id: u64,
+        view: View,
+        lease: PublicationLease,
+    ) -> Result<u32, u32> {
+        if node_id == 0 {
+            return Err(FAST_INVALID);
+        }
+        match self.consult_semantic_identity(node_id, &view)? {
+            SemanticIdentityMatch::Conflict => return Err(FAST_INVALID),
+            SemanticIdentityMatch::SameLiveWithRef(existing) => {
+                let reference = self.node_refs.get(&node_id).copied().ok_or(FAST_INTERNAL)?;
+                match lease {
+                    PublicationLease::Leased => {
+                        // Every generated constructor returns a caller-owned
+                        // lease, including re-materialization of an existing
+                        // semantic NodeId. Do not collapse that lease with an
+                        // already-live owner.
+                        self.acquire_lease(reference, existing)?;
+                    }
+                    PublicationLease::Weak => {}
+                }
+                return Ok(reference);
+            }
+            SemanticIdentityMatch::SameLiveWithoutRef | SemanticIdentityMatch::Fresh => {}
+        }
+        let reference = self.allocate_ref().ok_or(FAST_FALLBACK)?;
+        self.install_semantic_view(
+            node_id,
+            view,
+            reference,
+            matches!(lease, PublicationLease::Leased),
+        );
         Ok(reference)
+    }
+
+    fn publish(&mut self, node_id: u64, view: View) -> Result<u32, u32> {
+        self.publish_semantic_view(node_id, view, PublicationLease::Leased)
     }
 
     // Bulk V2/V3/V4 and FastShared definitions do not represent a live JS
     // backing, so they receive a weak-only lease. The generated path can
     // reacquire the same NativeRef later through the semantic NodeId cache.
     pub(super) fn publish_bulk(&mut self, node_id: u64, view: View) -> Result<u32, u32> {
-        if node_id == 0 {
-            return Err(FAST_INVALID);
-        }
-        if let Some(reference) = self.node_refs.get(&node_id).copied() {
-            match self.resolve_ref(reference) {
-                Ok((existing, _)) if existing == view => return Ok(reference),
-                Ok(_) => return Err(FAST_INVALID),
-                Err(FAST_CACHE_MISS) => {
-                    self.node_refs.remove(&node_id);
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        if let Some(existing) = self
-            .nodes
-            .get(&node_id)
-            .and_then(iyon_tui::WeakView::upgrade)
-            && existing != view
-        {
-            return Err(FAST_INVALID);
-        }
-        let reference = self.allocate_ref().ok_or(FAST_FALLBACK)?;
-        let weak = view.downgrade();
-        self.nodes.insert(node_id, weak.clone());
-        self.node_refs.insert(node_id, reference);
-        self.slots.insert(
-            reference,
-            NativeViewSlot {
-                node_id,
-                weak,
-                leased: None,
-                js_lease_count: 0,
-                kind: NativeViewKindTag::View,
-            },
-        );
-        Ok(reference)
+        self.publish_semantic_view(node_id, view, PublicationLease::Weak)
     }
 
     fn ref_for_node_id(&mut self, node_id: u64) -> Result<u32, u32> {
@@ -985,6 +1132,46 @@ impl NativeViewRuntime {
         self.builders.clear();
     }
 
+    /// Live View for a NodeId from the shared semantic cache, if any.
+    pub(super) fn live_cached_view(&self, node_id: u64) -> Option<View> {
+        self.nodes
+            .get(&node_id)
+            .and_then(iyon_tui::WeakView::upgrade)
+    }
+
+    /// Drops the cached weak entry for a NodeId. Decode-style transports call
+    /// this on a confirmed cache miss before re-decoding; at that point any
+    /// remaining entry is expired by definition.
+    pub(super) fn drop_cached_entry(&mut self, node_id: u64) {
+        self.nodes.remove(&node_id);
+    }
+
+    /// Shared insertion rules for decode-style transports (Direct N-API
+    /// decoder, packed decoder): same identity rules as publication without
+    /// minting a NativeRef. An identical live View deduplicates, a conflicting
+    /// live View is rejected as an impossible semantic identity, and expired
+    /// entries are replaced. Applies the shared size-based retain cleanup so
+    /// every transport benefits from one metadata-bounding rule.
+    pub(super) fn record_decoded_semantic_view(
+        &mut self,
+        node_id: u64,
+        view: &View,
+    ) -> Result<(), u32> {
+        if let Some(existing) = self
+            .nodes
+            .get(&node_id)
+            .and_then(iyon_tui::WeakView::upgrade)
+            && existing != *view
+        {
+            return Err(FAST_INVALID);
+        }
+        self.nodes.insert(node_id, view.downgrade());
+        if self.nodes.len() > 4096 && self.nodes.len() % 256 == 0 {
+            self.nodes.retain(|_, weak| weak.upgrade().is_some());
+        }
+        Ok(())
+    }
+
     pub(super) fn prune_expired(&mut self) {
         let expired_nodes = self
             .nodes
@@ -1009,7 +1196,7 @@ impl NativeViewRuntime {
             .slots
             .iter()
             .filter_map(|(reference, slot)| {
-                (slot.js_lease_count == 0 && slot.weak.upgrade().is_none()).then_some(*reference)
+                (slot.js_lease_count == 0 && slot.weak.upgrade().is_none()).then_some(reference)
             })
             .collect::<Vec<_>>();
         for reference in expired_refs {
@@ -2415,7 +2602,7 @@ pub unsafe extern "Rust" fn view_release_many_impl(
 }
 
 fn reserve_staged_ref(
-    slots: &HashMap<u32, NativeViewSlot>,
+    slots: &NativeRefTable,
     planned: &mut HashSet<u32>,
     next: &mut u32,
 ) -> Result<u32, u32> {
@@ -2992,11 +3179,158 @@ fn decode_align(value: u32) -> Result<HorizontalAlign, ()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, MAX_EDIT_COUNT, NativeViewRuntime,
-        PATH_ROOT_REF, generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
+        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, MAX_EDIT_COUNT, NativeRefTable,
+        NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF, PublicationLease,
+        generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
     use iyon_tui::{GridTrack, IntoView, TextSpan, View};
     use std::ffi::CString;
+    use std::time::Instant;
+
+    fn slot_for(node_id: u64) -> NativeViewSlot {
+        let view = View::spacer(1);
+        let weak = view.downgrade();
+        NativeViewSlot {
+            node_id,
+            weak,
+            leased: Some(view),
+            js_lease_count: 1,
+            kind: NativeViewKindTag::View,
+        }
+    }
+
+    #[test]
+    fn native_ref_table_maps_refs_across_pages() {
+        // Page-boundary and cross-page coverage for the dense table (§52).
+        let mut table = NativeRefTable::<10>::default();
+        assert_eq!(table.len(), 0);
+        assert!(!table.contains_key(&1));
+        let page_span = [
+            1u32,
+            2,
+            (1 << 10) - 1,
+            1 << 10,
+            (1 << 10) + 1,
+            (1 << 12) + 7,
+        ];
+        for &reference in &page_span {
+            assert!(
+                table
+                    .insert(reference, slot_for(u64::from(reference)))
+                    .is_none()
+            );
+        }
+        assert_eq!(table.len(), page_span.len());
+        for &reference in &page_span {
+            assert_eq!(
+                table.get(&reference).map(|slot| slot.node_id),
+                Some(u64::from(reference))
+            );
+            assert!(table.contains_key(&reference));
+        }
+        assert!(table.get(&0).is_none());
+        assert!(table.get(&(1 << 20)).is_none());
+        // Replace semantics match HashMap::insert.
+        assert!(table.insert((1 << 10) + 1, slot_for(u64::MAX)).is_some());
+        assert_eq!(
+            table.get(&((1 << 10) + 1)).map(|slot| slot.node_id),
+            Some(u64::MAX)
+        );
+        assert_eq!(table.len(), page_span.len());
+        // Removal drops empty pages but keeps the directory high-water (§54).
+        for &reference in &page_span {
+            assert!(table.remove(&reference).is_some());
+        }
+        assert_eq!(table.len(), 0);
+        assert!(table.remove(&1).is_none());
+        assert_eq!(table.iter().count(), 0);
+    }
+
+    #[test]
+    fn native_ref_table_iter_matches_hashmap_semantics() {
+        let mut table = NativeRefTable::<12>::default();
+        let mut reference = std::collections::HashMap::new();
+        for id in 1u32..=5_000u32 {
+            let node = u64::from(id * 3 + 1);
+            table
+                .insert(id * 7, slot_for(node))
+                .map(|_| ())
+                .unwrap_or_default();
+            reference.insert(id * 7, node);
+        }
+        assert_eq!(table.len(), reference.len());
+        let mut seen: Vec<(u32, u64)> = table
+            .iter()
+            .map(|(key, slot)| (key, slot.node_id))
+            .collect();
+        seen.sort_unstable();
+        let mut expected: Vec<(u32, u64)> = reference.into_iter().collect();
+        expected.sort_unstable();
+        assert_eq!(seen, expected);
+        // Expired-weak slots are still physical entries until removed; iter must
+        // surface them exactly like the former HashMap did.
+        assert!(table.values().count() == seen.len());
+    }
+
+    /// Representation benchmark backing the PERF-12 T2 decision (§52/§88).
+    /// Not a timing gate: prints measured ns/lookup so the chosen
+    /// representation and page size are recorded by measurement. Run with:
+    /// cargo test -p iyon-native --release -- --ignored --nocapture native_ref_table_representation
+    #[test]
+    #[ignore = "representation benchmark; run in release with --ignored --nocapture"]
+    fn native_ref_table_representation_benchmark() {
+        const LIVE_SLOTS: u32 = 8_192;
+        const LOOKUPS: u32 = 4_000_000;
+        let mut state = 0x9e37_79b9_u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            1 + (state % LIVE_SLOTS)
+        };
+        let keys: Vec<u32> = (0..LIVE_SLOTS).map(|_| next()).collect();
+        let mut hash_map = std::collections::HashMap::new();
+        let mut paged_10 = NativeRefTable::<10>::default();
+        let mut paged_12 = NativeRefTable::<12>::default();
+        for &key in &keys {
+            hash_map.insert(key, slot_for(u64::from(key)));
+            paged_10.insert(key, slot_for(u64::from(key)));
+            paged_12.insert(key, slot_for(u64::from(key)));
+        }
+        let lookup_keys: Vec<u32> = (0..LOOKUPS).map(|_| next()).collect();
+        fn measure(label: &str, lookup_keys: &[u32], elapsed_ns: u128) {
+            println!(
+                "{label}: {elapsed_ns} ns total, {:.2} ns/lookup",
+                elapsed_ns as f64 / lookup_keys.len() as f64
+            );
+        }
+        let started = Instant::now();
+        let mut hash_checksum = 0u64;
+        for &key in &lookup_keys {
+            if let Some(slot) = hash_map.get(&key) {
+                hash_checksum = hash_checksum.wrapping_add(slot.node_id);
+            }
+        }
+        measure("hash_map     ", &lookup_keys, started.elapsed().as_nanos());
+        let started = Instant::now();
+        let mut paged10_checksum = 0u64;
+        for &key in &lookup_keys {
+            if let Some(slot) = paged_10.get(&key) {
+                paged10_checksum = paged10_checksum.wrapping_add(slot.node_id);
+            }
+        }
+        measure("paged_10_bits", &lookup_keys, started.elapsed().as_nanos());
+        let started = Instant::now();
+        let mut paged12_checksum = 0u64;
+        for &key in &lookup_keys {
+            if let Some(slot) = paged_12.get(&key) {
+                paged12_checksum = paged12_checksum.wrapping_add(slot.node_id);
+            }
+        }
+        measure("paged_12_bits", &lookup_keys, started.elapsed().as_nanos());
+        assert_eq!(hash_checksum, paged10_checksum);
+        assert_eq!(hash_checksum, paged12_checksum);
+    }
 
     fn runtime() -> NativeViewRuntime {
         NativeViewRuntime::new()

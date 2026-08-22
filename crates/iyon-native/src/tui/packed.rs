@@ -182,9 +182,7 @@ impl<'a> PackedTransaction<'a> {
             ));
         }
 
-        let existing = super::with_view_runtime(&self.cache, |cache| {
-            cache.nodes.get(&id).and_then(iyon_tui::WeakView::upgrade)
-        })?;
+        let existing = super::with_view_runtime(&self.cache, |cache| cache.live_cached_view(id))?;
         let view = if let Some(existing) = existing {
             if existing != candidate {
                 return Err(invalid(format!(
@@ -196,10 +194,10 @@ impl<'a> PackedTransaction<'a> {
             candidate
         };
         super::with_view_runtime(&self.cache, |cache| {
-            cache.nodes.insert(id, view.downgrade());
-            if cache.nodes.len() > 4096 && cache.nodes.len() % 256 == 0 {
-                cache.nodes.retain(|_, weak| weak.upgrade().is_some());
-            }
+            cache.record_decoded_semantic_view(id, &view)
+        })
+        .and_then(|recorded| {
+            recorded.map_err(|_| invalid(format!("packed NodeId {id} changed semantic identity")))
         })?;
         inc(iyon_tui::perf::Counter::NapiPackedDefsDecoded);
         Ok(view)

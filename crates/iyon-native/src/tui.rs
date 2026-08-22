@@ -1951,19 +1951,12 @@ impl ViewDecoder {
             )));
         }
         validate_cached_node_header(&value, kind)?;
-        let cached = with_view_runtime(&self.cache, |cache| {
-            cache
-                .nodes
-                .get(&node_id)
-                .and_then(iyon_tui::WeakView::upgrade)
-        })?;
+        let cached = with_view_runtime(&self.cache, |cache| cache.live_cached_view(node_id))?;
         if let Some(view) = cached {
             tui_perf_inc!(NapiViewCacheHits);
             return Ok(view);
         }
-        with_view_runtime(&self.cache, |cache| {
-            cache.nodes.remove(&node_id);
-        })?;
+        with_view_runtime(&self.cache, |cache| cache.drop_cached_entry(node_id))?;
         tui_perf_inc!(NapiViewCacheMisses);
 
         if !self.active.insert(node_id) {
@@ -1976,10 +1969,14 @@ impl ViewDecoder {
         let view = result?;
 
         with_view_runtime(&self.cache, |cache| {
-            cache.nodes.insert(node_id, view.downgrade());
-            if cache.nodes.len() > 4096 && cache.nodes.len() % 256 == 0 {
-                cache.nodes.retain(|_, weak| weak.upgrade().is_some());
-            }
+            cache.record_decoded_semantic_view(node_id, &view)
+        })
+        .and_then(|recorded| {
+            recorded.map_err(|_| {
+                crate::NativeError::invalid_input(format!(
+                    "view node id {node_id} changed semantic identity"
+                ))
+            })
         })?;
         Ok(view)
     }

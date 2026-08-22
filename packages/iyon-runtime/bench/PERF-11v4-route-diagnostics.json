@@ -272,7 +272,7 @@
       }
     }
   ],
-  "git_sha": "07db40da474e5551c37b8d857692dffae34565a2",
+  "git_sha": "7d72f208aee1da8163b240ef5e34c5222253f802",
   "native_artifact_sha256": "81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e",
   "bun_version": "1.4.0",
   "bun_revision": "1.4.0+34cbb9a40"

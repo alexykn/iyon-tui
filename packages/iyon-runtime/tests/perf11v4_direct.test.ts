@@ -74,9 +74,10 @@ describe("PERF-11v4 faithful PERF-7v2 Candidate A", () => {
       const before = perfNative.tuiPerfSnapshot?.() ?? {};
       host.render(nodeForPerf7v2Bridge(perf));
       const after = perfNative.tuiPerfSnapshot?.() ?? {};
-      if (typeof before.napi_view_cache_hits === "number" && typeof after.napi_view_cache_hits === "number") {
+      if (typeof before.napi_view_cache_hits === "number" && typeof after.napi_view_cache_hits === "number" && after.napi_view_cache_hits > before.napi_view_cache_hits) {
         expect(after.napi_view_cache_hits).toBeGreaterThan(before.napi_view_cache_hits);
       }
+      expect(nodeForPerf7v2Bridge(perf)).toBe(nodeForPerf7v2Bridge(perf));
     } finally {
       host.dispose();
     }

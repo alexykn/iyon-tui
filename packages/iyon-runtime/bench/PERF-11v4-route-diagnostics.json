@@ -1,0 +1,279 @@
+{
+  "benchmark_version": "PERF-11v4",
+  "kind": "separate_counter_run",
+  "timing_valid": false,
+  "perf_native_view_stats": true,
+  "warmup_iterations": 1,
+  "measured_iterations": 5,
+  "cases": 14,
+  "route_counts": {
+    "no_op": 12,
+    "render_ref": 0,
+    "scalar": 0,
+    "shallow_depth": 0,
+    "path_ref": 0,
+    "structural": 0,
+    "edit_transaction": 0,
+    "native_builder": 82,
+    "fallback": 0,
+    "recovery": 0
+  },
+  "records": [
+    {
+      "label": "plain_text_column/20/COLD",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "COLD",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 6,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/FIRST_USE",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "FIRST_USE",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 6,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/IDENTICAL_IDENTITY",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "IDENTICAL_IDENTITY",
+      "route_counts": {
+        "no_op": 6,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 1,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/SHARED_PATH",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "SHARED_PATH",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/SHARED_DEEP",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "SHARED_DEEP",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/LARGE_SHARED_SUBTREE_CUTOFF",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "LARGE_SHARED_SUBTREE_CUTOFF",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "plain_text_column/20/REBUILT_EQUIVALENT",
+      "workload": "plain_text_column",
+      "size": 20,
+      "mode": "REBUILT_EQUIVALENT",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/COLD",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "COLD",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 6,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/FIRST_USE",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "FIRST_USE",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 6,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/IDENTICAL_IDENTITY",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "IDENTICAL_IDENTITY",
+      "route_counts": {
+        "no_op": 6,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 1,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/SHARED_PATH",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "SHARED_PATH",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/SHARED_DEEP",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "SHARED_DEEP",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/LARGE_SHARED_SUBTREE_CUTOFF",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "LARGE_SHARED_SUBTREE_CUTOFF",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    },
+    {
+      "label": "row_heavy/20/REBUILT_EQUIVALENT",
+      "workload": "row_heavy",
+      "size": 20,
+      "mode": "REBUILT_EQUIVALENT",
+      "route_counts": {
+        "no_op": 0,
+        "render_ref": 0,
+        "scalar": 0,
+        "shallow_depth": 0,
+        "path_ref": 0,
+        "structural": 0,
+        "edit_transaction": 0,
+        "native_builder": 7,
+        "fallback": 0,
+        "recovery": 0
+      }
+    }
+  ],
+  "git_sha": "07db40da474e5551c37b8d857692dffae34565a2",
+  "native_artifact_sha256": "81a1682d90f3b0be14fb0bb5cd07007c6e1a6b2a9c09158ff2e45be8aff54a9e",
+  "bun_version": "1.4.0",
+  "bun_revision": "1.4.0+34cbb9a40"
+}

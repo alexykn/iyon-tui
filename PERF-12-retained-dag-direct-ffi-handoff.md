@@ -4707,3 +4707,182 @@ convergent weak-cache metadata, not live semantic state), and the direct-call
 floor clears its decision threshold with headroom; T2/T3 may proceed. The
 bucket-F mechanism confirms Tranche 3 weak-cache scavenging remains a mandatory
 shared-runtime prerequisite before memory gates can be judged.
+
+## T2 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T2 (PERF-12.2a shared runtime publication)
+parent:       12.2 (T2+T3 share commit 3 of §108; this tranche is the
+              publication/representation half)
+sections:     §24 one central publish_semantic_view helper,
+              §25 classify existing 11v3 ABI functions,
+              §52–§53 NativeRef paged table design and decision,
+              §54 page reclamation,
+              §88 deliverables checklist (shared with T3; the weak-cache
+              maintenance item belongs to T3)
+```
+
+### 2. Commits
+
+```text
+2da3813  perf(tui): unify semantic publication and adopt paged NativeRef table
+```
+
+This record was appended in the immediately following documentation commit on
+`perf-refactor`.
+
+### 3. Review findings
+
+```text
+finding 1: the pre-T2 runtime had four near-duplicate identity-rule
+       implementations: `publish` (leased), `publish_bulk` (weak-only), the
+       staged publication prepare/commit pair, and blind weak inserts from the
+       Direct N-API decoder (crates/iyon-native/src/tui.rs) plus the packed
+       decoder (tui/packed.rs). Correction: all now funnel through shared rules
+       on NativeViewRuntime (`publish_semantic_view` +
+       `consult_semantic_identity` + `install_semantic_view` for ref-producing
+       transports; `record_decoded_semantic_view` for decode-style
+       transports). The only remaining direct cache accesses are the admin
+       hooks tuiPerfResetViewBridgeCache / size probes, which are not
+       publications.
+
+finding 2: `bun test packages/iyon-runtime/tests` (full directory) shows one
+       failing test — perf11v4 "reconstructs correctly after the weak cache
+       expires" asserts global live_weak_upgrades == 0, but tui_demo,
+       tui_native_persistent_seq, and tui_native_transaction legitimately leave
+       live Views in the shared per-environment runtime. Bisected pairwise and
+       confirmed byte-identical on pre-change HEAD: this is pre-existing
+       cross-file interference, not a T2 regression. The suite passes in
+       isolation (the mode used by the PERF-11v4 report).
+
+finding 3: `cargo test --workspace` shows three pre-existing api-surface
+       failures (generated manifest drift, missing TS declaration for
+       View::native_axis_from_children, checked-in artifact freshness) that are
+       byte-identical on pre-change HEAD. They concern iyon-tui/generated
+       surface state untouched by T2.
+
+finding 4: clippy parity was verified against HEAD (227 warnings before,
+       228 after, no new lint classes in view_abi.rs beyond one moved
+       pre-existing manual_is_multiple_of pattern); rustfmt applied.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+NativeViewRuntime::publish_semantic_view(node_id, view, PublicationLease)
+    single identity funnel: validate NodeId -> consult semantic identity ->
+    reject conflicts (FAST_INVALID) -> reuse live NativeRef (re-acquiring or
+    not per lease mode) or allocate fresh -> install slot/cache/ref entries
+publish / publish_bulk          thin delegations (Leased / Weak)
+commit_staged_publication       installs entries via install_semantic_view
+NativeRefTable<PAGE_BITS=12>    dense paged slots storage replacing
+    HashMap<u32, NativeViewSlot>; monotonic non-reused refs (§53); pages carry
+    live counts and are dropped at zero (§54) while the directory keeps its
+    high-water length; stale refs into dropped pages are plain cache misses
+record_decoded_semantic_view    shared weak-cache insertion rules for Direct
+    and packed decoders, including the single size-based retain cleanup
+PERF-12-nativeref-table.jsonl   representation benchmark artifact
+```
+
+Deliberately NOT done yet: weak-cache scavenging/maintenance counters and the
+memory diagnostic ABI extension belong to T3; no PERF-12 JS-side transport
+(BridgeNativeHint, ensureNative, materializers) exists yet; production routing
+is unchanged.
+
+§25 classification of all 49 generated ABI functions:
+
+```text
+A. semantic constructor/edit, remains useful unchanged (32):
+   host_render_ref, view_render_ref, view_spacer_create,
+   view_text_layout_patch_root, view_common_patch_root,
+   view_axis_create_buffer, view_row_create_0..4, view_column_create_0..4,
+   view_axis_set_child, view_axis_splice_buffer, view_grid_set_cell,
+   view_release_many, view_ref_for_node_id, style_atom_create_cstring,
+   style_create_bits, view_text_create_cstring(_2..4),
+   view_text_create_utf8(_2..4)
+B. useful implementation needing later cleanup (4):
+   edit_txn_begin/add_text_layout/commit_render/abort — superseded by the
+   planned JS-side MaterializeTx (§44); retained until boundary routing lands
+C. path/recipe machinery made redundant by the semantic DAG (9):
+   path_root, path_child, view_axis_set_child_path, view_grid_set_cell_path,
+   view_text_layout_patch_path(_d1..d4)
+D. benchmark/fallback only (4):
+   runtime_noop, axis_builder_begin/push/finish/abort
+```
+
+No function was rewritten merely to rename it PERF-12 (§25 rule).
+
+### 5. Provenance block
+
+```text
+source revision at capture: 2da38138a0f0af249e890bfe588438f70229e279
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      69319658d0570761fe13e994cc5f2e60b054f1bdf81936d58d1c5d3b3931e448
+schema BLAKE3:              f7b30e32493e2e95f86541401308e5db64103bd8a7e694cbecbfe851040025d3 (unchanged; no ABI schema change)
+generator BLAKE3:           20435cb0e211e543dd671e6c86669cf3f205c8e77c5070f47f4d181a4a9d3c71 (unchanged)
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. All transports route publication through one helper, no identity fork:
+   ref-producing paths (generated constructors, patches, path publications,
+   staged commits) all reach publish_semantic_view/install_semantic_view;
+   decode paths (Direct N-API, packed) share record_decoded_semantic_view.
+   Verified by code inspection plus the unchanged behavioral suites below:
+   cross-transport identity tests in tui_generated_view_abi (4 pass) and
+   tui_packed (8 pass) exercise Direct-vs-generated and packed-vs-runtime
+   sharing through the same environment cache.
+
+2. Existing 11v3/Direct regression suites pass unchanged:
+     perf11v4_direct.test.ts            7 pass / 0 fail
+     tui_generated_view_abi             4 pass / 0 fail
+     tui_native_builder                 2 pass / 0 fail
+     tui_native_scalar                  4 pass / 0 fail
+     tui_native_strings                 2 pass / 0 fail
+     tui_native_transaction             1 pass / 0 fail
+     tui_native_persistent_seq          2 pass / 0 fail
+     tui_packed                         8 pass / 0 fail
+     tui_runtime                        2 pass / 0 fail
+     tui_values                         8 pass / 0 fail
+     tui_fast_shared                   10 pass / 0 fail
+     tui_demo/handles/harness/pipeline/surface/traits   all green
+     bun14_ffi_probe                    JIT noop 4.97 ns, conformance pass
+     cargo test -p iyon-native         22 unit tests pass (+2 new table tests)
+   Full-directory bun run carries the one pre-existing interference failure
+   documented under Review findings; identical before and after T2.
+   cargo workspace failures are the three pre-existing api-surface drifts,
+   also identical before and after.
+
+3. NativeRef representation chosen by measurement:
+   PERF-12-nativeref-table.jsonl (release build, 8,192 live slots,
+   4,000,000 lookups, checksum-verified):
+     hash_map      22.66 ns/lookup (run 1), 17.65 ns (run 2)
+     paged 10-bit   5.23 ns / 5.24 ns
+     paged 12-bit   5.20 ns / 5.22 ns
+   Adopted: paged table, PAGE_BITS = 12 (~3.4–4.3x faster than HashMap;
+   page size decided by §53's smaller worst-case directory since 10 vs 12
+   lookup cost is statistically identical). Empty-page reclamation covered by
+   native_ref_table_maps_refs_across_pages unit test.
+   Post-adoption timing sanity: PERF-12 ffi floor probe re-run shows no
+   regression (worst common shape median 693 ns -> 561 ns, within noise);
+   diagnostics smoke block still converges to zero expired metadata.
+```
+
+### 7. Status line
+
+**Tranche T2 status: COMPLETE.** One shared semantic publication funnel and one
+decode-cache rule set now serve every transport, and the NativeRef table is a
+measured paged representation; all pre-existing behavior suites pass unchanged
+with the two documented pre-existing full-suite failures unrelated to this
+tranche. Weak-cache scavenging, maintenance counters, and the churn acceptance
+gate remain for T3.

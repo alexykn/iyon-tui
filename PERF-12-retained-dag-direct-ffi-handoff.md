@@ -5055,3 +5055,16 @@ full sweep), exposes the §56/§89 counter and snapshot surface, and passes the
 §59 1M-transient churn gate with O(live + bounded slack) post-maintenance
 metadata and zero slope. T2+T3 together complete §108 commit 3's scope; T4
 (faithful semantic DAG restoration) may proceed.
+
+Errata (added by the post-T1..T3 specification review): the gate-evidence list
+above omitted two explicit mappings that nonetheless hold. First, the §111
+scenario "old root lease released only after new host install succeeds" is
+covered jointly by `root_lease_transfers_to_boundary_after_new_install`
+(success path: old root slot removed only after the successful install) and
+`failed_host_install_retains_old_root` (failure path). Second, the remaining
+§59 required lines: transport persistent bytes are structurally zero (no
+transport node/edge arena exists anywhere in the runtime — verified by
+inspection), and scratch stays within configured caps because the churn gate
+allocates exactly two fixed buffers (a reused 2 KiB child-ref scratch sized
+for the 512-child wide column and one display scratch per generation), far
+below the §30 tier caps.

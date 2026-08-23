@@ -1141,117 +1141,151 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R7 status: COMPLETE.** Multi-scope updates now have a correctness model: prepare-everything → commit-once, with prepare failures fully atomic and commit failures structurally confined to pathological teardown. Ready for R8 (canonical boundaries + keyed reconciliation).
 
-## 32.2 R8 design addendum — builder boundaries, key groups, retained-content isolation (grounded; pre-implementation)
+## 32.2 R8 design addendum — CORRECTED (builder boundaries, key groups, retained-content isolation)
 
-This addendum fixes the R8 design before implementation, grounded in the actual History/StreamPane wiring (verified against `history.ts`, `stream.ts`, `runtime.ts`, `scene.ts`, `plugins/app/iyon/src/app.ts`).
+Supersedes the earlier draft addendum after the Rust ownership audit and design review. Normative for R8.
 
-### 32.2.1 Grounded facts — retained content engines already exist
+### 32.2.1 Grounded facts — the three retained mechanisms are distinct
 
 ```text
-History (nativeTui.history())
-  push(view)/pushRef(ref)   identity-first unit import (§78) — hints reuse
-                            materialized subtrees; content is NOT re-transported
-  freeze(unit, view)/freezeRef
-discardLive(unit)
-  setLayout(layout)         history layout policy (native-owned)
-  pushStream(stream)/sealStream(stream)   attach TextStream objects by native handle
+1. Structural execution (defineView scopes)
+   immutable View DAG roots; R7 prepare/publish; ScopeProjection for children.
 
-TextStream / StreamPane (nativeTui.textStream(options))
-  update(text), append(text, annotations), seal(), snapshot()
-  transport = STRINGS ONLY across the boundary; the buffer lives in Rust
+2. History — a HYBRID:
+     push(view)/freeze(unit, view)  => identity-first immutable View-DAG unit
+                                       import (pushRef/freezeRef when possible);
+     pushStream(TextStream)/seal    => attach a native stream handle ONCE;
+     TextStream.append/update/seal  => STRINGS ONLY into the native buffer thereafter;
+     StreamLayoutCache (Rust)       => width-keyed incremental reindex from the
+                                       semantic-changed frontier (reindex_in_place).
 
-Mounting
-  Scene carries the History binding; Tui.render performs host.setHistory on
-  binding change, then installs the body — two separate channels, already so.
-  StreamPane/ScrollPane appear inside Views as stable component handles.
+3. ScrollPane — like ViewSlot: stable ComponentId, View.component(...),
+   RetainedRootBoundary, setContent/setContentRef. Belongs with ViewSlot for
+   R8 builder ownership.
 ```
 
-Therefore the R8 rule:
+CORRECTION: StreamPane/TextStream is NOT a View component — no ComponentId, no view(), no DAG root. It is a native retained-content handle attached to History by native reference. ScrollPane IS a component boundary. Do not conflate them.
 
-> **Retained content primitives (History, TextStream/StreamPane, ScrollPane content, future log/terminal buffers) are NOT execution scopes and NOT semantic View DAG updates. Execution scopes own their placement and lifecycle; retained content objects own their high-frequency mutation path through their own revision channels.**
+CORRECTION: History is a HYBRID — do not say "History is not a semantic View DAG path": unit import IS a DAG path (once per unit); stream tokens are NOT.
 
-A token arriving must cause `stream.append(...)` ⇒ Rust buffer+revision+paint damage — never a scope invalidation, never a View allocation. A component may own a stream's *existence* (`View.component(handle)`); it never owns its *content* as reactive state.
-
-### 32.2.2 One builder-boundary abstraction, three adapters
-
-Introduce one internal generic retained builder-boundary abstraction; Tui root, ViewSlot, and ScrollPane become its three adapters. The execution scope stays **View-based** (never generalized to Scene):
+### 32.2.2 Retained-content isolation gate (corrected invariants)
 
 ```text
-RetainedExecutionRuntime
-       |
-       +-- component scope  -> ViewSlot publication
-       +-- root scope       -> Tui root publication
-       +-- slot builder     -> ViewSlot content publication
-       +-- pane builder     -> ScrollPane content publication
-```
-
-Every adapter: normalize (View + boundary-specific metadata) → prepare (R7 publication) → publish (infallible-after-prepare). There is exactly ONE transaction model.
-
-### 32.2.3 Root scope rules
-
-- `tui.render(() => new Scene(body, history))` becomes the canonical recurring form.
-- **Builder function identity is NOT root identity**: the Tui/boundary owns the root scope; each call replaces the producer and re-drives the root. Inline arrows never remount.
-- Root scope output is `Scene.body`; the History binding is staged alongside as boundary metadata and committed with the same transaction discipline (validate-then-swap; prove infallibility of the native handle swap after validation, as done for RootPublication).
-
-### 32.2.4 Ownership modes (direct ↔ builder)
-
-Direct and builder forms are OWNERSHIP MODES, applied uniformly to `Tui.render`, `slot.setView`, `pane.setContent`:
-
-```text
-builder -> direct : dispose builder scope, unsubscribe deps, install direct value
-direct  -> builder: create/reuse builder root; builder takes ownership
-builder -> builder : SAME root scope; replace producer; re-drive
-manual animation over builder: animation takes ownership (documented)
-```
-
-Without this, a stale builder scope ghost-overwrites direct values.
-
-### 32.2.5 Keys: keyed child-owner groups
-
-`View.key(key, build)` does NOT set "pending key for next invocation" (breaks with multiple invocations per thunk). Instead it establishes a lightweight KEYED CHILD-OWNER GROUP owning child component identity only — not an independently schedulable scope:
-
-```text
-ACTIVE_EXECUTION_SCOPE  (unchanged: slots, deps, scheduling)
-ACTIVE_CHILD_OWNER      (normally = active scope; View.key swaps it around the thunk)
-```
-
-Component invocations inside the thunk reconcile under the keyed group. Moved groups retain child identities. Rules:
-
-- unkeyed path: strict positional ordinal + type match; NO forward scanning;
-- keyed children do NOT consume the unkeyed ordinal stream (local isolation);
-- storage lazy: arrays+cursor until the first keyed child, then Map per owner;
-- duplicate key under same owner: deterministic error before publication;
-- same key different nested owners: legal; same key different type: remount within group;
-- abort: committed groups/order remain authoritative; removed-while-dirty follows parent structural transaction;
-- State reads inside a key thunk belong to the ENCLOSING execution scope (key = identity; defineView = execution; State = invalidation).
-
-### 32.2.6 Retained-content isolation gate (mandatory R8 test)
-
-```text
-Mounted History + StreamPane + chrome scopes.
-10,000 stream append operations:
-    scope body executions        = 0 (chrome AND history host scopes)
-    semantic View allocations    = 0 for the content path
-    native content revisions     = 10,000 accepted
-    layout recomputation         = 0 while constraints unchanged
+10,000 TextStream.append() operations with mounted History+StreamPane+chrome:
+  TS execution-scope reruns                    = 0
+  structural JS View creations from content    = 0
+  View-DAG re-imports caused by stream content = 0
+  root builder executions                      = 0
+  native stream mutations accepted             = yes (assert final content exact;
+                                                 revisionAfter > revisionBefore —
+                                                 internal coalescing is allowed)
 Terminal resize:
-    content layout invalidation, still zero chrome executions
+  content layout invalidation; still zero chrome executions
+MEASURED AND REPORTED, not asserted zero:
+  native scene resolves, generic layout traversals, paint work,
+  stream reindex work — nonzero/O(N) findings are R6b evidence, not failures
 ```
 
-Purpose: permanently prevent a future `HistoryView(history.snapshot())` abstraction from routing streams back through the DAG.
+### 32.2.3 HARD BLOCKER — cold fallback must not paint during PREPARE
 
-### 32.2.7 R8 implementation order
+Forbidden: retained prepare refuses ⇒ `host.render(body)` during prepare ⇒ visible mutation before the transaction decides. Transport-route fallback and transaction visibility are separate concerns.
 
-1. Factor the generic builder-boundary infrastructure (no public API change; synthetic targets).
-2. Tui root becomes an R7 publication target (body + staged history metadata).
-3. Canonical `tui.render(() => Scene)` overload; root identity owned by Tui.
-4. ViewSlot builder overload through the shared runtime.
-5. ScrollPane builder overload (scroll state untouched by content rebuilds).
-6. Direct↔builder ownership transitions + disposal.
-7. ChildOwner abstraction.
-8. Keyed child-owner groups + public `View.key`.
-9. Optional typed convenience on defineView (in terms of View.key only).
-10. Full structural/keyed/History/B3/B4/failure/multi-root/isolation gate tests.
+Root/slot/pane publication prepare therefore uses materialize-only paths:
+
+```text
+boundary.prepareInstall(view)            // existing retained path (R7)
+  ?? boundary.prepareColdInstall(view)   // materialize-only cold path:
+                                         // tryNativeMaterialize-class primitive
+                                         // producing a leased ref WITHOUT publish
+```
+
+Both return the same PreparedPublication {commit, abort}. If the existing cold decoder cannot produce a retained ref without publishing for any case, ADD the small native materialize-only primitive required. Never weaken atomicity because fallback is rare.
+
+### 32.2.4 History binding — attach-once ownership (Rust-audited)
+
+Rust facts (`crates/iyon-native/src/tui.rs`): `take_for_host()` REJECTS an already-attached History; `set_history` moves state into the host and drops the previous scene-side History value without returning it. History models `detached → attached`, not a reversible pointer.
+
+Codified invariant:
+
+```text
+Tui has zero or one History attachment.
+First Scene with History        -> attach (validated at prepare: isDetached)
+Later Scenes, same History      -> fine (no-op sideband)
+Later Scenes, no History        -> keep current binding
+Later Scenes, DIFFERENT History -> deterministic API error
+                                  (TUI_HISTORY_ALREADY_BOUND)
+```
+
+No TypeScript rollback via `host.setHistory(old)`. Root staging tracks `pendingScene {body, history}` vs `committedScene {body, history}`; publication fires when EITHER changed (body equality alone is insufficient — the metadata-only change must republish).
+
+### 32.2.5 PublicationTarget separate from ScopeProjection
+
+```ts
+interface PublicationTarget {
+  preparePublication(output: View): PreparedPublication | undefined;
+}
+interface ScopeProjection extends PublicationTarget {
+  readonly view: View;   // stable representation in the parent
+  dispose(): void;
+}
+```
+
+Scope fields: `publicationTarget?: PublicationTarget` (where output installs) and `projection?: ScopeProjection` (how represented in parent). defineView child: projection set, target = projection. Builder roots (Tui body / slot / pane): target set, projection undefined. No dummy spacer views; concepts never conflated.
+
+### 32.2.6 OwnedBuilderRoot with committed/pending producer
+
+Producer is part of the transaction:
+
+```text
+replace producer -> pendingProducer = X; invalidate scope
+evaluate/prepare succeed -> commit: currentProducer = X
+fail -> abort: pendingProducer cleared; currentProducer unchanged
+```
+
+Ownership transitions are themselves transactional (prepare-new BEFORE releasing-old):
+
+```text
+builder -> direct : prepare direct B (builder still authoritative; failure keeps builder owner + A visible) -> commit B -> THEN dispose builder scope/subscriptions
+direct  -> builder: new builder authoritative only after initial evaluation+publication succeed
+builder -> animation: materialize/validate/install frames first, then relinquish builder ownership (existing frame-ref materialization provides the boundary); stopAnimation obeys the same rule
+```
+
+### 32.2.7 One eager runtime per Tui; reentrancy guard
+
+`Tui.open()` creates the RetainedExecutionRuntime eagerly; createViewSlot/createScrollPane pass it through. Raw `new ViewSlot(host)` (internal/test construction) supports direct mode only — production architecture does not bend around test constructors. Reentrancy guard: builder-boundary mutations (`setView`/`setContent`/render-builder calls) from INSIDE any evaluating/preparing/committing scope reject deterministically (internal R7 callbacks bypass the user-facing guard).
+
+### 32.2.8 Keys: ChildOwnerState + WIP maps (no seenSerial, no monkey patch)
+
+```ts
+class ChildOwnerState {
+  committedChildren: ChildRecord[] = [];
+  pendingChildren: ChildRecord[] = [];
+  committedKeyed?: Map<ViewKey, KeyGroup>;   // untouched during evaluation
+  pendingKeyed?: Map<ViewKey, KeyGroup>;
+}
+class KeyGroup { readonly children = new ChildOwnerState(); }
+```
+
+Two contexts: `ACTIVE_EXECUTION_SCOPE` (unchanged by keys) and `ACTIVE_CHILD_OWNER` (= active scope's child-owner normally; swapped to group.children around a key thunk). Unkeyed invocations use strict positional ordinals and NEVER consume keyed slots; keyed groups live in their own namespace. Duplicate key in pending ⇒ immediate error. Commit promotes pendings and disposes absent committed groups; abort discards pendings/new groups, leaving committed maps literally untouched.
+
+Module layout (kills import cycles, no monkey-patching):
+
+```text
+execution-context.ts  ActiveExecutionFrame, activeExecutionScope(),
+                      activeChildOwner(), withChildOwner(), withKeyedChildOwner()
+                      — imports NO View.
+child-owner.ts        ChildOwnerState, KeyGroup, ChildRecord.
+execution.ts          scheduler, reconciliation, transactions.
+values/view.ts        View.key(k, build) -> withKeyedChildOwner(...) — plain import.
+```
+
+Documented limit: `View.key(id, () => View.text(x))` protects CHILD EXECUTION IDENTITY (component scopes inside the thunk), not raw-DAG-node identity; wrapper Views built directly in the thunk follow ordinary enclosing-scope slot behavior (correctness unaffected; local reuse may fall).
+
+### 32.2.9 Additional mandatory gates
+
+- **Atomic frame with root included**: root + Footer slot + ToolSlot dirty in one batch ⇒ exactly the final coherent scene observable (reuse R7 protocol; if individual publishes become externally visible mid-commit, fix with a small host batch boundary — never weaken the test).
+- **Lifecycle ordering**: `Tui.close()` = block invalidations/scheduled flushes → dispose runtime roots (builder scopes, subscriptions, pending work) → close scene-root boundary → dispose native host. Slot/pane dispose = owned builder root → pending publication release → boundary close → native handle. Queued auto-flush after teardown must be impossible (test: `state.set(); tui.close(); await microtask` ⇒ no use-after-dispose).
+- **History/stream regression suite**: hybrid paths preserved (unit import identity-first; stream strings direct); isolation measurements recorded per §32.2.2.
 
 ---
 

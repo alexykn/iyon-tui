@@ -46,6 +46,13 @@
       "name": "@iyon/sdk",
       "version": "0.1.0",
     },
+    "packages/tui-consumer-fixture": {
+      "name": "@iyon/tui-consumer-fixture",
+      "version": "0.1.0",
+      "dependencies": {
+        "@iyon/runtime": "workspace:*",
+      },
+    },
     "plugins/agents/iyon": {
       "name": "@iyon/agent-iyon",
       "version": "0.1.0",
@@ -180,6 +187,8 @@
     "@iyon/tool-read": ["@iyon/tool-read@workspace:plugins/tools/read"],
 
     "@iyon/tool-write": ["@iyon/tool-write@workspace:plugins/tools/write"],
+
+    "@iyon/tui-consumer-fixture": ["@iyon/tui-consumer-fixture@workspace:packages/tui-consumer-fixture"],
 
     "@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
 

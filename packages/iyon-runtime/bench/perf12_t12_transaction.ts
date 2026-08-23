@@ -14,8 +14,8 @@ type Host = { render(view: object): void; tuiViewAbiHostPointer(): number; dispo
 const Host = native.NativeTuiHost as unknown as
   | (new (width: number, height: number, headless: boolean) => Host)
   | undefined;
-const WARMUP = 20;
-const MEASURED = 50;
+const WARMUP = 50;
+const MEASURED = 500;
 
 function median(values: number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
@@ -26,6 +26,16 @@ function median(values: number[]): number {
 function percentile(values: number[], fraction: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]!;
+}
+
+function bootstrapMedianCi95(values: number[], resamples = 1_000): [number, number] {
+  const medians: number[] = [];
+  for (let sample = 0; sample < resamples; sample += 1) {
+    const draw = Array.from({ length: values.length }, () => values[(Math.random() * values.length) | 0]!);
+    medians.push(median(draw));
+  }
+  medians.sort((left, right) => left - right);
+  return [medians[Math.floor(resamples * 0.025)]!, medians[Math.floor(resamples * 0.975)]!];
 }
 
 function commandText(command: string[]): string {
@@ -72,12 +82,24 @@ const artifact = [
     candidate: "retained_dag_ffi",
     workload: "multi_branch_shared_child",
     mode: "SHARED_PATH",
+    git_sha: commandText(["git", "rev-parse", "HEAD"]),
+    perf7v2_sha: "e5292d62c4011610850cbdc1ba4a35f296f78e4f",
+    perf11v4_result_sha: "7c670ccd99fb296b18719f62c1aa845a3e3605de",
+    bun_version: Bun.version,
+    bun_revision: commandText(["bun", "--revision"]),
+    rustc_version: commandText(["rustc", "--version"]),
+    target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
     warmup_ops: WARMUP,
     measured_ops: MEASURED,
+    semantic_construction_samples_ns: [],
+    transport_prepare_samples_ns: [],
+    native_materialize_samples_ns: [],
+    host_commit_samples_ns: [],
     samples_ns: result.samples.map(Math.round),
     median_ns: Math.round(median(result.samples)),
     p95_ns: Math.round(percentile(result.samples, 0.95)),
     p99_ns: Math.round(percentile(result.samples, 0.99)),
+    median_ci95_ns: bootstrapMedianCi95(result.samples).map(Math.round),
     structural: result.counters,
   }),
   JSON.stringify({

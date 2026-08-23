@@ -60,6 +60,9 @@ function bindRuntime(tui: Tui): RetainedExecutionRuntime {
         install(output: View): void {
           slot.setView(output);
         },
+        preparePublication(output: View) {
+          return slot.prepareSetView(output);
+        },
         dispose(): void {
           slot.dispose();
         },

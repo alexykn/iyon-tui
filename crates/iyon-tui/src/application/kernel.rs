@@ -48,6 +48,12 @@ pub(crate) struct RunningApp<State, Action, Error, Update, ViewFn> {
     timers: TimerQueue<Action>,
     global_bindings: GlobalBindings<Action>,
     paste_interceptors: PasteInterceptors<Action>,
+    /// PERF-12 T13.1 R8: component ids whose language handle was disposed and
+    /// which may be physically reclaimed once the last SUCCESSFULLY reconciled
+    /// mount graph no longer contains them (deferred retirement — never
+    /// eager, because committed roots may still reference them until their
+    /// replacement publishes).
+    pending_component_retirements: Vec<u64>,
     deferred_pastes: VecDeque<String>,
     ingress: Option<Receiver<Action>>,
     handle: AppHandle<Action>,
@@ -100,6 +106,38 @@ where
     pub(crate) fn host_forward_paste(&mut self, text: String) -> Result<(), KernelError<Error>> {
         self.deferred_pastes.push_back(text);
         self.drain_deferred_pastes()
+    }
+
+    /// PERF-12 T13.1 R8: request deferred retirement of a host-registered
+    /// component by raw id. The registry entry survives until a successful
+    /// reconciliation proves the component unmounted — an eager remove here
+    /// would leave committed roots referencing a destroyed component when a
+    /// later publication fails.
+    pub(crate) fn host_retire_component(&mut self, raw_id: u64) {
+        self.pending_component_retirements.push(raw_id);
+        self.reap_retired_components();
+    }
+
+    /// Physically reclaim retired components that the last successfully
+    /// reconciled mount graph no longer contains. Called immediately on
+    /// retirement (covers components that never mounted) and after every
+    /// successful `prepare_frame`. Deliberately NOT called after a failed
+    /// frame — the previous authoritative graph still matters then.
+    pub(crate) fn reap_retired_components(&mut self) {
+        if self.pending_component_retirements.is_empty() {
+            return;
+        }
+        let mut still_pending = Vec::new();
+        for raw_id in self.pending_component_retirements.drain(..) {
+            let id = crate::component::ComponentId::from_raw(raw_id);
+            if self.scene_host.is_mounted(id) {
+                still_pending.push(raw_id);
+                continue;
+            }
+            self.components.remove_id(id);
+            self.paste_interceptors.remove_id(id);
+        }
+        self.pending_component_retirements = still_pending;
     }
 
     #[cfg(feature = "native-host")]
@@ -204,6 +242,7 @@ where
             components,
             outputs,
             scene_host: SceneHost::default(),
+            pending_component_retirements: Vec::new(),
             actions: VecDeque::new(),
             timers,
             global_bindings,

@@ -55,6 +55,9 @@ for (const n of [10, 100, 1000]) {
         install(output: View): void {
           slot.setView(output);
         },
+        preparePublication(output: View) {
+          return slot.prepareSetView(output);
+        },
         dispose(): void {
           slot.dispose();
         },

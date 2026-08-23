@@ -48,7 +48,7 @@ function viewSlotProjectionFactory(
   probes?: ProjectionProbe[],
 ) {
   return () => {
-    const slot = new ViewSlot(host);
+    const slot = new ViewSlot(host, View.spacer(0));
     const view = slot.view();
     let count = 0;
     const probe: ProjectionProbe = {
@@ -60,6 +60,19 @@ function viewSlotProjectionFactory(
       install(output: View): void {
         count += 1;
         slot.setView(output);
+      },
+      preparePublication(output: View) {
+        const publication = slot.prepareSetView(output);
+        if (publication === undefined) return undefined;
+        return {
+          commit(): void {
+            publication.commit();
+            count += 1;
+          },
+          abort(): void {
+            publication.abort();
+          },
+        };
       },
       dispose(): void {
         slot.dispose();
@@ -199,13 +212,25 @@ describe.skipIf(!canRun)("T13.1 R3 — retained scope projections", () => {
   test("failed installs keep old content authoritative on both sides", () => {
     let failInstalls = false;
     let installs = 0;
+    const host = new Host!(48, 12, true);
+    const slotMirror = new ViewSlot(host, View.spacer(0));
     const runtime = new RetainedExecutionRuntime({
       createScopeProjection: () => ({
         view: View.component({ id: 31 as never }),
         install(output: View): void {
-          if (failInstalls) throw new Error("install refused");
           installs += 1;
+          slotMirror.setView(output);
           void output;
+        },
+        preparePublication(output: View) {
+          if (failInstalls) throw new Error("install refused");
+          return {
+            commit(): void {
+              installs += 1;
+              slotMirror.setView(output);
+            },
+            abort(): void {},
+          };
         },
         dispose(): void {},
       }),
@@ -226,13 +251,10 @@ describe.skipIf(!canRun)("T13.1 R3 — retained scope projections", () => {
 
     // Committed world untouched: old output still authoritative.
     expect(bridgeText(root.children[0]!.scope.currentOutput)).toBe("old");
-    // R7 protocol: this projection has NO preparePublication (legacy
-    // per-scope path), so its failure is a COMMIT-phase pathological error —
-    // it surfaces loudly WITHOUT a batch abort (abort count unchanged).
-    // Batch-abort semantics belong to projections WITH preparePublication
-    // (perf12_t13_1_r7_transaction.test.ts).
+    // R7 protocol: this projection HAS preparePublication, so its failure is
+    // a PHASE-2 staging failure → whole batch aborts atomically.
     const after = executionCounterSnapshot();
-    expect(after.execution_commit_aborts - before.execution_commit_aborts).toBe(0);
+    expect(after.execution_commit_aborts - before.execution_commit_aborts).toBe(1);
 
     // Recovery succeeds once the failure clears.
     failInstalls = false;

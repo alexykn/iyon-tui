@@ -191,6 +191,13 @@ impl ComponentRegistry {
         Some(result)
     }
 
+    /// PERF-12 T13.1 R8: type-erased removal for deferred component
+    /// retirement (the native host bridge knows only ComponentIds by the
+    /// time a retired component may physically be reclaimed).
+    pub(crate) fn remove_id(&mut self, id: ComponentId) -> bool {
+        self.slots.remove(&id).is_some()
+    }
+
     pub(crate) fn remove<C>(&mut self, handle: ComponentHandle<C>) -> Option<C>
     where
         C: Component,

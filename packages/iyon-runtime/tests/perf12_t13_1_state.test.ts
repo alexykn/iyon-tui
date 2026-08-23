@@ -222,12 +222,15 @@ describe("T13.1 R4 — tracked State<T>", () => {
       const host = new Host!(48, 12, true);
       const runtime = new RetainedExecutionRuntime({
         createScopeProjection: () => {
-          const slot = new ViewSlot(host);
+          const slot = new ViewSlot(host, View.spacer(0));
           const view = slot.view();
           return {
             view,
             install(output: View): void {
               slot.setView(output);
+            },
+            preparePublication(output: View) {
+              return slot.prepareSetView(output);
             },
             dispose(): void {
               slot.dispose();

@@ -1491,6 +1491,11 @@ impl NativeScrollPane {
 
     #[napi]
     pub fn dispose(&self) {
+        // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
+        // registered component (idempotent); physical reclamation happens in
+        // RunningApp::reap_retired_components after reconciliation proves the
+        // component unmounted. The N-API surface is the durable public path.
+        self.pane.retire();
         self.alive.store(false, Ordering::Release);
     }
 
@@ -1548,6 +1553,11 @@ impl NativeViewSlot {
 
     #[napi]
     pub fn dispose(&self) {
+        // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
+        // registered component (idempotent). Physical reclamation happens in
+        // RunningApp::reap_retired_components after reconciliation proves the
+        // component unmounted — committed roots may still reference it.
+        self.slot.retire();
         self.alive.store(false, Ordering::Release);
     }
 

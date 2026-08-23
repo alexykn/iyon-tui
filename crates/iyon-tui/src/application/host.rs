@@ -197,6 +197,26 @@ impl HostViewSlot {
         self.component_id.lock().ok().and_then(|id| *id)
     }
 
+    /// PERF-12 T13.1 R8: request deferred retirement of this slot's registry
+    /// entry. Idempotent; a never-host-mounted slot (no component id) is a
+    /// no-op. Physical reclamation happens in
+    /// `RunningApp::reap_retired_components` after reconciliation proves the
+    /// component unmounted.
+    pub fn retire(&self) {
+        let Some(raw_id) = self.component_id() else {
+            return;
+        };
+        if let Ok(guard) = self.host.lock() {
+            if let Some(weak) = guard.as_ref() {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut inner) = inner.lock() {
+                        inner.running.host_retire_component(raw_id);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         self.state.lock().map(|state| state.revision).unwrap_or(0)
     }
@@ -410,6 +430,22 @@ impl HostScrollPane {
 
     pub fn component_id(&self) -> Option<u64> {
         self.component_id.lock().ok().and_then(|id| *id)
+    }
+
+    /// PERF-12 T13.1 R8: see `HostViewSlot::retire`.
+    pub fn retire(&self) {
+        let Some(raw_id) = self.component_id() else {
+            return;
+        };
+        if let Ok(guard) = self.host.lock() {
+            if let Some(weak) = guard.as_ref() {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut inner) = inner.lock() {
+                        inner.running.host_retire_component(raw_id);
+                    }
+                }
+            }
+        }
     }
 
     fn attach_host(&self, host: &Arc<Mutex<HostInner>>) -> Result<()> {

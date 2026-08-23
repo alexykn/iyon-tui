@@ -151,15 +151,18 @@ describe("T13.1 R7 — transactional retained-root publication", () => {
   });
 
   test("commit-phase failure surfaces loudly (pathological, never silent)", () => {
+    const probe: FakeProbe = { installs: 0, prepares: 0, failPrepare: false, failCommit: false };
     const runtime = new RetainedExecutionRuntime({
       autoFlush: false,
-      createScopeProjection: () => fakeProjection({ installs: 0, prepares: 0, failPrepare: false, failCommit: true }),
+      createScopeProjection: () => fakeProjection(probe),
     });
     const value = state("v0");
     const T = tracked(() => composeText(value.value));
     const Holder = tracked(() => composeVertical((column) => column.child(T.component(undefined as never))));
     const root = runtime.mountRoot(Holder.component, undefined as never);
 
+    // Arm the pathological COMMIT-phase failure only after a clean mount.
+    probe.failCommit = true;
     value.set("v1");
     // Prepare succeeds; the publish itself refuses. This is pathological per
     // the boundary contract (validated lease + generation) and MUST surface

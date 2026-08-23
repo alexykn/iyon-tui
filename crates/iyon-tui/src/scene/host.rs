@@ -164,6 +164,15 @@ pub(crate) struct SceneHost {
     pub(crate) resolve_count: usize,
 }
 
+impl SceneHost {
+    /// PERF-12 T13.1 R8: whether the last SUCCESSFULLY reconciled mount graph
+    /// still contains this component. Deferred component retirement consults
+    /// this before physically reclaiming a registry entry.
+    pub(crate) fn is_mounted(&self, id: crate::component::ComponentId) -> bool {
+        self.graph.contains(id)
+    }
+}
+
 impl Default for SceneHost {
     fn default() -> Self {
         Self {

@@ -1087,6 +1087,33 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R5 status: COMPLETE.** The scheduler now guarantees single-pass batching for synchronous bursts, auto-schedules per §12.1, never double-executes superseded children, and discards doomed work structurally. Ready for R6a (production projection wiring over existing host machinery).
 
+### R6a implementation record
+
+**1. Scope statement.** Tranche R6a (Step 9R part 1; AMENDMENT-C §14/§18): production projection wiring through existing host machinery — `bindExecutionRuntime(tui)`, end-to-end rendering proofs over a real headless Tui, and the mounted-scope-count overhead curve as the R6b decision input. No new host dependency graphs.
+
+**2. Commits.** `0cbf3ad` — feat(tui): wire T13.1 scope projections through the production host (R6a). Bench JSONL captured at the same working tree.
+
+**3. Review findings.**
+- Finding 1 (empirical anchor): `slot.setView` ALONE repaints the headless screen — native damage propagation is self-contained per component revision swap. This makes the R6a contract trivially strong: local updates are live with zero parent rebuild and zero scene re-render.
+- Finding 2 (the §5.3 gap, now measured): once a scene embeds N projections, per-update cost grows ~2.3µs × N in the native resolve/damage path (67µs @ 10 → 214µs @ 100 → 2.36ms @ 1,000), while pre-scene-render updates stay flat (~20–40µs). Initial scene renders are themselves O(N) (0.85–9.6ms). This curve IS the R6b trigger evidence the Staged-delivery gate demanded; exact phase attribution inside Rust (resolve vs layout vs paint) is R6b planning work.
+- Finding 3 (bench hygiene): two confounds were caught and removed before recording — host height scaling with N (fixed geometry), and an off-screen visibility probe replaced by a deterministic on-screen leaf update.
+- Finding 4: root-level structural changes propagate through an EXPLICIT scene render at this tranche; wiring that propagation into the canonical render boundary is R8/R11.
+
+**4. Implementation summary.** `tui-execution.ts` NEW (`bindExecutionRuntime`, private framework glue); 4-test end-to-end suite over real headless hosts; three-regime overhead instrument + JSONL. No changes to execution core semantics.
+
+**5. Provenance block.** Source revision at capture: commit `0cbf3ad` working tree (`b92be10` docs HEAD). bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Native addon exercised (ViewSlot/registry/host damage) but not rebuilt.
+
+**6. Gate evidence.**
+- *Local scope update renders end-to-end:* tracked write → auto-flush → projection install → screen shows new content with NO parent rebuild, NO scene re-render, NO cold fallbacks.
+- *Parent semantic View identity EXACT:* root output object identical across child-local updates.
+- *Old lease survives:* 8 consecutive hint-driven updates ⇒ cold_fallbacks 0, host_mutations 0 (slots are not scene hosts).
+- *Root structural change:* explicit render propagates cleanly, zero fallbacks.
+- *Independent regions:* left/right state writes repaint only their own regions.
+- *Overhead recorded (R6b input):* see Finding 2 + committed JSONL (three regimes × N=10/100/1,000, constant host geometry, visibility asserted deterministically).
+- *Battery:* typecheck clean; full suite 212 pass / 1 fail (documented perf11v4 interference, unchanged).
+
+**7. Status line.** **Tranche R6a status: COMPLETE.** Scoped updates render live through the unmodified production resolver/registry/damage machinery; parent identity exact; leases hold; the R6b trigger curve is quantified and committed. Next per registry: R7 (multi-scope transactional commit atomicity across projections), then R8+ integration arc.
+
 ---
 
 # 33. Files

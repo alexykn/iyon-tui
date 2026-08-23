@@ -182,7 +182,7 @@ describe("PERF-12 T6 retained identity fast paths", () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const session = nativeViewAbiSession()!;
     const view = View.spacer(2);
-    const unsupported = View.text("fallback please"); // text has no materializer yet
+    const unsupported = View.text("fallback please").bold(); // decorated nodes have no retained materializer
     const host = new Host(20, 6, true);
     try {
       host.render(nodeForBridge(view));

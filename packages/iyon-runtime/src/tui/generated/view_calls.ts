@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
-// generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e
+// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
+// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
 import type { Pointer } from "bun:ffi";
 import type { linkViewAbi } from "./view_abi";
 export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>["symbols"];
@@ -160,6 +160,11 @@ export function viewAxisSetChildPath(symbols: ViewAbiSymbols, runtime: Pointer, 
 
 export function viewGridCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, column_gap: number, row_gap: number, words: NodeJS.TypedArray | DataView, used_word_count: number): number {
   const result = symbols.viewGridCreateBuffer(runtime, node_id_low, node_id_high, column_gap, row_gap, words, words, used_word_count);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewDiffCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, words: NodeJS.TypedArray | DataView, used_word_count: number, bytes: NodeJS.TypedArray | DataView, used_byte_count: number): number {
+  const result = symbols.viewDiffCreateBuffer(runtime, node_id_low, node_id_high, words, words, used_word_count, bytes, bytes, used_byte_count);
   return checkedRef(symbols, runtime, result);
 }
 

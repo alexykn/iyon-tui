@@ -349,11 +349,26 @@ fn validation_statements(
                 argument.name, argument.name, error
             )),
             "buffer_used" => {
-                let buffer = function
-                    .args
-                    .iter()
-                    .find(|candidate| matches!(candidate.lowering.as_str(), "buffer" | "pod_slice"))
-                    .expect("validated buffer_used pair");
+                let buffer = if let Some(target) = argument.buffer_used_of.as_deref() {
+                    // PERF-12 T11 (§41): explicit pairing on multi-buffer
+                    // functions; validated to name a real buffer exactly once.
+                    function
+                        .args
+                        .iter()
+                        .find(|candidate| {
+                            candidate.name == target
+                                && matches!(candidate.lowering.as_str(), "buffer" | "pod_slice")
+                        })
+                        .expect("validated buffer_used_of target")
+                } else {
+                    function
+                        .args
+                        .iter()
+                        .find(|candidate| {
+                            matches!(candidate.lowering.as_str(), "buffer" | "pod_slice")
+                        })
+                        .expect("validated buffer_used pair")
+                };
                 let capacity = function
                     .args
                     .iter()
@@ -565,14 +580,22 @@ pub fn layout_tests(document: &AbiDocument, schema_hash: &str, generator_hash: &
     }
     output.push_str("}\n\n#[test]\nfn generated_wrappers_reject_invalid_inputs_and_delegate() {\n    let mut runtime = NativeViewRuntime;\n    let runtime_ptr = &mut runtime as *mut NativeViewRuntime;\n");
     if document.functions.len() >= 7 {
-        output.push_str("    assert_eq!(unsafe { generated_exports::iyon_runtime_noop_v1(runtime_ptr) }, 0x100);\n    assert_eq!(unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 1) }, 0x101);\n    let mut host = NativeHost;\n    let host_ptr = &mut host as *mut NativeHost;\n    assert_eq!(unsafe { generated_exports::iyon_host_render_ref_v1(runtime_ptr, host_ptr, 1) }, 102);\n    assert_eq!(unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 1, 0, 2) }, 0x103);\n    assert_eq!(unsafe { generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 1, 2) }, 0x104);\n    assert_eq!(unsafe { generated_exports::iyon_view_common_patch_root_v1(runtime_ptr, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1) }, 0x105);\n    let children = [generated_types::AxisChildInputV1 { track_word: 1, child_ref: 1 }];\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, children.as_ptr(), core::mem::size_of_val(&children), 1) }, 0x106);\n    let refs = [1_u32];\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, refs.as_ptr(), core::mem::size_of_val(&refs), 1) }, 127);\n    assert_eq!(unsafe { generated_exports::iyon_runtime_noop_v1(core::ptr::null_mut()) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 0) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 0, 0, 1) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 0, 1) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, core::ptr::null(), 8, 0) }, 0x8000_0002);\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, core::ptr::null(), 0, 1) }, 0x8000_0003);\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 4, 0) }, -2);\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 0, 1) }, -3);\n");
+        // Stub returns are positional (test_stub_value: u32/ViewRefResult ->
+        // 0x100 + index, i32/f32/f64 -> 100 + index). These expectations must
+        // track the canonical function order; they drifted when T12 inserted
+        // view_status_detail and were re-derived for T11's diff insertion.
+        output.push_str("    assert_eq!(unsafe { generated_exports::iyon_runtime_noop_v1(runtime_ptr) }, 0x100);\n    assert_eq!(unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 1) }, 0x102);\n    let mut host = NativeHost;\n    let host_ptr = &mut host as *mut NativeHost;\n    assert_eq!(unsafe { generated_exports::iyon_host_render_ref_v1(runtime_ptr, host_ptr, 1) }, 103);\n    assert_eq!(unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 1, 0, 2) }, 0x104);\n    assert_eq!(unsafe { generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 1, 2) }, 0x105);\n    assert_eq!(unsafe { generated_exports::iyon_view_common_patch_root_v1(runtime_ptr, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1) }, 0x106);\n    let children = [generated_types::AxisChildInputV1 { track_word: 1, child_ref: 1 }];\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, children.as_ptr(), core::mem::size_of_val(&children), 1) }, 0x107);\n    let refs = [1_u32];\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, refs.as_ptr(), core::mem::size_of_val(&refs), 1) }, 129);\n    assert_eq!(unsafe { generated_exports::iyon_runtime_noop_v1(core::ptr::null_mut()) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 0) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 0, 0, 1) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 0, 1) }, 0x8000_0001);\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, core::ptr::null(), 8, 0) }, 0x8000_0002);\n    assert_eq!(unsafe { generated_exports::iyon_view_axis_create_buffer_v1(runtime_ptr, 1, 0, 1, 0, core::ptr::null(), 0, 1) }, 0x8000_0003);\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 4, 0) }, -2);\n    assert_eq!(unsafe { generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 0, 1) }, -3);\n");
     }
-    if document
+    if let Some(index) = document
         .functions
         .iter()
-        .any(|function| function.name == "view_ref_for_node_id")
+        .position(|function| function.name == "view_ref_for_node_id")
     {
-        output.push_str("    assert_eq!(unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 1, 0) }, 0x11c);\n    assert_eq!(unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 0, 0) }, 0x8000_0001);\n");
+        // Positional stub value (0x100 + index) so insertions cannot drift it.
+        output.push_str(&format!(
+            "    assert_eq!(unsafe {{ generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 1, 0) }}, 0x{:x});\n    assert_eq!(unsafe {{ generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 0, 0) }}, 0x8000_0001);\n",
+            0x100 + index
+        ));
     }
     output.push_str("}\n");
     format_rust(output)

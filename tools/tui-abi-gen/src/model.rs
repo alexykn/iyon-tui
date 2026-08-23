@@ -156,6 +156,11 @@ pub struct ArgumentSpec {
     pub lowering: String,
     #[serde(default)]
     pub buffer_length_of: Option<String>,
+    /// PERF-12 T11 (§41): required on `buffer_used` arguments of functions
+    /// declaring more than one variable buffer; names the buffer whose used
+    /// count this argument carries. Single-buffer functions infer the pair.
+    #[serde(default)]
+    pub buffer_used_of: Option<String>,
 }
 
 /// PERF-12 T5 (§63): strongly typed semantic materializer declaration.

@@ -195,7 +195,7 @@ describe("PERF-12 T12 transaction integrity", () => {
   test("§45/§118: child failure drains temporary leases and leaves the old host root", () => {
     if (!canRun) return;
     const old = View.spacer(2);
-    const bad = View.horizontal([View.spacer(3), View.text("unsupported retained child")]);
+    const bad = View.horizontal([View.spacer(3), View.text("unsupported retained child").bold()]);
     const host = new Host!(48, 12, true);
     host.render(nodeForBridge(old));
     const boundary = new RetainedRootBoundary(session!, () => host.tuiViewAbiHostPointer() as never);

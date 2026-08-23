@@ -205,9 +205,13 @@ pub fn validate(
                 variable_buffers += 1;
             }
         }
-        if variable_buffers > 1 {
+        // PERF-12 T11 (§41): at most two variable buffers so the diff lane can
+        // carry framed metadata words plus its UTF-8 byte payload in ONE call.
+        // Each buffer still needs its own buffer_length/buffer_used pair and
+        // the shared per-function max_buffer_bytes bound.
+        if variable_buffers > 2 {
             return invalid(format!(
-                "function {} has more than one variable buffer in tranche 1",
+                "function {} has more than two variable buffers",
                 function.name
             ));
         }
@@ -227,6 +231,43 @@ pub fn validate(
                 "each buffer in {} must have exactly one buffer_used argument",
                 function.name
             ));
+        }
+        // PERF-12 T11 (§41): multi-buffer functions must pair every
+        // buffer_used with its target explicitly and unambiguously.
+        if variable_buffers > 1 {
+            let mut linked_targets = HashSet::new();
+            for argument in &function.args {
+                if argument.lowering != "buffer_used" {
+                    continue;
+                }
+                let Some(target) = argument.buffer_used_of.as_deref() else {
+                    return invalid(format!(
+                        "buffer_used argument {}.{} must declare buffer_used_of on a multi-buffer function",
+                        function.name, argument.name
+                    ));
+                };
+                if !function.args.iter().any(|candidate| {
+                    candidate.name == target
+                        && matches!(candidate.lowering.as_str(), "buffer" | "pod_slice")
+                }) {
+                    return invalid(format!(
+                        "buffer_used argument {}.{} refers to unknown buffer {}",
+                        function.name, argument.name, target
+                    ));
+                }
+                if !linked_targets.insert(target.to_owned()) {
+                    return invalid(format!(
+                        "buffer {} in {} has more than one buffer_used argument",
+                        target, function.name
+                    ));
+                }
+            }
+            if linked_targets.len() != variable_buffers {
+                return invalid(format!(
+                    "every buffer in {} must have exactly one buffer_used argument",
+                    function.name
+                ));
+            }
         }
         if variable_buffers == 0 && used_count != 0 {
             return invalid(format!(

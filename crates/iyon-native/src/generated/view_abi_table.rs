@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
-// generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e
+// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
+// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
 #![allow(dead_code)]
 
 #[derive(Clone, Copy, Debug)]
@@ -425,6 +425,21 @@ pub static FUNCTIONS: &[FunctionDescriptor] = &[
         max_buffer_bytes: 1048576,
         max_input_count: 262144,
         benchmark_registration: "view.grid_create_buffer",
+    },
+    FunctionDescriptor {
+        name: "view_diff_create_buffer",
+        symbol: "iyon_view_diff_create_buffer_v1",
+        family: "constructor",
+        hotness: "warm",
+        fallback: "direct_decode",
+        ownership: "runtime_owned",
+        borrow_duration: "call",
+        thread_affinity: "owner_thread",
+        may_allocate_native_memory: true,
+        mutates_host_state: false,
+        max_buffer_bytes: 1048576,
+        max_input_count: 262144,
+        benchmark_registration: "view.diff_create_buffer",
     },
     FunctionDescriptor {
         name: "view_grid_set_cell_path",

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
-// generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e
+// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
+// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -282,6 +282,19 @@ pub mod generated_impls {
             words: *const u32,
             words_capacity_bytes: usize,
             used_word_count: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_diff_create_buffer_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            words: *const u32,
+            words_capacity_bytes: usize,
+            used_word_count: u32,
+            bytes: *const u8,
+            bytes_capacity_bytes: usize,
+            used_byte_count: u32,
         ) -> u32;
     }
     unsafe extern "Rust" {
@@ -1603,6 +1616,61 @@ pub unsafe extern "C" fn iyon_view_grid_create_buffer_v1(
                         words,
                         words_capacity_bytes,
                         used_word_count,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_diff_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let words =
+                    generated_buffer(words, words_capacity_bytes, 4, 1048576, 0x8000_0002u32)?;
+                let used_word_count = generated_buffer_used(
+                    used_word_count,
+                    words_capacity_bytes,
+                    4,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                let bytes =
+                    generated_buffer(bytes, bytes_capacity_bytes, 1, 1048576, 0x8000_0002u32)?;
+                let used_byte_count = generated_buffer_used(
+                    used_byte_count,
+                    bytes_capacity_bytes,
+                    1,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                Ok(unsafe {
+                    generated_impls::view_diff_create_buffer_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        words,
+                        words_capacity_bytes,
+                        used_word_count,
+                        bytes,
+                        bytes_capacity_bytes,
+                        used_byte_count,
                     )
                 })
             })()

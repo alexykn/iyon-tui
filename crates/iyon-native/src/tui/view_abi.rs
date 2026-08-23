@@ -1,7 +1,8 @@
 use super::NativeTuiHost;
 use crate::NativeError;
 use iyon_tui::{
-    AnsiColor, ColorSpec, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView,
+    AnsiColor, ColorSpec, DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination,
+    DiffRange, DiffRenderer, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView, Renderer,
     RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
 };
 use napi::Env;
@@ -1547,6 +1548,7 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
             "viewAxisSpliceBuffer": generated_exports::iyon_view_axis_splice_buffer_v1 as *const () as usize as u64,
             "viewGridSetCell": generated_exports::iyon_view_grid_set_cell_v1 as *const () as usize as u64,
             "viewGridCreateBuffer": generated_exports::iyon_view_grid_create_buffer_v1 as *const () as usize as u64,
+            "viewDiffCreateBuffer": generated_exports::iyon_view_diff_create_buffer_v1 as *const () as usize as u64,
             "viewAxisSetChildPath": generated_exports::iyon_view_axis_set_child_path_v1 as *const () as usize as u64,
             "viewGridSetCellPath": generated_exports::iyon_view_grid_set_cell_path_v1 as *const () as usize as u64,
             "viewReleaseMany": generated_exports::iyon_view_release_many_v1 as *const () as usize as u64,
@@ -3012,6 +3014,150 @@ pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
     }
 }
 
+/// PERF-12 T11 (§41): parses the framed words+bytes payload describing a new
+/// Diff view and constructs it through the semantic `DiffRenderer` lowering
+/// used by the Direct decoder. Every read is bounds-checked; the word buffer
+/// must be consumed exactly and byte lengths must sum to the byte buffer.
+fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
+    // Canonical enum codes shared with the bridge schema and Direct decoder.
+    const DIFF_LINE_CONTEXT: u32 = 1;
+    const DIFF_LINE_ADDITION: u32 = 2;
+    const DIFF_LINE_DELETION: u32 = 3;
+    const DIFF_TERMINATED: u32 = 1;
+    const DIFF_UNTERMINATED: u32 = 2;
+    let mut word_cursor = 0usize;
+    let mut next_word = || -> Result<u32, u32> {
+        let value = *words.get(word_cursor).ok_or(FAST_INVALID)?;
+        word_cursor += 1;
+        Ok(value)
+    };
+    // JS numbers are safe integers below 2^53, so the high word of any
+    // coordinate carried by a canonical producer fits in 21 bits.
+    let coordinate = |low: u32, high: u32| -> Result<u64, u32> {
+        if high > 0x001f_ffff {
+            return Err(FAST_INVALID);
+        }
+        Ok((u64::from(high) << 32) | u64::from(low))
+    };
+    let line_number =
+        |raw: u64| -> Result<DiffLineNumber, u32> { DiffLineNumber::new(raw).ok_or(FAST_INVALID) };
+    let hunk_count = next_word()? as usize;
+    if hunk_count > words.len() {
+        return Err(FAST_INVALID);
+    }
+    let mut hunks = Vec::with_capacity(hunk_count);
+    let mut byte_cursor = 0usize;
+    for _ in 0..hunk_count {
+        let old_start = coordinate(next_word()?, next_word()?)?;
+        let old_count = coordinate(next_word()?, next_word()?)?;
+        let new_start = coordinate(next_word()?, next_word()?)?;
+        let new_count = coordinate(next_word()?, next_word()?)?;
+        if old_start > u64::from(u32::MAX)
+            || old_count > u64::from(u32::MAX)
+            || new_start > u64::from(u32::MAX)
+            || new_count > u64::from(u32::MAX)
+        {
+            return Err(FAST_INVALID);
+        }
+        let old_range =
+            DiffRange::new(DiffLineOffset::new(old_start), old_count).map_err(|_| FAST_INVALID)?;
+        let new_range =
+            DiffRange::new(DiffLineOffset::new(new_start), new_count).map_err(|_| FAST_INVALID)?;
+        let line_count = next_word()? as usize;
+        if line_count > words.len() {
+            return Err(FAST_INVALID);
+        }
+        let mut lines = Vec::with_capacity(line_count);
+        for _ in 0..line_count {
+            let meta = next_word()?;
+            let kind = meta & 0xffff;
+            let termination = match meta >> 16 {
+                DIFF_TERMINATED => DiffLineTermination::Terminated,
+                DIFF_UNTERMINATED => DiffLineTermination::Unterminated,
+                _ => return Err(FAST_INVALID),
+            };
+            let old_line_raw = coordinate(next_word()?, next_word()?)?;
+            let new_line_raw = coordinate(next_word()?, next_word()?)?;
+            let text_bytes = next_word()? as usize;
+            let text_end = byte_cursor.checked_add(text_bytes).ok_or(FAST_INVALID)?;
+            if text_end > bytes.len() {
+                return Err(FAST_INVALID);
+            }
+            let text = str::from_utf8(&bytes[byte_cursor..text_end])
+                .map_err(|_| FAST_INVALID)?
+                .to_owned();
+            byte_cursor = text_end;
+            let line = match kind {
+                DIFF_LINE_CONTEXT => {
+                    DiffLine::context(line_number(old_line_raw)?, line_number(new_line_raw)?, text)
+                }
+                DIFF_LINE_ADDITION => {
+                    if old_line_raw != 0 {
+                        return Err(FAST_INVALID);
+                    }
+                    DiffLine::addition(line_number(new_line_raw)?, text)
+                }
+                DIFF_LINE_DELETION => {
+                    if new_line_raw != 0 {
+                        return Err(FAST_INVALID);
+                    }
+                    DiffLine::deletion(line_number(old_line_raw)?, text)
+                }
+                _ => return Err(FAST_INVALID),
+            };
+            lines.push(line.with_termination(termination));
+        }
+        hunks.push(DiffHunk::new(old_range, new_range, lines).map_err(|_| FAST_INVALID)?);
+    }
+    if word_cursor != words.len() || byte_cursor != bytes.len() {
+        return Err(FAST_INVALID);
+    }
+    Ok(DiffRenderer::new().render(hunks.as_slice()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_diff_create_buffer_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    _words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    _bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing or resolving any buffered payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    if used_word_count == 0 || words.is_null() || bytes.is_null() {
+        return record_result(runtime, FAST_INVALID);
+    }
+    let words = unsafe { slice::from_raw_parts(words, used_word_count as usize) };
+    let bytes = if used_byte_count == 0 {
+        &[] as &[u8]
+    } else {
+        unsafe { slice::from_raw_parts(bytes, used_byte_count as usize) }
+    };
+    match parse_and_build_diff(words, bytes) {
+        Ok(view) => match runtime.publish(node_id, view) {
+            Ok(reference) => record_result(runtime, reference),
+            Err(error) => record_result(runtime, error),
+        },
+        Err(error) => record_result(runtime, error),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
     runtime: *mut NativeViewRuntime,
@@ -3369,6 +3515,13 @@ pub unsafe extern "Rust" fn view_text_create_cstring_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok(text) = cstring_to_owned(text, MAX_NEW_TEXT_BYTES) else {
         return record_result(runtime, FAST_INVALID);
     };
@@ -3398,6 +3551,13 @@ pub unsafe extern "Rust" fn view_text_create_utf8_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let bytes = if used_bytes == 0 {
         &[]
     } else {
@@ -3490,6 +3650,13 @@ pub unsafe extern "Rust" fn view_text_create_utf8_2_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_utf8_text(
         runtime,
         node_id,
@@ -3527,6 +3694,13 @@ pub unsafe extern "Rust" fn view_text_create_utf8_3_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_utf8_text(
         runtime,
         node_id,
@@ -3566,6 +3740,13 @@ pub unsafe extern "Rust" fn view_text_create_utf8_4_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_utf8_text(
         runtime,
         node_id,
@@ -3598,6 +3779,13 @@ pub unsafe extern "Rust" fn view_text_create_cstring_2_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_cstring_text(
         runtime,
         node_id,
@@ -3629,6 +3817,13 @@ pub unsafe extern "Rust" fn view_text_create_cstring_3_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_cstring_text(
         runtime,
         node_id,
@@ -3662,6 +3857,13 @@ pub unsafe extern "Rust" fn view_text_create_cstring_4_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let result = publish_cstring_text(
         runtime,
         node_id,
@@ -4612,6 +4814,189 @@ mod tests {
             )
         };
         assert_eq!(malformed, FAST_INVALID);
+    }
+
+    #[test]
+    fn text_constructors_consult_semantic_cache_first_perf12_t11() {
+        // PERF-12 §23 on the T11 payload lanes: a live NodeId returns its
+        // cached ref without parsing any text payload, on both the cstring
+        // and exact-byte families.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let original = unsafe {
+            generated_exports::iyon_view_text_create_cstring_v1(
+                pointer,
+                850,
+                0,
+                c"styled text".as_ptr() as *const std::ffi::c_char,
+                0,
+                1,
+                1,
+            )
+        };
+        assert!(original < 0x8000_0000);
+        // Same NodeId with garbage payload arguments must return the cache.
+        let again = unsafe {
+            generated_exports::iyon_view_text_create_cstring_v1(
+                pointer,
+                850,
+                0,
+                c"different".as_ptr() as *const std::ffi::c_char,
+                0,
+                3,
+                2,
+            )
+        };
+        assert_eq!(again, original);
+        let bytes = b"\xf0\x90\x80\x80"; // U+10000
+        let utf8_again = unsafe {
+            generated_exports::iyon_view_text_create_utf8_v1(
+                pointer,
+                850,
+                0,
+                bytes.as_ptr(),
+                bytes.len(),
+                bytes.len() as u32,
+                0,
+                1,
+                1,
+            )
+        };
+        assert_eq!(utf8_again, original);
+    }
+
+    #[test]
+    fn diff_create_buffer_builds_validates_and_consults_cache_perf12_t11() {
+        // PERF-12 §41: a new diff materializes through one borrowed
+        // words+bytes call and validates semantic coordinates exactly like
+        // the Direct decoder; a live NodeId short-circuits without parsing.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        // Hunk: -1,2 +1,2 with context/deletion/unterminated-addition.
+        // Words: [hunk_count, old_start(lo,hi), old_count(lo,hi),
+        //         new_start(lo,hi), new_count(lo,hi), line_count,
+        //   per line: meta, old(lo,hi), new(lo,hi), byte_length]
+        const DELETION: u32 = 3 | (1 << 16);
+        const ADDITION_UNTERMINATED: u32 = 2 | (2 << 16);
+        const CONTEXT: u32 = 1 | (1 << 16);
+        let words: [u32; 28] = [
+            1,
+            0,
+            0,
+            2,
+            0, // old range start 0 count 2
+            0,
+            0,
+            2,
+            0, // new range start 0 count 2
+            3,
+            CONTEXT,
+            1,
+            0,
+            1,
+            0,
+            4, // "same"
+            DELETION,
+            2,
+            0,
+            0,
+            0,
+            7, // "removed"
+            ADDITION_UNTERMINATED,
+            0,
+            0,
+            2,
+            0,
+            5, // "added"
+        ];
+        let bytes = b"sameremovedadded";
+        assert_eq!(
+            7 + 5 + 4,
+            bytes.len(),
+            "byte lengths must frame the payload exactly"
+        );
+        let diff = unsafe {
+            generated_exports::iyon_view_diff_create_buffer_v1(
+                pointer,
+                800,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                bytes.len() as u32,
+            )
+        };
+        assert!(diff < 0x8000_0000);
+        assert_eq!(diff, unsafe {
+            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 800, 0)
+        });
+        // §23 consult: same NodeId with garbage payload returns the cache.
+        let again = unsafe {
+            generated_exports::iyon_view_diff_create_buffer_v1(
+                pointer,
+                800,
+                0,
+                words.as_ptr(),
+                8,
+                2,
+                bytes.as_ptr(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(again, diff);
+        // Truncated word buffer must be rejected before construction.
+        let truncated = unsafe {
+            generated_exports::iyon_view_diff_create_buffer_v1(
+                pointer,
+                801,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                (words.len() - 1) as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                bytes.len() as u32,
+            )
+        };
+        assert_eq!(truncated, FAST_INVALID);
+        // Coordinate mismatch against the declared ranges is invalid exactly
+        // like Direct's DiffHunk validation.
+        let mut mismatched = words;
+        mismatched[11] = 5; // context claims old line 5, hunk expects 1
+        let mismatch = unsafe {
+            generated_exports::iyon_view_diff_create_buffer_v1(
+                pointer,
+                802,
+                0,
+                mismatched.as_ptr(),
+                mismatched.len() * 4,
+                mismatched.len() as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                bytes.len() as u32,
+            )
+        };
+        assert_eq!(mismatch, FAST_INVALID);
+        // Byte length overflow past the buffer is rejected.
+        let mut overlong = words;
+        overlong[11] = u32::MAX;
+        let overlong_status = unsafe {
+            generated_exports::iyon_view_diff_create_buffer_v1(
+                pointer,
+                803,
+                0,
+                overlong.as_ptr(),
+                overlong.len() * 4,
+                overlong.len() as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                bytes.len() as u32,
+            )
+        };
+        assert_eq!(overlong_status, FAST_INVALID);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 /* DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. */
-/* schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332 */
-/* generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e */
+/* schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6 */
+/* generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4 */
 #ifndef IYON_VIEW_ABI_H
 #define IYON_VIEW_ABI_H
 
@@ -86,6 +86,8 @@ uint32_t iyon_view_grid_set_cell_v1(NativeViewRuntime * runtime, uint32_t base_g
 uint32_t iyon_view_axis_set_child_path_v1(NativeViewRuntime * runtime, uint32_t base_root_ref, uint32_t path_ref, uint32_t path_depth, uint32_t target_node_id_low, uint32_t target_node_id_high, uint32_t ancestor0_node_id_low, uint32_t ancestor0_node_id_high, uint32_t ancestor1_node_id_low, uint32_t ancestor1_node_id_high, uint32_t ancestor2_node_id_low, uint32_t ancestor2_node_id_high, uint32_t ancestor3_node_id_low, uint32_t ancestor3_node_id_high, uint32_t axis_index, uint32_t track_word, uint32_t child_ref);
 
 uint32_t iyon_view_grid_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t column_gap, uint32_t row_gap, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count);
+
+uint32_t iyon_view_diff_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count, const uint8_t * bytes, size_t bytes_capacity_bytes, uint32_t used_byte_count);
 
 uint32_t iyon_view_grid_set_cell_path_v1(NativeViewRuntime * runtime, uint32_t base_root_ref, uint32_t path_ref, uint32_t path_depth, uint32_t target_node_id_low, uint32_t target_node_id_high, uint32_t ancestor0_node_id_low, uint32_t ancestor0_node_id_high, uint32_t ancestor1_node_id_low, uint32_t ancestor1_node_id_high, uint32_t ancestor2_node_id_low, uint32_t ancestor2_node_id_high, uint32_t ancestor3_node_id_low, uint32_t ancestor3_node_id_high, uint32_t grid_row, uint32_t grid_column, uint32_t child_ref);
 

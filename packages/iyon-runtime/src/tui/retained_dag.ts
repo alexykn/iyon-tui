@@ -31,13 +31,16 @@ import {
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
-import { BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode } from "./ir.ts";
+import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
   MAX_DIRECT_AXIS_REFS,
+  MAX_DIRECT_DIFF_BYTES,
+  MAX_DIRECT_DIFF_WORDS,
   MAX_DIRECT_GRID_WORDS,
+  MAX_DIRECT_TEXT_BYTES,
   MAX_RETAINED_DEPTH,
   MAX_RETAINED_NEW_NODES,
 } from "./native_view_policy.ts";
@@ -68,6 +71,26 @@ const GRID_WORD_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = 
   runtime: undefined,
   array: new Uint32Array(0),
 };
+
+/** PERF-12 T11 (§30): reusable byte tier for text/diff UTF-8 payloads. */
+const BYTE_SCRATCH: { runtime: Pointer | undefined; array: Uint8Array } = {
+  runtime: undefined,
+  array: new Uint8Array(0),
+};
+
+/**
+ * PERF-12 T11 (§40): generation-scoped StyleRef sidecar. Stable style objects
+ * map to native style refs exactly once per runtime generation; the native
+ * runtime's style table stays the only authoritative style cache (§40 bans a
+ * second one — this sidecar is acceleration metadata, like BRIDGE_NATIVE).
+ * Refs die with the generation; the single-slot reset mirrors AXIS_REF_SCRATCH.
+ */
+const STYLE_REF_CACHE: {
+  runtime: Pointer | undefined;
+  generation: number;
+  refs: WeakMap<object, number>;
+  atoms: Map<string, number>;
+} = { runtime: undefined, generation: 0, refs: new WeakMap(), atoms: new Map() };
 
 /**
  * Structural counters (§91 subset relevant to T6). Plain field increments on
@@ -193,20 +216,51 @@ export class MaterializeTx {
     return AXIS_REF_SCRATCH.array.subarray(0, words);
   }
 
-  /** Returns reusable grid construction scratch; no per-node TypedArray. */
-  gridWordScratch(wordCount: number): Uint32Array {
-    if (wordCount > MAX_DIRECT_GRID_WORDS) {
+  /** Returns reusable u32 construction scratch; no per-node TypedArray. */
+  private wordScratch(wordCount: number, cap: number, label: string): Uint32Array {
+    if (wordCount > cap) {
       counters.cold_fallbacks += 1;
       throw new RetainedFastFallbackError(
-        `grid word payload ${wordCount} exceeds the retained cap ${MAX_DIRECT_GRID_WORDS}`,
+        `${label} word payload ${wordCount} exceeds the retained cap ${cap}`,
       );
     }
-    if (GRID_WORD_SCRATCH.runtime !== this.runtime || GRID_WORD_SCRATCH.array.length < wordCount) {
+    const size = Math.max(MAX_DIRECT_DIFF_WORDS, MAX_DIRECT_GRID_WORDS);
+    if (GRID_WORD_SCRATCH.runtime !== this.runtime || GRID_WORD_SCRATCH.array.length < size) {
       GRID_WORD_SCRATCH.runtime = this.runtime;
-      GRID_WORD_SCRATCH.array = new Uint32Array(MAX_DIRECT_GRID_WORDS);
+      GRID_WORD_SCRATCH.array = new Uint32Array(size);
     }
     counters.transport_scratch_reuses += 1;
     return GRID_WORD_SCRATCH.array.subarray(0, wordCount);
+  }
+
+  /** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch. */
+  gridWordScratch(wordCount: number): Uint32Array {
+    return this.wordScratch(wordCount, MAX_DIRECT_GRID_WORDS, "grid");
+  }
+
+  /** PERF-12 T11 (§30/§41): reusable diff framing scratch (same u32 tier). */
+  diffWordScratch(wordCount: number): Uint32Array {
+    return this.wordScratch(wordCount, MAX_DIRECT_DIFF_WORDS, "diff");
+  }
+
+  /**
+   * PERF-12 T11 (§30): the medium byte tier — one environment-level
+   * Uint8Array reused by every transaction for text/diff UTF-8 payloads.
+   * `needed` above the cap refuses the retained path (§50).
+   */
+  byteScratch(needed: number, label: string): Uint8Array {
+    if (needed > MAX_DIRECT_TEXT_BYTES) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError(
+        `${label} payload ${needed} bytes exceeds the retained cap ${MAX_DIRECT_TEXT_BYTES}`,
+      );
+    }
+    if (BYTE_SCRATCH.runtime !== this.runtime || BYTE_SCRATCH.array.length < needed) {
+      BYTE_SCRATCH.runtime = this.runtime;
+      BYTE_SCRATCH.array = new Uint8Array(MAX_DIRECT_TEXT_BYTES);
+    }
+    counters.transport_scratch_reuses += 1;
+    return BYTE_SCRATCH.array.subarray(0, needed);
   }
 
   /** §90: borrowed-buffer preparation is counted, never hidden. */
@@ -468,17 +522,217 @@ function materializeGridNode(node: BridgeViewNode, tx: MaterializeTx): number {
 }
 
 /**
+ * PERF-12 T11 (§37/§40): retained text and style payload lanes.
+ *
+ * Styles resolve through a generation-scoped WeakMap sidecar into the native
+ * runtime's authoritative style table (created once per distinct style via
+ * the existing style_atom_create_cstring / style_create_bits ABI functions;
+ * §25 reuse before adding, §40 no second native style cache). Text uses the
+ * cstring family whenever every span is NUL-free — zero JS encoding, Bun
+ * lowers the strings natively — and the exact-byte utf8 family otherwise,
+ * encoding once into the reusable byte tier. Span counts outside the 1..=4
+ * constructor families route to the complete cold path (§49/§76).
+ */
+const TEXT_ENCODER = new TextEncoder();
+
+const STYLE_ATTRIBUTE_BITS = {
+  bold: 1,
+  dim: 2,
+  italic: 4,
+  underline: 8,
+  reversed: 16,
+  strikethrough: 32,
+} as const;
+
+function ensureStyleCache(tx: MaterializeTx): void {
+  if (STYLE_REF_CACHE.runtime !== tx.runtime || STYLE_REF_CACHE.generation !== tx.generation) {
+    STYLE_REF_CACHE.runtime = tx.runtime;
+    STYLE_REF_CACHE.generation = tx.generation;
+    STYLE_REF_CACHE.refs = new WeakMap();
+    STYLE_REF_CACHE.atoms = new Map();
+  }
+}
+
+function styleColorAtom(color: ColorNode): string {
+  return typeof color === "string" ? color : `ansi:${color.value}`;
+}
+
+function styleAtomRef(value: string, tx: MaterializeTx): number {
+  if (value.indexOf("\0") !== -1) {
+    throw new RetainedFastFallbackError("style atom contains an embedded NUL");
+  }
+  ensureStyleCache(tx);
+  const cached = STYLE_REF_CACHE.atoms.get(value);
+  if (cached !== undefined) return cached;
+  const reference = styleAtomCreateCstring(tx.symbols, tx.runtime, value);
+  STYLE_REF_CACHE.atoms.set(value, reference);
+  return reference;
+}
+
+/** Resolves one stable style object to its native StyleRef (0 = unstyled). */
+function styleRefFor(style: StyleNode | undefined, tx: MaterializeTx): number {
+  if (style === undefined) return 0;
+  ensureStyleCache(tx);
+  const cached = STYLE_REF_CACHE.refs.get(style);
+  if (cached !== undefined) return cached;
+  let present = 0;
+  let truth = 0;
+  for (const name of Object.keys(style.attributes)) {
+    const bit = STYLE_ATTRIBUTE_BITS[name as keyof typeof STYLE_ATTRIBUTE_BITS];
+    if (bit === undefined) {
+      throw new RetainedFastFallbackError(`unknown text attribute ${name}`);
+    }
+    present |= bit;
+    if (style.attributes[name]) truth |= bit;
+  }
+  const foreground = style.foreground === undefined ? 0 : styleAtomRef(styleColorAtom(style.foreground), tx);
+  const background = style.background === undefined ? 0 : styleAtomRef(styleColorAtom(style.background), tx);
+  const theme = style.theme === undefined ? 0 : styleAtomRef(`theme:${style.theme}`, tx);
+  const reference = styleCreateBits(tx.symbols, tx.runtime, 0, present, truth, foreground, background, theme);
+  STYLE_REF_CACHE.refs.set(style, reference);
+  return reference;
+}
+
+function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.text) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const spans = node.spans;
+  if (spans.length < 1 || spans.length > 4) {
+    counters.cold_fallbacks += 1;
+    throw new RetainedFastFallbackError(`text span count ${spans.length} is outside the retained family`);
+  }
+  // Payload dependencies resolve before any transport (children-first analog).
+  // Style publication failures are retained-path refusals: they count the
+  // fallback and route the complete cold path like any other cap/shape miss.
+  const styleRefs = spans.map((span) => {
+    try {
+      return styleRefFor(span.style, tx);
+    } catch (error) {
+      if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
+        counters.cold_fallbacks += 1;
+        if (isExpectedNativeStatus(error)) {
+          throw new RetainedFastFallbackError("style publication reported a failure status");
+        }
+        throw error;
+      }
+      throw error;
+    }
+  });
+  const [low, high] = splitNodeId(node.id);
+  let hasEmbeddedNul = false;
+  for (const span of spans) {
+    if (span.text.indexOf("\0") !== -1) {
+      hasEmbeddedNul = true;
+      break;
+    }
+  }
+  if (!hasEmbeddedNul) {
+    counters.byte_payload_bytes += 0; // cstring lane encodes nothing in JS.
+    return runMaterializer("text", () => {
+      switch (spans.length) {
+        case 1: return viewTextCreateCstring(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, node.wrap, node.align);
+        case 2: return viewTextCreateCstring2(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, node.wrap, node.align);
+        case 3: return viewTextCreateCstring3(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, node.wrap, node.align);
+        default: return viewTextCreateCstring4(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, spans[3]!.text, styleRefs[3]!, node.wrap, node.align);
+      }
+    });
+  }
+  // Exact-byte lane: encode once into the reusable byte tier; capacity
+  // overrun refuses the retained path instead of truncating (§30/§50).
+  const scratch = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "text");
+  let offset = 0;
+  const lengths: number[] = [];
+  for (const span of spans) {
+    const encoded = TEXT_ENCODER.encodeInto(span.text, scratch.subarray(offset));
+    if (encoded.read !== span.text.length) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError("text payload exceeds the retained byte tier");
+    }
+    lengths.push(encoded.written);
+    offset += encoded.written;
+  }
+  counters.byte_payload_bytes += offset;
+  return runMaterializer("text", () => {
+    switch (spans.length) {
+      case 1: return viewTextCreateUtf8(tx.symbols, tx.runtime, low, high, scratch, offset, styleRefs[0]!, node.wrap, node.align);
+      case 2: return viewTextCreateUtf82(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, node.wrap, node.align);
+      case 3: return viewTextCreateUtf83(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, node.wrap, node.align);
+      default: return viewTextCreateUtf84(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, lengths[3]!, styleRefs[3]!, node.wrap, node.align);
+    }
+  });
+}
+
+/** Splits a safe-integer coordinate into the canonical lo/hi word pair. */
+function u64Words(value: number): [number, number] {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RetainedFastFallbackError(`diff coordinate ${value} is not a safe non-negative integer`);
+  }
+  return [value % 0x1_0000_0000, Math.floor(value / 0x1_0000_0000)];
+}
+
+/** PERF-12 T11 (§41): new-Diff construction through one words+bytes call. */
+function materializeDiffNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.diff) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const hunks = node.hunks;
+  let lineTotal = 0;
+  let wordCount = 1;
+  for (const hunk of hunks) {
+    lineTotal += hunk.lines.length;
+    wordCount += 9 + hunk.lines.length * 6;
+  }
+  const words = tx.diffWordScratch(wordCount);
+  const bytes = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "diff");
+  let wordOffset = 0;
+  let byteOffset = 0;
+  const writeWords = (...values: number[]): void => {
+    for (const value of values) words[wordOffset++] = value;
+  };
+  writeWords(hunks.length);
+  for (const hunk of hunks) {
+    const oldStart = u64Words(hunk.oldRange.start);
+    const oldCount = u64Words(hunk.oldRange.count);
+    const newStart = u64Words(hunk.newRange.start);
+    const newCount = u64Words(hunk.newRange.count);
+    writeWords(oldStart[0], oldStart[1], oldCount[0], oldCount[1]);
+    writeWords(newStart[0], newStart[1], newCount[0], newCount[1]);
+    writeWords(hunk.lines.length);
+    for (const line of hunk.lines) {
+      const meta = line.kind | (line.termination << 16);
+      const oldLine = line.oldLine === undefined ? [0, 0] : u64Words(line.oldLine);
+      const newLine = line.newLine === undefined ? [0, 0] : u64Words(line.newLine);
+      const encoded = TEXT_ENCODER.encodeInto(line.text, bytes.subarray(byteOffset));
+      if (encoded.read !== line.text.length || encoded.written > 0xffff_ffff) {
+        counters.cold_fallbacks += 1;
+        throw new RetainedFastFallbackError("diff line payload exceeds the retained byte tier");
+      }
+      writeWords(meta, oldLine[0], oldLine[1], newLine[0], newLine[1], encoded.written);
+      byteOffset += encoded.written;
+    }
+  }
+  counters.ref_words_written += wordCount;
+  counters.byte_payload_bytes += byteOffset;
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("diff", () =>
+    viewDiffCreateBuffer(tx.symbols, tx.runtime, low, high, words, wordCount, bytes, byteOffset)
+  );
+}
+
+/**
  * Per-kind generated materializer dispatch (§22 children-first, §32 fixed
- * arities). T7 covers spacer plus row/column arities 0..=4; container,
- * clamp, hanging, grid, text, diff, decorated, and component route to the
- * complete fallback until their owning tranches land. Unknown kinds fall
- * back instead of guessing (§49).
+ * arities). T7 covers spacer plus row/column arities 0..=4; T10 adds Grid;
+ * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane.
+ * hanging, container, clamp, decorated, and component route to the complete
+ * fallback until their owning tranches land. Unknown kinds fall back instead
+ * of guessing (§49).
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [BRIDGE_VIEW_KIND.spacer, materializeSpacerNode],
   [BRIDGE_VIEW_KIND.row, materializeRowNode],
   [BRIDGE_VIEW_KIND.column, materializeColumnNode],
   [BRIDGE_VIEW_KIND.grid, materializeGridNode],
+  [BRIDGE_VIEW_KIND.text, materializeTextNode],
+  [BRIDGE_VIEW_KIND.diff, materializeDiffNode],
 ]);
 
 /**

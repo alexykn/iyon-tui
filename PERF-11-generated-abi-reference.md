@@ -1,11 +1,11 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332; generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6; generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4 -->
 
 # PERF-11 generated ABI reference
 
 > This file is generated. Do not edit it directly.
 
-- Schema BLAKE3: `3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332`
-- Generator BLAKE3: `362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e`
+- Schema BLAKE3: `8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6`
+- Generator BLAKE3: `de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4`
 - ABI: `iyon_tui_view` v1
 - Semantic schema: v1
 - Minimum Bun: `1.4.0`
@@ -78,6 +78,7 @@
 | `view_grid_set_cell` | `structural_patch` | `critical` | `ViewRefResult` | `v4` | `owner_thread` | `true` | `false` |
 | `view_axis_set_child_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `v4` | `owner_thread` | `true` | `false` |
 | `view_grid_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `v4` | `owner_thread` | `true` | `false` |
+| `view_diff_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
 | `view_grid_set_cell_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `v4` | `owner_thread` | `true` | `false` |
 | `view_release_many` | `lifecycle` | `cold` | `i32` | `none` | `owner_thread` | `false` | `false` |
 | `view_ref_for_node_id` | `exact_lookup` | `critical` | `ViewRefResult` | `v4` | `owner_thread` | `false` | `false` |

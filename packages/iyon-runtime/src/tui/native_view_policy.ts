@@ -27,3 +27,13 @@ export const MAX_DIRECT_AXIS_REFS = 1_024;
 
 /** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch cap. */
 export const MAX_DIRECT_GRID_WORDS = 65_536;
+
+/**
+ * PERF-12 T11 (§30/§37/§41): retained payload scratch caps. Text spans and
+ * diff payloads ride one reusable byte tier; diff framing words reuse the
+ * same u32 tier sizing as Grid. Above a cap the retained path refuses and
+ * routes the complete cold path (§50).
+ */
+export const MAX_DIRECT_TEXT_BYTES = 65_536;
+export const MAX_DIRECT_DIFF_WORDS = 65_536;
+export const MAX_DIRECT_DIFF_BYTES = 65_536;

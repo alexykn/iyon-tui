@@ -978,6 +978,34 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R1 status: COMPLETE.** Clean scopes provably never execute; only invalidated scopes run; exact-reuse is allocation-free inside dirty scopes; the transactional substrate holds under injected failure. Ready for R2 (defineView public API) on top of `invokeChild`/`invokeComponent`. Known limitation documented: cross-scope composite splicing after a child-only update awaits the R3 projection — body isolation does not depend on it.
 
+### R2 implementation record
+
+**1. Scope statement.** Tranche R2 (Step 5R; AMENDMENT-C §6/§18): public `defineView` component API — typed props, parent-local positional identity, component-type checks, local-key plumbing, shallow `Object.is` prop skipping, public export surface.
+
+**2. Commits.** `e46b005` — feat(tui): add T13.1 public defineView component API (R2).
+
+**3. Review findings.**
+- Finding 1: the first defineView wrapper returned `invokeComponent`'s `{view, scope}` result while its type promised a bare `View`; caught immediately by embed-parity tests (`nodeForBridge` on a non-View). The public callable unwraps to `.view`; the raw primitive remains available internally for diagnostics.
+- Finding 2: `ViewComponentType.render` tightened from method syntax to property-arrow syntax — method parameters are bivariant in TS, so `ViewComponent<A>` was silently assignable to `ViewComponent<B>`. Property syntax enforces contravariance.
+- Finding 3: the production-chrome smoke initially placed the conditional element FIRST; toggling it shifted every later sibling's ordinal and correctly remounted them under positional identity. Test rewritten to the §8.3 trailing-conditional pattern; recorded as migration guidance for Step 13R (leading conditionals need keys once R8 lands).
+- Finding 4: root-level props have no update channel yet (mount snapshots `currentProps`). This is R8/R11 territory (canonical boundary wiring); the interim test drives scalar changes via in-place field mutation, which the per-key `Object.is` comparison legitimately detects. Documented so nobody mistakes it for the final root API.
+
+**4. Implementation summary.** `define-view.ts` NEW (public `defineView`, ~55 lines); `execution.ts`: `ViewComponent<P>` interface added (callable + render entry), invokeChild shape validation with `TUI_EXECUTION_NOT_A_COMPONENT`; `index.ts` exports `defineView`/`ViewComponent` from the public tui surface. 10-test proof suite added covering every §32.1 R2 gate row.
+
+**5. Provenance block.** Source revision at capture: commit `e46b005` parent state; bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Pure TypeScript tranche.
+
+**6. Gate evidence.**
+- *Invocation returns stable View:* embed parity vs direct construction proven at bridge level (id-stripped deep equality) through a real mount.
+- *Props skip counter-proven:* unchanged primitive props in FRESH literals ⇒ body calls unchanged across parent re-renders; changed primitive ⇒ exactly one more execution.
+- *Fresh literals NOT skipped when identity-valued:* nested-object field re-executes the body; stable reference resumes skipping (both directions asserted — the §33.6 contract is now executable documentation).
+- *Positional identity:* same component at two ordinals ⇒ two instances; each survives re-renders independently.
+- *Local-key plumbing:* keys recorded on child scopes via `invokeComponent(..., key)`; public key API intentionally deferred to R8 with keyed reconciliation so users never see half-semantics.
+- *No global IDs:* nothing in the API accepts or requires one; type-level impossible to express.
+- *Deterministic errors:* outside-evaluation invocation, non-component values, async bodies — all typed framework errors.
+- *Battery:* typecheck clean; 168 pass / 1 fail (documented perf11v4 interference); cold fall-through gate re-run +0.94% (≤3%).
+
+**7. Status line.** **Tranche R2 status: COMPLETE.** The public component abstraction matches AMENDMENT-C §6 exactly: invocation-shaped, positionally identified, shallow-skipping, zero-setup. Ready for R3 (retained scope projection: stable ScopeRef views + independent sub-DAG roots).
+
 ---
 
 # 33. Files

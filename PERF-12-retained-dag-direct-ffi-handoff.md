@@ -6432,3 +6432,40 @@ lazy; Grid creation uses the bounded borrowed buffer lane and Grid cell edits
 use the retained native PersistentSeq path. §96 smoke timing beats direct_7v2
 at every tested width and operation; payload families remain T11, recovery
 hardening T12, and production boundary routing T13.
+
+Errata (added by the post-Tranche-10 implementation review):
+
+```text
+finding R1: `wrapFrozenBridgeNode` bypassed the View constructor and therefore
+       omitted the public frozen View `kind` field on wide axis/Grid derived
+       wrappers. Correction in b36e493 (`fix(tui): correct T10 retained wide
+       edit semantics`): the wrapper installs the same enumerable `kind:
+       "view"` own property before freezing; T10 tests now assert it.
+
+finding R2: Grid retained edits initially treated the source-row cell array
+       index as the native column coordinate. That diverges for column/row
+       spans and could target no cell or the wrong cell. Correction: the JS
+       wide sidecar now records the native placement map while seeding its
+       PersistentSeq; narrow edits compute the same placement map on demand.
+       A span-aware render-parity test covers the corrected coordinate rule.
+
+finding R3: the packed Grid lane silently discarded marker-track payload bits
+       and the JS encoder could truncate out-of-range track amounts through
+       bitwise coercion. Correction: the JS lane rejects non-u16 amounts via
+       the retained fallback, and native parsing rejects nonzero amounts on
+       content/flex marker words before construction; the native conformance
+       test covers malformed marker words.
+
+finding R4: the original T10 smoke artifact omitted §96 replacement widths 32
+       and 256 and did not include p99/median bootstrap-CI fields. The smoke
+       harness and committed `PERF-12-t10-wide-edits.jsonl` were refreshed at
+       b36e493 with replacement widths 32/256/2,000/10,000/100,000, p99 and
+       median_ci95_ns, and the existing 2,000-width insert/remove/splice
+       records. The additional structural test now proves set/insert/remove/
+       splice bounds at 2,000/10,000/100,000. Refreshed artifact provenance:
+       Bun 1.4.0 revision 34cbb9a40, rustc 1.97.1 aarch64-apple-darwin,
+       native SHA-256 6caffbd5772ca43aacd88519b0162afc1ce22aea49a4664628a83b762743046f.
+```
+
+The review corrections preserve the T10 status; no T11+ scope was pulled
+forward.

@@ -6711,4 +6711,9 @@ finding R12: `RetainedRootBoundary.install` drained leases for status-return
        was refreshed at that revision: median 4,605 ns, p95 13,583 ns, p99
        44,750 ns, median_ci95_ns [4,396, 4,938], host_mutations=500,
        stale_ref_retries=0, and cold_fallbacks=0.
+
+finding R13: the post-review T6–T10 plus T12 run now reports 43 passing tests
+       and 736 expect calls, rather than the earlier record's 42/732 summary.
+       The difference is the corrected shared-retained-branch regression and
+       the current suite composition; all 43 pass with zero failures.
 ```

@@ -6693,4 +6693,12 @@ finding R10: generated `checkedRef` queried the status-detail side channel
        362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e,
        and the restaged addon SHA-256 is
        96cf11783d18f6e42b64977748829139df1063cf4aab623a35c970bf22d657d6.
+
+finding R11: restaging the addon changed the T12 smoke artifact's native
+       provenance even though the native implementation was unchanged.
+       Correction: the raw JSONL was re-captured at facc713, now recording
+       addon SHA-256 96cf11783d18f6e42b64977748829139df1063cf4aab623a35c970bf22d657d6,
+       50 warmup/500 measured operations, median 6,167 ns, p95 12,542 ns,
+       p99 39,083 ns, median_ci95_ns [6,083, 6,292], host_mutations=500,
+       stale_ref_retries=0, and cold_fallbacks=0.
 ```

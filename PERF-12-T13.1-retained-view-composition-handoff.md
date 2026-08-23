@@ -1006,6 +1006,33 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R2 status: COMPLETE.** The public component abstraction matches AMENDMENT-C §6 exactly: invocation-shaped, positionally identified, shallow-skipping, zero-setup. Ready for R3 (retained scope projection: stable ScopeRef views + independent sub-DAG roots).
 
+### R3 implementation record
+
+**1. Scope statement.** Tranche R3 (Step 6R; AMENDMENT-C §5/§14/§18): retained scope projections — independently retained sub-DAG roots per live scope behind stable component/ref views, backed by the existing ViewSlot/RetainedRootBoundary primitives; §31.3 semantic-DAG gate at 3-scope scale; projection-overhead baseline at 10/100/1,000 scopes as the R6b decision instrument.
+
+**2. Commits.** `77351e2` — feat(tui): add T13.1 retained scope projections (R3). Bench JSONL captured pre-commit at the record state and committed with it.
+
+**3. Review findings.**
+- Finding 1 (benchmark confound caught before reporting): the first overhead run scaled HOST HEIGHT with N (`min(400,n)` rows) and showed linear leaf-update growth (~22→147 µs). Re-run with CONSTANT host geometry: leaf_update is FLAT (24.3/22.8/20.0 µs at 10/100/1,000). The original scaling was terminal layout size — a bench artifact, not scope-machinery cost. Recorded because reporting the first run would have wrongly fired the R6b trigger.
+- Finding 2: installs are deduped against `projectedOutput`, so semantic-noop invalidations (scenario I) perform ZERO host mutations — verified via install counters rather than trusting setView idempotence.
+- Finding 3: install ordering is deliberately BEFORE output promotion so a failed `setView` leaves old content authoritative on both JS and native sides without unwinding (ViewSlot's boundary already preserves the previous root on failure). Multi-scope install atomicity across ONE batch remains R7's deliverable (per-scope installs are individually atomic; cross-scope publication is not yet batched).
+- Finding 4: detached mode (no factory) is a permanent supported configuration for tests/benchmarks — raw-output embedding per R1 semantics; production wiring always supplies a factory (R6a/R11).
+
+**4. Implementation summary.** `execution.ts`: `ScopeProjection` interface, injectable `createScopeProjection` factory on runtime options, projection/projectedOutput fields on scopes, commit-time install-before-promote with no-op dedupe, invokeChild returns the stable projection view, dispose releases projections idempotently. Tests: 6 native-guarded proofs over headless hosts. Bench: 3-record JSONL instrument.
+
+**5. Provenance block.** Source revision at capture: commit `77351e2` parent working tree (`19dbbc1` docs HEAD); bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Native addon exercised (ViewSlot/component registry) but not rebuilt — addon SHA unchanged from the T13-era staged artifact.
+
+**6. Gate evidence.**
+- *Child content change ⇒ parent semantic identity EXACT:* after footer-only update, parent committed output is the SAME OBJECT and the embedded ScopeRef bridge node is the SAME object (component kind) across updates.
+- *§31.3 at 3 scopes:* local B update ⇒ A/C outputs identical objects, all three embedded ScopeRefs identical objects, App output identical object; B alone advances to a new content-root NodeId.
+- *Scenario I:* dirty scope re-executes (body_calls +1), emits exact previous View (noop_outputs +1), installs stay at their previous count — zero native work.
+- *Failure atomicity (single scope):* injected install failure ⇒ old text still authoritative on both sides, abort counter +1, recovery succeeds after the failure clears.
+- *Detached compatibility:* factory-less runtime reproduces R1 raw-output embedding (embedded child remains a text node).
+- *Projection-overhead instrument (R6b go/no-go):* leaf-update median FLAT across 10/100/1,000 sibling scopes (24,334 / 22,792 / 20,042 ns); cold mount amortizes (243 → 25 → 25 µs/scope); noop-all ~22–32 µs/scope (absolute value owned by R5 scheduler scrutiny). Per-update host work does NOT scale with mounted-scope count ⇒ R6b deferral posture VALIDATED by measurement; numbers committed in `PERF-12-T13.1-R3-projection-overhead.jsonl` with revisit triggers per Staged delivery.
+- *Battery:* typecheck clean; 174 pass / 1 fail (documented perf11v4 interference, unchanged).
+
+**7. Status line.** **Tranche R3 status: COMPLETE.** Scopes project as stable component refs over independent sub-DAG roots; the semantic-DAG gate passes at scale; the R6b instrument shows flat per-update cost. Ready for R4 (tracked State<T> invalidation).
+
 ---
 
 # 33. Files

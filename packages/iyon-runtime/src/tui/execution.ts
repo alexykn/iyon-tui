@@ -38,6 +38,7 @@
  */
 
 import type { View } from "./values/view.ts";
+import type { TrackedStateSource } from "./tracked-state.ts";
 
 // --- Public-machinery types --------------------------------------------------
 
@@ -194,6 +195,16 @@ export class RetainedExecutionScope<P = unknown> {
 
   readonly table = new ScopeSemanticTable();
 
+  /** Committed tracked-state subscriptions (AMENDMENT-C §7.1). */
+  readonly dependencies = new Set<TrackedStateSource>();
+  /** Subscriptions collected during the active evaluation; promoted on commit. */
+  pendingDependencies = new Set<TrackedStateSource>();
+
+  /** Records one tracked read against the active evaluation (state.ts calls this). */
+  linkDependency(source: TrackedStateSource): void {
+    if (!this.pendingDependencies.has(source)) this.pendingDependencies.add(source);
+  }
+
   /**
    * Independently retained sub-DAG projection (R3). `undefined` in detached
    * mode (no factory): the scope's raw output is embedded directly, which is
@@ -251,6 +262,9 @@ export class RetainedExecutionScope<P = unknown> {
       this.projection = undefined;
       this.projectedOutput = undefined;
     }
+    for (const dep of this.dependencies) dep.unsubscribe(this);
+    this.dependencies.clear();
+    this.pendingDependencies.clear();
     this.currentOutput = undefined;
     this.pendingOutput = undefined;
     this.currentProps = undefined;
@@ -321,6 +335,7 @@ export interface ExecutionCounters {
   execution_scope_unmounts: number;
   execution_scope_body_calls: number;
   execution_scope_prop_skips: number;
+  execution_scope_state_invalidations: number;
   execution_scope_dirty_enqueues: number;
   execution_scope_duplicate_invalidations: number;
   execution_scope_noop_outputs: number;
@@ -337,6 +352,7 @@ export const executionCounters: ExecutionCounters = {
   execution_scope_unmounts: 0,
   execution_scope_body_calls: 0,
   execution_scope_prop_skips: 0,
+  execution_scope_state_invalidations: 0,
   execution_scope_dirty_enqueues: 0,
   execution_scope_duplicate_invalidations: 0,
   execution_scope_noop_outputs: 0,
@@ -476,6 +492,17 @@ export class RetainedExecutionRuntime {
     }
   }
 
+  /**
+   * Invalidation entry used by tracked sources on confirmed value changes
+   * (handoff §9). Joins the standard dirty queue: enqueued once per pass,
+   * later passes inside a running flush (AMENDMENT-C §22.3).
+   */
+  invalidateFromState(scope: RetainedExecutionScope): void {
+    if (scope.disposed) return;
+    executionCounters.execution_scope_state_invalidations += 1;
+    this.invalidate(scope);
+  }
+
   /** Invalidate + flush convenience for a single scope. */
   update(scope: RetainedExecutionScope): void {
     this.invalidate(scope);
@@ -496,6 +523,9 @@ export class RetainedExecutionRuntime {
     scope.state = "evaluating";
     scope.table.begin();
     scope.pendingChildren = [];
+    // Fresh dependency collection: the committed set stays subscribed until
+    // this evaluation commits (abort retains it — AMENDMENT-C §7.1).
+    scope.pendingDependencies = new Set();
     pushActive(scope);
     try {
       const output = scope.type.render(scope.currentProps as never);
@@ -562,6 +592,18 @@ export class RetainedExecutionRuntime {
       record.scope.mounted = true;
     }
     scope.pendingChildren = [];
+
+    // Dependency promotion: unsubscribe sources no longer read; subscribe
+    // newly-read sources; swap pending -> committed (§21 pointer-swap class).
+    for (const dep of scope.dependencies) {
+      if (!scope.pendingDependencies.has(dep)) dep.unsubscribe(scope);
+    }
+    for (const dep of scope.pendingDependencies) {
+      if (!scope.dependencies.has(dep)) dep.subscribe(scope);
+    }
+    scope.dependencies.clear();
+    for (const dep of scope.pendingDependencies) scope.dependencies.add(dep);
+    scope.pendingDependencies.clear();
 
     scope.table.commit();
     scope.mounted = true;

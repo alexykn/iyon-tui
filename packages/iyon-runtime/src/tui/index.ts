@@ -41,6 +41,8 @@ export type {
 export { View, ChildrenBuilder } from "./values/view.ts";
 export { defineView } from "./define-view.ts";
 export type { ViewComponent } from "./execution.ts";
+export { state } from "./tracked-state.ts";
+export type { State } from "./tracked-state.ts";
 export { Insets } from "./values/geometry.ts";
 export { Style, StyleSpec } from "./values/style.ts";
 export { TextSelector, TextSpan } from "./values/text.ts";

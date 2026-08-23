@@ -39,7 +39,7 @@ This experiment has **16 implementation tranches**. Each tranche below names the
 | **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77` (traced: `PERF-12-production-boundary-trace.md`); History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
 | **T14** | 12.12 | Hardening: randomized DAG differential testing `§87`; cross-transport identity tests `§112`; fuzzing targets `§117`; full-schema coverage proof `§76`; banned-shortcut review `§107` | 100-seed differential suite, fuzz targets, and full-schema coverage green; no UAF, no retained borrowed pointer, no partial host mutation demonstrated under fault injection |
 | **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
-| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak; obsolete pending/recipe machinery removed or test-gated; final shape matches `§121` ownership map, not a regrown pending state machine |
+| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak, and ONLY for provably dead pending/recipe machinery that production can no longer reach (`§26`). This is not a rollback: every transport-independent PERF-12 win — the shared publication funnel, paged NativeRef table, weak-cache scavenging, retained text/style/diff payloads, PersistentSeq wide edits, derivation hints, and the §18 boundary routing landed in T6–T13 — is adopted architecture and MUST survive T16 intact. Final shape matches `§121` ownership map without regrowing a pending state machine |
 
 ## Registry rules
 
@@ -1341,6 +1341,26 @@ path lineage used only to compensate for missing semantic DAG identity
 builder state that is only a cold construction workaround
 transport-specific semantic materialization state
 ```
+
+This list is deliberately NARROW. T16 is dead-code removal, not an architectural rollback. PERF-12 delivered many optimizations that are independent of which transport wins the §104 comparison, and those are part of the adopted architecture regardless of the decision:
+
+```text
+central semantic publication funnel and decode-cache rules (T2)
+paged NativeRef table and page reclamation (T2)
+weak-cache scavenging, maintenance counters, memory diagnostics (T3)
+eager immutable semantic DAG with lookup-only nodeForBridge (T4)
+generated canonical ABI pipeline and conformance surface (T5+)
+identity fast paths: BridgeNativeHint, ensureNative, exact-root,
+    stable-subtree cutoff, root-lease boundaries (T6)
+direct materializers, borrowed-buffer lanes, scratch tiers (T7/T8)
+derivation hints and retained clone/edit primitives (T9)
+PersistentSeq wide edits and Grid buffer construction (T10)
+retained text/style/Diff payload families (T11)
+temporary-lease transactions, status detail, one-retry recovery (T12)
+retained routing at every View-bearing boundary incl. theme epoch (T13)
+```
+
+None of the above may be removed, weakened, or "simplified away" in T16 even if a §104 gate were decided against `retained_dag_ffi` as the primary transport: they fix real lifetime, correctness, and asymptotic defects of the pre-PERF-12 runtime (unbounded cache metadata, O(previous-tree) boundary updates, per-update cold rebuilds) and are wins under every candidate. A future tranche may only retire such machinery by proving, with measurements committed alongside the change, that a replacement preserves the same guarantees.
 
 Do not remove anything until full public-API parity and performance are proven.
 
@@ -3943,7 +3963,10 @@ adoption decision
 refactor(tui): remove superseded View transport recipe machinery
 ```
 
-Contains only cleanup proven safe by the selected architecture.
+Contains only cleanup proven safe by the selected architecture, scoped exactly
+as `§26`: provably unreachable pending/recipe code paths only. Transport-
+independent shared-runtime and retained improvements are adopted architecture
+and are explicitly out of scope for this commit.
 
 ---
 

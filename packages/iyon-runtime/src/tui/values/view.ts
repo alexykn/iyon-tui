@@ -537,6 +537,19 @@ export class View {
     return new View({ kind: BRIDGE_VIEW_KIND.component, handle: (nativeId ?? handle.id) as NativeHandleId });
   }
 
+  /**
+   * PERF-12 T13.1 Step 3 (@internal): construct an axis view from
+   * pre-composed layout entries so the composition layer can compare a
+   * container's immediate semantics against its previous committed node
+   * BEFORE allocating a parent (§19). Equivalent to View.vertical/horizontal
+   * over a builder callback, including the wide-sequence seed.
+   */
+  static __composedAxis(row: boolean, entries: BridgeLayoutChild[], gap: number): View {
+    const view = new View({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: entries, gap });
+    seedWideAxisSequence(view, entries);
+    return view;
+  }
+
   /** Internal retained-path constructor; not part of the public semantic API. */
   static textLayoutAtNativePathForTransport(
     view: View,

@@ -6654,3 +6654,14 @@ status-directed stale-child/base recovery with one bounded retry, and an
 exceptional shared-cache Direct recovery helper; §118 success and failure
 paths are covered by passing JS/native tests. T13 still owns production
 boundary routing and T11 still owns payload-family materializers.
+
+Errata (post-record generated-ABI gate):
+
+```text
+finding R7: adding the generated `view_status_detail` function increased the
+       canonical ABI function count from 50 to 51. The existing PERF-11
+       vertical-slice assertion still expected 50 and failed despite fresh
+       generated outputs. Correction in 4f9a9b8 (`test(tui): update generated
+       ABI count for T12 status detail`): the assertion now pins 51; the
+       generated ABI layout/conformance tests and vertical slice are green.
+```

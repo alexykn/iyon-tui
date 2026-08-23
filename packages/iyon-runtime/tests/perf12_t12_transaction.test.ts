@@ -45,7 +45,7 @@ function oracle(view: View, width = 48, height = 12): string[] {
 describe("PERF-12 T12 transaction integrity", () => {
   test("§43: materializes a shared child once across multiple changed branches", () => {
     if (!canRun) return;
-    const shared = View.spacer(2);
+    const shared = View.horizontal([View.spacer(2)]);
     const next = View.horizontal([shared, shared]);
     const host = new Host!(48, 12, true);
     const boundary = new RetainedRootBoundary(session!, () => host.tuiViewAbiHostPointer() as never);
@@ -53,9 +53,10 @@ describe("PERF-12 T12 transaction integrity", () => {
       const before = retainedIdentityCounterSnapshot();
       expect(boundary.install(next)).toBeGreaterThan(0);
       const after = retainedIdentityCounterSnapshot();
-      // One row plus one shared spacer: the second branch is a transaction
-      // local identity hit, not a second constructor/publication.
-      expect(after.direct_materializer_calls - before.direct_materializer_calls).toBe(2);
+      // One outer row, one shared branch, and one shared spacer: the second
+      // branch is a transaction-local identity hit, not a second
+      // constructor/publication.
+      expect(after.direct_materializer_calls - before.direct_materializer_calls).toBe(3);
       expect(host.screenRows()).toEqual(oracle(next));
     } finally {
       boundary.close();

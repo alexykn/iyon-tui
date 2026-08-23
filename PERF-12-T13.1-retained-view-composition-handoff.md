@@ -1060,6 +1060,33 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R4 status: COMPLETE.** Exact update provenance is live: one tracked write reaches exactly the scopes that read it, nothing else executes, and the frontier gate passes end-to-end through real projections. Ready for R5 (dirty scheduler hardening: batching/dedup formalization per §17).
 
+### R5 implementation record
+
+**1. Scope statement.** Tranche R5 (Step 8R; AMENDMENT-C §12/§17/§18): dirty-scheduler hardening — auto-scheduling with burst coalescing, commit-batch observability, parent-before-child determinism fixes, WIP prepare/commit discipline pinned under staged failure.
+
+**2. Commits.** `21d8383` — feat(tui): harden T13.1 dirty scheduler & batching (R5).
+
+**3. Review findings.**
+- Finding 1 (real bug, found by test): a scope structurally REMOVED by an evaluating ancestor still executed from its stale queue entry, then threw during its post-dispose commit (`committing scope N without prepared output`). Fix: `isDroppedDuringPreparation()` walks the ancestor chain against reconciled `pendingChildren`; dropped scopes have their queued work discarded before running (dirty cleared, never executed). This is the SS22.4 discard semantics made executable.
+- Finding 2 (real bug, found by test): when parent AND child were dirty in the same batch and the parent supplied newer child props inline, the child executed TWICE (inline + queued). Fix: inline evaluation supersedes queued work (dirty cleared at supersede), per SS12.2 "do not double-execute".
+- Finding 3: middle-child removal under positional identity legitimately remounts later siblings (ordinal shift ⇒ replacement) — pinned as documented pre-R8-keys semantics in a dedicated test; keys land in R8.
+- Finding 4: autoFlush defaults to TRUE (SS12.1); explicit flush pre-empts without double execution; production hosts may wire their frame loop instead via `autoFlush:false` (flush-integration rule, handoff §32.1 registry rules) — actual frame-loop hookup is R8/R11.
+
+**4. Implementation summary.** `execution.ts`: microtask coalescing scheduler (`scheduleFlush` + `flushScheduled` guard), `autoFlush` runtime option, `execution_commit_batches` counter, double-execution supersede fix, ancestor-drop check in the flush loop. 9-test proof suite added. No public API changes.
+
+**5. Provenance block.** Source revision at capture: commit `21d8383` working tree; bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Pure TypeScript tranche.
+
+**6. Gate evidence.**
+- *10 synchronous writes ⇒ 1 pass / 1 batch:* flush_passes delta 1, commit_batches delta 1, every body executed exactly once.
+- *Duplicate invalidations coalesce:* 3 invalidations ⇒ 1 enqueue + 2 duplicates + 1 execution.
+- *Scenario H:* three independent State writes ⇒ 1 pass, 1 commit batch, three bodies.
+- *Removed-while-dirty discarded:* B's body never ran after structural removal; disposed=true; stable siblings untouched.
+- *Middle-child removal semantics pinned:* tail remounts exactly once (mounts delta 1, calls 2 total).
+- *No partial committed state under staged failure:* stable+bomber batch abort leaves old values authoritative; retry succeeds.
+- *Battery:* typecheck clean; full suite 208 pass / 1 fail (documented perf11v4 interference, passes isolated); cold fall-through gate re-run +0.31% (≤3%).
+
+**7. Status line.** **Tranche R5 status: COMPLETE.** The scheduler now guarantees single-pass batching for synchronous bursts, auto-schedules per §12.1, never double-executes superseded children, and discards doomed work structurally. Ready for R6a (production projection wiring over existing host machinery).
+
 ---
 
 # 33. Files

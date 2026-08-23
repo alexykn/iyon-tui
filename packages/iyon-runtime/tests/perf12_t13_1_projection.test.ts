@@ -226,8 +226,13 @@ describe.skipIf(!canRun)("T13.1 R3 — retained scope projections", () => {
 
     // Committed world untouched: old output still authoritative.
     expect(bridgeText(root.children[0]!.scope.currentOutput)).toBe("old");
+    // R7 protocol: this projection has NO preparePublication (legacy
+    // per-scope path), so its failure is a COMMIT-phase pathological error —
+    // it surfaces loudly WITHOUT a batch abort (abort count unchanged).
+    // Batch-abort semantics belong to projections WITH preparePublication
+    // (perf12_t13_1_r7_transaction.test.ts).
     const after = executionCounterSnapshot();
-    expect(after.execution_commit_aborts - before.execution_commit_aborts).toBe(1);
+    expect(after.execution_commit_aborts - before.execution_commit_aborts).toBe(0);
 
     // Recovery succeeds once the failure clears.
     failInstalls = false;

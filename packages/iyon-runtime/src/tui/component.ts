@@ -56,6 +56,10 @@ type NativeViewSlotHandle = {
 
 export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> implements ViewSlotContract {
   private currentView?: View;
+  /** R7: mutable cell so transaction closures can promote currentView on commit. */
+  private currentViewSet = (view: View): void => {
+    this.currentView = view;
+  };
   /**
    * PERF-12 T13 (§18/§80): this slot is a root-lease owner. The boundary
    * keeps the CURRENT content's lease alive across replacements so stable
@@ -117,6 +121,30 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       this.currentView = view;
     });
   }
+  /**
+   * PERF-12 T13.1 R7: transactional variant of {@link setView}. Delegates to
+   * the slot's own RetainedRootBoundary — ownership stays inside the boundary
+   * (no split-brain). Returns `undefined` when no boundary is available
+   * (caller falls back to {@link setView}); otherwise returns a publication
+   * whose commit publishes the prepared root and whose abort leaves the old
+   * content installed and leased.
+   */
+  prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
+    if (this.disposed || this.boundary === undefined) return undefined;
+    const publication = this.boundary.prepareInstall(view);
+    if (publication === undefined) return undefined;
+    const setCurrentView = (promoted: View): void => this.currentViewSet(promoted);
+    return {
+      commit(): void {
+        publication.commit();
+        setCurrentView(view);
+      },
+      abort(): void {
+        publication.abort();
+      },
+    };
+  }
+
   setAnimation(frames: readonly View[], intervalMs: number): void {
     this.setAnimationWithRefs(frames, intervalMs, false);
   }

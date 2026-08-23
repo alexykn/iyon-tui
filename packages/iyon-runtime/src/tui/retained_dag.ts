@@ -1287,6 +1287,36 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * captured as `nativeLookupCeiling`, letting later sidecar misses distinguish
  * definitely-new NodeIds from older possibly-cached ones (§19).
  */
+/**
+ * PERF-12 T13.1 R7 — one prepared-but-unpublished root replacement
+ * (handoff §32.1 R7, AMENDMENT-C §13).
+ *
+ * Lifecycle: `prepareInstall` runs every fallible step (retained walk,
+ * materialization, lease acquisition/recovery) WITHOUT touching the
+ * installed root; the returned publication's `commit()` then publishes and
+ * performs bookkeeping only (pointer swap, ceiling capture, lease ownership
+ * swap) — no materialization, no allocation-heavy work, no user code.
+ * `abort()` releases everything the prepare acquired; the previous root
+ * stays installed and leased throughout.
+ */
+export interface RootPublication {
+  /** The prepared native root reference (held under lease until commit/abort). */
+  readonly rootRef: number;
+  /** Publishes the prepared root. Infallible after successful preparation. */
+  commit(): void;
+  /** Discards the prepared root; no visible mutation ever occurred. */
+  abort(): void;
+}
+
+interface PreparedRootInstall {
+  readonly node: BridgeViewNode;
+  readonly rootRef: number;
+  readonly tx: MaterializeTx;
+  readonly ownsTempLease: boolean;
+  /** True when prepare acquired a fresh boundary lease by NodeId promotion. */
+  acquiredBoundaryLease: boolean;
+}
+
 export class RetainedRootBoundary {
   private previousRef: number | undefined;
   private closed = false;
@@ -1331,6 +1361,66 @@ export class RetainedRootBoundary {
    */
   install(view: View): number | undefined {
     if (this.closed) throw new Error("boundary is closed");
+    const prepared = this.prepareFrom(view);
+    if (prepared === undefined) return undefined;
+    if (!this.publishPrepared(prepared)) return undefined;
+    return prepared.rootRef;
+  }
+
+  /**
+   * PERF-12 T13.1 R7: transactional form of {@link install}. Runs every
+   * fallible step (retained walk, materialization, NodeId promotion /
+   * stale recovery, lease acquisition) WITHOUT publishing anything — the
+   * installed root, its lease, and every visible byte stay untouched.
+   *
+   * Returns `undefined` when the retained path refused (fallback/budget/
+   * unrecoverable stale node); the caller keeps the old root, identically to
+   * a refused `install`.
+   *
+   * The returned publication's `commit()` performs only: the single publish
+   * call (validated inputs — lease held, generation current), temporary-
+   * lease drain, and root-transfer bookkeeping. After successful preparation
+   * a commit refusal indicates runtime teardown, not a recoverable condition.
+   */
+  prepareInstall(view: View): RootPublication | undefined {
+    if (this.closed) throw new Error("boundary is closed");
+    const prepared = this.prepareFrom(view);
+    if (prepared === undefined) return undefined;
+    let finished = false;
+    return {
+      rootRef: prepared.rootRef,
+      commit: (): void => {
+        if (finished) throw new Error("root publication already finished");
+        finished = true;
+        if (!this.publishPrepared(prepared)) {
+          // Pathological: preparation validated the lease and generation, so
+          // a publish refusal means the runtime is tearing down underneath
+          // us. Surface it loudly instead of silently going stale.
+          throw new Error("TUI_ROOT_PUBLISH_REFUSED_AFTER_PREPARE");
+        }
+      },
+      abort: (): void => {
+        if (finished) return;
+        finished = true;
+        this.unwindPrepared(prepared);
+      },
+    };
+  }
+
+  /**
+   * Everything fallible in `install`, stopping BEFORE the publish call:
+   * retained walk, materialization, lease acquisition/recovery. All failure
+   * paths drain temporary leases before returning.
+   */
+  private prepareFrom(
+    view: View,
+  ): {
+    node: BridgeViewNode;
+    rootRef: number;
+    tx: MaterializeTx;
+    ownsTempLease: boolean;
+    acquiredBoundaryLease: boolean;
+  } | undefined {
     const tx = new MaterializeTx(
       this.session.symbols,
       this.session.runtime,
@@ -1374,51 +1464,66 @@ export class RetainedRootBoundary {
         ownsTempLease = true;
       }
     }
+    return { node: nodeForBridge(view), rootRef, tx, ownsTempLease, acquiredBoundaryLease };
+  }
+
+  /**
+   * The publish + bookkeeping tail of `install`. Returns false only on a
+   * publish refusal from the host callback (which leaves the old root
+   * installed); unwinds all acquired leases in that case.
+   */
+  private publishPrepared(prepared: {
+    node: BridgeViewNode;
+    rootRef: number;
+    tx: MaterializeTx;
+    ownsTempLease: boolean;
+    acquiredBoundaryLease: boolean;
+  }): boolean {
+    const rootRef = prepared.rootRef;
     try {
       if (this.installRef !== undefined) {
         if (!this.installRef(rootRef)) {
-          tx.releaseAll();
-          if (acquiredBoundaryLease && rootRef !== this.previousRef) {
-            const batch = Uint32Array.of(rootRef);
-            viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
-            acquiredBoundaryLease = false;
-          }
-          return undefined;
+          this.unwindPrepared(prepared);
+          return false;
         }
       } else {
         const hostPointer = this.hostPointer();
         if (hostPointer !== undefined) {
           const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
           if (status !== HOST_STATUS_OK) {
-            tx.releaseAll();
             // Release only a freshly acquired boundary lease whose ref is not
             // already the boundary's leased previous root (§18 failure keeps
             // the old root installed).
-            if (acquiredBoundaryLease && rootRef !== this.previousRef) {
-              const batch = Uint32Array.of(rootRef);
-              viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
-              acquiredBoundaryLease = false;
-            }
-            return undefined;
+            this.unwindPrepared(prepared);
+            return false;
           }
         }
         counters.host_mutations += 1;
       }
-      if (ownsTempLease) tx.releaseAllExcept(rootRef);
-      else tx.releaseAll();
+      if (prepared.ownsTempLease) prepared.tx.releaseAllExcept(rootRef);
+      else prepared.tx.releaseAll();
       this.transferRoot(rootRef);
-      return rootRef;
+      return true;
     } catch (error) {
       // The host callback/FFI boundary is part of the transaction too: an
       // unexpected throw must not strand temporary or newly-acquired root
       // leases after semantic materialization has already succeeded.
-      tx.releaseAll();
-      if (acquiredBoundaryLease && rootRef !== this.previousRef) {
-        const batch = Uint32Array.of(rootRef);
-        viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
-        acquiredBoundaryLease = false;
-      }
+      this.unwindPrepared(prepared);
       throw error;
+    }
+  }
+
+  /** Drains temporary leases and releases any freshly acquired boundary lease. */
+  private unwindPrepared(prepared: {
+    tx: MaterializeTx;
+    rootRef: number;
+    acquiredBoundaryLease: boolean;
+  }): void {
+    prepared.tx.releaseAll();
+    if (prepared.acquiredBoundaryLease && prepared.rootRef !== this.previousRef) {
+      const batch = Uint32Array.of(prepared.rootRef);
+      viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+      prepared.acquiredBoundaryLease = false;
     }
   }
 

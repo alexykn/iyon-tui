@@ -39,6 +39,13 @@ export function bindExecutionRuntime(
         install(output: View): void {
           slot.setView(output);
         },
+        preparePublication(output: View): { commit(): void; abort(): void } | undefined {
+          // R7: delegate to the slot's own RetainedRootBoundary — ownership
+          // stays inside the boundary (no split-brain between slot and lease
+          // tables). `undefined` means the boundary is unavailable (no native
+          // session); the runtime falls back to the legacy per-scope install.
+          return slot.prepareSetView(output);
+        },
         dispose(): void {
           slot.dispose();
         },

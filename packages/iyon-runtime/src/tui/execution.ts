@@ -86,6 +86,14 @@ export interface ScopeProjection {
   readonly view: View;
   /** Swaps the independently retained sub-DAG root. Failure keeps the old content. */
   install(output: View): void;
+  /**
+   * R7 transactional publication (preferred over `install` when present):
+   * prepares EVERYTHING fallible without publishing; the returned
+   * publication's commit is infallible-after-prepare and its abort leaves
+   * the old root installed and leased. Returning `undefined` counts as a
+   * refused preparation (the enclosing batch aborts).
+   */
+  preparePublication?(output: View): { commit(): void; abort(): void } | undefined;
   /** Releases the sub-root lease and native slot. Must be idempotent. */
   dispose(): void;
 }
@@ -214,6 +222,8 @@ export class RetainedExecutionScope<P = unknown> {
   projection: ScopeProjection | undefined = undefined;
   /** Last output installed into the projection (dedupes no-op installs). */
   projectedOutput: View | undefined = undefined;
+  /** R7: prepared native publication consumed at batch commit (then cleared). */
+  stagedPublication: { commit(): void; abort(): void } | undefined = undefined;
 
   constructor(
     runtime: RetainedExecutionRuntime,
@@ -503,12 +513,12 @@ export class RetainedExecutionRuntime {
         // Parent-before-child within a pass (AMENDMENT-C §12.2).
         batch.sort((a, b) => a.depth - b.depth || a.ordinal - b.ordinal || a.id - b.id);
         const processed: RetainedExecutionScope[] = [];
+
+        // PHASE 1: evaluate every queued scope (children of evaluating parents
+        // are reached inline; SS12.2/SS22.4 drops skip doomed entries).
         try {
           for (const scope of batch) {
             if (scope.disposed || !scope.dirty) continue;
-            // §12.2/§22.4: an ancestor that ALREADY evaluated this pass may
-            // have structurally dropped this scope — discard its queued work
-            // instead of executing a doomed body.
             if (this.isDroppedDuringPreparation(scope)) {
               scope.dirty = false;
               continue;
@@ -517,11 +527,38 @@ export class RetainedExecutionRuntime {
             processed.push(scope);
             this.runWork(scope);
           }
-          this.commitBatch(processed);
         } catch (error) {
           this.abortBatch(processed);
           throw error;
         }
+
+        // PHASE 2 (SS17.3): prepare every changed projection root BEFORE any
+        // promotion. All fallible work happens here; a failure anywhere
+        // unwinds every staged publication and the whole JS batch, leaving
+        // the previous frame fully authoritative.
+        const stagedPublications: RetainedExecutionScope[] = [];
+        try {
+          for (const scope of processed) this.stagePublicationsRecursive(scope, stagedPublications);
+        } catch (prepareError) {
+          for (const scope of stagedPublications) {
+            try {
+              scope.stagedPublication?.abort();
+            } catch {
+              /* unwind is best-effort during an already-failing batch */
+            }
+            scope.stagedPublication = undefined;
+          }
+          this.abortBatch(processed);
+          throw prepareError;
+        }
+
+        // PHASE 3: publish all prepared roots, then promote JS state. By the
+        // boundary contract commit is infallible after successful prepare
+        // (validated lease + generation); a throw here is a pathological
+        // environment failure and intentionally propagates WITHOUT half-
+        // rolling back already-published scopes (AMENDMENT-C SS13.1).
+        this.commitBatch(processed);
+        for (const scope of stagedPublications) scope.stagedPublication = undefined;
       }
     } finally {
       this.flushing = false;
@@ -580,6 +617,7 @@ export class RetainedExecutionRuntime {
     scope.state = "evaluating";
     scope.table.begin();
     scope.pendingChildren = [];
+    scope.stagedPublication = undefined;
     // Fresh dependency collection: the committed set stays subscribed until
     // this evaluation commits (abort retains it — AMENDMENT-C §7.1).
     scope.pendingDependencies = new Set();
@@ -599,6 +637,39 @@ export class RetainedExecutionRuntime {
     if (scope.disposed) throw new ExecutionError("TUI_EXECUTION_DISPOSED", "cannot evaluate a disposed scope");
     executionCounters.execution_scope_body_calls += 1;
     this.evaluateIntoPendings(scope);
+  }
+
+  /**
+   * PHASE 2 walker: stages transactional publications for every scope whose
+   * projection supports them and whose output changed. Depth-first (children
+   * first) so leaf roots prepare before their ancestors. A refused or thrown
+   * preparation propagates; the flush catch unwinds all previously staged
+   * publications plus the JS batch.
+   */
+  private stagePublicationsRecursive(
+    scope: RetainedExecutionScope,
+    staged: RetainedExecutionScope[],
+  ): void {
+    for (const record of scope.pendingChildren) {
+      this.stagePublicationsRecursive(record.scope, staged);
+    }
+    const prepare = scope.projection?.preparePublication;
+    if (
+      prepare !== undefined
+      && scope.projection !== undefined
+      && scope.pendingOutput !== undefined
+      && scope.pendingOutput !== scope.projectedOutput
+    ) {
+      const publication = prepare.call(scope.projection, scope.pendingOutput);
+      if (publication === undefined) {
+        throw new ExecutionError(
+          "TUI_EXECUTION_PREPARE_REFUSED",
+          `projection for scope ${scope.id} refused preparation; batch aborts atomically`,
+        );
+      }
+      scope.stagedPublication = publication;
+      staged.push(scope);
+    }
   }
 
   private commitBatch(batch: ReadonlyArray<RetainedExecutionScope>): void {
@@ -622,9 +693,18 @@ export class RetainedExecutionRuntime {
     if (scope.projection !== undefined && newOutput !== scope.projectedOutput) {
       // Swap the independently retained sub-DAG root BEFORE promoting: a
       // failed install keeps the old content authoritative on BOTH sides
-      // (ViewSlot's boundary preserves the previous root on failure, §22.2),
-      // and the surrounding batch abort then has nothing to unwind here.
-      scope.projection.install(newOutput!);
+      // (ViewSlot's boundary preserves the previous root on failure, §22.2).
+      // R7: when a publication was staged in the prepare phase, commit it —
+      // infallible after prepare, and the whole batch already validated.
+      const staged = scope.stagedPublication;
+      if (staged !== undefined) {
+        staged.commit();
+        scope.stagedPublication = undefined;
+      } else {
+        // Legacy per-scope path for projections without preparePublication
+        // (detached/test fakes): individually atomic, not batch-atomic.
+        scope.projection.install(newOutput!);
+      }
       scope.projectedOutput = newOutput;
     }
     if (scope.pendingOutput === scope.currentOutput) {
@@ -686,6 +766,9 @@ export class RetainedExecutionRuntime {
       if (child.pendingOutput !== undefined || !child.mounted) this.abortScope(child);
     }
     scope.pendingOutput = undefined;
+    // Staged publications were unwound by the flush catch before abortBatch;
+    // clear the reference so none can be committed later.
+    scope.stagedPublication = undefined;
     scope.table.rollback();
     scope.state = "clean";
     scope.dirty = false;

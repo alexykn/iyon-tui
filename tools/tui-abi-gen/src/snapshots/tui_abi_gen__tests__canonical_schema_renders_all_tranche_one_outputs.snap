@@ -3949,5 +3949,5 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
       "size": 8
     }
   ],
-  "schema_blake3": "3bf6894a07d2888f5f728fcdf3fea29df1a52b0a4199f34e519b3f4e4e9a6279"
+  "schema_blake3": "8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6"
 }

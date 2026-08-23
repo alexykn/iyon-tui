@@ -7049,11 +7049,11 @@ prerequisite: PERF-12-production-boundary-trace.md (committed 4073ca8)
 ### 2. Commits
 
 ```text
-<implementation commit>  perf(tui): route all View boundaries through retained identity
-<this doc commit>        docs(perf): record T13 boundary routing tranche
+8d34ad1  perf(tui): route all View boundaries through retained identity
 ```
-The smoke artifact's `git_sha` records the pre-commit revision per the
-provenance convention documented since T6.
+This record was appended in the immediately following documentation commit on
+`perf-refactor`. The smoke artifact was captured at the implementation commit
+(`git_sha` 8d34ad1 in the JSONL), superseding the earlier capture at 4073ca8.
 
 ### 3. Review findings
 
@@ -7176,9 +7176,10 @@ Tranche table "Required result" rows:
    B1 changed-frontier chrome render + identical-body re-render, B3 card slot
    update + stable-shell hint re-set, B4 pane update + followEnd, B2 history
    import every 25th op):
-     median 505,667 ns  p95 675,500 ns  p99 1,171,792 ns
-     median_ci95_ns [471,666, 477,167]  (op includes full 80x24 headless
-     repaints of two scene renders plus slot/pane/history mutations)
+     median 508,313 ns  p95 672,166 ns  p99 1,009,125 ns
+     median_ci95_ns [471,666, 477,167] from the first capture (505,667 ns
+     median; both captures within their CIs — op includes full 80x24
+     headless repaints of two scene renders plus slot/pane/history mutations)
      cold_fallbacks = 0 (harness aborts on any fallback)
      bridge_hint_hits = 1,000 (the stable tool-card shell rides hints every
      operation — §21 cutoff at the slot boundary)

@@ -19,7 +19,7 @@ describe("PERF-11 generated vertical slice", () => {
   test("links the generated ABI and keeps the runtime pointer stable", () => {
     const session = nativeViewAbiSession();
     if (session === undefined) return;
-    expect(session.abi.function_count).toBe(50);
+    expect(session.abi.function_count).toBe(51);
     expect(session.abi.runtime_ptr).toBeGreaterThan(0);
     expect(session.symbols).toBeDefined();
     expect(nativeViewAbiSession()?.abi.runtime_ptr ?? 0).toBe(session.abi.runtime_ptr);

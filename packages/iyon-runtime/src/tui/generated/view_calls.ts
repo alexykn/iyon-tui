@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
-// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
+// schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
+// generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
 import type { Pointer } from "bun:ffi";
 import type { linkViewAbi } from "./view_abi";
 export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>["symbols"];
@@ -165,6 +165,31 @@ export function viewGridCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, 
 
 export function viewDiffCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, words: NodeJS.TypedArray | DataView, used_word_count: number, bytes: NodeJS.TypedArray | DataView, used_byte_count: number): number {
   const result = symbols.viewDiffCreateBuffer(runtime, node_id_low, node_id_high, words, words, used_word_count, bytes, bytes, used_byte_count);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewHangingCreate(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, prefix_ref: number, continuation_ref: number, body_ref: number): number {
+  const result = symbols.viewHangingCreate(runtime, node_id_low, node_id_high, prefix_ref, continuation_ref, body_ref);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewContainerCreate(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, child_ref: number): number {
+  const result = symbols.viewContainerCreate(runtime, node_id_low, node_id_high, child_ref);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewClampCreate(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, child_ref: number, max_rows: number, overflow_kind: number, overflow_style_ref: number, prefix: string): number {
+  const result = symbols.viewClampCreate(runtime, node_id_low, node_id_high, child_ref, max_rows, overflow_kind, overflow_style_ref, prefix);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewComponentCreate(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, handle_low: number, handle_high: number): number {
+  const result = symbols.viewComponentCreate(runtime, node_id_low, node_id_high, handle_low, handle_high);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewDecoratedCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, child_ref: number, style_ref: number, words: NodeJS.TypedArray | DataView, used_word_count: number, bytes: NodeJS.TypedArray | DataView, used_byte_count: number): number {
+  const result = symbols.viewDecoratedCreateBuffer(runtime, node_id_low, node_id_high, child_ref, style_ref, words, words, used_word_count, bytes, bytes, used_byte_count);
   return checkedRef(symbols, runtime, result);
 }
 

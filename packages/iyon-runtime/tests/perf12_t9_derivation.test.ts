@@ -182,7 +182,7 @@ describe("PERF-12 T9 derivation hints", () => {
     }
   });
 
-  test("mixed decorations stay unhinted and route the fallback with clean leases", () => {
+  test("mixed decorations stay unhinted and never ride the scalar patch", () => {
     if (!canRun) return;
     const s = session!;
     const host = new Host(30, 10, true);
@@ -192,14 +192,21 @@ describe("PERF-12 T9 derivation hints", () => {
       const boundary = new RetainedRootBoundary(s, () => host.tuiViewAbiHostPointer() as never);
       expect(boundary.adopt(old)).toBe(true);
       const leasedBefore = leasedSlots();
+      const derivationsBefore = retainedIdentityCounterSnapshot().derivation_fast_path_calls;
 
       // A style-bearing decoration has no exact retained primitive: no hint
-      // may be attached, and ensureNative must fall back cleanly.
+      // may be attached (T13 note: the decorated node now materializes
+      // through its own constructor — the §27 guarantee under test is that it
+      // does NOT ride the common-scalar patch lane).
       const mixed = View.spacer(1).bold();
       expect(peekBridgeDerivation(nodeForBridge(mixed))).toBeUndefined();
-      expect(boundary.install(View.vertical([mixed]))).toBeUndefined();
+      expect(boundary.install(View.vertical([mixed]))).toBeGreaterThan(0);
 
-      // Every temporary lease drained: back to the old root's lease only.
+      // No derivation fast path fired; leases return to exactly one boundary
+      // root lease; the previous root still renders exactly.
+      expect(retainedIdentityCounterSnapshot().derivation_fast_path_calls).toBe(derivationsBefore);
+      // The boundary transferred its root lease to the new root: still exactly
+      // one durable boundary lease, and the previous root renders via hint.
       expect(leasedSlots()).toBe(leasedBefore);
       expect(boundary.renderExact(old).status).toBe("ok");
       boundary.close();

@@ -7014,4 +7014,240 @@ finding R16 (added by the post-T11 joint T11/T12 review): two areas lacked
        median 5,563 ns, p95 13,834 ns, p99 34,542 ns,
        median_ci95_ns [5,209, 5,833], host_mutations=500,
        stale_ref_retries=0, cold_fallbacks=0.
+
+finding R17 (added by the T13 implementation): the "§45/§118 child failure"
+       and T6-R1 fixtures again used decorated/bold children as the canonical
+       unsupported retained kind — T13 landed decorated materializers, so both
+       installs now succeed by design. Correction: those fixtures use a
+       5-span styled text (outside the retained span family); all lease-drain,
+       old-root-preservation, and bounded-retry assertions are unchanged.
+       The suite remains 10 passing tests / 42 expect calls.
+```
+
+## T13 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T13 (PERF-12.10 + PERF-12.11 router and boundaries)
+parent:       12.10 + 12.11
+sections:     §49 cold/rebuilt router and budgets, §77 every View-bearing
+              boundary inventory (traced: PERF-12-production-boundary-trace.md),
+              §78 History, §79 Components, §80 ViewSlot/ScrollPane,
+              §81 Animations, §114 dormant-node recovery test,
+              §115 multi-host test
+supporting:   §18 boundary protocol extended to injectable installers,
+              §20 exact-root fast path wired into the scene router,
+              §21/§16 hint cutoffs at slot boundaries, §42 stream guard,
+              §76 full-schema coverage completion (five new constructors),
+              §40 theme-epoch rule for the style sidecar
+prerequisite: PERF-12-production-boundary-trace.md (committed 4073ca8)
+              documents boundaries B1–B6 and the TS-layer compromises this
+              tranche removes.
+```
+
+### 2. Commits
+
+```text
+<implementation commit>  perf(tui): route all View boundaries through retained identity
+<this doc commit>        docs(perf): record T13 boundary routing tranche
+```
+The smoke artifact's `git_sha` records the pre-commit revision per the
+provenance convention documented since T6.
+
+### 3. Review findings
+
+```text
+finding 1: RetainedRootBoundary hard-wired hostRenderRef as its commit step,
+       but ViewSlot/ScrollPane mutate via setViewRef/setContentRef, not scene
+       renders. Correction: the boundary now takes an optional installRef
+       callback; slot/pane boundaries pass their native ref installer and the
+       §18 lease protocol is unchanged otherwise (one durable root lease,
+       previous root leased until replacement commits, failure keeps old).
+
+finding 2: the pre-T13 ViewSlot.setView / ScrollPane.setContent re-
+       materialized the PREVIOUS view through the cold FFI graph on every
+       update just to obtain a base ref for patch routing — O(previous tree)
+       wasted work per update (trace doc compromise #1). Correction: handles
+       now own a boundary whose previousRef keeps current content leased;
+       updates are ensureNative installs of the changed frontier only. The
+       entire recipe cascade (scalar/path/structural/edit-transaction) left
+       runtime.ts; dead route helpers remain exported until the cleanup
+       tranche (T4 finding-4 pattern).
+
+finding 3: five View kinds had no retained constructor (container, clamp/
+       contentMax, hanging, component references, decorated), so production
+       trees built from @iyon/plugins support helpers always fell back.
+       Correction: canonical ABI gained view_hanging_create,
+       view_container_create, view_clamp_create (overflow kinds 0/1/2 also
+       serving contentMax), view_component_create (handle id split lo/hi),
+       and view_decorated_create_buffer (borrowed words+bytes lane; fixed
+       positional header framing; style-state keys/values UTF-8 framed in the
+       byte tier; decoration applied in exactly the Direct decoder's order;
+       custom border glyphs refuse explicitly). Function count 52 -> 57.
+
+finding 4: the handwritten same-image bootstrap pointer map initially
+       omitted the five new function pointers, failing the bootstrap
+       metadata handshake. Correction: bootstrap map, ABI_FUNCTION_NAMES,
+       NativeAbiPointers surface, generated outputs, conformance fixture,
+       and pinned function-count assertion agree (T10 finding-4 precedent).
+
+finding 5: adding functions shifted positional conformance stub values;
+       the hardcoded release_many expectation (129 -> 134) drifted exactly
+       as T11 finding 1 predicted it could. Correction: renderer expectation
+       updated with an in-source note to compute positionally next time;
+       schema/generator snapshots accepted for the new hashes.
+
+finding 6 (production-shape correction from review): tool cards are built
+       from View.hanging bullet lines plus clampRows collapse with theme-keyed
+       styles — not plain verticals. The bench's stable-card lane and the T13
+       parity suite use the exact support-helper shape (toolCallLine /
+       toolResultLine / collapseResultView) so hanging, clamp-footer, and
+       themed spans ride the measured path together.
+
+finding 7: theme changes after materialization would leave stale themed
+       StyleRefs cached per (runtime, generation) (trace compromise #7).
+       Correction: Tui.setTheme resets the style sidecar before installing
+       the new host theme (theme-epoch rule); the app's set-theme-once flow
+       is unaffected.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+B1 scene root    runtime.ts render(): object-identity no-op -> §20 exact-root
+                 fast path (boundary.renderExact) -> §18 boundary.install
+                 (ensureNative frontier walk, one hostRenderRef commit) ->
+                 §49 complete cold fallback (Direct decode) followed by
+                 boundary.adopt so future renders hit exactness. Aborted
+                 retained prefixes are NOT rolled back: published nodes stay
+                 valid cache entries the decode consults NodeId-first.
+B2 History       push/freeze prefer tryRetainedMaterializeRef: identity-first
+                 import where hint-covered subtrees cost zero payload reads;
+                 ceiling 0 so genuinely fresh units pay no per-node probes.
+                 Streams untouched (§42 counter guard added to the suite).
+B3/B4 slots      ViewSlot/ScrollPane own boundaries (§18/§80): leased current
+                 content, replacement after full materialization, failure
+                 keeps old content, dispose releases the root lease exactly
+                 once. Animations materialize frames through retained identity
+                 too; stable frame objects hit hints every cycle (§81).
+§114/§115        Suite coverage: dormant-node rematerialization after native
+                 expiry (maintenance hook), poisoned-hint single-retry
+                 recovery, two hosts sharing one semantic root (same NativeRef,
+                 independent leases, replace-on-A leaves B exact, close drains
+                 both leases back to the entry count).
+Compromises      Trace-doc compromises #1 (O(previous-tree) base refs), #2
+removed          (recipe cascade), #6 partially (freeze imports reuse hinted
+                 identities), #7 (theme epoch) are gone. Deliberately KEPT:
+                 #3 native-side sharing was already correct; #4 async history
+                 mutation queue (behavior-preserving ordering only); #5 app-level
+                 bodyKey memo (still gates animation advancement; shrinks to
+                 redundant once app code trusts cheap renders).
+```
+
+Deliberately NOT done: removal of the dead 11v3 route helpers and N-API packed
+decoders (cleanup tranche T16); authoritative benchmark matrix (T15); app-layer
+bodyKey simplification (product plugin change outside framework scope).
+
+### 5. Provenance block
+
+```text
+source revision at capture: 4073ca841bc67642b666dda33f5bf52c830cdc9e
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+restaged addon SHA-256:     8045ddccd60c41bb44446b0419fca6d89d46fa51a9c9c6d6c72174598010dabf
+schema BLAKE3:              8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
+generator BLAKE3:           0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. No production boundary silently routes through Direct/fallback on retained
+   traces:
+   PERF-12-t13-boundaries.jsonl (smoke profile, timing build, fresh staged
+   addon, 50 warmup + 500 measured operations of the traced production shape:
+   B1 changed-frontier chrome render + identical-body re-render, B3 card slot
+   update + stable-shell hint re-set, B4 pane update + followEnd, B2 history
+   import every 25th op):
+     median 505,667 ns  p95 675,500 ns  p99 1,171,792 ns
+     median_ci95_ns [471,666, 477,167]  (op includes full 80x24 headless
+     repaints of two scene renders plus slot/pane/history mutations)
+     cold_fallbacks = 0 (harness aborts on any fallback)
+     bridge_hint_hits = 1,000 (the stable tool-card shell rides hints every
+     operation — §21 cutoff at the slot boundary)
+     direct_materializer_calls = 8,040 (~16/op: fresh frontier nodes only)
+     host_mutations = 500 (exactly one committed scene render per operation;
+     the identical-body render no-ops above the bridge)
+     stale_ref_retries = 0; byte_payload_bytes = 0 on the stable lanes
+   Suite counters additionally prove each boundary individually (see tests
+   below). PASS.
+
+2. Dormant-node lifetime correct (§114):
+   perf12_t13_boundaries.test.ts "§114": a Direct-seeded subtree is evicted,
+   maintenance forced, and reinserted under a new parent — one bounded step
+   recovers (promotion miss -> fresh materialization), render matches the
+   Direct oracle, fresh generation-scoped hints installed. "§114b": a
+   poisoned generation-valid hint recovers with stale_ref_retries == exactly
+   1. PASS.
+
+3. Multi-host lifetime correct (§115):
+   "§115": two hosts install the same semantic root — both resolve the SAME
+   NativeRef while holding independent boundary leases; A replaces its root
+   and B keeps rendering the original exactly via renderExact; both closes
+   return leased_slots to the entry level. PASS.
+
+4. Initial cold render chooses the best cold path directly without wasted
+   retained prefix (§49):
+   "§49": a 700-leaf cold tree aborts at MAX_RETAINED_NEW_NODES with exactly
+   one counted cold_fallback, the Direct decode completes the render, and
+   prefix publications remain valid cache entries. The production router does
+   not special-case cold: the budget bounds the wasted prefix by construction
+   and the fallback gets cheaper because of it (§49 no-rollback rule). PASS.
+
+Section coverage evidence:
+   §77  All six traced boundaries (B1–B6) routed or guarded; trace document
+        referenced from §77 and the tranche registry.
+   §78  "history unit import reuses shared identity across boundaries": a
+        unit pushed after slot-materialization reports zero new materializer
+        calls and zero fallbacks; §42 stream guard asserts stream bytes never
+        touch structural counters behind the new boundaries.
+   §79  Component references materialize through registered slots (view_
+        component_create); unregistered ids fail identically on retained and
+        Direct paths (probe-documented MissingComponent parity).
+   §80  B3/B4 test: eight consecutive slot+pane updates report zero fallbacks
+        and zero extra host_mutations; content visible after scene repaint.
+   §81  Animation test: first setAnimation materializes the frame set; four
+        re-arm cycles add ZERO materializer calls and zero fallbacks.
+   §76  Remaining-kinds parity suite (container, clamp-footer, clamp-ellipsis,
+        contentMax, decorated-full with padding/colors/border/theme/style-
+        state/min/max, production tool-card shape, component) — all screen-
+        identical to the Direct oracle with zero fallbacks. Every schema kind
+        is now direct-materialized or explicitly fallback-routed (spans >4,
+        cap overruns, custom border glyphs).
+
+Regression battery: perf12_t13_boundaries 11/11; full runtime directory 132
+pass / 1 fail (the T2-documented pre-existing cross-file weak-cache
+interference, unchanged); cargo iyon-native lib 41 pass (+2 T13 tests) /
+generated integration suites green; tui-abi-gen 27/27 byte-fresh; tsc clean;
+cargo fmt clean; clippy warning delta limited to the accepted
+too-many-arguments class on new buffer impl signatures (T11 precedent).
+```
+
+### 7. Status line
+
+**Tranche T13 status: COMPLETE.** Every View-bearing boundary from the
+production trace — scene root, History units, ViewSlots, ScrollPanes,
+animations, theme installation — now routes through retained semantic identity
+with structural counter proof, the remaining five kinds materialize directly,
+dormant-node and multi-host lifetimes are covered, and the traced TS-layer
+compromises (per-update cold rebuilds, recipe cascade, theme staleness) are
+removed; T14 hardening, the T15 authoritative decision, and conditional T16
+cleanup remain.
 ```

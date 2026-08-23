@@ -1,5 +1,5 @@
 import { native } from "../native.ts";
-import { nativePathLineage, nativeTextLayoutTransaction, nodeForBridge } from "./values/view.ts";
+import { nodeForBridge } from "./values/view.ts";
 import { asTuiError, tuiError } from "./errors.ts";
 import { requireNativeClass } from "./handles.ts";
 import { Scene } from "./scene.ts";
@@ -9,19 +9,9 @@ import { ViewSlot } from "./component.ts";
 import { NativeScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
-  nativeViewRefForNodeId,
   recordNativeViewRoute,
-  releaseNativeViewRef,
-  tryNativeEditTransactionRender,
-  tryNativeColdRender,
-  tryNativeMaterialize,
-  tryNativeStructuralRender,
-  tryNativeTextCreateRender,
-  tryNativeViewBoundaryCreate,
-  tryNativePathScalarRender,
-  tryNativeRenderRef,
-  tryNativeScalarRender,
 } from "./native_view_abi.ts";
+import { resetStyleRefCacheForThemeChange, RetainedRootBoundary } from "./retained_dag.ts";
 import type {
   OutputHandle,
   ScrollPane,
@@ -39,7 +29,12 @@ export class Tui implements TuiRuntime {
   private readonly width: number;
   private readonly height: number;
   private currentScene?: Scene;
-  private currentNativeRef?: number;
+  /**
+   * PERF-12 T13 (§18/§49): the scene body's root-lease boundary. It owns
+   * exactly one lease on the currently installed root; previous roots stay
+   * leased until a replacement is fully materialized and committed.
+   */
+  private boundary?: RetainedRootBoundary;
 
   private constructor(host: NativeTuiHostContract, width: number, height: number) {
     this.host = host;
@@ -98,6 +93,25 @@ export class Tui implements TuiRuntime {
     return { actionId: event.routeId, ...(event.payload === undefined ? {} : { payload: event.payload }) };
   }
 
+  /**
+   * PERF-12 T13 (§49/§77-B1): production scene router.
+   *
+   * ```text
+   * same body object          → no-op (identity cutoff above the bridge)
+   * warm root hint            → §20 exact-root fast path (one host render)
+   * otherwise                 → §18 boundary install: ensureNative walks the
+   *                             changed semantic frontier, children-first, and
+   *                             commits once via hostRenderRef
+   * refused / over-budget     → complete cold path (Direct N-API decode), per
+   *                             §49: constructors published before the budget
+   *                             abort remain valid cache entries the decode
+   *                             reuses through its NodeId-first consult
+   * ```
+   *
+   * The pre-T13 recipe cascade (render_ref/scalar/path/structural/edit-tx)
+   * is gone: identity hints replace path-lineage recipes, and derivation
+   * patches ride inside ensureNative (§27).
+   */
   render(scene: SceneContract, signal?: AbortSignal): void {
     ensureSignal(signal);
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
@@ -115,59 +129,53 @@ export class Tui implements TuiRuntime {
       if (history.isDetached?.() === true) this.host.setHistory(history as object);
     }
     const previousBody = this.currentScene?.body;
-    const previousNativeRef = this.currentNativeRef;
-    let nextNativeRef: number | undefined;
-    if (previousBody !== undefined && previousNativeRef !== undefined && previousBody === normalized.body) {
-      nextNativeRef = tryNativeRenderRef(this.host, previousNativeRef);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("render_ref");
-    }
-    if (nextNativeRef === undefined && previousBody !== undefined && previousNativeRef !== undefined) {
-      nextNativeRef = tryNativeScalarRender(this.host, previousBody, previousNativeRef, normalized.body);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("scalar");
-    }
-    if (nextNativeRef === undefined && previousBody !== undefined && previousNativeRef !== undefined) {
-      nextNativeRef = tryNativePathScalarRender(this.host, previousBody, previousNativeRef, normalized.body);
-      if (nextNativeRef !== undefined) {
-        const depth = nativePathLineage(normalized.body)?.depth ?? 0;
-        recordNativeViewRoute(depth <= 4 ? "shallow_depth" : "path_ref");
+    const session = nativeViewAbiSession();
+    // Exact-root fast path: identical body View, warm hint, one host call.
+    if (
+      session !== undefined
+      && previousBody !== undefined
+      && normalized.body === previousBody
+    ) {
+      this.ensureBoundary(session);
+      const exact = this.boundary!.renderExact(normalized.body);
+      if (exact.status === "ok") {
+        recordNativeViewRoute("render_ref");
+        this.currentScene = normalized;
+        return;
       }
+      // Miss falls through to the full retained install (§47 recovery).
     }
-    if (nextNativeRef === undefined && previousBody !== undefined && previousNativeRef !== undefined) {
-      nextNativeRef = tryNativeStructuralRender(this.host, previousBody, previousNativeRef, normalized.body);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("structural");
-    }
-    if (nextNativeRef === undefined && previousBody !== undefined && previousNativeRef !== undefined) {
-      const edits = nativeTextLayoutTransaction(normalized.body);
-      if (edits !== undefined) {
-        nextNativeRef = tryNativeEditTransactionRender(this.host, previousBody, previousNativeRef, edits);
-        if (nextNativeRef !== undefined) recordNativeViewRoute("edit_transaction");
+    let installed = false;
+    if (session !== undefined) {
+      this.ensureBoundary(session);
+      const nextRef = this.boundary!.install(normalized.body);
+      if (nextRef !== undefined) {
+        recordNativeViewRoute("retained");
+        installed = true;
       }
+      // A refused install keeps the old root rendered (§45); the caller-level
+      // fallback below re-renders authoritatively.
     }
-
-    if (nextNativeRef === undefined) {
-      nextNativeRef = tryNativeTextCreateRender(this.host, normalized.body);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("native_builder");
-    }
-    if (nextNativeRef === undefined) {
-      nextNativeRef = tryNativeColdRender(this.host, normalized.body);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("native_builder");
-    }
-    if (nextNativeRef === undefined) {
-      nextNativeRef = tryNativeViewBoundaryCreate(this.host, normalized.body);
-      if (nextNativeRef !== undefined) recordNativeViewRoute("native_builder");
-    }
-    if (nextNativeRef === undefined) {
+    if (!installed) {
+      // Complete cold candidate (§49): Direct N-API decode of the whole tree.
+      // Nodes published by an aborted retained prefix stay valid cache entries
+      // that this decode consults NodeId-first, so wasted prefix work is not
+      // repeated — it shortens the fallback.
       recordNativeViewRoute("fallback");
       this.host.render(nodeForBridge(normalized.body));
-      nextNativeRef = this.host.tuiViewAbiHostPointer === undefined
-        ? undefined
-        : nativeViewRefForNodeId(normalized.body);
+      // Adopt so future renders hit the exact-root fast path.
+      if (session !== undefined) this.boundary!.adopt(normalized.body);
     }
-    if (previousNativeRef !== undefined && previousNativeRef !== nextNativeRef) {
-      releaseNativeViewRef(nativeViewAbiSession(), previousNativeRef);
-    }
-    this.currentNativeRef = nextNativeRef;
     this.currentScene = normalized;
+  }
+
+  private ensureBoundary(session: NonNullable<ReturnType<typeof nativeViewAbiSession>>): RetainedRootBoundary {
+    if (this.boundary === undefined) {
+      this.boundary = new RetainedRootBoundary(session, () =>
+        this.host.tuiViewAbiHostPointer?.() as never,
+      );
+    }
+    return this.boundary;
   }
 
   createHistory(): History { return new History(this.host.history() as never); }
@@ -177,27 +185,11 @@ export class Tui implements TuiRuntime {
   }
 
   createViewSlot(initialView: import("./values/view.ts").View): ViewSlot {
-    const ref = tryNativeMaterialize(initialView);
-    if (ref !== undefined) {
-      try {
-        return new ViewSlot(this.host.createViewSlotRef(ref), initialView);
-      } finally {
-        releaseNativeViewRef(nativeViewAbiSession(), ref);
-      }
-    }
-    return new ViewSlot(this.host.createViewSlot(nodeForBridge(initialView)), initialView);
+    return new ViewSlot(this.host, initialView);
   }
 
   createScrollPane(initialView: import("./values/view.ts").View): ScrollPane {
-    const ref = tryNativeMaterialize(initialView);
-    if (ref !== undefined) {
-      try {
-        return new NativeScrollPane(this.host.scrollPaneRef(ref), initialView);
-      } finally {
-        releaseNativeViewRef(nativeViewAbiSession(), ref);
-      }
-    }
-    return new NativeScrollPane(this.host.scrollPane(nodeForBridge(initialView)), initialView);
+    return new NativeScrollPane(this.host, initialView);
   }
 
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {
@@ -224,9 +216,9 @@ export class Tui implements TuiRuntime {
     if (this.closed) return;
     this.closed = true;
     try {
-      if (this.currentNativeRef !== undefined) releaseNativeViewRef(nativeViewAbiSession(), this.currentNativeRef);
+      this.boundary?.close();
     } finally {
-      this.currentNativeRef = undefined;
+      this.boundary = undefined;
       this.currentScene = undefined;
       this.host.dispose();
     }
@@ -235,9 +227,9 @@ export class Tui implements TuiRuntime {
   exit(): void {
     if (this.closed) return;
     try {
-      if (this.currentNativeRef !== undefined) releaseNativeViewRef(nativeViewAbiSession(), this.currentNativeRef);
+      this.boundary?.close();
     } finally {
-      this.currentNativeRef = undefined;
+      this.boundary = undefined;
       this.host.exit();
       this.closed = true;
     }
@@ -245,6 +237,9 @@ export class Tui implements TuiRuntime {
 
   setTheme(theme: import("./values/theme.ts").Theme): void {
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
+    // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
+    // retained materializations re-resolve against the new host theme.
+    resetStyleRefCacheForThemeChange();
     this.host.setTheme(theme.materialize());
   }
 

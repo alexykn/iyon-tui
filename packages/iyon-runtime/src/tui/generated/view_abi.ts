@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
-// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
+// schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
+// generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
 import { linkSymbols, type Pointer } from "bun:ffi";
 export type NativeAbiPointers = {
   runtimeNoop: Pointer;
@@ -31,6 +31,11 @@ export type NativeAbiPointers = {
   viewAxisSetChildPath: Pointer;
   viewGridCreateBuffer: Pointer;
   viewDiffCreateBuffer: Pointer;
+  viewHangingCreate: Pointer;
+  viewContainerCreate: Pointer;
+  viewClampCreate: Pointer;
+  viewComponentCreate: Pointer;
+  viewDecoratedCreateBuffer: Pointer;
   viewGridSetCellPath: Pointer;
   viewReleaseMany: Pointer;
   viewRefForNodeId: Pointer;
@@ -87,6 +92,11 @@ export function linkViewAbi(abi: NativeAbiPointers) {
     viewAxisSetChildPath: { ptr: abi.viewAxisSetChildPath, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
     viewGridCreateBuffer: { ptr: abi.viewGridCreateBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
     viewDiffCreateBuffer: { ptr: abi.viewDiffCreateBuffer, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
+    viewHangingCreate: { ptr: abi.viewHangingCreate, args: ["ptr", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
+    viewContainerCreate: { ptr: abi.viewContainerCreate, args: ["ptr", "u32", "u32", "u32"], returns: "u32" },
+    viewClampCreate: { ptr: abi.viewClampCreate, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "cstring"], returns: "u32" },
+    viewComponentCreate: { ptr: abi.viewComponentCreate, args: ["ptr", "u32", "u32", "u32", "u32"], returns: "u32" },
+    viewDecoratedCreateBuffer: { ptr: abi.viewDecoratedCreateBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
     viewGridSetCellPath: { ptr: abi.viewGridSetCellPath, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
     viewReleaseMany: { ptr: abi.viewReleaseMany, args: ["ptr", "buffer", "buffer_length", "u32"], returns: "i32" },
     viewRefForNodeId: { ptr: abi.viewRefForNodeId, args: ["ptr", "u32", "u32"], returns: "u32" },

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
-// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
+// schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
+// generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
 export type GeneratedAbiBenchmarkCase = {
   name: string;
   family: string;
@@ -41,6 +41,11 @@ export const generatedAbiCases: readonly GeneratedAbiBenchmarkCase[] = [
   { name: "view_axis_set_child_path", family: "structural_path_patch", hotness: "critical", benchmarkRegistration: "view.axis_set_child_path", scalarArgs: 17, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 4 },
   { name: "view_grid_create_buffer", family: "constructor", hotness: "warm", benchmarkRegistration: "view.grid_create_buffer", scalarArgs: 6, hasBuffer: true, maxBufferBytes: 1048576, maxInputCount: 262144 },
   { name: "view_diff_create_buffer", family: "constructor", hotness: "warm", benchmarkRegistration: "view.diff_create_buffer", scalarArgs: 5, hasBuffer: true, maxBufferBytes: 1048576, maxInputCount: 262144 },
+  { name: "view_hanging_create", family: "constructor", hotness: "warm", benchmarkRegistration: "view.hanging_create", scalarArgs: 6, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 3 },
+  { name: "view_container_create", family: "constructor", hotness: "warm", benchmarkRegistration: "view.container_create", scalarArgs: 4, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
+  { name: "view_clamp_create", family: "constructor", hotness: "warm", benchmarkRegistration: "view.clamp_create", scalarArgs: 8, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
+  { name: "view_component_create", family: "constructor", hotness: "warm", benchmarkRegistration: "view.component_create", scalarArgs: 5, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 0 },
+  { name: "view_decorated_create_buffer", family: "constructor", hotness: "warm", benchmarkRegistration: "view.decorated_create_buffer", scalarArgs: 7, hasBuffer: true, maxBufferBytes: 1048576, maxInputCount: 262144 },
   { name: "view_grid_set_cell_path", family: "structural_path_patch", hotness: "critical", benchmarkRegistration: "view.grid_set_cell_path", scalarArgs: 17, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 4 },
   { name: "view_release_many", family: "lifecycle", hotness: "cold", benchmarkRegistration: "lifecycle.release_many", scalarArgs: 2, hasBuffer: true, maxBufferBytes: 524288, maxInputCount: 131072 },
   { name: "view_ref_for_node_id", family: "exact_lookup", hotness: "critical", benchmarkRegistration: "view.ref_for_node_id", scalarArgs: 3, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },

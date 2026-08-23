@@ -1919,6 +1919,305 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
         },
         {
           "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "prefix_ref",
+          "type": "ViewRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "continuation_ref",
+          "type": "ViewRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "body_ref",
+          "type": "ViewRef"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.hanging_create",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_hanging_create_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 3,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_hanging_create",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "child_ref",
+          "type": "ViewRef"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.container_create",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_container_create_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 1,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_container_create",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "child_ref",
+          "type": "ViewRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "max_rows",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "overflow_kind",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "overflow_style_ref",
+          "type": "StyleRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "cstring_ephemeral",
+          "name": "prefix",
+          "type": "string"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.clamp_create",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_clamp_create_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 1,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_clamp_create",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "handle_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "handle_high",
+          "type": "u32"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.component_create",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_component_create_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 0,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_component_create",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "child_ref",
+          "type": "ViewRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "style_ref",
+          "type": "StyleRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer",
+          "name": "words",
+          "type": "u32[]"
+        },
+        {
+          "buffer_length_of": "words",
+          "lowering": "buffer_length",
+          "name": "words_capacity_bytes",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer_used",
+          "name": "used_word_count",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer",
+          "name": "bytes",
+          "type": "u8[]"
+        },
+        {
+          "buffer_length_of": "bytes",
+          "lowering": "buffer_length",
+          "name": "bytes_capacity_bytes",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer_used",
+          "name": "used_byte_count",
+          "type": "u32"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.decorated_create_buffer",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_decorated_create_buffer_impl",
+      "max_buffer_bytes": 1048576,
+      "max_input_count": 262144,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_decorated_create_buffer",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
           "lowering": "native_ref",
           "name": "base_root_ref",
           "type": "ViewRef"
@@ -3734,7 +4033,7 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
     "crates/iyon-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4",
+  "generator_blake3": "0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2",
   "handles": [
     {
       "kind": null,
@@ -3949,5 +4248,5 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
       "size": 8
     }
   ],
-  "schema_blake3": "8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6"
+  "schema_blake3": "8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0"
 }

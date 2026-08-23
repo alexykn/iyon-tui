@@ -4,6 +4,7 @@ import { native } from "../src/native.ts";
 import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
 import { NativeAbiStatusError, viewColumnCreate2, viewReleaseMany, viewSpacerCreate } from "../src/tui/generated/view_calls.ts";
 import { nodeForBridge, View } from "../src/tui/values/view.ts";
+import { TextSpan } from "../src/tui/values/text.ts";
 import {
   forceBridgeNativeHintForTests,
   retainedIdentityCounterSnapshot,
@@ -223,7 +224,15 @@ describe("PERF-12 T12 transaction integrity", () => {
   test("§45/§118: child failure drains temporary leases and leaves the old host root", () => {
     if (!canRun) return;
     const old = View.spacer(2);
-    const bad = View.horizontal([View.spacer(3), View.text("unsupported retained child").bold()]);
+    // T13 note: bold/decorated children now materialize, so the failing child
+    // is a 5-span styled text (outside the retained span family).
+    const bad = View.horizontal([View.spacer(3), View.styledText([
+      TextSpan.plain("u"),
+      TextSpan.plain("n"),
+      TextSpan.plain("s"),
+      TextSpan.plain("u"),
+      TextSpan.plain("p"),
+    ])]);
     const host = new Host!(48, 12, true);
     host.render(nodeForBridge(old));
     const boundary = new RetainedRootBoundary(session!, () => host.tuiViewAbiHostPointer() as never);

@@ -1,9 +1,10 @@
 use super::NativeTuiHost;
 use crate::NativeError;
 use iyon_tui::{
-    AnsiColor, ColorSpec, DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination,
-    DiffRange, DiffRenderer, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView, Renderer,
-    RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
+    AnsiColor, BorderEdges, BorderSpec, ColorSpec, DiffHunk, DiffLine, DiffLineNumber,
+    DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec, GridTrack,
+    HorizontalAlign, Insets, IntoView, Renderer, RetainedPathStep, StyleRef, StyleSpec,
+    TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -1549,6 +1550,11 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
             "viewGridSetCell": generated_exports::iyon_view_grid_set_cell_v1 as *const () as usize as u64,
             "viewGridCreateBuffer": generated_exports::iyon_view_grid_create_buffer_v1 as *const () as usize as u64,
             "viewDiffCreateBuffer": generated_exports::iyon_view_diff_create_buffer_v1 as *const () as usize as u64,
+            "viewHangingCreate": generated_exports::iyon_view_hanging_create_v1 as *const () as usize as u64,
+            "viewContainerCreate": generated_exports::iyon_view_container_create_v1 as *const () as usize as u64,
+            "viewClampCreate": generated_exports::iyon_view_clamp_create_v1 as *const () as usize as u64,
+            "viewComponentCreate": generated_exports::iyon_view_component_create_v1 as *const () as usize as u64,
+            "viewDecoratedCreateBuffer": generated_exports::iyon_view_decorated_create_buffer_v1 as *const () as usize as u64,
             "viewAxisSetChildPath": generated_exports::iyon_view_axis_set_child_path_v1 as *const () as usize as u64,
             "viewGridSetCellPath": generated_exports::iyon_view_grid_set_cell_path_v1 as *const () as usize as u64,
             "viewReleaseMany": generated_exports::iyon_view_release_many_v1 as *const () as usize as u64,
@@ -3199,6 +3205,367 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
         child_ref,
     );
     record_result(runtime, result)
+}
+
+/// PERF-12 T13 (§76): parses the framed words+bytes payload describing one
+/// decorated node and applies the decoration in exactly the Direct decoder's
+/// order (padding, background, foreground, border, style, style states,
+/// width, height, min/max). Colors arrive as style atoms; custom border
+/// glyphs are not expressible on this lane.
+fn parse_and_build_decorated(
+    runtime: &NativeViewRuntime,
+    child: View,
+    style_ref: u32,
+    words: &[u32],
+    bytes: &[u8],
+) -> Result<View, u32> {
+    // Mask bits gate USE only; every fixed header slot is always present so
+    // the framing stays trivially symmetric with the JS packer.
+    const MASK_PADDING: u32 = 1;
+    const MASK_BACKGROUND: u32 = 2;
+    const MASK_FOREGROUND: u32 = 4;
+    const MASK_BORDER: u32 = 8;
+    const MASK_WIDTH: u32 = 16;
+    const MASK_HEIGHT: u32 = 32;
+    const MASK_MIN_WIDTH: u32 = 64;
+    const MASK_MAX_WIDTH: u32 = 128;
+    const MASK_MIN_HEIGHT: u32 = 256;
+    const MASK_MAX_HEIGHT: u32 = 512;
+    let mut cursor = 0usize;
+    let mut next_word = || -> Result<u32, u32> {
+        let value = *words.get(cursor).ok_or(FAST_INVALID)?;
+        cursor += 1;
+        Ok(value)
+    };
+    let half =
+        |word: u32| -> Result<u16, u32> { u16::try_from(word & 0xffff).map_err(|_| FAST_INVALID) };
+    let mask = next_word()?;
+    if mask & !0x3ff != 0 {
+        return Err(FAST_INVALID);
+    }
+    let padding_top_right = next_word()?;
+    let padding_bottom_left = next_word()?;
+    let width_height = next_word()?;
+    let min_max_width = next_word()?;
+    let min_max_height = next_word()?;
+    let foreground_atom = next_word()?;
+    let background_atom = next_word()?;
+    let border_style_edges = next_word()?;
+    let border_color_atom = next_word()?;
+    let state_count = next_word()?;
+    if state_count as usize > bytes.len() + 1 {
+        return Err(FAST_INVALID);
+    }
+    let mut view = child;
+    if mask & MASK_PADDING != 0 {
+        view = view.padding(Insets::new(
+            half(padding_top_right)?,
+            (padding_top_right >> 16) as u16,
+            half(padding_bottom_left)?,
+            (padding_bottom_left >> 16) as u16,
+        ));
+    }
+    if mask & MASK_BACKGROUND != 0 && background_atom != 0 {
+        view = view.background(parse_color_atom(
+            runtime.style_atom_value(background_atom)?,
+        )?);
+    }
+    if mask & MASK_FOREGROUND != 0 && foreground_atom != 0 {
+        view = view.foreground(parse_color_atom(
+            runtime.style_atom_value(foreground_atom)?,
+        )?);
+    }
+    if mask & MASK_BORDER != 0 {
+        let mut spec = match border_style_edges & 0xff {
+            1 => BorderSpec::plain(),
+            2 => BorderSpec::rounded(),
+            3 => BorderSpec::double(),
+            _ => return Err(FAST_INVALID),
+        };
+        spec = match (border_style_edges >> 8) & 0xff {
+            1 => spec.edges(BorderEdges::ALL),
+            2 => spec.edges(BorderEdges::TOP_BOTTOM),
+            _ => return Err(FAST_INVALID),
+        };
+        if border_color_atom != 0 {
+            spec = spec.color(parse_color_atom(
+                runtime.style_atom_value(border_color_atom)?,
+            )?);
+        }
+        view = view.border(spec);
+    }
+    // The style always applies: ref 0 resolves to the default StyleRef, which
+    // overlays nothing — matching the Direct decoder's unconditional `.style()`
+    // over the (possibly empty) bridge style node.
+    let style = runtime.style_for_ref(style_ref)?;
+    view = view.style(style);
+    for _ in 0..state_count {
+        let key_offset = next_word()? as usize;
+        let key_length = next_word()? as usize;
+        let value_offset = next_word()? as usize;
+        let value_length = next_word()? as usize;
+        let key_end = key_offset.checked_add(key_length).ok_or(FAST_INVALID)?;
+        let value_end = value_offset.checked_add(value_length).ok_or(FAST_INVALID)?;
+        if value_end > bytes.len() || key_end > bytes.len() {
+            return Err(FAST_INVALID);
+        }
+        let key = str::from_utf8(&bytes[key_offset..key_end]).map_err(|_| FAST_INVALID)?;
+        let value = str::from_utf8(&bytes[value_offset..value_end]).map_err(|_| FAST_INVALID)?;
+        view = view.style_state(key, value);
+    }
+    if mask & MASK_WIDTH != 0 {
+        view = match width_height & 0xffff {
+            1 => view.fit_width(),
+            2 => view.fill_width(),
+            _ => return Err(FAST_INVALID),
+        };
+    }
+    if mask & MASK_HEIGHT != 0 {
+        let rule = (width_height >> 16) & 0xffff;
+        view = match rule {
+            1 => view.fit_height(),
+            2 => view.fill_height(),
+            _ => return Err(FAST_INVALID),
+        };
+    }
+    if mask & MASK_MIN_WIDTH != 0 {
+        view = view.min_width(half(min_max_width)?);
+    }
+    if mask & MASK_MAX_WIDTH != 0 {
+        view = view.max_width((min_max_width >> 16) as u16);
+    }
+    if mask & MASK_MIN_HEIGHT != 0 {
+        view = view.min_height(half(min_max_height)?);
+    }
+    if mask & MASK_MAX_HEIGHT != 0 {
+        view = view.max_height((min_max_height >> 16) as u16);
+    }
+    if cursor != words.len() {
+        return Err(FAST_INVALID);
+    }
+    Ok(view)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    style_ref: u32,
+    words: *const u32,
+    _words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    _bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref without
+    // parsing or resolving anything.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    let word_slice = if used_word_count == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(words, used_word_count as usize) }
+    };
+    let byte_slice = if used_byte_count == 0 {
+        &[]
+    } else {
+        unsafe { slice::from_raw_parts(bytes, used_byte_count as usize) }
+    };
+    let detail = child_status_detail(0);
+    let outcome = runtime
+        .resolve_ref(child_ref)
+        .map(|(child, _)| child)
+        .and_then(|child| {
+            parse_and_build_decorated(&runtime, child, style_ref, word_slice, byte_slice)
+        })
+        .and_then(|view| runtime.publish(node_id, view));
+    match outcome {
+        Ok(reference) => record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => record_result_with_detail(runtime, FAST_CACHE_MISS, detail),
+        Err(error) => record_result(runtime, error),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_hanging_create_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    prefix_ref: u32,
+    continuation_ref: u32,
+    body_ref: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    let mut detail = 0;
+    let outcome = (|| {
+        let prefix = runtime
+            .resolve_ref(prefix_ref)
+            .map(|(view, _)| view)
+            .map_err(|error| {
+                if error == FAST_CACHE_MISS {
+                    detail = child_status_detail(0);
+                }
+                error
+            })?;
+        let continuation = runtime
+            .resolve_ref(continuation_ref)
+            .map(|(view, _)| view)
+            .map_err(|error| {
+                if error == FAST_CACHE_MISS {
+                    detail = child_status_detail(1);
+                }
+                error
+            })?;
+        let body = runtime
+            .resolve_ref(body_ref)
+            .map(|(view, _)| view)
+            .map_err(|error| {
+                if error == FAST_CACHE_MISS {
+                    detail = child_status_detail(2);
+                }
+                error
+            })?;
+        runtime.publish(node_id, View::hanging(prefix, continuation, body))
+    })();
+    match outcome {
+        Ok(reference) => record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => record_result_with_detail(runtime, FAST_CACHE_MISS, detail),
+        Err(error) => record_result(runtime, error),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_container_create_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    let outcome = runtime
+        .resolve_ref(child_ref)
+        .map(|(child, _)| child)
+        .and_then(|child| runtime.publish(node_id, child.container()));
+    match outcome {
+        Ok(reference) => record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {
+            record_result_with_detail(runtime, FAST_CACHE_MISS, child_status_detail(0))
+        }
+        Err(error) => record_result(runtime, error),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_clamp_create_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    max_rows: u32,
+    overflow_kind: u32,
+    overflow_style_ref: u32,
+    prefix: *const std::ffi::c_char,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    };
+    let Ok(max_rows) = u16::try_from(max_rows) else {
+        return record_result(runtime, FAST_INVALID);
+    };
+    let overflow = match overflow_kind {
+        0 => iyon_tui::OverflowIndicator::None,
+        1 => match runtime.style_for_ref(overflow_style_ref) {
+            Ok(style) => iyon_tui::OverflowIndicator::Ellipsis { style },
+            Err(error) => return record_result(runtime, error),
+        },
+        2 => {
+            let Ok(prefix) = cstring_to_owned(prefix, MAX_NEW_TEXT_BYTES) else {
+                return record_result(runtime, FAST_INVALID);
+            };
+            match runtime.style_for_ref(overflow_style_ref) {
+                Ok(style) => iyon_tui::OverflowIndicator::Footer { prefix, style },
+                Err(error) => return record_result(runtime, error),
+            }
+        }
+        _ => return record_result(runtime, FAST_INVALID),
+    };
+    let outcome = runtime
+        .resolve_ref(child_ref)
+        .map(|(child, _)| child)
+        .and_then(|child| runtime.publish(node_id, child.clamp_rows(max_rows, overflow)));
+    match outcome {
+        Ok(reference) => record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {
+            record_result_with_detail(runtime, FAST_CACHE_MISS, child_status_detail(0))
+        }
+        Err(error) => record_result(runtime, error),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_component_create_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    handle_low: u32,
+    handle_high: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    let handle = (u64::from(handle_high) << 32) | u64::from(handle_low);
+    match runtime.publish(node_id, View::native_component(handle)) {
+        Ok(reference) => record_result(runtime, reference),
+        Err(error) => record_result(runtime, error),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -5207,6 +5574,215 @@ mod tests {
         assert_eq!(built, unsafe {
             generated_exports::iyon_view_ref_for_node_id_v1(pointer, 9, 0)
         });
+    }
+
+    #[test]
+    fn t13_structural_kinds_build_and_consult_semantic_cache_perf12() {
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 11, 0, 2) };
+        assert!(child < 0x8000_0000);
+        // Container: builds, publishes, and re-requests through the cache.
+        let container =
+            unsafe { generated_exports::iyon_view_container_create_v1(pointer, 12, 0, child) };
+        assert!(container < 0x8000_0000);
+        assert_eq!(
+            unsafe {
+                generated_exports::iyon_view_container_create_v1(pointer, 12, 0, 0x7fff_fe00)
+            },
+            container
+        );
+        // Hanging: three children resolve in order.
+        let prefix = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 13, 0, 1) };
+        let body = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 14, 0, 4) };
+        let hanging = unsafe {
+            generated_exports::iyon_view_hanging_create_v1(pointer, 15, 0, prefix, prefix, body)
+        };
+        assert!(hanging < 0x8000_0000);
+        // Stale middle child reports child ordinal 1 via the detail cell.
+        let stale = unsafe {
+            generated_exports::iyon_view_hanging_create_v1(
+                pointer,
+                16,
+                0,
+                prefix,
+                0x7fff_fd00,
+                body,
+            )
+        };
+        assert!(stale >= 0x8000_0000);
+        assert_eq!(
+            unsafe { generated_exports::iyon_view_status_detail_v1(pointer) },
+            0x4000_0000 | 1
+        );
+        // Clamp: footer overflow with a themed style atom.
+        let atom = unsafe {
+            generated_exports::iyon_style_atom_create_cstring_v1(
+                pointer,
+                b"theme:text.muted\0".as_ptr() as *const std::ffi::c_char,
+            )
+        };
+        assert!(atom < 0x8000_0000);
+        let clamp = unsafe {
+            generated_exports::iyon_view_clamp_create_v1(
+                pointer,
+                17,
+                0,
+                body,
+                16,
+                2,
+                0,
+                b"\0".as_ptr() as *const std::ffi::c_char,
+            )
+        };
+        assert!(clamp < 0x8000_0000);
+        // contentMax shape: overflow kind 0 ignores the style/prefix.
+        let content_max = unsafe {
+            generated_exports::iyon_view_clamp_create_v1(
+                pointer,
+                18,
+                0,
+                body,
+                13,
+                0,
+                0,
+                b"\0".as_ptr() as *const std::ffi::c_char,
+            )
+        };
+        assert!(content_max < 0x8000_0000);
+        // Component: handle id round-trips through the semantic cache.
+        let component =
+            unsafe { generated_exports::iyon_view_component_create_v1(pointer, 19, 0, 41, 0) };
+        assert!(component < 0x8000_0000);
+        assert_eq!(
+            unsafe { generated_exports::iyon_view_component_create_v1(pointer, 19, 0, 41, 0) },
+            component
+        );
+    }
+
+    #[test]
+    fn t13_decorated_buffer_builds_and_validates_perf12() {
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let child = unsafe {
+            generated_exports::iyon_view_text_create_cstring_v1(
+                pointer,
+                21,
+                0,
+                b"hello\0".as_ptr() as *const std::ffi::c_char,
+                0,
+                3,
+                1,
+            )
+        };
+        assert!(child < 0x8000_0000);
+        let atom = unsafe {
+            generated_exports::iyon_style_atom_create_cstring_v1(
+                pointer,
+                b"#ff8000\0".as_ptr() as *const std::ffi::c_char,
+            )
+        };
+        assert!(atom < 0x8000_0000);
+        // mask = PADDING | FOREGROUND | WIDTH | MIN_WIDTH; one style state.
+        // Words: mask, padTR, padBL, widthHeight, minMaxW, minMaxH, fg, bg,
+        //        borderStyleEdges, borderColor, stateCount, 4 state words.
+        let key = b"iyon.agent.effort";
+        let value = b"high";
+        let mut words = [
+            1u32 | 4 | 16 | 64,
+            1 | (2 << 16),
+            3 | (4 << 16),
+            1,
+            8,
+            0,
+            atom,
+            0,
+            0,
+            0,
+            1,
+            0,
+            key.len() as u32,
+            0,
+            value.len() as u32,
+        ];
+        let mut bytes = [0u8; 64];
+        let mut offset = 0usize;
+        bytes[offset..offset + key.len()].copy_from_slice(key);
+        words[11] = offset as u32;
+        offset += key.len();
+        bytes[offset..offset + value.len()].copy_from_slice(value);
+        words[13] = offset as u32;
+        offset += value.len();
+        let decorated = unsafe {
+            generated_exports::iyon_view_decorated_create_buffer_v1(
+                pointer,
+                22,
+                0,
+                child,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                offset as u32,
+            )
+        };
+        assert!(decorated < 0x8000_0000);
+        // Cache-first consult wins over a stale child ref.
+        assert_eq!(
+            unsafe {
+                generated_exports::iyon_view_decorated_create_buffer_v1(
+                    pointer,
+                    22,
+                    0,
+                    0x7fff_fc00,
+                    0,
+                    words.as_ptr(),
+                    words.len() * 4,
+                    words.len() as u32,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    offset as u32,
+                )
+            },
+            decorated
+        );
+        // Truncated state framing is FAST_INVALID, not a crash.
+        let truncated = unsafe {
+            generated_exports::iyon_view_decorated_create_buffer_v1(
+                pointer,
+                23,
+                0,
+                child,
+                0,
+                words.as_ptr(),
+                11 * 4,
+                11,
+                bytes.as_ptr(),
+                bytes.len(),
+                offset as u32,
+            )
+        };
+        assert_eq!(truncated, 0x8000_0001);
+        // Unknown mask bits are rejected.
+        words[0] |= 1 << 20;
+        let bad_mask = unsafe {
+            generated_exports::iyon_view_decorated_create_buffer_v1(
+                pointer,
+                24,
+                0,
+                child,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+                bytes.as_ptr(),
+                bytes.len(),
+                offset as u32,
+            )
+        };
+        assert_eq!(bad_mask, 0x8000_0001);
     }
 
     #[test]

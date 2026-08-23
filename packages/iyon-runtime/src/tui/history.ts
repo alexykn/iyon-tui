@@ -1,5 +1,5 @@
 import { nodeForBridge, type View } from "./values/view.ts";
-import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize } from "./native_view_abi.ts";
+import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
 import { HandleBase, nativeTui } from "./handles.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
 
@@ -10,9 +10,16 @@ export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "h
     return this.call(() => this.nativeHandle.layout() as HistoryLayout);
   }
 
+  /**
+   * PERF-12 T13 (§78): unit import is identity-first. Retained hints reuse
+   * any subtree already materialized through any boundary (tool cards, chrome,
+   * earlier units) with zero payload re-reads; a refused retained path falls
+   * back to the cold graph and finally the N-API bridge. The temporary lease
+   * drains after the push because History retains its own strong state.
+   */
   push(view: View): number {
     return this.call(() => {
-      const ref = tryNativeMaterialize(view);
+      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
           if (this.nativeHandle.pushRef !== undefined) return this.nativeHandle.pushRef(ref);
@@ -26,7 +33,9 @@ export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "h
 
   freeze(unit: number, view: View): void {
     this.call(() => {
-      const ref = tryNativeMaterialize(view);
+      // T13 (§78): same retained-first rule as push — freezing a live card
+      // reuses its already-materialized nodes through their hints.
+      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
           if (this.nativeHandle.freezeRef !== undefined) {

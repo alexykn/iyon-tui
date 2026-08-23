@@ -5,9 +5,30 @@ import {
   nativeViewAbiSession,
   releaseNativeViewRef,
   tryNativeMaterialize,
-  tryNativeViewBoundaryRender,
+  tryRetainedMaterializeRef,
 } from "./native_view_abi.ts";
+import { RetainedRootBoundary } from "./retained_dag.ts";
 import { nodeForBridge, View } from "./values/view.ts";
+import type { NativeTuiHostContract } from "../native.ts";
+
+/**
+ * PERF-12 T13: builds the native slot for the initial content. Retained
+ * materialization first (identity-first, hint-driven), then the cold FFI
+ * graph, then the N-API bridge; the temporary lease always drains because
+ * the slot natively retains its own strong copy.
+ */
+function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): object {
+  const seed = initialView ?? View.spacer(0);
+  const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
+  if (retained !== undefined) {
+    try {
+      return host.createViewSlotRef(retained);
+    } finally {
+      releaseNativeViewRef(nativeViewAbiSession(), retained);
+    }
+  }
+  return host.createViewSlot(nodeForBridge(seed));
+}
 
 const ANIMATION_REF_SCRATCH = new WeakMap<object, Uint32Array>();
 
@@ -35,10 +56,31 @@ type NativeViewSlotHandle = {
 
 export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> implements ViewSlotContract {
   private currentView?: View;
+  /**
+   * PERF-12 T13 (§18/§80): this slot is a root-lease owner. The boundary
+   * keeps the CURRENT content's lease alive across replacements so stable
+   * subtrees stay native-live and their hints resolve during the next
+   * materialization — no O(previous-tree) rebuild per update.
+   */
+  private boundary?: RetainedRootBoundary;
 
-  constructor(nativeHandle: NativeViewSlotHandle | object, initialView?: View) {
-    super("component", nativeHandle as NativeViewSlotHandle);
+  constructor(host: NativeTuiHostContract, initialView?: View) {
+    super("component", buildSlotHandle(host, initialView) as NativeViewSlotHandle);
     this.currentView = initialView;
+    const session = nativeViewAbiSession();
+    if (session !== undefined && initialView !== undefined) {
+      this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
+        if (this.disposed || this.nativeHandle.setViewRef === undefined) return false;
+        try {
+          this.nativeHandle.setViewRef(ref);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      // Adopt the initial content so the boundary owns its root lease.
+      this.boundary.adopt(initialView);
+    }
   }
 
   tuiViewAbiInstallRef(viewRef: number): void { this.nativeHandle.setViewRef(viewRef); }
@@ -51,28 +93,15 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
   revision(): number { return this.call(() => this.nativeHandle.revision()); }
   setView(view: View): void {
     this.call(() => {
-      const previous = this.currentView;
-      if (previous !== undefined) {
-        let previousRef = tryNativeMaterialize(previous);
-        try {
-          const nextRef = tryNativeViewBoundaryRender(this, previous, view, previousRef);
-          if (nextRef !== undefined) {
-            releaseNativeViewRef(nativeViewAbiSession(), nextRef);
-            if (previousRef !== undefined) {
-              const retainedRef = previousRef;
-              previousRef = undefined;
-              releaseNativeViewRef(nativeViewAbiSession(), retainedRef);
-            }
-            this.currentView = view;
-            return;
-          }
-        } finally {
-          if (previousRef !== undefined) {
-            const retainedRef = previousRef;
-            previousRef = undefined;
-            releaseNativeViewRef(nativeViewAbiSession(), retainedRef);
-          }
+      // PERF-12 T13 retained path: identity-first install through the slot's
+      // own §18 boundary. Previous content stays leased until the replacement
+      // is fully materialized and committed; failure keeps the old content.
+      if (this.boundary !== undefined) {
+        if (this.boundary.install(view) !== undefined) {
+          this.currentView = view;
+          return;
         }
+        // Refused → complete fallback below; old content still installed.
       }
       const ref = tryNativeMaterialize(view);
       if (ref !== undefined) {
@@ -108,7 +137,9 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
           scratch = this.animationScratch(frames.length);
         }
         for (const [index, frame] of frames.entries()) {
-          const ref = tryNativeMaterialize(frame);
+          // T13: animation frames ride retained identity too — stable frame
+          // View objects hit their hints on every cycle instead of rebuilding.
+          const ref = tryRetainedMaterializeRef(frame) ?? tryNativeMaterialize(frame);
           if (ref === undefined) {
             this.setAnimationBridge(frames, intervalMs, atCycleBoundary);
             return;
@@ -193,7 +224,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
 
   stopAnimation(view: View): void {
     this.call(() => {
-      const ref = tryNativeMaterialize(view);
+      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
           this.nativeHandle.stopAnimationRef(ref);
@@ -204,6 +235,18 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       }
       this.nativeHandle.stopAnimation(nodeForBridge(view));
     });
+  }
+
+  /** Releases the boundary's root lease exactly once before native teardown. */
+  dispose(): void {
+    if (!this.disposed) {
+      try {
+        this.boundary?.close();
+      } finally {
+        this.boundary = undefined;
+      }
+    }
+    super.dispose();
   }
   nativeComponentId(): number | undefined {
     const id = this.nativeHandle.componentId();

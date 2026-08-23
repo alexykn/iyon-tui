@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
 import { nodeForBridge, View } from "../src/tui/values/view.ts";
+import { TextSpan } from "../src/tui/values/text.ts";
 import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
 import {
   MaterializeTx,
@@ -182,7 +183,16 @@ describe("PERF-12 T6 retained identity fast paths", () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const session = nativeViewAbiSession()!;
     const view = View.spacer(2);
-    const unsupported = View.text("fallback please").bold(); // decorated nodes have no retained materializer
+    // T13 note: decorated nodes now have a retained materializer, so the
+    // canonical unsupported kind here is a 5-span styled text (outside the
+    // retained span family, §49 explicit routing).
+    const unsupported = View.styledText([
+      TextSpan.plain("a"),
+      TextSpan.plain("b"),
+      TextSpan.plain("c"),
+      TextSpan.plain("d"),
+      TextSpan.plain("e"),
+    ]);
     const host = new Host(20, 6, true);
     try {
       host.render(nodeForBridge(view));

@@ -31,8 +31,8 @@ import {
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
+import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -718,13 +718,194 @@ function materializeDiffNode(node: BridgeViewNode, tx: MaterializeTx): number {
   );
 }
 
+/** PERF-12 T13: overflow-indicator codes shared with the native parser. */
+const OVERFLOW_NONE = 0;
+const OVERFLOW_ELLIPSIS = 1;
+const OVERFLOW_FOOTER = 2;
+
+/**
+ * T13: styleRefFor with retained-refusal accounting — publication failures
+ * count one cold fallback and route the complete cold path like any cap miss.
+ */
+function styleRefCounted(style: StyleNode | undefined, tx: MaterializeTx): number {
+  try {
+    return styleRefFor(style, tx);
+  } catch (error) {
+    if (error instanceof RetainedFastFallbackError) throw error;
+    if (isExpectedNativeStatus(error)) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError("style publication reported a failure status");
+    }
+    throw error;
+  }
+}
+
+function materializeHangingNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.hanging) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const prefixRef = ensureNative(node.prefix, tx);
+  const continuationRef = ensureNative(node.continuation, tx);
+  const bodyRef = ensureNative(node.body, tx);
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("hanging", () =>
+    viewHangingCreate(tx.symbols, tx.runtime, low, high, prefixRef, continuationRef, bodyRef)
+  );
+}
+
+function materializeContainerNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.container) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const childRef = ensureNative(node.child, tx);
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("container", () =>
+    viewContainerCreate(tx.symbols, tx.runtime, low, high, childRef)
+  );
+}
+
+/** Lowers clamp/contentMax nodes; contentMax is a clamp with no indicator. */
+function materializeClampNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.clamp && node.kind !== BRIDGE_VIEW_KIND.contentMax) {
+    throw new RetainedFastFallbackError("kind mismatch");
+  }
+  counters.bridge_semantic_nodes_inspected += 1;
+  const childRef = ensureNative(node.child, tx);
+  let overflowKind = OVERFLOW_NONE;
+  let overflowStyleRef = 0;
+  let prefix = "";
+  if (node.kind === BRIDGE_VIEW_KIND.clamp && node.overflow !== undefined && node.overflow.kind !== BRIDGE_OVERFLOW_KIND.none) {
+    const overflow = node.overflow;
+    overflowKind = overflow.kind === BRIDGE_OVERFLOW_KIND.ellipsis ? OVERFLOW_ELLIPSIS : OVERFLOW_FOOTER;
+    overflowStyleRef = styleRefCounted(overflow.style, tx);
+    if (overflow.kind === BRIDGE_OVERFLOW_KIND.footer) prefix = overflow.prefix;
+  }
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("clamp", () =>
+    viewClampCreate(tx.symbols, tx.runtime, low, high, childRef, node.maxRows ?? 0, overflowKind, overflowStyleRef, prefix)
+  );
+}
+
+function materializeComponentNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.component) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const handleWords = u64Words(node.handle);
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("component", () =>
+    viewComponentCreate(tx.symbols, tx.runtime, low, high, handleWords[0], handleWords[1])
+  );
+}
+
+/** Decoration mask bits shared with the native parser (T13 §76 framing). */
+const DECORATION_PADDING = 1;
+const DECORATION_BACKGROUND = 2;
+const DECORATION_FOREGROUND = 4;
+const DECORATION_BORDER = 8;
+const DECORATION_WIDTH = 16;
+const DECORATION_HEIGHT = 32;
+const DECORATION_MIN_WIDTH = 64;
+const DECORATION_MAX_WIDTH = 128;
+const DECORATION_MIN_HEIGHT = 256;
+const DECORATION_MAX_HEIGHT = 512;
+
+const BORDER_STYLE_CODES = { plain: 1, rounded: 2, double: 3 } as const;
+const BORDER_EDGE_CODES = { all: 1, topBottom: 2 } as const;
+const WIDTH_RULE_CODES = { fit: 1, fill: 2 } as const;
+
+function materializeDecoratedNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const childRef = ensureNative(node.child, tx);
+  const decoration = node.decoration;
+  if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {
+    counters.cold_fallbacks += 1;
+    throw new RetainedFastFallbackError("custom border glyphs are not expressible on the retained lane");
+  }
+  let mask = 0;
+  const states = Object.entries(decoration.styleStates ?? {});
+  // Fixed header: mask + 9 payload words + state count, then 4 words per state.
+  const wordCount = 11 + states.length * 4;
+  const words = tx.diffWordScratch(wordCount);
+  const bytes = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "decorated");
+  let byteOffset = 0;
+  let colorAtoms: [number, number] = [0, 0];
+  try {
+    colorAtoms = [
+      decoration.foreground === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.foreground), tx),
+      decoration.background === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.background), tx),
+    ];
+  } catch (error) {
+    if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
+      counters.cold_fallbacks += 1;
+      throw error instanceof RetainedFastFallbackError ? error : new RetainedFastFallbackError("decoration color atom publication failed");
+    }
+    throw error;
+  }
+  const borderStyle = decoration.border?.style === undefined ? 0 : BORDER_STYLE_CODES[decoration.border.style];
+  const borderEdges = decoration.border?.edges === undefined ? 0 : BORDER_EDGE_CODES[decoration.border.edges];
+  const borderColorAtom = decoration.border?.color === undefined || decoration.border === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.border.color), tx);
+  const padding = decoration.padding;
+  if (padding !== undefined) mask |= DECORATION_PADDING;
+  if (padding !== undefined) mask |= DECORATION_PADDING;
+  if (decoration.background !== undefined) mask |= DECORATION_BACKGROUND;
+  if (decoration.foreground !== undefined) mask |= DECORATION_FOREGROUND;
+  if (decoration.border !== undefined) mask |= DECORATION_BORDER;
+  if (decoration.width !== undefined) mask |= DECORATION_WIDTH;
+  if (decoration.height !== undefined) mask |= DECORATION_HEIGHT;
+  if (decoration.minWidth !== undefined) mask |= DECORATION_MIN_WIDTH;
+  if (decoration.maxWidth !== undefined) mask |= DECORATION_MAX_WIDTH;
+  if (decoration.minHeight !== undefined) mask |= DECORATION_MIN_HEIGHT;
+  if (decoration.maxHeight !== undefined) mask |= DECORATION_MAX_HEIGHT;
+  let wordOffset = 0;
+  const writeWord = (value: number): void => {
+    words[wordOffset++] = value;
+  };
+  writeWord(mask);
+  writeWord(padding === undefined ? 0 : (padding.top | (padding.right << 16)) >>> 0);
+  writeWord(padding === undefined ? 0 : (padding.bottom | (padding.left << 16)) >>> 0);
+  writeWord((decoration.width === undefined ? 0 : WIDTH_RULE_CODES[decoration.width])
+    | ((decoration.height === undefined ? 0 : WIDTH_RULE_CODES[decoration.height]) << 16));
+  writeWord((decoration.minWidth ?? 0) | ((decoration.maxWidth ?? 0) << 16));
+  writeWord((decoration.minHeight ?? 0) | ((decoration.maxHeight ?? 0) << 16));
+  writeWord(colorAtoms[0]);
+  writeWord(colorAtoms[1]);
+  writeWord(borderStyle | (borderEdges << 8));
+  writeWord(borderColorAtom);
+  writeWord(states.length);
+  for (const [key, value] of states) {
+    const keyBytes = TEXT_ENCODER.encodeInto(key, bytes.subarray(byteOffset));
+    if (keyBytes.read !== key.length) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError("style-state payload exceeds the retained byte tier");
+    }
+    const keyOffset = byteOffset;
+    byteOffset += keyBytes.written;
+    const valueBytes = TEXT_ENCODER.encodeInto(value, bytes.subarray(byteOffset));
+    if (valueBytes.read !== value.length) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError("style-state payload exceeds the retained byte tier");
+    }
+    const valueOffset = byteOffset;
+    byteOffset += valueBytes.written;
+    writeWord(keyOffset);
+    writeWord(keyBytes.written);
+    writeWord(valueOffset);
+    writeWord(valueBytes.written);
+  }
+  counters.ref_words_written += wordCount;
+  counters.byte_payload_bytes += byteOffset;
+  const styleRef = styleRefCounted(decoration.style, tx);
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("decorated", () =>
+    viewDecoratedCreateBuffer(tx.symbols, tx.runtime, low, high, childRef, styleRef, words, wordCount, bytes, byteOffset)
+  );
+}
+
 /**
  * Per-kind generated materializer dispatch (§22 children-first, §32 fixed
  * arities). T7 covers spacer plus row/column arities 0..=4; T10 adds Grid;
- * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane.
- * hanging, container, clamp, decorated, and component route to the complete
- * fallback until their owning tranches land. Unknown kinds fall back instead
- * of guessing (§49).
+ * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane;
+ * T13 adds hanging, container, clamp/contentMax, component references, and
+ * decorated nodes — every §76 kind is now direct-materialized or explicitly
+ * fallback-routed (text spans >4, oversized payloads, custom border glyphs).
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [BRIDGE_VIEW_KIND.spacer, materializeSpacerNode],
@@ -733,6 +914,12 @@ const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [BRIDGE_VIEW_KIND.grid, materializeGridNode],
   [BRIDGE_VIEW_KIND.text, materializeTextNode],
   [BRIDGE_VIEW_KIND.diff, materializeDiffNode],
+  [BRIDGE_VIEW_KIND.hanging, materializeHangingNode],
+  [BRIDGE_VIEW_KIND.container, materializeContainerNode],
+  [BRIDGE_VIEW_KIND.clamp, materializeClampNode],
+  [BRIDGE_VIEW_KIND.contentMax, materializeClampNode],
+  [BRIDGE_VIEW_KIND.component, materializeComponentNode],
+  [BRIDGE_VIEW_KIND.decorated, materializeDecoratedNode],
 ]);
 
 /**
@@ -1109,6 +1296,13 @@ export class RetainedRootBoundary {
   constructor(
     private readonly session: NativeViewAbiSession,
     private readonly hostPointer: () => Pointer | undefined,
+    /**
+     * PERF-12 T13 (§80): optional alternative commit step for boundaries whose
+     * mutation is a direct ref install (`ViewSlot.setViewRef`,
+     * `ScrollPane.setContentRef`) rather than a host scene render. Returning
+     * false means the boundary change failed; the old root stays installed.
+     */
+    private readonly installRef?: (rootRef: number) => boolean,
   ) {}
 
   /**
@@ -1181,20 +1375,32 @@ export class RetainedRootBoundary {
       }
     }
     try {
-      const hostPointer = this.hostPointer();
-      if (hostPointer !== undefined) {
-        const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
-        if (status !== HOST_STATUS_OK) {
+      if (this.installRef !== undefined) {
+        if (!this.installRef(rootRef)) {
           tx.releaseAll();
-          // Release only a freshly acquired boundary lease whose ref is not
-          // already the boundary's leased previous root (§18 failure keeps
-          // the old root installed).
           if (acquiredBoundaryLease && rootRef !== this.previousRef) {
             const batch = Uint32Array.of(rootRef);
             viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
             acquiredBoundaryLease = false;
           }
           return undefined;
+        }
+      } else {
+        const hostPointer = this.hostPointer();
+        if (hostPointer !== undefined) {
+          const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+          if (status !== HOST_STATUS_OK) {
+            tx.releaseAll();
+            // Release only a freshly acquired boundary lease whose ref is not
+            // already the boundary's leased previous root (§18 failure keeps
+            // the old root installed).
+            if (acquiredBoundaryLease && rootRef !== this.previousRef) {
+              const batch = Uint32Array.of(rootRef);
+              viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+              acquiredBoundaryLease = false;
+            }
+            return undefined;
+          }
         }
         counters.host_mutations += 1;
       }
@@ -1245,4 +1451,18 @@ export class RetainedRootBoundary {
       viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
     }
   }
+}
+
+/**
+ * PERF-12 T13: the theme epoch rule. Themed StyleRefs resolve theme KEYS
+ * against the host theme at paint time, but the JS sidecar caches resolved
+ * refs per (runtime, generation). Replacing the host theme therefore requires
+ * dropping cached refs so later materializations re-resolve under the new
+ * theme. Called by `Tui.setTheme` before installing the new theme.
+ */
+export function resetStyleRefCacheForThemeChange(): void {
+  STYLE_REF_CACHE.runtime = undefined;
+  STYLE_REF_CACHE.generation = -1;
+  STYLE_REF_CACHE.refs = new WeakMap();
+  STYLE_REF_CACHE.atoms = new Map();
 }

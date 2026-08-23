@@ -1559,6 +1559,292 @@ type = "u32"
 lowering = "buffer_used"
 buffer_used_of = "bytes"
 
+# PERF-12 T13 (§76): remaining structural kinds. Hanging, container, clamp
+# (also serving contentMax), and component references complete the direct
+# materializer set; every §76 kind is now direct-materialized or explicitly
+# fallback-routed.
+
+[[function]]
+name = "view_hanging_create"
+family = "constructor"
+hotness = "warm"
+implementation = "view_hanging_create_impl"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 0
+max_input_count = 3
+arity_specializations = []
+benchmark_registration = "view.hanging_create"
+return = "ViewRefResult"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "prefix_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function.arg]]
+name = "continuation_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function.arg]]
+name = "body_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function]]
+name = "view_container_create"
+family = "constructor"
+hotness = "warm"
+implementation = "view_container_create_impl"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 0
+max_input_count = 1
+arity_specializations = []
+benchmark_registration = "view.container_create"
+return = "ViewRefResult"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "child_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function]]
+name = "view_clamp_create"
+family = "constructor"
+hotness = "warm"
+implementation = "view_clamp_create_impl"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 0
+max_input_count = 1
+arity_specializations = []
+benchmark_registration = "view.clamp_create"
+return = "ViewRefResult"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "child_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function.arg]]
+name = "max_rows"
+type = "u32"
+lowering = "u32"
+
+# Overflow indicator: 0 = none (contentMax kind), 1 = ellipsis with
+# overflow_style_ref, 2 = footer with prefix text and overflow_style_ref.
+[[function.arg]]
+name = "overflow_kind"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "overflow_style_ref"
+type = "StyleRef"
+lowering = "u32"
+
+[[function.arg]]
+name = "prefix"
+type = "string"
+lowering = "cstring_ephemeral"
+
+[[function]]
+name = "view_component_create"
+family = "constructor"
+hotness = "warm"
+implementation = "view_component_create_impl"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 0
+max_input_count = 0
+arity_specializations = []
+benchmark_registration = "view.component_create"
+return = "ViewRefResult"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+# The application-owned native component id, split like a NodeId (the JS
+# handle ids are monotonically increasing safe integers).
+[[function.arg]]
+name = "handle_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "handle_high"
+type = "u32"
+lowering = "u32"
+
+# PERF-12 T13 (§76): decorated-node construction through one borrowed
+# words+bytes lane. Words layout:
+#   [mask,
+#    padding_top | padding_right<<16,        (mask PADDING)
+#    padding_bottom | padding_left<<16,
+#    width_rule | height_rule<<16,           (0 none / 1 fit / 2 fill)
+#    min_width | max_width<<16,
+#    min_height | max_height<<16,
+#    foreground_atom_ref, background_atom_ref,   (0 = absent)
+#    border_style(1..3) | border_edges<<8,       (mask BORDER)
+#    border_color_atom_ref,                      (0 = absent)
+#    style_state_count,
+#    per state: key_offset, key_length, value_offset, value_length]
+# Bytes layout: concatenated UTF-8 of style-state keys and values in framed
+# order. Colors arrive as style atoms created by style_atom_create_cstring
+# (same string forms the Direct decoder parses). Custom border glyphs are
+# not expressible on this lane and refuse on the JS side (§49 explicit
+# routing); decoration order mirrors the Direct decoder exactly.
+[[function]]
+name = "view_decorated_create_buffer"
+family = "constructor"
+hotness = "warm"
+implementation = "view_decorated_create_buffer_impl"
+fallback = "direct_decode"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 1_048_576
+max_input_count = 262_144
+arity_specializations = []
+benchmark_registration = "view.decorated_create_buffer"
+return = "ViewRefResult"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "child_ref"
+type = "ViewRef"
+lowering = "native_ref"
+
+[[function.arg]]
+name = "style_ref"
+type = "StyleRef"
+lowering = "u32"
+
+[[function.arg]]
+name = "words"
+type = "u32[]"
+lowering = "buffer"
+
+[[function.arg]]
+name = "words_capacity_bytes"
+type = "u32"
+lowering = "buffer_length"
+buffer_length_of = "words"
+
+[[function.arg]]
+name = "used_word_count"
+type = "u32"
+lowering = "buffer_used"
+buffer_used_of = "words"
+
+[[function.arg]]
+name = "bytes"
+type = "u8[]"
+lowering = "buffer"
+
+[[function.arg]]
+name = "bytes_capacity_bytes"
+type = "u32"
+lowering = "buffer_length"
+buffer_length_of = "bytes"
+
+[[function.arg]]
+name = "used_byte_count"
+type = "u32"
+lowering = "buffer_used"
+buffer_used_of = "bytes"
+
 [[function]]
 name = "view_grid_set_cell_path"
 family = "structural_path_patch"

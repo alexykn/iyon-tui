@@ -115,6 +115,11 @@ export interface NativeViewAbiBootstrap {
     viewGridSetCell: number;
     viewGridCreateBuffer: number;
     viewDiffCreateBuffer: number;
+    viewHangingCreate: number;
+    viewContainerCreate: number;
+    viewClampCreate: number;
+    viewComponentCreate: number;
+    viewDecoratedCreateBuffer: number;
     viewAxisSetChildPath: number;
     viewGridSetCellPath: number;
     viewReleaseMany: number;

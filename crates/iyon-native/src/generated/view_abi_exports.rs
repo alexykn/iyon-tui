@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
-// generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
+// schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
+// generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -289,6 +289,60 @@ pub mod generated_impls {
             runtime: *mut NativeViewRuntime,
             node_id_low: u32,
             node_id_high: u32,
+            words: *const u32,
+            words_capacity_bytes: usize,
+            used_word_count: u32,
+            bytes: *const u8,
+            bytes_capacity_bytes: usize,
+            used_byte_count: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_hanging_create_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            prefix_ref: u32,
+            continuation_ref: u32,
+            body_ref: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_container_create_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            child_ref: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_clamp_create_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            child_ref: u32,
+            max_rows: u32,
+            overflow_kind: u32,
+            overflow_style_ref: u32,
+            prefix: *const ::core::ffi::c_char,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_component_create_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            handle_low: u32,
+            handle_high: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_decorated_create_buffer_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            child_ref: u32,
+            style_ref: u32,
             words: *const u32,
             words_capacity_bytes: usize,
             used_word_count: u32,
@@ -1665,6 +1719,194 @@ pub unsafe extern "C" fn iyon_view_diff_create_buffer_v1(
                         runtime,
                         node_id_low,
                         node_id_high,
+                        words,
+                        words_capacity_bytes,
+                        used_word_count,
+                        bytes,
+                        bytes_capacity_bytes,
+                        used_byte_count,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_hanging_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    prefix_ref: u32,
+    continuation_ref: u32,
+    body_ref: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let prefix_ref = generated_native_ref(prefix_ref, 0x8000_0001u32)?;
+                let continuation_ref = generated_native_ref(continuation_ref, 0x8000_0001u32)?;
+                let body_ref = generated_native_ref(body_ref, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_hanging_create_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        prefix_ref,
+                        continuation_ref,
+                        body_ref,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_container_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let child_ref = generated_native_ref(child_ref, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_container_create_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        child_ref,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_clamp_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    max_rows: u32,
+    overflow_kind: u32,
+    overflow_style_ref: u32,
+    prefix: *const ::core::ffi::c_char,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let child_ref = generated_native_ref(child_ref, 0x8000_0001u32)?;
+                let prefix = generated_nonnull_const(prefix, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_clamp_create_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        child_ref,
+                        max_rows,
+                        overflow_kind,
+                        overflow_style_ref,
+                        prefix,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_component_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    handle_low: u32,
+    handle_high: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_component_create_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        handle_low,
+                        handle_high,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_decorated_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    style_ref: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let child_ref = generated_native_ref(child_ref, 0x8000_0001u32)?;
+                let words =
+                    generated_buffer(words, words_capacity_bytes, 4, 1048576, 0x8000_0002u32)?;
+                let used_word_count = generated_buffer_used(
+                    used_word_count,
+                    words_capacity_bytes,
+                    4,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                let bytes =
+                    generated_buffer(bytes, bytes_capacity_bytes, 1, 1048576, 0x8000_0002u32)?;
+                let used_byte_count = generated_buffer_used(
+                    used_byte_count,
+                    bytes_capacity_bytes,
+                    1,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                Ok(unsafe {
+                    generated_impls::view_decorated_create_buffer_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        child_ref,
+                        style_ref,
                         words,
                         words_capacity_bytes,
                         used_word_count,

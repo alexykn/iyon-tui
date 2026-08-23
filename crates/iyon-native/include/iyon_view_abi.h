@@ -1,6 +1,6 @@
 /* DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. */
-/* schema_blake3 = 8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6 */
-/* generator_blake3 = de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4 */
+/* schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0 */
+/* generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2 */
 #ifndef IYON_VIEW_ABI_H
 #define IYON_VIEW_ABI_H
 
@@ -88,6 +88,16 @@ uint32_t iyon_view_axis_set_child_path_v1(NativeViewRuntime * runtime, uint32_t 
 uint32_t iyon_view_grid_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t column_gap, uint32_t row_gap, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count);
 
 uint32_t iyon_view_diff_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count, const uint8_t * bytes, size_t bytes_capacity_bytes, uint32_t used_byte_count);
+
+uint32_t iyon_view_hanging_create_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t prefix_ref, uint32_t continuation_ref, uint32_t body_ref);
+
+uint32_t iyon_view_container_create_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t child_ref);
+
+uint32_t iyon_view_clamp_create_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t child_ref, uint32_t max_rows, uint32_t overflow_kind, uint32_t overflow_style_ref, const char * prefix);
+
+uint32_t iyon_view_component_create_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t handle_low, uint32_t handle_high);
+
+uint32_t iyon_view_decorated_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t child_ref, uint32_t style_ref, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count, const uint8_t * bytes, size_t bytes_capacity_bytes, uint32_t used_byte_count);
 
 uint32_t iyon_view_grid_set_cell_path_v1(NativeViewRuntime * runtime, uint32_t base_root_ref, uint32_t path_ref, uint32_t path_depth, uint32_t target_node_id_low, uint32_t target_node_id_high, uint32_t ancestor0_node_id_low, uint32_t ancestor0_node_id_high, uint32_t ancestor1_node_id_low, uint32_t ancestor1_node_id_high, uint32_t ancestor2_node_id_low, uint32_t ancestor2_node_id_high, uint32_t ancestor3_node_id_low, uint32_t ancestor3_node_id_high, uint32_t grid_row, uint32_t grid_column, uint32_t child_ref);
 

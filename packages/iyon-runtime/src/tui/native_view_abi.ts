@@ -1,5 +1,6 @@
 import type { Pointer } from "bun:ffi";
 import { native, type NativeViewAbiBootstrap } from "../native.ts";
+import { ensureNative, MaterializeTx, RetainedCycleError, RetainedFastFallbackError } from "./retained_dag.ts";
 import { linkViewAbi, type NativeAbiPointers } from "./generated/view_abi.ts";
 import {
   hostRenderRef,
@@ -95,6 +96,7 @@ export interface NativeViewRenderHost {
 export type NativeViewRoute =
   | "no_op"
   | "render_ref"
+  | "retained"
   | "scalar"
   | "shallow_depth"
   | "path_ref"
@@ -109,6 +111,7 @@ export type NativeViewRouteSnapshot = Readonly<Record<NativeViewRoute, number>>;
 const ROUTE_NAMES: readonly NativeViewRoute[] = [
   "no_op",
   "render_ref",
+  "retained",
   "scalar",
   "shallow_depth",
   "path_ref",
@@ -201,6 +204,11 @@ const ABI_FUNCTION_NAMES = [
   "viewGridSetCellPath",
   "viewGridCreateBuffer",
   "viewDiffCreateBuffer",
+  "viewHangingCreate",
+  "viewContainerCreate",
+  "viewClampCreate",
+  "viewComponentCreate",
+  "viewDecoratedCreateBuffer",
   "viewReleaseMany",
   "viewRefForNodeId",
   "pathRoot",
@@ -271,6 +279,11 @@ export function nativeViewAbiSession(): NativeViewAbiSession | undefined {
     viewAxisCreateBuffer: bootstrap.functions.viewAxisCreateBuffer as Pointer,
     viewGridCreateBuffer: bootstrap.functions.viewGridCreateBuffer as Pointer,
     viewDiffCreateBuffer: bootstrap.functions.viewDiffCreateBuffer as Pointer,
+    viewHangingCreate: bootstrap.functions.viewHangingCreate as Pointer,
+    viewContainerCreate: bootstrap.functions.viewContainerCreate as Pointer,
+    viewClampCreate: bootstrap.functions.viewClampCreate as Pointer,
+    viewComponentCreate: bootstrap.functions.viewComponentCreate as Pointer,
+    viewDecoratedCreateBuffer: bootstrap.functions.viewDecoratedCreateBuffer as Pointer,
     viewRowCreate0: bootstrap.functions.viewRowCreate0 as Pointer,
     viewRowCreate1: bootstrap.functions.viewRowCreate1 as Pointer,
     viewRowCreate2: bootstrap.functions.viewRowCreate2 as Pointer,
@@ -376,6 +389,34 @@ export function tryNativeTextCreateRender(
   } catch (error) {
     if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
     if (isExpectedNativeStatus(error)) return undefined;
+    throw error;
+  }
+}
+
+/**
+ * PERF-12 T13 (§78/§80): retained materialization for boundaries that keep a
+ * View only transiently (History unit import, animation frames) or that run
+ * their own §18 boundary. Identity-first: BridgeNativeHint hits reuse already-
+ * materialized nodes with zero payload reads; ceiling is 0 so genuinely new
+ * nodes skip the NodeId probe exactly like the §19 ordering requires — cold
+ * unit imports pay no extra per-node round trips, while anything previously
+ * materialized through any boundary rides its hint.
+ *
+ * Returns the root ref carrying exactly ONE live lease (every other temporary
+ * lease drains in one batch), or undefined when the retained path refused
+ * (cap/shape/fallback); the caller then routes its complete fallback.
+ */
+export function tryRetainedMaterializeRef(next: View): number | undefined {
+  const session = nativeViewAbiSession();
+  if (session === undefined) return undefined;
+  const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
+  try {
+    const reference = ensureNative(nodeForBridge(next), tx);
+    tx.releaseAllExcept(reference);
+    return reference;
+  } catch (error) {
+    tx.releaseAll();
+    if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
     throw error;
   }
 }

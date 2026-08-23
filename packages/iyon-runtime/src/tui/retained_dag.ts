@@ -926,26 +926,40 @@ export class RetainedRootBoundary {
         ownsTempLease = true;
       }
     }
-    const hostPointer = this.hostPointer();
-    if (hostPointer !== undefined) {
-      const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
-      if (status !== HOST_STATUS_OK) {
-        tx.releaseAll();
-        // Release only a freshly acquired boundary lease whose ref is not
-        // already the boundary's leased previous root (§18 failure keeps the
-        // old root installed).
-        if (acquiredBoundaryLease && rootRef !== this.previousRef) {
-          const batch = Uint32Array.of(rootRef);
-          viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+    try {
+      const hostPointer = this.hostPointer();
+      if (hostPointer !== undefined) {
+        const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+        if (status !== HOST_STATUS_OK) {
+          tx.releaseAll();
+          // Release only a freshly acquired boundary lease whose ref is not
+          // already the boundary's leased previous root (§18 failure keeps
+          // the old root installed).
+          if (acquiredBoundaryLease && rootRef !== this.previousRef) {
+            const batch = Uint32Array.of(rootRef);
+            viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+            acquiredBoundaryLease = false;
+          }
+          return undefined;
         }
-        return undefined;
+        counters.host_mutations += 1;
       }
-      counters.host_mutations += 1;
+      if (ownsTempLease) tx.releaseAllExcept(rootRef);
+      else tx.releaseAll();
+      this.transferRoot(rootRef);
+      return rootRef;
+    } catch (error) {
+      // The host callback/FFI boundary is part of the transaction too: an
+      // unexpected throw must not strand temporary or newly-acquired root
+      // leases after semantic materialization has already succeeded.
+      tx.releaseAll();
+      if (acquiredBoundaryLease && rootRef !== this.previousRef) {
+        const batch = Uint32Array.of(rootRef);
+        viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+        acquiredBoundaryLease = false;
+      }
+      throw error;
     }
-    if (ownsTempLease) tx.releaseAllExcept(rootRef);
-    else tx.releaseAll();
-    this.transferRoot(rootRef);
-    return rootRef;
   }
 
   /** §20 exact-root fast path against the currently installed root hint. */

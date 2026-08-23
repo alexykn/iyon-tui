@@ -1,5 +1,45 @@
 const BRANCH_FACTOR = 32;
 
+/**
+ * PERF-12 §91} structural counters (compile-time-cheap arm: plain field
+ * increments on already-executing mutation paths, no scans, no allocation).
+ * They prove the O(log₃₂ N) asymptotic of retained wide edits independently
+ * of timing noise: one `set` at width 100,000 clones a bounded handful of
+ * nodes regardless of width. `nodes_cloned` counts every PersistentSeqNode
+ * allocated by a mutation (branches and leaves); `items_iterated` counts
+ * leaf item copies those allocations touch.
+ */
+export const persistentSeqCounters = {
+  nodes_cloned: 0,
+  branches_cloned: 0,
+  items_iterated: 0,
+};
+
+export function resetPersistentSeqCounters(): void {
+  persistentSeqCounters.nodes_cloned = 0;
+  persistentSeqCounters.branches_cloned = 0;
+  persistentSeqCounters.items_iterated = 0;
+}
+
+function countLeafClone<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  persistentSeqCounters.nodes_cloned += 1;
+  persistentSeqCounters.items_iterated += copy.length;
+  return copy;
+}
+
+function countBranchClone<T>(children: readonly PersistentSeqNode<T>[]): PersistentSeqNode<T>[] {
+  persistentSeqCounters.nodes_cloned += 1;
+  persistentSeqCounters.branches_cloned += 1;
+  return [...children];
+}
+
+function countLeafMerge<T>(left: readonly T[], right: readonly T[]): T[] {
+  const merged = [...left, ...right];
+  persistentSeqCounters.items_iterated += merged.length;
+  return merged;
+}
+
 export type SeqAggregate = number;
 
 export type PersistentSeqNode<T> =
@@ -86,20 +126,20 @@ function childIndex(sizes: readonly number[], index: number): number {
 
 function setNode<T>(node: PersistentSeqNode<T>, index: number, value: T, aggregate: Aggregate<T>): PersistentSeqNode<T> {
   if (node.kind === "leaf") {
-    const items = [...node.items];
+    const items = countLeafClone(node.items);
     items[index] = value;
     return leaf(items, aggregate);
   }
   const child = childIndex(node.sizes, index);
   const offset = child === 0 ? index : index - node.sizes[child - 1]!;
-  const children = [...node.children];
+  const children = countBranchClone(node.children);
   children[child] = setNode(children[child]!, offset, value, aggregate);
   return branch(children);
 }
 
 function insertNode<T>(node: PersistentSeqNode<T>, index: number, value: T, aggregate: Aggregate<T>): InsertResult<T> {
   if (node.kind === "leaf") {
-    const items = [...node.items];
+    const items = countLeafClone(node.items);
     items.splice(index, 0, value);
     if (items.length <= BRANCH_FACTOR) return [leaf(items, aggregate)];
     return [leaf(items.slice(0, BRANCH_FACTOR), aggregate), leaf(items.slice(BRANCH_FACTOR), aggregate)];
@@ -107,20 +147,20 @@ function insertNode<T>(node: PersistentSeqNode<T>, index: number, value: T, aggr
   const child = index === node.length ? node.children.length - 1 : childIndex(node.sizes, index);
   const offset = child === 0 ? index : index - node.sizes[child - 1]!;
   const inserted = insertNode(node.children[child]!, offset, value, aggregate);
-  const children = [...node.children.slice(0, child), ...inserted, ...node.children.slice(child + 1)];
+  const children = countBranchClone(node.children).slice(0, child).concat(inserted, node.children.slice(child + 1));
   if (children.length <= BRANCH_FACTOR) return [branch(children)];
   return [branch(children.slice(0, BRANCH_FACTOR)), branch(children.slice(BRANCH_FACTOR))];
 }
 
 function removeNode<T>(node: PersistentSeqNode<T>, index: number, aggregate: Aggregate<T>): PersistentSeqNode<T> {
   if (node.kind === "leaf") {
-    const items = [...node.items];
+    const items = countLeafClone(node.items);
     items.splice(index, 1);
     return leaf(items, aggregate);
   }
   const child = childIndex(node.sizes, index);
   const offset = child === 0 ? index : index - node.sizes[child - 1]!;
-  const children = [...node.children];
+  const children = countBranchClone(node.children);
   children[child] = removeNode(children[child]!, offset, aggregate);
   if (children[child]!.length === 0) children.splice(child, 1);
   return children.length === 0 ? leaf([], aggregate) : branch(children);
@@ -133,7 +173,7 @@ function normalizeRoot<T>(node: PersistentSeqNode<T>): PersistentSeqNode<T> {
 }
 
 function splitNode<T>(node: PersistentSeqNode<T>, index: number, aggregate: Aggregate<T>): readonly [PersistentSeqNode<T>, PersistentSeqNode<T>] {
-  if (node.kind === "leaf") return [leaf(node.items.slice(0, index), aggregate), leaf(node.items.slice(index), aggregate)];
+  if (node.kind === "leaf") return [leaf(countLeafClone(node.items.slice(0, index)), aggregate), leaf(countLeafClone(node.items.slice(index)), aggregate)];
   const child = index === node.length ? node.children.length : childIndex(node.sizes, index);
   if (child === node.children.length) return [node, leaf([], aggregate)];
   const offset = child === 0 ? index : index - node.sizes[child - 1]!;
@@ -141,7 +181,8 @@ function splitNode<T>(node: PersistentSeqNode<T>, index: number, aggregate: Aggr
   const [leftChild, rightChild] = splitNode(node.children[child]!, offset, aggregate);
   const left = wrapToHeight(leftChild, childHeight);
   const right = wrapToHeight(rightChild, childHeight);
-  const leftChildren = [...node.children.slice(0, child), ...(left.length === 0 ? [] : [left])];
+  const leftChildren = countBranchClone(node.children).slice(0, child);
+  if (left.length !== 0) leftChildren.push(left);
   const rightChildren = [...(right.length === 0 ? [] : [right]), ...node.children.slice(child + 1)];
   return [
     leftChildren.length === 0 ? leaf([], aggregate) : branch(leftChildren),
@@ -157,7 +198,7 @@ function wrapToHeight<T>(node: PersistentSeqNode<T>, height: number): Persistent
 
 function concatNodes<T>(left: PersistentSeqNode<T>, right: PersistentSeqNode<T>, aggregate: Aggregate<T>): readonly PersistentSeqNode<T>[] {
   if (left.kind === "leaf" && right.kind === "leaf") {
-    const items = [...left.items, ...right.items];
+    const items = countLeafMerge(left.items, right.items);
     if (items.length <= BRANCH_FACTOR) return [leaf(items, aggregate)];
     return [leaf(items.slice(0, BRANCH_FACTOR), aggregate), leaf(items.slice(BRANCH_FACTOR), aggregate)];
   }

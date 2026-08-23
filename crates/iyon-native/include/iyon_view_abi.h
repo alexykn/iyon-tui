@@ -1,6 +1,6 @@
 /* DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. */
-/* schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4 */
-/* generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a */
+/* schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498 */
+/* generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a */
 #ifndef IYON_VIEW_ABI_H
 #define IYON_VIEW_ABI_H
 
@@ -82,6 +82,8 @@ uint32_t iyon_view_axis_splice_buffer_v1(NativeViewRuntime * runtime, uint32_t b
 uint32_t iyon_view_grid_set_cell_v1(NativeViewRuntime * runtime, uint32_t base_grid_ref, uint32_t node_id_low, uint32_t node_id_high, uint32_t row, uint32_t column, uint32_t child_ref);
 
 uint32_t iyon_view_axis_set_child_path_v1(NativeViewRuntime * runtime, uint32_t base_root_ref, uint32_t path_ref, uint32_t path_depth, uint32_t target_node_id_low, uint32_t target_node_id_high, uint32_t ancestor0_node_id_low, uint32_t ancestor0_node_id_high, uint32_t ancestor1_node_id_low, uint32_t ancestor1_node_id_high, uint32_t ancestor2_node_id_low, uint32_t ancestor2_node_id_high, uint32_t ancestor3_node_id_low, uint32_t ancestor3_node_id_high, uint32_t axis_index, uint32_t track_word, uint32_t child_ref);
+
+uint32_t iyon_view_grid_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, uint32_t column_gap, uint32_t row_gap, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count);
 
 uint32_t iyon_view_grid_set_cell_path_v1(NativeViewRuntime * runtime, uint32_t base_root_ref, uint32_t path_ref, uint32_t path_depth, uint32_t target_node_id_low, uint32_t target_node_id_high, uint32_t ancestor0_node_id_low, uint32_t ancestor0_node_id_high, uint32_t ancestor1_node_id_low, uint32_t ancestor1_node_id_high, uint32_t ancestor2_node_id_low, uint32_t ancestor2_node_id_high, uint32_t ancestor3_node_id_low, uint32_t ancestor3_node_id_high, uint32_t grid_row, uint32_t grid_column, uint32_t child_ref);
 

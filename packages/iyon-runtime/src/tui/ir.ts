@@ -1,5 +1,6 @@
 import type { NativeHandleId } from "./types.ts";
 import bridgeSchema from "./bridge-schema.json";
+import { PersistentSeq } from "./persistent_seq.ts";
 
 type BridgeSchema = {
   readonly schemaVersion: 1;
@@ -565,7 +566,64 @@ export interface BridgeCommonScalarDerivation {
   readonly maxHeight: number;
 }
 
-export type BridgeDerivation = BridgeTextLayoutDerivation | BridgeCommonScalarDerivation;
+// --- PERF-12 T10 (§34/§28): wide retained edits --------------------------
+
+/** One-child replacement on a retained row/column axis. */
+export interface BridgeAxisSetDerivation {
+  readonly kind: "axisSet";
+  readonly base: BridgeViewNode;
+  readonly index: number;
+  /** 0 preserves the existing track; else the compact track word encoding. */
+  readonly trackWord: number;
+  readonly child: BridgeViewNode;
+}
+
+/** Insert/remove/splice on a retained row/column axis. */
+export interface BridgeAxisSpliceDerivation {
+  readonly kind: "axisSplice";
+  readonly base: BridgeViewNode;
+  readonly index: number;
+  readonly removeCount: number;
+  /** Only the INSERTED children cross FFI (§35); order matches the splice. */
+  readonly inserted: readonly { readonly node: BridgeViewNode; readonly trackWord: number }[];
+}
+
+/** One-cell replacement on a retained grid. */
+export interface BridgeGridCellDerivation {
+  readonly kind: "gridCell";
+  readonly base: BridgeViewNode;
+  readonly row: number;
+  readonly column: number;
+  readonly child: BridgeViewNode;
+}
+
+export type BridgeDerivation =
+  | BridgeTextLayoutDerivation
+  | BridgeCommonScalarDerivation
+  | BridgeAxisSetDerivation
+  | BridgeAxisSpliceDerivation
+  | BridgeGridCellDerivation;
+
+/** Axis sequence edit descriptor carried alongside the authoritative seq. */
+export type AxisSequenceEdit =
+  | { readonly kind: "axisSet"; readonly index: number }
+  | { readonly kind: "axisSplice"; readonly index: number; readonly removeCount: number; readonly insertedCount: number };
+
+export interface BridgeSequenceOverride {
+  readonly baseNode: BridgeViewNode;
+  readonly sequence: PersistentSeq<BridgeLayoutChild>;
+  /** Undefined for the initial wide-axis sequence seed. */
+  readonly edit?: AxisSequenceEdit;
+}
+
+export interface BridgeGridSequenceOverride {
+  readonly baseNode: BridgeViewNode;
+  readonly sequence: PersistentSeq<BridgeGridCellNode>;
+  /** Prefix cell offsets; length = row count + 1. */
+  readonly rowOffsets: readonly number[];
+  readonly rowTracks: readonly BridgeGridTrackNode[];
+}
+
 
 /** Derivation hints die with their semantic node (§15). */
 const BRIDGE_DERIVATION = new WeakMap<BridgeViewNode, BridgeDerivation>();
@@ -578,6 +636,29 @@ export function setBridgeDerivation(node: BridgeViewNode, derivation: BridgeDeri
 /** Retained-path read access (ensureNative's tryDerivation step). */
 export function peekBridgeDerivation(node: BridgeViewNode): BridgeDerivation | undefined {
   return BRIDGE_DERIVATION.get(node);
+}
+
+/** §34: sequence overrides die with their semantic node. */
+const BRIDGE_SEQUENCE = new WeakMap<BridgeViewNode, BridgeSequenceOverride>();
+const BRIDGE_GRID_SEQUENCE = new WeakMap<BridgeViewNode, BridgeGridSequenceOverride>();
+
+export function setBridgeSequenceOverride(
+  node: BridgeViewNode,
+  override: BridgeSequenceOverride,
+): void {
+  BRIDGE_SEQUENCE.set(node, override);
+}
+
+export function peekBridgeSequenceOverride(node: BridgeViewNode): BridgeSequenceOverride | undefined {
+  return BRIDGE_SEQUENCE.get(node);
+}
+
+export function setBridgeGridSequenceOverride(node: BridgeViewNode, override: BridgeGridSequenceOverride): void {
+  BRIDGE_GRID_SEQUENCE.set(node, override);
+}
+
+export function peekBridgeGridSequenceOverride(node: BridgeViewNode): BridgeGridSequenceOverride | undefined {
+  return BRIDGE_GRID_SEQUENCE.get(node);
 }
 
 function cloneColor(color: ColorNode | undefined): ColorNode | undefined {

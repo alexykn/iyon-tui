@@ -30,12 +30,13 @@ import {
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { hostRenderRef, viewCommonPatchRoot, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
-import { BRIDGE_VIEW_KIND, peekBridgeDerivation, type BridgeViewNode } from "./ir.ts";
+import { hostRenderRef, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, type BridgeGridTrackNode, type BridgeViewNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
   MAX_DIRECT_AXIS_REFS,
+  MAX_DIRECT_GRID_WORDS,
   MAX_RETAINED_DEPTH,
   MAX_RETAINED_NEW_NODES,
 } from "./native_view_policy.ts";
@@ -57,6 +58,12 @@ const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
  * after any call returns (§29).
  */
 const AXIS_REF_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+  runtime: undefined,
+  array: new Uint32Array(0),
+};
+
+/** PERF-12 T10 (§30/§36): reusable medium-tier flat-grid word scratch. */
+const GRID_WORD_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
   runtime: undefined,
   array: new Uint32Array(0),
 };
@@ -183,6 +190,22 @@ export class MaterializeTx {
     return AXIS_REF_SCRATCH.array.subarray(0, words);
   }
 
+  /** Returns reusable grid construction scratch; no per-node TypedArray. */
+  gridWordScratch(wordCount: number): Uint32Array {
+    if (wordCount > MAX_DIRECT_GRID_WORDS) {
+      counters.cold_fallbacks += 1;
+      throw new RetainedFastFallbackError(
+        `grid word payload ${wordCount} exceeds the retained cap ${MAX_DIRECT_GRID_WORDS}`,
+      );
+    }
+    if (GRID_WORD_SCRATCH.runtime !== this.runtime || GRID_WORD_SCRATCH.array.length < wordCount) {
+      GRID_WORD_SCRATCH.runtime = this.runtime;
+      GRID_WORD_SCRATCH.array = new Uint32Array(MAX_DIRECT_GRID_WORDS);
+    }
+    counters.transport_scratch_reuses += 1;
+    return GRID_WORD_SCRATCH.array.subarray(0, wordCount);
+  }
+
   /** §90: borrowed-buffer preparation is counted, never hidden. */
   noteRefWords(words: number): void {
     counters.ref_words_written += words;
@@ -253,6 +276,51 @@ function materializeColumnNode(node: BridgeViewNode, tx: MaterializeTx): number 
   );
 }
 
+function gridTrackWord(track: BridgeGridTrackNode): number {
+  switch (track.kind) {
+    case BRIDGE_GRID_TRACK_KIND.content: return 1;
+    case BRIDGE_GRID_TRACK_KIND.contentMax: return 2 | (track.max << 8);
+    case BRIDGE_GRID_TRACK_KIND.fixed: return 3 | (track.size << 8);
+    case BRIDGE_GRID_TRACK_KIND.flex: return 4;
+    case BRIDGE_GRID_TRACK_KIND.flexMax: return 5 | (track.max << 8);
+  }
+}
+
+/** PERF-12 T10 (§36): new Grid construction through one borrowed word lane. */
+function materializeGridNode(node: BridgeViewNode, tx: MaterializeTx): number {
+  if (node.kind !== BRIDGE_VIEW_KIND.grid) throw new RetainedFastFallbackError("kind mismatch");
+  const wordCount = 2 + node.columns.length
+    + node.rows.reduce((total, row) => total + 2 + row.cells.length * 3, 0);
+  const words = tx.gridWordScratch(wordCount);
+  let offset = 0;
+  words[offset++] = node.columns.length;
+  for (const track of node.columns) words[offset++] = gridTrackWord(track);
+  words[offset++] = node.rows.length;
+  for (const row of node.rows) {
+    words[offset++] = gridTrackWord(row.track);
+    words[offset++] = row.cells.length;
+    for (const cell of row.cells) {
+      words[offset++] = ensureNative(cell.view, tx);
+      words[offset++] = (cell.columnSpan & 0xffff) | ((cell.rowSpan & 0xffff) << 16);
+      words[offset++] = (cell.horizontalAlign & 0xffff) | ((cell.verticalAlign & 0xffff) << 16);
+    }
+  }
+  tx.noteRefWords(wordCount);
+  counters.bridge_children_visited += node.rows.reduce((total, row) => total + row.cells.length, 0);
+  counters.bridge_semantic_nodes_inspected += 1;
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("grid", () => viewGridCreateBuffer(
+    tx.symbols,
+    tx.runtime,
+    low,
+    high,
+    node.columnGap,
+    node.rowGap,
+    words,
+    wordCount,
+  ));
+}
+
 /**
  * Per-kind generated materializer dispatch (§22 children-first, §32 fixed
  * arities). T7 covers spacer plus row/column arities 0..=4; container,
@@ -264,6 +332,7 @@ const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [BRIDGE_VIEW_KIND.spacer, materializeSpacerNode],
   [BRIDGE_VIEW_KIND.row, materializeRowNode],
   [BRIDGE_VIEW_KIND.column, materializeColumnNode],
+  [BRIDGE_VIEW_KIND.grid, materializeGridNode],
 ]);
 
 /**
@@ -427,7 +496,7 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
         derivation.wrap,
         derivation.align,
       );
-    } else {
+    } else if (derivation.kind === "commonScalar") {
       reference = viewCommonPatchRoot(
         tx.symbols,
         tx.runtime,
@@ -444,6 +513,52 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
         derivation.minHeight,
         derivation.maxHeight,
         0,
+      );
+    } else if (derivation.kind === "axisSet") {
+      // §35 children-first: resolve only the replacement child, never the
+      // old wide sequence.
+      const childRef = ensureNative(derivation.child, tx);
+      reference = viewAxisSetChild(
+        tx.symbols,
+        tx.runtime,
+        baseRef,
+        low,
+        high,
+        derivation.index,
+        derivation.trackWord,
+        childRef,
+      );
+    } else if (derivation.kind === "axisSplice") {
+      // Only inserted refs cross FFI; the old sequence remains native-retained.
+      const scratch = tx.axisRefScratch(derivation.inserted.length);
+      let offset = 0;
+      for (const entry of derivation.inserted) {
+        scratch[offset++] = entry.trackWord;
+        scratch[offset++] = ensureNative(entry.node, tx);
+      }
+      tx.noteRefWords(offset);
+      reference = viewAxisSpliceBuffer(
+        tx.symbols,
+        tx.runtime,
+        baseRef,
+        low,
+        high,
+        derivation.index,
+        derivation.removeCount,
+        scratch,
+        derivation.inserted.length,
+      );
+    } else {
+      const childRef = ensureNative(derivation.child, tx);
+      reference = viewGridSetCell(
+        tx.symbols,
+        tx.runtime,
+        baseRef,
+        low,
+        high,
+        derivation.row,
+        derivation.column,
+        childRef,
       );
     }
     counters.derivation_fast_path_calls += 1;

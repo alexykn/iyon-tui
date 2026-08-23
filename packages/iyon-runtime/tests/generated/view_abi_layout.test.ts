@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 import { expect, test } from "bun:test";
 import manifest from "../../src/tui/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {
-  expect(manifest.schema_blake3).toBe("ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4");
+  expect(manifest.schema_blake3).toBe("7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498");
   expect(manifest.abi.version).toBe(1);
   expect(manifest.functions.map((item) => item.name)).toEqual([
     "runtime_noop",
@@ -33,6 +33,7 @@ test("generated ABI manifest is pinned and ordered", () => {
     "view_axis_splice_buffer",
     "view_grid_set_cell",
     "view_axis_set_child_path",
+    "view_grid_create_buffer",
     "view_grid_set_cell_path",
     "view_release_many",
     "view_ref_for_node_id",
@@ -119,6 +120,7 @@ test("generated ABI signatures and POD layouts are pinned", () => {
     ["runtime_ptr", "native_ref", "u32", "u32", "u32", "u32", "pod_slice", "buffer_length", "buffer_used"],
     ["runtime_ptr", "native_ref", "u32", "u32", "u32", "u32", "native_ref"],
     ["runtime_ptr", "native_ref", "native_ref", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "native_ref"],
+    ["runtime_ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "buffer_used"],
     ["runtime_ptr", "native_ref", "native_ref", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "native_ref"],
     ["runtime_ptr", "buffer", "buffer_length", "buffer_used"],
     ["runtime_ptr", "u32", "u32"],

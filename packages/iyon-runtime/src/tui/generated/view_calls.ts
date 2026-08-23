@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 import type { Pointer } from "bun:ffi";
 import type { linkViewAbi } from "./view_abi";
 export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>["symbols"];
@@ -134,6 +134,11 @@ export function viewGridSetCell(symbols: ViewAbiSymbols, runtime: Pointer, base_
 
 export function viewAxisSetChildPath(symbols: ViewAbiSymbols, runtime: Pointer, base_root_ref: number, path_ref: number, path_depth: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, axis_index: number, track_word: number, child_ref: number): number {
   const result = symbols.viewAxisSetChildPath(runtime, base_root_ref, path_ref, path_depth, target_node_id_low, target_node_id_high, ancestor0_node_id_low, ancestor0_node_id_high, ancestor1_node_id_low, ancestor1_node_id_high, ancestor2_node_id_low, ancestor2_node_id_high, ancestor3_node_id_low, ancestor3_node_id_high, axis_index, track_word, child_ref);
+  return checkedRef(result);
+}
+
+export function viewGridCreateBuffer(symbols: ViewAbiSymbols, runtime: Pointer, node_id_low: number, node_id_high: number, column_gap: number, row_gap: number, words: NodeJS.TypedArray | DataView, used_word_count: number): number {
+  const result = symbols.viewGridCreateBuffer(runtime, node_id_low, node_id_high, column_gap, row_gap, words, words, used_word_count);
   return checkedRef(result);
 }
 

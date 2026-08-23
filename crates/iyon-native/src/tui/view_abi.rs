@@ -1,8 +1,8 @@
 use super::NativeTuiHost;
 use crate::NativeError;
 use iyon_tui::{
-    AnsiColor, ColorSpec, HorizontalAlign, Insets, IntoView, RetainedPathStep, StyleRef, StyleSpec,
-    TextAttribute, TextSpan, View, WrapMode,
+    AnsiColor, ColorSpec, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView,
+    RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -70,6 +70,16 @@ const PATCH_MASK: u32 = PATCH_PADDING
     | PATCH_MAX_WIDTH
     | PATCH_MIN_HEIGHT
     | PATCH_MAX_HEIGHT;
+
+// PERF-12 T10 (§36): grid track words use the schema kind codes in the low
+// byte (1=content, 2=contentMax, 3=fixed, 4=flex, 5=flexMax) with the u16
+// size/max at bits 8..24. Align packs hold horizontal in the low half and
+// vertical in the high half; span packs hold column_span low / row_span high.
+const GRID_TRACK_CONTENT_WORD: u32 = 1;
+const GRID_TRACK_CONTENT_MAX_WORD: u32 = 2;
+const GRID_TRACK_FIXED_WORD: u32 = 3;
+const GRID_TRACK_FLEX_WORD: u32 = 4;
+const GRID_TRACK_FLEX_MAX_WORD: u32 = 5;
 
 #[repr(C)]
 pub(super) struct FastStatusCell {
@@ -1515,6 +1525,7 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
             "viewAxisSetChild": generated_exports::iyon_view_axis_set_child_v1 as *const () as usize as u64,
             "viewAxisSpliceBuffer": generated_exports::iyon_view_axis_splice_buffer_v1 as *const () as usize as u64,
             "viewGridSetCell": generated_exports::iyon_view_grid_set_cell_v1 as *const () as usize as u64,
+            "viewGridCreateBuffer": generated_exports::iyon_view_grid_create_buffer_v1 as *const () as usize as u64,
             "viewAxisSetChildPath": generated_exports::iyon_view_axis_set_child_path_v1 as *const () as usize as u64,
             "viewGridSetCellPath": generated_exports::iyon_view_grid_set_cell_path_v1 as *const () as usize as u64,
             "viewReleaseMany": generated_exports::iyon_view_release_many_v1 as *const () as usize as u64,
@@ -2657,6 +2668,13 @@ pub unsafe extern "Rust" fn view_axis_set_child_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without resolving the base or consuming edit arguments.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok((base, _)) = runtime.resolve_ref(base_axis_ref) else {
         return FAST_CACHE_MISS;
     };
@@ -2690,6 +2708,13 @@ pub unsafe extern "Rust" fn view_axis_splice_buffer_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without resolving the base or consuming edit arguments.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok((base, _)) = runtime.resolve_ref(base_axis_ref) else {
         return FAST_CACHE_MISS;
     };
@@ -2723,6 +2748,13 @@ pub unsafe extern "Rust" fn view_grid_set_cell_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without resolving the base or consuming edit arguments.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok((base, _)) = runtime.resolve_ref(base_grid_ref) else {
         return FAST_CACHE_MISS;
     };
@@ -2736,6 +2768,167 @@ pub unsafe extern "Rust" fn view_grid_set_cell_impl(
         .publish(node_id, patched)
         .unwrap_or_else(|error| error);
     record_result(runtime, result)
+}
+
+/// PERF-12 T10 (§36): parses the flat u32 word buffer describing a new
+/// grid and constructs it through the semantic builder. Every read is
+/// bounds-checked; the buffer must be consumed exactly.
+fn parse_and_build_grid(
+    words: &[u32],
+    resolve_child: &mut dyn FnMut(u32) -> Result<View, u32>,
+    column_gap: u16,
+    row_gap: u16,
+) -> Result<View, u32> {
+    let mut cursor = 0usize;
+    let mut next_word = || -> Result<u32, u32> {
+        let value = *words.get(cursor).ok_or(FAST_INVALID)?;
+        cursor += 1;
+        Ok(value)
+    };
+    let decode_track = |word: u32| -> Result<GridTrack, u32> {
+        let kind = word & 0xff;
+        let raw_amount = word >> 8;
+        if raw_amount > u16::MAX as u32 {
+            return Err(FAST_INVALID);
+        }
+        let amount = raw_amount as u16;
+        match kind {
+            GRID_TRACK_CONTENT_WORD => Ok(GridTrack::content()),
+            GRID_TRACK_FLEX_WORD => Ok(GridTrack::flex()),
+            GRID_TRACK_FIXED_WORD => Ok(GridTrack::fixed(
+                u16::try_from(amount).map_err(|_| FAST_INVALID)?,
+            )),
+            GRID_TRACK_CONTENT_MAX_WORD => Ok(GridTrack::content_max(
+                u16::try_from(amount).map_err(|_| FAST_INVALID)?,
+            )),
+            GRID_TRACK_FLEX_MAX_WORD => Ok(GridTrack::flex_max(
+                u16::try_from(amount).map_err(|_| FAST_INVALID)?,
+            )),
+            _ => Err(FAST_INVALID),
+        }
+    };
+    let column_track_count = next_word()?;
+    if column_track_count > words.len() as u32 {
+        return Err(FAST_INVALID);
+    }
+    let mut column_tracks = Vec::with_capacity(column_track_count as usize);
+    for _ in 0..column_track_count {
+        column_tracks.push(decode_track(next_word()?)?);
+    }
+    let row_count = next_word()?;
+    if row_count > words.len() as u32 {
+        return Err(FAST_INVALID);
+    }
+    // Two-phase parse: validate the whole layout (including child refs)
+    // before constructing anything, so a malformed tail cannot leave partial
+    // work behind.
+    let mut parsed_rows: Vec<(GridTrack, Vec<(GridCellSpec, View)>)> =
+        Vec::with_capacity(row_count as usize);
+    for _ in 0..row_count {
+        let row_track = decode_track(next_word()?)?;
+        let cell_count = next_word()?;
+        if cell_count > words.len() as u32 {
+            return Err(FAST_INVALID);
+        }
+        let mut cells = Vec::with_capacity(cell_count as usize);
+        for _ in 0..cell_count {
+            let child_ref = next_word()?;
+            let span_pack = next_word()?;
+            let align_pack = next_word()?;
+            let view = resolve_child(child_ref)?;
+            let column_span = (span_pack & 0xffff) as u16;
+            let row_span = (span_pack >> 16) as u16;
+            if column_span == 0 || row_span == 0 {
+                return Err(FAST_INVALID);
+            }
+            let spec = GridCellSpec::new()
+                .column_span(column_span)
+                .row_span(row_span)
+                .horizontal_align(match align_pack & 0xffff {
+                    1 => HorizontalAlign::Start,
+                    2 => HorizontalAlign::Center,
+                    3 => HorizontalAlign::End,
+                    _ => return Err(FAST_INVALID),
+                })
+                .vertical_align(match align_pack >> 16 {
+                    1 => VerticalAlign::Top,
+                    2 => VerticalAlign::Center,
+                    3 => VerticalAlign::Bottom,
+                    _ => return Err(FAST_INVALID),
+                });
+            cells.push((spec, view));
+        }
+        parsed_rows.push((row_track, cells));
+    }
+    if cursor != words.len() {
+        return Err(FAST_INVALID);
+    }
+    Ok(View::grid(|grid| {
+        grid.columns(column_tracks);
+        grid.column_gap(column_gap);
+        grid.row_gap(row_gap);
+        for (track, cells) in parsed_rows {
+            grid.row_with(track, |row| {
+                for (spec, view) in &cells {
+                    row.cell_with(*spec, view.clone());
+                }
+            });
+        }
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    column_gap: u32,
+    row_gap: u32,
+    words: *const u32,
+    _words_capacity_bytes: usize,
+    used_word_count: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing or resolving any buffered word.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    // PERF-12 §68/§116 note: count-vs-capacity validation is enforced by
+    // the generated export layer before this implementation runs.
+    if used_word_count == 0 || words.is_null() {
+        return record_result(runtime, FAST_INVALID);
+    }
+    let Ok(column_gap) = u16::try_from(column_gap) else {
+        return FAST_INVALID;
+    };
+    let Ok(row_gap) = u16::try_from(row_gap) else {
+        return FAST_INVALID;
+    };
+    let slice = unsafe { slice::from_raw_parts(words, used_word_count as usize) };
+    let outcome = parse_and_build_grid(
+        slice,
+        &mut |child_ref: u32| {
+            let (view, _) = runtime.resolve_ref(child_ref)?;
+            Ok(view)
+        },
+        column_gap,
+        row_gap,
+    );
+    match outcome {
+        Ok(view) => match runtime.publish(node_id, view) {
+            Ok(reference) => record_result(runtime, reference),
+            Err(error) => record_result(runtime, error),
+        },
+        Err(error) => record_result(runtime, error),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -3425,9 +3618,11 @@ fn decode_align(value: u32) -> Result<HorizontalAlign, ()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, MAX_EDIT_COUNT, NativeRefTable,
-        NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF, PublicationLease,
-        generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
+        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, GRID_TRACK_CONTENT_MAX_WORD,
+        GRID_TRACK_CONTENT_WORD, GRID_TRACK_FIXED_WORD, GRID_TRACK_FLEX_MAX_WORD,
+        GRID_TRACK_FLEX_WORD, MAX_EDIT_COUNT, NativeRefTable, NativeViewKindTag, NativeViewRuntime,
+        NativeViewSlot, PATH_ROOT_REF, PublicationLease, generated_exports, is_valid_builder_ref,
+        is_valid_edit_txn_ref,
     };
     use iyon_tui::{GridTrack, IntoView, TextSpan, View};
     use std::ffi::CString;
@@ -4236,6 +4431,158 @@ mod tests {
             )
         };
         assert!(ok < 0x8000_0000);
+    }
+
+    #[test]
+    fn grid_create_buffer_builds_and_consults_cache_perf12_t10() {
+        // PERF-12 §36: a new grid materializes through one borrowed word
+        // buffer; a live NodeId short-circuits without parsing (§23).
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let child_a = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 600, 0, 1) };
+        let child_b = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 601, 0, 2) };
+        assert!(child_a < 0x8000_0000 && child_b < 0x8000_0000);
+        // One column track (content), one row (content track) with two cells.
+        let words: [u32; 11] = [
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            2,
+            child_a,
+            1 | (1 << 16),
+            1 | (1 << 16),
+            child_b,
+            2 | (1 << 16),
+            3 | (2 << 16),
+        ];
+        let grid = unsafe {
+            generated_exports::iyon_view_grid_create_buffer_v1(
+                pointer,
+                700,
+                0,
+                1,
+                2,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+            )
+        };
+        assert!(grid < 0x8000_0000);
+        assert_eq!(grid, unsafe {
+            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 700, 0)
+        });
+        // §23 consult: same NodeId with garbage words must return the cache.
+        let again = unsafe {
+            generated_exports::iyon_view_grid_create_buffer_v1(
+                pointer,
+                700,
+                0,
+                9,
+                9,
+                words.as_ptr(),
+                8,
+                2,
+            )
+        };
+        assert_eq!(again, grid);
+        // Truncated buffer must be rejected before construction.
+        let truncated = unsafe {
+            generated_exports::iyon_view_grid_create_buffer_v1(
+                pointer,
+                701,
+                0,
+                1,
+                1,
+                words.as_ptr(),
+                40,
+                10,
+            )
+        };
+        assert_eq!(truncated, FAST_INVALID);
+    }
+
+    #[test]
+    fn axis_and_grid_edits_consult_semantic_cache_first_perf12_t10() {
+        // PERF-12 §23 on the T10 edit primitives: a live NodeId returns the
+        // cached ref without resolving the base or child refs.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let base_child =
+            unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 800, 0, 1) };
+        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 801, 0, 1) };
+        let base = unsafe {
+            generated_exports::iyon_view_column_create_1_v1(pointer, 802, 0, 0, 0, base_child)
+        };
+        let edited = unsafe {
+            generated_exports::iyon_view_axis_set_child_v1(pointer, base, 900, 0, 0, 0, child)
+        };
+        assert!(edited < 0x8000_0000);
+        // Live NodeId + stale base and child: consult must win.
+        let again = unsafe {
+            generated_exports::iyon_view_axis_set_child_v1(
+                pointer,
+                0x7fff_fe00,
+                900,
+                0,
+                5,
+                5,
+                0x7fff_fe01,
+            )
+        };
+        assert_eq!(again, edited);
+        // Splice path: live NodeId wins over a stale base before any parse.
+        let spliced_again = unsafe {
+            generated_exports::iyon_view_axis_splice_buffer_v1(
+                pointer,
+                0x7fff_fe02,
+                900,
+                0,
+                0,
+                0,
+                std::ptr::null(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(spliced_again, edited);
+        // Grid path: build a real grid, then re-request via stale args.
+        let cell = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 802, 0, 1) };
+        let words: [u32; 8] = [
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            1,
+            cell,
+            1 | (1 << 16),
+            1 | (1 << 16),
+        ];
+        let grid = unsafe {
+            generated_exports::iyon_view_grid_create_buffer_v1(
+                pointer,
+                950,
+                0,
+                0,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+            )
+        };
+        assert!(grid < 0x8000_0000);
+        let cell_edit = unsafe {
+            generated_exports::iyon_view_grid_set_cell_v1(
+                pointer,
+                0x7fff_fe03,
+                950,
+                0,
+                9,
+                9,
+                0x7fff_fe04,
+            )
+        };
+        assert_eq!(cell_edit, grid);
     }
 
     #[test]

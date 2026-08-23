@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -267,6 +267,18 @@ pub mod generated_impls {
             axis_index: u32,
             track_word: u32,
             child_ref: u32,
+        ) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_grid_create_buffer_impl(
+            runtime: *mut NativeViewRuntime,
+            node_id_low: u32,
+            node_id_high: u32,
+            column_gap: u32,
+            row_gap: u32,
+            words: *const u32,
+            words_capacity_bytes: usize,
+            used_word_count: u32,
         ) -> u32;
     }
     unsafe extern "Rust" {
@@ -1531,6 +1543,50 @@ pub unsafe extern "C" fn iyon_view_axis_set_child_path_v1(
                         axis_index,
                         track_word,
                         child_ref,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_grid_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    column_gap: u32,
+    row_gap: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let words =
+                    generated_buffer(words, words_capacity_bytes, 4, 1048576, 0x8000_0002u32)?;
+                let used_word_count = generated_buffer_used(
+                    used_word_count,
+                    words_capacity_bytes,
+                    4,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                Ok(unsafe {
+                    generated_impls::view_grid_create_buffer_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        column_gap,
+                        row_gap,
+                        words,
+                        words_capacity_bytes,
+                        used_word_count,
                     )
                 })
             })()

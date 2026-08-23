@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 #![allow(dead_code)]
 
 #[derive(Clone, Copy, Debug)]
@@ -395,6 +395,21 @@ pub static FUNCTIONS: &[FunctionDescriptor] = &[
         max_buffer_bytes: 0,
         max_input_count: 4,
         benchmark_registration: "view.axis_set_child_path",
+    },
+    FunctionDescriptor {
+        name: "view_grid_create_buffer",
+        symbol: "iyon_view_grid_create_buffer_v1",
+        family: "constructor",
+        hotness: "warm",
+        fallback: "v4",
+        ownership: "runtime_owned",
+        borrow_duration: "call",
+        thread_affinity: "owner_thread",
+        may_allocate_native_memory: true,
+        mutates_host_state: false,
+        max_buffer_bytes: 1048576,
+        max_input_count: 262144,
+        benchmark_registration: "view.grid_create_buffer",
     },
     FunctionDescriptor {
         name: "view_grid_set_cell_path",

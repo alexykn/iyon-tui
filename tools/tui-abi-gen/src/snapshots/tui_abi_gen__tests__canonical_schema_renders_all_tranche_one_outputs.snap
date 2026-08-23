@@ -1752,6 +1752,73 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
         },
         {
           "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "column_gap",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "row_gap",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer",
+          "name": "words",
+          "type": "u32[]"
+        },
+        {
+          "buffer_length_of": "words",
+          "lowering": "buffer_length",
+          "name": "words_capacity_bytes",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "buffer_used",
+          "name": "used_word_count",
+          "type": "u32"
+        }
+      ],
+      "arity_specializations": [],
+      "benchmark_registration": "view.grid_create_buffer",
+      "borrow_duration": "call",
+      "fallback": "v4",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_grid_create_buffer_impl",
+      "max_buffer_bytes": 1048576,
+      "max_input_count": 262144,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_grid_create_buffer",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
           "lowering": "native_ref",
           "name": "base_root_ref",
           "type": "ViewRef"
@@ -3567,7 +3634,7 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
     "crates/iyon-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a",
+  "generator_blake3": "5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a",
   "handles": [
     {
       "kind": null,
@@ -3782,5 +3849,5 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
       "size": 8
     }
   ],
-  "schema_blake3": "ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4"
+  "schema_blake3": "7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498"
 }

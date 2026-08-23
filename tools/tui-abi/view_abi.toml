@@ -1392,6 +1392,71 @@ type = "ViewRef"
 lowering = "native_ref"
 
 [[function]]
+name = "view_grid_create_buffer"
+family = "constructor"
+hotness = "warm"
+implementation = "view_grid_create_buffer_impl"
+fallback = "v4"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = true
+mutates_host_state = false
+max_buffer_bytes = 1_048_576
+max_input_count = 262_144
+arity_specializations = []
+benchmark_registration = "view.grid_create_buffer"
+return = "ViewRefResult"
+
+# PERF-12 T10 (§36): flat u32 word buffer for new-Grid construction.
+# Layout: [column_track_count, column track words..., row_count,
+#          per row: row_track_word, cell_count,
+#            per cell: child_ref, span_pack (column_span | row_span<<16),
+#                      align_pack (horizontal | vertical<<16)]
+# The parser bounds-checks every read and requires the buffer to be consumed
+# exactly; child refs are resolved like any other reference argument.
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function.arg]]
+name = "node_id_low"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "node_id_high"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "column_gap"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "row_gap"
+type = "u32"
+lowering = "u32"
+
+[[function.arg]]
+name = "words"
+type = "u32[]"
+lowering = "buffer"
+
+[[function.arg]]
+name = "words_capacity_bytes"
+type = "u32"
+lowering = "buffer_length"
+buffer_length_of = "words"
+
+[[function.arg]]
+name = "used_word_count"
+type = "u32"
+lowering = "buffer_used"
+
+[[function]]
 name = "view_grid_set_cell_path"
 family = "structural_path_patch"
 hotness = "critical"

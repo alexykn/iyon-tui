@@ -24,3 +24,6 @@ export const MAX_RETAINED_DEPTH = 256;
  * realistic traces at T15.
  */
 export const MAX_DIRECT_AXIS_REFS = 1_024;
+
+/** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch cap. */
+export const MAX_DIRECT_GRID_WORDS = 65_536;

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 export type GeneratedAbiBenchmarkCase = {
   name: string;
   family: string;
@@ -38,6 +38,7 @@ export const generatedAbiCases: readonly GeneratedAbiBenchmarkCase[] = [
   { name: "view_axis_splice_buffer", family: "structural_patch", hotness: "warm", benchmarkRegistration: "view.axis_splice_buffer", scalarArgs: 7, hasBuffer: true, maxBufferBytes: 4194304, maxInputCount: 524288 },
   { name: "view_grid_set_cell", family: "structural_patch", hotness: "critical", benchmarkRegistration: "view.grid_set_cell", scalarArgs: 7, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
   { name: "view_axis_set_child_path", family: "structural_path_patch", hotness: "critical", benchmarkRegistration: "view.axis_set_child_path", scalarArgs: 17, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 4 },
+  { name: "view_grid_create_buffer", family: "constructor", hotness: "warm", benchmarkRegistration: "view.grid_create_buffer", scalarArgs: 6, hasBuffer: true, maxBufferBytes: 1048576, maxInputCount: 262144 },
   { name: "view_grid_set_cell_path", family: "structural_path_patch", hotness: "critical", benchmarkRegistration: "view.grid_set_cell_path", scalarArgs: 17, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 4 },
   { name: "view_release_many", family: "lifecycle", hotness: "cold", benchmarkRegistration: "lifecycle.release_many", scalarArgs: 2, hasBuffer: true, maxBufferBytes: 524288, maxInputCount: 131072 },
   { name: "view_ref_for_node_id", family: "exact_lookup", hotness: "critical", benchmarkRegistration: "view.ref_for_node_id", scalarArgs: 3, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
-// generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
 #[allow(dead_code)]
 pub struct NativeViewRuntime;
 
@@ -516,6 +516,28 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    column_gap: u32,
+    row_gap: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+) -> u32 {
+    let _ = runtime;
+    let _ = node_id_low;
+    let _ = node_id_high;
+    let _ = column_gap;
+    let _ = row_gap;
+    let _ = words;
+    let _ = words_capacity_bytes;
+    let _ = used_word_count;
+    0x119
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "Rust" fn view_grid_set_cell_path_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -552,7 +574,7 @@ pub unsafe extern "Rust" fn view_grid_set_cell_path_impl(
     let _ = grid_row;
     let _ = grid_column;
     let _ = child_ref;
-    0x119
+    0x11a
 }
 
 #[unsafe(no_mangle)]
@@ -566,7 +588,7 @@ pub unsafe extern "Rust" fn view_release_many_impl(
     let _ = refs;
     let _ = refs_capacity_bytes;
     let _ = used_ref_count;
-    126
+    127
 }
 
 #[unsafe(no_mangle)]
@@ -578,13 +600,13 @@ pub unsafe extern "Rust" fn view_ref_for_node_id_impl(
     let _ = runtime;
     let _ = node_id_low;
     let _ = node_id_high;
-    0x11b
+    0x11c
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "Rust" fn path_root_impl(runtime: *mut NativeViewRuntime) -> u32 {
     let _ = runtime;
-    0x11c
+    0x11d
 }
 
 #[unsafe(no_mangle)]
@@ -600,7 +622,7 @@ pub unsafe extern "Rust" fn path_child_impl(
     let _ = step_kind;
     let _ = expected_view_kind;
     let _ = selector;
-    0x11d
+    0x11e
 }
 
 #[unsafe(no_mangle)]
@@ -638,7 +660,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_impl(
     let _ = ancestor3_node_id_high;
     let _ = wrap;
     let _ = align;
-    0x11e
+    0x11f
 }
 
 #[unsafe(no_mangle)]
@@ -662,7 +684,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d1_impl(
     let _ = ancestor0_node_id_high;
     let _ = wrap;
     let _ = align;
-    0x11f
+    0x120
 }
 
 #[unsafe(no_mangle)]
@@ -690,7 +712,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d2_impl(
     let _ = ancestor1_node_id_high;
     let _ = wrap;
     let _ = align;
-    0x120
+    0x121
 }
 
 #[unsafe(no_mangle)]
@@ -722,7 +744,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d3_impl(
     let _ = ancestor2_node_id_high;
     let _ = wrap;
     let _ = align;
-    0x121
+    0x122
 }
 
 #[unsafe(no_mangle)]
@@ -758,7 +780,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d4_impl(
     let _ = ancestor3_node_id_high;
     let _ = wrap;
     let _ = align;
-    0x122
+    0x123
 }
 
 #[unsafe(no_mangle)]
@@ -770,7 +792,7 @@ pub unsafe extern "Rust" fn edit_txn_begin_impl(
     let _ = runtime;
     let _ = base_root_ref;
     let _ = expected_edit_count;
-    0x123
+    0x124
 }
 
 #[unsafe(no_mangle)]
@@ -808,7 +830,7 @@ pub unsafe extern "Rust" fn edit_txn_add_text_layout_impl(
     let _ = ancestor3_node_id_high;
     let _ = wrap;
     let _ = align;
-    136
+    137
 }
 
 #[unsafe(no_mangle)]
@@ -820,7 +842,7 @@ pub unsafe extern "Rust" fn edit_txn_commit_render_impl(
     let _ = runtime;
     let _ = host;
     let _ = txn_ref;
-    0x125
+    0x126
 }
 
 #[unsafe(no_mangle)]
@@ -830,7 +852,7 @@ pub unsafe extern "Rust" fn edit_txn_abort_impl(
 ) -> i32 {
     let _ = runtime;
     let _ = txn_ref;
-    138
+    139
 }
 
 #[unsafe(no_mangle)]
@@ -840,7 +862,7 @@ pub unsafe extern "Rust" fn style_atom_create_cstring_impl(
 ) -> u32 {
     let _ = runtime;
     let _ = value;
-    0x127
+    0x128
 }
 
 #[unsafe(no_mangle)]
@@ -860,7 +882,7 @@ pub unsafe extern "Rust" fn style_create_bits_impl(
     let _ = foreground_ref;
     let _ = background_ref;
     let _ = theme_atom_ref;
-    0x128
+    0x129
 }
 
 #[unsafe(no_mangle)]
@@ -880,7 +902,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_impl(
     let _ = style_ref;
     let _ = wrap;
     let _ = align;
-    0x129
+    0x12a
 }
 
 #[unsafe(no_mangle)]
@@ -904,7 +926,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_impl(
     let _ = style_ref;
     let _ = wrap;
     let _ = align;
-    0x12a
+    0x12b
 }
 
 #[unsafe(no_mangle)]
@@ -934,7 +956,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_2_impl(
     let _ = style1;
     let _ = wrap;
     let _ = align;
-    0x12b
+    0x12c
 }
 
 #[unsafe(no_mangle)]
@@ -968,7 +990,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_3_impl(
     let _ = style2;
     let _ = wrap;
     let _ = align;
-    0x12c
+    0x12d
 }
 
 #[unsafe(no_mangle)]
@@ -1006,7 +1028,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_4_impl(
     let _ = style3;
     let _ = wrap;
     let _ = align;
-    0x12d
+    0x12e
 }
 
 #[unsafe(no_mangle)]
@@ -1030,7 +1052,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_2_impl(
     let _ = style1;
     let _ = wrap;
     let _ = align;
-    0x12e
+    0x12f
 }
 
 #[unsafe(no_mangle)]
@@ -1058,7 +1080,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_3_impl(
     let _ = style2;
     let _ = wrap;
     let _ = align;
-    0x12f
+    0x130
 }
 
 #[unsafe(no_mangle)]
@@ -1090,12 +1112,12 @@ pub unsafe extern "Rust" fn view_text_create_cstring_4_impl(
     let _ = style3;
     let _ = wrap;
     let _ = align;
-    0x130
+    0x131
 }
 
 #[test]
 fn generated_function_count_is_stable() {
-    assert_eq!(generated::FUNCTION_COUNT, 49);
+    assert_eq!(generated::FUNCTION_COUNT, 50);
 }
 
 #[test]
@@ -1270,7 +1292,7 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
                 1,
             )
         },
-        126
+        127
     );
     assert_eq!(
         unsafe { generated_exports::iyon_runtime_noop_v1(core::ptr::null_mut()) },
@@ -1334,7 +1356,7 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     );
     assert_eq!(
         unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 1, 0) },
-        0x11b
+        0x11c
     );
     assert_eq!(
         unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 0, 0) },

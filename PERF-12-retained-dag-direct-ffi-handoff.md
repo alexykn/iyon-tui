@@ -6218,3 +6218,217 @@ payload bytes, SHARED_PATH-style gate win at 0.9821x of direct_7v2 total
 time on TEXT_METADATA_PATCH) with clean degradation on every hint-miss path;
 axis/grid edit derivations land with their native primitives in T10, payload
 families in T11, recovery hardening in T12, and boundary routing in T13.
+
+## T10 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T10 (PERF-12.7 wide retained edits)
+parent:       12.7
+sections:     §33 PersistentSeq preservation, §34 wide sidecar exception,
+              §35 wide native edit path, §36 Grid, §96 wide benchmark gate
+supporting:   §28 AxisEdit/GridEdit derivation hints, §29/§30 borrowed
+              transport and scratch policy, §50 retained caps, §91 structural
+              counters, §23 native cache-first rule
+```
+
+### 2. Commits
+
+```text
+b63a64c  perf(tui): preserve logarithmic wide edits in retained DAG FFI
+```
+
+This record is appended in the immediately following documentation commit on
+`perf-refactor`. The §96 artifact summary records `git_sha = 6e4787f` because
+its clean-tree capture ran immediately before the T10 implementation commit;
+the benchmark source and all implementation files were then committed in
+`b63a64c`, with no semantic drift between capture and commit. This is the
+same explicit pre-amend/pre-commit provenance convention used by T6–T9.
+
+### 3. Review findings
+
+```text
+finding 1: a first design draft converted a flat base axis to PersistentSeq
+       inside the edit constructor. That would make the first 100k edit
+       O(width), violating §33 and the user's wide-performance requirement.
+       Correction: row/column construction above the 1,024-wide threshold
+       seeds a PersistentSeq sidecar once; every subsequent set/insert/remove/
+       splice is path-copying only. Derived nodes carry a lazy frozen `children`
+       accessor; the retained path never asks for the flat array.
+
+finding 2: the first Grid cell implementation copied the addressed row's
+       complete cell array. For a 100k-cell row this silently regrew a flat
+       wide edit. Correction: wide Grids seed a BRIDGE_GRID_SEQUENCE sidecar
+       with PersistentSeq cells plus row offsets/tracks; gridSetCell performs
+       one logarithmic set and uses a lazy rows accessor. Narrow Grids retain
+       the eager semantic shape. The wide-grid conformance test proves the
+       sidecar path has bounded sequence counters and zero retained child
+       traversal.
+
+finding 3: T8 documented that no native Grid constructor existed. The T10
+       §36 scope requires new-Grid construction on the same borrowed lane, so
+       a canonical `view_grid_create_buffer` function was added rather than
+       deferring Grid again. It uses one bounded u32 buffer with explicit
+       track/row/cell framing, exact-consumption validation, packed spans and
+       alignments, and owned native Grid construction; no persistent buffer
+       pointer survives the call.
+
+finding 4: the generated ABI manifest/function count changed from 49 to 50,
+       but the handwritten bootstrap pointer map initially omitted the new
+       `viewGridCreateBuffer` pointer. Correction: the same-image bootstrap
+       map, NativeAbiPointers surface, function-name list, generated outputs,
+       conformance fixture, and pinned function-count assertion now all agree.
+
+finding 5: inserting the new ABI function shifted the generated conformance
+       stub return values, while two fixed expected values in the generator's
+       Rust fixture remained at their T9 values. Correction: the canonical
+       Rust renderer now emits the shifted expectations (127 and 0x11c), the
+       snapshot was refreshed, and `tui-abi-gen check` is byte-fresh.
+
+finding 6: the native Grid parser initially narrowed packed track amounts to
+       u16 without rejecting high bits. Correction: raw amounts above u16::MAX
+       are rejected before construction, and zero cell spans/invalid alignment
+       codes are rejected as well; generated buffer length/count checks remain
+       active before the unsafe implementation.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+packages/iyon-runtime/src/tui/persistent_seq.ts
+    §91 counters for nodes_cloned, branches_cloned, items_iterated; mutation
+    paths instrumented without scans/allocations outside their existing
+    path-copy work
+
+packages/iyon-runtime/src/tui/ir.ts
+    AxisSet/AxisSplice/GridCell derivation hints; BridgeSequenceOverride and
+    BridgeGridSequenceOverride WeakMap sidecars; PersistentSeq remains the
+    authoritative wide semantic storage
+
+packages/iyon-runtime/src/tui/values/view.ts
+    axisSetChildForTransport, axisSpliceForTransport, and
+    gridSetCellForTransport; wide axis/grid initial seeding above 1,024;
+    frozen lazy accessors preserve exact BridgeViewNode shape and only flatten
+    on Direct/fallback access; normal narrow View construction is unchanged
+
+packages/iyon-runtime/src/tui/retained_dag.ts
+    axis set/splice and Grid cell derivations resolve only replacement or
+    inserted child nodes, then call existing native retained primitives;
+    viewAxisSetChild/viewAxisSpliceBuffer/viewGridSetCell carry no old child
+    list; reusable bounded grid word scratch; new Grid materializer uses one
+    generated borrowed u32 buffer and native exact parser; §91 counters remain
+    visible
+
+canonical ABI/native
+    view_grid_create_buffer added to view_abi.toml and all generated Rust/C/
+    TypeScript/manifest/conformance outputs; NativeViewRuntime parses packed
+    Grid tracks, row metadata, cell refs/spans/alignments and publishes via
+    the shared semantic cache; §23 cache-first consults cover Grid creation,
+    axis set/splice, and Grid cell edits
+
+tests/perf12_t10_wide.test.ts
+    seven tests covering axis replacement, insert/remove/splice parity,
+    2k/10k/100k sequence counters, new Grid construction, wide Grid cell
+    replacement, larger Grid construction, and over-cap fallback
+bench/perf12_t10_wide_edits.ts + PERF-12-t10-wide-edits.jsonl
+    §96 smoke profile, clean isolated arm runs, retained/direct total timing,
+    structural counter records, full provenance
+```
+
+Deliberately NOT done yet: production boundary routing remains T13; payload
+families remain T11; Grid/axis edits use this T10 native lane but do not add
+an application-specific production API — the `ForTransport` constructors are
+private retained-candidate machinery, matching the existing T9 transport
+constructor pattern.
+
+### 5. Provenance block
+
+```text
+source revision at capture: b63a64c3be04701273ef4e79beb852aff56b0846
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      c47c40f39493b620478fd5ace608fff08a3479f4c71143fd6bce547af075818e
+schema BLAKE3:              7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
+generator BLAKE3:           5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Replace/insert/remove/splice remain O(log₃₂ N) at widths 2k/10k/100k:
+   perf12_t10_wide.test.ts performs set at all three widths. Per one edit:
+     width 2,000:   nodes_cloned=3, branches_cloned=2, items_iterated=32
+     width 10,000:  nodes_cloned=3, branches_cloned=2, items_iterated=32
+     width 100,000: nodes_cloned=4, branches_cloned=3, items_iterated=32
+   generous assertions are <=10 nodes, <=8 branches, <=64 items at every
+   width. A lazy-access assertion proves no sequence items are iterated while
+   constructing the retained node; flat children are only produced when
+   explicitly accessed. Insert/remove/splice render-parity tests use width
+   2,000 and all pass.
+
+2. No flat materialization on the retained one-edit path:
+   all retained wide cases report bridge_children_visited=0. Final §96
+   retained records (300 measured operations per case) report:
+     axis_set@2k:     derivations=300, materializers=300, words=0,
+                      seq nodes=900, items=9,600
+     axis_set@10k:    derivations=300, materializers=300, words=0,
+                      seq nodes=900, items=9,600
+     axis_set@100k:   derivations=300, materializers=300, words=0,
+                      seq nodes=1,200, items=9,600
+     axis_insert@2k:  derivations=300, materializers=300, words=600
+     axis_remove@2k:  derivations=300, materializers=0, words=0
+     splice4@2k:      derivations=300, materializers=1,200, words=2,400
+   The only materializers are newly inserted/replacement children; no old
+   sequence is inspected or transported. PASS.
+
+3. Grid §36:
+   new Grid construction: 2-cell and 400-cell grids pass render/installation
+   tests through one borrowed word buffer; a 22,000-cell grid exceeds the
+   65,536-word retained scratch cap and cleanly falls back while the old root
+   remains installed. Retained wide Grid cell replacement at 2,000 cells
+   clones bounded sequence work, reports derivation +1, direct child
+   materializer +1, bridge_children_visited +0, and matches Direct output.
+   Native Grid parsing tests cover track kinds, gaps, spans, alignments,
+   malformed/truncated buffers, and §23 cache-first re-request. PASS.
+
+4. §96 smoke timing (total operation time, including host commit; profile
+   smoke, 20 warmup rounds + 30 measured rounds, 10 operations/block):
+     mode             width       retained/direct median ratio
+     axis_set         2,000       0.5443
+     axis_set        10,000       0.5575
+     axis_set       100,000       0.5337
+     axis_insert      2,000       0.4999
+     axis_remove      2,000       0.4928
+     axis_splice4     2,000       0.0411
+   Retained is faster in every measured case. The 100k totals include the
+   unavoidable host repaint/layout of a 100k-node view; the structural
+   counters separately prove the edit itself remains logarithmic and sends
+   no old child sequence.
+
+§23 native cache-first tests: 2 new Rust tests cover Grid construction and
+axis/Grid edit re-requests with stale base/child arguments; all return the
+live NodeId ref before consuming payload/children.
+
+Regression battery: perf12_t10_wide 7/7; full runtime test run 145 pass /
+1 fail (the T2-documented pre-existing cross-file interference in the weak-
+cache expiry test); tsc clean; tui-abi-gen check fresh and 27/27; cargo
+iyon-native 36 lib tests plus all generated suites green; cargo fmt clean;
+clippy clean.
+```
+
+### 7. Status line
+
+**Tranche T10 status: COMPLETE.** Wide row/column replacement and splice
+operations now preserve PersistentSeq logarithmic work, transport only new
+child refs through retained native edits, and keep flat semantic children
+lazy; Grid creation uses the bounded borrowed buffer lane and Grid cell edits
+use the retained native PersistentSeq path. §96 smoke timing beats direct_7v2
+at every tested width and operation; payload families remain T11, recovery
+hardening T12, and production boundary routing T13.

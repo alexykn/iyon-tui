@@ -908,6 +908,31 @@ This posture is correct while mounted structural scope counts stay small and hot
 
 Either way the decision is made once, from committed benchmark evidence, and documented in the tranche records — never re-litigated informally mid-sequence.
 
+## Tranche implementation records
+
+### R0 implementation record
+
+**1. Scope statement.** Tranche R0 (Steps 2-adapt / 3-rewire / 4-stop; AMENDMENT-C §17.2–§17.4): lexical composition machinery retirement, active-scope helper re-shaping, fall-through parity proof, cold-cost gate.
+
+**2. Commits.** `acc947f` — refactor(tui): retire T13.1 lexical composition machinery (R0). Benchmark JSONL captured at working tree `4f4e576` (pre-commit), committed in `acc947f`.
+
+**3. Review findings.**
+- Finding 1: AMENDMENT-C §17.2 says "adapt" the Step 2 runtime, but once helpers stop consulting module/site slots every structure in it (module registry, site buckets, occurrence cursors, keyed groups, pass context) has zero callers. Per the dead-code directive, retired outright rather than kept dormant; R1 rebuilds against scope semantics that do not map onto these shapes. Dual-epoch transaction discipline survives via git history (`235a9da`) and handoff §21 prose.
+- Finding 2: Step 3 comparators were likewise unreachable without slots. Retired to git history (`dad92b5`); their semantic contracts (decorate() merge deltas, wide-axis bail-out, layout-patch three-shape rules) remain documented in handoff §12 for R1's scoped reimplementation.
+- Finding 3: `View.__composedAxis` duplicated exactly what `View.vertical/horizontal` already do from builder callbacks — removed instead of kept for a caller that no longer exists.
+
+**4. Implementation summary.** `composition.ts` and `composition_registry.ts` deleted; `compose.ts` reduced to 27 value-shaped fall-through helpers (`composeText(content)` etc.) whose signatures are final for the R1 scoped arm; `internal-composition.ts` reduced to the helper surface only; `__composedAxis` removed from `values/view.ts`; module/site test suite deleted; parity suite rewritten (11 tests); interleaved-arm cold-cost benchmark added with JSONL evidence.
+
+**5. Provenance block.** Source revision at capture: `4f4e57604f284b19981cc24f03dc842b39538478` (commit `acc947f`). bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). No native addon/schema/generator involvement (pure TypeScript tranche).
+
+**6. Gate evidence.**
+- *All T13.1 suites green with helpers inactive:* `perf12_t13_1_compose.test.ts` 11 pass / 0 fail (39 assertions). The former `perf12_t13_1_composition.test.ts` no longer exists (machinery deleted).
+- *Measured cold construction ≤3%:* three independent process runs of `perf12_t13_1_r0_cold_fallthrough.ts` (30 rounds × 2,000 ops/arm, interleaved A/B): composed-vs-direct median overhead **+0.46% / −0.14% / −0.29%** — inside noise; final run recorded in `PERF-12-T13.1-R0-cold-fallthrough.jsonl` (direct median 5,867 ns vs composed 5,850 ns, −0.29%). Gate pass on every run.
+- *No retired symbols remain:* typecheck clean (`bun run typecheck`, 0 errors; plugins 0 errors) — no `CompositionModuleId`/`CompositionSiteId`/site-bucket/module-registration references compile anywhere.
+- *Known interference failure unchanged:* full runtime battery 143 pass / 1 fail; the single failure is `perf11v4_direct.test.ts` weak-cache expiry, which passes in isolation — identical to the pre-R0 documented state (§39).
+
+**7. Status line.** **Tranche R0 status: COMPLETE.** The lexical-composition architecture is fully retired, helpers carry their final scoped call shape with proven ≤noise fall-through cost, and the tree is clean for R1 (RetainedExecutionScope substrate).
+
 ---
 
 # 33. Files

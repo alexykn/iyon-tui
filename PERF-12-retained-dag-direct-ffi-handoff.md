@@ -6469,3 +6469,188 @@ finding R4: the original T10 smoke artifact omitted §96 replacement widths 32
 
 The review corrections preserve the T10 status; no T11+ scope was pulled
 forward.
+
+## T12 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T12 (PERF-12.9 transaction integrity)
+parent:       12.9
+sections:     §43 multi-branch DAG materialization, §44 temporary lease
+              transaction, §45 host atomicity, §46 stale hints, §47 targeted
+              one-retry recovery, §73 authoritative recovery helper,
+              §118 failure injection suite
+```
+
+### 2. Commits
+
+```text
+15ae34c  perf(tui): harden multi-branch materialization and stale-ref recovery
+```
+
+The generated ABI reference, schema outputs, native addon-facing status
+surface, retained transaction implementation, smoke harness, and T12 tests
+are all included in this commit. The raw smoke artifact was captured after
+this commit and is included in the following documentation commit.
+
+### 3. Review findings
+
+```text
+finding 1: T6/T7 already deduplicated identical BridgeViewNode objects in a
+       transaction-local Map, but there was no T12-specific proof spanning
+       multiple changed branches. Correction: the T12 suite constructs a
+       shared child referenced by both branches and asserts exactly two
+       materializer calls (one parent + one child), with render parity.
+
+finding 2: the native ABI status cell already had an unused detail word, but
+       generated TypeScript discarded it by throwing an untyped Error. That
+       made §47 unable to identify a stale child without probing every ref.
+       Correction: the canonical ABI now emits `view_status_detail`; native
+       constructors/edit primitives record child ordinals or a base-ref kind;
+       generated wrappers throw NativeAbiStatusError carrying status/detail.
+
+finding 3: retained materializer failures were previously converted directly
+       to FastFallback, so a stale child hint could not receive the required
+       one targeted retry. Correction: ensureNative maps the native detail to
+       the corresponding semantic child, invalidates only that hint, uses the
+       retained NodeId path or §73 Direct recovery helper, and retries the
+       parent once. A transaction counter prevents a second retry.
+
+finding 4: the existing exact-root recovery acquired a NodeId lease but did
+       not release that temporary acquisition after the host retry. Correction:
+       the recovery path now releases exactly that extra lease in a finally
+       block; the boundary's durable root lease remains untouched.
+
+finding 5: releaseAllExcept previously removed every equal ref from the temp
+       list. Correction: it transfers exactly one lease occurrence and batch-
+       releases the rest, preserving correct accounting if a future path
+       acquires the same ref more than once.
+
+finding 6: no persistent transaction record, second semantic cache, or
+       borrowed-buffer retention was introduced. The exceptional §73 helper
+       decodes synchronously, publishes through the shared publication funnel,
+       returns one lease, and retains no napi_value.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+§43/§44  MaterializeTx.refs deduplicates shared semantic nodes; temporary
+         NativeRef leases remain private to one transaction and transfer only
+         the completed root to RetainedRootBoundary. All failure paths use one
+         batch release; root transfer removes exactly one lease occurrence.
+§45     RetainedRootBoundary installs/render-commits only after complete root
+         materialization. Host failure leaves previousRef and host state in
+         place; temporary and newly-acquired boundary leases are drained.
+§46/47  generated NativeAbiStatusError exposes FAST_CACHE_MISS detail;
+         constructors and edits identify stale child ordinals/base refs;
+         ensureNative and derivation edits perform one targeted retry, then
+         return the complete fallback without looping.
+§73     `tuiViewAbiDecodeRef` is an exceptional synchronous N-API helper that
+         decodes one BridgeViewNode, publishes with the shared semantic cache,
+         and returns a leased NativeRef. It is used only when a stale node has
+         no retained materializer (the T12 dormant text-child test).
+§74     `view_status_detail` is generated through the canonical ABI and reads
+         the runtime's status detail side channel only on an error path.
+§118   T12 transaction suite covers shared-branch dedupe, child/base stale
+         recovery, dormant Direct recovery, unsupported-child failure, a
+         second-stale-child bounded retry, host failure, old-host preservation,
+         and temporary lease invariants. Native unit coverage proves malformed
+         parent publication returns child detail before publishing a root.
+```
+
+Deliberately NOT done yet: production boundary routing remains T13; T11
+payload-family materializers remain outside this tranche; no persistent mirror,
+changed-closure VM, asynchronous command ring, or per-node native lease was
+added. Existing T8 buffer-cap fallback and T11 payload work remain the
+authoritative owners of their respective specialized failure paths.
+
+### 5. Provenance block
+
+```text
+source revision at capture: 15ae34c6f07ac0db8529e8c2ca3d0e83912c88e1
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      0e8f48d641c6b38b6fdfa204b0c3da1c9f0c8e1dfb4a1d32c87e665ef6918d5b
+schema BLAKE3:              3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
+generator BLAKE3:           4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Common ancestors built once across branches:
+   perf12_t12_transaction.test.ts §43 passes. A View.horizontal with one
+   shared spacer in both child positions installs through one transaction;
+   direct_materializer_calls = 2 (one row + one spacer), bridge_children_visited
+   = 2, host_mutations = 1, and the retained screen equals the Direct oracle.
+   PASS.
+
+2. Exactly one host mutation after complete materialization:
+   the same §43 case reports host_mutations = 1; all other T12 successful
+   installs in the smoke run report one host mutation per operation (50/50).
+   The boundary commits only after ensureNative returns the complete root.
+   PASS.
+
+3. Temporary leases drain on success, error, and failure injection:
+   §45/§118 child failure keeps leased_slots exactly at the old-root count,
+   preserves the old screen, and subsequently accepts a valid install;
+   second-stale-child failure keeps the old screen and is followed by a
+   successful exact-root render; disposed-host failure leaves the lease count
+   unchanged. The eight JS T12 tests pass with 33 assertions; native test
+   `t12_stale_child_status_detail_precedes_parent_publication` passes and
+   observes zero published slots after the failed parent. Existing §111 Rust
+   lease tests remain green. PASS.
+
+4. One bounded stale-ref retry then authoritative fallback:
+   child recovery: stale_ref_retries delta = 1 and render parity PASS;
+   derivation-base recovery: stale_ref_retries delta = 1 and text parity PASS;
+   dormant text child: stale_ref_retries delta = 1 and §73 Direct decode
+   recovery/render parity PASS; two stale children: install returns undefined,
+   stale_ref_retries delta = 1, old host remains unchanged, and no second
+   retry occurs. Native detail cells report child ordinal 0/1 as appropriate;
+   the raw ABI test observed detail kind `0x40000000` and ordinal `0`.
+   PASS.
+
+5. Host atomicity:
+   failed child materialization and disposed-host render both leave the
+   previous boundary root installed; no host mutation is recorded on either
+   failure. The existing Rust failed_host_install_retains_old_root test and
+   the T12 JS failure cases pass. PASS.
+
+6. Smoke-profile raw evidence (timing build, total operation time including
+   host commit, 20 warmup + 50 measured operations, fresh staged addon):
+   PERF-12-t12-transaction.jsonl records multi_branch_shared_child with
+   median 13,979 ns, p95 47,959 ns, p99 58,083 ns, samples retained, and
+   structural counters bridge_hint_hits=50, direct_materializer_calls=100,
+   bridge_children_visited=100, stale_ref_retries=0, cold_fallbacks=0,
+   host_mutations=50. This is integrity evidence, not an adoption decision.
+```
+
+Regression/verification evidence:
+
+```text
+T6–T10 plus T12 TypeScript suites: 42 pass / 0 fail / 732 expect calls
+T12 suite alone:                    8 pass / 0 fail / 33 expect calls
+iyon-native lib tests:              37 pass / 0 fail / 1 ignored
+ABI generator freshness check:      pass
+TypeScript typecheck:               pass
+cargo fmt --check:                  pass
+native addon staged:                pass; SHA recorded above
+```
+
+### 7. Status line
+
+**Tranche T12 status: COMPLETE.** Multi-branch retained materialization now
+has one transaction-local identity/lease protocol, atomic host installation,
+status-directed stale-child/base recovery with one bounded retry, and an
+exceptional shared-cache Direct recovery helper; §118 success and failure
+paths are covered by passing JS/native tests. T13 still owns production
+boundary routing and T11 still owns payload-family materializers.

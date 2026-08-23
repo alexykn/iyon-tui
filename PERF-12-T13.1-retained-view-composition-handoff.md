@@ -1033,6 +1033,33 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R3 status: COMPLETE.** Scopes project as stable component refs over independent sub-DAG roots; the semantic-DAG gate passes at scale; the R6b instrument shows flat per-update cost. Ready for R4 (tracked State<T> invalidation).
 
+### R4 implementation record
+
+**1. Scope statement.** Tranche R4 (Step 7R; AMENDMENT-C §7/§18): generic tracked `State<T>` — read tracking during evaluation, write ⇒ dirty + enqueue-once, dependency refresh on commit/abort, purity enforcement, public export.
+
+**2. Commits.** `3eae810` — feat(tui): add T13.1 tracked State invalidation (R4).
+
+**3. Review findings.**
+- Finding 1: §7.2 (reject writes inside bodies) vs §22.3 (writes during a running transaction schedule a later pass) reconcile cleanly by LOCATION: writes from inside any component body are rejected deterministically; writes outside bodies but inside a running flush join the standard drain loop as a later pass. Both behaviors verified.
+- Finding 2 (test-design lesson, recorded for Step 13R): the abort-lifecycle test initially drove re-evaluation through the parent holder and expected the child body to run — but the props-skip gate correctly bypassed it. The dependency lifecycle must be tested via direct scope invalidation; skip-gate precedence over dirty-state is itself worth pinning (a skipped body never consumes its pending reads).
+- Finding 3: the abort test also surfaced that a still-failing body re-throws when its COMMITTED subscription drives re-execution — correct behavior (invalidation ≠ success), and recovery semantics were asserted explicitly (failure cleared ⇒ next execution adopts both reads).
+
+**4. Implementation summary.** `tracked-state.ts` NEW (~130 lines: StateSource with subscriber set, purity gate, Object.is publish discipline, `trackedStateSubscriberCount` diagnostic). `execution.ts`: committed/pending dependency sets on scopes, `linkDependency`, commit-time diff promotion (unsubscribe dropped / subscribe new), abort discards pendings only, dispose unsubscribes, `invalidateFromState` entry with dedicated counter. `index.ts`: `state`/`State` public exports. 8-test proof suite added.
+
+**5. Provenance block.** Source revision at capture: commit `3eae810` parent working tree; bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Pure TypeScript tranche; native addon exercised headlessly in tests, not rebuilt.
+
+**6. Gate evidence.**
+- *Purity enforcement:* `counter.set(99)` inside a body throws `TUI_EXECUTION_STATE_WRITE_DURING_EVALUATION`; value unmutated; nothing committed.
+- *Subscription lifecycle:* conditional read stops ⇒ writes to the dropped state leave the scope clean (0 executions) while live-dependency writes still invalidate (+1).
+- *Abort retains committed set:* aborted read of `second` does NOT subscribe (write ⇒ 0 executions); committed `first` still drives re-execution (throws again while failure armed — invalidation ≠ success); after recovery both reads drive invalidation (+1 each).
+- *Object.is discipline:* same-primitive and same-reference sets produce ZERO state invalidations/enqueues; `update()` transition applies end-to-end.
+- *Batching:* two states read by one scope, both written synchronously ⇒ exactly one flush pass, one body execution; shared-state fan-out executes both subscribers in one pass.
+- *Dispose safety:* writes after runtime dispose are silent no-ops; subscriber count follows live scopes (`trackedStateSubscriberCount` → 0).
+- *§31.1 EXECUTION-FRONTIER GATE END-TO-END (through native projections):* App/A/B/C each with own State; `stateB.set("written")` alone schedules work ⇒ body executions App=0 A=0 B=1 C=0 by counters; `state_invalidations` delta exactly 1; only B's content root advances ("B=written" visible through its projection).
+- *Battery:* typecheck clean; full suite 199 pass / 1 fail (documented perf11v4 interference, passes isolated); cold fall-through gate re-run −0.57% (≤3%).
+
+**7. Status line.** **Tranche R4 status: COMPLETE.** Exact update provenance is live: one tracked write reaches exactly the scopes that read it, nothing else executes, and the frontier gate passes end-to-end through real projections. Ready for R5 (dirty scheduler hardening: batching/dedup formalization per §17).
+
 ---
 
 # 33. Files

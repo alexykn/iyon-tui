@@ -6664,4 +6664,15 @@ finding R7: adding the generated `view_status_detail` function increased the
        generated outputs. Correction in 4f9a9b8 (`test(tui): update generated
        ABI count for T12 status detail`): the assertion now pins 51; the
        generated ABI layout/conformance tests and vertical slice are green.
+
+finding R8: the first committed T12 smoke artifact used 20 warmup/50 measured
+       operations and omitted the §103 phase/CI fields. Correction in 47c26b0
+       (`bench(tui): align T12 smoke output with result schema`): the harness
+       now uses 50 warmup/500 measured operations, records the required
+       candidate/provenance/phase fields, p99, and a bootstrap median CI. The
+       raw JSONL was refreshed at that revision. The authoritative integrity
+       record is now median 5,729 ns, p95 19,834 ns, p99 46,333 ns,
+       median_ci95_ns [5,354, 6,209], with host_mutations=500,
+       direct_materializer_calls=1,000, bridge_children_visited=1,000,
+       stale_ref_retries=0, and cold_fallbacks=0.
 ```

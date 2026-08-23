@@ -1,5 +1,6 @@
 ---
 source: tools/tui-abi-gen/src/main.rs
+assertion_line: 309
 expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_manifest.json\").expect(\"manifest output\")"
 ---
 {
@@ -463,9 +464,9 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
         },
         {
           "buffer_length_of": null,
-          "lowering": "native_ref",
+          "lowering": "u32",
           "name": "decoration_ref",
-          "type": "ViewRef"
+          "type": "u32"
         }
       ],
       "arity_specializations": [
@@ -3781,5 +3782,5 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
       "size": 8
     }
   ],
-  "schema_blake3": "fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d"
+  "schema_blake3": "ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4"
 }

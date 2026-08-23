@@ -353,8 +353,8 @@ lowering = "u32"
 
 [[function.arg]]
 name = "decoration_ref"
-type = "ViewRef"
-lowering = "native_ref"
+type = "u32"
+lowering = "u32"
 
 [[function]]
 name = "view_axis_create_buffer"

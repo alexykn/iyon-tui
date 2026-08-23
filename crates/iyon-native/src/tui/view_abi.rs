@@ -2205,6 +2205,13 @@ pub unsafe extern "Rust" fn view_text_layout_patch_root_impl(
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref without
+    // resolving the base or consuming scalars.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
     let Ok(wrap) = decode_wrap(wrap) else {
         return FAST_INVALID;
     };
@@ -2244,13 +2251,22 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
     let Ok(runtime) = runtime_mut(runtime) else {
         return FAST_INVALID;
     };
-    if mask == 0 || mask & !PATCH_MASK != 0 {
-        return FAST_INVALID;
-    }
     let Ok(node_id) = node_id(node_id_low, node_id_high) else {
         return FAST_INVALID;
     };
-    if runtime.resolve_ref(decoration_ref).is_err() {
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref without
+    // resolving the base or consuming scalar arguments.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    if mask == 0 || mask & !PATCH_MASK != 0 {
+        return FAST_INVALID;
+    }
+    // PERF-12 T9: decoration_ref is part of the legacy patch surface but is
+    // not consumed by any mask branch; 0 means absent and must not fail.
+    if decoration_ref != 0 && runtime.resolve_ref(decoration_ref).is_err() {
         return FAST_CACHE_MISS;
     }
     let Ok((base_view, _)) = runtime.resolve_ref(base) else {
@@ -4220,6 +4236,110 @@ mod tests {
             )
         };
         assert!(ok < 0x8000_0000);
+    }
+
+    #[test]
+    fn text_layout_patch_consults_semantic_cache_and_clones_payload_perf12_t9() {
+        // PERF-12 §23/§38: a wrap/align-only patch clones the base's retained
+        // text payload under the new NodeId, and a live NodeId short-circuits
+        // without resolving the base ref.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let base = unsafe {
+            generated_exports::iyon_view_text_create_cstring_v1(
+                pointer,
+                100,
+                0,
+                c"hello".as_ptr(),
+                0,
+                1,
+                1,
+            )
+        };
+        assert!(base < 0x8000_0000);
+        // WrapMode::Grapheme = 2, HorizontalAlign::Center = 2 (schema codes).
+        let patched = unsafe {
+            generated_exports::iyon_view_text_layout_patch_root_v1(pointer, base, 101, 0, 2, 2)
+        };
+        assert!(patched < 0x8000_0000);
+        assert_ne!(patched, base);
+        assert_eq!(patched, unsafe {
+            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 101, 0)
+        });
+        // Cache-first consult: same NodeId with a stale base must return the
+        // cached ref instead of failing on the base resolution.
+        let again = unsafe {
+            generated_exports::iyon_view_text_layout_patch_root_v1(
+                pointer,
+                0x7fff_ff00,
+                101,
+                0,
+                3,
+                3,
+            )
+        };
+        assert_eq!(again, patched);
+    }
+
+    #[test]
+    fn common_patch_applies_scalar_mask_and_accepts_absent_decoration_ref_perf12_t9() {
+        // PERF-12 T9: the common scalar patch applies padding + width to the
+        // base view; decoration_ref = 0 means absent and must not fail.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let base = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 200, 0, 1) };
+        assert!(base < 0x8000_0000);
+        // PATCH_PADDING = 4 | PATCH_WIDTH = 8; padding_tr packs top|right<<16.
+        const MASK: u32 = 4 | 8;
+        let patched = unsafe {
+            generated_exports::iyon_view_common_patch_root_v1(
+                pointer,
+                base,
+                201,
+                0,
+                MASK,
+                3 | (4 << 16),
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        assert!(patched < 0x8000_0000);
+        assert_eq!(patched, unsafe {
+            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 201, 0)
+        });
+        // Cache-first consult: live NodeId wins over a stale base ref.
+        let again = unsafe {
+            generated_exports::iyon_view_common_patch_root_v1(
+                pointer,
+                0x7fff_ff00,
+                201,
+                0,
+                MASK,
+                0,
+                0,
+                2,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
+        assert_eq!(again, patched);
+        // An empty mask stays invalid.
+        let invalid = unsafe {
+            generated_exports::iyon_view_common_patch_root_v1(
+                pointer, base, 202, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            )
+        };
+        assert_eq!(invalid, FAST_INVALID);
     }
 
     #[test]

@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d
+// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
 // generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
 #![allow(dead_code)]
 
 //! Canonical pointer-free ABI types and constants.
 
-pub const SCHEMA_BLAKE3: &str = "fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d";
+pub const SCHEMA_BLAKE3: &str = "ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4";
 pub const GENERATOR_BLAKE3: &str =
     "e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a";
 

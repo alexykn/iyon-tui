@@ -64,6 +64,7 @@ import {
   VIEW_BRIDGE_SCHEMA_VERSION,
 } from "../ir.ts";
 import { insets, Insets } from "./geometry.ts";
+import { setBridgeDerivation, type BridgeCommonScalarDerivation } from "../ir.ts";
 import { StyleSpec } from "./style.ts";
 import { TextSpan, type HorizontalAlign, type WrapMode } from "./text.ts";
 
@@ -501,20 +502,117 @@ export class View {
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
     const child = decorated?.child ?? nodeForBridge(this);
     const next: DecorationNode = { ...current, ...decoration, style: decoration.style === undefined ? current.style : mergeStyles(current.style, decoration.style) };
-    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) });
+    const derived = new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) });
+    // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
+    // `base + masked modifiers`, which the retained common patch expresses
+    // without re-materializing the base subtree. Mixed decorations stay
+    // unhinted and route through normal materialization/fallback.
+    const scalarDerivation = commonScalarDerivation(child, next);
+    if (scalarDerivation !== undefined) setBridgeDerivation(nodeForBridge(derived), scalarDerivation);
+    return derived;
   }
 
   private textLayoutPatch(wrap: number | undefined, align: number | undefined): View {
     const node = nodeForBridge(this);
     if (node.kind === BRIDGE_VIEW_KIND.text) {
-      return new View({ ...node, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) });
+      const derived = new View({ ...node, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) });
+      // PERF-12 T9 (§27/§38): a wrap/align-only text change is derivable —
+      // the retained path may clone the base's native text payload with new
+      // layout scalars instead of re-importing the payload.
+      setBridgeDerivation(nodeForBridge(derived), {
+        kind: "textLayout",
+        base: node,
+        wrap: wrap ?? node.wrap,
+        align: align ?? node.align,
+      });
+      return derived;
     }
     if (node.kind === BRIDGE_VIEW_KIND.decorated && node.child.kind === BRIDGE_VIEW_KIND.text) {
       const decorated = node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }>;
-      return new View({ ...decorated, child: { ...decorated.child, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) } });
+      const baseText = decorated.child as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.text }>;
+      const child = { ...baseText, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) };
+      const derived = new View({ ...decorated, child });
+      const derivedNode = nodeForBridge(derived);
+      if (derivedNode.kind === BRIDGE_VIEW_KIND.decorated) {
+        setBridgeDerivation(derivedNode.child, {
+          kind: "textLayout",
+          base: baseText,
+          wrap: wrap ?? baseText.wrap,
+          align: align ?? baseText.align,
+        });
+      }
+      return derived;
     }
     return this;
   }
+}
+
+/**
+ * PERF-12 T9 (§27/§28): encodes a scalar-only decoration as a common-scalar
+ * derivation over `base`. Returns undefined for any decoration carrying
+ * non-scalar content (color, border, non-empty style, styleStates) or no
+ * scalar modifier at all — those have no exact retained primitive and stay
+ * unhinted (§27: the hint must not guess).
+ *
+ * Mask bit values mirror the native view_common_patch_root implementation.
+ */
+const PATCH_PADDING = 4;
+const PATCH_WIDTH = 8;
+const PATCH_HEIGHT = 16;
+const PATCH_MIN_WIDTH = 32;
+const PATCH_MAX_WIDTH = 64;
+const PATCH_MIN_HEIGHT = 128;
+const PATCH_MAX_HEIGHT = 256;
+
+function isEmptyStyle(style: StyleNode): boolean {
+  return style.theme === undefined && style.foreground === undefined && style.background === undefined
+    && Object.keys(style.attributes).length === 0;
+}
+
+function commonScalarDerivation(base: BridgeViewNode, decoration: DecorationNode): BridgeCommonScalarDerivation | undefined {
+  if (decoration.background !== undefined || decoration.foreground !== undefined || decoration.border !== undefined) return undefined;
+  if (decoration.styleStates !== undefined && Object.keys(decoration.styleStates).length > 0) return undefined;
+  if (!isEmptyStyle(decoration.style)) return undefined;
+  let mask = 0;
+  let paddingTopRight = 0;
+  let paddingBottomLeft = 0;
+  if (decoration.padding !== undefined) {
+    mask |= PATCH_PADDING;
+    paddingTopRight = (decoration.padding.top & 0xffff) | ((decoration.padding.right & 0xffff) << 16);
+    paddingBottomLeft = (decoration.padding.bottom & 0xffff) | ((decoration.padding.left & 0xffff) << 16);
+  }
+  let widthRule = 0;
+  if (decoration.width !== undefined) {
+    mask |= PATCH_WIDTH;
+    widthRule = decoration.width === "fit" ? 1 : 2;
+  }
+  let heightRule = 0;
+  if (decoration.height !== undefined) {
+    mask |= PATCH_HEIGHT;
+    heightRule = decoration.height === "fit" ? 1 : 2;
+  }
+  const minWidth = decoration.minWidth ?? 0;
+  if (decoration.minWidth !== undefined) mask |= PATCH_MIN_WIDTH;
+  const maxWidth = decoration.maxWidth ?? 0;
+  if (decoration.maxWidth !== undefined) mask |= PATCH_MAX_WIDTH;
+  const minHeight = decoration.minHeight ?? 0;
+  if (decoration.minHeight !== undefined) mask |= PATCH_MIN_HEIGHT;
+  const maxHeight = decoration.maxHeight ?? 0;
+  if (decoration.maxHeight !== undefined) mask |= PATCH_MAX_HEIGHT;
+  if (mask === 0) return undefined;
+  return {
+    kind: "commonScalar",
+    base,
+    mask,
+    paddingTopRight,
+    paddingBottomLeft,
+    widthRule,
+    heightRule,
+    minWidth,
+    maxWidth,
+    minHeight,
+    maxHeight,
+  };
 }
 
 const nodes = new WeakMap<View, BridgeViewNode>();

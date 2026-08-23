@@ -1,5 +1,5 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = fd2399c70ce82d2b29ee40a4f69864e452568325cb1d83360f72a8b4248ed73d
+// schema_blake3 = ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
 // generator_blake3 = e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
@@ -810,7 +810,6 @@ pub unsafe extern "C" fn iyon_view_common_patch_root_v1(
                 let base = generated_native_ref(base, 0x8000_0001u32)?;
                 let (node_id_low, node_id_high) =
                     generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
-                let decoration_ref = generated_native_ref(decoration_ref, 0x8000_0001u32)?;
                 Ok(unsafe {
                     generated_impls::view_common_patch_root_impl(
                         runtime,

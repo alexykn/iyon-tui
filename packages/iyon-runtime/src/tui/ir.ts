@@ -522,6 +522,64 @@ export function emptyDecoration(): DecorationNode {
   return { style: emptyStyle() };
 }
 
+// ---------------------------------------------------------------------------
+// PERF-12 T9 (§15/§27): derivation hints.
+//
+// The semantic DAG is authoritative; a derivation records how a new immutable
+// node was derived from an old one so the retained path can use an exact
+// native clone/edit primitive instead of re-materializing from fields. It is
+// an optimization hint, never a second representation: `ensureNative` uses it
+// only when the base carries a same-generation NativeRef and an exact native
+// retained primitive exists; otherwise it is ignored and the node
+// materializes from its semantic fields (§27/§38).
+
+export interface BridgeTextLayoutDerivation {
+  readonly kind: "textLayout";
+  /** The complete prior semantic node whose retained text payload is reused. */
+  readonly base: BridgeViewNode;
+  /** Final BRIDGE_WRAP_MODE code for the derived text node. */
+  readonly wrap: number;
+  /** Final BRIDGE_HORIZONTAL_ALIGN code for the derived text node. */
+  readonly align: number;
+}
+
+/**
+ * Scalar-only decorated node derivable through the retained common patch:
+ * the derived node renders identically to the native `base` view with the
+ * masked modifiers applied (padding/width/height/min/max only — any color,
+ * border, style, or styleState content makes the hint inexpressible and it
+ * is not attached).
+ */
+export interface BridgeCommonScalarDerivation {
+  readonly kind: "commonScalar";
+  readonly base: BridgeViewNode;
+  /** view_common_patch_root mask: exactly the modifiers this derivation carries. */
+  readonly mask: number;
+  readonly paddingTopRight: number;
+  readonly paddingBottomLeft: number;
+  readonly widthRule: number;
+  readonly heightRule: number;
+  readonly minWidth: number;
+  readonly maxWidth: number;
+  readonly minHeight: number;
+  readonly maxHeight: number;
+}
+
+export type BridgeDerivation = BridgeTextLayoutDerivation | BridgeCommonScalarDerivation;
+
+/** Derivation hints die with their semantic node (§15). */
+const BRIDGE_DERIVATION = new WeakMap<BridgeViewNode, BridgeDerivation>();
+
+/** Attaches a derivation hint to a freshly constructed semantic node. */
+export function setBridgeDerivation(node: BridgeViewNode, derivation: BridgeDerivation): void {
+  BRIDGE_DERIVATION.set(node, derivation);
+}
+
+/** Retained-path read access (ensureNative's tryDerivation step). */
+export function peekBridgeDerivation(node: BridgeViewNode): BridgeDerivation | undefined {
+  return BRIDGE_DERIVATION.get(node);
+}
+
 function cloneColor(color: ColorNode | undefined): ColorNode | undefined {
   return color !== undefined && typeof color === "object" ? { ...color } : color;
 }

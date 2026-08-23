@@ -30,8 +30,8 @@ import {
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { hostRenderRef, viewRefForNodeId, viewReleaseMany } from "./generated/view_calls.ts";
-import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "./ir.ts";
+import { hostRenderRef, viewCommonPatchRoot, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { BRIDGE_VIEW_KIND, peekBridgeDerivation, type BridgeViewNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -341,19 +341,23 @@ export function ensureNative(node: BridgeViewNode, tx: MaterializeTx): number {
 
   tx.inProgress.add(node);
   try {
-    const materializer = MATERIALIZERS.get(node.kind);
-    if (materializer === undefined) {
-      counters.bridge_semantic_nodes_inspected += 1;
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError(`no generated materializer for kind ${node.kind}`);
-    }
-    counters.direct_materializer_calls += 1;
-    tx.depth += 1;
-    let reference: number;
-    try {
-      reference = materializer(node, tx);
-    } finally {
-      tx.depth -= 1;
+    // §19 ordering: derivations are tried after identity resolution but
+    // before payload-inspecting materialization.
+    let reference = tryDerivation(node, tx);
+    if (reference === undefined) {
+      const materializer = MATERIALIZERS.get(node.kind);
+      if (materializer === undefined) {
+        counters.bridge_semantic_nodes_inspected += 1;
+        counters.cold_fallbacks += 1;
+        throw new RetainedFastFallbackError(`no generated materializer for kind ${node.kind}`);
+      }
+      counters.direct_materializer_calls += 1;
+      tx.depth += 1;
+      try {
+        reference = materializer(node, tx);
+      } finally {
+        tx.depth -= 1;
+      }
     }
     installHint(node, tx.generation, reference);
     tx.refs.set(node, reference);
@@ -364,13 +368,99 @@ export function ensureNative(node: BridgeViewNode, tx: MaterializeTx): number {
   }
 }
 
-/** Host render statuses returned by the generated `hostRenderRef`. */
-const HOST_STATUS_OK = 0;
-const HOST_STATUS_CACHE_MISS = 1;
+/**
+ * Resolves the derivation base's same-generation NativeRef (§27).
+ *
+ * A base hint is used directly. Otherwise — and only when the base existed
+ * before the boundary's last commit — one ceiling-gated NodeId→NativeRef
+ * promotion recovers the ref exactly as `ensureNative` would; the acquired
+ * lease joins the transaction's temporary leases so it drains with the tx on
+ * every path. An unavailable base leaves the hint unused (§38 fallback rule).
+ */
+function derivationBaseRef(base: BridgeViewNode, tx: MaterializeTx): number | undefined {
+  const hint = BRIDGE_NATIVE.get(base);
+  if (hint !== undefined && hint.generation === tx.generation) return hint.nativeRef;
+  if (base.id > tx.nativeLookupCeiling) return undefined;
+  counters.node_id_ref_promotion_attempts += 1;
+  const [low, high] = splitNodeId(base.id);
+  try {
+    const recovered = viewRefForNodeId(tx.symbols, tx.runtime, low, high);
+    counters.node_id_ref_promotion_hits += 1;
+    installHint(base, tx.generation, recovered);
+    tx.refs.set(base, recovered);
+    tx.temporaryLeases.push(recovered);
+    return recovered;
+  } catch (error) {
+    if (!isExpectedNativeStatus(error)) throw error;
+    counters.node_id_ref_promotion_misses += 1;
+    return undefined;
+  }
+}
+
+/**
+ * PERF-12 T9 (§27/§28/§38): tries the node's derivation hint against an
+ * exact native retained primitive before any payload inspection.
+ *
+ * Preconditions follow §27: the node has no NativeRef yet (ensureNative's
+ * ordering guarantees this) and the hint exists; the base must carry a
+ * same-generation NativeRef, recoverable by promotion for pre-commit nodes.
+ * Any expected native failure status ignores the hint cleanly — the caller
+ * materializes the node from its semantic fields (§38: 'If the base NativeRef
+ * is unavailable, fall back to direct semantic materialization'). The hint
+ * itself stays attached: it may succeed after the base is re-adopted.
+ */
+function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
+  const derivation = peekBridgeDerivation(node);
+  if (derivation === undefined) return undefined;
+  const baseRef = derivationBaseRef(derivation.base, tx);
+  if (baseRef === undefined) return undefined;
+  const [low, high] = splitNodeId(node.id);
+  try {
+    let reference: number;
+    if (derivation.kind === "textLayout") {
+      reference = viewTextLayoutPatchRoot(
+        tx.symbols,
+        tx.runtime,
+        baseRef,
+        low,
+        high,
+        derivation.wrap,
+        derivation.align,
+      );
+    } else {
+      reference = viewCommonPatchRoot(
+        tx.symbols,
+        tx.runtime,
+        baseRef,
+        low,
+        high,
+        derivation.mask,
+        derivation.paddingTopRight,
+        derivation.paddingBottomLeft,
+        derivation.widthRule,
+        derivation.heightRule,
+        derivation.minWidth,
+        derivation.maxWidth,
+        derivation.minHeight,
+        derivation.maxHeight,
+        0,
+      );
+    }
+    counters.derivation_fast_path_calls += 1;
+    return reference;
+  } catch (error) {
+    if (!isExpectedNativeStatus(error)) throw error;
+    return undefined;
+  }
+}
 
 function isValidNativeRef(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0 && value < 0x8000_0000;
 }
+
+/** Host render statuses returned by the generated `hostRenderRef`. */
+const HOST_STATUS_OK = 0;
+const HOST_STATUS_CACHE_MISS = 1;
 
 export type ExactRootRender =
   | { readonly status: "ok"; readonly rootRef: number; readonly recovered: boolean }

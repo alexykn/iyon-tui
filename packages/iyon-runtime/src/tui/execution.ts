@@ -45,13 +45,29 @@ import type { View } from "./values/view.ts";
 export type ViewKey = string | number;
 
 /**
- * Stable per-component-type identity. Identity is object REFERENCE equality:
- * `defineView` (R2) returns one object per component definition; synthetic
- * drivers create bare literals. Two structurally identical literals are two
- * DIFFERENT component types (mismatch ⇒ remount, §9.1).
+ * Core component abstraction: a stable identity token carrying its pure,
+ * synchronous render body. Identity is object REFERENCE equality —
+ * `defineView` (define-view.ts) returns one object per component definition;
+ * synthetic drivers create bare literals. Two structurally identical
+ * literals are two DIFFERENT component types (mismatch ⇒ remount, §9.1).
+ *
+ * `render` uses PROPERTY (arrow) syntax deliberately: parameter types are
+ * checked contravariantly, so `ViewComponent<A>` is not silently assignable
+ * to `ViewComponent<B>`.
  */
 export interface ViewComponentType<P = unknown> {
-  render(props: P): View;
+  readonly render: (props: P) => View;
+}
+
+/**
+ * The PUBLIC component value returned by `defineView` (handoff §8): callable
+ * so idiomatic usage reads `column.child(Footer({ status }))`. The call
+ * performs reconciliation + scheduling inside the currently evaluating
+ * parent scope; the `.render` entry is what the runtime calls when THIS
+ * scope itself executes.
+ */
+export interface ViewComponent<P = unknown> extends ViewComponentType<P> {
+  (props: P): View;
 }
 
 interface SemanticSlot {
@@ -564,16 +580,22 @@ export class RetainedExecutionRuntime {
    * parent's execution supplies the new inputs (§8.2).
    */
   invokeChild<P>(
-    type: ViewComponentType<P>,
+    component: ViewComponentType<P>,
     props: P,
     key: ViewKey | undefined,
   ): { view: View; scope: RetainedExecutionScope<P> } {
+    if (typeof component?.render !== "function") {
+      throw new ExecutionError(
+        "TUI_EXECUTION_NOT_A_COMPONENT",
+        "component invocation requires a component value with a render entry",
+      );
+    }
     const parent = activeExecutionScope();
     if (parent === undefined) {
       throw new ExecutionError("TUI_EXECUTION_NO_ACTIVE_SCOPE", "component invocation outside any evaluating scope");
     }
     const ordinal = parent.pendingChildren.length;
-    const { scope, created } = this.reconcileChild(parent, type as ViewComponentType<never>, key, ordinal);
+    const { scope, created } = this.reconcileChild(parent, component as ViewComponentType<never>, key, ordinal);
     const typed = scope as RetainedExecutionScope<P>;
     if (!created && propsShallowEqual(scope.currentProps, props)) {
       executionCounters.execution_scope_prop_skips += 1;
@@ -592,7 +614,7 @@ export class RetainedExecutionRuntime {
  * {@link RetainedExecutionRuntime.invokeChild}.
  */
 export function invokeComponent<P>(
-  type: ViewComponentType<P>,
+  component: ViewComponentType<P>,
   props: P,
   key?: ViewKey,
 ): { view: View; scope: RetainedExecutionScope<P> } {
@@ -600,5 +622,5 @@ export function invokeComponent<P>(
   if (parent === undefined) {
     throw new ExecutionError("TUI_EXECUTION_NO_ACTIVE_SCOPE", "component invocation outside any evaluating scope");
   }
-  return parent.runtime.invokeChild(type, props, key);
+  return parent.runtime.invokeChild(component, props, key);
 }

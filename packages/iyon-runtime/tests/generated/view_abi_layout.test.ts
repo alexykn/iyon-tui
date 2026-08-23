@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
-// generator_blake3 = 4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c
+// generator_blake3 = 362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e
 import { expect, test } from "bun:test";
 import manifest from "../../src/tui/generated/view_abi_manifest.json";
 

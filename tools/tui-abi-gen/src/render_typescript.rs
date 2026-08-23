@@ -286,9 +286,9 @@ pub fn calls(document: &AbiDocument, schema_hash: &str, generator_hash: &str) ->
     let mut output = typescript_calls_header(schema_hash, generator_hash);
     output
         .push_str("export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>[\"symbols\"];\n\n");
-    output.push_str("const ERROR_BIT = 0x8000_0000;\n\n");
+    output.push_str("const ERROR_BIT = 0x8000_0000;\nconst CACHE_MISS = 0x8000_0004;\n\n");
     output.push_str("export class NativeAbiStatusError extends Error {\n  readonly status: number;\n  readonly detail: number;\n\n  constructor(status: number, detail: number) {\n    super(`native ABI status 0x${status.toString(16)}`);\n    this.name = \"NativeAbiStatusError\";\n    this.status = status;\n    this.detail = detail;\n  }\n}\n\n");
-    output.push_str("function checkedRef(symbols: ViewAbiSymbols, runtime: Pointer, result: number): number {\n  if (result === 0 || result >= ERROR_BIT) {\n    throw new NativeAbiStatusError(result, symbols.viewStatusDetail(runtime));\n  }\n  return result;\n}\n\n");
+    output.push_str("function checkedRef(symbols: ViewAbiSymbols, runtime: Pointer, result: number): number {\n  if (result === 0 || result >= ERROR_BIT) {\n    const detail = result === CACHE_MISS ? symbols.viewStatusDetail(runtime) : 0;\n    throw new NativeAbiStatusError(result, detail);\n  }\n  return result;\n}\n\n");
     for function in &document.functions {
         output.push_str(&format!(
             "export function {}(symbols: ViewAbiSymbols, {}): {} {{\n",

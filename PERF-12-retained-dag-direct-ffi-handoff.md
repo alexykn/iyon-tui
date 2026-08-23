@@ -6682,4 +6682,15 @@ finding R9: the initial §43 regression used a shared leaf, which proves
        retained branch deduplication`): the test now shares a complete
        retained branch (row + leaf) between both root branches and asserts
        exactly three materializers (outer row + shared row + shared leaf).
+
+finding R10: generated `checkedRef` queried the status-detail side channel
+       for every error result, while some legacy/native invalid-result paths
+       intentionally return without writing detail. A later invalid call could
+       therefore observe stale child/base detail. Correction: the canonical
+       TypeScript generator now reads detail only for `FAST_CACHE_MISS` and
+       supplies zero for other statuses; generated outputs were refreshed and
+       the addon was restaged. New generator BLAKE3 is
+       362fc984b6d1270399baf0880b9c80fc3e4e939c943938952eca14ee7c12e74e,
+       and the restaged addon SHA-256 is
+       96cf11783d18f6e42b64977748829139df1063cf4aab623a35c970bf22d657d6.
 ```

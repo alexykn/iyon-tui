@@ -70,6 +70,28 @@ export interface ViewComponent<P = unknown> extends ViewComponentType<P> {
   (props: P): View;
 }
 
+/**
+ * Independently retained sub-DAG root for one live execution scope
+ * (AMENDMENT-C §5/§14, handoff §19). The projection VIEW is created once at
+ * mount and embedded in the parent — its identity is FIXED for the scope's
+ * lifetime; content swaps happen behind it via {@link ScopeProjection.install}.
+ *
+ * Implementations own their native slot/boundary/lease (production uses the
+ * existing ViewSlot primitive; a slim private equivalent may replace it per
+ * §31.6 measurements — architecture first, per AMENDMENT-C §14.1).
+ */
+export interface ScopeProjection {
+  /** Stable component/ref view shown to the parent. Never rebuilt. */
+  readonly view: View;
+  /** Swaps the independently retained sub-DAG root. Failure keeps the old content. */
+  install(output: View): void;
+  /** Releases the sub-root lease and native slot. Must be idempotent. */
+  dispose(): void;
+}
+
+/** Optional factory the runtime consults at child-scope mount. */
+export type ScopeProjectionFactory = (scope: RetainedExecutionScope<never>) => ScopeProjection | undefined;
+
 interface SemanticSlot {
   /** Last committed View for this dense slot (strong, by design). */
   current: View | undefined;
@@ -172,6 +194,16 @@ export class RetainedExecutionScope<P = unknown> {
 
   readonly table = new ScopeSemanticTable();
 
+  /**
+   * Independently retained sub-DAG projection (R3). `undefined` in detached
+   * mode (no factory): the scope's raw output is embedded directly, which is
+   * the documented R1 fallback — parent composites then see content changes
+   * and rebuild along the changed path.
+   */
+  projection: ScopeProjection | undefined = undefined;
+  /** Last output installed into the projection (dedupes no-op installs). */
+  projectedOutput: View | undefined = undefined;
+
   constructor(
     runtime: RetainedExecutionRuntime,
     parent: RetainedExecutionScope | null,
@@ -213,6 +245,12 @@ export class RetainedExecutionScope<P = unknown> {
     if (this.disposed) return;
     this.disposed = true;
     this.dirty = false;
+    try {
+      this.projection?.dispose();
+    } finally {
+      this.projection = undefined;
+      this.projectedOutput = undefined;
+    }
     this.currentOutput = undefined;
     this.pendingOutput = undefined;
     this.currentProps = undefined;
@@ -350,10 +388,26 @@ let NEXT_SCOPE_ID = 1;
  * authoritative. Further invalidations during preparation join later passes
  * of the same flush (§22.3).
  */
+export interface RetainedExecutionRuntimeOptions {
+  /**
+   * Factory consulted when a child scope mounts. Return a projection backed
+   * by the existing ViewSlot/component primitives (or a slim equivalent) to
+   * give every scope an independently retained sub-DAG root whose stable
+   * component view is embedded in the parent. Return `undefined` to run the
+   * scope DETACHED (R1 raw-output embedding).
+   */
+  createScopeProjection?: ScopeProjectionFactory;
+}
+
 export class RetainedExecutionRuntime {
   private queue: RetainedExecutionScope[] = [];
   private flushing = false;
   private readonly roots: RetainedExecutionScope[] = [];
+  private readonly projectionFactory: ScopeProjectionFactory | undefined;
+
+  constructor(options: RetainedExecutionRuntimeOptions = {}) {
+    this.projectionFactory = options.createScopeProjection;
+  }
 
   /**
    * Mounts a root scope and evaluates it synchronously (initial render is
@@ -476,6 +530,15 @@ export class RetainedExecutionRuntime {
     if (scope.pendingOutput === undefined) {
       throw new ExecutionError("TUI_EXECUTION_STATE", `committing scope ${scope.id} without prepared output`);
     }
+    const newOutput = scope.pendingOutput;
+    if (scope.projection !== undefined && newOutput !== scope.projectedOutput) {
+      // Swap the independently retained sub-DAG root BEFORE promoting: a
+      // failed install keeps the old content authoritative on BOTH sides
+      // (ViewSlot's boundary preserves the previous root on failure, §22.2),
+      // and the surrounding batch abort then has nothing to unwind here.
+      scope.projection.install(newOutput!);
+      scope.projectedOutput = newOutput;
+    }
     if (scope.pendingOutput === scope.currentOutput) {
       executionCounters.execution_scope_noop_outputs += 1;
     } else {
@@ -563,6 +626,9 @@ export class RetainedExecutionRuntime {
       return { scope: committed.scope, created: false };
     }
     const scope = new RetainedExecutionScope(this, parent, type, undefined, ordinal, key, NEXT_SCOPE_ID++);
+    if (this.projectionFactory !== undefined) {
+      scope.projection = this.projectionFactory(scope as RetainedExecutionScope<never>) ?? undefined;
+    }
     executionCounters.execution_scope_mounts += 1;
     parent.pendingChildren[ordinal] = { type, key, scope };
     return { scope, created: true };
@@ -597,14 +663,17 @@ export class RetainedExecutionRuntime {
     const ordinal = parent.pendingChildren.length;
     const { scope, created } = this.reconcileChild(parent, component as ViewComponentType<never>, key, ordinal);
     const typed = scope as RetainedExecutionScope<P>;
+    const embeddable = (): View => scope.projection !== undefined ? scope.projection.view : (
+      created ? typed.pendingOutput! : scope.currentOutput!
+    );
     if (!created && propsShallowEqual(scope.currentProps, props)) {
       executionCounters.execution_scope_prop_skips += 1;
-      return { view: scope.currentOutput!, scope: typed };
+      return { view: embeddable(), scope: typed };
     }
     typed.currentProps = props;
     executionCounters.execution_scope_body_calls += 1;
     this.evaluateIntoPendings(typed);
-    return { view: typed.pendingOutput!, scope: typed };
+    return { view: embeddable(), scope: typed };
   }
 }
 

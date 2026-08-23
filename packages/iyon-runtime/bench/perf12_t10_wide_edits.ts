@@ -36,6 +36,16 @@ function percentile(values: number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))]!;
 }
 
+function bootstrapMedianCi95(values: number[], resamples = 1_000): [number, number] {
+  const medians: number[] = [];
+  for (let sampleIndex = 0; sampleIndex < resamples; sampleIndex += 1) {
+    const sample = Array.from({ length: values.length }, () => values[(Math.random() * values.length) | 0]!);
+    medians.push(median(sample));
+  }
+  medians.sort((left, right) => left - right);
+  return [medians[Math.floor(resamples * 0.025)]!, medians[Math.floor(resamples * 0.975)]!];
+}
+
 function runCase(
   candidate: "retained_dag_ffi" | "direct_7v2",
   mode: "axis_set" | "axis_insert" | "axis_remove" | "axis_splice4",
@@ -100,7 +110,7 @@ async function main(): Promise<void> {
   if (Host === undefined || session === undefined) throw new Error("T10 benchmark requires the staged NativeTuiHost artifact");
   const records: Record<string, unknown>[] = [];
   const cases: readonly ["axis_set" | "axis_insert" | "axis_remove" | "axis_splice4", number][] = [
-    ["axis_set", 2_000], ["axis_set", 10_000], ["axis_set", 100_000],
+    ["axis_set", 32], ["axis_set", 256], ["axis_set", 2_000], ["axis_set", 10_000], ["axis_set", 100_000],
     ["axis_insert", 2_000], ["axis_remove", 2_000], ["axis_splice4", 2_000],
   ];
   for (const [mode, width] of cases) {
@@ -121,6 +131,8 @@ async function main(): Promise<void> {
         measured_ops: MEASURED * OPS,
         median_ns: Math.round(median(result.samples)),
         p95_ns: Math.round(percentile(result.samples, 0.95)),
+        p99_ns: Math.round(percentile(result.samples, 0.99)),
+        median_ci95_ns: bootstrapMedianCi95(result.samples).map((value) => Math.round(value)),
         samples_ns: result.samples.map((value) => Math.round(value)),
         persistent_seq_branches_cloned: result.seq.branches_cloned,
         persistent_seq_nodes_cloned: result.seq.nodes_cloned,

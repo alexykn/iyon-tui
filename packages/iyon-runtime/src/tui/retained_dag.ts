@@ -276,13 +276,20 @@ function materializeColumnNode(node: BridgeViewNode, tx: MaterializeTx): number 
   );
 }
 
+function gridTrackAmount(value: number, label: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new RetainedFastFallbackError(`grid ${label} is outside the u16 range`);
+  }
+  return value;
+}
+
 function gridTrackWord(track: BridgeGridTrackNode): number {
   switch (track.kind) {
     case BRIDGE_GRID_TRACK_KIND.content: return 1;
-    case BRIDGE_GRID_TRACK_KIND.contentMax: return 2 | (track.max << 8);
-    case BRIDGE_GRID_TRACK_KIND.fixed: return 3 | (track.size << 8);
+    case BRIDGE_GRID_TRACK_KIND.contentMax: return 2 | (gridTrackAmount(track.max, "contentMax") << 8);
+    case BRIDGE_GRID_TRACK_KIND.fixed: return 3 | (gridTrackAmount(track.size, "fixed") << 8);
     case BRIDGE_GRID_TRACK_KIND.flex: return 4;
-    case BRIDGE_GRID_TRACK_KIND.flexMax: return 5 | (track.max << 8);
+    case BRIDGE_GRID_TRACK_KIND.flexMax: return 5 | (gridTrackAmount(track.max, "flexMax") << 8);
   }
 }
 

@@ -622,6 +622,8 @@ export interface BridgeGridSequenceOverride {
   /** Prefix cell offsets; length = row count + 1. */
   readonly rowOffsets: readonly number[];
   readonly rowTracks: readonly BridgeGridTrackNode[];
+  /** Native grid coordinates to flat sequence indexes, per source row. */
+  readonly cellIndices: readonly ReadonlyMap<number, number>[];
 }
 
 

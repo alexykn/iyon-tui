@@ -58,6 +58,7 @@ describe("PERF-12 T10 wide retained edits", () => {
     const child = View.spacer(7);
     const next = View.axisSetChildForTransport(base, 1_234, child);
     const nextNode = nodeForBridge(next);
+    expect(next.kind).toBe("view");
     expect(nextNode.kind).toBeDefined();
 
     const { boundary, host } = installWithBoundary(base, base, 80, 24);
@@ -129,6 +130,56 @@ describe("PERF-12 T10 wide retained edits", () => {
         expect(node.children.length).toBe(width);
       }
       expect(persistentSeqCounters.items_iterated).toBeGreaterThanOrEqual(beforeAccess.items_iterated);
+    }
+  });
+
+  test("§33/§35/§96: every wide edit stays logarithmic at all proof widths", () => {
+    for (const width of [2_000, 10_000, 100_000]) {
+      const base = wideColumn(width);
+      const edits = [
+        () => View.axisSetChildForTransport(base, width >> 1, View.spacer(3)),
+        () => View.axisSpliceForTransport(base, width >> 1, 0, [{ view: View.spacer(3) }]),
+        () => View.axisSpliceForTransport(base, width >> 1, 1, []),
+        () => View.axisSpliceForTransport(base, width >> 1, 4, [
+          { view: View.spacer(2) },
+          { view: View.spacer(3) },
+          { view: View.spacer(4) },
+          { view: View.spacer(5) },
+        ]),
+      ];
+      for (const edit of edits) {
+        resetPersistentSeqCounters();
+        const next = edit();
+        const snapshot = { ...persistentSeqCounters };
+        expect(nodeForBridge(next).kind).toBe(BRIDGE_VIEW_KIND.column);
+        expect(snapshot.nodes_cloned).toBeLessThanOrEqual(12);
+        expect(snapshot.branches_cloned).toBeLessThanOrEqual(8);
+        expect(snapshot.items_iterated).toBeLessThanOrEqual(128);
+      }
+    }
+  });
+
+  test("§36: Grid cell coordinates remain semantic with spans", () => {
+    if (!canRun) return;
+    const base = View.grid({
+      columns: [{ kind: "content" }, { kind: "content" }, { kind: "content" }],
+      rows: [{
+        track: { kind: "content" },
+        cells: [
+          { view: View.spacer(1), columnSpan: 2 },
+          { view: View.spacer(2) },
+        ],
+      }],
+    });
+    const next = View.gridSetCellForTransport(base, 0, 2, View.spacer(7));
+    const { boundary, host } = installWithBoundary(base, base, 40, 12);
+    try {
+      expect(next.kind).toBe("view");
+      expect(boundary.install(next)).toBeGreaterThan(0);
+      expect(host.screenRows()).toEqual(renderOracle(next, 40, 12));
+    } finally {
+      boundary.close();
+      host.dispose();
     }
   });
 

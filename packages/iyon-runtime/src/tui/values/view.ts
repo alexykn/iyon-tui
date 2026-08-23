@@ -489,14 +489,15 @@ export class View {
     const gridNode = nodeForBridge(base);
     if (gridNode.kind !== BRIDGE_VIEW_KIND.grid) throw new TypeError("retained grid cell edit base is not a grid");
     const gridOverride = peekBridgeGridSequenceOverride(gridNode);
-    if (!Number.isInteger(row) || row < 0 || row >= (gridOverride?.rowTracks.length ?? gridNode.rows.length)) throw new RangeError("retained grid cell row out of range");
+    const placement = gridOverride === undefined ? gridPlacement(gridNode.rows) : undefined;
+    const rowCount = gridOverride?.rowTracks.length ?? gridNode.rows.length;
+    if (!Number.isInteger(row) || row < 0 || row >= rowCount) throw new RangeError("retained grid cell row out of range");
     const childNode = nodeForBridge(cellView);
     if (gridOverride !== undefined) {
-      const rowStart = gridOverride.rowOffsets[row]!;
-      const rowEnd = gridOverride.rowOffsets[row + 1]!;
-      if (!Number.isInteger(column) || column < 0 || column >= rowEnd - rowStart) throw new RangeError("retained grid cell column out of range");
-      const sequence = gridOverride.sequence.set(rowStart + column, {
-        ...gridOverride.sequence.get(rowStart + column)!,
+      const sequenceIndex = gridOverride.cellIndices[row]?.get(column);
+      if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
+      const sequence = gridOverride.sequence.set(sequenceIndex, {
+        ...gridOverride.sequence.get(sequenceIndex)!,
         view: childNode,
       });
       const derived = buildWideGridNode(gridNode, gridOverride, sequence);
@@ -509,13 +510,15 @@ export class View {
       });
       return derived;
     }
-    const gridRow = gridNode.rows[row]!;
-    if (!Number.isInteger(column) || column < 0 || column >= gridRow.cells.length) throw new RangeError("retained grid cell column out of range");
+    const sequenceIndex = placement!.cellIndices[row]?.get(column);
+    if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
+    const rowStart = placement!.rowOffsets[row]!;
+    const cellIndex = sequenceIndex - rowStart;
     // Narrow grids retain the ordinary eager semantic shape; only the wide
     // sidecar path above avoids copying the addressed row's cell array.
     const rows = gridNode.rows.map((current, rowIndex) =>
       rowIndex === row
-        ? { ...current, cells: current.cells.map((cell, columnIndex) => columnIndex === column ? { ...cell, view: childNode } : cell) }
+        ? { ...current, cells: current.cells.map((cell, index) => index === cellIndex ? { ...cell, view: childNode } : cell) }
         : current,
     );
     const derived = new View({ kind: BRIDGE_VIEW_KIND.grid, columns: gridNode.columns, rows, columnGap: gridNode.columnGap, rowGap: gridNode.rowGap });
@@ -749,23 +752,60 @@ function seedWideAxisSequence(view: View, children: readonly BridgeLayoutChild[]
   });
 }
 
+function gridPlacement(rows: readonly BridgeGridRowNode[]): {
+  readonly rowOffsets: readonly number[];
+  readonly cellIndices: readonly ReadonlyMap<number, number>[];
+} {
+  const occupiedUntil: number[] = [];
+  const rowOffsets = [0];
+  const cellIndices: Map<number, number>[] = [];
+  let sequenceIndex = 0;
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex]!;
+    const rowIndexMap = new Map<number, number>();
+    cellIndices.push(rowIndexMap);
+    for (const cell of row.cells) {
+      const columnSpan = cell.columnSpan;
+      let column = 0;
+      for (;;) {
+        while (occupiedUntil.length < column + columnSpan) occupiedUntil.push(0);
+        let available = true;
+        for (let index = column; index < column + columnSpan; index += 1) {
+          if (occupiedUntil[index]! > rowIndex) {
+            available = false;
+            break;
+          }
+        }
+        if (available) break;
+        column += 1;
+      }
+      rowIndexMap.set(column, sequenceIndex);
+      sequenceIndex += 1;
+      const occupiedThrough = rowIndex + cell.rowSpan;
+      for (let index = column; index < column + columnSpan; index += 1) occupiedUntil[index] = occupiedThrough;
+    }
+    rowOffsets.push(sequenceIndex);
+  }
+  return {
+    rowOffsets: Object.freeze(rowOffsets),
+    cellIndices: Object.freeze(cellIndices.map((indices) => indices)),
+  };
+}
+
 function seedWideGridSequence(view: View, rows: readonly BridgeGridRowNode[]): void {
   const totalCells = rows.reduce((total, row) => total + row.cells.length, 0);
   if (totalCells <= WIDE_GRID_SEQUENCE_THRESHOLD) return;
-  const rowOffsets = [0];
-  const rowTracks: BridgeGridTrackNode[] = [];
+  const placement = gridPlacement(rows);
+  const rowTracks: BridgeGridTrackNode[] = rows.map((row) => row.track);
   const cells: BridgeGridCellNode[] = [];
-  for (const row of rows) {
-    rowTracks.push(row.track);
-    cells.push(...row.cells);
-    rowOffsets.push(cells.length);
-  }
+  for (const row of rows) cells.push(...row.cells);
   const node = nodeForBridge(view);
   setBridgeGridSequenceOverride(node, {
     baseNode: node,
     sequence: PersistentSeq.from(cells),
-    rowOffsets: Object.freeze(rowOffsets),
+    rowOffsets: placement.rowOffsets,
     rowTracks: Object.freeze(rowTracks),
+    cellIndices: placement.cellIndices,
   });
 }
 
@@ -774,6 +814,7 @@ function buildWideGridNode(
   override: {
     readonly rowOffsets: readonly number[];
     readonly rowTracks: readonly BridgeGridTrackNode[];
+    readonly cellIndices: readonly ReadonlyMap<number, number>[];
   },
   sequence: PersistentSeq<BridgeGridCellNode>,
 ): View {
@@ -805,6 +846,7 @@ function buildWideGridNode(
     sequence,
     rowOffsets: override.rowOffsets,
     rowTracks: override.rowTracks,
+    cellIndices: override.cellIndices,
   });
   return wrapFrozenBridgeNode(node);
 }
@@ -879,6 +921,12 @@ function buildWideAxisNode(
 /** Installs an already-frozen bridge node under a fresh View wrapper. */
 function wrapFrozenBridgeNode(node: BridgeViewNode): View {
   const view = Object.create(View.prototype) as View;
+  Object.defineProperty(view, "kind", {
+    configurable: true,
+    enumerable: true,
+    value: "view",
+    writable: true,
+  });
   nodes.set(view, node);
   return Object.freeze(view) as View;
 }

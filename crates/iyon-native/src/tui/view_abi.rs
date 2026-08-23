@@ -2793,8 +2793,8 @@ fn parse_and_build_grid(
         }
         let amount = raw_amount as u16;
         match kind {
-            GRID_TRACK_CONTENT_WORD => Ok(GridTrack::content()),
-            GRID_TRACK_FLEX_WORD => Ok(GridTrack::flex()),
+            GRID_TRACK_CONTENT_WORD if amount == 0 => Ok(GridTrack::content()),
+            GRID_TRACK_FLEX_WORD if amount == 0 => Ok(GridTrack::flex()),
             GRID_TRACK_FIXED_WORD => Ok(GridTrack::fixed(
                 u16::try_from(amount).map_err(|_| FAST_INVALID)?,
             )),
@@ -3618,11 +3618,9 @@ fn decode_align(value: u32) -> Result<HorizontalAlign, ()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, GRID_TRACK_CONTENT_MAX_WORD,
-        GRID_TRACK_CONTENT_WORD, GRID_TRACK_FIXED_WORD, GRID_TRACK_FLEX_MAX_WORD,
-        GRID_TRACK_FLEX_WORD, MAX_EDIT_COUNT, NativeRefTable, NativeViewKindTag, NativeViewRuntime,
-        NativeViewSlot, PATH_ROOT_REF, PublicationLease, generated_exports, is_valid_builder_ref,
-        is_valid_edit_txn_ref,
+        AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, GRID_TRACK_CONTENT_WORD, MAX_EDIT_COUNT,
+        NativeRefTable, NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF,
+        generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
     use iyon_tui::{GridTrack, IntoView, TextSpan, View};
     use std::ffi::CString;
@@ -4500,6 +4498,22 @@ mod tests {
             )
         };
         assert_eq!(truncated, FAST_INVALID);
+        // Amount-bearing bits on a marker-only track are malformed, not
+        // silently discarded by the packed parser.
+        let malformed_track = [1, GRID_TRACK_CONTENT_WORD | (1 << 8), 0];
+        let malformed = unsafe {
+            generated_exports::iyon_view_grid_create_buffer_v1(
+                pointer,
+                702,
+                0,
+                0,
+                0,
+                malformed_track.as_ptr(),
+                malformed_track.len() * 4,
+                malformed_track.len() as u32,
+            )
+        };
+        assert_eq!(malformed, FAST_INVALID);
     }
 
     #[test]

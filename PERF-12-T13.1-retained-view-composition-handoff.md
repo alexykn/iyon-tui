@@ -1114,6 +1114,33 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R6a status: COMPLETE.** Scoped updates render live through the unmodified production resolver/registry/damage machinery; parent identity exact; leases hold; the R6b trigger curve is quantified and committed. Next per registry: R7 (multi-scope transactional commit atomicity across projections), then R8+ integration arc.
 
+### R7 implementation record
+
+**1. Scope statement.** Tranche R7 (Step 10R; AMENDMENT-C §13/§18): transactional retained-root publication — boundary-level prepare/commit/abort, runtime prepare-all-then-commit-all flush protocol, legacy fallback pinning. MountGraph/layout/paint frontier work explicitly deferred (R6b/R9).
+
+**2. Commits.** `6a47b68` — feat(tui): add T13.1 transactional retained-root publication (R7).
+
+**3. Review findings.**
+- Finding 1: publish-refusal handling was redesigned mid-tranche per the planning review. Original plan treated a post-prepare publish refusal as recoverable with full unwind; final design makes it PATHOLOGICAL: after preparation holds a validated lease in the current generation, the only remaining failure input is runtime teardown, so refusal surfaces loudly instead of silently going stale. Cross-scope native atomicity against process death requires the §13.1 native batch primitive — explicitly deferred with R6b.
+- Finding 2: a commit-phase throw intentionally does NOT trigger abortBatch — already-promoted scopes of the same batch would be corrupted by a rollback that runs after their promotion. Post-commit-throw state is unspecified by protocol; tests assert only that the error surfaces loudly.
+- Finding 3: consumed notifications do not replay after an aborted batch — an application re-drive (any subsequent state write or explicit update) is required for recovery. Pinned by test with explanatory comment; matches handoff §41's retry semantics.
+- Finding 4: R3's legacy-path failure test updated — legacy projections fail at COMMIT phase (no prepare), which under the R7 protocol is pathological rather than a batch abort; counter expectation corrected from 1 to 0 with protocol documentation.
+
+**4. Implementation summary.** `retained_dag.ts`: RootPublication type, prepareInstall / prepareFrom / publishPrepared / unwindPrepared (install recomposed, behavior identical); `component.ts`: ViewSlot.prepareSetView wrapper; `execution.ts`: ScopeProjection.preparePublication optional hook, scope.stagedPublication cell, three-phase flush (evaluate → stage → commit+promote) with staging-failure atomic unwind; `tui-execution.ts`: production factory publishes via ViewSlot.prepareSetView. 4-test proof suite added.
+
+**5. Provenance block.** Source revision at capture: commit `6a47b68` working tree (`f6d4273` docs HEAD). bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). No ABI changes — pure JS restructuring over existing FFI calls.
+
+**6. Gate evidence.**
+- *Atomic multi-scope publication:* A/B/C all changed, C's preparation armed to fail ⇒ zero publishes across ALL probes (install counts unchanged), every committed output shows OLD values, `execution_commit_aborts` +1; recovery (failure cleared + re-drive) publishes all three atomically.
+- *Ownership:* publications delegate to ViewSlot.prepareSetView → RetainedRootBoundary.prepareInstall; slot state and lease tables never diverge (no split-brain path exists).
+- *Prepare/commit split:* prepare performs no visible mutation (asserted via committed-output stability through staged failures); commit performs publish + bookkeeping only.
+- *Commit-phase pathological:* injected commit failure surfaces loudly; documented as unspecified-state by protocol.
+- *Legacy fallback:* projections without preparePublication still drive content swaps (installs counted).
+- *ViewSlot parity:* prepare→commit ≡ setView (revision +1, content visible); prepare→abort leaves revision and content untouched; double-commit guarded.
+- *Battery:* typecheck clean; full suite 216 pass / 1 fail (documented perf11v4 interference, passes isolated).
+
+**7. Status line.** **Tranche R7 status: COMPLETE.** Multi-scope updates now have a correctness model: prepare-everything → commit-once, with prepare failures fully atomic and commit failures structurally confined to pathological teardown. Ready for R8 (canonical boundaries + keyed reconciliation).
+
 ---
 
 # 33. Files

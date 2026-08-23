@@ -54,7 +54,7 @@ function runCase(session: ReturnType<typeof nativeViewAbiSession>): {
   if (!boundary.adopt(initial)) throw new Error("T12 boundary adoption failed");
   let current = initial;
   const operation = (): void => {
-    const shared = View.spacer(2);
+    const shared = View.horizontal([View.spacer(2)]);
     current = View.horizontal([shared, shared]);
     if (boundary.install(current) === undefined) throw new Error("T12 multi-branch install fell back");
   };
@@ -80,7 +80,7 @@ const artifact = [
     profile: "smoke",
     benchmark_version: "PERF-12",
     candidate: "retained_dag_ffi",
-    workload: "multi_branch_shared_child",
+    workload: "multi_branch_shared_branch",
     mode: "SHARED_PATH",
     git_sha: commandText(["git", "rev-parse", "HEAD"]),
     perf7v2_sha: "e5292d62c4011610850cbdc1ba4a35f296f78e4f",

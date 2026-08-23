@@ -6675,4 +6675,11 @@ finding R8: the first committed T12 smoke artifact used 20 warmup/50 measured
        median_ci95_ns [5,354, 6,209], with host_mutations=500,
        direct_materializer_calls=1,000, bridge_children_visited=1,000,
        stale_ref_retries=0, and cold_fallbacks=0.
+
+finding R9: the initial §43 regression used a shared leaf, which proves
+       transaction identity deduplication but is weaker than the handoff's
+       multi-branch wording. Correction in 9896b5d (`test(tui): cover shared
+       retained branch deduplication`): the test now shares a complete
+       retained branch (row + leaf) between both root branches and asserts
+       exactly three materializers (outer row + shared row + shared leaf).
 ```

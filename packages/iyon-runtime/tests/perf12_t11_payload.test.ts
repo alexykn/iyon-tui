@@ -312,6 +312,31 @@ describe("PERF-12 T11 payload families", () => {
     }
   });
 
+  test("§41: diff coordinates beyond 32 bits match the Direct oracle", () => {
+    if (!canRun) return;
+    // The bridge schema carries coordinates as safe 53-bit integers and the
+    // Direct decoder accepts them; the buffer lane must not narrow them.
+    const base = 2 ** 40 + 12_345;
+    const view = View.diff([{
+      oldRange: { start: base - 2, count: 1 },
+      newRange: { start: base, count: 2 },
+      lines: [
+        { kind: "context", text: "ctx", termination: "terminated", oldLine: base - 1, newLine: base + 1 },
+        { kind: "addition", text: "add", termination: "terminated", newLine: base + 2 },
+      ],
+    }]);
+    const host = new Host!(48, 8, true);
+    const boundary = new RetainedRootBoundary(session!, () => host.tuiViewAbiHostPointer() as never);
+    try {
+      const delta = countersDelta(() => expect(boundary.install(view)).toBeGreaterThan(0));
+      expect(delta.cold_fallbacks).toBe(0);
+      expect(host.screenRows()).toEqual(oracle(view, 48, 8));
+    } finally {
+      boundary.close();
+      host.dispose();
+    }
+  });
+
   test("§42: stream bytes never enter structural construction", () => {
     if (!canRun) return;
     const NativeTextStream = native.NativeTextStream;

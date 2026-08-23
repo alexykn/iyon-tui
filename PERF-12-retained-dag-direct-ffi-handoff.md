@@ -6705,6 +6705,33 @@ counter-proven stable-payload cutoffs, unchanged stream separation, and a
 measured default-lane decision; decorated/container/hanging/component nodes
 and production boundary routing remain explicitly fallback-routed for T13.
 
+Errata (added by the post-T11 joint T11/T12 review):
+
+```text
+finding R1: parse_and_build_diff narrowed hunk range STARTS to u32::MAX even
+       though the bridge schema carries coordinates as safe 53-bit integers
+       and the Direct decoder accepts them via required_u64/NonZeroU64. A
+       review probe installing a diff at range start 2^40+12,345 fell back
+       while the Direct oracle rendered it. Correction: the spurious narrowing
+       was removed (DiffRange::new/DiffLineNumber already validate genuine
+       overflow); regression test "§41: diff coordinates beyond 32 bits match
+       the Direct oracle" covers it end to end.
+
+finding R2: review probes also CONFIRMED two suspected areas hold:
+       TextEncoder.encodeInto keeps read === length while replacing lone
+       surrogates, so NUL+surrogate payloads ride the exact-byte lane without
+       wrongful refusal; and §47 targeted recovery works through payload nodes
+       (a poisoned TEXT-child hint recovers with exactly one retry — now a
+       permanent T12-suite test).
+
+finding R3: the parser fix changed the native artifact and both smoke
+       artifacts were re-captured at 29745c2 (addon SHA-256
+       42fbce1e367ed725130b74b25c457f2c14e0feee5e18daa178a1e7ff5d70c0c8).
+       T11 string-case medians are within noise of the figures above
+       (short_ascii 5,188 ns; embedded_nul 3,792 ns; styled_spans 6,125 ns;
+       diff_lines 84,125 ns); lane probes remain statistical parity.
+```
+
 ## T12 implementation record
 
 ### 1. Scope statement
@@ -6967,4 +6994,20 @@ finding R15 (added by the T11 implementation review): the §45/§118 child-
        design. Correction: the fixture's failing child is now a DECORATED
        node (still fallback-routed until T13); the lease-drain, old-root
        preservation, and bounded-retry assertions are unchanged and pass.
+
+finding R16 (added by the post-T11 joint T11/T12 review): two areas lacked
+       direct test proof. First, the R12 exception drain in the host commit
+       section was never exercised — the disposed-host fixture returns no
+       pointer instead of throwing. Second, §47 recovery had only been proven
+       through structural children. Corrections: new tests "§118: an exception
+       during the host commit drains every lease and rethrows" (leases return
+       to the before-count, old root intact, next install succeeds) and
+       "§47×T11: a stale hint on a TEXT child recovers through its payload
+       materializer" (exactly one retry, Direct parity). The suite is now 10
+       passing tests / 42 expect calls, and the smoke artifact was re-captured
+       at 29745c2 with addon SHA-256
+       42fbce1e367ed725130b74b25c457f2c14e0feee5e18daa178a1e7ff5d70c0c8:
+       median 5,563 ns, p95 13,834 ns, p99 34,542 ns,
+       median_ci95_ns [5,209, 5,833], host_mutations=500,
+       stale_ref_retries=0, cold_fallbacks=0.
 ```

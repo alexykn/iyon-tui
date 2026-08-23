@@ -7,6 +7,7 @@ import { nodeForBridge, View } from "../src/tui/values/view.ts";
 import {
   forceBridgeNativeHintForTests,
   retainedIdentityCounterSnapshot,
+  resetRetainedIdentityCounters,
   RetainedRootBoundary,
 } from "../src/tui/retained_dag.ts";
 
@@ -43,6 +44,33 @@ function oracle(view: View, width = 48, height = 12): string[] {
 }
 
 describe("PERF-12 T12 transaction integrity", () => {
+  test("§47×T11: a stale hint on a TEXT child recovers through its payload materializer", () => {
+    if (!canRun) return;
+    const host = new Host!(48, 12, true);
+    const boundary = new RetainedRootBoundary(session!, () => host.tuiViewAbiHostPointer() as never);
+    const directHost = new Host!(48, 12, true);
+    try {
+      const textChild = View.text("stale payload child");
+      // Seed ONLY the child in the shared cache; the row must be unknown so
+      // its constructor actually resolves children and hits the stale hint.
+      directHost.render(nodeForBridge(textChild));
+      const root = View.horizontal([View.spacer(1), textChild]);
+      forceBridgeNativeHintForTests(nodeForBridge(textChild), {
+        generation: session!.abi.generation,
+        nativeRef: 0x7fff_fe10,
+      });
+      resetRetainedIdentityCounters();
+      const ref = boundary.install(root);
+      expect(ref).toBeGreaterThan(0);
+      expect(retainedIdentityCounterSnapshot().stale_ref_retries).toBe(1);
+      expect(host.screenRows()).toEqual(directHost.screenRows());
+    } finally {
+      boundary.close();
+      directHost.dispose();
+      host.dispose();
+    }
+  });
+
   test("§43: materializes a shared child once across multiple changed branches", () => {
     if (!canRun) return;
     const shared = View.horizontal([View.spacer(2)]);
@@ -260,6 +288,37 @@ describe("PERF-12 T12 transaction integrity", () => {
       expect(memorySnapshot()?.leased_slots).toBe(leasedBefore);
     } finally {
       boundary.close();
+    }
+  });
+
+  test("§118: an exception during the host commit drains every lease and rethrows", () => {
+    if (!canRun) return;
+    const old = View.spacer(2);
+    const host = new Host!(48, 12, true);
+    host.render(nodeForBridge(old));
+    let throwInCommit = false;
+    const boundary = new RetainedRootBoundary(session!, () => {
+      if (throwInCommit) throw new Error("host commit exploded");
+      return host.tuiViewAbiHostPointer() as never;
+    });
+    try {
+      expect(boundary.adopt(old)).toBe(true);
+      const leasedBefore = memorySnapshot()?.leased_slots;
+      const beforeRows = host.screenRows();
+      throwInCommit = true;
+      // The root fully materializes; the commit section then throws. The
+      // transaction must drain every temporary lease before rethrowing.
+      expect(() => boundary.install(View.horizontal([View.spacer(5), View.spacer(6)]))).toThrow("host commit exploded");
+      throwInCommit = false;
+      expect(memorySnapshot()?.leased_slots).toBe(leasedBefore);
+      // The old root is untouched and still renders exactly.
+      expect(host.screenRows()).toEqual(beforeRows);
+      expect(boundary.renderExact(old).status).toBe("ok");
+      // A subsequent valid install succeeds.
+      expect(boundary.install(View.spacer(8))).toBeGreaterThan(0);
+    } finally {
+      boundary.close();
+      host.dispose();
     }
   });
 });

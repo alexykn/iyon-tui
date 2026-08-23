@@ -3052,13 +3052,8 @@ fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
         let old_count = coordinate(next_word()?, next_word()?)?;
         let new_start = coordinate(next_word()?, next_word()?)?;
         let new_count = coordinate(next_word()?, next_word()?)?;
-        if old_start > u64::from(u32::MAX)
-            || old_count > u64::from(u32::MAX)
-            || new_start > u64::from(u32::MAX)
-            || new_count > u64::from(u32::MAX)
-        {
-            return Err(FAST_INVALID);
-        }
+        // Coordinates are full safe-53-bit values exactly like the Direct
+        // decoder; DiffRange::new validates overflow below.
         let old_range =
             DiffRange::new(DiffLineOffset::new(old_start), old_count).map_err(|_| FAST_INVALID)?;
         let new_range =

@@ -6027,3 +6027,194 @@ finding R2: the review verified where count-vs-capacity validation for
        the same buffer shape still validates, strengthening the §116
        gate evidence recorded above.
 ```
+
+## T9 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T9 (PERF-12.6 retained clone/edit lanes)
+parent:       12.6
+sections:     §27 derivation hints, §28 why derivations are kept,
+              §38 text layout mutation
+supporting:   §19 ensureNative ordering (tryDerivation step),
+              §23 native cache-first rule extended to patch impls,
+              §25 reuse-before-adding (no new ABI functions),
+              §91 derivation_fast_path_calls counter
+```
+
+### 2. Commits
+
+```text
+ecbe221  feat(tui): preserve semantic derivations and retained scalar clones
+```
+
+This record was appended in the immediately following documentation commit on
+`perf-refactor`. The committed benchmark artifact's summary `git_sha` records
+`ecbe221` (the artifact was re-captured after the implementation commit; tree
+content identical except the artifact file), per the provenance convention
+documented in the T6 record.
+
+### 3. Review findings
+
+```text
+finding 1: the legacy view_common_patch_root surface resolved decoration_ref
+       unconditionally and the GENERATED EXPORT LAYER validated it as a
+       non-zero ViewRef, so the function could never be called with the
+       absent-marker 0 - the dead 11v3 route dodged this by passing the base
+       ref twice. Correction: decoration_ref is consumed by no mask branch,
+       so the canonical schema now lowers it as plain u32; the impl resolves
+       it only when non-zero. Schema BLAKE3 changed legitimately (below).
+
+finding 2: both patch implementations lacked the §23 semantic-cache-first
+       consult that T7 added to constructors. Correction: a live NodeId now
+       returns its cached ref before the base is resolved or scalars are
+       inspected, on both view_text_layout_patch_root and
+       view_common_patch_root (+ Rust unit tests covering the consult and
+       the stale-base error path).
+
+finding 3: the first benchmark draft derived every generation from the same
+       ORIGINAL text node and fell back after one generation. Root cause is
+       a native lifetime fact, now documented: modifier operations allocate
+       a new root Arc<ViewNode> (persistent-value semantics), so a node's
+       weak cache entry dies once the tree holding its exact handle is
+       released. Correction: generations chain - each generation derives
+       from the PREVIOUS generation's text node, whose handle lives inside
+       the still-leased previous root. This is exactly the §18 guarantee
+       the architecture pairs with §27/§38; deriving from a dormant
+       original degrades cleanly to full materialization instead.
+
+finding 4: scalar-only decorations over INLINE-kind bases (Spacer) have the
+       same exposure amplified: the padded node's construction already drops
+       the inner spacer's Arc even while the tree lives, so such bases are
+       unresolvable after ANY decode. Tests therefore use Text bases (Arc'd
+       inside ViewKind::Text and held by the parent column), which is also
+       the realistic agent-TUI shape. Spacer-based scalar derivations remain
+       correct - they simply fall back when the base is not resolvable,
+       which §27 permits ("otherwise it ignores the hint").
+
+finding 5: the first test suite draft asserted direct_materializer_calls +1
+       for the wrap-only generation but each `View.vertical([...])` builds a
+       FRESH spacer leaf (new identity), so the true delta was 2. The counter
+       semantics were right; the expectation was fixed.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+src/tui/ir.ts
+    BridgeTextLayoutDerivation / BridgeCommonScalarDerivation /
+    BridgeDerivation types, BRIDGE_DERIVATION WeakMap sidecar, set/peek
+    accessors (§15: hints die with their semantic node)
+values/view.ts
+    textLayoutPatch attaches TextLayoutDerivation {base, wrap, align} to
+        the derived text node in BOTH cases (plain text; decorated wrapper
+        with patched inner text) - final codes recorded, spans array
+        identity preserved by the spread (§38 construction contract)
+    decorate() attaches CommonScalarDerivation when the merged decoration is
+        scalar-only (padding/width/height/min/max, empty style/colors/
+        border/styleStates, mask != 0); mask bits mirror the native
+        PATCH_* constants; padding packs as top|right<<16 /
+        bottom|left<<16 exactly as the native impl unpacks
+retained_dag.ts
+    tryDerivation(node, tx): runs after identity resolution and before
+        materializer dispatch (§19 hard ordering); resolves the base's
+        same-generation NativeRef from its hint or, for pre-commit NodeIds,
+        one ceiling-gated promotion whose acquired lease joins the tx
+        temporaries; calls the EXISTING generated wrappers
+        viewTextLayoutPatchRoot / viewCommonPatchRoot (§25 - zero new
+        ABI functions, function_count stays 49); any expected native
+        failure status ignores the hint (which stays attached for later
+        re-adoption) and materializes from semantic fields (§27/§38);
+        success counted as derivation_fast_path_calls (§91)
+crates/iyon-native/src/tui/view_abi.rs
+    §23 consult on both patch impls; decoration_ref resolution only when
+    non-zero; two new unit tests
+tools/tui-abi/view_abi.toml
+    decoration_ref lowered as u32 (schema change; regenerated)
+tests/perf12_t9_derivation.test.ts   five conformance tests
+bench/perf12_t9_text_metadata_patch.ts + PERF-12-t9-text-metadata-patch.jsonl
+addon rebuilt and restaged for the new schema hash:
+    d48b8acbe92472b3d22727bc9018467b0ebcb626cafd6fdaf365ed6f76ec63b6
+```
+
+Deliberately NOT done yet: AxisEditDerivation/GridEditDerivation land with
+their native retained edit primitives in T10 (§33-§36); production
+routing unchanged until T13; decorated-node materializers are T11/T13, so a
+scalar derivation under a STILL-decorated parent falls back until then.
+
+### 5. Provenance block
+
+```text
+source revision at capture: ecbe2215adf9468c3dd76a4321bda339eaa74515
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+rebuilt addon SHA-256:      d48b8acbe92472b3d22727bc9018467b0ebcb626cafd6fdaf365ed6f76ec63b6
+schema BLAKE3:              ec82466e117642ffc4009bd11199b7a24aa37f3476065fa34e8732d070dda2d4
+generator BLAKE3:           e6237f38757724691b7b739064c158573fc0f1dcd63ab16d537a85039e8d155a
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Wrap/align-only text change sends base NativeRef + NodeId + scalars,
+   never resends payload:
+   perf12_t9_derivation.test.ts "§38: wrap-only text change clones the
+   retained payload" - install(next) over a Direct-decoded previous root:
+   derivation_fast_path_calls +1, byte_payload_bytes +0, cold_fallbacks +0,
+   exactly one ceiling-gated base promotion (attempts/hits +1/+1, the
+   §94 cold-sidecar shape), render parity with the Direct oracle.
+   The align-only variant passes identically. The smoke benchmark's measured
+   window proves the same structurally at scale: 1,600 consecutive retained
+   installs rode the derivation lane with fallbacks=0 and
+   byte_payload_bytes=0 (every violation aborts the run). PASS.
+
+2. Common scalar patch reuses base ref:
+   perf12_t9_derivation.test.ts "§27/§28: scalar-only decoration
+   patch reuses the shared base ref" - an unmodified shared text base inside
+   the leased root is patched through view_common_patch_root across TWO
+   consecutive generations (padding scalars, then a width rule), each riding
+   derivation_fast_path_calls +1 with byte_payload_bytes +0 and Direct-oracle
+   render parity; generation 2 resolves the base from its hint (no extra
+   promotion). PASS.
+
+3. Hint-miss degrades cleanly to full materialization:
+   three independent proofs -
+     a) mixed decorations stay unhinted (style-bearing decoration attaches
+        nothing) -> install returns undefined, every temporary lease drains
+        (leased_slots back to the old root only), old root keeps rendering;
+     b) raw-symbol proof: stale/unresolvable base refs return error statuses
+        (never crash) for BOTH patch primitives, and tryDerivation converts
+        expected statuses into "ignore hint";
+     c) dormant-base fallback: a derivation whose base weak entry expired
+        misses the ceiling-gated promotion and falls through to normal
+        materialization/fallback routing (finding 3 scenario).
+   PASS.
+
+§91 counter coverage: derivation_fast_path_calls incremented only on
+successful fast paths; misses are visible through materializer/fallback
+behavior rather than a new counter (the §91 list has no miss cell for
+derivations; adding one would extend the agreed surface mid-tranche).
+
+Regression battery: perf12_t9_derivation 5/5; tests directory 89 pass /
+1 fail (the T2-documented pre-existing cross-file interference, unchanged);
+test+tests 138 pass / 1 fail; tsc clean; tui-abi-gen check byte-fresh;
+tui-abi-gen 27/27; cargo iyon-native 34 lib tests green (+2 new); cargo fmt
+clean; clippy warning profile identical to the pre-T9 baseline.
+```
+
+### 7. Status line
+
+**Tranche T9 status: COMPLETE.** Derivation hints now let wrap/align-only
+text changes and scalar-only decoration changes clone retained native state
+through the existing patch primitives (base ref + NodeId + scalars, zero
+payload bytes, SHARED_PATH-style gate win at 0.9821x of direct_7v2 total
+time on TEXT_METADATA_PATCH) with clean degradation on every hint-miss path;
+axis/grid edit derivations land with their native primitives in T10, payload
+families in T11, recovery hardening in T12, and boundary routing in T13.

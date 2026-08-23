@@ -36,7 +36,7 @@ This experiment has **16 implementation tranches**. Each tranche below names the
 | **T10** | 12.7 | Wide retained edits: PersistentSeq preservation `§33`; wide sidecar exception `§34`; wide native edit path `§35`; Grid `§36`; wide benchmark gate `§96` | Replace/insert/remove/splice remain O(log₃₂ N) with counter proof at widths 2k/10k/100k; no flat materialization on the retained one-edit path |
 | **T11** | 12.8 | Payload families: text paths `§37`; strings and embedded NUL `§39`; styles `§40`; Diff `§41`; streaming separation `§42`; string benchmark `§98` | Full `§39` correctness dataset passes; stable text/style payload never resent; stream bytes never enter structural construction; string path chosen by end-to-end measurement |
 | **T12** | 12.9 | Transaction integrity: multi-branch DAG materialization `§43`; temporary lease transaction `§44`; host atomicity rule `§45`; stale hints `§46`; targeted one-retry recovery `§47`; recovery helper `§73`; failure injection suite `§118` | Common ancestors built once across branches; exactly one host mutation; every success/error/failure-injection path drains temporary leases; one bounded retry then authoritative fallback |
-| **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77`; History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
+| **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77` (traced: `PERF-12-production-boundary-trace.md`); History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
 | **T14** | 12.12 | Hardening: randomized DAG differential testing `§87`; cross-transport identity tests `§112`; fuzzing targets `§117`; full-schema coverage proof `§76`; banned-shortcut review `§107` | 100-seed differential suite, fuzz targets, and full-schema coverage green; no UAF, no retained borrowed pointer, no partial host mutation demonstrated under fault injection |
 | **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
 | **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak; obsolete pending/recipe machinery removed or test-gated; final shape matches `§121` ownership map, not a regrown pending state machine |
@@ -2714,7 +2714,11 @@ No silent omissions.
 
 # 77. Every View-bearing boundary
 
-Trace actual production source before implementation.
+Trace actual production source before implementation. The completed trace is
+committed as `PERF-12-production-boundary-trace.md` (boundaries B1–B6, legacy
+crates/iyon vs plugins/app/iyon, theming/styling relationship, streaming,
+components, diff/markdown/smoothing, tool renderers, and the TS-layer
+compromises T13 removes); it is the authoritative inventory for this section.
 
 PERF-12 must integrate at every place that currently accepts or stores a View, including at least:
 

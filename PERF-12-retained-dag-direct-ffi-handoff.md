@@ -5634,6 +5634,17 @@ covered by nine conformance tests; production boundaries still route through
 Direct until T13, full-schema materializers land in T7, and derivation hints
 in T9.
 
+Errata (added by the T11 implementation review):
+
+```text
+finding R1: the "§18: failed install keeps the previous root" fixture used
+       View.text as the canonical unsupported kind ("text has no materializer
+       yet"). T11 landed text materializers, so that install now succeeds by
+       design. Correction: the fixture now uses a DECORATED node, which
+       remains explicitly fallback-routed until T13; the §18 lease-drain and
+       old-root assertions are unchanged and pass.
+```
+
 ## T7 implementation record
 
 ### 1. Scope statement
@@ -6470,6 +6481,230 @@ finding R4: the original T10 smoke artifact omitted §96 replacement widths 32
 The review corrections preserve the T10 status; no T11+ scope was pulled
 forward.
 
+## T11 implementation record
+
+### 1. Scope statement
+
+```text
+tranche:      T11 (PERF-12.8 payload families)
+parent:       12.8
+sections:     §37 text paths, §39 strings and embedded NUL, §40 styles,
+              §41 Diff, §42 streaming separation, §98 string benchmark
+supporting:   §23 semantic-cache-first consults (text constructors),
+              §25 reuse-before-adding, §29/§30 borrowed transport and byte
+              tier, §50 retained caps, §74 status surface reuse, §91
+              structural counters, §103 result schema
+note on order: T11 was implemented after T12 (the T12 record's "deliberately
+              NOT done" list explicitly reserved payload families to T11);
+              this record is inserted between T10 and T12 to keep registry
+              order readable.
+```
+
+### 2. Commits
+
+```text
+3f24225  feat(tui): materialize retained text, style, and diff payload families
+```
+
+The smoke artifact (`PERF-12-t11-strings.jsonl`) was captured at that
+revision in the immediately following documentation commit, per the provenance
+convention documented since T6.
+
+### 3. Review findings
+
+```text
+finding 1 (pre-existing drift): the generated Rust integration test pinned
+       hardcoded stub-return expectations from BEFORE T12 inserted
+       view_status_detail (view_render_ref expected 0x101 while its stub had
+       returned 0x102 since that insertion). The drift survived because only
+       `cargo test --lib` ran in recent tranches. Correction: the canonical
+       renderer's expectation block now carries the shifted values and the
+       view_ref_for_node_id expectation is computed positionally
+       (0x100 + index) so future insertions cannot drift it.
+
+finding 2: the eight pre-existing text constructors lacked the §23
+       semantic-cache-first consult that T7/T9/T10 added to their sibling
+       constructors/patches. A raw re-request of a LIVE NodeId with different
+       payload therefore hit the publication identity-conflict rejection
+       (FAST_INVALID) instead of returning the cached ref — discovered by the
+       §98 lane probe reusing a fixed NodeId across payloads. Correction: all
+       eight text constructors now consult ref_for_node_id first (+ unit
+       test), and the probe mints fresh NodeIds per iteration so it measures
+       the real cold-construction shape.
+
+finding 3: the generator rejected functions with more than one variable
+       buffer (a PERF-11-era tranche-1 rule), but §41 needs framed metadata
+       words AND a UTF-8 byte payload in ONE call. Correction: the rule now
+       allows up to two buffers; multi-buffer functions must declare an
+       explicit buffer_used_of per used-count (validated bijection) so the
+       export layer validates each used-count against ITS OWN buffer's
+       capacity/element size — the first render exposed exactly this bug for
+       the second buffer (used_byte_count validated against words_capacity).
+
+finding 4: the initial diff lane reused canonical enum codes incorrectly
+       (0-based kinds, a termination bit); the Direct decoder uses the
+       bridge-schema codes (context=1/addition=2/deletion=3,
+       terminated=1/unterminated=2). Correction: meta packs kind | term<<16
+       with the canonical codes, and empty diffs (hunk_count = 0) are accepted
+       to match Direct parity for View.diff([]).
+
+finding 5: stale tranche fixtures assumed text had no materializer. The T6
+       "failed install" test and one T12 failure-injection fixture used
+       View.text as the canonical unsupported kind; after T11 both installs
+       succeed. Correction: those fixtures now use a DECORATED node (still
+       fallback-routed until T13), recorded as errata on the T6 and T12
+       records.
+
+finding 6: style sidecar identity follows the legacy route conventions
+       exactly (attribute bits bold=1..strikethrough=32, color atoms as the
+       same string forms Direct parses, theme atom as "theme:<key>", ref 0 =
+       unstyled) and is generation-scoped like BRIDGE_NATIVE. The native
+       runtime's style table remains the only authoritative style cache (§40);
+       the WeakMap is acceleration metadata only.
+```
+
+### 4. Implementation summary
+
+What now exists:
+
+```text
+tools/tui-abi/view_abi.toml + tui-abi-gen
+    view_diff_create_buffer: borrowed u32[] words + u8[] bytes lane with
+        explicit buffer_used_of pairing; two-variable-buffer validation rule;
+        positional conformance stub expectations; function_count 51 -> 52
+native (crates/iyon-native/src/tui/view_abi.rs)
+    parse_and_build_diff + view_diff_create_buffer_impl: bounds-checked word
+        framing, UTF-8 validation, canonical DiffHunk coordinate validation
+        via iyon_tui::DiffHunk::new, DiffRenderer lowering identical to the
+        Direct oracle, shared-cache publication with a §23 consult;
+        §23 consults added to all eight text constructors; unit tests for
+        diff build/validation/consult and text-constructor consults
+packages/iyon-runtime/src/tui/native_view_policy.ts
+    MAX_DIRECT_TEXT_BYTES / MAX_DIRECT_DIFF_WORDS / MAX_DIRECT_DIFF_BYTES
+    = 65,536 each (§30 tiers; final values from realistic traces at T15)
+retained_dag.ts
+    STYLE_REF_CACHE: generation-scoped WeakMap<StyleNode, StyleRef> plus a
+        per-generation atom intern map over style_atom_create_cstring /
+        style_create_bits (§40)
+    materializeTextNode: cstring family for NUL-free spans 1..=4 (zero JS
+        encoding), TextEncoder.encodeInto into the reusable byte tier for
+        NUL/surrogate payloads, span counts >4 refuse with cold_fallbacks
+    materializeDiffNode: framed words+bytes packing through one borrowed
+        call; safe-integer coordinate validation; oversize refuses
+    MaterializeTx.byteScratch/diffWordScratch: labeled reusable tiers sharing
+        one storage slot per environment
+    unknown attributes/NUL atoms/failed style publication count
+        cold_fallbacks and route the complete cold path
+bench/perf12_t11_strings.ts -> PERF-12-t11-strings.jsonl
+    §103 smoke records per dataset with p95/p99/bootstrap median CI and
+    structural counters, plus raw cstring-vs-utf8 lane probes
+```
+
+Deliberately NOT done yet: production boundary routing remains T13;
+decorated/container/hanging/component nodes still route to the complete
+fallback by explicit routing (their materializers/boundary wiring are T13
+decisions); streaming stays fully outside the View bridge unchanged (§42,
+now counter-proven); no DiffPayloadRef was added — the direct words+bytes
+import made a retained payload handle unnecessary at these sizes (§41
+benchmark-first rule; revisit only if large-diff profiles show repeated
+re-import cost).
+
+### 5. Provenance block
+
+```text
+source revision at capture: 3f242259e56f13a713b440f9f605e5f99499a092
+bun --version:              1.4.0
+bun --revision:             1.4.0+34cbb9a40
+rustc:                      1.97.1 (8bab26f4f 2026-07-14), target aarch64-apple-darwin
+restaged addon SHA-256:     8d514a869fc6d5061e075be54eca15552b9553338c96f1d765a430859a528564
+schema BLAKE3:              8fcc9af81022fc96af24b4f5904c019d099084cbba60e24bd6c01699c1ac30c6
+generator BLAKE3:           de90d6c9ff4fe3d9ad72e91ce00e7e3d95124e664f97b21fd584dbcc9a37f6e4
+macOS 26.5.2, Apple M1 Pro
+```
+
+### 6. Gate evidence
+
+Tranche table "Required result" rows:
+
+```text
+1. Full §39 correctness dataset passes:
+   perf12_t11_payload.test.ts covers empty, ASCII, short Unicode, emoji/
+   non-BMP (ZWJ family + flags), combining sequences, embedded NUL, lone
+   surrogates (both orientations), U+10FFFF, 256-byte, and 4-KiB texts plus
+   a 120-line mixed-kind Diff with Unicode payloads — every case installed
+   through RetainedRootBoundary and asserted screen-identical to the Direct
+   decode oracle, zero cold_fallbacks, one text/diff materializer per case.
+   12/12 tests pass (92 expect calls). PASS.
+
+2. Stable text/style payload never resent:
+   §40 test: installing a grown root that SHARES the styled text node reports
+   bridge_hint_hits = 1 (identity cutoff before any payload/style access),
+   direct_materializer_calls = 2 (new column + new spacer only), and
+   byte_payload_bytes = 0. Replacing the text with a new node reusing the
+   SAME style object materializes only the new nodes; styles resolve through
+   the sidecar without re-publication. Themed styles verified end-to-end:
+   retained and Direct hosts with the same Theme produce identical screens
+   and the themed foreground paints (#ff8000 asserted cell-by-cell). PASS.
+
+3. Stream bytes never enter structural construction:
+   §42 test appends/seals a markdown TextStream and asserts every structural
+   counter stays at exactly 0 (materializers, children visited, ref words,
+   byte payload, host mutations). The stream pipeline itself is unchanged
+   native machinery (§42 keep-regardless). PASS.
+
+4. String path chosen by end-to-end measurement (§98):
+   PERF-12-t11-strings.jsonl (smoke profile, timing build, fresh staged addon,
+   50 warmup + 500 measured ops per dataset):
+     short_ascii     median 5,042 ns  (cstring)   p99 77,375
+     short_unicode   median 4,375 ns  (cstring)   p99 26,083
+     emoji_non_bmp   median 4,291 ns  (cstring)   p99 14,292
+     embedded_nul    median 4,625 ns  (utf8-byte) p99 636,000 (one OS-scheduler outlier tail)
+     bytes_256       median 3,584 ns  (cstring)
+     bytes_4k        median 4,625 ns  (cstring)
+     styled_spans    median 5,646 ns  (cstring)
+     diff_lines      median 86,979 ns (diff-words-bytes; includes full host
+                      repaint of 40 lowered rows)
+   Raw lane probes (fresh NodeId per call, 10k measured each):
+     ascii   cstring 625 ns vs utf8 584 ns; unicode cstring 667 ns vs utf8
+     708 ns — statistical parity. Decision: keep cstring as the default lane
+     (zero JS encoding, simplest argument lowering) and use the exact-byte
+     lane only when NUL forbids cstring or exact bytes are required. No
+     credible regression against either lane. PASS.
+
+Section coverage evidence:
+   §37  cstring common path + utf8 exact-byte path + fixed multi-span
+        families; >4 spans explicitly fallback-routed (§49/§76).
+   §39  dataset above; lone-surrogate normalization proven identical across
+        transports; NUL never truncates (byte lengths frame exactly).
+   §40  sidecar + cutoff + themed resolution + invalid-style refusal with
+        lease conservation (delta assertion).
+   §41  dedicated words+bytes constructor; validation parity (coordinate
+        mismatch, truncated framing, byte-length overflow all FAST_INVALID in
+        native tests); oversize JS payload refuses with the old root intact;
+        empty diff parity; no persistent payload handle introduced.
+   §42  counter proof above.
+
+Regression battery: perf12_t11_payload 12/12; combined T6-T12 + generated ABI
+suites 62 pass / 0 fail (852 expect calls); full runtime directory 118 pass /
+1 fail (the T2-documented pre-existing cross-file weak-cache interference,
+passing in isolation, unchanged); cargo iyon-native lib 39 pass / 1 ignored
+(+2 new tests); cargo fmt clean; clippy warning classes unchanged from the
+pre-T11 baseline (+2 too_many_arguments/+1 unsafe_function matching every
+existing buffer impl signature, no new lint classes); tsc clean; tui-abi-gen
+generate/check byte-fresh (27/27 tests); generated_view_abi integration suite
+now green after fixing finding 1.
+```
+
+### 7. Status line
+
+**Tranche T11 status: COMPLETE.** Text (cstring + exact-byte lanes), styles
+(generation-scoped StyleRef sidecar over the authoritative native table), and
+Diff (one borrowed words+bytes call through the canonical DiffRenderer
+lowering) now materialize on the retained path with full §39 dataset parity,
+counter-proven stable-payload cutoffs, unchanged stream separation, and a
+measured default-lane decision; decorated/container/hanging/component nodes
+and production boundary routing remain explicitly fallback-routed for T13.
+
 ## T12 implementation record
 
 ### 1. Scope statement
@@ -6725,4 +6960,11 @@ finding R14: the smoke harness still named and exercised a shared leaf after
        1,500 child visits, and 500 host mutations over 500 measured operations.
        Refreshed timing is median 8,251 ns, p95 20,208 ns, p99 47,583 ns,
        median_ci95_ns [7,833, 8,688], with zero retries and fallbacks.
+
+finding R15 (added by the T11 implementation review): the §45/§118 child-
+       failure fixture used a plain text child as the unsupported retained
+       kind. T11 landed text materializers, so that child now materializes by
+       design. Correction: the fixture's failing child is now a DECORATED
+       node (still fallback-routed until T13); the lease-drain, old-root
+       preservation, and bounded-retry assertions are unchanged and pass.
 ```

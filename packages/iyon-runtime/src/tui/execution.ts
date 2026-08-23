@@ -341,6 +341,7 @@ export interface ExecutionCounters {
   execution_scope_noop_outputs: number;
   execution_scope_changed_outputs: number;
   execution_flush_passes: number;
+  execution_commit_batches: number;
   execution_commit_aborts: number;
   /** Existing semantic-layer counters (handoff §28: these remain). */
   composition_exact_view_reuses: number;
@@ -358,6 +359,7 @@ export const executionCounters: ExecutionCounters = {
   execution_scope_noop_outputs: 0,
   execution_scope_changed_outputs: 0,
   execution_flush_passes: 0,
+  execution_commit_batches: 0,
   execution_commit_aborts: 0,
   composition_exact_view_reuses: 0,
   composition_new_views: 0,
@@ -413,6 +415,15 @@ export interface RetainedExecutionRuntimeOptions {
    * scope DETACHED (R1 raw-output embedding).
    */
   createScopeProjection?: ScopeProjectionFactory;
+  /**
+   * Auto-scheduling (AMENDMENT-C §12.1): the FIRST invalidation in a turn
+   * schedules one flush at the end of the current microtask turn; later
+   * invalidations join the same dirty set. Explicit `flush()` always runs
+   * immediately and pre-empts the scheduled one. Production hosts may wire
+   * their frame loop instead (handoff flush-integration rule); disable with
+   * `autoFlush: false` for fully manual driving. Default: `true`.
+   */
+  autoFlush?: boolean;
 }
 
 export class RetainedExecutionRuntime {
@@ -420,9 +431,12 @@ export class RetainedExecutionRuntime {
   private flushing = false;
   private readonly roots: RetainedExecutionScope[] = [];
   private readonly projectionFactory: ScopeProjectionFactory | undefined;
+  private readonly autoFlush: boolean;
+  private flushScheduled = false;
 
   constructor(options: RetainedExecutionRuntimeOptions = {}) {
     this.projectionFactory = options.createScopeProjection;
+    this.autoFlush = options.autoFlush ?? true;
   }
 
   /**
@@ -458,6 +472,21 @@ export class RetainedExecutionRuntime {
     scope.dirty = true;
     this.queue.push(scope);
     executionCounters.execution_scope_dirty_enqueues += 1;
+    this.scheduleFlush();
+  }
+
+  /**
+   * Coalesces a synchronous burst of invalidations into ONE flush at the end
+   * of the current microtask turn (§12.1). Explicit `flush()` pre-empts it;
+   * the scheduled callback then finds an empty queue and becomes a no-op.
+   */
+  private scheduleFlush(): void {
+    if (!this.autoFlush || this.flushing || this.flushScheduled) return;
+    this.flushScheduled = true;
+    queueMicrotask(() => {
+      this.flushScheduled = false;
+      if (this.queue.length > 0) this.flush();
+    });
   }
 
   /**
@@ -477,6 +506,13 @@ export class RetainedExecutionRuntime {
         try {
           for (const scope of batch) {
             if (scope.disposed || !scope.dirty) continue;
+            // §12.2/§22.4: an ancestor that ALREADY evaluated this pass may
+            // have structurally dropped this scope — discard its queued work
+            // instead of executing a doomed body.
+            if (this.isDroppedDuringPreparation(scope)) {
+              scope.dirty = false;
+              continue;
+            }
             scope.dirty = false;
             processed.push(scope);
             this.runWork(scope);
@@ -519,6 +555,27 @@ export class RetainedExecutionRuntime {
 
   // --- internals -------------------------------------------------------------
 
+  /**
+   * Whether any evaluating ancestor has structurally dropped this scope from
+   * its reconciled pending child list during the current preparation phase.
+   * Walks the full ancestor chain so transitive drops are caught too.
+   */
+  private isDroppedDuringPreparation(scope: RetainedExecutionScope): boolean {
+    let node = scope;
+    let current = scope.parent;
+    while (current !== null) {
+      if (
+        current.state === "evaluating" &&
+        !current.pendingChildren.some((record) => record.scope === node)
+      ) {
+        return true;
+      }
+      node = current;
+      current = current.parent;
+    }
+    return false;
+  }
+
   private evaluateIntoPendings(scope: RetainedExecutionScope): void {
     scope.state = "evaluating";
     scope.table.begin();
@@ -545,6 +602,7 @@ export class RetainedExecutionRuntime {
   }
 
   private commitBatch(batch: ReadonlyArray<RetainedExecutionScope>): void {
+    executionCounters.execution_commit_batches += 1;
     for (const scope of batch) this.commitScope(scope);
   }
 
@@ -713,6 +771,9 @@ export class RetainedExecutionRuntime {
       return { view: embeddable(), scope: typed };
     }
     typed.currentProps = props;
+    // Inline evaluation supplies newer inputs than any queued dirty work for
+    // this scope: supersede it (AMENDMENT-C §12.2 - no double execution).
+    typed.dirty = false;
     executionCounters.execution_scope_body_calls += 1;
     this.evaluateIntoPendings(typed);
     return { view: embeddable(), scope: typed };

@@ -944,6 +944,40 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R0 status: COMPLETE.** The lexical-composition architecture is fully retired, helpers carry their final scoped call shape with proven ≤noise fall-through cost, and the tree is clean for R1 (RetainedExecutionScope substrate).
 
+### R1 implementation record
+
+**1. Scope statement.** Tranche R1 (Step 4R; AMENDMENT-C §18): retained execution substrate — `RetainedExecutionRuntime`/`RetainedExecutionScope`, parent/current/pending state, scope-local semantic slot ownership wired into every compose helper, active-scope nesting, disposal, §28 execution counters, synthetic identity/props-skipping proofs. No native projection (R3), no keyed dynamics (R8), no State<T> tracking (R4).
+
+**2. Commits.** `2ee5c88` — feat(tui): add T13.1 retained execution scope substrate (R1). Bench JSONL re-captured at `9f1cf91` (pre-commit working tree of this tranche) and committed in `2ee5c88`.
+
+**3. Review findings.**
+- Finding 1 (gate regression caught by measurement, fixed): inserting the scoped arm added one cross-module function call (`activeExecutionScope()`) per helper — cold construction regressed to **+5.9%…+7.0%**, FAILING the ≤3% gate. Root cause: per-call cost of a module-boundary function returning the context-stack top (~30 ns × ~13 helpers/op under JSC without bundle inlining). Fix: hot path now reads a stable shared cell (`executionContext.top`, property load on an imported constant object); push/pop sync it. Post-fix: **+1.48% / +0.90% / +0.47%** across three runs — gate pass with real margin. Lesson recorded: any future per-helper probe must be a property load, never a call.
+- Finding 2 (real commit-coverage bug found by tests before ever shipping): children evaluated INLINE during a parent's render were not in the flush batch's processed list, so their prepared outputs/slots were never promoted — a skipped child later re-presented an uncommitted (`undefined`) output. Fix: `commitScope`/`abortScope` recurse depth-first through `pendingChildren` carrying prepared work; fresh never-committed subtrees are disposed on abort after rollback. This is exactly the class of bug §13's prepare/commit separation exists to surface.
+- Finding 3: axis fall-through initially called `View.vertical(build)` for construction after already running the builder callback for comparison — double-executing user builder callbacks (side effects). `View.__composedAxis` (removed in R0 as caller-less) was reinstituted with updated docs so the builder runs EXACTLY once.
+
+**4. Implementation summary.** `execution.ts` NEW (~600 lines): scopes (type/parent/ordinal/key/current+pending output/state/mounted/dirty), dense semantic slot tables (begin/next/commit/rollback/release), positional child reconciliation, `invokeComponent` primitive (the future defineView wrapper guts, including shallow props skip), runtime batch protocol with depth-ordered passes, generation-safe duplicate-invalidation coalescing, recursive disposal, execution counters + semantic reuse counters. `compose.ts`: scoped arm inserted into all 27 helpers (slot → immediate-equality comparator → exact previous View | fresh build + stage); comparators ported from Step 3 (`dad92b5`) unchanged in contract. `view.ts`: `__composedAxis` reinstated (@internal).
+
+**5. Provenance block.** Source revision at capture: `9f1cf91fdb60d8b19fe8de00b440624da3b83c35` (commit `2ee5c88`). bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`). Pure TypeScript tranche; no native addon/schema/generator involvement.
+
+**6. Gate evidence.**
+- *Same type+position ⇒ same instance:* proven across parent re-renders (captured scope refs identical, not disposed).
+- *Type mismatch ⇒ remount:* replacement scope created; predecessor disposed after commit; A.calls()==1, B.calls()==1.
+- *Dirty-only execution, counter-proven:* three sibling roots, invalidate middle ⇒ body_calls delta exactly 1, siblings zero; nested variant: child-only invalidation executes exactly the child body (parent/header bodies untouched).
+- *Exact reuse / no-op counters:* identical re-render returns the SAME View object; `composition_exact_view_reuses` +1, `composition_new_views` +0, `execution_scope_noop_outputs` +1. Changed payload ⇒ new NodeId + changed-output event.
+- *Control-flow shift:* toggling a conditional middle child keeps output bridge-identical to cold reference construction in all three states (reuse may degrade locally — semantics never).
+- *Slot lifetime:* tail shrinks on commit (4→6→abort@9→rewind to 6→grow to 5 verified via committedSlotCount); abort leaves currentOutput defined and authoritative.
+- *Batch atomicity:* stable+bomber dirty in one batch, bomber throws after staging ⇒ whole batch aborted (abort counter +1), stable still presents OLD value, retry succeeds after failure clears.
+- *Aborted fresh child disposal:* child created then parent body threw ⇒ child.disposed === true.
+- *Props skipping (synthetic, AMENDMENT-C Step 4R requirement):* shallow-equal props skip the body (calls unchanged, `prop_skips` +1 semantics); changed props execute exactly once more.
+- *Duplicate invalidation:* 3 invalidations ⇒ 1 enqueue + 2 duplicates + 1 execution.
+- *Async rejection:* `TUI_EXECUTION_ASYNC_BODY` deterministic error; nothing committed.
+- *Multi-runtime isolation:* same component type mounted under two runtimes ⇒ distinct scope instances; independent updates don't cross.
+- *Disposal soak:* 1,000 mount/dispose cycles ⇒ mounts==1,000, unmounts ≥1,000, disposed roots have undefined output and empty slot tables.
+- *Cold fall-through ≤3% (re-verified post-scoped-arm):* three runs +1.48% / +0.90% / +0.47%; final JSONL committed (direct median 5,805 ns vs composed 5,832 ns, +0.47%).
+- *Battery:* typecheck clean (runtime + plugins); full suite 158 pass / 1 fail — the documented pre-existing perf11v4_direct weak-cache interference failure (passes isolated), unchanged.
+
+**7. Status line.** **Tranche R1 status: COMPLETE.** Clean scopes provably never execute; only invalidated scopes run; exact-reuse is allocation-free inside dirty scopes; the transactional substrate holds under injected failure. Ready for R2 (defineView public API) on top of `invokeChild`/`invokeComponent`. Known limitation documented: cross-scope composite splicing after a child-only update awaits the R3 projection — body isolation does not depend on it.
+
 ---
 
 # 33. Files

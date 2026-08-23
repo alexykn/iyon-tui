@@ -6701,4 +6701,14 @@ finding R11: restaging the addon changed the T12 smoke artifact's native
        50 warmup/500 measured operations, median 6,167 ns, p95 12,542 ns,
        p99 39,083 ns, median_ci95_ns [6,083, 6,292], host_mutations=500,
        stale_ref_retries=0, and cold_fallbacks=0.
+
+finding R12: `RetainedRootBoundary.install` drained leases for status-return
+       host failures but did not protect the host-pointer/FFI commit section
+       from an unexpected throw after materialization. Correction in 76dd1ae
+       (`fix(tui): drain leases across host commit exceptions`): the commit
+       section now drains all temporary leases and any newly acquired boundary
+       lease before rethrowing, while preserving the old root. The smoke JSONL
+       was refreshed at that revision: median 4,605 ns, p95 13,583 ns, p99
+       44,750 ns, median_ci95_ns [4,396, 4,938], host_mutations=500,
+       stale_ref_retries=0, and cold_fallbacks=0.
 ```

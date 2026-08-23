@@ -537,6 +537,19 @@ export class View {
     return new View({ kind: BRIDGE_VIEW_KIND.component, handle: (nativeId ?? handle.id) as NativeHandleId });
   }
 
+  /**
+   * PERF-12 T13.1 (@internal): construct an axis view from pre-composed
+   * layout entries so the composition layer builds the builder callback
+   * EXACTLY ONCE and reuses the entries for both reuse-check and construction
+   * (§19). Equivalent to View.vertical/horizontal over a builder callback,
+   * including the wide-sequence seed. Reinstituted in R1 for the scoped arm.
+   */
+  static __composedAxis(row: boolean, entries: BridgeLayoutChild[], gap: number): View {
+    const view = new View({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: entries, gap });
+    seedWideAxisSequence(view, entries);
+    return view;
+  }
+
   /** Internal retained-path constructor; not part of the public semantic API. */
   static textLayoutAtNativePathForTransport(
     view: View,

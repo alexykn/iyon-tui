@@ -277,8 +277,8 @@ boundaries, each of which PERF-12 T13 must own explicitly:
 
 | # | Boundary | Entry points (files) | Current transport behavior |
 |---|---|---|---|
-| B1 | Scene root (`Tui.render`) | `runtime.ts` `Tui.render(Scene)`; app calls it per state change | Holds `currentNativeRef` for the previous scene body and walks the 11v3 route cascade: `render_ref` → scalar patch → path-scalar → structural → edit transaction → text-create → cold → boundary-create → **Direct decode fallback** (`host.render(nodeForBridge(body))`). No BridgeNativeHint sidecars, no ceiling-gated NodeId promotion, no MaterializeTx. Previous ref released only after success ✓. |
-| B2 | History units | `history.ts` `push/freeze/pushStream/sealStream/setLayout` | Per-call cold materialization via `tryNativeMaterialize` (cold FFI graph) then `pushRef/freezeRef`; falls back to `nodeForBridge` N-API push. No identity reuse across units or with the scene. Streams bypass the bridge entirely. |
+| B1 | Scene root (`Tui.render`) | `runtime.ts` `Tui.render(Scene)`; app calls it per state change | Holds `currentNativeRef` for the previous scene body and walks the 11v3 route cascade: `render_ref` → scalar patch → path-scalar → structural → edit transaction → text-create → cold → boundary-create → **Direct decode fallback** (`host.render(nodeForBridge(body))`). No BridgeNativeHint sidecars, no ceiling-gated NodeId promotion, no MaterializeTx. Previous ref released only after success ✓. Two no-op guards sit above this cascade: `Tui.render` first checks **object identity** of the scene body (`currentScene.body === normalized.body` → `no_op` route), and the app layer adds its own `bodyKey` **string** memo on top (see §10.5). |
+| B2 | History units | `history.ts` `push/freeze/pushStream/sealStream/setLayout` | Per-call cold materialization via `tryNativeMaterialize` (cold FFI graph, gated by NATIVE_COLD_MAX_NODES = 524,288 nodes / NATIVE_COLD_MAX_DEPTH = 128; beyond either it returns undefined and the call falls through to the N-API `nodeForBridge` push). No identity reuse across units or with the scene. Streams bypass the bridge entirely. |
 | B3 | ViewSlot replace/animate | `component.ts` `ViewSlot.setView/setAnimation/stopAnimation` | `setView` **re-materializes the previous View from scratch on every update** just to obtain a base ref for patch routing, then tries scalar/path/structural/text/cold routes, else `setViewRef(fresh cold ref)`, else N-API. Animations materialize each frame view, install refs, release leases. |
 | B4 | ScrollPane content | `scroll-pane.ts` `setContent/followEnd` | Same pattern as B3 (re-materialize previous → route cascade → setContentRef). |
 | B5 | Component references | `View.component(handle)` inside trees | Native component ids embedded in the semantic node; resolved by native during layout. No separate lease. |
@@ -301,22 +301,37 @@ layers' semantics.
    frontier materialization + §49 cold router (initial/cold renders choose the
    best cold path directly; oversized frontiers abort into the bulk path).
    The dead recipe routes (path lineage, edit transactions) become removable.
-3. **No shared identity across B1 and B2.** Scene chrome and History units
-   materialize independently; shared subtrees (e.g. repeated tool-card shells)
-   rebuild per unit. Retained identity (NodeId + hints) gives cross-boundary
-   cutoffs for free once all boundaries use the same publication funnel.
+3. **Native identity is already shared across B1 and B2; only JS hints are not.**
+   Both boundaries ultimately publish through the same native constructors and
+   the same publication funnel, so a given NodeId resolves to one native cache
+   entry regardless of which boundary sent it (and the same View object in a
+   frozen unit and the chrome has the same NodeId by construction). What does
+   NOT propagate between boundaries is the BridgeNativeHint sidecar: B1's route
+   cascade never consults or installs hints, and B2's cold materializer never
+   checks them, so every boundary rediscovers identity from scratch on the JS
+   side. Retained routing (hint → ceiling-gated promotion) is precisely the
+   piece that turns this native-side sharing into actual skipped work.
 4. **Async serialization of mutations.** `historyMutation` promise chaining
    orders History mutations and scene renders; each hop yields to the microtask
    queue. With synchronous cheap FFI the app can keep ordering without paying
    a macrotask/microtask per mutation. (Behavior-preserving optimization;
    not required for correctness.)
-5. **`bodyKey` string diffing duplicates what identity cutoff provides.**
-   It also gates animation advancement (`advance?.(0)`). Once B1 is O(changed
-   frontier), the memo can shrink to the trivial "same Scene object" check the
-   runtime already performs.
+5. **Two stacked no-op memos duplicate what identity cutoff provides.**
+   `Tui.render` skips work when the scene body View object is identical
+   (`currentScene.body === normalized.body`), and the app adds its own
+   `bodyKey` **string** memo over reduced state on top of that — also gating
+   animation advancement (`advance?.(0)`). Once B1 is O(changed frontier), the
+   app-level string memo becomes redundant with the object-identity check and
+   can shrink away; until then it remains the cheaper guard.
 6. **Freeze-time rematerialization of tool cards.** Freezing builds a brand-new
    combined view and materializes it cold (B2). With hints, the frozen view
    shares the live card's already-materialized nodes where identities match.
+   Note the budget trade-off when switching B2 to ensureNative: retained caps
+   NEW nodes at 512 (vs the cold path's 524,288-node/128-depth envelope), so
+   genuinely huge fresh units still abort into the bulk/N-API path exactly as
+   §49 prescribes — the win is that repeated or shared content (stable cards,
+   re-frozen batches, chrome subtrees) costs near-zero new nodes instead of a
+   full cold rebuild every time.
 7. **Theme/style interplay is safe today but unguarded:** `STYLE_REF_CACHE`
    (T11) is generation-scoped, not theme-scoped; `setTheme` after materialized
    views exist would leave stale themed StyleRefs. Fine for the current

@@ -1,3879 +1,1066 @@
-# PERF-12 Tranche 13.1 — Retained View Composition
+# PERF-12 Tranche 13.1 — Incremental Retained Execution over Independently Retained Immutable View DAG Roots
 
-## Automatic structural sharing for every supported `iyon-tui` consumer without exposing the internal DAG or compiler
+## Automatic dirty-scope-only rendering for every supported `iyon-tui` consumer without exposing the internal DAG, a compiler, or any internal machinery
 
-**Status:** implementation handoff  
-**Repository:** `alexykn/iyon`  
-**Target branch:** `perf-refactor`  
-**Source freeze:** `f665c9e3d2d69378caade3ee058a7ae1ed421d07` (`docs(tui): complete PERF-12 T13 production review`)  
-**Parent tranche:** PERF-12 T13 production boundary integration/review  
-**Architecture being extended:** PERF-12 Retained DAG Direct FFI  
-**Transport dependency:** **none** — T13.1 is deliberately above the native transport and must survive a future PERF-12v2 N-API transport unchanged.  
-**Framework ownership invariant:** retained composition and its source transform are mandatory, invisible `iyon-tui` infrastructure for every supported consumer path; no application installs or opts into them.
+**Status:** normative implementation handoff — **REWRITTEN to the Amendment C end state**
+**Normative amendment:** `PERF-12-T13.1-AMENDMENT-C-optimal-retained-dag-execution.md` (supersedes Amendments A and B). Where this document and Amendment C conflict, **Amendment C wins**; this document incorporates its requirements and points to it as `AMENDMENT-C §N`.
+**Superseded in place:** the original "Retained View Composition" design (lexical SiteId source transform, globally addressed composition slots, whole-root replay with exact reuse). See §42 for the authoritative list of retired sections.
+**Repository:** `alexykn/iyon`
+**Branch:** `perf-refactor`
+**Baseline:** `f665c9ef913a7a8eda552a385b072f25f853b359` plus local T13.1 Steps 1–3 commits (`379e1cf`, `235a9da`, `dad92b5`).
+**Parent tranche:** PERF-12 T13 production boundary integration/review
+**Architecture being extended:** PERF-12 Retained DAG Direct FFI
+**Transport dependency:** **none** — everything here sits above the physical JS/native transport and must survive PERF-12v2 N-API unchanged (AMENDMENT-C §25).
+**Framework ownership invariant:** retained execution is mandatory, invisible `iyon-tui` infrastructure for every supported consumer path; no application installs, configures, compiles, or opts into anything (AMENDMENT-C §24).
 
 ---
 
-# 0. Executive decision
+# 0. Executive decision (as corrected by Amendment C)
 
-PERF-12 currently has a strong retained semantic DAG **after stable JavaScript View identity already exists**.
+The original T13.1 correctly identified the problem — repeated ordinary declarative construction does not preserve the immutable `View -> BridgeViewNode` identity PERF-12 cuts off on — but optimized the wrong unit. It made **full replay cheap** (per-site exact-reuse checks over the whole executed program). Amendment C requires the stronger property: **clean work must not execute at all**.
 
-That is not yet enough for the public framework.
-
-Idiomatic application code does this:
-
-```ts
-function createIyonView(state: State): View {
-  return View.vertical(column => {
-    column.push(View.text(state.status))
-    column.push(View.component(composer).style(theme.composer))
-    column.push(View.text(state.footer).style(theme.footer))
-  }).fillWidth().fillHeight()
-}
-```
-
-and then calls it again after state changes.
-
-Without another framework layer, every call produces fresh `View` objects, fresh `BridgeViewNode`s, and fresh semantic `NodeId`s even when 95% of the UI is semantically unchanged. PERF-12 can only stop at an identity frontier if the caller happened to preserve those identities manually.
-
-That is the wrong public contract.
-
-**Users of `iyon-tui` must not need to know about the immutable DAG, NodeIds, NativeRefs, BridgeNativeHints, native leases, or manual View memoization to receive retained-rendering benefits.**
-
-T13.1 adds a framework-owned **Retained View Composition** layer between declarative View construction and the existing immutable semantic DAG.
-
-The final conceptual pipeline becomes:
+The primary abstraction is therefore changed from
 
 ```text
-application state
-      |
-      v
-ordinary declarative View-building code
-      |
-      v
-+--------------------------------------------------+
-| Retained View Composition                        |
-|                                                  |
-| compiler-known lexical site identity             |
-| + occurrence identity                            |
-| + explicit local keys only where needed          |
-| + previous immutable View per logical slot       |
-| + generated shallow semantic reuse checks        |
-+--------------------------------------------------+
-      |
-      v
-structurally-shared immutable BridgeViewNode DAG
-      |
-      v
-PERF-12 retained_dag.ts
-      |
-      +-- exact root ----------------------> O(1)
-      +-- stable subtree ------------------> O(1) cutoff
-      +-- changed semantic frontier -------> derivation/materialization
-      +-- wide retained mutation ----------> PersistentSeq O(log_32 N)
-      |
-      v
-retained Rust View DAG
-      |
-      v
-layout / paint / host
+memoized semantic construction slots replayed on every render
 ```
 
-The core rule is:
-
-> **Applications describe successive UI values. `iyon-tui` owns continuity between those values.**
-
-T13.1 must make the following true for normal supported `iyon-tui` applications, including external library consumers:
+to
 
 ```text
-same logical construction site
-+ same immediate semantic inputs
-=
-return the exact previously-committed View object
+persistent retained execution scopes
++ independently retained immutable sub-DAG roots per scope
++ tracked invalidation (State<T> reads/writes, shallow props skipping)
++ incremental host-side component/mount/layout/paint frontiers
 ```
 
-Therefore:
+Semantic construction slots remain valuable **inside a scope that genuinely executes**, but they are no longer the mechanism that discovers all changes by replaying the entire declarative program.
+
+The slogan:
+
+> **Do not re-execute clean scopes. Do not rebuild clean semantic nodes. Preserve immutable DAG identity all the way down — through execution, resolution, layout, and paint.**
+
+Canonical proof shape (AMENDMENT-C §8.1, §20.1):
 
 ```text
-same View object
--> same BridgeViewNode object
--> same NodeId
--> same BridgeNativeHint when available
--> same NativeRef
--> existing PERF-12 identity cutoff fires naturally
+footer dependency changes
+        |
+        v
+mark Footer execution scope dirty
+        |
+        v
+execute Footer body only            App/Header/Composer bodies: NOT executed
+        |
+        v
+Footer obtains a new immutable output root only if semantics changed
+        |
+        v
+install only Footer's retained sub-DAG root
+        |
+        v
+invalidate only the required layout/paint frontier
 ```
 
-When semantics change:
-
-```text
-same logical composition identity
-+ changed semantic inputs
-=
-new immutable View / BridgeViewNode / NodeId
-+ known predecessor relationship
-```
-
-The existing PERF-12 derivation and retained edit machinery can then update only the true changed frontier.
-
-This is **not** a VDOM reconciler.
-
-This is **not** content hashing.
-
-This is **not** a second semantic DAG.
-
-This is **not** app-layer memoization.
-
-This is a small retained composition index whose only job is to connect declarative construction sites across successful renders.
+If any phase executes, reconstructs, resolves, or remeasures clean scopes merely to discover they are unchanged, T13.1 fails its objective (AMENDMENT-C §31).
 
 ---
 
 # 1. Why T13.1 exists
 
-## 1.1 The gap in the original PERF-12 handoff
+## 1.1 The gap
 
-The PERF-12 handoff correctly requires:
-
-```text
-stable JS identity for unchanged semantic subtrees
-semantic identity cutoff before payload/child inspection
-semantic JS construction O(changed semantic nodes)
-NativeRef cutoff O(changed frontier)
-```
-
-It also correctly defines:
+PERF-12 proved that once stable identity exists, unchanged subtrees cost nothing:
 
 ```text
-new semantic node -> new NodeId
-unchanged shared semantic node -> same immutable BridgeViewNode -> same NodeId
+unchanged semantic identity
+    -> zero descendant semantic traversal
+    -> zero payload re-transport
+    -> zero native reconstruction
 ```
 
-What it did **not** fully specify is how ordinary application code that re-evaluates a render function from new state creates that structural sharing automatically.
+The unresolved question is how normal application code *keeps/generates* that identity as state evolves. Two answers are not equivalent:
 
-The handoff therefore solved:
+Weak (original design): replay everything cheaply — run A, compare, reuse; run B, compare, change; run C, compare, reuse. For deep/broad trees this is still O(all executed UI sites) per update.
 
-```text
-shared immutable DAG
-        ->
-retained native update
-```
-
-but left this transition implicit:
-
-```text
-new application state
-        ->
-shared immutable DAG
-```
-
-T13.1 owns that missing transition.
+Strong (required): retain the execution graph too — A clean ⇒ not executed; B invalidated ⇒ executed; C clean ⇒ not executed. Only B produces a new immutable output root (AMENDMENT-C §1).
 
 ## 1.2 The production trace proves the gap is real
 
-At the source freeze, production `createIyonView()` rebuilds the small chrome tree each time from reduced state. The application then computes a `bodyKey` string and avoids `Tui.render()` entirely when that string has not changed.
+Production `createIyonView()` rebuilds the chrome tree from reduced state on every render, guarded by an application-computed `bodyKey`. That is effective but is exactly the wrong boundary: application code currently knows enough about renderer identity to build cache keys. The framework must own continuity. `bodyKey` remains a benchmark control until the end state is proven, then is removed (§24.3, Step 14R).
 
-This is effective as a temporary application optimization, but it is the wrong abstraction boundary:
+## 1.3 Do not fix this by memoizing in the app
 
-```text
-application code
-  currently knows enough about rendering identity
-  to build a cache key
-```
-
-The framework should own that.
-
-The new retained root boundary in `Tui.render` is already correct **once it receives a shared View DAG**. Likewise `ViewSlot` and `ScrollPane` now own current-root leases. T13.1 must sit above those boundaries and feed them structurally shared Views.
-
-## 1.3 Do not “fix” this by memoizing `createIyonView()` in the app
-
-A T13 review implementation such as:
-
-```ts
-let previousBodyKey: string | undefined
-let previousBody: View | undefined
-
-function createIyonViewMemoized(state: State): View {
-  const key = ...
-  if (key === previousBodyKey) return previousBody!
-  ...
-}
-```
-
-is explicitly rejected as the architectural solution.
-
-It may exist temporarily as a benchmark control/oracle, but not as the final production mechanism.
-
-Reasons:
-
-1. It leaks renderer identity discipline into every application.
-2. It makes public performance depend on undocumented object-reuse behavior.
-3. Every application would invent different cache keys and invalidation rules.
-4. It scales poorly to nested changing subtrees.
-5. It cannot naturally express structural sharing along only the changed path.
-6. It makes framework optimization opportunities inaccessible to generic consumers.
-7. It directly contradicts the goal of a declarative public API.
+App-layer memo tables, body-derived keys as architecture, manual View retention — rejected (original §1.3 stands). Under Amendment C even *framework-side* full replay with cheap slot hits is rejected as the final hot path (AMENDMENT-C §27).
 
 ---
 
-# 2. Source freeze — what already exists at `f665c9e`
+# 2. Starting substrate — what exists at the working baseline
 
-T13.1 must build on the actual current code, not re-create a hypothetical architecture.
+T13.1 builds on actual code, plus the repository audit recorded in AMENDMENT-C §5.2 and §32.4.
 
-## 2.1 Eager immutable semantic DAG is already restored
+## 2.1 Eager immutable semantic DAG
 
-Current:
+`packages/iyon-runtime/src/tui/values/view.ts`: `View -> WeakMap -> BridgeViewNode` eagerly created, private NodeId, frozen Views; semantic derivation sidecars (text-layout, common-scalar, axis-set, axis-splice, grid-cell, wide overrides). Reuse exactly; never duplicate.
 
-`packages/iyon-runtime/src/tui/values/view.ts`
+## 2.2 Retained bridge and boundaries
 
-has the historical-style shape:
+`retained_dag.ts` (identity-before-payload cutoff, BridgeNativeHint, NativeRef promotion, cold/fallback discipline, PersistentSeq paths); `runtime.ts` root boundary; `component.ts` / `scroll-pane.ts` root leases. T13.1 adds no second transport, cache, or NativeRef table.
 
-```text
-View
-  -> WeakMap<View, BridgeViewNode>
-  -> BridgeViewNode eagerly created
-  -> private NodeId assigned
-  -> immutable/frozen View
-```
-
-`nodeForBridge(view)` is a lookup, not a serialization pass.
-
-The file also already owns semantic derivation sidecars for retained optimizations including:
-
-```text
-text-layout
-common-scalar
-axis-set
-axis-splice
-grid-cell
-```
-
-and wide-child/grid override sidecars.
-
-T13.1 must reuse this semantic representation exactly.
-
-## 2.2 `retained_dag.ts` already solves the native frontier
-
-Current:
-
-`packages/iyon-runtime/src/tui/retained_dag.ts`
-
-already contains:
-
-```text
-RetainedRootBoundary
-ensureNativeRoot
-BridgeNativeHint
-NodeId -> NativeRef promotion
-nativeLookupCeiling
-identity-before-payload cutoff
-transaction-local temporary leases
-stale-ref recovery
-cold/frontier caps
-complete fallback
-monomorphic materializers
-PersistentSeq-aware derivation paths
-```
-
-T13.1 must **not** create another native transport, another native cache, another NativeRef table, or another semantic authority.
-
-## 2.3 `Tui.render` already owns a retained root boundary
-
-Current:
-
-`packages/iyon-runtime/src/tui/runtime.ts`
-
-has one `RetainedRootBoundary` for the scene body and already:
-
-```text
-checks exact object identity
-tries retained root installation
-routes cold graphs through the current cold builder
-adopts the successful native root
-falls back to complete N-API decode when necessary
-```
-
-T13.1 adds composition *before* this logic.
-
-## 2.4 `ViewSlot` and `ScrollPane` already own retained root boundaries
-
-Current:
+## 2.3 Component primitives already present (AMENDMENT-C §5.2, §32.4)
 
 ```text
 packages/iyon-runtime/src/tui/component.ts
-packages/iyon-runtime/src/tui/scroll-pane.ts
+  ViewSlot: stable native component identity, owns RetainedRootBoundary,
+  retains current root, installs replacements via setViewRef after success,
+  preserves old root until materialization succeeds
+crates/iyon-tui/src/component/slot.rs
+  View::component = stable ComponentSlot(ComponentId) semantic node
+crates/iyon-tui/src/component/registry.rs
+  persistent entries carry revision + cached immutable snapshot;
+  invalidation increments revision, drops only that snapshot
+crates/iyon-tui/src/scene/host.rs
+  SceneHost already retains MountGraph, LayoutCache, PaintCache
+crates/iyon-tui/src/scene/resolve.rs
+  resolver still scans component-bearing branches (gap — see §18)
+crates/iyon-tui/src/presentation/layout/measure.rs
+  MeasureKey::with_component includes resolved output identity (good);
+  important component-containing parents intentionally uncached (gap — see §18)
 ```
 
-already keep their current View and retained root boundary.
-
-These are natural owners of independent composition roots.
-
-## 2.5 The application still carries `bodyKey`
-
-Current:
-
-`plugins/app/iyon/src/app.ts`
-
-still contains `lastRenderedBodyKey` / scene-body key logic because ordinary `createIyonView()` calls create fresh View values.
-
-The `bodyKey` must remain during the initial T13.1 proof as a control. It is removed **only after** automatic composition proves semantic parity and performance.
-
-## 2.6 Current build infrastructure already supports a source transform
-
-Current CLI build:
-
-```ts
-Bun.build({
-  ...,
-  plugins: [iyonVirtualModulePlugin],
-})
-```
-
-and `iyonVirtualModulePlugin` already uses Bun `onResolve` / `onLoad` hooks.
-
-Therefore T13.1 does not need a new compiler toolchain.
-
-Add one small Iyon source-transform plugin to the existing Bun build/plugin infrastructure.
+These are the primitives Amendment C extends. Do not invent a parallel framework (AMENDMENT-C §32.4).
 
 ---
 
-# 3. Research result — what mature frameworks teach us
+# 3. Research conclusions
 
-T13.1 should borrow ideas, not copy implementations wholesale.
+Condensed from original §3 and AMENDMENT-C §2/§26; rationale lives there.
 
-## 3.1 React — logical continuity must not depend on element object identity
+| Source | Take | Use | Reject |
+|---|---|---|---|
+| React Fiber | persistent execution identity ≠ ephemeral element values; clean subtrees bail out without executing | persistent scopes, dirty-work metadata, current/WIP separation, parent-local type/position/key identity | DOM/VDOM reconciliation, lane priority complexity |
+| React Compiler | memoization layer is separate from the Fiber scheduling substrate | confirms a compiler is NOT needed for the core guarantee (AMENDMENT-C §11.1) | depending on a source transform for execution identity |
+| Jetpack Compose | restart scopes + tracked state reads + input skipping | restartable scopes, read tracking, `Object.is` prop skipping, local keys | Kotlin compiler plumbing, SlotTable, stability annotations |
+| Flutter | immutable Widgets over persistent Elements; dirty Elements scheduled directly; sublinear layout | immutable outputs over retained execution objects; direct dirty scheduling; layout dependency cutoffs | Element-tree copying |
+| Fine-grained signals | minimal observable write → exact reader invalidation | small generic `State<T>` as invalidation source only | reactive mutable semantic nodes |
 
-React associates persistent component state with the component's position/type in the render tree; explicit `key` changes or refines identity for dynamic children.
-
-Important lesson:
-
-```text
-fresh declarative values are allowed
-persistent logical identity lives elsewhere
-```
-
-React also makes keys local to the relevant parent/list rather than requiring globally unique application IDs.
-
-React Compiler further demonstrates that manual memoization can be moved into build-time/runtime machinery instead of forcing users to write `useMemo` everywhere.
-
-T13.1 adopts those usability lessons.
-
-T13.1 does **not** adopt React's general runtime VDOM reconciliation pass.
-
-## 3.2 Jetpack Compose — closest architectural precedent
-
-Compose is the strongest precedent for T13.1:
-
-```text
-lexical call site identifies a composition instance
-same call site repeated -> occurrence order by default
-key(...) -> explicit identity for dynamic/reordered instances
-stable unchanged inputs -> skip/reuse
-retained composition table -> continuity across recomposition
-```
-
-This maps directly to Iyon's problem.
-
-T13.1 therefore uses:
-
-```text
-compiler-assigned source site
-+ occurrence index
-+ optional explicit local key
-```
-
-as logical composition identity.
-
-Unlike Compose, T13.1 initially does not implement a general reactive dependency graph or arbitrary function-level restart scopes. It only needs enough composition machinery to produce structurally shared immutable `View` snapshots.
-
-## 3.3 SwiftUI — value is not identity
-
-SwiftUI explicitly separates:
-
-```text
-ephemeral View value
-persistent identity/lifetime
-```
-
-and uses structural identity by default plus explicit data identity where necessary.
-
-That distinction is essential for Iyon:
-
-```text
-CompositionIdentity != NodeId != NativeRef
-```
-
-## 3.4 Flutter — immutable declarations over persistent retained state
-
-Flutter demonstrates that immutable UI descriptions and persistent runtime identity are complementary, not contradictory.
-
-Its dirty-element model also reinforces the principle that unchanged retained work should be skipped rather than re-derived from scratch.
-
-T13.1 keeps Iyon's stronger immutable DAG cutoff instead of copying the Element tree.
-
-## 3.5 Vue — compiler information can shrink runtime work
-
-Vue's compiler-generated patch metadata demonstrates a useful principle:
-
-```text
-if source structure already tells the compiler where dynamic work can occur,
-do not force the runtime to rediscover that structure by recursively diffing trees.
-```
-
-T13.1's source SiteIds follow that principle.
-
-## 3.6 Solid — useful lesson, wrong semantic representation for this tranche
-
-Solid's fine-grained reactive graph shows how powerful direct dependency invalidation can be.
-
-Do **not** embed reactive cells into Iyon's semantic View DAG in T13.1.
-
-The immutable snapshot DAG is already a proven asset.
-
-A future reactive scheduler may decide *which composition root/scope to reevaluate*, but each successful reevaluation must still produce an immutable semantic snapshot.
+Decisive compiler conclusion (AMENDMENT-C §11): Compose needs compiler-generated restart groups because `@Composable` calls look like ordinary function calls. Iyon's `defineView` makes the restart boundary an ordinary explicit runtime abstraction, so **T13.1 requires no source transform, no SiteId compiler, and no Oxc/AST dependency** (AMENDMENT-C §11.3). Source code stays literal.
 
 ---
 
 # 4. Non-negotiable invariants
 
-T13.1 is accepted only if all of these remain true.
+Original §4 stands except where restated below; Amendment C strengthens it.
 
 ## 4.1 Public abstraction and framework ownership
 
-The retained-composition compiler is an implementation detail of `iyon-tui`, in the same category as its native bridge or generated bindings. A supported consumer must never have to discover, import, install, register, configure, feature-flag, or version-match it manually.
-
 ```text
-[ ] every supported iyon-tui build/run path activates retained composition automatically
-[ ] no public composition/compiler plugin is required from consumers
-[ ] no application-level enableRetainedComposition()/feature flag exists
-[ ] no application-specific build configuration is required solely for retained composition
-[ ] the Iyon app is only a normal consumer/reference fixture, never the owner of the mechanism
-[ ] users do not see NodeId
-[ ] users do not see NativeRef
-[ ] users do not see BridgeViewNode
-[ ] users do not manage BridgeNativeHint
-[ ] users do not manually retain View objects for performance
-[ ] users do not write application-specific semantic cache keys for ordinary rendering
-[ ] explicit keys are required only for genuinely ambiguous repeated/dynamic identity
+[ ] every supported iyon-tui build/run path activates retained execution automatically
+[ ] no plugin install, feature flag, build config, or preload in consumer code
+[ ] no compiler/source transform anywhere in the supported path
+[ ] users never see RetainedExecutionScope, NodeId, NativeRef, BridgeViewNode,
+    BridgeNativeHint, scope ids, subscriptions, or the dirty queue
+[ ] the Iyon app is a normal consumer/reference fixture, never the owner
+[ ] explicit keys required only for genuinely ambiguous repeated/dynamic instances
 ```
 
-## 4.2 Semantic DAG
+## 4.2 Semantic DAG (unchanged)
+
+Views and BridgeViewNodes remain immutable; NodeId remains exact semantic object identity; changed node ⇒ new NodeId; unchanged composed node ⇒ exact old View/BridgeViewNode/NodeId; no mutable same-NodeId payloads; no second semantic graph.
+
+## 4.3 PERF-12 retained bridge (unchanged)
+
+Identity cutoff before payload/child work; hints/leases transport-only; `retained_dag.ts` authoritative; cold fallback complete; PersistentSeq logarithmic; streams outside the structural bridge.
+
+## 4.4 Execution layer
 
 ```text
-[ ] View remains immutable
-[ ] BridgeViewNode remains immutable
-[ ] NodeId remains exact semantic object identity
-[ ] a changed semantic node gets a new NodeId
-[ ] an unchanged composed semantic node reuses the exact old View/BridgeViewNode/NodeId
-[ ] no mutable "same NodeId, new payload" state exists
-[ ] no second semantic graph is introduced
-```
-
-## 4.3 PERF-12 retained bridge
-
-```text
-[ ] identity cutoff still happens before native payload/child work
-[ ] BridgeNativeHint remains transport acceleration only
-[ ] NativeRef remains runtime-local acceleration only
-[ ] NativeRef leases remain owned by existing retained boundaries
-[ ] retained_dag.ts remains authoritative for native materialization
-[ ] cold fallback remains complete
-[ ] PersistentSeq wide paths stay logarithmic
-[ ] streams remain outside the structural View bridge
-```
-
-## 4.4 Composition
-
-```text
-[ ] composition identity is private framework metadata
-[ ] composition identity is not NodeId
-[ ] composition identity is not NativeRef
-[ ] no full-tree recursive equality pass
-[ ] no content-addressed subtree hashing
-[ ] no global user-visible key registry
-[ ] no strong cache of all historical View values
-[ ] failed host/native installation cannot commit composition state
-[ ] a successful no-op composition may return the exact committed root View
+[ ] execution/lifecycle metadata is private framework data, never user-visible identity
+[ ] no recursive tree equality anywhere
+[ ] no content hashing
+[ ] failed evaluation/materialization cannot publish partial committed state
+[ ] a successful semantic no-op may leave every committed root untouched
+[ ] scopes store execution state + pointers to immutable outputs, never payload copies
 ```
 
 ## 4.5 Transport independence
 
-T13.1 must not depend on:
-
-```text
-extern "C"
-raw pointers
-borrowed FFI buffers
-Bun FFI status encoding
-NativeRef physical table layout
-```
-
-It may consume the existing `RetainedRootBoundary` API, but the composition model must remain valid if PERF-12v2 later replaces the transport with safe N-API calls.
+No FFI/NativeRef-table assumptions above `RetainedRootBoundary`; scopes own semantic View roots and retained boundaries, never physical refs (AMENDMENT-C §25).
 
 ---
 
 # 5. Explicit non-goals
 
-Do not expand this tranche into:
+Original §5 stands, plus (AMENDMENT-C §0/§27):
 
 ```text
-- general React-style virtual DOM reconciliation
-- a signal/reactivity system
-- a state management library
-- a hooks system
-- a component-local state framework
-- a scheduler rewrite
-- compiler HIR/dataflow analysis comparable to React Compiler
-- content hashing / structural interning
-- persistent wire/mirror records
-- native changes unrelated to exposing existing retained operations
-- automatic optimization of arbitrary JavaScript calculations
+- whole-application replay-and-compare as the final hot path (even with cheap slot hits)
+- a general VDOM reconciler
+- a signals library / state management framework / hooks system
+- compiler HIR/dataflow analysis (React-Compiler-class optimization of arbitrary JS)
+- content hashing / interning
+- lane-priority scheduling beyond a simple dirty bit/generation
+- a source transform or AST dependency of any kind
 ```
 
 T13.1 has one job:
 
-> **Turn repeated ordinary declarative View construction into structurally shared immutable View DAG snapshots automatically.**
+> **Turn repeated ordinary declarative UI updates into dirty-scope-only execution over structurally shared immutable DAG snapshots automatically.**
 
 ---
 
 # 6. Identity model
 
-The implementation must make three identities explicit in design and naming.
+Three identities remain distinct (original §6 survives with scope identity replacing CompositionAddress):
 
-## 6.1 Composition identity — logical continuity
-
-Composition identity answers:
+## 6.1 Execution-scope identity — logical continuity
 
 ```text
-"Which logical construction site from the previous successful render corresponds
- to this construction now?"
+ExecutionInstance =
+    parent scope
+    + component type (defineView value identity)
+    + ordinary position | explicit local key
 ```
 
-It is scoped to one composition root.
+Parent-local; survives semantic changes; created/matched by child-scope reconciliation (§16). Not user-visible. Not a NodeId. Not a NativeRef.
 
-Conceptually:
+## 6.2 NodeId — immutable semantic identity (unchanged)
 
-```text
-CompositionAddress =
-    CompositionRoot
-    + lexical SiteId
-    + occurrence OR explicit Key
-    + active keyed-group ancestry
-```
+Different payload ⇒ different immutable node ⇒ different NodeId. Same payload through the same logical instance ⇒ exact previous View object.
 
-It survives semantic changes.
+## 6.3 NativeRef — environment-local acceleration (unchanged)
 
-Example:
-
-```text
-logical footer
-render 1: text="Working"
-render 2: text="Done"
-
-same CompositionAddress
-```
-
-## 6.2 NodeId — immutable semantic identity
-
-NodeId continues to mean:
-
-```text
-"this exact immutable BridgeViewNode object"
-```
-
-Example:
-
-```text
-footer "Working" -> NodeId 8127
-footer "Done"    -> NodeId 8134
-```
-
-Different payload, therefore different immutable semantic identity.
-
-## 6.3 NativeRef — environment-local native acceleration
-
-NativeRef continues to mean:
-
-```text
-"fast handle that may resolve this NodeId's retained Rust View in this runtime generation"
-```
-
-Composition must not make NativeRef semantic.
+Never made semantic by scopes; leases stay owned by existing retained boundaries.
 
 ## 6.4 Example over time
 
 ```text
-render #1
-
-CompositionAddress footer = {module 3, site 8, occurrence 0}
-NodeId                    = 8127
-NativeRef                 = 39
-semantic text             = "Working"
-
-render #2
-
-CompositionAddress footer = {module 3, site 8, occurrence 0}   SAME
-NodeId                    = 8134                               NEW
-NativeRef                 = 44                                 NEW
-semantic text             = "Done"
-
-render #3
-
-CompositionAddress footer = {module 3, site 8, occurrence 0}   SAME
-NodeId                    = 8134                               SAME
-NativeRef                 = 44                                 SAME
-semantic text             = "Done"                            SAME
-```
-
-That is the model.
-
----
-
-# 7. Architecture layers
-
-T13.1 must retain clear ownership boundaries.
-
-```text
-+---------------------------------------------------------+
-| Application                                             |
-| State, actions, ordinary View-building functions        |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| Build-time composition transform                        |
-| - assigns lexical SiteIds                               |
-| - lowers recognized View factories/modifier chains     |
-| - injects tiny private composition helpers              |
-| - changes no user-visible semantics                     |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| ViewCompositionRoot / ViewCompositionPass               |
-| - current slots                                         |
-| - pending slots                                         |
-| - occurrence cursors                                    |
-| - keyed groups                                          |
-| - commit/abort                                          |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| View semantic constructors                              |
-| - compare immediate new semantic inputs against old     |
-| - return previous View on exact semantic match          |
-| - otherwise create new immutable View + derivation hint |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| Existing immutable BridgeViewNode DAG                   |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| Existing retained_dag.ts                                |
-+---------------------------------------------------------+
-                         |
-                         v
-+---------------------------------------------------------+
-| Existing NativeViewRuntime / Rust View DAG              |
-+---------------------------------------------------------+
-```
-
-No layer above `retained_dag.ts` may know how a NativeRef table is physically implemented.
-
----
-
-# 8. Runtime composition data structures
-
-Names may change to fit local conventions, but responsibilities may not.
-
-Baseline conceptual types:
-
-```ts
-type CompositionModuleId = number
-type CompositionSiteId = number
-export type ViewKey = string | number
-
-interface CompositionSlot {
-  current: View | undefined
-  pending: View | undefined
-  seenEpoch: number
-}
-
-interface SiteBucket {
-  epoch: number
-  occurrenceCursor: number
-  positional: CompositionSlot[]
-  keyed: Map<ViewKey, CompositionSlot> | undefined
-}
-
-interface ModuleSlots {
-  readonly siteCount: number
-  readonly sites: Array<SiteBucket | undefined>
-}
-
-class ViewCompositionRoot {
-  private modules: Array<ModuleSlots | undefined>
-  private committedEpoch: number
-  private activePass: ViewCompositionPass | undefined
-
-  begin(): ViewCompositionPass
-  commit(pass: ViewCompositionPass): void
-  abort(pass: ViewCompositionPass): void
-  dispose(): void
-}
-
-class ViewCompositionPass {
-  readonly root: ViewCompositionRoot
-  readonly baseEpoch: number
-  readonly nextEpoch: number
-  readonly touchedSlots: CompositionSlot[]
-  readonly touchedBuckets: SiteBucket[]
-  readonly groupStack: CompositionGroup[]
-  state: "building" | "prepared" | "committed" | "aborted"
-}
-```
-
-This is conceptual, not a mandate to allocate exactly these classes.
-
-Hot-path implementation should minimize objects:
-
-```text
-prefer arrays and small structs
-avoid generic Map lookups for ordinary unkeyed sites
-only keyed repeated groups require a Map
-avoid per-call descriptor allocation
-avoid rest arrays
-avoid closure allocation inside generated semantic helpers
+render #1  Footer scope {parent App, type Footer, pos 3} output NodeId 8127, NativeRef 39, text "Working"
+render #2  same scope instance                           output NodeId 8134, NativeRef 44, text "Done"
+render #3  same scope instance                           output NodeId 8134, NativeRef 44  (semantic no-op)
 ```
 
 ---
 
-# 9. Dense source SiteIds — no runtime hashing
+# 7. Final architecture
 
-## 9.1 Do not derive hot identity from source strings
-
-Reject:
-
-```ts
-"plugins/app/iyon/src/view.ts:81:17"
-```
-
-as a hot Map key.
-
-Reject runtime hashing of source location.
-
-Reject stack inspection.
-
-## 9.2 Register each transformed module once
-
-The source transform injects a module registration once at module initialization:
-
-```ts
-import {
-  __iyonRegisterCompositionModule,
-  __iyonCompose,
-} from "@iyon/runtime/tui/internal-composition"
-
-const __iyonModule = __iyonRegisterCompositionModule(17)
-```
-
-`17` is the number of transformed View semantic sites in that module.
-
-Registration returns a dense process-local integer:
+(AMENDMENT-C §3.)
 
 ```text
-module 0
-module 1
-module 2
-...
++--------------------------------------------------------------+
+| Application                                                   |
+| ordinary state / props · optional tracked State<T> ·          |
+| user-defined defineView components                            |
++------------------------------+-------------------------------+
+                               v
++--------------------------------------------------------------+
+| Retained execution graph                                      |
+| RetainedExecutionScope: identity · inputs · dependencies ·    |
+| dirty flag · child scopes · current immutable output View ·   |
+| independently retained sub-DAG boundary                       |
++------------------------------+-------------------------------+
+            only dirty scopes execute
+                               v
++--------------------------------------------------------------+
+| Scope-local semantic construction                             |
+| T13.1 monomorphic helpers: exact old View reuse on immediate  |
+| equality · new immutable node on change · derivation hints    |
++------------------------------+-------------------------------+
+                               v
++--------------------------------------------------------------+
+| Immutable View -> BridgeViewNode DAG                          |
+| each live scope owns one current immutable root               |
++------------------------------+-------------------------------+
+                               v
++--------------------------------------------------------------+
+| Existing PERF-12 retained boundary                            |
+| NativeRef / BridgeNativeHint / PersistentSeq / root leases    |
++------------------------------+-------------------------------+
+                               v
++--------------------------------------------------------------+
+| Retained host dependency graph                                |
+| component revision/mount topology -> layout dependencies      |
+| -> paint dependencies; local swaps invalidate only the        |
+| required frontier                                             |
++------------------------------+-------------------------------+
+                               v
+                    Rust retained DAG / frame
 ```
 
-No stable cross-build module ID is required.
-
-A composition root lives only inside one running program image.
-
-## 9.3 Site IDs are dense per module
-
-Within the transformed source module:
+Each component scope projects into its parent as a **stable ScopeRef** — a semantic `ComponentSlot(ComponentId)` whose content is a separate immutable DAG root (AMENDMENT-C §5):
 
 ```text
-site 0
-site 1
-site 2
-...
+parent Column
+├── ScopeRef(Header scope)     NodeId SAME across footer-local updates
+├── ScopeRef(Composer scope)   NodeId SAME
+└── ScopeRef(Footer scope)     NodeId SAME; content root NodeId NEW when footer changes
 ```
 
-are assigned deterministically by AST/source order.
-
-Hot lookup becomes:
-
-```ts
-const moduleSlots = root.modules[moduleId]
-const bucket = moduleSlots.sites[localSiteId]
-```
-
-rather than:
-
-```ts
-Map<string, Slot>.get(hash(sourcePath + line + column))
-```
-
-## 9.4 HMR/reload semantics
-
-Site IDs need not survive recompilation.
-
-A source/module reload creates a new composition module registration. Old composition metadata is either:
-
-```text
-- dropped with the old root/runtime,
-- reset on explicit HMR generation change,
-- or reclaimed by bounded stale-module maintenance.
-```
-
-Do not preserve logical composition identity across arbitrary code replacement in T13.1.
+The outer DAG is not reconstructed for a Footer-local change. This is why existing component indirection is strategically load-bearing, and why the host side must consume such swaps incrementally (§18).
 
 ---
 
-# 10. Site occurrence algorithm
+# 8. Public component API — `defineView`
 
-A lexical site can execute more than once in one render:
-
-```ts
-for (const item of items) {
-  View.text(item.label)
-}
-```
-
-Without an explicit key, identity is:
-
-```text
-SiteId + occurrence index
-```
-
-matching the useful Compose default.
-
-Conceptual:
+(AMENDMENT-C §6.)
 
 ```ts
-function nextPositionalSlot(
-  pass: ViewCompositionPass,
-  moduleId: number,
-  siteId: number,
-): CompositionSlot {
-  const bucket = getOrCreateBucket(pass.root, moduleId, siteId)
+import { defineView, View } from "iyon:tui"
 
-  if (bucket.epoch !== pass.nextEpoch) {
-    bucket.epoch = pass.nextEpoch
-    bucket.occurrenceCursor = 0
-    pass.touchedBuckets.push(bucket)
-  }
-
-  const occurrence = bucket.occurrenceCursor++
-  return bucket.positional[occurrence] ??= newSlot()
-}
-```
-
-The exact implementation must ensure:
-
-```text
-one normal array lookup per common site
-one cursor increment
-no string key
-no source hash
-no tree search
-```
-
----
-
-# 11. Explicit key algorithm
-
-## 11.1 Public API
-
-Add one small public composition primitive:
-
-```ts
-export type ViewKey = string | number
-
-export class View {
-  static key(key: ViewKey, build: () => View): View
-}
-```
-
-Example:
-
-```ts
-const rows = tools.map(tool =>
-  View.key(tool.id, () => toolView(tool)),
+const Header = defineView<{ title: string }>(({ title }) =>
+  View.text(title).bold(),
 )
-```
 
-or inside a builder:
+const Footer = defineView<{ status: string }>(({ status }) =>
+  View.text(status),
+)
 
-```ts
-View.vertical(column => {
-  for (const tool of tools) {
-    column.push(
-      View.key(tool.id, () => toolView(tool)),
-    )
-  }
-})
-```
-
-## 11.2 Key scope
-
-A key is **not global**.
-
-It is unique only within:
-
-```text
-current composition scope
-+ lexical View.key call site
-```
-
-This matches React/Compose-style local identity and avoids application-global registries.
-
-## 11.3 Key does not imply semantic equality
-
-This is critical.
-
-Wrong:
-
-```text
-same key -> return same View without checking new semantics
-```
-
-Correct:
-
-```text
-same key
--> locate logical predecessor slot
--> compare immediate semantic inputs at each View site
--> unchanged -> exact View reuse
--> changed -> new immutable semantic node
-```
-
-`View.key("footer", ...)` means:
-
-```text
-"this is the same logical footer instance"
-```
-
-not:
-
-```text
-"the footer's value can never change"
-```
-
-## 11.4 Duplicate keys
-
-Two executions of the same keyed site with the same key in one composition pass are an error.
-
-Do not silently alias them.
-
-Use a deterministic framework error such as:
-
-```text
-TUI_COMPOSITION_DUPLICATE_KEY
-```
-
-Include enough debug metadata to locate the transformed module/site in non-minified development builds.
-
-## 11.5 Key changes reset logical lifetime
-
-If:
-
-```ts
-View.key("a", () => ...)
-```
-
-becomes:
-
-```ts
-View.key("b", () => ...)
-```
-
-that is a new logical composition instance.
-
-Do not derive from the old keyed instance automatically.
-
-## 11.6 A key owns a nested composition scope
-
-Do not implement `View.key` as merely another discriminator on every leaf slot.
-
-The keyed invocation itself owns a small child `CompositionScope`.
-
-Conceptually:
-
-```ts
-interface KeyedGroup {
-  readonly key: ViewKey
-  readonly scope: CompositionScope
-  seenEpoch: number
-}
-
-interface KeySiteBucket {
-  groups: Map<ViewKey, KeyedGroup>
-}
-```
-
-A transformed:
-
-```ts
-View.key(tool.id, () => toolView(tool))
-```
-
-behaves conceptually as:
-
-```ts
-function composeKey(
-  moduleId: number,
-  siteId: number,
-  key: ViewKey,
-  build: () => View,
-): View {
-  const parent = activeCompositionScope()
-  const keySite = getOrCreateKeySite(parent, moduleId, siteId)
-
-  if (keySite.seenThisPass(key)) {
-    throw duplicateCompositionKey(...)
-  }
-
-  const group = keySite.groups.get(key) ?? createKeyedGroup(key)
-  markVisited(group)
-
-  return withCompositionScope(group.scope, build)
-}
-```
-
-All transformed View sites inside `toolView(tool)` therefore resolve against that keyed child scope.
-
-This is important for helper functions. The same lexical `View.text(...)` site inside `toolView()` can execute for 100 tools without flattening those 100 instances into one global occurrence sequence. Each keyed tool group owns its own child site table.
-
-The resulting logical address is naturally hierarchical:
-
-```text
-Tui composition root
-  -> View.key lexical site
-     -> key = tool-17
-        -> toolView() internal lexical sites
-```
-
-Reordering tools merely changes traversal order. It does not change the keyed group's child scope or its retained View identities.
-
-## 11.7 Key-group commit/reclamation
-
-During a pass, keyed groups are marked visited but the committed map is not destructively changed.
-
-On successful commit:
-
-```text
-visited existing key -> keep child scope and promote pending slots
-new key              -> commit new child scope
-previous key absent  -> dispose/remove that child scope
-```
-
-On abort:
-
-```text
-retain the previous committed key map exactly
-discard newly-created pending groups
-do not dispose previously committed absent-looking groups
-```
-
-This is required because a failed render must not unmount logical keyed content that is still visible in the old committed root.
-
----
-
-# 12. Source transform — scope and philosophy
-
-## 12.1 This is deliberately much smaller than React Compiler
-
-Do not build a general optimizer.
-
-The transform needs to understand only Iyon's own View API.
-
-Its job is:
-
-```text
-1. find the imported public iyon-tui View binding
-2. assign dense lexical site IDs
-3. lower recognized View factories/modifier chains to internal monomorphic compose helpers
-4. lower View.key to a keyed composition group helper
-5. inject one private internal import/module registration
-```
-
-No data-flow HIR is required.
-
-No arbitrary dependency inference is required.
-
-## 12.2 Recognized import sources
-
-At minimum:
-
-```text
-"iyon:tui"
-"@iyon/runtime/tui"
-"@iyon/runtime" when View is imported/re-exported there
-```
-
-Track aliases:
-
-```ts
-import { View as TuiView } from "iyon:tui"
-```
-
-must still be recognized.
-
-Do not transform an unrelated class named `View`.
-
-## 12.3 Factory lowering
-
-Conceptually:
-
-```ts
-View.text(text)
-```
-
-becomes:
-
-```ts
-__iyonCompose.text(__iyonModule, 7, text)
-```
-
-and:
-
-```ts
-View.spacer(0)
-```
-
-becomes:
-
-```ts
-__iyonCompose.spacer(__iyonModule, 8, 0)
-```
-
-The helper immediately falls through to ordinary construction if no composition pass is active.
-
-## 12.4 Container builder lowering
-
-Conceptually:
-
-```ts
-View.vertical(column => {
-  column.push(a)
-  column.push(b)
-})
-```
-
-becomes:
-
-```ts
-__iyonCompose.vertical(__iyonModule, 10, column => {
-  column.push(a)
-  column.push(b)
-})
-```
-
-The callback executes first to obtain child Views.
-
-Then the composition helper compares:
-
-```text
-layout scalars
-child count
-child View/BridgeViewNode identities
-track metadata
-```
-
-against the previous semantic node for that site.
-
-If all immediate semantics match, return the previous parent View.
-
-No recursive child equality occurs.
-
-## 12.5 Fluent modifier lowering
-
-Production depends heavily on fluent modifiers:
-
-```ts
-View.component(composer)
-  .style(theme.composer)
-  .styleState("iyon.agent.effort", effort)
-```
-
-and:
-
-```ts
-View.vertical(...)
-  .fillWidth()
-  .fillHeight()
-```
-
-The transform must cover the full public View modifier chain used by the project.
-
-Conceptually:
-
-```ts
-base.style(spec)
-```
-
-becomes:
-
-```ts
-__iyonCompose.style(__iyonModule, 11, base, spec)
-```
-
-and:
-
-```ts
-base.fillWidth()
-```
-
-becomes:
-
-```ts
-__iyonCompose.fillWidth(__iyonModule, 12, base)
-```
-
-The implementation may use generated helper names or a generated method table, but the hot path must remain monomorphic.
-
-Do not lower common calls through:
-
-```ts
-__compose("style", [base, spec])
-```
-
-with string dispatch/rest arrays.
-
-## 12.6 Conservative transformation
-
-The transform must never guess incorrectly about an unrelated method call.
-
-Safe cases include:
-
-```text
-- direct chains rooted in a recognized View static factory
-- chains rooted in an already-transformed View modifier
-- local identifiers whose initializer is statically a recognized View expression
-- values explicitly typed as View if the transformer has reliable type information
-```
-
-If a View modifier cannot be proven syntactically, leave it unchanged rather than rewriting arbitrary `.style()` calls.
-
-Add a development-only transform diagnostic/counter for untransformed known-View patterns. The Iyon workspace is one coverage fixture, but the transform is framework infrastructure and must be validated against a separate external-consumer fixture as well.
-
-## 12.7 Full current production coverage is mandatory
-
-The transform/runtime helper set must cover the normal public `iyon-tui` View construction surface, not merely the calls exercised by the bundled Iyon application. As a minimum proof, it must cover every operation used by:
-
-```text
-plugins/app/iyon/src/view.ts
-plugins/app/iyon/src/app.ts
-plugins/tools/*/render.ts
-packages/iyon-plugins/src/tools/support/render.ts
-external-consumer integration fixture(s) using only the published public API
-```
-
-including the production semantic families listed in the boundary trace:
-
-```text
-text
-styled/decorated text
-vertical/hanging layout
-component
-contentMax / clamp-related wrappers
-fill width/height
-style
-style state
-DiffRenderer outputs where composition is involved
-```
-
-Do not claim T13.1 complete while a canonical public-API pattern falls through to uncomposed rebuilds silently. The production Iyon app is evidence, not the definition of coverage.
-
----
-
-# 13. Build/runtime integration — mandatory invisible framework infrastructure
-
-This section is a hard architectural requirement.
-
-The source transform is **not** an application plugin and is **not** an optional optimization package. It is private `iyon-tui` infrastructure. A normal external consumer must never write or maintain anything equivalent to:
-
-```ts
-plugins: [iyonViewCompositionPlugin]
-enableRetainedComposition()
-new Tui({ retainedComposition: true })
-```
-
-or add special `bunfig.toml`, preload, feature-flag, or app-local compiler wiring solely to receive retained composition.
-
-## 13.1 Ownership
-
-Place the transform and its runtime helpers under framework-owned implementation/build-support modules. Exact repository paths may follow local package conventions, but ownership must read conceptually as:
-
-```text
-iyon-tui public API
-    |
-    +-- private composition runtime
-    +-- private composition transform
-    +-- framework build/run integration
-```
-
-not:
-
-```text
-plugins/app/iyon
-    -> installs/configures composition
-```
-
-The Iyon CLI may host one installation hook because it already owns a supported execution path, but the compiler must not be *defined* as an Iyon-app optimization.
-
-Do not export a consumer-facing `iyonViewCompositionPlugin` as the normal integration contract. If a Bun plugin object exists internally, keep it private or expose it only from an explicitly internal/build-support module used by framework tooling.
-
-## 13.2 Every supported consumer path must activate it automatically
-
-Inventory every execution/build path that the project considers supported for `iyon-tui`, including at minimum the paths used by:
-
-```text
-- the bundled Iyon application
-- external applications built through the standard Iyon/iyon-tui build path
-- runtime-loaded application/plugin modules if they are part of the supported model
-- tests/examples that represent documented public usage
-```
-
-For each supported path, retained composition must be activated automatically before consumer View code is evaluated.
-
-The current repo already has two useful integration points:
-
-```text
-packages/iyon-cli/build.ts
-    Bun.build(... plugins: [iyonVirtualModulePlugin])
-
-packages/iyon-runtime/src/virtual-modules.ts
-    installIyonVirtualModules()
-    Bun.plugin(...)
-```
-
-Reuse or consolidate those mechanisms as appropriate, but make the result a **framework-owned aggregate bootstrap**. Consumers should invoke the normal supported runtime/build entrypoint and receive virtual modules + composition lowering together.
-
-If the current packaging cannot guarantee transparent transformation for some advertised consumer path, fix the supported framework entrypoint/tooling in this tranche rather than documenting “also install this plugin.” Public API/tooling changes are allowed for that purpose.
-
-## 13.3 External-consumer proof is mandatory
-
-Add a small fixture outside `plugins/app/iyon` that looks like a third-party library consumer. It must:
-
-```text
-- import only documented public iyon-tui APIs
-- contain no internal imports
-- contain no composition/compiler/plugin setup
-- contain no feature flag
-- contain no manual View memoization
-- build/run through a supported public entrypoint
-```
-
-Drive at least:
-
-```text
-exact no-op
-single text change
-conditional branch toggle
-dynamic keyed reorder
-ViewSlot recurring update
-ScrollPane recurring update
-```
-
-and assert composition counters / exact View reuse where appropriate.
-
-This fixture is the acceptance proof for “generic TUI framework”, while `plugins/app/iyon` remains the realistic production trace.
-
-## 13.4 No silent supported-path downgrade
-
-Untransformed execution may exist internally for:
-
-```text
-- differential tests
-- benchmark control arms
-- low-level/debug escape hatches
-```
-
-but it is **not** an acceptable steady-state for a normal supported consumer path.
-
-If framework bootstrap accidentally fails to install the transform, integration tests must fail. In development, expose a diagnostic such as:
-
-```text
-composition_expected = true
-composition_transformed_sites = N
-composition_untransformed_known_sites = 0
-```
-
-Do not silently tell ordinary users “it is still correct, just slower” when the framework itself failed to install mandatory infrastructure.
-
-## 13.5 AST implementation
-
-The workspace already depends on TypeScript for type checking. A TypeScript AST transform is acceptable for this tranche.
-
-Do not add a large Babel/SWC dependency merely to inject SiteIds unless measured build-time or implementation evidence requires it.
-
-The transform must preserve:
-
-```text
-source maps where supported
-async semantics
-evaluation order
-short-circuit behavior
-exceptions
-this binding
-optional chaining semantics
-```
-
-Never move semantic expressions across side-effect boundaries just for composition.
-
-## 13.6 Bun 1.4 qualification
-
-The repository is qualified on Bun 1.4.0. Verify the exact build-plugin/runtime-plugin behavior on that pinned version.
-
-The acceptance question is not “can Bun expose a plugin?” It is:
-
-> Can the supported `iyon-tui` execution path guarantee that consumer source is transformed before relevant View construction executes, with no consumer configuration?
-
-If one supported path cannot satisfy that with the current bootstrap sequence, change that path's framework-owned launcher/build integration rather than leaking the private compiler into application setup.
-
----
-
-# 14. Composition context
-
-Generated compose helpers need to know which boundary is currently evaluating.
-
-Use a private synchronous composition context.
-
-Conceptually:
-
-```ts
-let ACTIVE_PASS: ViewCompositionPass | undefined
-```
-
-but implement nesting safely.
-
-Required semantics:
-
-```text
-enter pass A
-  helper calls use A
-  nested independent composition boundary B
-    helper calls use B
-  leave B
-  helper calls resume A
-leave A
-```
-
-A small stack or save/restore token is sufficient.
-
-Do not use `AsyncLocalStorage` for this hot synchronous construction path.
-
-View construction must not retain the active pass beyond the synchronous builder invocation.
-
-If an async builder accidentally returns a Promise, reject it.
-
-Composition builders are synchronous by contract.
-
----
-
-# 15. Boundary API — canonical retained evaluation, not an optimization opt-in
-
-Construction must happen inside a composition pass. A `View` fully constructed before the framework enters a retained boundary cannot retroactively avoid those JS allocations.
-
-Public API changes are therefore allowed when they establish the correct retained lifecycle. The crucial rule is that the API shape is **semantic/canonical**, not “the fast variant”. Users must never choose between a normal API and an optimized composition API.
-
-## 15.1 Canonical builder types
-
-Conceptually:
-
-```ts
-export type ViewBuilder = () => View
-export type SceneBuilder = () => Scene
-```
-
-Names may follow existing conventions.
-
-The implementation agent must choose one canonical repeated-boundary form and document it as ordinary `iyon-tui` usage.
-
-## 15.2 `Tui.render`
-
-Preferred canonical recurring form:
-
-```ts
 tui.render(() =>
   new Scene(
-    createView(state),
-    history,
-  )
-)
-```
-
-The closure is **not** a memoization hook and is **not** an optimization switch. Its semantic purpose is to give `Tui` ownership of the evaluation transaction so framework-owned composition can establish the correct root before View factories run.
-
-Existing:
-
-```ts
-render(scene: Scene): void
-```
-
-may remain source-compatible for prebuilt/one-shot values. If retained, document reference identity/performance as framework-private and do not present the direct form as an equivalent recurring “slow path” users must reason about.
-
-If the compiler can transparently lower ordinary direct render expressions into the same internal transaction without unsafe guessing, that is even better and may preserve the existing source shape. Do not require such lowering if it materially complicates the transform; the canonical builder form is acceptable because public API changes are permitted.
-
-## 15.3 `ViewSlot.setView`
-
-Canonical recurring form:
-
-```ts
-slot.setView(() => userBatchView(messages))
-```
-
-The slot owns its composition root and evaluates the builder within that root.
-
-Existing `setView(view: View)` may remain for already-built/one-shot values and animation-frame cases where the View identity is already intentionally stable.
-
-## 15.4 `ScrollPane.setContent`
-
-Canonical recurring form:
-
-```ts
-pane.setContent(() => toolOutputView(update))
-```
-
-The pane owns its composition root and evaluates the builder within that root.
-
-Existing direct-View form may remain for compatibility/one-shot use.
-
-## 15.5 Public API promise
-
-For every documented canonical recurring boundary:
-
-```text
-normal public API use
-+ supported framework build/runtime path
-=
-retained composition automatically active
-```
-
-There is no separate `compose`, `memo`, `optimized`, `retained`, or compiler-registration step in application code.
-
-## 15.6 Initial construction APIs
-
-Do not add lazy/builder forms to every one-shot constructor merely for symmetry. Add them where a boundary actually owns repeated semantic evolution or where consistency materially improves the API.
-
-## 15.7 History
-
-Do not force History's immutable one-shot units through a new composition root.
-
-History already owns retained native state and stream specialization. `push(view)` and a unit's terminal `freeze(unit, view)` do not form a general repeatedly-rendered root in the same sense as B1/B3/B4.
-
-Leave B2 semantics unchanged unless a concrete repeated-unit workflow demonstrates a missing optimization.
-
----
-
-# 16. Composition execution transaction
-
-The composition state and native/host root state must advance atomically from the application's perspective.
-
-## 16.1 Required sequence
-
-For a composed boundary update:
-
-```text
-1. begin composition pass from last committed composition
-2. activate pass
-3. execute user builder synchronously
-4. deactivate pass
-5. finalize/prepare composition work state
-6. attempt existing retained/cold/complete boundary install
-7. if install succeeds:
-       commit composition state
-       boundary's existing root lease is now the new committed root
-   else:
-       abort composition state
-       old composition remains authoritative
-       old native root lease remains authoritative
-8. return / rethrow
-```
-
-## 16.2 Builder failure
-
-If the user builder throws:
-
-```text
-abort composition
-make no host mutation
-leave old root lease untouched
-rethrow original exception
-```
-
-## 16.3 Native materialization failure
-
-If retained materialization fails and complete fallback succeeds:
-
-```text
-commit composition
-```
-
-Transport route choice is irrelevant to composition correctness.
-
-If all install routes fail:
-
-```text
-abort composition
-```
-
-## 16.4 Commit must be effectively infallible
-
-Do not perform risky semantic construction after the host has accepted the new root.
-
-Prepare any arrays/cleanup bookkeeping before host mutation where practical.
-
-Post-host composition commit should be limited to operations such as:
-
-```text
-pointer/reference swaps
-epoch advancement
-pending -> current slot promotion
-bounded map deletions
-```
-
-No user callbacks.
-
-No semantic View factory calls.
-
----
-
-# 17. Exact reuse algorithm
-
-This is the heart of T13.1.
-
-For every transformed semantic View operation:
-
-```text
-1. obtain current composition slot by module/site/(occurrence|key)
-2. read slot.current
-3. inspect only that previous node's immediate semantic fields
-4. compare against the new operation's immediate semantic arguments
-5. if exact semantic match:
-       stage/revisit same View
-       return exact previous View object
-6. otherwise:
-       construct one new immutable View
-       record valid predecessor/derivation metadata
-       stage new View
-       return new View
-```
-
-No descendants are recursively compared.
-
-## 17.1 Why immediate comparison is sufficient
-
-Children are themselves built first.
-
-If a child is unchanged, composition already returned the exact previous child View.
-
-Therefore a parent can determine unchanged child semantics by identity:
-
-```ts
-oldChild === newChild
-```
-
-or equivalently:
-
-```ts
-nodeForBridge(oldChild) === nodeForBridge(newChild)
-```
-
-So parent comparison remains shallow.
-
-## 17.2 Example
-
-Old committed tree:
-
-```text
-root A
-├── working A
-├── approval A
-├── composer A
-└── footer A
-```
-
-Only footer text changes.
-
-Composition produces:
-
-```text
-root B
-├── SAME working A
-├── SAME approval A
-├── SAME composer A
-└── footer B
-```
-
-Only the semantic wrappers from the changed footer back to the root become new nodes.
-
-PERF-12 then sees exactly the changed frontier it was designed for.
-
----
-
-# 18. Semantic equality — generated, shallow, kind-specific
-
-Do not use:
-
-```text
-JSON.stringify
-Object.keys
-Object.entries
-recursive equality
-content hash
-reflection over arbitrary properties
-```
-
-Use monomorphic comparisons for known View semantic kinds.
-
-The exact generated/helper structure should follow the current `BridgeViewNode` schema.
-
-## 18.1 Primitive scalars
-
-Compare directly:
-
-```ts
-old.gap === gap
-old.width === width
-old.height === height
-old.wrap === wrap
-old.align === align
-old.componentId === componentId
-```
-
-## 18.2 Strings
-
-Use JavaScript string equality for correctness:
-
-```ts
-old.text === text
-```
-
-Do not pre-hash text.
-
-Production long assistant text is already streamed outside the structural DAG, so common structural strings are small.
-
-Benchmark long static strings separately to ensure no hidden pathological cost.
-
-## 18.3 Child Views
-
-Compare exact semantic child identity:
-
-```ts
-old.child === nodeForBridge(newChild)
-```
-
-or equivalent cached internal references.
-
-Never recursively compare the child.
-
-## 18.4 Arrays of ordinary small children
-
-For common small Row/Column-style nodes, compare:
-
-```text
-length
-per-entry layout/track scalar
-per-entry child BridgeViewNode identity
-```
-
-This is O(arity), not O(descendant tree size).
-
-For normal application chrome with small arity this is appropriate.
-
-Wide structures are handled separately in §22.
-
-## 18.5 Styles/decorations
-
-Reuse existing normalized semantic representations rather than comparing user objects by arbitrary deep equality.
-
-Where the semantic DAG already stores normalized immutable style data or a stable style reference/key, compare that representation.
-
-Do not make composition depend on resolved theme colors; theme resolution remains late/native.
-
-## 18.6 Component handles
-
-Compare stable component identity already represented in the semantic node.
-
-Do not compare wrapper object incidental identity if the existing semantic representation has a canonical native component ID.
-
-## 18.7 Diff
-
-Diff structural values may be large.
-
-Do not introduce an O(diff payload) composition comparison on every re-render if the Diff path already has retained payload identity/renderer specialization.
-
-Use existing retained Diff identity where available; otherwise treat a new Diff payload as changed and let the specialized retained/native lane handle it.
-
-## 18.8 Unknown/rare kinds
-
-Correct fallback is:
-
-```text
-cannot cheaply prove equal -> construct a new immutable View
-```
-
-Never guess equality.
-
-Performance optimization requires proof of sameness; semantic correctness does not require reuse.
-
----
-
-# 19. Avoiding allocation on exact reuse
-
-The preferred hot path must compare the new operation's raw semantic arguments **before** allocating a new `View`, assigning a NodeId, or constructing transport metadata.
-
-Preferred:
-
-```ts
-function composeSpacer(moduleId: number, siteId: number, size: number): View {
-  const slot = currentSlot(moduleId, siteId)
-  const previous = slot.current
-
-  if (previous !== undefined) {
-    const node = nodeForBridge(previous)
-    if (node.kind === "spacer" && node.size === size) {
-      stage(slot, previous)
-      return previous
-    }
-  }
-
-  const next = View.__uncomposedSpacer(size)
-  stage(slot, next)
-  return next
-}
-```
-
-Avoid as the final common path:
-
-```text
-construct fresh View
-assign NodeId
-construct BridgeViewNode
-then compare candidate vs previous
-then discard candidate
-```
-
-That fallback may be useful while bringing up uncommon semantic kinds, but the production-hot families must be pre-allocation reuse checks.
-
-This is necessary to make the handoff's original promise:
-
-```text
-semantic JS construction O(changed semantic nodes)
-```
-
-true in ordinary application code.
-
----
-
-# 20. Predecessor / derivation integration
-
-Composition gives PERF-12 information it did not reliably have before:
-
-```text
-"new semantic node X is the next value of the same logical construction site as old node Y"
-```
-
-Use that information only where it maps to an existing valid retained derivation.
-
-## 20.1 Do not make predecessor identity semantic
-
-A predecessor relation is optimization metadata.
-
-Store it in a WeakMap/private sidecar, not on the BridgeViewNode object.
-
-Conceptually:
-
-```ts
-const COMPOSITION_PREDECESSOR = new WeakMap<BridgeViewNode, BridgeViewNode>()
-```
-
-or fold it into the existing derivation sidecar when a specific derivation can be proven.
-
-## 20.2 Prefer specific derivation variants
-
-If composition observes:
-
-```text
-same logical Text
-same payload
-new wrap/alignment
-```
-
-install/retain the existing text-layout derivation.
-
-If it observes:
-
-```text
-same logical common node
-one supported scalar changed
-```
-
-use existing common-scalar derivation.
-
-If a container child group exposes one set/splice:
-
-```text
-axis-set / axis-splice
-```
-
-If one Grid cell changes:
-
-```text
-grid-cell
-```
-
-Do not add a generic native "diff these two arbitrary Views" operation.
-
-## 20.3 Unsupported changed semantics
-
-If no specific retained derivation applies:
-
-```text
-new immutable semantic node
--> normal ensureNative materialization
-```
-
-Correctness first.
-
----
-
-# 21. Conditional structure
-
-Lexical SiteIds are specifically chosen so an earlier conditional does not renumber unrelated later sites.
-
-Example:
-
-```ts
-if (state.working) {
-  View.component(workingHandle)
-}
-
-View.component(composer)
-View.text(footer)
-```
-
-The transform assigns distinct lexical sites:
-
-```text
-working  -> site 4
-composer -> site 5
-footer   -> site 6
-```
-
-When `working` disappears:
-
-```text
-site 4 is absent
-site 5 is still site 5
-site 6 is still site 6
-```
-
-This is a major advantage over a single global "construction ordinal" counter.
-
-Do not implement composition identity as merely:
-
-```text
-first View created this render
-second View created this render
-third View created this render
-```
-
-because a conditional would shift every later identity.
-
----
-
-# 22. Wide structures and PersistentSeq
-
-T13.1 must not accidentally undo PERF-12's largest asymptotic wins.
-
-## 22.1 Never scan 100k descendants to prove a retained one-child edit
-
-Current PERF-12 wide paths already know how to express:
-
-```text
-set(index, child)
-remove(index)
-splice(index, removeCount, inserted)
-```
-
-through retained PersistentSeq semantics.
-
-Composition must preserve those operation descriptors where they are already produced by the View API.
-
-## 22.2 Small ordinary container
-
-For common 2–20 child chrome:
-
-```text
-compare immediate child identities linearly
-```
-
-is acceptable and simpler.
-
-## 22.3 Wide container
-
-For a wide sidecar-backed sequence:
-
-```text
-base View identity
-+ sequence derivation sidecar
-+ operation descriptor
-```
-
-should be the reuse/delta source.
-
-Do not flatten it merely so composition can compare arrays.
-
-## 22.4 Fresh arbitrary arrays have an information cost
-
-If the public caller gives Iyon a brand-new arbitrary 100,000-element array every render and provides neither stable Views nor retained edit information, some O(N) work is unavoidable to discover what changed.
-
-T13.1 must not hide that fact behind a hash table or expensive content digest.
-
-The preferred scalable APIs remain:
-
-```text
-History
-ViewSlot
-ScrollPane
-streams
-PersistentSeq-backed retained edits
-keyed repeated groups where appropriate
-```
-
-Production already places large conversation content behind these retained subsystems.
-
----
-
-# 23. Keyed dynamic collections
-
-For repeated calls from one lexical site, occurrence order is the default.
-
-Example:
-
-```ts
-for (const item of items) {
-  column.push(itemView(item))
-}
-```
-
-If insertion/reorder continuity matters, use:
-
-```ts
-for (const item of items) {
-  column.push(
-    View.key(item.id, () => itemView(item)),
-  )
-}
-```
-
-This should be the only identity API most users ever see.
-
-Do not require IDs on:
-
-```text
-text nodes
-rows
-columns
-spacers
-styles
-ordinary static components
-ordinary modifiers
-```
-
-## 23.1 Optional future convenience
-
-A future collection builder such as:
-
-```ts
-column.each(items, item => item.id, item => itemView(item))
-```
-
-may sugar `View.key`, but do not expand T13.1 unless production code clearly benefits.
-
----
-
-# 24. Helper functions and repeated call sites
-
-T13.1 does not need a full compiler-level call graph.
-
-A View factory site inside a helper may execute multiple times. The baseline identity is:
-
-```text
-lexical site inside helper + occurrence order
-```
-
-This remains semantically safe because Views are immutable semantic values, not stateful React component instances.
-
-If repeated helper instances can reorder and retaining logical continuity matters, callers use `View.key` around the helper's produced View.
-
-Example:
-
-```ts
-function toolRow(tool: Tool): View {
-  return View.text(tool.label).style(toolStyle(tool))
-}
-
-for (const tool of tools) {
-  column.push(
-    View.key(tool.id, () => toolRow(tool)),
-  )
-}
-```
-
-This avoids building a general function-call composition compiler in T13.1.
-
----
-
-# 25. Composition slot lifetime and reclamation
-
-## 25.1 Strongly retain the last committed View for live sites
-
-A composition slot must hold its last committed View strongly while the logical site is live.
-
-That is intentional: the entire purpose is to make exact identity available to the next composition.
-
-## 25.2 Do not retain unlimited historical values
-
-Each ordinary positional slot retains at most:
-
-```text
-one committed View
-one temporary pending View during a pass
-```
-
-A successful commit replaces the old slot value.
-
-An abort drops the pending value.
-
-## 25.3 Repeated positional sites
-
-If a site executed N times last render and M < N times this render, successful commit must release the tail:
-
-```text
-slots[M..N]
-```
-
-No indefinite high-water retention after the site remains active with a smaller cardinality.
-
-## 25.4 Keyed sites
-
-On successful commit, remove keyed entries that were present in the previous committed pass but not visited in the new pass.
-
-Do not run this cleanup on abort.
-
-## 25.5 Entire skipped lexical sites
-
-A site absent from one successful composition pass is logically unmounted.
-
-When it next appears, its previous semantic value must not be treated as continuously mounted.
-
-Implementation choices:
-
-```text
-A. eagerly mark/clear previous-pass active sites at commit
-B. mark last-seen committed epoch and reset lazily on next appearance
-```
-
-Choose based on benchmark evidence, with these hard requirements:
-
-```text
-- semantic lifetime is correct
-- memory remains bounded
-- exact stable chrome does not gain an O(all historical sites) cleanup path
-```
-
-A small previous-active-site list is acceptable for normal 20–200 node roots if measured cost is negligible.
-
-## 25.6 Root disposal
-
-`ViewCompositionRoot.dispose()` must immediately release all strong View references and keyed maps.
-
-Wire it to:
-
-```text
-Tui.close/dispose lifecycle
-ViewSlot.dispose
-ScrollPane.dispose
-```
-
-as appropriate.
-
----
-
-# 26. Composition must not become another semantic cache
-
-The composition table stores:
-
-```text
-logical slot -> actual immutable View object
-```
-
-It does **not** store:
-
-```text
-copied semantic payload
-serialized node record
-child record graph
-NativeRef ownership graph
-NodeId -> semantic content map
-wire bytes
-```
-
-Semantic authority remains:
-
-```text
-BridgeViewNode / NodeId
-        +
-NativeViewRuntime NodeId -> WeakView
-```
-
-Composition is only continuity metadata.
-
-This distinction is why T13.1 does not recreate the rejected Shared Mirror architecture on the JS side.
-
----
-
-# 27. B1 — `Tui.render` integration
-
-Add one `ViewCompositionRoot` beside the existing `RetainedRootBoundary`.
-
-Conceptually:
-
-```ts
-class Tui {
-  readonly #rootBoundary = new RetainedRootBoundary()
-  readonly #compositionRoot = new ViewCompositionRoot()
-
-  render(sceneOrBuilder: Scene | (() => Scene)): void {
-    if (typeof sceneOrBuilder !== "function") {
-      this.#renderPreparedScene(sceneOrBuilder)
-      return
-    }
-
-    const pass = this.#compositionRoot.begin()
-    let scene: Scene
-
-    try {
-      scene = withActiveComposition(pass, sceneOrBuilder)
-      pass.prepare()
-      this.#renderPreparedScene(scene)
-      this.#compositionRoot.commit(pass)
-    } catch (error) {
-      this.#compositionRoot.abort(pass)
-      throw error
-    }
-  }
-}
-```
-
-Real code must respect current error/fallback behavior.
-
-## 27.1 No-op path
-
-If composition returns the exact previous root View:
-
-```text
-currentScene.body === nextScene.body
-```
-
-must still trigger the existing no-op route.
-
-Expected structural result:
-
-```text
-new NodeIds:                 0
-semantic nodes inspected:   0
-children visited:           0
-NativeRef materializations: 0
-host render native calls:   0 for the existing JS no-op route
-```
-
-Composition evaluation itself is measured separately.
-
-## 27.2 History object changes
-
-`Scene` also carries History.
-
-Do not treat exact body identity as permission to ignore a materially different History binding if current `Scene` semantics allow changing it.
-
-Preserve current normalization/render semantics exactly.
-
----
-
-# 28. B3 — `ViewSlot` integration
-
-Each `ViewSlot` gets one `ViewCompositionRoot` in addition to its existing `RetainedRootBoundary`.
-
-Builder update:
-
-```ts
-slot.setView(() => userBatchView(messages))
-```
-
-executes inside that slot's composition root.
-
-If only one line changes:
-
-```text
-unchanged lines -> same Views
-changed line    -> new View
-container spine -> changed semantic path only
-```
-
-then the existing retained boundary installs the result.
-
-## 28.1 Animation APIs
-
-Do not force stable prebuilt animation frame arrays through new composition every tick.
-
-Current animation architecture intentionally reuses stable frame View identities and native animation machinery.
-
-Composition may be used when the animation *definition* is rebuilt, but the tick path must remain native/retained.
-
----
-
-# 29. B4 — `ScrollPane` integration
-
-Same model as ViewSlot:
-
-```ts
-pane.setContent(() => toolOutputView(update))
-```
-
-uses a pane-local composition root.
-
-`followEnd()` remains native and unrelated.
-
-Do not couple content composition identity to scroll position.
-
----
-
-# 30. B2/B5/B6 behavior
-
-## 30.1 History B2
-
-History stays retained native state.
-
-Do not add a composition root to every frozen History unit by default.
-
-Streams continue to bypass structural View composition entirely.
-
-## 30.2 Component references B5
-
-`View.component(handle)` continues to lower the stable component handle/native ID into the semantic node.
-
-Composition merely recognizes unchanged component semantics automatically.
-
-No new component lease model.
-
-## 30.3 Theme B6
-
-Theme installation remains independent.
-
-T13.1 must not cache resolved colors into composition metadata.
-
-If T13 proper adds theme epochs for style references, composition compares semantic style/theme keys under those existing rules.
-
----
-
-# 31. Iyon application — normal consumer migration and black-box validation
-
-`plugins/app/iyon` is **not** an architectural layer of retained composition. It is one application built on the generic public `iyon-tui` framework and serves two purposes in T13.1:
-
-```text
-1. realistic production-trace benchmark
-2. black-box proof that normal consumers receive the framework behavior
-```
-
-No app-local compiler setup, composition plugin registration, internal SiteId import, DAG access, NativeRef access, or manual stable-View cache is allowed.
-
-## 31.1 Migrate only to canonical public API where needed
-
-If §15 establishes builder-based repeated boundaries as the canonical public contract, migrate the Iyon app exactly as any external consumer would:
-
-```ts
-tui.render(() =>
-  new Scene(
-    createIyonView(options),
-    this.historyHandle,
-  )
-)
-```
-
-and similarly for recurring `ViewSlot` / `ScrollPane` updates.
-
-That source change is acceptable because it is a normal public API evolution. It must not contain any knowledge of retained DAG internals or compiler implementation.
-
-If the compiler safely preserves the existing direct-expression source shape instead, no app migration is necessary. Choose the simpler public contract, not a special app path.
-
-## 31.2 `createIyonView()` remains ordinary declarative code
-
-Do not add:
-
-```text
-memo tables
-body-derived semantic caches
-NodeIds
-NativeRefs
-compiler SiteIds
-internal composition helpers
-manual stable View retention
-```
-
-to `plugins/app/iyon/src/view.ts`.
-
-The same rule applies to tool renderers and other application/plugin code.
-
-## 31.3 `bodyKey` is temporary evidence only
-
-Keep `lastRenderedBodyKey` during initial parity/benchmarking as a control arm.
-
-Add a benchmark mode that bypasses it while framework composition is active.
-
-Remove the production `bodyKey` only after:
-
-```text
-automatic composition no-op produces exact root reuse
-real trace performance is not worse
-animations still advance correctly
-all bodyKey-covered state transitions produce identical visuals
-external-consumer fixture passes without special setup
-```
-
-### Preserve the current animation/time side effect
-
-Today a `bodyKey` hit also calls `advance?.(0)`. Removing the guard must not accidentally remove this runtime advancement opportunity.
-
-Place that behavior in the smallest semantically correct framework/application scheduling location after tracing current ownership. View composition itself must not become a clock or scheduler.
-
-Add a regression test in which repeated exact-root composed renders still permit the existing spinner/stream/headless advancement behavior.
-
-The final Iyon app should not need `bodyKey` for renderer identity.
-
-## 31.4 ViewSlot and ScrollPane
-
-Migrate recurring reconstructed content only to the canonical public boundary forms selected in §15. Do not use any internal composition API.
-
-Already-stable prebuilt animation frames do not need artificial reconstruction solely to exercise composition.
-
----
-
-# 32. Public API and consumer-experience contract
-
-This section is mandatory for T13.1 review.
-
-## 32.1 Retained composition is part of the framework contract
-
-For a documented supported `iyon-tui` consumer path, retained composition is not optional.
-
-The user experience must **not** contain:
-
-```ts
-installCompositionCompiler()
-use(iyonViewCompositionPlugin)
-enableRetainedViews()
-new Tui({ composition: true })
-```
-
-and must not require app-local Bun plugin arrays, preload configuration, feature flags, or manual memoization.
-
-## 32.2 Public API changes are allowed when they define lifecycle semantics
-
-T13.1 may add or canonicalize APIs such as:
-
-```ts
-Tui.render(() => Scene)
-ViewSlot.setView(() => View)
-ScrollPane.setContent(() => View)
-View.key(key, () => View)
-```
-
-because these express real lifecycle/identity semantics.
-
-They must not be marketed or designed as “optimized variants”. They are ordinary framework APIs.
-
-Keep existing direct-View APIs where source compatibility is cheap and semantics remain clear. Deprecation is preferable to maintaining two permanently equivalent-looking APIs with materially different lifecycle guarantees.
-
-## 32.3 Explicit `View.key` is semantic, not opt-in performance plumbing
-
-`View.key` is allowed only where logical identity is ambiguous, such as repeated/reordered siblings originating from the same lexical site.
-
-Static ordinary nodes must not require user IDs.
-
-The key is local composition identity metadata, not a NodeId, NativeRef, cache key, or declaration that content is unchanged.
-
-## 32.4 Transformation must not change visible semantics
-
-The same canonical application logic must have identical visible semantics in internal transformed-vs-reference differential tests.
-
-Transformation may change:
-
-```text
-object reuse
-NodeId reuse
-allocation count
-amount of bridge work
-```
-
-It must not change:
-
-```text
-visual output
-layout semantics
-style semantics
-component identity
-History semantics
-stream semantics
-event routing
-evaluation order
-exception behavior except composition-specific duplicate-key errors
-```
-
-## 32.5 View reference equality is framework-private
-
-Audit documentation/tests for any promise that every View factory call returns a newly allocated distinct object.
-
-The public contract should define `View` as an immutable semantic value whose reference identity may be reused by the framework.
-
-Application logic must not rely on `a === b` meaning semantic equality or inequality.
-
-## 32.6 No normal supported untransformed mode
-
-An untransformed/reference mode may exist for tests and benchmarks, but it is not a normal consumer feature.
-
-A supported external consumer that follows documented setup and still runs canonical View code untransformed is a framework integration bug.
-
-The external-consumer fixture from §13.3 must guard this invariant.
-
-## 32.7 No public compiler escape hatch by default
-
-Do not add a public transform plugin or opt-out switch merely for convenience.
-
-If a genuine tooling incompatibility later requires an escape hatch, isolate it in framework tooling/debug support and preserve semantics. It must not become the documented normal installation path.
-
----
-
-# 33. Internal API stability
-
-The following private contracts should remain narrow:
-
-```text
-register composition module
-begin/end active composition pass
-monomorphic composition factory helpers
-monomorphic modifier helpers
-keyed group helper
-composition counters/debug metadata
-```
-
-Do not expose these from `iyon:tui`'s normal public TypeScript surface.
-
-The transform may import them from a private/internal package export that is clearly marked `@internal`.
-
----
-
-# 34. Compiler/framework failure behavior
-
-## 34.1 Unsupported syntax
-
-If the transform cannot safely lower an unusual expression, semantic correctness wins: leave the expression unchanged rather than emit incorrect code.
-
-However, distinguish two cases:
-
-```text
-A. unusual/noncanonical dynamic JS pattern
-   -> correct fallback is acceptable
-
-B. documented canonical iyon-tui usage pattern
-   -> missed lowering is a T13.1 defect
-```
-
-The supported external-consumer fixture and public API coverage tests must keep case B at zero.
-
-## 34.2 Bootstrap/integration failure
-
-If the framework expects composition transformation for a supported path but the private transform was not installed/executed, do not silently normalize that as “optional optimization disabled”.
-
-Development/test builds must make this diagnosable and acceptance tests must fail.
-
-## 34.3 Build diagnostics
-
-Development builds should be able to report privately:
-
-```text
-module path
-site count
-transformed View factory count
-transformed modifier count
-untransformed suspicious known-View call count
-framework bootstrap/transform-active status
-```
-
-No diagnostic work belongs in the hot runtime path.
-
-## 34.4 Source maps
-
-Preserve usable source locations for exceptions and debugging.
-
-A mandatory invisible transform that makes consumer stack traces unusable is not acceptable.
-
----
-
-# 35. Composition counters
-
-Add counters separate from existing retained DAG counters.
-
-At minimum:
-
-```text
-composition_passes
-composition_commits
-composition_aborts
-composition_modules_touched
-composition_sites_touched
-composition_positional_slot_hits
-composition_positional_slot_misses
-composition_keyed_slot_hits
-composition_keyed_slot_misses
-composition_exact_view_reuses
-composition_new_views
-composition_predecessor_hints
-composition_duplicate_key_errors
-composition_removed_positional_slots
-composition_removed_keyed_slots
-composition_untransformed_fallbacks   // dev/bench only if useful
-```
-
-For benchmark correlation also retain the existing PERF-12 counters:
-
-```text
-semantic_nodes_inspected
-children_visited
-direct_materializer_calls
-derivation_fast_path_calls
-byte_payload_bytes
-cold_fallbacks
-NativeRef promotion counters
-host mutation counters
-```
-
-The important proof is the cross-layer relationship:
-
-```text
-composition exact reuse
-        ->
-zero new NodeId
-        ->
-zero retained frontier visit for that subtree
-```
-
----
-
-# 36. Required evidence probe before deleting `bodyKey`
-
-Create one focused T13.1 benchmark/probe through the **real production `Tui.render` router**.
-
-Model the actual `createIyonView` chrome shape from production.
-
-Required arms:
-
-```text
-A. current_body_key
-   current application guard + ordinary construction
-
-B. rebuild_uncomposed
-   bodyKey disabled; fresh ordinary View construction each op
-
-C. manual_stable_oracle
-   hand-preserved View identities purely as an experimental upper-bound/control
-   NOT production code
-
-D. composed_auto
-   bodyKey disabled; ordinary application source evaluated through T13.1 composition
-```
-
-The manual stable arm answers:
-
-```text
-"What structural counters should perfect automatic composition reproduce?"
-```
-
-The composed arm must converge to that structural shape without app memoization.
-
----
-
-# 37. Production-state benchmark cases
-
-At minimum model these state transitions from `plugins/app/iyon`.
-
-## 37.1 Exact semantic no-op
-
-Reduced state changes elsewhere but chrome inputs are unchanged.
-
-Expected:
-
-```text
-exact root View reused
-0 new semantic nodes
-0 retained semantic nodes inspected
-0 native materializers
-existing Tui no-op route
-```
-
-## 37.2 Footer-only change
-
-Change:
-
-```text
-provider/model/effort/status footer text
-```
-
-Expected:
-
-```text
-working subtree reused
-approval subtree reused
-composer subtree reused
-footer changed
-only footer wrapper path + ancestors become new
-```
-
-## 37.3 Effort style-state change
-
-Change only:
-
-```text
-"iyon.agent.effort"
-```
-
-Expected:
-
-```text
-component handle reused
-unrelated chrome reused
-derivation/common-scalar path used where valid
-```
-
-## 37.4 Working spinner visibility toggle
-
-Toggle conditional:
-
-```text
-working row <-> spacer
-```
-
-Expected:
-
-```text
-composer lexical identity preserved
-footer lexical identity preserved
-approval lexical identity preserved
-no positional-site shift caused by the earlier conditional
-```
-
-## 37.5 Approval appear/disappear/change
-
-Same principle as working.
-
-## 37.6 Steering queue preview change
-
-Only affected working-row branch and ancestors should change.
-
-## 37.7 Tool status update behind retained slot
-
-Scene chrome may be logically unchanged while a tool ViewSlot changes.
-
-Expected:
-
-```text
-scene composition -> exact root reuse/no-op
-slot composition  -> changed frontier only
-```
-
-## 37.8 Tool pane output update
-
-Expected:
-
-```text
-scene unchanged
-pane-local composition only
-followEnd native behavior unchanged
-```
-
----
-
-# 38. Key correctness tests
-
-Add deterministic tests for:
-
-```text
-[ ] same site + same key + same semantics -> exact View reuse
-[ ] same site + same key + changed semantics -> new NodeId, known predecessor
-[ ] same site + changed key -> new logical lifetime
-[ ] same key at different lexical sites -> independent
-[ ] same key in different composition roots -> independent
-[ ] duplicate key in same site/pass -> deterministic error
-[ ] reorder keyed items -> individual item View identities follow keys
-[ ] insert keyed item at front -> existing items retain identity
-[ ] remove keyed item -> removed slot released after successful commit
-[ ] aborted pass with removals -> old keyed map remains committed
-```
-
----
-
-# 39. Conditional/occurrence tests
-
-Required:
-
-```text
-[ ] later lexical sites retain identity when earlier conditional disappears
-[ ] same lexical site repeated without keys uses occurrence order
-[ ] shrinking occurrence count releases tail after successful commit
-[ ] aborted shrink does not release committed tail
-[ ] reappearing previously-unmounted site receives correct lifetime behavior
-[ ] nested View.key groups scope child identities independently
-```
-
----
-
-# 40. Semantic-kind differential tests
-
-For every public View semantic family supported by composition:
-
-```text
-untransformed construction
-vs
-transformed composed construction
-```
-
-must produce equivalent Bridge semantics.
-
-Test both:
-
-```text
-exact unchanged inputs
-one-field mutation
-multiple-field mutation
-child identity mutation
-```
-
-For unchanged inputs assert:
-
-```text
-composed_next === composed_previous
-nodeForBridge(composed_next) === nodeForBridge(composed_previous)
-NodeId unchanged
-```
-
-For changed inputs assert:
-
-```text
-composed_next !== composed_previous
-NodeId changed
-semantic output equals untransformed reference
-```
-
----
-
-# 41. Failure atomicity tests
-
-Reuse T12/T13 failure injection where possible.
-
-Inject failure after composition evaluation at:
-
-```text
-NativeRef resolution
-new-node materialization
-retained patch
-hostRenderRef
-ViewSlot setViewRef
-ScrollPane setContentRef
-cold fallback
-complete fallback
-```
-
-For every failure:
-
-```text
-[ ] old composition slots still current
-[ ] old root View still current
-[ ] old native root lease still valid
-[ ] pending composition refs dropped
-[ ] retry from same application state produces correct result
-```
-
-Then verify success commits once.
-
----
-
-# 42. Multi-root isolation tests
-
-Composition identity is root-local.
-
-Test:
-
-```text
-Tui A renders module/site 7
-Tui B renders same module/site 7
-```
-
-They must have independent slots and independent committed Views.
-
-Likewise:
-
-```text
-ViewSlot A
-ViewSlot B
-ScrollPane A
-ScrollPane B
-```
-
-must never share logical composition state merely because transformed source sites are identical.
-
-Semantic DAG sharing that occurs through actual identical immutable View objects is still allowed where explicitly passed/shared by the caller.
-
----
-
-# 43. Memory tests
-
-T13.1 adds strong JS references by design, so memory behavior must be proven.
-
-## 43.1 Static chrome churn
-
-Run at least 1,000,000 composition updates over a ~200-site synthetic UI while changing a small subset each op.
-
-After GC/maintenance:
-
-```text
-live composition slots = O(current logical sites)
-not O(total updates)
-```
-
-## 43.2 Repeated positional churn
-
-Grow a repeated site to a large count, shrink to a small count, commit, GC.
-
-Tail Views must become reclaimable.
-
-## 43.3 Key churn
-
-Cycle through many keys while retaining only a small live set.
-
-After each successful removal pass and GC:
-
-```text
-keyed map size follows live keys
-```
-
-not historical keys.
-
-## 43.4 Abort churn
-
-Repeatedly build large pending compositions and inject failure.
-
-Pending Views must not remain strongly retained after abort.
-
-## 43.5 Root dispose
-
-After dispose + GC:
-
-```text
-composition root retains no Views
-```
-
----
-
-# 44. Performance benchmark methodology
-
-Use process isolation and the same discipline as PERF-11v4/PERF-12.
-
-Report:
-
-```text
-median
-p95
-p99
-mean only as supplementary
-raw JSONL samples
-independent process repetitions
-```
-
-Separate phases:
-
-```text
-application render-function evaluation
-composition lookup/equality
-semantic View construction
-retained native frontier
-host layout/paint
-total operation
-```
-
-Do not hide composition time inside a renamed "construction" bucket.
-
----
-
-# 45. Performance gates
-
-T13.1 is primarily an architecture-correctness tranche, but it must not silently buy identity with expensive JS reconciliation.
-
-## 45.1 Structural gate — mandatory
-
-For the real production chrome cases:
-
-```text
-composed_auto structural counters
-=
-manual_stable_oracle structural counters
-```
-
-where the semantics are equivalent.
-
-In particular:
-
-```text
-exact no-op:
-  0 new semantic nodes
-  0 native semantic nodes inspected
-  0 children visited
-
-footer-only:
-  only footer semantic path changes
-
-conditional toggle:
-  unrelated later sites retain exact identities
-```
-
-## 45.2 No full-tree native work
-
-No ordinary state update may regress to:
-
-```text
-fresh whole-tree materialization
-full Direct decode
-cold graph build
-```
-
-merely because application code re-evaluated its View builder.
-
-## 45.3 Exact no-op JS cost
-
-Compare:
-
-```text
-current bodyKey guard
-vs
-composed builder returning exact old root
-```
-
-Preferred:
-
-```text
-composed no-op <= current bodyKey total guard cost + 10%
-```
-
-If composition is measurably slower in the tiny chrome no-op case, profile and remove avoidable per-site allocations/Map lookups before deleting bodyKey.
-
-The final decision should use absolute nanoseconds/microseconds as well as percentages.
-
-## 45.4 Changed production update
-
-`composed_auto` should be no slower than `rebuild_uncomposed` end-to-end and should approach the `manual_stable_oracle` retained/native counters.
-
-Preferred:
-
-```text
->= 10% faster than rebuild_uncomposed
-```
-
-on state changes where substantial semantic subtrees remain stable.
-
-Do not reject the architecture solely because host paint dominates total time if composition structurally removes the redundant bridge/native work; but do reject a composition mechanism whose JS overhead erases the benefit.
-
-## 45.5 Cold one-shot View construction
-
-Uncomposed `View.*` construction outside an active composition pass must remain within noise of the pre-T13.1 eager DAG path.
-
-The transform's internal helpers must immediately fall through when no pass is active without imposing a meaningful universal tax.
-
-Target:
-
-```text
-<= 3% credible regression on ordinary uncomposed construction
-```
-
-## 45.6 Keyed list
-
-For reorder/insert of a keyed list:
-
-```text
-unchanged keyed item Views retain identity
-```
-
-and native work is proportional to changed container/frontier semantics rather than every reordered item's payload.
-
-## 45.7 Wide retained edits
-
-Existing PERF-12 wide benchmark asymptotics must remain unchanged:
-
-```text
-axis set/splice retained semantic work stays O(log_32 N + inserted)
-```
-
-T13.1 may not introduce an O(width) composition scan into those benchmark paths.
-
----
-
-# 46. Benchmark matrix
-
-At minimum:
-
-```text
-small chrome ~20 nodes
-production-like chrome
-200-node synthetic declarative tree
-2,000-node structural test
-wide 32
-wide 256
-wide 2,000
-wide 10,000
-wide 100,000 where current PERF-12 benchmark applies
-```
-
-Operations:
-
-```text
-exact no-op
-one leaf text change
-one metadata/style-state change
-one conditional branch toggle
-three changed nodes
-multiple independent changed branches
-keyed insert
-keyed remove
-keyed reorder
-axis set
-axis remove
-axis splice4
-ViewSlot update
-ScrollPane update
-```
-
-Arms:
-
-```text
-current_body_key
-rebuild_uncomposed
-manual_stable_oracle
-composed_auto
-```
-
-Do not compare only composition microbenchmarks.
-
----
-
-# 47. Instrumentation proof examples
-
-A successful exact no-op should resemble:
-
-```text
-composition_passes               1
-composition_exact_view_reuses    ~= all executed View semantic sites
-composition_new_views            0
-semantic_nodes_inspected         0
-children_visited                 0
-direct_materializer_calls        0
-derivation_fast_path_calls       0
-cold_fallbacks                   0
-```
-
-A footer-only update should resemble:
-
-```text
-composition_exact_view_reuses    many
-composition_new_views            small changed path only
-semantic_nodes_inspected         changed frontier only
-derivation/materializers         changed frontier only
-```
-
-A keyed list reorder should show:
-
-```text
-keyed_slot_hits                  existing item count
-new item semantic construction  only genuinely new/changed items
-```
-
----
-
-# 48. Implementation order inside this single tranche
-
-This remains one ambitious MR/tranche. Implement in this order so framework ownership is proven before app cleanup.
-
-## Step 1 — freeze and probe current behavior
-
-Add the four-arm production-chrome evidence benchmark before changing runtime behavior:
-
-```text
-bodyKey control
-uncomposed/reference rebuild
-manual stable oracle
-current structural counters
-```
-
-Also create the skeleton external-consumer fixture with no composition setup.
-
-## Step 2 — composition runtime
-
-Implement:
-
-```text
-ViewCompositionRoot
-ViewCompositionPass
-module/site tables
-occurrence slots
-commit/abort
-counters
-```
-
-Unit-test with synthetic internal helper calls.
-
-## Step 3 — internal monomorphic semantic compose helpers
-
-Cover production-hot families first, then the documented public semantic View surface required by T13.1.
-
-## Step 4 — lexical SiteId transform
-
-Implement the private framework-owned source transform and module registration.
-
-Prove:
-
-```text
-conditional site stability
-alias imports
-fluent chains
-source maps/evaluation order
-```
-
-Do not expose an application-installable plugin as the normal contract.
-
-## Step 5 — automatic framework bootstrap
-
-Wire the private transform into every supported build/runtime entrypoint identified in §13.
-
-At this point the external-consumer fixture must receive transformed composition with **zero** plugin/configuration code in the fixture.
-
-This step is a hard gate before app-specific migration.
-
-## Step 6 — `View.key`
-
-Add keyed group semantics, duplicate detection, cleanup, reorder tests.
-
-## Step 7 — canonical retained boundary APIs
-
-Wire composition roots into:
-
-```text
-Tui.render
-ViewSlot.setView
-ScrollPane.setContent
-```
-
-Use the canonical public shape chosen in §15. Keep compatibility overloads only where they remain conceptually clear.
-
-## Step 8 — derivation integration
-
-Use same-logical-site predecessor information to feed only proven retained derivation families.
-
-## Step 9 — generic external-consumer acceptance
-
-Run the fixture from §13.3 and require:
-
-```text
-no compiler/plugin setup in consumer source/config
-transform active automatically
-zero canonical known-View fallback sites
-exact no-op View/root reuse
-changed-frontier structural counters
-keyed reorder correctness
-```
-
-T13.1 cannot pass solely because the bundled Iyon app works.
-
-## Step 10 — Iyon reference consumer migration
-
-If the canonical public boundary API changed, migrate `plugins/app/iyon` exactly as an external consumer would. No internal imports or compiler wiring are permitted.
-
-Keep `bodyKey` as a benchmark/control switch initially.
-
-## Step 11 — full production trace test
-
-Exercise B1/B3/B4 plus History/stream interactions and the animation/time side effect.
-
-## Step 12 — authoritative benchmark and bodyKey decision
-
-If all structural, performance, memory, external-consumer, and production gates pass:
-
-```text
-remove app-layer bodyKey
-```
-
-If they do not, fix framework composition cost/integration. Do not move the optimization into app code as a workaround.
-
----
-
-# 49. Likely files to add/change
-
-Exact organization may differ, but ownership should be approximately:
-
-```text
-packages/iyon-runtime/src/tui/composition.ts                 NEW
-packages/iyon-runtime/src/tui/internal-composition.ts        NEW/private
-packages/iyon-runtime/src/tui/values/view.ts                 MODIFY
-packages/iyon-runtime/src/tui/runtime.ts                      MODIFY
-packages/iyon-runtime/src/tui/component.ts                    MODIFY
-packages/iyon-runtime/src/tui/scroll-pane.ts                  MODIFY
-packages/iyon-runtime/src/tui/index.ts                        MODIFY only for canonical public lifecycle/key API
-
-framework-owned build-support/composition-transform module    NEW/private
-packages/iyon-runtime/src/virtual-modules.ts                  MODIFY framework bootstrap as needed
-packages/iyon-cli/build.ts                                    MODIFY supported build integration as needed
-
-external consumer fixture/package                             NEW
-  - imports only public iyon-tui surface
-  - contains zero transform/plugin setup
-
-packages/iyon-runtime/src/tui/__tests__/composition*.test.ts  NEW
-packages/iyon-runtime/src/tui/__tests__/runtime*.test.ts      EXTEND
-packages/iyon-runtime/bench/perf12_t13_1_*.ts                 NEW
-packages/iyon-runtime/bench/PERF-12-T13.1-*.jsonl             generated evidence
-
-plugins/app/iyon/src/app.ts                                   MODIFY only for canonical public API migration/bodyKey cleanup
-plugins/app/iyon/src/view.ts                                  no composition internals or memoization logic
-```
-
-If repository architecture suggests a cleaner package boundary for generic `iyon-tui` build support, use it.
-
-Hard ownership test:
-
-```text
-deleting plugins/app/iyon must not remove or disable retained composition support
-```
-
-The framework mechanism must stand on its own.
-
----
-
-# 50. Code-generation policy
-
-The semantic equality/helper coverage must stay synchronized with View schema evolution.
-
-Preferred hierarchy:
-
-```text
-1. reuse an existing canonical semantic schema if it cleanly describes the needed fields
-2. generate repetitive compose/equality helpers from that schema
-3. keep handwritten specializations for complex semantic kinds
-```
-
-Do not force composition metadata into `view_abi.toml` if that would couple a JS-only concern to the physical native ABI unnecessarily.
-
-If a separate small generator/spec is cleaner, use it.
-
-CI must fail when a new public semantic View kind is added without a composition policy:
-
-```text
-reuse comparator
-specialized retained policy
-or explicit "always changed" fallback
-```
-
-Silent omission is not acceptable.
-
----
-
-# 51. Interaction with future PERF-12v2 safe N-API transport
-
-T13.1 must be written so this entire upper half survives:
-
-```text
-application
-composition transform
-ViewCompositionRoot
-immutable shared View DAG
-NodeId semantics
-derivation metadata
-PersistentSeq semantics
-```
-
-while only this lower part changes later:
-
-```text
-PERF-12 FFI materialization
-        ->
-PERF-12v2 safe N-API materialization/ref operations
-```
-
-This is a major design constraint.
-
-Do not let the composition API call FFI functions directly.
-
-Do not let composition slots store NativeRefs.
-
-Do not let keys encode transport state.
-
-Composition returns Views. `RetainedRootBoundary` owns native transport.
-
----
-
-# 52. Anti-patterns — explicitly reject
-
-## 52.1 App memoization
-
-```ts
-const bodyKey = JSON.stringify(...)
-if (bodyKey === lastBodyKey) return lastBody
-```
-
-Not final architecture.
-
-## 52.2 Content interning
-
-```text
-hash every BridgeViewNode payload
-Map<Hash, WeakRef<View>>
-```
-
-Rejected.
-
-Reasons:
-
-```text
-hashing cost
-string/payload cost
-collision machinery
-cleanup machinery
-turns semantic equality into global cache policy
-```
-
-## 52.3 Full-tree old/new reconciliation
-
-```text
-render fresh tree
-then recursively compare against previous tree
-```
-
-Rejected.
-
-It pays O(tree) object construction plus O(tree) comparison and undermines the point of construction-time identity.
-
-## 52.4 User ID on every node
-
-```ts
-View.text("footer", text)
-View.row("toolbar", ...)
-View.spacer("gap-7", ...)
-```
-
-Rejected as normal API.
-
-Only dynamic/reordered repeated identity needs an explicit `View.key`.
-
-## 52.5 Key means immutable value
-
-Never use a key as permission to skip semantic comparison.
-
-## 52.6 Mutable semantic node
-
-Never mutate old BridgeViewNode payload in place because a composition address stayed stable.
-
-## 52.7 Composition-owned NativeRef
-
-Never turn composition into a second native lifetime owner.
-
-## 52.8 Generic reflection hot path
-
-No:
-
-```text
-Object.keys
-property-name loops
-string kind dispatch
-rest-array argument packs
-JSON serialization
-```
-
-for common composed semantic operations.
-
-## 52.9 Async composition builders
-
-No Promises from `render(() => ...)`, `setView(() => ...)`, or `setContent(() => ...)` builders.
-
-The composition context is synchronous and transactional.
-
----
-
-# 53. Correctness acceptance checklist
-
-```text
-[ ] current public View semantics preserved
-[ ] canonical public APIs receive retained composition on every supported consumer path
-[ ] external consumer fixture needs zero compiler/plugin/feature-flag setup
-[ ] Iyon app contains no special composition/compiler installation
-[ ] private transform is automatically active before canonical consumer View evaluation
-[ ] reference/untransformed mode exists only for tests/bench/debug, not normal consumption
-[ ] composition transform changes no visual semantics
-[ ] View remains immutable
-[ ] BridgeViewNode remains immutable
-[ ] NodeId remains semantic object identity
-[ ] CompositionIdentity remains separate from NodeId
-[ ] NativeRef remains separate from both
-[ ] exact semantic repeat returns exact previous View
-[ ] changed semantic value gets new NodeId
-[ ] no recursive tree equality
-[ ] no content hashing
-[ ] no second semantic DAG/cache
-[ ] key local to lexical site/scope
-[ ] duplicate keys detected
-[ ] conditional lexical sites do not shift unrelated identities
-[ ] repeated unkeyed sites have deterministic occurrence identity
-[ ] keyed reorder preserves item identity
-[ ] failed builder aborts cleanly
-[ ] failed native/host install aborts composition
-[ ] successful fallback commits composition
-[ ] multi-root isolation proven
-[ ] root dispose releases composition refs
-[ ] ViewSlot composition isolated
-[ ] ScrollPane composition isolated
-[ ] History/stream semantics unchanged
-[ ] animation tick path unchanged
-[ ] theme semantics unchanged
-```
-
----
-
-# 54. Structural acceptance checklist
-
-```text
-[ ] production exact no-op: 0 new semantic nodes
-[ ] production exact no-op: 0 retained semantic nodes inspected
-[ ] footer-only update changes only footer path + ancestors
-[ ] effort-only update preserves unrelated subtrees
-[ ] working visibility toggle preserves later lexical-site identities
-[ ] approval visibility toggle preserves later lexical-site identities
-[ ] slot-only update leaves scene root exact-reused
-[ ] pane-only update leaves scene root exact-reused
-[ ] no common T13.1 path full-materializes a freshly rebuilt app tree
-[ ] wide set/remove/splice retains current PERF-12 asymptotics
-[ ] no 100k-child composition flatten introduced
-```
-
----
-
-# 55. Performance acceptance checklist
-
-```text
-[ ] raw process-isolated benchmark samples retained
-[ ] application render-function time measured
-[ ] composition lookup/equality time measured
-[ ] semantic construction time measured
-[ ] native retained frontier time measured
-[ ] host time measured
-[ ] total op time measured
-[ ] composed_auto matches manual_stable_oracle structural counters
-[ ] exact no-op composition competitive with bodyKey guard
-[ ] uncomposed cold construction <=3% credible regression
-[ ] no common production update slower than rebuild_uncomposed
-[ ] wide benchmarks unchanged asymptotically
-[ ] keyed reorder avoids rebuilding unchanged item semantics
-```
-
----
-
-# 56. Memory acceptance checklist
-
-```text
-[ ] one committed View per live ordinary composition slot
-[ ] at most one pending View per touched slot during active pass
-[ ] removed positional tails released
-[ ] removed keyed entries released
-[ ] aborted pending state released
-[ ] root dispose releases all composition refs
-[ ] million-update soak does not retain historical View generations
-[ ] key churn memory follows live set, not historical key count
-```
-
----
-
-# 57. Required tests in the actual production trace
-
-Use the production trace as the parity inventory.
-
-Exercise:
-
-```text
-B1 Scene root
-B2 History push/freeze around B1/B3 updates
-B3 working/user/tool ViewSlots
-B4 tool ScrollPanes
-B5 View.component(handle)
-B6 existing theme setup
-assistant TextStream append/seal
-spinner/slot animations
-Diff result rendering
-```
-
-The point is not to make B2/B5/B6 composition roots.
-
-The point is to prove that introducing composition at B1/B3/B4 does not break their interactions with the rest of the production surface.
-
----
-
-# 58. Source references — Iyon
-
-Source freeze:
-
-- Commit: `f665c9e3d2d69378caade3ee058a7ae1ed421d07`
-- `packages/iyon-runtime/src/tui/values/view.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/tui/values/view.ts>
-- `packages/iyon-runtime/src/tui/retained_dag.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/tui/retained_dag.ts>
-- `packages/iyon-runtime/src/tui/runtime.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/tui/runtime.ts>
-- `packages/iyon-runtime/src/tui/component.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/tui/component.ts>
-- `packages/iyon-runtime/src/tui/scroll-pane.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/tui/scroll-pane.ts>
-- `plugins/app/iyon/src/view.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/plugins/app/iyon/src/view.ts>
-- `plugins/app/iyon/src/app.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/plugins/app/iyon/src/app.ts>
-- `packages/iyon-runtime/src/virtual-modules.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-runtime/src/virtual-modules.ts>
-- `packages/iyon-cli/build.ts`
-  - <https://github.com/alexykn/iyon/blob/f665c9e3d2d69378caade3ee058a7ae1ed421d07/packages/iyon-cli/build.ts>
-- Production boundary trace:
-  - `packages/iyon-runtime/bench/PERF-12-production-boundary-trace.md`
-
-Companion architecture document:
-
-- `PERF-12-retained-dag-direct-ffi-handoff.md`
-
----
-
-# 59. External research references
-
-## React
-
-- Preserving/resetting state; position/type/key identity:
-  - <https://react.dev/learn/preserving-and-resetting-state>
-- React Compiler automatic memoization:
-  - <https://react.dev/learn/react-compiler/introduction>
-- React Compiler 1.0 architecture/background:
-  - <https://react.dev/blog/2025/10/07/react-compiler-1>
-
-Key lesson used here:
-
-```text
-users should not manually preserve declarative object identity;
-framework/runtime/compiler owns continuity and memoization.
-```
-
-## Jetpack Compose
-
-- Lifecycle of composables:
-  - <https://developer.android.com/develop/ui/compose/lifecycle>
-- Stability / skipping:
-  - <https://developer.android.com/develop/ui/compose/performance/stability>
-- Strong skipping:
-  - <https://developer.android.com/develop/ui/compose/performance/stability/strongskipping>
-
-Key lesson used here:
-
-```text
-call-site identity
-+ occurrence default
-+ local key for repeated dynamic instances
-+ retained composition
-```
-
-This is the closest conceptual precedent for T13.1.
-
-## SwiftUI
-
-- Demystify SwiftUI — Identity, Lifetime, Dependencies:
-  - <https://developer.apple.com/videos/play/wwdc2021/10022/>
-
-Key lesson:
-
-```text
-View value != persistent view identity;
-structural identity is automatic, explicit identity is data-driven where needed.
-```
-
-## Flutter
-
-- Inside Flutter:
-  - <https://docs.flutter.dev/resources/inside-flutter>
-- Flutter UI/key matching overview:
-  - <https://docs.flutter.dev/ui>
-
-Key lesson:
-
-```text
-immutable descriptions can sit above persistent retained runtime state;
-unchanged identity should cut off work.
-```
-
-## Vue
-
-- Rendering mechanism / compiler-informed VDOM:
-  - <https://vuejs.org/guide/extras/rendering-mechanism>
-
-Key lesson:
-
-```text
-source/compiler knowledge should prevent unnecessary runtime rediscovery.
-```
-
-## Bun
-
-- Bun plugin API:
-  - <https://bun.com/docs/runtime/plugins>
-- `PluginBuilder.onLoad`:
-  - <https://bun.com/reference/bun/PluginBuilder/onLoad>
-
-Key implementation fact:
-
-```text
-Bun build plugins can intercept source with onLoad and return transformed contents,
-which fits the current Iyon Bun.build pipeline.
-```
-
-The project remains pinned/qualified on Bun 1.4.0; verify the exact transform path in the pinned runtime as part of T13.1 rather than assuming newer Bun behavior.
-
----
-
-# 60. Final architecture after T13.1
-
-The intended result is:
-
-```text
-               ANY IYON-TUI CONSUMER
-                          |
-                          | ordinary public declarative API
-                          v
-                +-------------------+
-                | View Composition  |
-                |-------------------|
-                | lexical SiteId    |
-                | occurrence/key    |
-                | previous View     |
-                | exact reuse       |
-                +-------------------+
-                          |
-                          | structurally shared immutable snapshots
-                          v
-                +-------------------+
-                | BridgeViewNode DAG|
-                | NodeId semantic   |
-                | identity          |
-                +-------------------+
-                          |
-                          | existing PERF-12 cutoff
-                          v
-                +-------------------+
-                | RetainedRoot      |
-                | Boundary          |
-                +-------------------+
-                          |
-                +---------+---------+
-                |                   |
-          NativeRef hint       NodeId recovery
-                |                   |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                | Rust View DAG     |
-                | PersistentSeq     |
-                | retained text     |
-                +-------------------+
-                          |
-                          v
-                     layout/paint
-```
-
-And a public consumer should look boring. If builder boundaries are selected as the canonical API:
-
-```ts
-tui.render(() =>
-  new Scene(
-    createIyonView({
-      state,
-      composer,
-      working,
-      theme,
+    View.vertical(column => {
+      column.child(Header({ title: state.title }))
+      column.child(Footer({ status: state.status }))
     }),
     history,
-  )
+  ),
 )
 ```
 
-with ordinary View code:
+Requirements:
 
-```ts
-export function createIyonView(options: Options): View {
-  return View.vertical(column => {
-    column.push(workingView(options))
-    column.push(approvalView(options))
-    column.push(
-      View.component(options.composer)
-        .style(options.theme.composer)
-        .styleState("iyon.agent.effort", options.effort),
-    )
-    column.push(
-      View.text(footerText(options))
-        .style(options.theme.footer),
-    )
-  })
-  .fillWidth()
-  .fillHeight()
-}
+- An invocation returns a normal `View` — the **stable scope projection**, not the raw latest body output.
+- Typed props; parent-local positional identity; component-type mismatch ⇒ replacement/remount.
+- Local `key` support for repeated/movable instances (§16). No global IDs ever.
+- Users never see scopes, slots, ids, subscriptions, or the scheduler.
+
+## 8.1 Props comparison (skip gate)
+
+When a parent scope genuinely executes, each child invocation performs a cheap skip check first:
+
+```text
+same key/type + same own prop-key set
++ Object.is(oldPropValue, newPropValue) for every prop
+    => skip child body entirely
 ```
 
-No DAG code.
-
-No memo key.
-
-No NativeRef.
-
-No NodeId.
-
-No manual retained identity discipline.
-No compiler/plugin installation.
-No retained-composition feature flag.
-No app-specific build wiring.
-
-The bundled Iyon app must use exactly this generic contract. That is the success condition.
+Primitives by `Object.is`; objects/functions by identity. Never deep-compare props (hidden O(tree/data) work). Props are documented as immutable snapshots; independently mutating data belongs behind `State<T>` (AMENDMENT-C §6.2, §22.6).
 
 ---
 
-# 61. Final instruction to the implementation agent
+# 9. Generic tracked `State<T>`
 
-**Implement PERF-12 T13.1 as mandatory, framework-owned retained composition for the generic `iyon-tui` public API. Starting from `f665c9e3d2d69378caade3ee058a7ae1ed421d07`, preserve the eager immutable `View -> BridgeViewNode` DAG, NodeId semantics, RetainedRootBoundary, NativeRef/BridgeNativeHint lifecycle, PersistentSeq wide edits, streams, History, and all T13 boundary behavior. Add the Compose-like retained composition frontend: dense compiler-assigned lexical sites, occurrence identity by default, local `View.key()` only for genuinely ambiguous repeated/reordered identity, previous committed immutable View per logical slot, immediate kind-specific semantic comparison, exact old-View return before allocation on hits, and predecessor-backed derivation only for proven existing retained families on changes. Never recursively reconcile complete old/new trees, never content-hash subtrees, never equate keys with NodeIds, never mutate semantic nodes, and never introduce another semantic/native mirror. Composition commits transactionally with the existing root install and aborts without disturbing the previous committed composition/root.**
+(AMENDMENT-C §7.)
 
-**The source transform is private `iyon-tui` infrastructure, not an application plugin. Every supported external consumer path must activate it automatically before canonical View construction executes. A normal consumer must never install/register a composition compiler, edit a Bun plugin list or preload solely for this feature, enable a feature flag, import internal helpers, or manually memoize Views. Public API changes are allowed where they establish the correct retained lifecycle; if builder-based `Tui.render(() => Scene)`, `ViewSlot.setView(() => View)`, or `ScrollPane.setContent(() => View)` are chosen, they are canonical semantic APIs, not “optimized variants”. `View.key()` is public only because dynamic/reordered logical identity is real application information, not as an optimization switch. Untransformed execution may remain as an internal differential/benchmark/debug mode, but a documented supported consumer path that silently misses the transform is a framework defect.**
+```ts
+export interface State<T> {
+  readonly value: T
+  set(value: T): void
+  update(update: (previous: T) => T): void
+}
+export function state<T>(initial: T): State<T>
+```
 
-**Prove this with two independent integration targets: (1) a new external-consumer fixture that imports only public `iyon-tui` APIs and contains zero compiler/plugin/configuration setup, and (2) the real Iyon production trace, where Iyon is treated only as an ordinary framework consumer. The external fixture must demonstrate automatic exact reuse, changed-frontier behavior, conditional identity, keyed reorder behavior, ViewSlot and ScrollPane retained updates, and zero canonical known-View transform fallbacks. The production benchmark must retain the four evidence arms—current bodyKey, uncomposed/reference rebuild, manual stable-identity oracle, and automatic composition—and require the automatic arm to reproduce the oracle's structural behavior where applicable. Only after external-consumer automatic activation, exact-root reuse, conditional-site stability, keyed identity, failure atomicity, bounded memory, full production parity, and performance gates pass may the Iyon app's `bodyKey` workaround be removed. Do not fix a framework integration failure by moving identity logic into `plugins/app/iyon`.**
+- While a retained execution scope runs, a `.value` read records `(state -> scope)`.
+- A write that changes by `Object.is` marks subscribed live scopes dirty and enqueues each once.
+- Dependency sets are execution-dependent: old subscriptions survive until successful commit; pending reads replace them only on commit; abort retains the committed set (§21).
+- Component evaluation is **pure and synchronous**: reads allowed/tracked; `State.set/update` during evaluation rejected deterministically; Promise/async returns rejected; no external mutation through framework internals (AMENDMENT-C §7.2). Writes happen outside evaluation and enqueue work for the next transaction.
+- No hidden-mutation guessing: no stack inspection, implicit Proxies, deep diffs, or hashing. External/opaque state uses explicit root/props updates. This is an information boundary, not a missing optimization (AMENDMENT-C §7.3).
 
-**Keep the entire composition frontend transport-independent so it carries unchanged into PERF-12v2 when the physical FFI transport is replaced by safe N-API. The end state is: an external developer uses the normal documented `iyon-tui` API and automatically receives structurally shared immutable DAG snapshots and PERF-12 retained-update benefits without ever knowing that a compiler, SiteIds, NodeIds, NativeRefs, derivation hints, or a retained DAG exist.**
+---
+
+# 10. RetainedExecutionRuntime and RetainedExecutionScope
+
+(AMENDMENT-C §4/§12.)
+
+Not another View IR. Stores execution/lifecycle state and pointers to immutable outputs only:
+
+```ts
+interface RetainedExecutionScope<P = unknown> {
+  readonly type: ViewComponentType<P>
+  readonly key: ViewKey | undefined
+  parent: RetainedExecutionScope | null
+  currentProps: P | undefined
+  currentOutput: View | undefined
+  children: ScopeChildSet
+  dependencies: StateDependencySet
+  dirty: boolean
+  disposed: boolean
+  boundary: RetainedRootBoundary          // existing primitive, scope-owned root lease
+  projection: View                        // stable semantic component/ref View shown to parent
+  semanticSlots: SemanticSlot[]           // scope-local T3 slots (§11)
+}
+```
+
+Semantic source of truth remains `currentOutput -> nodeForBridge(currentOutput)`.
+
+Runtime minimum:
+
+```ts
+class RetainedExecutionRuntime {
+  invalidate(scope): void   // mark dirty; enqueue once (dirty bit/generation, not Set churn)
+  flush(): void             // one batched work transaction (§17)
+}
+```
+
+Active-scope context: synchronous save/restore stack; nested independent boundaries nest correctly (original §14 discipline carries over; no AsyncLocalStorage; async builders rejected).
+
+---
+
+# 11. Scope-local semantic construction — adapt T2/T3, do not throw them away
+
+(AMENDMENT-C §10/§17.3 — normative for the already-implemented work.)
+
+Inside a **dirty** scope, the monomorphic helpers operate on scope-local slots with a dense cursor:
+
+```text
+View.text(value)
+    -> ACTIVE_EXECUTION_SCOPE -> next semantic slot
+    -> immediate semantic equality vs previous slot View?
+       yes -> return exact previous View (zero allocation)
+       no  -> construct new immutable View (+ derivation hint where proven)
+```
+
+Helper signature change from the Step 3 form:
+
+```text
+composeText(moduleId, siteId, value)   -->   composeText(value)
+```
+
+addressing flows through the active scope instead of module/site tables. Outside an active execution scope, helpers fall through immediately to the raw eager constructor; ordinary uncomposed `View.*` construction keeps the ≤3% regression gate (original §45.5, retained).
+
+Why this no longer threatens the DAG: replay cost is bounded by the invalidated scope, not the application. Control-flow shifts inside a dirty scope may reduce slot reuse locally but cannot select another component instance, corrupt retained execution identity, or produce stale semantics (AMENDMENT-C §10.1/§10.2).
+
+Retired from Step 2/3 addressing: `CompositionModuleId`, `CompositionSiteId`, `ModuleSlots`, module registration, lexical site buckets as identity. Performant primitives worth salvaging (dense arrays, epoch counters, touched-slot accounting, dispose/cleanup infrastructure, counters) move **inside** each execution scope rather than being deleted gratuitously (AMENDMENT-C §17.2).
+
+---
+
+# 12. Semantic equality — generated, shallow, kind-specific
+
+Original §18 stands verbatim and remains binding:
+
+- Monomorphic comparisons per known kind; never `JSON.stringify`/`Object.keys`/recursive equality/content hashes/reflection walks.
+- Scalars and strings by direct equality; children by node identity (`old === nodeForBridge(next)` equivalent), never recursion.
+- Small-child arrays O(arity); styles/decorations compared in their normalized semantic representation, never resolved theme colors; component handles by stable native component ID; Diff treated as changed unless existing retained identity applies; unknown kinds ⇒ construct new (never guess equality).
+
+---
+
+# 13. Avoiding allocation on exact reuse
+
+Original §19 stands verbatim: compare raw arguments against the previous committed node's immediate fields **before** constructing anything. Candidate-then-discard is permitted only while bringing up uncommon kinds; production-hot families are pre-allocation. This is what makes `semantic construction O(changed nodes)` true inside dirty scopes.
+
+---
+
+# 14. Predecessor / derivation integration
+
+Original §20 stands, scoped: predecessor relations are optimization metadata (WeakMap/private sidecar or folded into existing derivation sidecars), never semantic. Feed only proven families — text-layout, common-scalar, axis-set/splice, grid-cell — and let unsupported changes take normal `ensureNative` materialization.
+
+---
+
+# 15. Wide structures and PersistentSeq
+
+Original §22 stands verbatim and is strengthened by AMENDMENT-C §20.7:
+
+- Never scan 100k descendants to prove a one-child edit; wide axes ride base identity + sequence sidecar + operation descriptors.
+- Small containers (2–20 children) compare linearly; fine.
+- Fresh arbitrary arrays have an information cost — no hiding it behind hashes. Large sequences with mutation provenance use PersistentSeq/History/streams/specialized APIs, which remain authoritative and are **not** wrapped in execution scopes.
+- No O(width) composition scan may enter the retained wide-edit benchmarks; asymptotics stay `O(log_32 N + inserted)`.
+
+---
+
+# 16. Child-scope reconciliation and keys
+
+(AMENDMENT-C §9; supersedes original §23's slot-level key design.)
+
+Reconciliation covers **component execution instances owned by one parent scope**, not View trees:
+
+- Unkeyed common path: same parent + ordinal position + same component type ⇒ same scope. Type mismatch ⇒ replacement/remount. Array/index based; no Map on the common path.
+- Keyed path: `same parent + same key + same type ⇒ same scope regardless of movement`. Map only for keyed/reorder contexts.
+- Duplicate live keys under the same parent/repeated context: deterministic error (`TUI_COMPOSITION_DUPLICATE_KEY` heritage preserved), thrown before commit. Never alias.
+- Keys assert logical instance identity, **not** semantic equality — props/dependencies still decide execution.
+
+Public surface: `View.key(key, () => …)` remains the single explicit identity primitive for repeated/movable instances (and/or a component-call convenience if more ergonomic). Static nodes never require keys.
+
+---
+
+# 17. Scheduler, batching, and one authoritative batch commit
+
+(AMENDMENT-C §12/§13.)
+
+## 17.1 Dirty queue
+
+Simple dirty bit/generation; a scope already dirty is never enqueued twice. Parent-before-child determinism within a batch via epoch tracking: if a parent's structural execution removes a dirty child, the child's pending work is discarded; if the parent already executed a child with newer inputs, no double execution.
+
+## 17.2 Batching
+
+Multiple synchronous `State.set` calls coalesce into one flush/frame: first invalidation schedules one flush; later ones join the dirty set; one evaluate + one commit. No arbitrary latency; single-set latency must reach the next supported frame.
+
+## 17.3 Work-in-progress protocol
+
+Closer to React WIP/Compose prepare-apply than eager per-scope publication:
+
+```text
+PREPARE JS       evaluate dirty scopes into pending outputs; collect pending
+                 props/deps; stage mounts/unmounts/reorders; committed state untouched
+PREPARE NATIVE   ensureNative/materialize each changed pending scope root; retain new
+                 NativeRefs; compute topology patches; validate ids/generations; old roots leased
+COMMIT ONCE      atomically swap changed scope roots · apply MountGraph patches ·
+                 install Scene root if changed · advance revisions · invalidate layout/paint deps ·
+                 promote pending props/deps/children · dispose unmounts · release superseded
+                 leases · request ONE authoritative host frame
+ABORT            expose none of the pending state; keep old roots/MountGraph/subscriptions;
+                 release only pending/new leases
+```
+
+All failure-prone work precedes publication. If final swaps cannot be proven infallible post-validation, implement rollback or a native batch transaction (`prepare_scope_batch / commit_scope_batch / abort_scope_batch`) reusing PERF-12's temporary-lease/status discipline — do not rely on "failures are unlikely" (AMENDMENT-C §13.1). One frame per turn even with many dirty scopes (§13.2).
+
+---
+
+# 18. Host-side retained frontier — mount, layout, paint
+
+(AMENDMENT-C §2.6/§5.3–§5.6 — the part that prevents moving O(N) downstream.)
+
+Execution retention is half the system; the renderer must not rediscover the forest afterwards.
+
+## 18.1 Incremental MountGraph
+
+`SceneHost`'s `MountGraph` becomes authoritative incremental state:
+
+```text
+scope S output root changes
+  topology inside S unchanged -> update S revision/snapshot only; no parent/sibling rescans
+  topology inside S changed   -> re-resolve only S's descendant subtree; patch transactionally
+```
+
+A parent's immutable output did not change because a descendant swapped its independent root, so its child topology cannot have changed — provenance already exists to skip rediscovery. Reverse ownership must locate affected mounted subtrees in O(depth + changed mounts), not O(total mounts).
+
+## 18.2 Retained layout dependencies
+
+Invalidate outward from the changed component; never fingerprint by walking descendants per frame:
+
+```text
+child scope content changes
+  -> remeasure changed scope under previous constraints
+  geometry/layout facts unchanged -> parent layout stays valid; repaint affected region only
+  geometry changed -> propagate layout dirtiness only along real dependency frontiers;
+                      reuse unchanged siblings' cached measurements under unchanged constraints
+```
+
+Layout validity ties to component revision/output and retained dependencies — **never** to projection-View equality, which intentionally stays stable while content changes (AMENDMENT-C §5.6). A height change early in a long stack may legitimately require O(suffix) placement/paint; that is real output work and must be reported separately from semantic execution (§31).
+
+Both directions must be proven: same-geometry content change leaves parent layout caches valid and matches cold rebuild; geometry change invalidates exactly the required ancestors while reusing valid sibling measurements.
+
+---
+
+# 19. Relationship to ViewSlot, ScrollPane, History, streams
+
+(AMENDMENT-C §14; supersedes original §28–§30 details.)
+
+- **ViewSlot** is precedent and likely the projection substrate. Do not expose one public ViewSlot per component; if its animation/public machinery is too expensive per scope, build a slim private `ScopeSlot` sharing the native component-root primitive carrying only: stable ComponentId/target id, current root NativeRef, revision/generation, root lease, minimal invalidation metadata. Benchmark 10/100/1,000 scopes before choosing (gate §31.6). Architecture first; per-scope overhead is an implementation problem, not a reason to return to monolithic replay.
+- **ScrollPane** stays a specialized independently retained boundary; viewport/follow-end semantics are distinct; content composition identity decoupled from scroll position (original §29 holds).
+- **History/streams** unchanged; retained collection models stay authoritative; no scopes wrapped around units or tokens.
+
+---
+
+# 20. Root API and canonical boundaries
+
+(Original §15 + AMENDMENT-C §15.)
+
+```ts
+tui.render(() => new Scene(view, history))   // canonical recurring form
+slot.setView(() => …)                          // recurring local builders retained
+pane.setContent(() => …)
+```
+
+The closures are ordinary lifecycle API — they give the runtime ownership of the root execution scope, transaction lifetime, active-scope context, initial child mounts, and explicit root-props updates. Not opt-ins. Direct `render(scene)` may remain compatibility/one-shot; it must not be presented as an equivalent recurring path. Initial-construction APIs stay lean (original §15.6). History keeps B2 semantics (original §15.7).
+
+---
+
+# 21. Transaction semantics
+
+Original §16 survives intact, generalized to the execution runtime:
+
+```text
+1 begin pass/work transaction from last committed state
+2 activate context; execute builders synchronously
+3 deactivate; prepare
+4 attempt retained/cold/complete install routes
+5 success  -> commit (pointer swaps, epoch advances, pending promotion, bounded deletions)
+6 failure  -> abort; old composition/roots/leases remain authoritative; rethrow builder errors
+```
+
+Builder throws: abort, no host mutation, old lease untouched, rethrow. Materialization failure with successful complete fallback: commit. Commit itself effectively infallible — no user callbacks, no semantic factory calls after host mutation (original §16.4).
+
+State written *while* a scope executes records a later dirty generation; schedule one further pass; never re-enter recursively (AMENDMENT-C §22.3). A child removed while dirty loses to the parent's structural transaction; discard its pending work and dispose subscriptions/root lease after successful commit (§22.4).
+
+---
+
+# 22. Memory model
+
+(Original §25 + AMENDMENT-C §23.)
+
+A live scope strongly retains exactly its committed execution state: current props, current output View, stable projection View, live children, live State subscriptions, scope-local slots, root lease/boundary. Removed scopes reclaim after successful commit. Aborts drop pending state and never disturb committed maps/subscriptions. Root disposal (`Tui.close`, scope dispose) releases all strong references immediately. No FinalizationRegistry as a correctness clock. Soak targets: mount/unmount 100k keyed scopes against a bounded live set; subscriber counts follow live scopes; aborted pendings reclaimed.
+
+---
+
+# 23. The execution layer must not become another semantic cache
+
+Original §26 carries over: scopes store `logical instance -> immutable View pointer`, never payload copies, serialized records, NodeId→content maps, wire bytes, or native graphs. Semantic authority remains `BridgeViewNode/NodeId + NativeViewRuntime`.
+
+---
+
+# 24. Iyon application — normal consumer migration
+
+## 24.1 Componentize through public APIs only
+
+Per AMENDMENT-C §16/§30, the chrome decomposes at its natural semantic boundaries:
+
+```ts
+const Working = defineView<WorkingProps>(…)
+const Approval = defineView<ApprovalProps>(…)
+const ComposerChrome = defineView<ComposerProps>(…)
+const Footer = defineView<FooterProps>(…)
+
+function App(props: AppProps): View {
+  return View.vertical(column => {
+    column.child(Working(props.working))
+    column.child(Approval(props.approval))
+    column.contentMax(MAX_COMPOSER_ROWS, ComposerChrome(props.composer))
+    column.child(Footer(props.footer))
+  }).fillWidth().fillHeight()
+}
+```
+
+Footer-tracked status change ⇒ Footer executes; App/Working/Approval/Composer do not. Structural condition change ⇒ owning scope executes; unchanged children skip. Tool cards/streaming stay on ViewSlot/ScrollPane specialized paths — stream deltas never enter the app execution graph.
+
+## 24.2 No special treatment
+
+No internal imports, manual DAG caches, compiler wiring, or app-specific composition primitives — ever. `plugins/app/iyon/src/view.ts` and tool renderers remain ordinary declarative code.
+
+## 24.3 bodyKey lifecycle
+
+Keep `lastRenderedBodyKey` as benchmark control until the Amendment C behavior is proven (footer-local update executes one body; parity with current visuals; animations advance — preserve today's `advance?.(0)` side effect in a semantically correct framework location, with a regression test that repeated exact-root renders still advance spinners/streams/headless time). Remove only at Step 14R. Never relocate identity logic into the app to paper over a framework gap.
+
+---
+
+# 25. Public API and consumer-experience contract
+
+Original §32 carries over with Amendment C substitutions:
+
+- Retained execution is part of the framework contract on every supported path; the consumer experience contains no `installX()`, no plugin arrays, no flags, no manual memoization, **and no compiler** (AMENDMENT-C §24).
+- Public API changes defining lifecycle semantics are legitimate (`defineView`, `state`, `Tui.render(() => …)`, builder forms); none are marketed as "optimized variants".
+- Transformation-visible-semantics rule (original §32.4) becomes runtime-visible-semantics: identical visual/layout/style/component/History/stream/event semantics; differences limited to object reuse, NodeIds, allocations, and bridge work; permitted exception: composition-specific duplicate-key errors.
+- View reference equality is framework-private; audit docs/tests promising fresh allocations per call (original §32.5).
+- No normal supported untransformed/unscoped mode: a supported consumer silently missing execution activation is a framework bug, caught by the external fixture (original §32.6).
+- No public escape hatch by default (original §32.7).
+
+External-consumer fixture requirement (original §13.3, extended per AMENDMENT-C §24): the fixture in `packages/tui-consumer-fixture` imports only public APIs, has zero setup, and must ultimately demonstrate **direct scoped invalidation** — e.g. `count.set(1)` updates `Counter` without executing `Static` or the parent render body.
+
+---
+
+# 26. Internal API stability
+
+Private contracts stay narrow: scope registry/reconciliation, begin/end active scope context, monomorphic compose helpers (active-scope form), keyed reconciliation helper, State dependency bookkeeping, counters/debug metadata. Exported only from `@internal` modules; never from `iyon:tui`'s public TypeScript surface (original §33).
+
+---
+
+# 27. Failure modes
+
+(AMENDMENT-C §22 + original §41.)
+
+```text
+component body throws            -> abort pending scope/frame tx; committed roots/deps stand
+native materialization fails     -> no pending projection commits; complete-fallback success commits
+write during scope execution     -> later dirty generation; one further pass; no re-entry
+child removed while dirty        -> parent structural tx wins; discard pending; dispose
+duplicate keys                   -> deterministic error before commit
+mutable prop mutated in place    -> undetectable by design; document immutability contract
+```
+
+Failure-injection tests (original §41) apply at: NativeRef resolution, new-node materialization, retained patch, `hostRenderRef`/`setViewRef`/`setContentRef`, cold fallback, complete fallback, and now scope-batch commit/abort. For every failure: old slots current, old root Views current, old leases valid, pending refs dropped, retry correct, then success commits once.
+
+---
+
+# 28. Counters and instrumentation
+
+(AMENDMENT-C §21; replaces original §35's module/site counters.)
+
+Execution layer minimum:
+
+```text
+execution_scope_mounts / unmounts / body_calls / prop_skips
+execution_scope_state_invalidations / dirty_enqueues / duplicate_invalidations
+execution_scope_noop_outputs / changed_outputs / commit_aborts
+execution_scope_dependency_reads / subscriptions / unsubscriptions
+keyed_scope_hits / keyed_scope_mounts / keyed_scope_moves
+mount_subtrees_resolved / mount_nodes_visited
+layout_dependency_invalidations / layout_nodes_remeasured / layout_measure_cache_hits
+paint_subtrees_invalidated
+```
+
+Existing semantic/native counters remain. Benchmarks report together: scopes called · semantic sites visited · semantic nodes allocated · native nodes inspected · constructors/derivations · host layout/paint. Never hide execution cost inside "construction".
+
+---
+
+# 29. Evidence probes and benchmark scenarios
+
+## 29.1 Existing baseline (Step 1 artifact — KEEP)
+
+`PERF-12-T13.1-composition-baseline.jsonl` + `perf12_t13_1_composition_probe.ts`: three arms (`current_body_key`, `rebuild_uncomposed`, `manual_stable_oracle`) × eight §37 production transitions through the real router, cross-arm screen parity, full provenance. Headline controls: exact no-op rebuild 19,125 ns + 10 materializers vs oracle 417 ns zero-bridge; tool slot 28 µs A/B vs 1,083 ns zero-host-mutation oracle; footer-only 10→4 constructors. These arms remain; add execution-scope arms rather than deleting evidence (AMENDMENT-C §17.1). The future retained arm plugs into the same harness.
+
+## 29.2 Required scenarios (AMENDMENT-C §29)
+
+```text
+A  exact no-op root call                     -> exact root/scope reuse
+B  one local State change in 3 siblings      -> canonical execution-frontier proof (§31.1)
+C  one local State change in 1,000 siblings  -> same-geometry variant (§31.5A)
+D  child prop change via parent/root update  -> parent executes; unchanged children skip
+E  structural parent toggle                  -> unaffected mounted children skip; mount/unmount right
+F  keyed prepend/reorder                     -> unchanged keyed bodies unexecuted
+G  child output size change                  -> revision/layout propagation; sibling measurements reused
+H  multi-scope batch                         -> several writes, one frame transaction
+I  semantic no-op invalidation               -> dirty scope emits exact previous View; zero native work
+J  B3/B4/History interaction                 -> specialized boundaries unregressed
+K  wide axis operations                      -> PERF-12 wide matrix unchanged
+```
+
+All process-isolated per §44 methodology (median/p95/p99, raw JSONL, phase separation: scope evaluation · scope-local semantic construction · native frontier · mount/layout/paint · total).
+
+---
+
+# 30. Tests
+
+Carried forward from original §§38–43, re-anchored:
+
+- **Keyed/conditional (was §38–39)**: keyed reorder/insert/remove/abort semantics now at scope level (§16); conditional structure safety moves from "lexical sites don't shift" to "structural parent changes mount/unmount the right scopes and leave others' identities untouched".
+- **Semantic-kind differentials (§40)**: for every supported family, untransformed construction vs composed construction inside a dirty scope — unchanged inputs give exact previous View/NodeId; changed inputs give new NodeId with output equal to the uncomposed reference.
+- **Failure atomicity (§41)**: per §27.
+- **Multi-root isolation (§42)**: independent runtimes/scopes never share logical state; semantic sharing only via explicitly passed identical Views.
+- **Memory (§43)**: per §22 soak targets, including abort churn and root disposal.
+- **New execution tests (AMENDMENT-C §20/§22)**: 1-of-3 and 1-of-1000 body-execution proofs; parent-props skip proofs; duplicate-key errors; write-during-evaluation rejection; child-removed-while-dirty; same-geometry vs geometry-change layout propagation parity against cold rebuilds.
+
+---
+
+# 31. Performance gates
+
+Original gates stand unless strengthened; Amendment C adds the decisive ones.
+
+## 31.1 Execution-frontier gate (mandatory, AMENDMENT-C §20.1)
+
+```text
+App/A/B/C each with own State dependency; change only B's State
+=> App body executions 0 · A 0 · B 1 · C 0
+```
+
+Executing clean bodies "to discover they're unchanged" fails the tranche.
+
+## 31.2 Parent-props skip gate (§20.2)
+
+Explicit root update changing only B's props ⇒ App 1, A 0, B 1, C 0.
+
+## 31.3 Semantic DAG gate (§20.3)
+
+Local B update ⇒ A/C outputs and all ScopeRef NodeIds unchanged; only B's changed semantic path gets new NodeIds.
+
+## 31.4 Native gate (§20.4)
+
+Local B update ⇒ no root cold decode; no A/C/parent materialization; B's boundary visits its changed frontier only.
+
+## 31.5 1-of-1000 sibling independence (§20.5 — the end-to-end proof)
+
+Variant A (same measured geometry): dirty body executions 1; clean bodies 0; parent 0; clean semantic allocations 0; clean sibling materializations 0; mount-forest rescans 0; clean sibling remeasurements 0. Variant B (geometry changes): body/native work still exactly the child frontier; layout propagates only as dependencies require; unchanged sibling measurements reused; placement/paint suffix reported separately.
+
+## 31.6 Projection overhead (§20.6)
+
+Cold mount / exact no-op / local leaf / full structural update / layout / memory at 10/100/1,000 scopes. If public ViewSlot-per-component is too expensive, keep the architecture and build the slim private handle — never fall back to global re-execution.
+
+## 31.7 Carried gates
+
+Exact no-op JS cost ≤ bodyKey guard +10% (original §45.3); composed updates ≥10% faster than `rebuild_uncomposed` on substantially-stable traces (§45.4); cold uncomposed construction ≤3% regression (§45.5); keyed lists avoid rebuilding unchanged item semantics (§45.6); wide asymptotics unchanged (§45.7 / §20.7).
+
+---
+
+# 32. Implementation order from the current partial state
+
+Supersedes original §48 Steps 4–12 entirely. Steps 1–3 dispositions per AMENDMENT-C §17; new steps are the AMENDMENT-C §18 sequence (4R–14R). Each step names its Amendment anchor.
+
+## Step 1 — KEEP (done, commit `379e1cf`) — AMENDMENT-C §17.1
+
+Evidence/probe work and fixture stand as-is; extend with execution-scope arms/counters; the key new benchmark is three independent scopes with one scope-local State change proving zero execution elsewhere (feeds §31.1/§31.5).
+
+## Step 2 — ADAPT (implemented `235a9da`; adaptation owed) — AMENDMENT-C §17.2
+
+Keep: transaction generation/epochs, current-vs-pending discipline, begin/commit/abort, active-context save/restore, touched-slot accounting where useful, dispose/cleanup infrastructure, counters. Remove/retire: module/site registration and lexical addressing as identity (§11 retirement list). Add: runtime/scope/parent-links/reconciliation/scope-local slots/dependency sets/dirty queue/batch epoch/pending mount state. Salvage performant primitives inward.
+
+## Step 3 — KEEP AND REWIRE (implemented `dad92b5`; rewiring owed) — AMENDMENT-C §17.3
+
+Keep: raw constructors, monomorphic comparators, exact-reuse-before-allocation, derivation selection, validation, counters. Change: addressing to active-scope form (`composeText(value)` via `ACTIVE_EXECUTION_SCOPE`), immediate fall-through outside scopes, ≤3% cold gate re-verified after rewiring.
+
+## Step 4 — STOP AND SALVAGE (partial work halted) — AMENDMENT-C §17.4
+
+Do not continue the TS-AST/Oxc/handwritten-scanner SiteId transform, module registration injection, Bun onLoad View-call rewriting, or transform-specific source-map machinery. Remove partial code that exists solely for lexical lowering. Salvage generic tests/fixtures (public-API coverage, fluent chains, alias/import compat, source-semantics regressions) converted to exercise the public runtime API. Historical note: the TS 7.0.2 unstable-API and Bun.Transpiler capability findings that shaped the abandoned transform design are recorded in the prior progress record (§43) and are moot for architecture.
+
+## Step 4R — execution-scope substrate — AMENDMENT-C §18
+
+`RetainedExecutionRuntime`, `RetainedExecutionScope`, parent/current/pending state, scope-local slot ownership, active-scope nesting, disposal, counters. Prove scope identity + props skipping synthetically. No native projection yet if that simplifies tests.
+
+## Step 5R — generic `defineView` API — AMENDMENT-C §6/§18
+
+Typed props, parent-local positional identity, type checks, local keys, shallow `Object.is` skip, no global IDs, no app-specific types.
+
+## Step 6R — retained scope projection — AMENDMENT-C §5/§14/§18
+
+Independent sub-DAG projection per live scope (existing ViewSlot primitive or slim private equivalent). Prove: child scope content change ⇒ parent semantic View identity exact.
+
+## Step 7R — tracked `State<T>` — AMENDMENT-C §7/§18
+
+Observable primitive + dependency collection; write ⇒ exact subscriber dirty, unrelated scopes untouched.
+
+## Step 8R — dirty scheduler and batching — AMENDMENT-C §12/§18
+
+One-turn batching/coalescing; duplicate invalidations join; parent-before-child epoch determinism.
+
+## Step 9R — retained native mount/layout frontier — AMENDMENT-C §5.4–5.6/§9R/§18
+
+MountGraph subtree patching by ComponentId; revision-driven resolver invalidation; retained layout dependency invalidation; unchanged-constraint measurement cutoffs; unchanged-sibling measurement reuse; paint invalidation no broader than required. Gate: same-size local leaf among 1,000 mounted siblings causes no rescan/remeasure of the other 999 (§31.5).
+
+## Step 10R — multi-scope transactional commit — AMENDMENT-C §13/§18
+
+Pending materialization + atomic component-root batch swaps + MountGraph patches + layout/paint invalidation + dependency promotion + mounts/unmounts + rollback/atomicity proof.
+
+## Step 11R — canonical boundaries — AMENDMENT-C §15/§18
+
+Wire `tui.render(() => …)` and recurring ViewSlot/ScrollPane builders to the execution runtime.
+
+## Step 12R — keyed reorder and structural parent changes — AMENDMENT-C §18
+
+Insert/remove/prepend/middle-insert/reorder/conditional mount-unmount identity proofs.
+
+## Step 13R — production reference conversion — AMENDMENT-C §16/§30/§18
+
+Convert Iyon via public APIs only (§24); bodyKey stays as control during evidence collection.
+
+## Step 14R — authoritative benchmark and cleanup — AMENDMENT-C §18/§14R
+
+After all gates pass: remove `bodyKey`; remove abandoned transform code and any unused transform dependencies; freeze the four-arm-plus-scopes benchmark record with full provenance.
+
+Hard sequencing rule: Step 9R is mandatory before completeness claims — passing the JS execution frontier while the host rescans the forest is failure (AMENDMENT-C §2.6, §31).
+
+## 32.1 Tranche decomposition — registry
+
+The remaining work (Step 2/3 adaptation through Step 14R) splits into merge-request-sized tranches following the conventions of the parent experiment (`PERF-12-retained-dag-direct-ffi-handoff.md`, "Exact implementation tranches"). Do not collapse tranches into one burst. Do not begin a tranche whose predecessors' gates have not been demonstrated with committed evidence.
+
+**Testing doctrine (binding for every tranche):**
+
+1. **Every architectural assumption gets a test that fails if the assumption is false**, in the same tranche that introduces the assumption. Examples: "a descendant swapping its independent sub-DAG root cannot change the parent's mount topology" is proven by bounding `mount_nodes_visited` under a descendant-only swap (R6); "props skipping never confuses logical instances" is proven by the reconciliation tests (R2/R8); "abort leaves committed state authoritative" is proven by failure injection (R1/R7).
+2. **Non-execution is proven by counters, never by output parity alone.** Screen equality cannot distinguish "did not execute" from "executed and got lucky". Body-call counts, semantic-allocation deltas, materializer calls, and mount/layout visit bounds are mandatory gate evidence. Scenario I (semantic no-op invalidation, §29.2) exists specifically to catch implementations that execute everything and emit identical output.
+3. **Every cache or incremental shortcut requires differential parity against a cold rebuild** in the same tranche (layout measurement reuse, MountGraph patching, scope-local slots). Incremental output must equal cold-rebuild output exactly, both directions of §18.2.
+4. **Failure injection is part of correctness, not hardening garnish**: the T12/T13 injection suite is extended to scope-batch transactions (R7); no exception path may silently swallow state.
+5. **Memory claims get soak evidence** scaled to smoke profile per tranche and repeated at full scale in R10 (§22 targets).
+6. **Benchmarks**: smoke profile only during R0–R9 (`§102.1` discipline); the authoritative full-matrix run happens exactly once, in R10, process-isolated, raw JSONL committed with provenance.
+7. **Records are mandatory**: each completed tranche appends an implementation record to this document under a new `## Tranche implementation records` heading, following the parent handoff's record convention (scope, commits, review findings, summary, provenance, per-gate measured evidence, status line). A tranche without a conforming record is not complete regardless of passing code. Missing evidence for any gate row forces status PARTIAL.
+8. **Gate failures stop the sequence.** Never lower a gate because later tranches depend on it. R6 failure blocks R7–R10 entirely (AMENDMENT-C §2.6: moving O(N) downstream is failure, not partial credit).
+
+Risk-domain mapping per Review Addendum §33.7: **T13.1A** = R0–R5 (retained execution), **T13.1B** = R6–R7 (retained host frontier), integration/acceptance = R8–R10. T13.1 is not complete until both domains are individually proven.
+
+### Registry
+
+| Tranche | Parent steps | Exact scope | Required result before proceeding |
+|---|---|---|---|
+| **R0** | Steps 2-adapt, 3-rewire, 4-stop (AMENDMENT-C §17.2–§17.4) | §11 retirement list executed: module/site registration and lexical addressing removed; compose helpers rewired to active-scope form with `ACTIVE_EXECUTION_SCOPE` permanently inactive for now (pure fall-through); `composition_registry.ts` retired; any transform remnants removed; salvaged generic tests converted to public-runtime form | All T13.1 suites green with helpers inactive; **measured** cold uncomposed construction ≤3% vs pre-change baseline (record numbers); no `CompositionModuleId`/`CompositionSiteId`/site-bucket symbols remain; known perf11v4 interference failure unchanged |
+| **R1** | Step 4R | §10 `RetainedExecutionRuntime`, `RetainedExecutionScope`, parent/current/pending state, scope-local slot ownership, active-scope nesting, disposal, §28 execution counters | Synthetic-driver proofs: same type+position ⇒ same instance across updates; type mismatch ⇒ remount; dirty scope executes once, clean scopes zero `body_calls` (counter-proven); abort keeps committed slots/subscriptions; disposal releases all strong refs (soak evidence) |
+| **R2** | Step 5R | §8 `defineView`: typed props, parent-local positional identity, component-type checks, local-key plumbing, shallow `Object.is` prop skipping | Public-API tests: invocation returns stable projection View; props skip proven by body-call counters (unchanged props ⇒ 0 executions); fresh-object-literal props correctly NOT skipped (documents Review Addendum §33.6 contract); no way to express global IDs |
+| **R3** | Step 6R | §19 scope projection: independently replaceable retained sub-DAG root per live scope (existing primitive first; slim private slot only if §31.6 measurements demand) | Child scope content change ⇒ parent semantic View identity **exact** (Bridge-level assertion, not string compare); §31.3 semantic-DAG gate green at 3-scope scale; projection-overhead baseline recorded at 10/100/1,000 scopes — **these numbers are also the go/no-go instrument that schedules R6 (see Staged delivery below)** |
+| **R4** | Step 7R | §9 tracked `State<T>`: read tracking during evaluation, write⇒dirty+enqueue-once, dependency refresh on commit/abort (§21) | Purity enforcement tests (write-during-evaluation rejected, async builder rejected deterministically); subscription lifecycle (deps dropped when no longer read; abort retains old set); **§31.1 execution-frontier gate passes end-to-end**: App/A/B/C each with own State, write B ⇒ body executions App=0 A=0 B=1 C=0 by counters |
+| **R5** | Step 8R + §17 | Dirty queue with dedup, one-turn batching, parent-before-child epoch determinism, JS-side WIP prepare/stage discipline | 10 synchronous writes ⇒ exactly 1 flush/commit (counter); duplicate invalidations coalesce (`duplicate_invalidations` counter); child-removed-while-dirty discarded after parent commit; scenario H smoke green; no partial committed state observable under staged-failure injection |
+| **R6** | Step 9R (**T13.1B**, highest risk, isolated commit, **measurement-gated start** — see Staged delivery below) | §18 host frontier: incremental `MountGraph` subtree patching by ComponentId, revision-driven resolver invalidation, retained layout dependency invalidation, unchanged-constraint measurement cutoffs, sibling measurement reuse, paint invalidation scoping | **§31.5 both variants at 1,000 siblings**: same-geometry ⇒ 1 body, 0 clean bodies, 0 clean materializations, 0 mount-forest rescans (`mount_nodes_visited` bounded), 0 clean sibling remeasurements; geometry-change ⇒ layout propagates only along real dependencies, sibling measurements reused; **differential parity: scoped-update output === cold-rebuild output in both variants**; layout cache-hit counters reported |
+| **R7** | Step 10R | §17.3/§27 multi-scope transactional commit: pending materialization, atomic component-root batch swaps (or proven-infallible publication), MountGraph patches, dependency promotion, mounts/unmounts, rollback | Extended failure-injection suite (scope-batch commit/abort at every stage): every injected failure leaves old roots/leases/MountGraph/subscriptions authoritative and pending refs released; retry succeeds; success publishes exactly one frame for N dirty scopes |
+| **R8** | Steps 11R+12R | §20 canonical boundaries (`tui.render(() => …)`, slot/pane builders) wired to the runtime; §16 keyed reorder + structural parent changes (insert/remove/prepend/middle-insert/reorder/conditional mount-unmount) | Reconciliation identity tests green (keyed items survive movement with unexecuted bodies — counter-proven); scenarios E/F/J (§29.2) pass; B3/B4/History interactions unregressed; duplicate keys throw before commit |
+| **R9** | Step 13R + fixture extension (AMENDMENT-C §24) | §25 external-consumer fixture extended to **direct scoped invalidation**; §24 production conversion via public APIs only, bodyKey kept armed as control | Fixture: `count.set(1)` updates `Counter` executing neither `Static` nor the parent body (counter-proven), zero setup in consumer source/config; production chrome §38 cases green with visual parity harness; animation/time side effect preserved (regression test per §24.3) |
+| **R10** | Step 14R | §29 full authoritative benchmark matrix (four arms + scopes), process-isolated, full statistics/provenance; adoption decision; **only after gates pass**: bodyKey removal, dead-code/dependency cleanup | Every §37 checklist line evidenced with raw numbers; carried gates re-verified; oracle-vs-runtime divergence (§39) resolved explicitly in the analysis; report published regardless of outcome; cleanup commit shows zero behavioral delta |
+
+### Registry rules
+
+- **Order is mandatory:** R0 precedes all runtime work (it establishes the clean fall-through floor the ≤3% gate needs); R1–R5 sequential (each builds on the prior's proven identity); R6 requires R3+R5 (projection + transaction staging exist) **and a positive R6 decision** (see Staged delivery); R7 requires R6; R8–R10 sequential.
+- **Once started, R6 is the architecture's point of no return:** if its gates fail, fix inside R6 or stop — proceeding to R7–R10 on a rescan-based host would ship exactly the moved-O(N) failure Amendment C forbids.
+- **No gate may be deferred to "the next tranche":** each row's Required result is that tranche's definition of done, evidenced in its implementation record.
+- Related tranches may share an implementation session only when every individual gate still runs and commits separately.
+
+### Staged delivery — supported intermediate state and the R6 decision gate
+
+Amendment C remains the final T13.1 end state (Review Addendum §33.7: not complete until both risk domains are proven). Within that arc, two delivery postures are explicitly legitimate:
+
+**Supported intermediate end state: stop after R5 (+ light R8 boundary wiring).** At this point the system already delivers, with no Rust host changes:
+
+```text
+tui.render(() => …) root scope          -> whole-root replay replaced by one scope pass;
+                                           exact-reuse semantics inside the root reproduce the old
+                                           composition design's no-op behavior WITHOUT any transform
+defineView componentization where it pays -> clean child scopes never execute (§31.1 proven)
+State<T> tracked invalidation            -> update provenance is exact, batching included
+```
+
+This posture is correct while mounted structural scope counts stay small and hot content remains behind History/streams/ViewSlot/ScrollPane — which is what the production trace shows today. It is an honest release state, not a failure: record it in the implementation record as `INTERMEDIATE (R0–R5)` with the measured rationale.
+
+**The R6 decision gate.** R6's start is decided by R3's projection-overhead benchmarks at 10/100/1,000 scopes plus current mounted-scope counts, not by preference:
+
+- If measured resolve/layout behavior at realistic and projected scope counts keeps §31.4/§31.5-class costs bounded without incremental host patching (i.e., the rescan cost over few mounted scopes is noise), **defer R6**: ship the intermediate state, revisit when mounted-scope counts or benchmark curves cross the threshold. The deferral decision, its numbers, and its revisit trigger are recorded; T13.1 stays formally PARTIAL until R6 runs.
+- If measurements show per-update host work scaling with mounted-scope count in any real or projected trace, **run R6 now** — deferral would be shipping the moved-O(N) failure.
+- A compiler-assisted alternative (source-level boundary detection) is explicitly rejected as a middle path: `defineView` provides the execution boundary at runtime with zero build machinery; reintroducing a transform for boundaries re-adds bootstrap fragility and dual identity sources to solve a solved problem (AMENDMENT-C §11).
+
+Either way the decision is made once, from committed benchmark evidence, and documented in the tranche records — never re-litigated informally mid-sequence.
+
+---
+
+# 33. Files
+
+Updated from original §49:
+
+```text
+packages/iyon-runtime/src/tui/composition.ts        ADAPT -> retained execution runtime/scopes
+packages/iyon-runtime/src/tui/compose.ts            ADAPT -> active-scope addressing
+packages/iyon-runtime/src/tui/composition_registry.ts  RETIRE (module/site registry)
+packages/iyon-runtime/src/tui/internal-composition.ts   ADAPT (@internal facade)
+packages/iyon-runtime/src/tui/values/view.ts         MODIFY only for @internal hooks as needed
+packages/iyon-runtime/src/tui/runtime.ts             MODIFY (root scope wiring)
+packages/iyon-runtime/src/tui/component.ts           MODIFY (scope projection / slim slot)
+packages/iyon-runtime/src/tui/scroll-pane.ts         MODIFY (builder boundary only)
+packages/iyon-runtime/src/tui/index.ts               MODIFY for defineView/state/View.key public API
+crates/iyon-tui (resolve.rs, host.rs, measure.rs, registry.rs)  MODIFY for §18 frontier work
+framework-owned transform/build-support modules      DO NOT CREATE (removed architecture)
+packages/iyon-cli/build.ts                           NO transform wiring required
+packages/tui-consumer-fixture/*                      EXTEND for scoped-invalidation acceptance
+tests/perf12_t13_1_*.test.ts                         ADAPT/EXTEND per §30
+bench/perf12_t13_1_*.ts + JSONL                      EXTEND per §29
+plugins/app/iyon/src/{app,view}.ts                   MODIFY only per §24 (public APIs; no internals)
+```
+
+Ownership test unchanged: deleting `plugins/app/iyon` must not disable retained execution.
+
+---
+
+# 34. Code generation policy
+
+Original §50 stands: reuse the canonical semantic schema; generate repetitive compose/equality helpers from it; handwritten specializations for complex kinds; no forcing composition metadata into `view_abi.toml`; CI must fail when a new semantic View kind ships without a composition policy (reuse comparator / specialized policy / explicit always-changed).
+
+---
+
+# 35. Transport independence / PERF-12v2
+
+Original §51 + AMENDMENT-C §25, verbatim in force: everything above the transport survives N-API replacement; scopes never touch FFI functions directly, never store NativeRefs, never encode transport state in keys or scope identity; composition returns Views; `RetainedRootBoundary` owns transport.
+
+---
+
+# 36. Anti-patterns — explicitly reject
+
+Original §52 items all stand (app memoization as architecture, content interning, full-tree reconciliation, per-node user IDs, key-means-immutable, mutable semantic nodes, scope-owned NativeRefs, reflection hot paths, async builders). Amendment C adds:
+
+```text
+52.10  Whole-app replay-and-compare as the final hot path
+       ("cheap slot hits make it fine") — rejected; clean scopes must not execute
+52.11  Moving the O(N) rediscovery downstream — jumping to one dirty JS body
+       then rescanning mounts/remeasuring siblings in resolve/layout/paint
+52.12  Reintroducing a source transform/compiler for identity the component
+       API provides directly
+52.13  Deep-diffing props or arbitrary application state
+52.14  One host frame per dirty scope instead of batched transactions
+```
+
+---
+
+# 37. Acceptance checklist
+
+Merged from original §§53–56 and AMENDMENT-C §28; the tranche is complete only when every line holds.
+
+**Execution**: State write targets a scope directly; clean sibling/parent bodies don't execute; props updates skip unchanged children; mount/unmount/reorder identity correct; keys local and rare.
+
+**Semantic DAG**: per-scope outputs immutable; changed ⇒ new NodeId; unchanged scope-local nodes reuse exact Views/NodeIds; clean projections keep exact identity; no mutable payloads; no second graph.
+
+**Native**: per-scope independently retained sub-DAG roots; local update never materializes parent/siblings; MountGraph patched incrementally, never globally rediscovered; same-geometry update remeasures nothing clean; geometry-changing update invalidates exactly the dependency frontier; revision-driven layout correctness; old lease survives until replacement; multi-scope publication atomic or infallible-after-validation; transport details private.
+
+**Performance**: 1-of-3 and 1-of-1000 body counts exact; no O(total scopes) resolve/remeasure pass in same-geometry variant; layout/paint reported separately from semantic work; zero-allocation exact hits; cold construction ≤3%; projection overhead measured at 10/100/1000; wide asymptotics unchanged; production trace not slower in representative updates.
+
+**Generic public API**: no app-specific primitives; no compiler/plugin configuration; no global IDs; no manual DAG retention; external fixture demonstrates direct scoped invalidation; Iyon uses only the same public APIs.
+
+**Cleanup**: lexical SiteId architecture gone; partial transform code removed or isolated only if independently useful; no Oxc/AST dependency added for the abandoned transform; `bodyKey` removed only after gates pass.
+
+**Memory**: per §22 soak targets all green.
+
+---
+
+# 38. Production trace requirements
+
+Original §57 + AMENDMENT-C §30: exercise B1/B3/B4 plus History/stream interactions, spinner/slot animations, Diff rendering — proving composition introduction doesn't break them — plus the concrete chrome proofs: footer-only status update (one body; outer vertical and sibling ScopeRef NodeIds unchanged; topology reused; layout remeasurement only as Footer geometry requires), effort/style-state update confined to the owning scope, working visibility structural toggle skipping stable siblings, tool-card streaming on the specialized path.
+
+---
+
+# 39. Progress record — updated for Amendment C
+
+*(Append-only history; prior record preserved below in condensed form with revised dispositions.)*
+
+- **Steps 1–3 implemented pre-amendment** (`379e1cf`, `235a9da`, `dad92b5`): baseline probe + fixture (KEEP); composition runtime with dual-epoch discipline, keyed slot groups, module/site registry (machinery KEPT, module/site identity RETIRING per §11); monomorphic compose helpers incl. the two fixed bugs (composeTextAlign double-mapping; harness multi-root correction) (KEPT, rewiring owed). Step 4 explored only to the toolchain-decision point (TS 7.0.2 exposes no stable parse/print JS API; Bun 1.4 Transpiler has no AST rewriting); **no transform code was committed and none of that exploration is committed architecture** (AMENDMENT-C preamble).
+- **Oracle divergence note (still standing)**: the Step 1 oracle models hand-preserved identity surviving absences; runtime semantics differ deliberately per §21/§22; surface explicitly in Step 14R analysis.
+- **Known pre-existing failure**: `perf11v4_direct.test.ts` cross-file weak-cache interference (passes isolated) — out of tranche.
+- **Post-amendment obligations**: §11 retirement/rewiring, §17 scheduler/WIP commit, §18 host frontier work, fixture extension to scoped-invalidation proofs, then Steps 4R–14R in order.
+
+---
+
+# 40. Superseded sections index
+
+Authoritative map from the original handoff to this rewrite (for reviewers diffing histories):
+
+```text
+§0–§8 exec/why/freeze/research/invariants/non-goals/identity/architecture
+      -> kept, reframed to execution scopes (here §0–§10)
+§9   Dense source SiteIds ......................... REMOVED (no compiler; AMENDMENT-C §11)
+§10  Site occurrence algorithm .................... REPLACED by scope-local slot cursor (§11)
+§11  View.key slot-group algorithm ................ REPLACED by scope reconciliation keys (§16);
+                                                     public View.key API intent survives
+§12  Source transform scope/philosophy ............ REMOVED entirely (AMENDMENT-C §11/§17.4)
+§13  Build/runtime integration for the transform .. REDUCED to §4.1 automatic-activation
+                                                     invariant; no plugin/bootstrap machinery
+§13.3 external fixture ............................. KEPT, extended (§25)
+§13.5/§13.6 AST/Bun qualification .................. MOOT (historical findings archived in §39)
+§14  Composition context .......................... KEPT as active-scope context (§10)
+§15  Boundary API ................................. KEPT (§20)
+§16  Transaction .................................. KEPT, generalized (§21)
+§17  Exact reuse .................................. KEPT, scope-local (§11–§13)
+§18  Equality / §19 allocation / §20 predecessor .. KEPT (§12–§14)
+§21  Conditional structure (site stability) ....... SUPERSEDED by structural scope semantics (§16, §30)
+§22  Wide/PersistentSeq ........................... KEPT (§15)
+§23  Keyed collections ............................ SUPERSEDED (§16)
+§24  Helper functions ............................. SUPERSEDED by defineView components (§8)
+§25  Slot lifetime ................................ KEPT as scope memory model (§22)
+§26  Not-another-cache ............................ KEPT (§23)
+§27–§30 B1–B6 boundaries .......................... GENERALIZED (§19–§20, §38)
+§31–§33 app/API/internals .......................... UPDATED (§24–§26)
+§34  Compiler/framework failure behavior .......... TRANSFORM halves removed; atomicity kept (§27)
+§35  Counters ..................................... REPLACED by AMENDMENT-C §21 set (§28)
+§36–§46 probes/tests/benchmarks/gates .............. EXTENDED (§29–§31)
+§47  Instrumentation examples ..................... FOLDED into §28/§29
+§48  Steps 1–12 ................................... REPLACED by dispositions + 4R–14R (§32)
+§49–§51 files/codegen/transport .................... UPDATED (§33–§35)
+§52  Anti-patterns ................................ EXTENDED (§36)
+§53–§56 checklists ................................. MERGED (§37)
+§57  Production trace ............................. MERGED (§38)
+§58–§59 sources .................................... SEE AMENDMENT-C §32 (primary-source list)
+§60  Final architecture ........................... REPLACED (§7)
+§61  Final instruction ............................ REPLACED by §42 below
+§62  Progress record (first addendum) ............. REVISED into §39
+```
+
+---
+
+# 41. Source references
+
+Repository anchors at the working baseline: `values/view.ts`, `retained_dag.ts`, `runtime.ts`, `component.ts`, `scroll-pane.ts`, `composition.ts`/`compose.ts`/`composition_registry.ts` (adaptation targets), `virtual-modules.ts` (unchanged), fixture package; Rust: `component/slot.rs`, `component/registry.rs`, `scene/{resolve.rs, host.rs}`, `presentation/layout/measure.rs`. Primary research sources: AMENDMENT-C §32 (React Render-and-Commit/memo/Fiber reconciler, Compose lifecycle/phases/SnapshotStateObserver, Flutter Inside-Flutter/sublinear-layout). Companion documents: `PERF-12-retained-dag-direct-ffi-handoff.md`, `PERF-12-production-boundary-trace.md`, `PERF-12-T13.1-AMENDMENT-C-optimal-retained-dag-execution.md`.
+
+---
+
+# 42. Final instruction to the implementation agent
+
+Implement T13.1 from the current partial local state as an **incremental retained execution system over independently retained immutable View DAG roots, with retained host-side component/layout dependency frontiers** — per AMENDMENT-C §31, which this section incorporates by reference and summarizes:
+
+Adapt the implemented T2 runtime/transaction machinery into the retained execution runtime; keep T3's monomorphic comparators and raw constructors but make their memo slots scope-local; stop and remove the partial T4 lexical-SiteId compiler work — React targets retained Fibers without its compiler, and Iyon's explicit `defineView` boundary supplies the restart scope directly, so no source transform or AST dependency is justified. Give each mounted component scope a stable parent-local projection and an independent retained sub-DAG root so a local update replaces only that scope root. Add the minimal tracked `State<T>` for exact invalidation and shallow `Object.is` props-skipping as the second channel; local keys only for repeated/movable identity. Prepare all dirty-scope outputs, NativeRefs, mount patches, and dependency changes without mutating committed state; publish in one authoritative batch commit or prove final publication infallible after complete validation. Then finish the job host-side: incremental MountGraph patching, revision-driven resolver invalidation, retained layout dependency invalidation with unchanged-constraint cutoffs and sibling measurement reuse, and paint invalidation no broader than required.
+
+Preserve the immutable `View -> BridgeViewNode` DAG, NodeId semantics, hint/lease separation, `RetainedRootBoundary`, PersistentSeq, History, streams, ScrollPane, and every PERF-12 transport invariant. No second semantic graph, no mutable semantic nodes, no deep diffs.
+
+The decisive evidence is the two 1-of-1000 sibling tests: same-geometry and geometry-changing. If the implementation executes, reconstructs, resolves, or remeasures clean scopes to discover the one changed branch — at any layer — T13.1 has failed. The end state is an external developer writing boring `defineView`/`state`/`View` code on the normal documented `iyon-tui` API and receiving dirty-scope-only retained updates without ever knowing that scopes, State tracking, NodeIds, NativeRefs, layout dependency graphs, or a retained DAG exist.

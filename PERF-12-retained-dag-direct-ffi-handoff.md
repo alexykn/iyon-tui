@@ -6716,4 +6716,13 @@ finding R13: the post-review T6–T10 plus T12 run now reports 43 passing tests
        and 736 expect calls, rather than the earlier record's 42/732 summary.
        The difference is the corrected shared-retained-branch regression and
        the current suite composition; all 43 pass with zero failures.
+
+finding R14: the smoke harness still named and exercised a shared leaf after
+       R9 strengthened the regression test to a shared retained branch.
+       Correction in e68329f (`bench(tui): exercise shared retained branch
+       transaction`): the benchmark now measures `multi_branch_shared_branch`
+       (outer row + shared row + shared leaf), with 1,500 materializer calls,
+       1,500 child visits, and 500 host mutations over 500 measured operations.
+       Refreshed timing is median 8,251 ns, p95 20,208 ns, p99 47,583 ns,
+       median_ci95_ns [7,833, 8,688], with zero retries and fallbacks.
 ```

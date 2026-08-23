@@ -89,6 +89,7 @@ export interface NativeViewAbiBootstrap {
   };
   functions: {
     runtimeNoop: number;
+    viewStatusDetail: number;
     viewRenderRef: number;
     hostRenderRef: number;
     viewSpacerCreate: number;
@@ -181,6 +182,8 @@ export interface NativeAddon {
     alive: boolean;
   };
   tuiViewAbiBootstrap?: (pruneExpired?: boolean) => NativeViewAbiBootstrap;
+  /** Exceptional T12 recovery: decode one semantic bridge node and return a leased root ref. */
+  tuiViewAbiDecodeRef?: (view: object) => number;
   tuiPerfAbiProbe?(): {
     noop_ptr: number;
     u32_8_ptr: number;

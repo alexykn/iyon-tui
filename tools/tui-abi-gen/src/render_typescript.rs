@@ -287,7 +287,8 @@ pub fn calls(document: &AbiDocument, schema_hash: &str, generator_hash: &str) ->
     output
         .push_str("export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>[\"symbols\"];\n\n");
     output.push_str("const ERROR_BIT = 0x8000_0000;\n\n");
-    output.push_str("function checkedRef(result: number): number {\n  if (result === 0 || result >= ERROR_BIT) throw new Error(`native ABI status 0x${result.toString(16)}`);\n  return result;\n}\n\n");
+    output.push_str("export class NativeAbiStatusError extends Error {\n  readonly status: number;\n  readonly detail: number;\n\n  constructor(status: number, detail: number) {\n    super(`native ABI status 0x${status.toString(16)}`);\n    this.name = \"NativeAbiStatusError\";\n    this.status = status;\n    this.detail = detail;\n  }\n}\n\n");
+    output.push_str("function checkedRef(symbols: ViewAbiSymbols, runtime: Pointer, result: number): number {\n  if (result === 0 || result >= ERROR_BIT) {\n    throw new NativeAbiStatusError(result, symbols.viewStatusDetail(runtime));\n  }\n  return result;\n}\n\n");
     for function in &document.functions {
         output.push_str(&format!(
             "export function {}(symbols: ViewAbiSymbols, {}): {} {{\n",
@@ -308,7 +309,7 @@ pub fn calls(document: &AbiDocument, schema_hash: &str, generator_hash: &str) ->
             call_args
         ));
         if is_ref_result(function.return_type.as_str()) {
-            output.push_str("  return checkedRef(result);\n");
+            output.push_str("  return checkedRef(symbols, runtime, result);\n");
         } else {
             output.push_str("  return result;\n");
         }

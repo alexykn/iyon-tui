@@ -127,6 +127,28 @@ type = "RuntimePtr"
 lowering = "runtime_ptr"
 
 [[function]]
+name = "view_status_detail"
+family = "diagnostic"
+hotness = "cold"
+implementation = "view_status_detail_impl"
+fallback = "none"
+ownership = "runtime_owned"
+borrow_duration = "call"
+thread_affinity = "owner_thread"
+may_allocate_native_memory = false
+mutates_host_state = false
+max_buffer_bytes = 0
+max_input_count = 0
+arity_specializations = [1]
+benchmark_registration = "diagnostic.status_detail"
+return = "u32"
+
+[[function.arg]]
+name = "runtime"
+type = "RuntimePtr"
+lowering = "runtime_ptr"
+
+[[function]]
 name = "view_render_ref"
 family = "render_ref"
 hotness = "critical"

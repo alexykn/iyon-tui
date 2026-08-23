@@ -1817,6 +1817,18 @@ fn decode_view(value: &Object<'_>) -> Result<View> {
     decoder.decode(*value)
 }
 
+/// Exceptional PERF-12 §73 recovery helper. It decodes one semantic bridge
+/// node synchronously, publishes through the shared runtime identity funnel,
+/// and returns one leased root reference. No N-API value is retained.
+#[napi(js_name = "tuiViewAbiDecodeRef")]
+pub fn tui_view_abi_decode_ref(value: Object) -> Result<i64> {
+    let node_id = required_u64(&value, "id")?;
+    let cache = view_bridge_cache(&value)?;
+    let view = decode_view(&value)?;
+    let reference = view_abi::publish_decoded_view(&cache, node_id, view)?;
+    Ok(i64::from(reference))
+}
+
 struct ViewDecoder {
     cache: ViewRuntimeHandle,
     active: HashSet<u64>,

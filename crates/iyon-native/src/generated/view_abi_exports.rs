@@ -1,12 +1,15 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498
-// generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a
+// schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332
+// generator_blake3 = 4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
     use super::{AxisChildInputV1, NativeHost, NativeViewRuntime};
     unsafe extern "Rust" {
         pub fn runtime_noop_impl(runtime: *mut NativeViewRuntime) -> u32;
+    }
+    unsafe extern "Rust" {
+        pub fn view_status_detail_impl(runtime: *mut NativeViewRuntime) -> u32;
     }
     unsafe extern "Rust" {
         pub fn view_render_ref_impl(runtime: *mut NativeViewRuntime, base: u32) -> u32;
@@ -695,6 +698,19 @@ pub unsafe extern "C" fn iyon_runtime_noop_v1(runtime: *mut NativeViewRuntime) -
             (|| -> Result<u32, u32> {
                 let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
                 Ok(unsafe { generated_impls::runtime_noop_impl(runtime) })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_status_detail_v1(runtime: *mut NativeViewRuntime) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                Ok(unsafe { generated_impls::view_status_detail_impl(runtime) })
             })()
         },
         0x8000_00ffu32,

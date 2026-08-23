@@ -210,6 +210,33 @@
           "lowering": "runtime_ptr",
           "name": "runtime",
           "type": "RuntimePtr"
+        }
+      ],
+      "arity_specializations": [
+        1
+      ],
+      "benchmark_registration": "diagnostic.status_detail",
+      "borrow_duration": "call",
+      "fallback": "none",
+      "family": "diagnostic",
+      "hotness": "cold",
+      "implementation": "view_status_detail_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 0,
+      "may_allocate_native_memory": false,
+      "mutates_host_state": false,
+      "name": "view_status_detail",
+      "ownership": "runtime_owned",
+      "return": "u32",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
         },
         {
           "buffer_length_of": null,
@@ -3629,7 +3656,7 @@
     "crates/iyon-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a",
+  "generator_blake3": "4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c",
   "handles": [
     {
       "kind": null,
@@ -3844,5 +3871,5 @@
       "size": 8
     }
   ],
-  "schema_blake3": "7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498"
+  "schema_blake3": "3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332"
 }

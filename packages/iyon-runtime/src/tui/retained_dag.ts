@@ -25,13 +25,14 @@
  */
 
 import type { Pointer } from "bun:ffi";
+import { native } from "../native.ts";
 import {
   materializeColumn,
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { hostRenderRef, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
-import { BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, type BridgeGridTrackNode, type BridgeViewNode } from "./ir.ts";
+import { NativeAbiStatusError, hostRenderRef, viewAxisSetChild, viewAxisSpliceBuffer, viewCommonPatchRoot, viewGridCreateBuffer, viewGridSetCell, viewRefForNodeId, viewReleaseMany, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { BRIDGE_GRID_TRACK_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode } from "./ir.ts";
 import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -150,6 +151,8 @@ export class MaterializeTx {
   readonly borrowedHints: { readonly node: BridgeViewNode; readonly nativeRef: number }[] = [];
   newNodeCount = 0;
   depth = 0;
+  /** One targeted stale-ref recovery is allowed per root transaction (§47). */
+  staleRefRetries = 0;
 
   constructor(
     readonly symbols: NativeViewAbiSession["symbols"],
@@ -219,9 +222,14 @@ export class MaterializeTx {
     this.temporaryLeases.length = 0;
   }
 
-  /** Releases every temporary lease except `keepRef` (success path, §18.4). */
+  /** Releases every temporary lease except one root lease (§18.4). */
   releaseAllExcept(keepRef: number): void {
-    const remaining = this.temporaryLeases.filter((ref) => ref !== keepRef);
+    // A transaction normally has one lease per newly-created ref. Remove only
+    // the transferred occurrence: releasing every equal number would under-
+    // release if a future publication path legitimately acquires twice.
+    const keepIndex = this.temporaryLeases.indexOf(keepRef);
+    const remaining = this.temporaryLeases.slice();
+    if (keepIndex >= 0) remaining.splice(keepIndex, 1);
     this.temporaryLeases.length = 0;
     if (remaining.length === 0) return;
     const batch = Uint32Array.from(remaining);
@@ -231,8 +239,143 @@ export class MaterializeTx {
 
 type NodeMaterializer = (node: BridgeViewNode, tx: MaterializeTx) => number;
 
+const FAST_CACHE_MISS = 0x8000_0004;
+const STATUS_DETAIL_CHILD_KIND = 1;
+const STATUS_DETAIL_BASE_KIND = 2;
+const STATUS_DETAIL_CHILD_INDEX = 0x4000_0000;
+
 function isExpectedNativeStatus(error: unknown): boolean {
   return error instanceof Error && /^native ABI status 0x[0-9a-f]+$/u.test(error.message);
+}
+
+function nativeStatusCode(error: unknown): number | undefined {
+  if (error instanceof NativeAbiStatusError) return error.status;
+  if (!isExpectedNativeStatus(error)) return undefined;
+  const match = /^native ABI status 0x([0-9a-f]+)$/u.exec((error as Error).message);
+  return match === null ? undefined : Number.parseInt(match[1]!, 16);
+}
+
+function nativeStatusDetail(error: unknown): number {
+  return error instanceof NativeAbiStatusError ? error.detail : 0;
+}
+
+function staleChildOrdinal(error: unknown): number | undefined {
+  if (nativeStatusCode(error) !== FAST_CACHE_MISS) return undefined;
+  const detail = nativeStatusDetail(error);
+  if ((detail >>> 30) !== STATUS_DETAIL_CHILD_KIND) return undefined;
+  return detail & 0x3fff_ffff;
+}
+
+function isStaleBase(error: unknown): boolean {
+  return nativeStatusCode(error) === FAST_CACHE_MISS
+    && (nativeStatusDetail(error) >>> 30) === STATUS_DETAIL_BASE_KIND;
+}
+
+/** Exceptional §73 recovery: Direct decodes one node and returns one lease. */
+function recoverNodeWithDirectDecode(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
+  const decodeRef = native.tuiViewAbiDecodeRef;
+  if (decodeRef === undefined) return undefined;
+  const reference = decodeRef(node as unknown as object);
+  if (!isValidNativeRef(reference)) return undefined;
+  installHint(node, tx.generation, reference);
+  tx.refs.set(node, reference);
+  tx.temporaryLeases.push(reference);
+  return reference;
+}
+
+function childAtOrdinal(node: BridgeViewNode, ordinal: number): BridgeViewNode | undefined {
+  if (!Number.isSafeInteger(ordinal) || ordinal < 0) return undefined;
+  if (node.kind === BRIDGE_VIEW_KIND.row || node.kind === BRIDGE_VIEW_KIND.column) {
+    const override = peekBridgeSequenceOverride(node);
+    const child = override?.sequence.get(ordinal) ?? node.children[ordinal];
+    return child?.child;
+  }
+  if (node.kind === BRIDGE_VIEW_KIND.grid) {
+    const override = peekBridgeGridSequenceOverride(node);
+    if (override !== undefined) return override.sequence.get(ordinal)?.view;
+    let offset = ordinal;
+    for (const row of node.rows) {
+      if (offset < row.cells.length) return row.cells[offset]?.view;
+      offset -= row.cells.length;
+    }
+  }
+  if (node.kind === BRIDGE_VIEW_KIND.hanging) {
+    return [node.prefix, node.continuation, node.body][ordinal];
+  }
+  if (node.kind === BRIDGE_VIEW_KIND.container || node.kind === BRIDGE_VIEW_KIND.clamp || node.kind === BRIDGE_VIEW_KIND.contentMax) {
+    return ordinal === 0 ? node.child : undefined;
+  }
+  if (node.kind === BRIDGE_VIEW_KIND.decorated) return ordinal === 0 ? node.child : undefined;
+  return undefined;
+}
+
+function derivationChildAt(derivation: NonNullable<ReturnType<typeof peekBridgeDerivation>>, ordinal: number): BridgeViewNode | undefined {
+  switch (derivation.kind) {
+    case "axisSet":
+    case "gridCell":
+      return ordinal === 0 ? derivation.child : undefined;
+    case "axisSplice":
+      return derivation.inserted[ordinal]?.node;
+    case "textLayout":
+    case "commonScalar":
+      return undefined;
+  }
+}
+
+/**
+ * Invalidates one stale hint and performs the bounded recovery used by both
+ * constructors and retained edit primitives. The Direct decoder is the
+ * authoritative exceptional fallback when this node has no retained
+ * materializer of its own (§47/§73).
+ */
+function recoverStaleNode(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
+  if (tx.staleRefRetries >= 1) return undefined;
+  tx.staleRefRetries += 1;
+  counters.stale_ref_retries += 1;
+  deleteBridgeNativeHintForTests(node);
+  tx.refs.delete(node);
+  try {
+    return ensureNative(node, tx);
+  } catch (error) {
+    if (!(error instanceof RetainedFastFallbackError) && !(error instanceof RetainedCycleError)) throw error;
+  }
+  return recoverNodeWithDirectDecode(node, tx);
+}
+
+function materializeWithRecovery(
+  node: BridgeViewNode,
+  tx: MaterializeTx,
+  materializer: NodeMaterializer,
+): number {
+  const invoke = (): number => {
+    counters.direct_materializer_calls += 1;
+    tx.depth += 1;
+    try {
+      return materializer(node, tx);
+    } finally {
+      tx.depth -= 1;
+    }
+  };
+  try {
+    return invoke();
+  } catch (error) {
+    const ordinal = staleChildOrdinal(error);
+    const child = ordinal === undefined ? undefined : childAtOrdinal(node, ordinal);
+    if (child !== undefined && recoverStaleNode(child, tx) !== undefined) {
+      try {
+        return invoke();
+      } catch (retryError) {
+        if (isExpectedNativeStatus(retryError)) {
+          throw new RetainedFastFallbackError("native constructor retry reported a failure status");
+        }
+        throw retryError;
+      }
+    }
+    if (isExpectedNativeStatus(error)) {
+      throw new RetainedFastFallbackError("native constructor reported a failure status");
+    }
+    throw error;
+  }
 }
 
 /**
@@ -240,15 +383,11 @@ function isExpectedNativeStatus(error: unknown): boolean {
  * into a fast fallback so the caller routes the complete cold path (§49).
  * Unexpected errors propagate.
  */
-function runMaterializer(kind: string, lower: () => number): number {
-  try {
-    return lower();
-  } catch (error) {
-    if (isExpectedNativeStatus(error)) {
-      throw new RetainedFastFallbackError(`${kind} constructor reported a native failure status`);
-    }
-    throw error;
-  }
+function runMaterializer(_kind: string, lower: () => number): number {
+  // Native status errors stay typed until ensureNative can perform the one
+  // targeted stale-child retry. Non-cache failures become the complete
+  // fallback there; unexpected exceptions remain visible to the caller.
+  return lower();
 }
 
 function materializeSpacerNode(node: BridgeViewNode, tx: MaterializeTx): number {
@@ -427,13 +566,7 @@ export function ensureNative(node: BridgeViewNode, tx: MaterializeTx): number {
         counters.cold_fallbacks += 1;
         throw new RetainedFastFallbackError(`no generated materializer for kind ${node.kind}`);
       }
-      counters.direct_materializer_calls += 1;
-      tx.depth += 1;
-      try {
-        reference = materializer(node, tx);
-      } finally {
-        tx.depth -= 1;
-      }
+      reference = materializeWithRecovery(node, tx, materializer);
     }
     installHint(node, tx.generation, reference);
     tx.refs.set(node, reference);
@@ -572,6 +705,18 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
     return reference;
   } catch (error) {
     if (!isExpectedNativeStatus(error)) throw error;
+    const staleNode = isStaleBase(error)
+      ? derivation.base
+      : (() => {
+        const ordinal = staleChildOrdinal(error);
+        return ordinal === undefined ? undefined : derivationChildAt(derivation, ordinal);
+      })();
+    if (staleNode !== undefined && recoverStaleNode(staleNode, tx) !== undefined) {
+      // `recoverStaleNode` consumes the single transaction retry budget; the
+      // recursive call therefore performs at most one retry and then falls
+      // back cleanly if the repaired ref is still rejected.
+      return tryDerivation(node, tx);
+    }
     return undefined;
   }
 }
@@ -621,10 +766,24 @@ export function renderExactRoot(
       counters.node_id_ref_promotion_attempts += 1;
       BRIDGE_NATIVE.delete(node);
       const [low, high] = splitNodeId(node.id);
+      let recoveredRef: number | undefined;
       try {
-        const recoveredRef = viewRefForNodeId(session.symbols, session.runtime, low, high);
+        recoveredRef = viewRefForNodeId(session.symbols, session.runtime, low, high);
         counters.node_id_ref_promotion_hits += 1;
-        installHint(node, generation, recoveredRef);
+      } catch (error) {
+        if (!isExpectedNativeStatus(error)) throw error;
+        counters.node_id_ref_promotion_misses += 1;
+        const decodeRef = native.tuiViewAbiDecodeRef;
+        if (decodeRef !== undefined) {
+          recoveredRef = decodeRef(node as unknown as object);
+        }
+      }
+      if (recoveredRef === undefined || !isValidNativeRef(recoveredRef)) {
+        BRIDGE_NATIVE.delete(node);
+        return { status: "no_root_ref" };
+      }
+      installHint(node, generation, recoveredRef);
+      try {
         const retryStatus = hostRenderRef(session.symbols, session.runtime, hostPointer, recoveredRef);
         if (retryStatus === HOST_STATUS_OK) {
           counters.host_mutations += 1;
@@ -632,9 +791,11 @@ export function renderExactRoot(
         }
         BRIDGE_NATIVE.delete(node);
         return { status: "no_root_ref" };
-      } catch (error) {
-        if (!isExpectedNativeStatus(error)) throw error;
-        return { status: "no_root_ref" };
+      } finally {
+        // viewRefForNodeId/§73 recovery returns one temporary lease. The
+        // boundary's existing root lease remains the durable owner.
+        const batch = Uint32Array.of(recoveredRef);
+        viewReleaseMany(session.symbols, session.runtime, batch, 1);
       }
     }
     throw new Error(`hostRenderRef failed with status ${status}`);
@@ -740,7 +901,7 @@ export class RetainedRootBoundary {
     }
     // Does this tx own a lease on the resolved ref (promotion/materialization),
     // or was it borrowed from a hint whose lease belongs to someone else?
-    const ownsTempLease = tx.temporaryLeases.includes(resolvedRef);
+    let ownsTempLease = tx.temporaryLeases.includes(resolvedRef);
     let rootRef = resolvedRef;
     let acquiredBoundaryLease = false;
     if (!ownsTempLease && resolvedRef !== this.previousRef) {
@@ -751,10 +912,18 @@ export class RetainedRootBoundary {
         counters.node_id_ref_promotion_hits += 1;
         acquiredBoundaryLease = true;
       } catch (error) {
-        tx.releaseAll();
-        if (!isExpectedNativeStatus(error)) throw error;
+        if (!isExpectedNativeStatus(error)) {
+          tx.releaseAll();
+          throw error;
+        }
         counters.node_id_ref_promotion_misses += 1;
-        return undefined;
+        const recovered = recoverStaleNode(nodeForBridge(view), tx);
+        if (recovered === undefined) {
+          tx.releaseAll();
+          return undefined;
+        }
+        rootRef = recovered;
+        ownsTempLease = true;
       }
     }
     const hostPointer = this.hostPointer();

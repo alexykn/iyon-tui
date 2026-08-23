@@ -173,6 +173,7 @@ const STYLE_ATOM_REFS = new WeakMap<NativeViewAbiSession, Map<string, number>>()
 const TEXT_SCRATCH = new WeakMap<NativeViewAbiSession, Uint8Array>();
 const ABI_FUNCTION_NAMES = [
   "runtimeNoop",
+  "viewStatusDetail",
   "viewRenderRef",
   "hostRenderRef",
   "viewSpacerCreate",
@@ -260,6 +261,7 @@ export function nativeViewAbiSession(): NativeViewAbiSession | undefined {
   }
   const pointers: NativeAbiPointers = {
     runtimeNoop: bootstrap.functions.runtimeNoop as Pointer,
+    viewStatusDetail: bootstrap.functions.viewStatusDetail as Pointer,
     viewRenderRef: bootstrap.functions.viewRenderRef as Pointer,
     hostRenderRef: bootstrap.functions.hostRenderRef as Pointer,
     viewSpacerCreate: bootstrap.functions.viewSpacerCreate as Pointer,

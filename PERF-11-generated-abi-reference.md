@@ -1,11 +1,11 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498; generator_blake3 = 5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332; generator_blake3 = 4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c -->
 
 # PERF-11 generated ABI reference
 
 > This file is generated. Do not edit it directly.
 
-- Schema BLAKE3: `7c7f9480cf8950965436de870da6d9a135bc346bd1e78aa74cb702874f0cf498`
-- Generator BLAKE3: `5fa933f670b4b38bdf04e8e5b6635342d3a75e6781cceb14283f73c575d4ed4a`
+- Schema BLAKE3: `3f4ebadaf333fb067cc4ffbde6266b7177216a3fa210cbd25e04992c5ae13332`
+- Generator BLAKE3: `4eb8b57027886c4f8812e667ad51e61f3d6fcbdc4dbd0e1bc935b2aae8f6b29c`
 - ABI: `iyon_tui_view` v1
 - Semantic schema: v1
 - Minimum Bun: `1.4.0`
@@ -52,6 +52,7 @@
 | Name | Family | Hotness | Return | Fallback | Thread | Allocates | Host mutation |
 |---|---|---|---|---|---|---|---|
 | `runtime_noop` | `runtime` | `probe` | `u32` | `none` | `owner_thread` | `false` | `false` |
+| `view_status_detail` | `diagnostic` | `cold` | `u32` | `none` | `owner_thread` | `false` | `false` |
 | `view_render_ref` | `render_ref` | `critical` | `ViewRefResult` | `v4` | `owner_thread` | `false` | `false` |
 | `host_render_ref` | `render_ref` | `critical` | `i32` | `none` | `owner_thread` | `false` | `true` |
 | `view_spacer_create` | `constructor` | `warm` | `ViewRefResult` | `v4` | `owner_thread` | `true` | `false` |

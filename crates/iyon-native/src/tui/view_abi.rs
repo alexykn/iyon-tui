@@ -46,6 +46,13 @@ const FAST_CACHE_MISS: u32 = 0x8000_0004;
 const FAST_FALLBACK: u32 = 0x8000_0005;
 const FAST_INTERNAL: u32 = 0x8000_0006;
 
+// PERF-12 §74/T12: the status detail side channel uses the top two bits for
+// the failure kind and the remaining bits for a child ordinal where needed.
+// Child ordinals are bounded by the retained transport caps, so they fit in
+// the 30-bit payload. Base-ref failures carry no payload.
+const STATUS_DETAIL_CHILD_INDEX: u32 = 0x4000_0000;
+const STATUS_DETAIL_BASE_REF: u32 = 0x8000_0000;
+
 /// PERF-12 §55 maintenance tuning: bounded candidate budget processed per
 /// maintenance call, and the weak-cache metadata growth that triggers the
 /// threshold-backstop full sweep. Final values are benchmark decisions.
@@ -1426,6 +1433,19 @@ pub(super) fn runtime_from_handle(
     Ok(runtime)
 }
 
+pub(super) fn publish_decoded_view(
+    handle: &ViewRuntimeHandle,
+    node_id: u64,
+    view: View,
+) -> napi::Result<u32> {
+    let runtime = runtime_from_handle(handle)?;
+    runtime.publish(node_id, view).map_err(|status| {
+        NativeError::invalid_input(format!(
+            "decoded View publication failed with status 0x{status:x}"
+        ))
+    })
+}
+
 pub(super) fn runtime_for_env(env: &Env) -> napi::Result<*mut NativeViewRuntime> {
     runtime_ptr_for_env(env)
 }
@@ -1502,6 +1522,7 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
         "function_count": generated_table::FUNCTION_COUNT,
         "functions": {
             "runtimeNoop": generated_exports::iyon_runtime_noop_v1 as *const () as usize as u64,
+            "viewStatusDetail": generated_exports::iyon_view_status_detail_v1 as *const () as usize as u64,
             "viewRenderRef": generated_exports::iyon_view_render_ref_v1 as *const () as usize as u64,
             "hostRenderRef": generated_exports::iyon_host_render_ref_v1 as *const () as usize as u64,
             "viewSpacerCreate": generated_exports::iyon_view_spacer_create_v1 as *const () as usize as u64,
@@ -1659,6 +1680,34 @@ fn node_id(low: u32, high: u32) -> Result<u64, u32> {
 
 fn record_result(runtime: &NativeViewRuntime, result: u32) -> u32 {
     runtime.status.record(result, 0)
+}
+
+fn record_result_with_detail(runtime: &NativeViewRuntime, result: u32, detail: u32) -> u32 {
+    runtime.status.record(result, detail)
+}
+
+fn child_status_detail(index: usize) -> u32 {
+    STATUS_DETAIL_CHILD_INDEX | (index as u32 & 0x3fff_ffff)
+}
+
+fn base_status_detail() -> u32 {
+    STATUS_DETAIL_BASE_REF
+}
+
+fn record_child_cache_miss(runtime: &NativeViewRuntime, index: usize) -> u32 {
+    record_result_with_detail(runtime, FAST_CACHE_MISS, child_status_detail(index))
+}
+
+fn record_base_cache_miss(runtime: &NativeViewRuntime) -> u32 {
+    record_result_with_detail(runtime, FAST_CACHE_MISS, base_status_detail())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "Rust" fn view_status_detail_impl(runtime: *mut NativeViewRuntime) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return 0;
+    };
+    runtime.status.detail.load(Ordering::Acquire)
 }
 
 fn record_host_status(runtime: &NativeViewRuntime, status: i32) -> i32 {
@@ -2230,7 +2279,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_root_impl(
         return FAST_INVALID;
     };
     let Ok((base_view, _)) = runtime.resolve_ref(base) else {
-        return FAST_CACHE_MISS;
+        return record_base_cache_miss(runtime);
     };
     let Ok(patched) = base_view.try_with_text_layout_patch(Some(wrap), Some(align)) else {
         return FAST_INVALID;
@@ -2281,7 +2330,7 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
         return FAST_CACHE_MISS;
     }
     let Ok((base_view, _)) = runtime.resolve_ref(base) else {
-        return FAST_CACHE_MISS;
+        return record_base_cache_miss(runtime);
     };
     let mut patched = base_view;
     if mask & PATCH_PADDING != 0 {
@@ -2341,33 +2390,54 @@ const AXIS_KIND_ROW: u32 = 1;
 const AXIS_KIND_COLUMN: u32 = 2;
 const MAX_AXIS_CHILD_COUNT: u32 = 524_288;
 
+#[derive(Clone, Copy, Debug)]
+struct StatusFailure {
+    code: u32,
+    detail: u32,
+}
+
+impl From<u32> for StatusFailure {
+    fn from(code: u32) -> Self {
+        Self { code, detail: 0 }
+    }
+}
+
 fn resolve_axis_children(
     runtime: &mut NativeViewRuntime,
     children: *const AxisChildInputV1,
     used_child_count: u32,
-) -> Result<Vec<(u32, View)>, u32> {
+) -> Result<Vec<(u32, View)>, StatusFailure> {
     if used_child_count > MAX_AXIS_CHILD_COUNT {
-        return Err(FAST_FALLBACK);
+        return Err(FAST_FALLBACK.into());
     }
     if used_child_count == 0 {
         return Ok(Vec::new());
     }
     if children.is_null() {
-        return Err(FAST_INVALID);
+        return Err(FAST_INVALID.into());
     }
     let inputs = unsafe { std::slice::from_raw_parts(children, used_child_count as usize) };
     inputs
         .iter()
-        .map(|input| {
+        .enumerate()
+        .map(|(index, input)| {
             if input.track_word != 0 {
                 let kind = input.track_word & 0xff;
                 if !(1..=5).contains(&kind) {
-                    return Err(FAST_INVALID);
+                    return Err(FAST_INVALID.into());
                 }
             }
             runtime
                 .resolve_ref(input.child_ref)
                 .map(|(view, _)| (input.track_word, view))
+                .map_err(|code| StatusFailure {
+                    code,
+                    detail: if code == FAST_CACHE_MISS {
+                        child_status_detail(index)
+                    } else {
+                        0
+                    },
+                })
         })
         .collect()
 }
@@ -2465,7 +2535,7 @@ pub unsafe extern "Rust" fn view_axis_create_buffer_impl(
     // on the slice below being in bounds.
     let children = match resolve_axis_children(runtime, children, used_child_count) {
         Ok(children) => children,
-        Err(error) => return record_result(runtime, error),
+        Err(error) => return record_result_with_detail(runtime, error.code, error.detail),
     };
     let horizontal = match axis_kind {
         AXIS_KIND_ROW => true,
@@ -2505,12 +2575,12 @@ fn create_small_axis(
         return FAST_INVALID;
     };
     let mut resolved = Vec::with_capacity(children.len());
-    for &(track_word, child_ref) in children {
+    for (index, &(track_word, child_ref)) in children.iter().enumerate() {
         if track_word != 0 && !(1..=5).contains(&(track_word & 0xff)) {
             return record_result(runtime, FAST_INVALID);
         }
         let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
-            return record_result(runtime, FAST_CACHE_MISS);
+            return record_child_cache_miss(runtime, index);
         };
         resolved.push((track_word, child));
     }
@@ -2676,10 +2746,10 @@ pub unsafe extern "Rust" fn view_axis_set_child_impl(
         Err(error) => return record_result(runtime, error),
     }
     let Ok((base, _)) = runtime.resolve_ref(base_axis_ref) else {
-        return FAST_CACHE_MISS;
+        return record_base_cache_miss(runtime);
     };
     let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
-        return FAST_CACHE_MISS;
+        return record_child_cache_miss(runtime, 0);
     };
     let Ok(patched) = base.native_axis_set_child(child_index as usize, track_word, child) else {
         return FAST_INVALID;
@@ -2716,11 +2786,11 @@ pub unsafe extern "Rust" fn view_axis_splice_buffer_impl(
         Err(error) => return record_result(runtime, error),
     }
     let Ok((base, _)) = runtime.resolve_ref(base_axis_ref) else {
-        return FAST_CACHE_MISS;
+        return record_base_cache_miss(runtime);
     };
     let inserted = match resolve_axis_children(runtime, children, used_child_count) {
         Ok(inserted) => inserted,
-        Err(error) => return record_result(runtime, error),
+        Err(error) => return record_result_with_detail(runtime, error.code, error.detail),
     };
     let Ok(patched) = base.native_axis_splice(index as usize, remove_count as usize, inserted)
     else {
@@ -2756,10 +2826,10 @@ pub unsafe extern "Rust" fn view_grid_set_cell_impl(
         Err(error) => return record_result(runtime, error),
     }
     let Ok((base, _)) = runtime.resolve_ref(base_grid_ref) else {
-        return FAST_CACHE_MISS;
+        return record_base_cache_miss(runtime);
     };
     let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
-        return FAST_CACHE_MISS;
+        return record_child_cache_miss(runtime, 0);
     };
     let Ok(patched) = base.native_grid_set_cell(row as usize, column as usize, child) else {
         return FAST_INVALID;
@@ -2913,11 +2983,22 @@ pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
         return FAST_INVALID;
     };
     let slice = unsafe { slice::from_raw_parts(words, used_word_count as usize) };
+    let mut child_index = 0usize;
+    let mut detail = 0;
     let outcome = parse_and_build_grid(
         slice,
         &mut |child_ref: u32| {
-            let (view, _) = runtime.resolve_ref(child_ref)?;
-            Ok(view)
+            let index = child_index;
+            child_index += 1;
+            runtime
+                .resolve_ref(child_ref)
+                .map(|(view, _)| view)
+                .map_err(|error| {
+                    if error == FAST_CACHE_MISS {
+                        detail = child_status_detail(index);
+                    }
+                    error
+                })
         },
         column_gap,
         row_gap,
@@ -2927,7 +3008,7 @@ pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
             Ok(reference) => record_result(runtime, reference),
             Err(error) => record_result(runtime, error),
         },
-        Err(error) => record_result(runtime, error),
+        Err(error) => record_result_with_detail(runtime, error, detail),
     }
 }
 
@@ -3620,7 +3701,7 @@ mod tests {
     use super::{
         AxisChildInputV1, FAST_CACHE_MISS, FAST_INVALID, GRID_TRACK_CONTENT_WORD, MAX_EDIT_COUNT,
         NativeRefTable, NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF,
-        generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
+        STATUS_DETAIL_CHILD_INDEX, generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
     use iyon_tui::{GridTrack, IntoView, TextSpan, View};
     use std::ffi::CString;
@@ -3773,6 +3854,23 @@ mod tests {
 
     fn runtime() -> NativeViewRuntime {
         NativeViewRuntime::new()
+    }
+
+    #[test]
+    fn t12_stale_child_status_detail_precedes_parent_publication() {
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let stale_child = 0x7fff_fe00;
+        let result = unsafe {
+            generated_exports::iyon_view_row_create_1_v1(pointer, 91, 0, 0, 0, stale_child)
+        };
+        assert_eq!(result, FAST_CACHE_MISS);
+        assert_eq!(
+            unsafe { generated_exports::iyon_view_status_detail_v1(pointer) },
+            STATUS_DETAIL_CHILD_INDEX
+        );
+        assert_eq!(runtime.ref_for_node_id(91), Err(FAST_CACHE_MISS));
+        assert_eq!(runtime.slots.len(), 0);
     }
 
     #[test]

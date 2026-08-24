@@ -1166,17 +1166,6 @@ function disposeKeyGroup(group: KeyGroup): void {
   group.owner.release();
 }
 
-/** Collects fresh never-committed pending scopes after an aborted pass. */
-function disposeFreshPending(owner: ChildOwnerState): void {
-  for (const record of owner.pendingChildren) {
-    if (!record.scope.mounted && !record.scope.disposed) record.scope.dispose();
-  }
-  if (owner.pendingKeyed !== undefined) {
-    for (const [, group] of owner.pendingKeyed) disposeFreshPending(group.owner);
-  }
-  owner.dropPending();
-}
-
 function ownsScope(owner: ChildOwnerState, scope: RetainedExecutionScope): boolean {
   if (owner.pendingChildren.some((record) => record.scope === scope)) return true;
   if (owner.pendingKeyed !== undefined) {

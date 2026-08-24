@@ -604,7 +604,10 @@ const provenance = {
   note: "R10 authoritative decision run (§102.1): four arms — body-key guard, uncomposed rebuild, manual stable oracle, and the T13.1 retained-scope candidate over defineView/state. Arms run sequentially in one process with per-arm headless sessions and cross-arm screen parity enforcement; counter deltas isolate per-case windows.",
 };
 
-const artifact = [JSON.stringify(provenance), ...ARMS.flatMap((arm) => results.get(arm)!.records)]
+// provenance goes in RAW: the .map() below stringifies every element, so
+// pre-stringifying here produced a double-encoded line (a quirk the Step-1
+// baseline artifact carried; fixed for the authoritative decision record).
+const artifact = [provenance, ...ARMS.flatMap((arm) => results.get(arm)!.records)]
   .map((record) => JSON.stringify(record))
   .join("\n") + "\n";
 writeFileSync("packages/iyon-runtime/bench/PERF-12-T13.1-R10-composition-authoritative.jsonl", artifact);

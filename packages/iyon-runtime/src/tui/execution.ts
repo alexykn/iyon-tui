@@ -32,6 +32,7 @@ import {
   popActiveFrame,
   protocolState,
   pushActiveFrame,
+  resolveKeyedGroup,
 } from "./execution-context.ts";
 
 export type { ViewKey };
@@ -777,6 +778,42 @@ export class RetainedExecutionRuntime {
     owner.wipActive = false;
   }
 
+  /**
+   * Mounts an externally constructed root scope (OwnedBuilderRoot): runs its
+   * body once, stages/commits publications through its assigned publication
+   * target. On failure rolls back WIP, disposes the subtree and rethrows
+   * (the root never becomes authoritative).
+   */
+  mountExistingRoot(scope: RetainedExecutionScope): void {
+    this.roots.push(scope);
+    executionCounters.execution_scope_mounts += 1;
+    const staged: RetainedExecutionScope[] = [];
+    try {
+      this.runWork(scope);
+      this.stagePublicationsRecursive(scope, staged);
+      this.commitBatch([scope]);
+    } catch (error) {
+      unwindStaged(staged);
+      const fresh: RetainedExecutionScope[] = [];
+      this.abortLevel(scope.owner, fresh);
+      scope.pendingOutput = undefined;
+      scope.table.rollback();
+      scope.pendingDependencies = new Set();
+      scope.state = "clean";
+      for (const s of fresh) this.disposeScopeTree(s);
+      this.disposeScopeTree(scope);
+      this.roots.splice(this.roots.indexOf(scope), 1);
+      throw error;
+    }
+  }
+
+  /** Detaches a mounted root scope from the runtime (OwnedBuilderRoot dispose). */
+  detachRoot(scope: RetainedExecutionScope): void {
+    this.disposeScopeTree(scope);
+    const index = this.roots.indexOf(scope);
+    if (index !== -1) this.roots.splice(index, 1);
+  }
+
   private disposeScopeTree(scope: RetainedExecutionScope): void {
     scope.dispose();
   }
@@ -827,8 +864,21 @@ export class RetainedExecutionRuntime {
     if (execScope === undefined) {
       throw new ExecutionError("TUI_EXECUTION_NO_ACTIVE_SCOPE", "component invocation outside any evaluating scope");
     }
+    // ONE keyed identity mechanism (review SS10): a keyed invocation routes
+    // reconciliation into its group's child-owner; unkeyed invocations use
+    // the active owner's positional stream.
+    if (key !== undefined) {
+      const owner = executionContext.childOwner ?? execScope.owner;
+      const group = resolveKeyedGroup(owner, key);
+      const typed = this.invokeInto(group.owner, execScope, component, props, undefined);
+      const embeddable = (): View =>
+        typed.projection !== undefined ? typed.projection.view : (
+          typed.pendingOutput ?? typed.currentOutput!
+        );
+      return { view: embeddable(), scope: typed };
+    }
     const childOwner = executionContext.childOwner ?? execScope.owner;
-    const typed = this.invokeInto(childOwner, execScope, component, props, key);
+    const typed = this.invokeInto(childOwner, execScope, component, props, undefined);
     const embeddable = (): View =>
       typed.projection !== undefined ? typed.projection.view : (
         typed.pendingOutput ?? typed.currentOutput!
@@ -944,6 +994,28 @@ function ownsScope(owner: ChildOwnerState, scope: RetainedExecutionScope): boole
 }
 
 /**
+ * R8 diagnostics: the keyed group that owns `scope`, if any. Key identity
+ * lives on the group, not on child records (handoff §32.2.5).
+ */
+export function keyGroupOf(scope: RetainedExecutionScope): ViewKey | undefined {
+  const parent = scope.parent;
+  if (parent === null) return undefined;
+  // Check WIP first (group may have been touched but not yet promoted), then
+  // the committed namespace.
+  const owners = [parent.owner.pendingKeyed, parent.owner.committedKeyed];
+  for (const map of owners) {
+    if (map === undefined) continue;
+    for (const [key, group] of map) {
+      const pools = [group.owner.pendingChildren, group.owner.committedChildren];
+      for (const pool of pools) {
+        if (pool.some((record) => record.scope === scope)) return key;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * Invokes a child component inside the currently evaluating scope. Must be
  * called from inside a component body. Reconciles under the ACTIVE CHILD
  * OWNER (the enclosing scope normally; a keyed group inside View.key).
@@ -958,4 +1030,74 @@ export function invokeComponent<P>(
     throw new ExecutionError("TUI_EXECUTION_NO_ACTIVE_SCOPE", "component invocation outside any evaluating scope");
   }
   return execScope.runtime.invokeChild(component, props, key);
+}
+
+
+/**
+ * PERF-12 T13.1 R8 — OwnedBuilderRoot (handoff §32.2.6).
+ *
+ * A retained execution root whose View producer is owned by a boundary
+ * (Tui body / ViewSlot content / ScrollPane content). The producer is part
+ * of the transaction: `replaceProducer` stages the new producer, re-drives
+ * the scope, and only PROMOTES it when evaluation/publication succeed;
+ * failure restores the previous producer so the boundary keeps rendering
+ * its last authoritative content.
+ *
+ * Ownership transitions (direct↔builder↔animation) are transactional too:
+ * the new owner takes over only after its initial publication succeeds.
+ */
+export class OwnedBuilderRoot {
+  readonly scope: RetainedExecutionScope;
+  private currentProducer: () => View;
+  private onFailure?: (previousProducer: () => View) => void;
+
+  private constructor(
+    runtime: RetainedExecutionRuntime,
+    producer: () => View,
+    target: PublicationTarget,
+    onFailure?: (previousProducer: () => View) => void,
+  ) {
+    this.currentProducer = producer;
+    this.onFailure = onFailure;
+    // The scope renders whatever the CURRENT producer yields; the producer
+    // itself is transactional state owned by this root (§32.2.6).
+    const self = this;
+    const componentType: ViewComponentType<void> = { render: () => self.currentProducer() };
+    this.scope = new RetainedExecutionScope<void>(runtime, null, componentType, undefined, -1, undefined, NEXT_SCOPE_ID++);
+    this.scope.publicationTarget = target;
+  }
+
+  /** Starts an owned builder root and evaluates its initial content. */
+  static start(
+    runtime: RetainedExecutionRuntime,
+    producer: () => View,
+    target: PublicationTarget,
+    onFailure?: (previousProducer: () => View) => void,
+  ): OwnedBuilderRoot {
+    const root = new OwnedBuilderRoot(runtime, producer, target, onFailure);
+    runtime.mountExistingRoot(root.scope);
+    return root;
+  }
+
+  /**
+   * Stages a new producer and re-drives the root synchronously. On success
+   * the new producer becomes current; on failure the previous producer is
+   * restored so the boundary keeps rendering its last authoritative content.
+   */
+  replaceProducer(producer: () => View): void {
+    if (this.currentProducer === producer) return;
+    const previous = this.currentProducer;
+    this.currentProducer = producer;
+    try {
+      this.scope.runtime.update(this.scope);
+    } catch (error) {
+      // Restore: the failed producer must not be retried implicitly.
+      this.currentProducer = previous;
+      throw error;
+    }
+  }
+
+  dispose(): void {
+    this.scope.runtime.detachRoot(this.scope);
+  }
 }

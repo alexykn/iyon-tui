@@ -8,6 +8,11 @@ import {
   tryRetainedMaterializeRef,
 } from "./native_view_abi.ts";
 import { RetainedRootBoundary } from "./retained_dag.ts";
+import {
+  OwnedBuilderRoot,
+  type RetainedExecutionRuntime,
+} from "./execution.ts";
+import { protocolState } from "./execution-context.ts";
 import { nodeForBridge, View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "../native.ts";
 
@@ -68,9 +73,18 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
    */
   private boundary?: RetainedRootBoundary;
 
-  constructor(host: NativeTuiHostContract, initialView?: View) {
+  /** R8: shared Tui execution runtime (undefined for raw internal construction — builder mode unsupported there). */
+  private readonly retainedRuntime?: RetainedExecutionRuntime;
+  private ownedBuilderRoot?: OwnedBuilderRoot;
+
+  constructor(
+    host: NativeTuiHostContract,
+    initialView?: View,
+    retainedRuntime?: RetainedExecutionRuntime,
+  ) {
     super("component", buildSlotHandle(host, initialView) as NativeViewSlotHandle);
     this.currentView = initialView;
+    this.retainedRuntime = retainedRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
@@ -95,7 +109,51 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
   revision(): number { return this.call(() => this.nativeHandle.revision()); }
-  setView(view: View): void {
+  /**
+   * PERF-12 T13.1 R8 (handoff §32.2.4): direct and builder forms are
+   * OWNERSHIP MODES.
+   *
+   *   setView(() => View)  — builder takes ownership: a retained execution
+   *       root owned by THIS slot renders the producer output; State reads
+   *       subscribe automatically (no further setView calls needed).
+   *   setView(view)        — DIRECT takes ownership: any previous builder
+   *       root is disposed AFTER the direct view is successfully installed
+   *       (transactional order: prepare/commit new, then release old).
+   */
+  setView(viewOrBuilder: View | (() => View)): void {
+    if (typeof viewOrBuilder === "function") {
+      this.setViewBuilder(viewOrBuilder);
+      return;
+    }
+    this.setViewDirect(viewOrBuilder);
+  }
+
+  private assertBuilderAllowed(): void {
+    if (protocolState.mutating) {
+      throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: slot builder mutation during a retained protocol pass");
+    }
+    if (this.retainedRuntime === undefined) {
+      throw new Error(
+        "TUI_EXECUTION_BUILDER_UNSUPPORTED: builder mode requires a Tui-created slot (shared execution runtime)",
+      );
+    }
+  }
+
+  private setViewBuilder(build: () => View): void {
+    this.assertBuilderAllowed();
+    const target = {
+      preparePublication: (o: import("./values/view.ts").View) => this.prepareSetView(o),
+    };
+    if (this.ownedBuilderRoot === undefined) {
+      const runtime = this.retainedRuntime!;
+      this.ownedBuilderRoot = OwnedBuilderRoot.start(runtime, build, target);
+    } else {
+      this.ownedBuilderRoot.replaceProducer(build);
+    }
+  }
+
+  /** Direct ownership: install now, then dispose any owned builder root. */
+  private setViewDirect(view: View): void {
     this.call(() => {
       // PERF-12 T13 retained path: identity-first install through the slot's
       // own §18 boundary. Previous content stays leased until the replacement
@@ -120,6 +178,17 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       this.nativeHandle.setView(nodeForBridge(view));
       this.currentView = view;
     });
+    // Transactional ownership transition (direct wins only after successful
+    // publication): dispose any owned builder root LAST.
+    this.disposeOwnedBuilder();
+  }
+
+  private disposeOwnedBuilder(): void {
+    const root = this.ownedBuilderRoot;
+    if (root !== undefined) {
+      this.ownedBuilderRoot = undefined;
+      root.dispose();
+    }
   }
   /**
    * PERF-12 T13.1 R7: transactional variant of {@link setView}. Delegates to

@@ -49,6 +49,15 @@ export function activeChildOwner(): ChildOwnerState | undefined {
   return executionContext.childOwner;
 }
 
+/** Active child owner or deterministic failure (View.key entry). */
+export function activeChildOwnerOrThrow(): ChildOwnerState {
+  const owner = activeChildOwner();
+  if (owner === undefined) {
+    throw new Error("TUI_EXECUTION_NO_ACTIVE_SCOPE: View.key outside any evaluating scope");
+  }
+  return owner;
+}
+
 export function pushActiveFrame(scope: RetainedExecutionScope): void {
   frameStack.push({ scope, owner: scope.owner });
   syncTop();
@@ -75,21 +84,28 @@ export function popActiveFrame(scope: RetainedExecutionScope): void {
  * State reads and semantic slots still belong to the enclosing scope — key
  * groups own identity only (AMENDMENT-C §32.2.5 / handoff §16).
  */
-export function withKeyedChildOwner<T>(owner: ChildOwnerState, key: ViewKey, build: () => T): T {
-  const frame = frameStack[frameStack.length - 1];
-  if (frame === undefined) {
-    throw new Error("TUI_EXECUTION_NO_ACTIVE_SCOPE");
-  }
-  // Duplicate detection lives in the WIP map: presence in pendingKeyed means
-  // "already seen this pass" \u2014 committed groups never enter it implicitly.
+/**
+ * Resolves or creates the keyed group for `key` under `owner`. Duplicate use
+ * within the same WIP pass rejects deterministically. Marks participation
+ * and opens fresh WIP for the group's child stream.
+ */
+export function resolveKeyedGroup(owner: ChildOwnerState, key: ViewKey): KeyGroup {
   if (owner.pendingKeyed?.has(key)) {
     throw new Error(`TUI_EXECUTION_DUPLICATE_KEY: key ${String(key)} already used in this pass`);
   }
   const existing = owner.committedKeyed?.get(key);
   const group = existing ?? new KeyGroup(key);
   (owner.pendingKeyed ??= new Map()).set(key, group);
-  // Fresh WIP for the group's child stream on every entry (reused groups too).
   group.owner.beginChildPass();
+  return group;
+}
+
+export function withKeyedChildOwner<T>(owner: ChildOwnerState, key: ViewKey, build: () => T): T {
+  const frame = frameStack[frameStack.length - 1];
+  if (frame === undefined) {
+    throw new Error("TUI_EXECUTION_NO_ACTIVE_SCOPE");
+  }
+  const group = resolveKeyedGroup(owner, key);
 
   const previous = frame.owner;
   frame.owner = group.owner;

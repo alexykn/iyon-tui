@@ -1,5 +1,5 @@
 import { native } from "../native.ts";
-import { nodeForBridge } from "./values/view.ts";
+import { nodeForBridge, View } from "./values/view.ts";
 import { asTuiError, tuiError } from "./errors.ts";
 import { requireNativeClass } from "./handles.ts";
 import { Scene } from "./scene.ts";
@@ -10,12 +10,21 @@ import { NativeScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
+  tryNativeMaterialize,
 } from "./native_view_abi.ts";
-import { resetStyleRefCacheForThemeChange, RetainedRootBoundary } from "./retained_dag.ts";
+import {
+  resetStyleRefCacheForThemeChange,
+  RetainedRootBoundary,
+  setRootColdMaterializer,
+} from "./retained_dag.ts";
+import type { RootPublication } from "./retained_dag.ts";
+import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./execution.ts";
+import { protocolState } from "./execution-context.ts";
 import type {
   OutputHandle,
   ScrollPane,
   Scene as SceneContract,
+  History as HistoryContract,
   TerminalMetadata,
   TuiEvent,
   TuiOpenOptions,
@@ -36,10 +45,106 @@ export class Tui implements TuiRuntime {
    */
   private boundary?: RetainedRootBoundary;
 
+  /**
+   * PERF-12 T13.1 R8: ONE retained execution runtime per Tui, created eagerly.
+   * The root scene scope and every slot/pane builder root participate in this
+   * single dirty queue / batch / R7 transaction protocol.
+   */
+  private readonly retainedRuntime: RetainedExecutionRuntime;
+  /** Root execution scope (created on first canonical render). */
+  private rootBuilder?: OwnedBuilderRoot;
+  private rootProducerStaged?: () => SceneContract;
+  private rootScopeCreated = false;
+  /** History sideband: attach-once ownership per the Rust audit (SS32.2.4). */
+  private stagedHistory?: HistoryContract;
+  private boundHistory?: HistoryContract;
+
   private constructor(host: NativeTuiHostContract, width: number, height: number) {
     this.host = host;
     this.width = width;
     this.height = height;
+    // Bootstrap the boundary's COLD materializer (Direct decode w/o paint)
+    // so prepareColdInstall can fulfill the SS32.2.3 no-paint-during-PREPARE
+    // rule. Idempotent; last Tui wins (single active runtime per process is
+    // the supported model).
+    setRootColdMaterializer((view) => tryNativeMaterialize(view));
+    const hostRef = host;
+    // autoFlush stays ENABLED: tracked-state writes drain on the next
+    // microtask (R5 scheduler semantics). render() additionally drains
+    // pending work first so legacy/direct callers see a coherent frame.
+    this.retainedRuntime = new RetainedExecutionRuntime({
+      createScopeProjection: () => {
+        // Component scopes project as native view slots (R6a machinery).
+        const slot = new ViewSlot(hostRef);
+        const view = slot.view();
+        return {
+          view,
+          install(output: View): void {
+            slot.setView(output);
+          },
+          preparePublication(output: View) {
+            return slot.prepareSetView(output);
+          },
+          dispose(): void {
+            slot.dispose();
+          },
+        };
+      },
+    });
+  }
+
+  /**
+   * PERF-12 T13.1 R8 root publication target: retained prepare first; on
+   * refusal a COLD MATERIALIZE-ONLY fallback (never paints during PREPARE —
+   * the commit publishes via one hostRenderRef call). History sideband is
+   * validated here and swapped at commit.
+   */
+  private prepareRootPublication(
+    session: NonNullable<ReturnType<typeof nativeViewAbiSession>>,
+    output: View,
+  ): RootPublication | undefined {
+    this.ensureBoundary(session);
+    let prepared: RootPublication | undefined = this.boundary!.prepareInstall(output);
+    if (prepared === undefined) {
+      // Cold materialize-only: decode WITHOUT painting (\u00a732.2.3 hard rule).
+      prepared = this.boundary!.prepareColdInstall(output);
+    }
+    // History sideband validation happens at prepare time via stageHistory;
+    // commit swaps the binding before the body publishes.
+    const historyToBind = this.stagedHistory;
+    const previousHistory = this.boundHistory;
+    return {
+      rootRef: prepared!.rootRef,
+      commit: (): void => {
+        // History swap BEFORE body publish mirrors the direct path's ordering
+        // (set_history then install/paint).
+        if (historyToBind !== undefined && historyToBind !== previousHistory) {
+          const nativeObj = (historyToBind as unknown as { nativeObject(): object }).nativeObject() as never;
+          this.host.setHistory(nativeObj);
+          this.boundHistory = historyToBind;
+        }
+        prepared!.commit();
+        this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+      },
+      abort(): void {
+        prepared!.abort();
+      },
+    };
+  }
+
+  private stageHistoryBinding(history?: HistoryContract): void {
+    if (
+      history !== undefined &&
+      this.boundHistory !== undefined &&
+      this.boundHistory !== history
+    ) {
+      // Rust ownership model: History transitions detached -> attached ONCE
+      // (take_for_host rejects already-attached handles; scene replacement
+      // orphans the old value). Different handle after binding is therefore
+      // a deterministic API error, not a swappable pointer.
+      throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
+    }
+    this.stagedHistory = history ?? this.boundHistory;
   }
 
   static async open(options: TuiOpenOptions = {}): Promise<Tui> {
@@ -58,6 +163,9 @@ export class Tui implements TuiRuntime {
   }
 
   get size(): TerminalMetadata { return { width: this.width, height: this.height }; }
+
+  /** PERF-12 T13.1 R8: the ONE retained execution runtime owned by this Tui. */
+  get executionRuntime(): RetainedExecutionRuntime { return this.retainedRuntime; }
 
   async nextEvent(signal?: AbortSignal): Promise<TuiEvent> {
     if (signal?.aborted) throw tuiError("cancelled", "TUI event wait was cancelled");
@@ -112,9 +220,64 @@ export class Tui implements TuiRuntime {
    * is gone: identity hints replace path-lineage recipes, and derivation
    * patches ride inside ensureNative (§27).
    */
-  render(scene: SceneContract, signal?: AbortSignal): void {
+  /**
+   * PERF-12 T13.1 R8 canonical recurring form (handoff §32.2.3): the Tui
+   * owns the root execution scope — closure IDENTITY is irrelevant. Each
+   * call replaces the producer and re-drives the root through the same R7
+   * prepare/commit protocol as every other boundary participant. State reads
+   * inside `builder` subscribe the root scope automatically, so tracked
+   * state changes re-render WITHOUT calling render again.
+   */
+  render(sceneOrBuilder: SceneContract | (() => SceneContract), signal?: AbortSignal): void {
+    if (typeof sceneOrBuilder === "function") {
+      this.renderCanonical(sceneOrBuilder, signal);
+      return;
+    }
+    this.renderDirect(sceneOrBuilder, signal);
+  }
+
+  /** Drains pending retained-execution work so callers see a coherent frame. */
+  private drainExecution(): void {
+    if (!this.closed) this.retainedRuntime.flush();
+  }
+
+  private assertNotMutating(operation: string): void {
+    if (protocolState.mutating || this.closed === false) {
+      // Only reject when a retained protocol pass is actually running.
+      if (protocolState.mutating) {
+        throw tuiError("terminal", `${operation} during a retained protocol pass is forbidden`);
+      }
+    }
+  }
+
+  private renderCanonical(builder: () => SceneContract, signal?: AbortSignal): void {
     ensureSignal(signal);
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
+    this.drainExecution();
+    this.assertNotMutating("tui.render(builder)");
+
+    const producer = (): View => {
+      const scene = Scene.from(builder());
+      this.stageHistoryBinding(scene.history);
+      return scene.body;
+    };
+
+    if (!this.rootScopeCreated) {
+      this.rootScopeCreated = true;
+      const rootTarget = {
+        preparePublication: (output: View): RootPublication | undefined =>
+          this.prepareRootPublication(nativeViewAbiSession()!, output),
+      };
+      this.rootBuilder = OwnedBuilderRoot.start(this.retainedRuntime, producer, rootTarget);
+      return;
+    }
+    this.rootBuilder!.replaceProducer(producer);
+  }
+
+  private renderDirect(scene: SceneContract, signal?: AbortSignal): void {
+    ensureSignal(signal);
+    if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
+    this.drainExecution();
     const normalized = Scene.from(scene);
     if (
       this.currentScene !== undefined
@@ -185,11 +348,11 @@ export class Tui implements TuiRuntime {
   }
 
   createViewSlot(initialView: import("./values/view.ts").View): ViewSlot {
-    return new ViewSlot(this.host, initialView);
+    return new ViewSlot(this.host, initialView, this.retainedRuntime);
   }
 
   createScrollPane(initialView: import("./values/view.ts").View): ScrollPane {
-    return new NativeScrollPane(this.host, initialView);
+    return new NativeScrollPane(this.host, initialView, this.retainedRuntime);
   }
 
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {

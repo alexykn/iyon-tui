@@ -8,6 +8,11 @@ import {
   tryRetainedMaterializeRef,
 } from "./native_view_abi.ts";
 import { RetainedRootBoundary } from "./retained_dag.ts";
+import {
+  OwnedBuilderRoot,
+  type RetainedExecutionRuntime,
+} from "./execution.ts";
+import { protocolState } from "./execution-context.ts";
 import { nodeForBridge, View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "../native.ts";
 
@@ -38,9 +43,18 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
   /** T13 (§18/§80): the pane owns one root lease on its current content. */
   private boundary?: RetainedRootBoundary;
 
-  constructor(host: NativeTuiHostContract, initialView?: View) {
+  /** R8: shared Tui execution runtime (undefined for raw internal construction). */
+  private readonly retainedRuntime?: RetainedExecutionRuntime;
+  private ownedBuilderRoot?: OwnedBuilderRoot;
+
+  constructor(
+    host: NativeTuiHostContract,
+    initialView?: View,
+    retainedRuntime?: RetainedExecutionRuntime,
+  ) {
     super("component", buildPaneHandle(host, initialView) as NativeScrollPaneHandle);
     this.currentView = initialView;
+    this.retainedRuntime = retainedRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
@@ -65,7 +79,52 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
 
   capabilities(): ComponentCapabilities { return this.call(() => ({ focusable: true, keys: ["up", "down", "pageup", "pagedown", "home", "end"] })); }
 
-  setContent(view: View): void {
+  /**
+   * PERF-12 T13.1 R8: ownership modes mirror ViewSlot.setView — builder
+   * form creates/reuses a pane-owned retained execution root; direct form
+   * takes ownership after successful install. Scroll state (viewport,
+   * follow-end) is NEVER touched by content rebuilds.
+   */
+  setContent(viewOrBuilder: View | (() => View)): void {
+    if (typeof viewOrBuilder === "function") {
+      if (protocolState.mutating) {
+        throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane builder mutation during a retained protocol pass");
+      }
+      if (this.retainedRuntime === undefined) {
+        throw new Error("TUI_EXECUTION_BUILDER_UNSUPPORTED: builder mode requires a Tui-created pane");
+      }
+      const target = {
+        preparePublication: (o: View) => this.prepareSetContent(o),
+      };
+      if (this.ownedBuilderRoot === undefined) {
+        this.ownedBuilderRoot = OwnedBuilderRoot.start(this.retainedRuntime!, viewOrBuilder, target);
+      } else {
+        this.ownedBuilderRoot.replaceProducer(viewOrBuilder);
+      }
+      return;
+    }
+    this.setContentDirect(viewOrBuilder);
+  }
+
+  private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
+    if (this.disposed || this.boundary === undefined) return undefined;
+    const publication = this.boundary.prepareInstall(output);
+    if (publication === undefined) return undefined;
+    const setCurrent = (promoted: View): void => {
+      this.currentView = promoted;
+    };
+    return {
+      commit(): void {
+        publication.commit();
+        setCurrent(output);
+      },
+      abort(): void {
+        publication.abort();
+      },
+    };
+  }
+
+  private setContentDirect(view: View): void {
     this.call(() => {
       // PERF-12 T13 retained path (§80): previous content stays leased until
       // the replacement is fully materialized and committed.
@@ -88,6 +147,13 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
       this.nativeHandle.setContent(nodeForBridge(view));
       this.currentView = view;
     });
+    // Transactional ownership transition (direct wins after successful
+    // publication): dispose any owned builder root LAST.
+    const root = this.ownedBuilderRoot;
+    if (root !== undefined) {
+      this.ownedBuilderRoot = undefined;
+      root.dispose();
+    }
   }
 
   followEnd(): void { this.call(() => this.nativeHandle.followEnd()); }
@@ -96,6 +162,12 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
   dispose(): void {
     if (!this.disposed) {
       try {
+        // Owned builder root first (SS32.2 lifecycle ordering), then boundary.
+        const root = this.ownedBuilderRoot;
+        if (root !== undefined) {
+          this.ownedBuilderRoot = undefined;
+          root.dispose();
+        }
         this.boundary?.close();
       } finally {
         this.boundary = undefined;

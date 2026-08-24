@@ -77,6 +77,7 @@ import {
 import { PersistentSeq } from "../persistent_seq.ts";
 import { StyleSpec } from "./style.ts";
 import { TextSpan, type HorizontalAlign, type WrapMode } from "./text.ts";
+import { withKeyedChildOwner, activeChildOwnerOrThrow } from "../execution-context.ts";
 
 type ChildBuilder = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
@@ -338,6 +339,23 @@ function freezeBridgeNode(node: BridgeViewNode): BridgeViewNode {
 }
 
 export class View {
+  /**
+   * PERF-12 T13.1 R8 (handoff §16/AMENDMENT-C §32.2.5): keyed child-owner
+   * group. Component invocations inside `build` reconcile under a stable
+   * identity namespace, so moved instances keep their execution scopes
+   * without re-execution. Keys protect CHILD EXECUTION IDENTITY only — raw
+   * Views built directly in the thunk still follow the enclosing scope's
+   * ordinary semantic-slot behavior.
+   *
+   * Keyed groups do not consume unkeyed ordinals and are not independently
+   * schedulable scopes: State reads inside `build` belong to the enclosing
+   * execution scope (identity = View.key; execution = defineView;
+   * invalidation = State<T>).
+   */
+  static key(key: string | number, build: () => View): View {
+    return withKeyedChildOwner(activeChildOwnerOrThrow(), key, build);
+  }
+
   readonly kind = "view" as const;
 
   private constructor(node: BridgeViewNode | BridgeViewNodeDraft) {

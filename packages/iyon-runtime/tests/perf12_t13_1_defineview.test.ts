@@ -23,7 +23,7 @@ import {
   type ViewComponent,
 } from "../src/tui/execution.ts";
 import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
+import { invokeComponent, keyGroupOf } from "../src/tui/execution.ts";
 import { composeText, composeVertical } from "../src/tui/compose.ts";
 import { BRIDGE_VIEW_KIND } from "../src/tui/ir.ts";
 import { View, nodeForBridge } from "../src/tui/values/view.ts";
@@ -149,8 +149,8 @@ describe("T13.1 R2 — defineView public API", () => {
     const keys: unknown[] = [];
     const List = tracked(() =>
       composeVertical((column) => {
-        const { scope } = invokeComponent(Item.component, { label: `tool-${7}` }, `tool-${7}`);
-        keys.push(scope.key);
+        const { scope } = invokeComponent(Item.component, { label: `tool-7` }, `tool-7`);
+        keys.push(keyGroupOf(scope));
         column.child(composeText("tail"));
       }),
     );

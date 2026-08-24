@@ -1288,6 +1288,22 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * definitely-new NodeIds from older possibly-cached ones (§19).
  */
 /**
+ * PERF-12 T13.1 R8 — injectable COLD materializer used by
+ * {@link RetainedRootBoundary.prepareColdInstall}: decodes a whole View tree
+ * into a leased native root reference WITHOUT painting. Bootstrap wires this
+ * to the Direct N-API decode (`tryNativeMaterialize`) — kept behind a hook
+ * because retained_dag must not import native_view_abi (cycle).
+ */
+let COLD_ROOT_MATERIALIZER: ((view: View) => number | undefined) | undefined;
+
+/** Bootstrap wiring for {@link COLD_ROOT_MATERIALIZER} (idempotent). */
+export function setRootColdMaterializer(
+  materializer: (view: View) => number | undefined,
+): void {
+  COLD_ROOT_MATERIALIZER = materializer;
+}
+
+/**
  * PERF-12 T13.1 R7 — one prepared-but-unpublished root replacement
  * (handoff §32.1 R7, AMENDMENT-C §13).
  *
@@ -1465,6 +1481,53 @@ export class RetainedRootBoundary {
       }
     }
     return { node: nodeForBridge(view), rootRef, tx, ownsTempLease, acquiredBoundaryLease };
+  }
+
+  /**
+   * PERF-12 T13.1 R8: COLD transactional publication. Decodes the whole tree
+   * via the injected cold materializer (Direct decode, NO painting) and
+   * returns a publication whose commit paints the prepared ref once
+   * (hostRenderRef) and transfers its lease into the boundary. Used when the
+   * retained path refuses — guarantees "cold fallback never paints during
+   * PREPARE" (handoff §32.2.3 hard rule).
+   */
+  prepareColdInstall(view: View): RootPublication | undefined {
+    if (this.closed) throw new Error("boundary is closed");
+    const materialize = COLD_ROOT_MATERIALIZER;
+    if (materialize === undefined) return undefined;
+    const rootRef = materialize(view);
+    if (rootRef === undefined) return undefined;
+    let finished = false;
+    return {
+      rootRef,
+      commit: (): void => {
+        if (finished) throw new Error("root publication already finished");
+        finished = true;
+        const hostPointer = this.hostPointer();
+        if (hostPointer === undefined) {
+          this.releaseColdLease(rootRef);
+          throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host pointer");
+        }
+        const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+        if (status !== HOST_STATUS_OK) {
+          this.releaseColdLease(rootRef);
+          throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
+        }
+        counters.host_mutations += 1;
+        // Transfer our lease on the new root into the boundary; the previous
+        // root's lease is released here exactly like transferRoot does.
+        this.transferRoot(rootRef);
+      },
+      abort: (): void => {
+        if (finished) return;
+        finished = true;
+        this.releaseColdLease(rootRef);
+      },
+    };
+  }
+
+  private releaseColdLease(rootRef: number): void {
+    viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(rootRef), 1);
   }
 
   /**

@@ -29,6 +29,7 @@
     "test": "bun test",
     "t4:check": "cargo run -p api-surface -- check --config tools/api-surface/surface.toml && bun test packages/iyon-runtime/tests packages/iyon-runtime/test packages/iyon-sdk/tests",
     "t5:check": "cargo run -p api-surface -- check --config tools/api-surface/surface.toml && bun run typecheck && bun test packages/iyon-runtime/tests/tui_* packages/iyon-sdk/tests/tui_*",
+    "check:ownership": "bun run tools/ownership/check.ts",
     "build:standalone": "bun run packages/iyon-runtime/scripts/stage-native.ts --standalone",
     "build:iyon": "bun run native:stage && bun run packages/iyon-cli/build.ts"
   },

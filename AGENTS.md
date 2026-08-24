@@ -26,6 +26,7 @@
 - Run the smallest relevant checks for the files you changed before finishing.
 - Run broader test/lint suites only if explicitly requested or if the change clearly warrants it.
 - Do not add new tests unless explicitly asked.
+- Run `bun run check:ownership` before completing any change that touches the TUI framework boundary or its public surface (see ARCHITECTURE.md).
 
 ## Python
 - Use `uv` for environment and dependency management.

@@ -101,7 +101,7 @@ export interface Component extends NativeHandle {
 }
 
 export interface ViewSlot extends Component {
-  setView(view: View): TuiOperation<void>;
+  setView(view: View | (() => View)): TuiOperation<void>;
   setAnimation(frames: readonly View[], intervalMs: number): TuiOperation<void>;
   setAnimationAtCycleBoundary(frames: readonly View[], intervalMs: number): TuiOperation<void>;
   stopAnimation(view: View): TuiOperation<void>;
@@ -209,6 +209,9 @@ export interface Scene {
   readonly body: View;
 }
 
+/** A scene value or a producer closure evaluated inside the retained root scope. */
+export type SceneProducer = Scene | (() => Scene);
+
 export interface TuiOpenOptions {
   readonly width?: number;
   readonly height?: number;
@@ -225,7 +228,7 @@ export interface TerminalMetadata {
 export interface TuiRuntime {
   readonly size: TuiOperation<TerminalMetadata>;
   nextEvent(signal?: AbortSignal): Promise<TuiEvent>;
-  render(scene: Scene, signal?: AbortSignal): TuiOperation<void>;
+  render(scene: SceneProducer, signal?: AbortSignal): TuiOperation<void>;
   resize(width: number, height: number): TuiOperation<void>;
   close(): TuiOperation<void>;
   exit(): TuiOperation<void>;

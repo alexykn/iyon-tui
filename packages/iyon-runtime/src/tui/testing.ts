@@ -5,7 +5,6 @@ import type {
   AppHarness as AppHarnessContract,
   History,
   OutputHandle,
-  Scene,
   TextInput,
   ScrollPane,
   TuiEvent,
@@ -32,7 +31,7 @@ export class AppHarness implements AppHarnessContract {
   nextEvent(signal?: AbortSignal): Promise<TuiEvent> { return this.tui.nextEvent(signal); }
   nextAction(signal?: AbortSignal): Promise<{ actionId: string; payload?: string } | null> { return this.tui.nextAction(signal); }
 
-  render(scene: Scene, signal?: AbortSignal): void {
+  render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);
     this.tui.advance(0);
   }

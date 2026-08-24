@@ -131,6 +131,8 @@ function registerRuntimeModules(build: Bun.PluginBuilder): void {
       NativeScrollPane,
       Theme,
       View,
+      defineView: require("./tui/define-view.ts").defineView,
+      state: require("./tui/tracked-state.ts").state,
       TuiError: require("./tui/errors.ts").TuiError,
       asTuiError: require("./tui/errors.ts").asTuiError,
       isTuiCancelledError: require("./tui/errors.ts").isTuiCancelledError,

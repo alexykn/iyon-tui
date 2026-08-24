@@ -64,6 +64,8 @@ export interface ConsumerSession {
   readonly composer: TextInput;
   readonly listSlot: ViewSlot;
   readonly pane: ScrollPane;
+  /** R9: body-execution counter for the direct-path chrome (diagnostic). */
+  readonly chromeExecutions: () => number;
   render(state: ConsumerState): void;
   close(): void;
 }
@@ -74,13 +76,16 @@ export async function openConsumerSession(): Promise<ConsumerSession> {
   const listSlot = tui.createViewSlot(View.spacer(0));
   const pane = tui.createScrollPane(View.spacer(0));
   const history = tui.createHistory();
+  let chromeRenderCount = 0;
   return {
     tui,
     history,
     composer,
     listSlot,
     pane,
+    chromeExecutions: () => chromeRenderCount,
     render(state: ConsumerState): void {
+      chromeRenderCount += 1;
       tui.render(new Scene(buildConsumerBody(state, { composer, listSlot, pane }), history));
     },
     close(): void {
@@ -89,6 +94,72 @@ export async function openConsumerSession(): Promise<ConsumerSession> {
       pane.dispose();
       history.dispose();
       tui.close();
+    },
+  };
+}
+
+
+// --- PERF-12 T13.1 R9: componentized consumer (public APIs ONLY) -----------
+//
+// Ordinary defineView/state/View.key usage with ZERO framework setup.
+// The Tui-owned retained runtime activates automatically for these sources.
+
+import { defineView as defineViewPublic } from "@iyon/runtime/tui";
+import { state as createStatePublic } from "@iyon/runtime/tui";
+
+export interface ScopedEntry {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface ScopedConsumer {
+  readonly status: ReturnType<typeof createStatePublic<string>>;
+  readonly items: ReturnType<typeof createStatePublic<readonly ScopedEntry[]>>;
+  readonly headerExecutions: () => number;
+  readonly cardExecutions: (id: string) => number;
+  /** Renders the scoped App tree through the Tui's canonical render path. */
+  readonly renderApp: () => void;
+}
+
+export function buildScopedConsumer(tui: Tui): ScopedConsumer {
+  const status = createStatePublic<string>("ready");
+  const items = createStatePublic<readonly ScopedEntry[]>([
+    { id: "a", label: "alpha" },
+    { id: "b", label: "beta" },
+  ]);
+
+  const headerCount = { n: 0 };
+  const cardCounts = new Map<string, number>();
+
+  const Header = defineViewPublic(() => {
+    headerCount.n += 1;
+    return View.text(`header [${status.value}]`);
+  });
+
+  const ItemCard = defineViewPublic<ScopedEntry>((entry) => {
+    cardCounts.set(entry.id, (cardCounts.get(entry.id) ?? 0) + 1);
+    return View.text(`item ${entry.id}: ${entry.label}`);
+  });
+
+  const Footer = defineViewPublic(() => View.text("footer"));
+
+  const App = defineViewPublic(() =>
+    View.vertical((column) => {
+      column.child(Header({}));
+      for (const entry of items.value) {
+        column.child(View.key(entry.id, () => ItemCard(entry)));
+      }
+      column.child(Footer({}));
+    }),
+  );
+
+  return {
+    status,
+    items,
+    headerExecutions: () => headerCount.n,
+    cardExecutions: (id) => cardCounts.get(id) ?? 0,
+    renderApp: () => {
+      tui.render(() => new Scene(App({})));
     },
   };
 }

@@ -75,7 +75,7 @@ export class Tui implements TuiRuntime {
     this.retainedRuntime = new RetainedExecutionRuntime({
       createScopeProjection: () => {
         // Component scopes project as native view slots (R6a machinery).
-        const slot = new ViewSlot(hostRef);
+        const slot = new ViewSlot(hostRef, View.spacer(0));
         const view = slot.view();
         return {
           view,
@@ -117,10 +117,14 @@ export class Tui implements TuiRuntime {
       rootRef: prepared!.rootRef,
       commit: (): void => {
         // History swap BEFORE body publish mirrors the direct path's ordering
-        // (set_history then install/paint).
+        // (set_history then install/paint). Host-fabricated histories are
+        // born attached to their fabricating host (take_for_host would
+        // reject re-attach); only detached handles transfer here.
         if (historyToBind !== undefined && historyToBind !== previousHistory) {
-          const nativeObj = (historyToBind as unknown as { nativeObject(): object }).nativeObject() as never;
-          this.host.setHistory(nativeObj);
+          const nativeObj = (historyToBind as unknown as { nativeObject(): object }).nativeObject() as { isDetached?: () => boolean };
+          if (nativeObj.isDetached?.() !== false) {
+            this.host.setHistory((historyToBind as unknown as { nativeObject(): object }).nativeObject() as never);
+          }
           this.boundHistory = historyToBind;
         }
         prepared!.commit();

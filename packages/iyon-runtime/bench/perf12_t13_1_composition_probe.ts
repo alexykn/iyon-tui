@@ -36,9 +36,15 @@ import type { ScrollPane } from "../src/tui/types.ts";
 import { TextInput } from "../src/tui/text-input.ts";
 import { ViewSlot } from "../src/tui/component.ts";
 import { Tui } from "../src/tui/runtime.ts";
+import { defineView } from "../src/tui/define-view.ts";
+import { state } from "../src/tui/tracked-state.ts";
 
 const WARMUP = 50;
-const MEASURED = 500;
+/**
+ * R10 authoritative profile (§102/§102.1): >= 500 measured ops required,
+ * p99 requires >= 1,000. The decision run measures every arm at this count.
+ */
+const MEASURED = 1_000;
 const WIDTH = 80;
 const HEIGHT = 24;
 
@@ -286,6 +292,114 @@ const CASES: readonly CaseScript[] = [
   },
 ];
 
+// --- R10 retained-scope arm: the composed candidate over public APIs. ------
+// Mirrors plugins/app/iyon/src/view.ts's production conversion shape: the
+// same chrome decomposed into defineView components reading tracked State
+// slices. NO application-provided identity keys anywhere — reuse comes from
+// scope-local semantic slots + shallow prop skipping + tracked invalidation.
+// Pixel drift against the uncomposed arms fails the cross-arm parity check.
+
+interface RetainedChrome {
+  footerInfo: ReturnType<typeof state<{ provider: string; modelId: string; status: string }>>;
+  effort: ReturnType<typeof state<Effort>>;
+  activityVisible: ReturnType<typeof state<boolean>>;
+  steering: ReturnType<typeof state<readonly string[]>>;
+  approvalId: ReturnType<typeof state<string | undefined>>;
+}
+
+function createRetainedChrome(initial: ProbeState): RetainedChrome {
+  return {
+    footerInfo: state({ provider: initial.provider, modelId: initial.modelId, status: initial.status }),
+    effort: state(initial.effort),
+    activityVisible: state(initial.activityVisible),
+    steering: state(initial.steering),
+    approvalId: state(initial.approvalId),
+  };
+}
+
+function retainedFooterText(chrome: RetainedChrome): string {
+  const info = chrome.footerInfo.value;
+  const effortLabel = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High" }[chrome.effort.value];
+  return [info.provider, info.modelId, `effort: ${effortLabel}`, info.status].filter((value) => value.length > 0).join(" · ");
+}
+
+function retainedQueuePreview(chrome: RetainedChrome): string | undefined {
+  const first = chrome.steering.value[0];
+  if (first === undefined) return undefined;
+  return first.split(/\s+/).filter(Boolean).join(" ");
+}
+
+const RetainedWorking = defineView<{ chrome: RetainedChrome; workingSlot: ViewSlot }>(({ chrome, workingSlot }) => {
+  if (!chrome.activityVisible.value) return View.spacer(0);
+  const preview = retainedQueuePreview(chrome);
+  const extra = chrome.steering.value.length - 1;
+  return View.horizontal((row) => {
+    row.gap(4);
+    row.child(View.component(workingSlot));
+    if (preview !== undefined) {
+      row.flex(muted(`Queue: ${preview}`));
+      if (extra > 0) row.child(muted(` + ${extra} more`));
+    }
+  })
+    .fillWidth()
+    .padding(Insets.of(0, 2, 1, 2));
+});
+
+const RetainedApproval = defineView<{ chrome: RetainedChrome }>(({ chrome }) => {
+  const approvalId = chrome.approvalId.value;
+  if (approvalId === undefined) return View.spacer(0);
+  return View.text(`Approve bash? Press Enter to approve or Escape to reject (${approvalId}).`).fillWidth();
+});
+
+const RetainedComposer = defineView<{ chrome: RetainedChrome; composer: TextInput }>(({ chrome, composer }) => {
+  return View.component(composer)
+    .style(COMPOSER_STYLE)
+    .styleState("iyon.agent.effort", chrome.effort.value)
+    .fillWidth();
+});
+
+const RetainedFooter = defineView<{ chrome: RetainedChrome }>(({ chrome }) => {
+  return View.text(retainedFooterText(chrome)).style(FOOTER_STYLE).fillWidth();
+});
+
+const RetainedChromeRoot = defineView<{ chrome: RetainedChrome; composer: TextInput; workingSlot: ViewSlot }>(({ chrome, composer, workingSlot }) => {
+  return View.vertical((column) => {
+    column.child(RetainedWorking({ chrome, workingSlot }));
+    column.child(RetainedApproval({ chrome }));
+    column.contentMax(13, RetainedComposer({ chrome, composer }));
+    column.child(RetainedFooter({ chrome }));
+  })
+    .fillWidth()
+    .fillHeight();
+});
+
+/** Publish-only mirror of ProbeState into the tracked slices (Object.is dedupe). */
+function syncRetainedStates(source: ProbeState, chrome: RetainedChrome): void {
+  const info = chrome.footerInfo.value;
+  if (info.provider !== source.provider || info.modelId !== source.modelId || info.status !== source.status) {
+    chrome.footerInfo.set({ provider: source.provider, modelId: source.modelId, status: source.status });
+  }
+  if (chrome.effort.value !== source.effort) chrome.effort.set(source.effort);
+  if (chrome.activityVisible.value !== source.activityVisible) chrome.activityVisible.set(source.activityVisible);
+  const steering = chrome.steering.value;
+  if (source.steering.length !== steering.length || source.steering.some((value, index) => value !== steering[index])) {
+    chrome.steering.set([...source.steering]);
+  }
+  if (chrome.approvalId.value !== source.approvalId) chrome.approvalId.set(source.approvalId);
+}
+
+async function drainRetained(): Promise<void> {
+  // scheduleFlush queues M1; two awaits land after the drain completes.
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+interface RetainedArmContext {
+  chrome: RetainedChrome;
+  composer: TextInput;
+  workingSlot: ViewSlot;
+}
+
 // --- Arms. ------------------------------------------------------------------
 
 type Counters = ReturnType<typeof retainedIdentityCounterSnapshot>;
@@ -305,9 +419,11 @@ interface ArmContext {
   state: ProbeState;
   lastBodyKey?: string;
   oracle: ManualChromeOracle;
+  /** R10 retained-scope arm extras (undefined on the uncomposed arms). */
+  retained?: RetainedArmContext;
 }
 
-async function openArmSession(): Promise<ArmContext> {
+async function openArmSession(arm: string): Promise<ArmContext> {
   const tui = await Tui.open({ width: WIDTH, height: HEIGHT, headless: true });
   const composer = tui.createTextInput({ multiline: true });
   const workingSlot = tui.createViewSlot(View.spacer(0));
@@ -315,19 +431,34 @@ async function openArmSession(): Promise<ArmContext> {
   const pane = tui.createScrollPane(View.spacer(0));
   const history = tui.createHistory();
   history.setLayout({ padding: 1, gap: 1 });
-  return {
+  const ctx: ArmContext = {
     tui,
     history,
     handles: { chrome: { composer, workingSlot }, cardSlot, pane },
     state: initialState(),
     oracle: new ManualChromeOracle(),
   };
+  if (arm === "retained_scopes") {
+    // The retained arm publishes its initial frame canonically BEFORE any
+    // measured op so every later op is an incremental scoped update.
+    const chrome = createRetainedChrome(ctx.state);
+    ctx.retained = { chrome, composer, workingSlot };
+    tui.render(() => new Scene(RetainedChromeRoot({ chrome, composer, workingSlot })));
+    await drainRetained();
+  }
+  return ctx;
 }
 
 /** One arm-specific scene render/update cycle for the current state. */
-function runSceneOp(arm: string, ctx: ArmContext): void {
+function runSceneOp(arm: string, ctx: ArmContext): void | Promise<void> {
   const { tui, history, handles, state } = ctx;
   switch (arm) {
+    case "retained_scopes": {
+      // Publish-only state mirror; the auto-flush drains exactly the scopes
+      // whose tracked slices actually changed (production applyChrome shape).
+      syncRetainedStates(state, ctx.retained!.chrome);
+      return drainRetained();
+    }
     case "current_body_key": {
       const key = bodyKey(state);
       if (key === ctx.lastBodyKey) {
@@ -379,7 +510,7 @@ function commandText(command: string[]): string {
 // --- Measurement. -----------------------------------------------------------
 
 async function measureArm(arm: string): Promise<{ screens: Map<string, string>; records: unknown[] }> {
-  const ctx = await openArmSession();
+  const ctx = await openArmSession(arm);
   const records: unknown[] = [];
   const screens = new Map<string, string>();
   try {
@@ -389,7 +520,7 @@ async function measureArm(arm: string): Promise<{ screens: Map<string, string>; 
       for (let op = 0; op < WARMUP; op += 1) {
         entry.advance(state, WARMUP + op);
         entry.boundaryOp?.(WARMUP + op, handles);
-        runSceneOp(arm, ctx);
+        await runSceneOp(arm, ctx);
       }
       resetRetainedIdentityCounters();
       const before = retainedIdentityCounterSnapshot();
@@ -398,16 +529,16 @@ async function measureArm(arm: string): Promise<{ screens: Map<string, string>; 
         entry.advance(state, op);
         entry.boundaryOp?.(op, handles);
         const started = Bun.nanoseconds();
-        runSceneOp(arm, ctx);
+        await runSceneOp(arm, ctx);
         samples.push(Number(Bun.nanoseconds() - started));
       }
       const after = retainedIdentityCounterSnapshot();
       records.push({
-        record_kind: "t13_1_step1_arm_case",
-        profile: "smoke",
+        record_kind: "t13_1_r10_arm_case",
+        profile: "authoritative",
         benchmark_version: "PERF-12",
         tranche: "T13.1",
-        step: 1,
+        step: "R10",
         arm,
         case: entry.name,
         warmup_ops: WARMUP,
@@ -433,7 +564,11 @@ function screenSignature(tui: Tui): string {
 
 // --- Main. -------------------------------------------------------------------
 
-const ARMS = ["current_body_key", "rebuild_uncomposed", "manual_stable_oracle"] as const;
+// R10 authoritative matrix (handoff §29/§32.1 R10): the three Step-1 arms plus
+// the composed candidate. All four arms drive identical deterministic state
+// sequences through separate headless sessions and must converge on identical
+// final screens per case.
+const ARMS = ["current_body_key", "rebuild_uncomposed", "manual_stable_oracle", "retained_scopes"] as const;
 
 const results = new Map<string, { screens: Map<string, string>; records: unknown[] }>();
 for (const arm of ARMS) {
@@ -453,11 +588,11 @@ for (const [caseName, reference] of referenceScreens) {
 }
 
 const provenance = {
-  record_kind: "t13_1_step1_provenance",
-  profile: "smoke",
+  record_kind: "t13_1_r10_provenance",
+  profile: "authoritative",
   benchmark_version: "PERF-12",
   tranche: "T13.1",
-  step: 1,
+  step: "R10",
   git_sha: commandText(["git", "rev-parse", "HEAD"]),
   perf7v2_sha: "e5292d62c4011610850cbdc1ba4a35f296f78e4f",
   perf11v4_result_sha: "7c670ccd99fb296b18719f62c1aa845a3e3605de",
@@ -466,13 +601,13 @@ const provenance = {
   rustc_version: commandText(["rustc", "--version"]),
   target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
   addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-native.node"]).split(" ")[0],
-  note: "Step 1 baseline captured BEFORE the composition runtime exists (§48 order). The composed_auto arm reuses this harness once T13.1 lands. Arms run sequentially in one process; counter deltas isolate per-case windows.",
+  note: "R10 authoritative decision run (§102.1): four arms — body-key guard, uncomposed rebuild, manual stable oracle, and the T13.1 retained-scope candidate over defineView/state. Arms run sequentially in one process with per-arm headless sessions and cross-arm screen parity enforcement; counter deltas isolate per-case windows.",
 };
 
 const artifact = [JSON.stringify(provenance), ...ARMS.flatMap((arm) => results.get(arm)!.records)]
   .map((record) => JSON.stringify(record))
   .join("\n") + "\n";
-writeFileSync("packages/iyon-runtime/bench/PERF-12-T13.1-composition-baseline.jsonl", artifact);
+writeFileSync("packages/iyon-runtime/bench/PERF-12-T13.1-R10-composition-authoritative.jsonl", artifact);
 
 // Compact console summary.
 for (const arm of ARMS) {

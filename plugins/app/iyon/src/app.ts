@@ -19,7 +19,7 @@ import { ComposerPasteStore } from "./composer.ts";
 import { ApprovalStore } from "./approvals.ts";
 import { createInitialState, hasActiveWork, reduceIyonState } from "./state.ts";
 import { createIyonTheme, type IyonTheme } from "./theme.ts";
-import { createIyonChrome, syncChromeStates, IyonRootView, footerText, userBatchView, workingFrames } from "./view.ts";
+import { createIyonChrome, syncChromeStates, IyonRootView, userBatchView, workingFrames } from "./view.ts";
 import type { ChromeState } from "./view.ts";
 import { handleIyonAction } from "./actions.ts";
 import { startCoreEventBridge, type CoreEventBridge, type CoreEventSource } from "./backend.ts";
@@ -116,7 +116,6 @@ class IyonAppImpl implements IyonApp {
   private shutdownComplete = false;
   private liveUserBatch?: LiveUserBatch;
   private historyMutation: Promise<void> = Promise.resolve();
-  private renderedBodyKey?: string;
   private lastCtrlCAt = 0;
 
   constructor(
@@ -625,20 +624,6 @@ class IyonAppImpl implements IyonApp {
     this.shutdownComplete = true;
   }
 
-  private bodyKey(state: IyonState): string {
-    return [
-      Number(state.goodbye),
-      footerText(state),
-      state.info.reasoningEffort,
-      state.pendingApproval?.approvalId ?? "",
-      Number(state.activityVisible),
-      state.steering.join("\u0001"),
-      [...state.liveTools.entries()]
-        .map(([key, tool]) => `${key}:${tool.status}:${Number(tool.frozen)}:${tool.toolName ?? ""}`)
-        .join("\u0001"),
-    ].join("|");
-  }
-
   private syncWorkingAnimation(state: IyonState): void {
     if (this.workingHandle === undefined) return;
     if (!state.activityVisible) {
@@ -660,15 +645,16 @@ class IyonAppImpl implements IyonApp {
    * choreography first (unchanged side-effect channel), then tracked-state
    * writes whose auto-flush re-executes exactly the reading scopes.
    *
-   * `bodyKey` stays armed as a benchmark control until R10 (handoff
-   * §24.3); the advance tick preserves today's side effect where repeated
-   * exact-root updates still advance spinners/streams/headless time.
+   * R10 (Step 14R): `bodyKey` is REMOVED — the application no longer
+   * computes any renderer-identity key. Tracked-state invalidation IS the
+   * update provenance (§24.3: identity logic never relocates into the app).
+   * The advance tick preserves today's side effect where repeated exact-root
+   * updates still advance spinners/streams/headless time.
    */
   private async applyChrome(next: IyonState): Promise<void> {
     if (this.tui === undefined || !this.started) return;
     this.syncWorkingAnimation(next);
     syncChromeStates(this.chrome, next);
-    this.renderedBodyKey = this.bodyKey(next);
     // Drain the scheduled flush so scoped updates commit before callers
     // observe the screen (same effective ordering as the awaited render it
     // replaces), then advance headless animations.

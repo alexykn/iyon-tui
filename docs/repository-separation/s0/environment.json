@@ -1,0 +1,23 @@
+{
+  "capturedAt": "2026-08-24T19:01:40Z",
+  "host": {
+    "architecture": "arm64",
+    "kernel": "Darwin 25.6.0",
+    "macOSBuild": "25G83",
+    "macOSVersion": "26.6.2"
+  },
+  "repository": {
+    "branch": "perf-refactor",
+    "remote": "git@github.com:alexykn/iyon.git",
+    "sourceRevision": "bd503b0382e34d74a38c562b9662d08c8c96f58a",
+    "sourceRevisionSubject": "feat: add repo split doc",
+    "worktreeBeforeCapture": "clean"
+  },
+  "toolchains": {
+    "bunRevision": "1.4.0+34cbb9a40",
+    "bunVersion": "1.4.0",
+    "cargoVersion": "cargo 1.97.1 (c980f4866 2026-06-30)",
+    "gitVersion": "git version 2.50.1 (Apple Git-155)",
+    "rustcVersion": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+  }
+}

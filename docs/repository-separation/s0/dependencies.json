@@ -1,0 +1,2019 @@
+{
+  "cargo": {
+    "packages": [
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "cargo_metadata",
+            "optional": false,
+            "rename": null,
+            "req": "^0.23.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "clap",
+            "optional": false,
+            "rename": null,
+            "req": "^4.6.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "visit",
+              "extra-traits"
+            ],
+            "kind": null,
+            "name": "syn",
+            "optional": false,
+            "rename": null,
+            "req": "^2.0.106",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "toml",
+            "optional": false,
+            "rename": null,
+            "req": "^1.1.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "tools/api-surface/Cargo.toml",
+        "name": "api-surface",
+        "targets": [
+          {
+            "crateTypes": [
+              "lib"
+            ],
+            "kind": [
+              "lib"
+            ],
+            "name": "api_surface"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "bin"
+            ],
+            "name": "api-surface"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "binding"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "cfg"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "current_surface"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "manifest"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "metadata"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "reachability"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "tsgen"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "anyhow",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.102",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "base64",
+            "optional": false,
+            "rename": null,
+            "req": "^0.22.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "clap",
+            "optional": false,
+            "rename": null,
+            "req": "^4.6.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-api",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-core",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-tui",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "keyring",
+            "optional": false,
+            "rename": null,
+            "req": "^3.6.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "rand",
+            "optional": false,
+            "rename": null,
+            "req": "^0.9.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "rayon",
+            "optional": false,
+            "rename": null,
+            "req": "^1.12.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "json",
+              "stream",
+              "rustls-tls"
+            ],
+            "kind": null,
+            "name": "reqwest",
+            "optional": false,
+            "rename": null,
+            "req": "^0.12.23",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": false,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "rpassword",
+            "optional": false,
+            "rename": null,
+            "req": "^7.4.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "sha2",
+            "optional": false,
+            "rename": null,
+            "req": "^0.10.9",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "test-util"
+            ],
+            "kind": null,
+            "name": "tokio",
+            "optional": false,
+            "rename": null,
+            "req": "^1.52.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "tokio-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.7.17",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "toml",
+            "optional": false,
+            "rename": null,
+            "req": "^1.1.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "url",
+            "optional": false,
+            "rename": null,
+            "req": "^2.5.7",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "test-util"
+            ],
+            "kind": "dev",
+            "name": "iyon-tui",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "similar",
+            "optional": false,
+            "rename": null,
+            "req": "^2.7.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "crates/iyon/Cargo.toml",
+        "name": "iyon",
+        "targets": [
+          {
+            "crateTypes": [
+              "lib"
+            ],
+            "kind": [
+              "lib"
+            ],
+            "name": "iyon"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "public_app"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "async-stream",
+            "optional": false,
+            "rename": null,
+            "req": "^0.3.6",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "base64",
+            "optional": false,
+            "rename": null,
+            "req": "^0.22.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "futures-core",
+            "optional": false,
+            "rename": null,
+            "req": "^0.3.31",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "futures-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.3.31",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "json",
+              "stream",
+              "rustls-tls"
+            ],
+            "kind": null,
+            "name": "reqwest",
+            "optional": false,
+            "rename": null,
+            "req": "^0.12.23",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": false,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "test-util"
+            ],
+            "kind": null,
+            "name": "tokio",
+            "optional": false,
+            "rename": null,
+            "req": "^1.52.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "crates/iyon-api/Cargo.toml",
+        "name": "iyon-api",
+        "targets": [
+          {
+            "crateTypes": [
+              "lib"
+            ],
+            "kind": [
+              "lib"
+            ],
+            "name": "iyon_api"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "provider_compatibility"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "anyhow",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.102",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "futures-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.3.31",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-api",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "similar",
+            "optional": false,
+            "rename": null,
+            "req": "^2.7.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "tempfile",
+            "optional": false,
+            "rename": null,
+            "req": "^3.23.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "thiserror",
+            "optional": false,
+            "rename": null,
+            "req": "^2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "test-util"
+            ],
+            "kind": null,
+            "name": "tokio",
+            "optional": false,
+            "rename": null,
+            "req": "^1.52.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "tokio-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.7.17",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "which",
+            "optional": false,
+            "rename": null,
+            "req": "^6.0.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "crates/iyon-core/Cargo.toml",
+        "name": "iyon-core",
+        "targets": [
+          {
+            "crateTypes": [
+              "lib"
+            ],
+            "kind": [
+              "lib"
+            ],
+            "name": "iyon_core"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "bytemuck",
+            "optional": false,
+            "rename": null,
+            "req": "^1.25.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "futures-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.3.31",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-api",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "iyon-core",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [
+              "native-host"
+            ],
+            "kind": null,
+            "name": "iyon-tui",
+            "optional": false,
+            "rename": null,
+            "req": "*",
+            "source": null,
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": true
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "keyring",
+            "optional": false,
+            "rename": null,
+            "req": "^3.6.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "async",
+              "serde-json"
+            ],
+            "kind": null,
+            "name": "napi",
+            "optional": false,
+            "rename": null,
+            "req": "^3.12.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "napi-derive",
+            "optional": false,
+            "rename": null,
+            "req": "^3.6.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "static_assertions",
+            "optional": false,
+            "rename": null,
+            "req": "^1.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "test-util"
+            ],
+            "kind": null,
+            "name": "tokio",
+            "optional": false,
+            "rename": null,
+            "req": "^1.52.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "tokio-util",
+            "optional": false,
+            "rename": null,
+            "req": "^0.7.17",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "build",
+            "name": "napi-build",
+            "optional": false,
+            "rename": null,
+            "req": "^2.4.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "build",
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "crates/iyon-native/Cargo.toml",
+        "name": "iyon-native",
+        "targets": [
+          {
+            "crateTypes": [
+              "cdylib",
+              "rlib"
+            ],
+            "kind": [
+              "cdylib",
+              "rlib"
+            ],
+            "name": "iyon_native"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "async_ops"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "credentials"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "generated_view_abi"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "handles"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "queue"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "sync"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "custom-build"
+            ],
+            "name": "build-script-build"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "anyhow",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.102",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "crossterm",
+            "optional": false,
+            "rename": null,
+            "req": "^0.29.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "pulldown-cmark",
+            "optional": false,
+            "rename": null,
+            "req": "=0.13.4",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": false,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "termwiz",
+            "optional": false,
+            "rename": null,
+            "req": "=0.23.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": false,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "test-util"
+            ],
+            "kind": null,
+            "name": "tokio",
+            "optional": false,
+            "rename": null,
+            "req": "^1.52.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "unicode-linebreak",
+            "optional": false,
+            "rename": null,
+            "req": "^0.1.5",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "unicode-segmentation",
+            "optional": false,
+            "rename": null,
+            "req": "^1.13.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "insta",
+            "optional": false,
+            "rename": null,
+            "req": "^1.48.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "proptest",
+            "optional": false,
+            "rename": null,
+            "req": "^1.11.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "trybuild",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.114",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "vt100",
+            "optional": false,
+            "rename": null,
+            "req": "^0.16.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "crates/iyon-tui/Cargo.toml",
+        "name": "iyon-tui",
+        "targets": [
+          {
+            "crateTypes": [
+              "lib"
+            ],
+            "kind": [
+              "lib"
+            ],
+            "name": "iyon_tui"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "bin"
+            ],
+            "name": "tui_perf"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "example"
+            ],
+            "name": "width_probe"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "diff_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "document_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "history_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "markdown_composition"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "markdown_hardening"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "markdown_incremental"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "markdown_smoke"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "p3c_ergonomics"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "projection_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "public_semantic_api"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "pulldown_characterization"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "root_compile_contract"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "scene_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "stream_public"
+          },
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "test"
+            ],
+            "name": "text_origin"
+          }
+        ],
+        "version": "0.1.0"
+      },
+      {
+        "dependencies": [
+          {
+            "features": [],
+            "kind": null,
+            "name": "askama",
+            "optional": false,
+            "rename": null,
+            "req": "^0.14.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "blake3",
+            "optional": false,
+            "rename": null,
+            "req": "^1.8.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "bytemuck",
+            "optional": false,
+            "rename": null,
+            "req": "^1.25.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "cargo_metadata",
+            "optional": false,
+            "rename": null,
+            "req": "^0.23.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "clap",
+            "optional": false,
+            "rename": null,
+            "req": "^4.6.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "serde"
+            ],
+            "kind": null,
+            "name": "indexmap",
+            "optional": false,
+            "rename": null,
+            "req": "^2.13.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "fancy"
+            ],
+            "kind": null,
+            "name": "miette",
+            "optional": false,
+            "rename": null,
+            "req": "^7.6.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "prettyplease",
+            "optional": false,
+            "rename": null,
+            "req": "^0.2.37",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "proc-macro2",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.106",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "quote",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "derive"
+            ],
+            "kind": null,
+            "name": "serde",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_json",
+            "optional": false,
+            "rename": null,
+            "req": "^1.0.145",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "serde_path_to_error",
+            "optional": false,
+            "rename": null,
+            "req": "^0.1.20",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "full",
+              "visit",
+              "extra-traits"
+            ],
+            "kind": null,
+            "name": "syn",
+            "optional": false,
+            "rename": null,
+            "req": "^2.0.106",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "tempfile",
+            "optional": false,
+            "rename": null,
+            "req": "^3.23.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "thiserror",
+            "optional": false,
+            "rename": null,
+            "req": "^2.0.17",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": null,
+            "name": "toml",
+            "optional": false,
+            "rename": null,
+            "req": "^1.1.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [
+              "serde"
+            ],
+            "kind": null,
+            "name": "toml_edit",
+            "optional": false,
+            "rename": null,
+            "req": "^0.23.7",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          },
+          {
+            "features": [],
+            "kind": "dev",
+            "name": "insta",
+            "optional": false,
+            "rename": null,
+            "req": "^1.48.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "target": null,
+            "usesDefaultFeatures": true,
+            "workspacePackage": false
+          }
+        ],
+        "manifestPath": "tools/tui-abi-gen/Cargo.toml",
+        "name": "tui-abi-gen",
+        "targets": [
+          {
+            "crateTypes": [
+              "bin"
+            ],
+            "kind": [
+              "bin"
+            ],
+            "name": "tui-abi-gen"
+          }
+        ],
+        "version": "0.1.0"
+      }
+    ],
+    "targetDirectory": "$REPO/target",
+    "workspaceRoot": "$REPO"
+  },
+  "schemaVersion": 1,
+  "sourceRevision": "bd503b0382e34d74a38c562b9662d08c8c96f58a",
+  "typescript": {
+    "packageManager": "bun@1.4.0",
+    "packages": [
+      {
+        "dependencies": {
+          "@iyon/cli": "workspace:*",
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {
+          "bun-types": "1.4.0"
+        },
+        "exports": null,
+        "manifestPath": "package.json",
+        "name": "iyon-workspace",
+        "peerDependencies": {},
+        "private": true,
+        "version": null,
+        "workspaces": [
+          "packages/*",
+          "plugins/agents/*",
+          "plugins/app/*",
+          "plugins/providers/*",
+          "plugins/tools/*"
+        ]
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-cli/package.json",
+        "name": "@iyon/cli",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": {
+          ".": "./src/index.ts"
+        },
+        "manifestPath": "packages/iyon-plugins/package.json",
+        "name": "@iyon/plugins",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/test/fixtures/dogfood/package.json",
+        "name": "fixture-dogfood",
+        "peerDependencies": {},
+        "private": true,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/test/fixtures/replace-read/package.json",
+        "name": "fixture-replace-read",
+        "peerDependencies": {},
+        "private": true,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/dependency-package/package.json",
+        "name": "fixture-dependency-package",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/activation-failure/package.json",
+        "name": "fixture-activation-failure",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/async-activation/package.json",
+        "name": "fixture-async-activation",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/multiple-contributions/package.json",
+        "name": "fixture-multiple-contributions",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/npm-dependency/node_modules/fixture-dependency-package/package.json",
+        "name": "fixture-dependency-package",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/npm-dependency/package.json",
+        "name": "fixture-npm-dependency",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/override-builtin/package.json",
+        "name": "fixture-override-builtin",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/register-tool/package.json",
+        "name": "fixture-register-tool",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/scene-composer/package.json",
+        "name": "fixture-scene-composer",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/scene-replacement/package.json",
+        "name": "fixture-scene-replacement",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/iyon-plugins/tests/fixtures/packages/unload-restore/package.json",
+        "name": "fixture-unload-restore",
+        "peerDependencies": {},
+        "private": false,
+        "version": "1.0.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": {
+          ".": "./src/index.ts",
+          "./bootstrap": "./src/bootstrap/index.ts",
+          "./modules/*": "./src/modules/*.ts",
+          "./native": "./src/native.ts",
+          "./providers/*": "./src/providers/*.ts",
+          "./smoke": "./src/smoke.ts",
+          "./tui": "./src/tui/index.ts",
+          "./virtual-modules": "./src/virtual-modules.ts"
+        },
+        "manifestPath": "packages/iyon-runtime/package.json",
+        "name": "@iyon/runtime",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {},
+        "devDependencies": {},
+        "exports": {
+          ".": "./src/index.ts"
+        },
+        "manifestPath": "packages/iyon-sdk/package.json",
+        "name": "@iyon/sdk",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/runtime": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "packages/tui-consumer-fixture/package.json",
+        "name": "@iyon/tui-consumer-fixture",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/agents/iyon/package.json",
+        "name": "@iyon/agent-iyon",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/app/iyon/package.json",
+        "name": "@iyon/app-iyon",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/providers/mock/package.json",
+        "name": "@iyon/provider-mock",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/providers/openai-codex/package.json",
+        "name": "@iyon/provider-openai-codex",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/providers/openrouter/package.json",
+        "name": "@iyon/provider-openrouter",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/runtime": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/bash/package.json",
+        "name": "@iyon/tool-bash",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/edit/package.json",
+        "name": "@iyon/tool-edit",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/find/package.json",
+        "name": "@iyon/tool-find",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/grep/package.json",
+        "name": "@iyon/tool-grep",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/ls/package.json",
+        "name": "@iyon/tool-ls",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/read/package.json",
+        "name": "@iyon/tool-read",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      },
+      {
+        "dependencies": {
+          "@iyon/plugins": "workspace:*",
+          "@iyon/sdk": "workspace:*"
+        },
+        "devDependencies": {},
+        "exports": null,
+        "manifestPath": "plugins/tools/write/package.json",
+        "name": "@iyon/tool-write",
+        "peerDependencies": {},
+        "private": true,
+        "version": "0.1.0",
+        "workspaces": null
+      }
+    ]
+  }
+}

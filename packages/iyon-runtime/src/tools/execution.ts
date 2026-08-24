@@ -43,10 +43,14 @@ export async function executeTool(
 ): Promise<ToolLifecycleResult> {
   const execution = session.prepareToolExecution(request);
   const signal = options.signal ?? new AbortController().signal;
-  const capturedUpdates: ToolUpdateEvent[] = [];
+  // Default tool update sink: push updates through the native kernel event
+  // bus via the ToolExecution handle's sendUpdate.  This makes every
+  // context.update() from a tool plugin appear as a CoreEvent::ToolCallUpdated
+  // on the kernel event stream, which the frontend already translates into
+  // toolCallUpdated frontend events and routes to live tool cards / panes.
   const updates = options.updates ?? {
     send: async (update: ToolUpdateEvent): Promise<void> => {
-      capturedUpdates.push(update);
+      (execution).sendUpdate(update);
     },
   };
   const context = createContext(request, signal, options, updates);
@@ -71,7 +75,7 @@ export async function executeTool(
       const unknown = unknownResult(request.toolName, request.arguments);
       execution.finish(unknown);
       terminalized = true;
-      return { result: unknown, execution, events: execution.events(), updates: capturedUpdates };
+      return { result: unknown, execution, events: execution.events(), updates: [] };
     }
 
     const before = await options.hooks?.before?.(context, request.arguments);
@@ -95,7 +99,7 @@ export async function executeTool(
       if (!approve) {
         const rejected = errorResult(tool.name, "tool approval rejected");
         terminalized = true;
-        return { result: rejected, execution, events: execution.events(), updates: capturedUpdates };
+        return { result: rejected, execution, events: execution.events(), updates: [] };
       }
     }
     if (signal.aborted) return cancelAndThrow(execution, signal.reason);
@@ -106,7 +110,7 @@ export async function executeTool(
     if (after && typeof after === "object" && "content" in after) result = after;
     execution.finish(toNativeResult(result));
     terminalized = true;
-    return { result, execution, events: execution.events(), updates: capturedUpdates };
+    return { result, execution, events: execution.events(), updates: [] };
   } catch (error) {
     return fail(error);
   }

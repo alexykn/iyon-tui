@@ -20,6 +20,7 @@ import type {
   ToolLifecycleEvent,
   ToolLifecycleState,
   ToolResult,
+  ToolUpdateEvent,
 } from "../../../iyon-sdk/src/core.ts";
 import type { ModelError, ModelStreamEvent } from "../../../iyon-sdk/src/api.ts";
 import { eventsFromNextEvent } from "./async-events.ts";
@@ -76,6 +77,10 @@ export class ToolExecution {
 
   start(): void {
     this.handle.start();
+  }
+
+  sendUpdate(update: ToolUpdateEvent): void {
+    this.handle.sendUpdate(jsonValue(update));
   }
 
   requestApproval(requirement?: unknown): ApprovalState | null {

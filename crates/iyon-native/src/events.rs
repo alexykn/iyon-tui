@@ -1,5 +1,6 @@
 use iyon_core::{CoreEvent, MessageDelta, MessageRole, ToolCallDelta, ToolUpdateEvent};
 use serde_json::{Value, json};
+use crate::NativeError;
 
 pub(crate) fn core_event(event: &CoreEvent) -> Value {
     match event {
@@ -183,5 +184,53 @@ fn tool_update(update: &ToolUpdateEvent) -> Value {
             "type": "progress", "label": label, "current": current, "total": total,
         }),
         ToolUpdateEvent::Details(details) => json!({"type": "details", "details": details}),
+    }
+}
+
+pub(crate) fn parse_tool_update(value: Value) -> napi::Result<ToolUpdateEvent> {
+    let object = value.as_object().ok_or_else(|| {
+        NativeError::invalid_input("tool update must be an object")
+    })?;
+    let type_str = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeError::invalid_input("tool update type must be a string"))?;
+    match type_str {
+        "text" => {
+            let text = object
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    NativeError::invalid_input("text update requires a text field")
+                })?;
+            Ok(ToolUpdateEvent::Text(text.to_owned()))
+        }
+        "progress" => {
+            let label = object
+                .get("label")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    NativeError::invalid_input("progress update requires a label field")
+                })?;
+            let current = object.get("current").and_then(Value::as_u64);
+            let total = object.get("total").and_then(Value::as_u64);
+            Ok(ToolUpdateEvent::Progress {
+                label: label.to_owned(),
+                current,
+                total,
+            })
+        }
+        "details" => {
+            let details = object
+                .get("details")
+                .ok_or_else(|| {
+                    NativeError::invalid_input("details update requires a details field")
+                })?
+                .clone();
+            Ok(ToolUpdateEvent::Details(details))
+        }
+        other => Err(NativeError::invalid_input(format!(
+            "unknown tool update type `{other}`"
+        ))),
     }
 }

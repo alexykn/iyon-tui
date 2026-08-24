@@ -17,6 +17,7 @@ export interface NativeToolExecutionContract {
   requestApproval(requirement?: JsonValue): JsonValue | null;
   approve(approvalId: number): void;
   reject(approvalId: number, reason?: string): void;
+  sendUpdate(update: JsonValue): void;
   finish(result: JsonValue): void;
   fail(error: string): void;
   cancel(reason?: string): void;

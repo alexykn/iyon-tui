@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex as StdMutex};
 
 use iyon_core::{
-    CoreEvent,
+    CoreEvent, ToolUpdateEvent,
     ids::{ApprovalId, MessageId, ToolCallId, TurnId},
     kernel::{
         AgentMessage, ApprovalDecision, ApprovalRequirement, ApprovalState, ToolLifecycleEvent,
@@ -299,6 +299,20 @@ impl ToolExecution {
             text: error,
             details,
             is_error: true,
+        })
+    }
+
+    #[napi(js_name = "sendUpdate")]
+    pub fn send_update(&self, update: Value) -> Result<()> {
+        self.state.ensure_open()?;
+        let tool_update = crate::events::parse_tool_update(update)?;
+        let (tool_call_id, tool_name, _) = self.call_fields()?;
+        self.emit(CoreEvent::ToolCallUpdated {
+            turn_id: self.turn_id.0,
+            message_id: self.message_id.0,
+            tool_call_id,
+            tool_name,
+            update: tool_update,
         })
     }
 

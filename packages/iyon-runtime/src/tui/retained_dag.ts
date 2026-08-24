@@ -1503,20 +1503,37 @@ export class RetainedRootBoundary {
       commit: (): void => {
         if (finished) throw new Error("root publication already finished");
         finished = true;
-        const hostPointer = this.hostPointer();
-        if (hostPointer === undefined) {
-          this.releaseColdLease(rootRef);
-          throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host pointer");
+        let transferred = false;
+        try {
+          if (this.installRef !== undefined) {
+            // Component/scroll boundaries publish through their retained slot
+            // target rather than the scene host. Cold preparation is still
+            // paint-free; the ref install is the only commit-side mutation.
+            if (!this.installRef(rootRef)) {
+              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: component target refused");
+            }
+          } else {
+            const hostPointer = this.hostPointer();
+            if (hostPointer === undefined) {
+              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host pointer");
+            }
+            const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+            if (status !== HOST_STATUS_OK) {
+              throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
+            }
+          }
+          counters.host_mutations += 1;
+          // Transfer our lease on the new root into the boundary; the previous
+          // root's lease is released here exactly like transferRoot does.
+          this.transferRoot(rootRef);
+          transferred = true;
+        } catch (error) {
+          // A thrown install/host callback must not strand the materializer's
+          // temporary lease. The publication is already finished, so abort()
+          // will not run as a second cleanup path.
+          if (!transferred) this.releaseColdLease(rootRef);
+          throw error;
         }
-        const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
-        if (status !== HOST_STATUS_OK) {
-          this.releaseColdLease(rootRef);
-          throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
-        }
-        counters.host_mutations += 1;
-        // Transfer our lease on the new root into the boundary; the previous
-        // root's lease is released here exactly like transferRoot does.
-        this.transferRoot(rootRef);
       },
       abort: (): void => {
         if (finished) return;

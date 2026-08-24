@@ -27,7 +27,9 @@
  */
 
 import { executionContext, executionCounters } from "./execution.ts";
+import { withoutRetainedComposition } from "./execution-context.ts";
 import {
+  BRIDGE_GRID_TRACK_KIND,
   BRIDGE_HORIZONTAL_ALIGN,
   BRIDGE_LAYOUT_CHILD_KIND,
   BRIDGE_OVERFLOW_KIND,
@@ -38,6 +40,7 @@ import {
   mergeStyles,
   peekBridgeSequenceOverride,
   type BorderNode,
+  type BridgeGridTrackNode,
   type BridgeLayoutChild,
   type BridgeOverflowIndicatorNode,
   type BridgeViewNode,
@@ -46,7 +49,14 @@ import {
   type DiffHunkNode,
   type StyleNode,
 } from "./ir.ts";
-import { ChildrenBuilder, View, nodeForBridge, type OverflowIndicator } from "./values/view.ts";
+import {
+  ChildrenBuilder,
+  GridBuilder,
+  View,
+  nodeForBridge,
+  type GridSpec,
+  type OverflowIndicator,
+} from "./values/view.ts";
 import { insets } from "./values/geometry.ts";
 import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
@@ -230,19 +240,21 @@ function decorationDeltaMatches(
     }
     case MOD_TEXT_ATTRIBUTE: {
       const name = a as string;
+      const value = (b as boolean | undefined) ?? true;
       if (!colorEqual(dec.style.theme, inherited.style.theme)) return false;
       if (!colorEqual(dec.style.foreground, inherited.style.foreground)) return false;
       if (!colorEqual(dec.style.background, inherited.style.background)) return false;
       const inheritedAttributes = inherited.style.attributes;
       const actual = dec.style.attributes;
-      let inheritedCount = 0;
+      let expectedCount = 0;
       for (const key in inheritedAttributes) {
-        if (actual[key] !== inheritedAttributes[key]) return false;
-        inheritedCount += 1;
+        expectedCount += 1;
+        if (actual[key] !== (key === name ? value : inheritedAttributes[key])) return false;
       }
+      if (inheritedAttributes[name] === undefined) expectedCount += 1;
       let actualCount = 0;
       for (const _key in actual) actualCount += 1;
-      return actualCount === inheritedCount + 1 && actual[name] === true;
+      return actualCount === expectedCount && actual[name] === value;
     }
     case MOD_STYLE_STATE: {
       const key = a as string;
@@ -297,25 +309,28 @@ function applyDecoration(base: View, tag: number, a?: unknown, b?: unknown): Vie
 }
 
 function applyDecorationDirect(base: View, tag: number, a: unknown, b: unknown): View {
-  switch (tag) {
-    case MOD_FILL_WIDTH: return base.fillWidth();
-    case MOD_FIT_WIDTH: return base.fitWidth();
-    case MOD_FILL_HEIGHT: return base.fillHeight();
-    case MOD_FIT_HEIGHT: return base.fitHeight();
-    case MOD_MIN_WIDTH: return base.minWidth(a as number);
-    case MOD_MAX_WIDTH: return base.maxWidth(a as number);
-    case MOD_MIN_HEIGHT: return base.minHeight(a as number);
-    case MOD_MAX_HEIGHT: return base.maxHeight(a as number);
-    case MOD_PADDING: return base.padding(a as number | Insets);
-    case MOD_FOREGROUND: return base.foreground(a as ColorNode);
-    case MOD_BACKGROUND: return base.background(a as ColorNode);
-    case MOD_STYLE_SPEC: return base.style(a as StyleSpec);
-    case MOD_TEXT_ATTRIBUTE: return base.textAttribute(a as string);
-    case MOD_STYLE_STATE: return base.styleState(a as string, b as string);
-    case MOD_BORDER: return base.border(a as BorderNode);
-    default:
-      throw new RangeError(`unknown decoration modifier ${tag}`);
-  }
+  const construct = (): View => {
+    switch (tag) {
+      case MOD_FILL_WIDTH: return base.fillWidth();
+      case MOD_FIT_WIDTH: return base.fitWidth();
+      case MOD_FILL_HEIGHT: return base.fillHeight();
+      case MOD_FIT_HEIGHT: return base.fitHeight();
+      case MOD_MIN_WIDTH: return base.minWidth(a as number);
+      case MOD_MAX_WIDTH: return base.maxWidth(a as number);
+      case MOD_MIN_HEIGHT: return base.minHeight(a as number);
+      case MOD_MAX_HEIGHT: return base.maxHeight(a as number);
+      case MOD_PADDING: return base.padding(a as number | Insets);
+      case MOD_FOREGROUND: return base.foreground(a as ColorNode);
+      case MOD_BACKGROUND: return base.background(a as ColorNode);
+      case MOD_STYLE_SPEC: return base.style(a as StyleSpec);
+      case MOD_TEXT_ATTRIBUTE: return base.textAttribute(a as string, (b as boolean | undefined) ?? true);
+      case MOD_STYLE_STATE: return base.styleState(a as string, b as string);
+      case MOD_BORDER: return base.border(a as BorderNode);
+      default:
+        throw new RangeError(`unknown decoration modifier ${tag}`);
+    }
+  };
+  return executionContext.top === undefined ? construct() : withoutRetainedComposition(construct);
 }
 
 // --- Factory helpers. -------------------------------------------------------
@@ -340,7 +355,7 @@ export function composeText(content: string): View {
       return previous;
     }
   }
-  const view = View.text(content);
+  const view = withoutRetainedComposition(() => View.text(content));
   stageFresh(slot, view);
   return view;
 }
@@ -358,7 +373,7 @@ export function composeStyledText(spans: readonly TextSpan[]): View {
       return previous;
     }
   }
-  const view = View.styledText(spans);
+  const view = withoutRetainedComposition(() => View.styledText(spans));
   stageFresh(slot, view);
   return view;
 }
@@ -390,7 +405,7 @@ export function composeSpacer(rows: number): View {
       return previous;
     }
   }
-  const view = View.spacer(rows);
+  const view = withoutRetainedComposition(() => View.spacer(rows));
   stageFresh(slot, view);
   return view;
 }
@@ -409,7 +424,7 @@ export function composeComponent(handle: ComponentHandleLike): View {
       return previous;
     }
   }
-  const view = View.component(handle);
+  const view = withoutRetainedComposition(() => View.component(handle));
   stageFresh(slot, view);
   return view;
 }
@@ -432,7 +447,7 @@ export function composeHanging(prefix: View, continuation: View, body: View): Vi
       return previous;
     }
   }
-  const view = View.hanging(prefix, continuation, body);
+  const view = withoutRetainedComposition(() => View.hanging(prefix, continuation, body));
   stageFresh(slot, view);
   return view;
 }
@@ -519,7 +534,7 @@ export function composeContentMax(maxRows: number, child: View): View {
       return previous;
     }
   }
-  const view = View.contentMax(maxRows, child);
+  const view = withoutRetainedComposition(() => View.contentMax(maxRows, child));
   stageFresh(slot, view);
   return view;
 }
@@ -537,7 +552,7 @@ export function composeContainer(base: View): View {
       return previous;
     }
   }
-  const view = base.container();
+  const view = withoutRetainedComposition(() => base.container());
   stageFresh(slot, view);
   return view;
 }
@@ -565,7 +580,7 @@ export function composeClampRows(
       return previous;
     }
   }
-  const view = base.clampRows(maxRows, overflow);
+  const view = withoutRetainedComposition(() => base.clampRows(maxRows, overflow));
   stageFresh(slot, view);
   return view;
 }
@@ -581,14 +596,70 @@ function overflowIndicatorMatches(bridged: BridgeOverflowIndicatorNode, overflow
     && styleNodesEqual(bridged.style, overflow.style.value as unknown as StyleNode);
 }
 
+/** Lowers View.grid(specification) with immediate child/track equality. */
+export function composeGrid(
+  specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void),
+): View {
+  const scope = executionContext.top;
+  if (scope === undefined) return View.grid(specification);
+  const slot = scope.nextSemanticSlot();
+  const view = View.__rawGrid(specification);
+  const previous = slot.current;
+  if (previous !== undefined && gridMatches(previous, view)) {
+    stageReuse(slot, previous);
+    return previous;
+  }
+  stageFresh(slot, view);
+  return view;
+}
+
+function gridMatches(previous: View, next: View): boolean {
+  const past = nodeForBridge(previous);
+  const current = nodeForBridge(next);
+  if (past.kind !== BRIDGE_VIEW_KIND.grid || current.kind !== BRIDGE_VIEW_KIND.grid) return false;
+  if (past.columnGap !== current.columnGap || past.rowGap !== current.rowGap) return false;
+  if (past.columns.length !== current.columns.length || past.rows.length !== current.rows.length) return false;
+  for (let index = 0; index < current.columns.length; index += 1) {
+    if (!gridTrackMatches(past.columns[index]!, current.columns[index]!)) return false;
+  }
+  for (let rowIndex = 0; rowIndex < current.rows.length; rowIndex += 1) {
+    const oldRow = past.rows[rowIndex]!;
+    const newRow = current.rows[rowIndex]!;
+    if (!gridTrackMatches(oldRow.track, newRow.track) || oldRow.cells.length !== newRow.cells.length) return false;
+    for (let cellIndex = 0; cellIndex < newRow.cells.length; cellIndex += 1) {
+      const oldCell = oldRow.cells[cellIndex]!;
+      const newCell = newRow.cells[cellIndex]!;
+      if (oldCell.view !== newCell.view
+        || oldCell.columnSpan !== newCell.columnSpan
+        || oldCell.rowSpan !== newCell.rowSpan
+        || oldCell.horizontalAlign !== newCell.horizontalAlign
+        || oldCell.verticalAlign !== newCell.verticalAlign) return false;
+    }
+  }
+  return true;
+}
+
+function gridTrackMatches(a: BridgeGridTrackNode, b: BridgeGridTrackNode): boolean {
+  if (a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case BRIDGE_GRID_TRACK_KIND.content: return true;
+    case BRIDGE_GRID_TRACK_KIND.contentMax:
+    case BRIDGE_GRID_TRACK_KIND.flexMax:
+      return a.max === (b as Extract<BridgeGridTrackNode, { kind: typeof a.kind }>).max;
+    case BRIDGE_GRID_TRACK_KIND.fixed:
+      return a.size === (b as Extract<BridgeGridTrackNode, { kind: typeof a.kind }>).size;
+    case BRIDGE_GRID_TRACK_KIND.flex: return true;
+  }
+}
+
 /**
  * Lowers View.diff(hunks) (§18.7): diff payloads have no cheap immediate
  * equality, so composition stages a fresh immutable View every evaluation —
  * but ALWAYS consumes a slot to keep the scope cursor aligned across renders.
  */
 export function composeDiff(hunks: readonly DiffHunkNode[]): View {
-  const view = View.diff(hunks);
   const scope = executionContext.top;
+  const view = scope === undefined ? View.diff(hunks) : withoutRetainedComposition(() => View.diff(hunks));
   if (scope !== undefined) {
     const slot = scope.nextSemanticSlot();
     stageFresh(slot, view);
@@ -664,8 +735,8 @@ export function composeStyleState(base: View, key: string, value: string): View 
 }
 
 /** Lowers base.textAttribute(name) — bold/dim/italic/strikethrough family. */
-export function composeTextAttribute(base: View, name: string): View {
-  return applyDecoration(base, MOD_TEXT_ATTRIBUTE, name);
+export function composeTextAttribute(base: View, name: string, enabled = true): View {
+  return applyDecoration(base, MOD_TEXT_ATTRIBUTE, name, enabled);
 }
 
 /** Lowers base.border(spec). */
@@ -707,9 +778,9 @@ function composeLayoutPatch(base: View, wrapMode: WrapMode | undefined, alignMod
   }
   let view: View;
   if (wrapMode !== undefined) {
-    view = base.wrap(wrapMode);
+    view = withoutRetainedComposition(() => base.wrap(wrapMode));
   } else if (alignMode !== undefined) {
-    view = base.textAlign(alignMode);
+    view = withoutRetainedComposition(() => base.textAlign(alignMode));
   } else {
     view = base;
   }

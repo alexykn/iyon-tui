@@ -12,7 +12,7 @@ import {
   OwnedBuilderRoot,
   type RetainedExecutionRuntime,
 } from "./execution.ts";
-import { protocolState } from "./execution-context.ts";
+import { activeExecutionScope, protocolState } from "./execution-context.ts";
 import { nodeForBridge, View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "../native.ts";
 
@@ -87,7 +87,7 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
    */
   setContent(viewOrBuilder: View | (() => View)): void {
     if (typeof viewOrBuilder === "function") {
-      if (protocolState.mutating) {
+      if (protocolState.mutating || activeExecutionScope() !== undefined) {
         throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane builder mutation during a retained protocol pass");
       }
       if (this.retainedRuntime === undefined) {
@@ -108,7 +108,9 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
 
   private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed || this.boundary === undefined) return undefined;
-    const publication = this.boundary.prepareInstall(output);
+    // Retained preparation may refuse on a bounded/unsupported path; use the
+    // complete cold materializer transactionally before giving up.
+    const publication = this.boundary.prepareInstall(output) ?? this.boundary.prepareColdInstall(output);
     if (publication === undefined) return undefined;
     const setCurrent = (promoted: View): void => {
       this.currentView = promoted;
@@ -125,6 +127,9 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
   }
 
   private setContentDirect(view: View): void {
+    if (protocolState.mutating || activeExecutionScope() !== undefined) {
+      throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane mutation during a retained protocol pass");
+    }
     this.call(() => {
       // PERF-12 T13 retained path (§80): previous content stays leased until
       // the replacement is fully materialized and committed.
@@ -156,7 +161,12 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
     }
   }
 
-  followEnd(): void { this.call(() => this.nativeHandle.followEnd()); }
+  followEnd(): void {
+    if (protocolState.mutating || activeExecutionScope() !== undefined) {
+      throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane mutation during a retained protocol pass");
+    }
+    this.call(() => this.nativeHandle.followEnd());
+  }
 
   /** Releases the boundary's root lease exactly once before native teardown. */
   dispose(): void {
@@ -171,6 +181,7 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
         this.boundary?.close();
       } finally {
         this.boundary = undefined;
+        this.currentView = undefined;
       }
     }
     super.dispose();

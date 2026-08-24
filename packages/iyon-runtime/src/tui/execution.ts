@@ -17,7 +17,7 @@
  * allocation-free exact reuse inside dirty scopes.
  */
 
-import type { View } from "./values/view.ts";
+import { nodeForBridge, type View } from "./values/view.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
 import {
   ChildOwnerState,
@@ -76,6 +76,12 @@ export interface PublicationTarget {
    * refused preparation (the enclosing batch aborts atomically).
    */
   preparePublication(output: View): PreparedPublication | undefined;
+  /**
+   * Optional metadata-only publication trigger. Root boundaries use this for
+   * Scene sideband changes (for example History) when the semantic body View
+   * is unchanged.
+   */
+  needsPublication?(output: View): boolean;
 }
 
 /**
@@ -165,7 +171,10 @@ export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
   readonly type: ViewComponentType<never>;
 
   ordinal: number;
+  /** Last committed inputs. Pending prop updates stay separate until commit. */
   currentProps: P | undefined;
+  pendingProps: P | undefined;
+  pendingPropsActive = false;
   /** Last committed immutable output — the scope's observable artifact. */
   currentOutput: View | undefined;
   pendingOutput: View | undefined;
@@ -257,19 +266,14 @@ export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
     this.currentOutput = undefined;
     this.pendingOutput = undefined;
     this.currentProps = undefined;
+    this.pendingProps = undefined;
+    this.pendingPropsActive = false;
     this.state = "clean";
     this.table.release();
-    // Dispose the entire owned subtree: unkeyed children and every keyed
-    // group's descendant scopes.
-    for (const record of this.owner.committedChildren) record.scope.dispose();
-    if (this.owner.committedKeyed !== undefined) {
-      for (const group of this.owner.committedKeyed.values()) {
-        for (const record of group.owner.committedChildren) record.scope.dispose();
-        group.owner.release();
-      }
-      this.owner.committedKeyed.clear();
-    }
-    this.owner.release();
+    // Dispose the entire owned subtree: unkeyed children and arbitrarily
+    // nested keyed namespaces. A bounded-depth walk would retain deeper
+    // keyed scopes and their subscriptions after the parent is disposed.
+    disposeOwnedChildren(this.owner);
     this.runtime.noteUnmount(this);
   }
 }
@@ -406,6 +410,8 @@ export class RetainedExecutionRuntime {
       const fresh: RetainedExecutionScope[] = [];
       this.abortLevel(scope.owner, fresh);
       scope.pendingOutput = undefined;
+      scope.pendingProps = undefined;
+      scope.pendingPropsActive = false;
       scope.table.rollback();
       scope.pendingDependencies = new Set();
       scope.state = "clean";
@@ -419,15 +425,26 @@ export class RetainedExecutionRuntime {
       this.stagePublicationsRecursive(scope, staged);
       this.commitBatch([scope]);
     } catch (error) {
+      let unwindError: unknown;
+      try {
+        unwindStaged(staged);
+      } catch (cleanupError) {
+        unwindError = cleanupError;
+      }
       const fresh: RetainedExecutionScope[] = [];
       this.abortLevel(scope.owner, fresh);
       scope.pendingOutput = undefined;
+      scope.pendingProps = undefined;
+      scope.pendingPropsActive = false;
       scope.table.rollback();
       scope.pendingDependencies = new Set();
       scope.state = "clean";
       for (const s of fresh) this.disposeScopeTree(s);
       this.disposeScopeTree(scope);
       this.roots.splice(this.roots.indexOf(scope), 1);
+      if (unwindError !== undefined) {
+        throw new AggregateError([error, unwindError], "retained execution mount cleanup failed");
+      }
       throw error;
     }
     return scope;
@@ -482,11 +499,17 @@ export class RetainedExecutionRuntime {
             this.runWork(scope);
           }
         } catch (error) {
+          // The batch was removed from the queue before evaluation. A scope
+          // that was not reached (for example a later child after a failing
+          // parent) must not remain dirty without a queue entry: clear the
+          // consumed notification so an explicit retry can enqueue it.
+          for (const scope of batch) {
+            if (!processed.includes(scope)) scope.dirty = false;
+          }
           this.abortBatch(processed);
           throw error;
         } finally {
           this.mutating = false;
-          protocolState.mutating = false;
         }
 
         // PHASE 2: prepare all publications. Fallible — any failure unwinds
@@ -501,8 +524,16 @@ export class RetainedExecutionRuntime {
           for (const scope of processed) this.stagePublicationsRecursive(scope, stagedPublications);
         } catch (prepareError) {
           this.mutating = false;
-          unwindStaged(stagedPublications);
+          let unwindError: unknown;
+          try {
+            unwindStaged(stagedPublications);
+          } catch (cleanupError) {
+            unwindError = cleanupError;
+          }
           this.abortBatch(processed);
+          if (unwindError !== undefined) {
+            throw new AggregateError([prepareError, unwindError], "retained execution batch cleanup failed");
+          }
           throw prepareError;
         }
 
@@ -518,7 +549,6 @@ export class RetainedExecutionRuntime {
           throw commitError;
         } finally {
           this.mutating = false;
-          protocolState.mutating = false;
           const sink = this.batchRemoved;
           this.batchRemoved = [];
           // FINALIZE deferred disposals only when promotion completed
@@ -584,10 +614,16 @@ export class RetainedExecutionRuntime {
     scope.pendingDependencies = new Set();
     pushActive(scope);
     try {
-      const output = scope.type.render(scope.currentProps as never);
+      const props = scope.pendingPropsActive ? scope.pendingProps : scope.currentProps;
+      const output = scope.type.render(props as never);
       if (isPromiseLike(output)) {
         throw new ExecutionError(EXECUTION_ASYNC_BODY, "component bodies must be synchronous");
       }
+      // The public type says bodies return View, but runtime consumers are JS
+      // and can violate that contract. Validate before the output can become
+      // pending state; otherwise an ignored invalid child could be promoted as
+      // mounted without an authoritative output.
+      nodeForBridge(output);
       scope.pendingOutput = output;
     } finally {
       popActive(scope);
@@ -604,33 +640,24 @@ export class RetainedExecutionRuntime {
     scope: RetainedExecutionScope,
     staged: RetainedExecutionScope[],
   ): void {
-    const owner = scope.owner;
-    for (const record of owner.pendingChildren) {
-      this.stagePublicationsRecursive(record.scope, staged);
-    }
-    if (owner.pendingKeyed !== undefined) {
-      for (const group of owner.pendingKeyed.values()) {
-        for (const record of group.owner.pendingChildren) {
-          this.stagePublicationsRecursive(record.scope, staged);
-        }
-        if (group.owner.pendingKeyed !== undefined) {
-          for (const nested of group.owner.pendingKeyed.values()) {
-            for (const record of nested.owner.pendingChildren) {
-              this.stagePublicationsRecursive(record.scope, staged);
-            }
-          }
-        }
-      }
-    }
+    this.stageOwnerPublications(scope.owner, staged);
     const target = scope.effectivePublicationTarget;
     const prepare = target?.preparePublication;
-    if (
-      prepare !== undefined
-      && scope.pendingOutput !== undefined
-      && scope.pendingOutput !== scope.projectedOutput
-    ) {
-      const publication = prepare.call(target, scope.pendingOutput);
+    const pendingOutput = scope.pendingOutput;
+    const needsPublication = prepare !== undefined
+      && pendingOutput !== undefined
+      && (
+        pendingOutput !== scope.projectedOutput
+        || target?.needsPublication?.(pendingOutput) === true
+      );
+    if (needsPublication) {
+      const publication = prepare.call(target, pendingOutput);
       if (publication === undefined) {
+        // A projection may lack a native boundary (for example a detached
+        // compatibility host). Its legacy install path remains the complete
+        // fallback. Explicit publication targets, such as the scene root,
+        // have no legacy target and must still abort atomically on refusal.
+        if (scope.projection !== undefined && scope.publicationTarget === undefined) return;
         throw new ExecutionError(
           "TUI_EXECUTION_PREPARE_REFUSED",
           `publication target for scope ${scope.id} refused preparation; batch aborts atomically`,
@@ -638,6 +665,30 @@ export class RetainedExecutionRuntime {
       }
       scope.stagedPublication = publication;
       staged.push(scope);
+    }
+  }
+
+  /** Stages every pending component below an execution owner. */
+  private stageOwnerPublications(owner: ChildOwnerState, staged: RetainedExecutionScope[]): void {
+    for (const record of owner.pendingChildren) {
+      this.stagePublicationsRecursive(record.scope, staged);
+    }
+    if (owner.pendingKeyed !== undefined) {
+      for (const group of owner.pendingKeyed.values()) {
+        this.stageKeyGroupPublications(group, staged);
+      }
+    }
+  }
+
+  /** KeyGroups are identity namespaces, so only their descendant scopes publish. */
+  private stageKeyGroupPublications(group: KeyGroup, staged: RetainedExecutionScope[]): void {
+    for (const record of group.owner.pendingChildren) {
+      this.stagePublicationsRecursive(record.scope, staged);
+    }
+    if (group.owner.pendingKeyed !== undefined) {
+      for (const nested of group.owner.pendingKeyed.values()) {
+        this.stageKeyGroupPublications(nested, staged);
+      }
     }
   }
 
@@ -650,27 +701,10 @@ export class RetainedExecutionRuntime {
   private batchRemoved: RetainedExecutionScope[] = [];
 
   private commitScope(scope: RetainedExecutionScope, removed: RetainedExecutionScope[]): void {
-    const owner = scope.owner;
-    // Depth-first through inline-evaluated children and keyed groups.
-    for (const record of owner.pendingChildren) {
-      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
-    }
-    if (owner.pendingKeyed !== undefined) {
-      for (const group of owner.pendingKeyed.values()) {
-        for (const record of group.owner.pendingChildren) {
-          if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
-        }
-        if (group.owner.pendingKeyed !== undefined) {
-          for (const nested of group.owner.pendingKeyed.values()) {
-            for (const record of nested.owner.pendingChildren) {
-              if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
-            }
-            promoteOwnedChildren(nested.owner, removed);
-          }
-        }
-        promoteOwnedChildren(group.owner, removed);
-      }
-    }
+    // Commit descendants before their parent so every embedded projection is
+    // authoritative when the parent output is promoted. This is recursive
+    // rather than bounded to the two keyed levels used by the first R8 pass.
+    this.commitOwnerChildren(scope.owner, removed);
 
     if (scope.pendingOutput === undefined) {
       throw new ExecutionError("TUI_EXECUTION_STATE", `committing scope ${scope.id} without prepared output`);
@@ -678,13 +712,26 @@ export class RetainedExecutionRuntime {
     const newOutput = scope.pendingOutput;
     const staged = scope.stagedPublication;
     if (staged !== undefined) {
-      // R7 transactional publication prepared during PHASE 2.
-      staged.commit();
+      // R7 transactional publication prepared during PHASE 2. Publication
+      // callbacks are framework-owned; allow their boundary calls to bypass
+      // the user-facing reentrancy guard without exposing that escape hatch to
+      // component bodies.
+      protocolState.internalPublication = true;
+      try {
+        staged.commit();
+      } finally {
+        protocolState.internalPublication = false;
+      }
       scope.stagedPublication = undefined;
       scope.projectedOutput = newOutput;
     } else if (scope.projection !== undefined && newOutput !== scope.projectedOutput) {
       // Legacy per-scope fallback for projections without transactions.
-      scope.projection.install(newOutput);
+      protocolState.internalPublication = true;
+      try {
+        scope.projection.install(newOutput);
+      } finally {
+        protocolState.internalPublication = false;
+      }
       scope.projectedOutput = newOutput;
     }
     if (newOutput === scope.currentOutput) {
@@ -694,8 +741,11 @@ export class RetainedExecutionRuntime {
     }
     scope.currentOutput = newOutput;
     scope.pendingOutput = undefined;
-
-    promoteOwnedChildren(owner, removed);
+    if (scope.pendingPropsActive) {
+      scope.currentProps = scope.pendingProps;
+      scope.pendingProps = undefined;
+      scope.pendingPropsActive = false;
+    }
 
     // Dependency promotion.
     for (const dep of scope.dependencies) {
@@ -719,6 +769,8 @@ export class RetainedExecutionRuntime {
     for (const scope of batch) {
       this.abortLevel(scope.owner, fresh);
       scope.pendingOutput = undefined;
+      scope.pendingProps = undefined;
+      scope.pendingPropsActive = false;
       scope.table.rollback();
       scope.pendingDependencies = new Set();
       scope.state = "clean";
@@ -741,10 +793,12 @@ export class RetainedExecutionRuntime {
   ): void {
     for (const record of owner.pendingChildren) {
       const child = record.scope;
-      if (child.pendingOutput !== undefined) {
+      if (child.pendingOutput !== undefined || child.state === "evaluating") {
         // Evaluated inline this pass: roll back its subtree first.
         this.abortLevel(child.owner, fresh);
         child.pendingOutput = undefined;
+        child.pendingProps = undefined;
+        child.pendingPropsActive = false;
         child.table.rollback();
         child.pendingDependencies = new Set();
         child.state = "clean";
@@ -752,30 +806,18 @@ export class RetainedExecutionRuntime {
         child.stagedPublication = undefined;
         if (!child.mounted) fresh.push(child);
       } else if (!child.mounted) {
+        // A fresh child can have thrown before producing an output.
         fresh.push(child);
       }
     }
     if (owner.pendingKeyed !== undefined) {
       for (const group of owner.pendingKeyed.values()) {
         this.abortLevel(group.owner, fresh);
-        const everCommitted = owner.committedKeyed?.get(group.key) === group;
-        if (!everCommitted) {
-          // Group itself never committed: everything inside is fresh.
-          for (const record of group.owner.committedChildren) fresh.push(record.scope);
-          if (group.owner.committedKeyed !== undefined) {
-            for (const nested of group.owner.committedKeyed.values()) {
-              for (const record of nested.owner.committedChildren) fresh.push(record.scope);
-            }
-            group.owner.committedKeyed.clear();
-          }
-          group.owner.committedChildren.length = 0;
-        }
       }
     }
-    owner.pendingChildren = [];
-    owner.cursor = 0;
-    owner.pendingKeyed = undefined;
-    owner.wipActive = false;
+    // Drop only WIP. Committed keyed groups/children remain authoritative on
+    // abort, including at arbitrary nesting depth.
+    owner.dropPending();
   }
 
   /**
@@ -793,16 +835,26 @@ export class RetainedExecutionRuntime {
       this.stagePublicationsRecursive(scope, staged);
       this.commitBatch([scope]);
     } catch (error) {
-      unwindStaged(staged);
+      let unwindError: unknown;
+      try {
+        unwindStaged(staged);
+      } catch (cleanupError) {
+        unwindError = cleanupError;
+      }
       const fresh: RetainedExecutionScope[] = [];
       this.abortLevel(scope.owner, fresh);
       scope.pendingOutput = undefined;
+      scope.pendingProps = undefined;
+      scope.pendingPropsActive = false;
       scope.table.rollback();
       scope.pendingDependencies = new Set();
       scope.state = "clean";
       for (const s of fresh) this.disposeScopeTree(s);
       this.disposeScopeTree(scope);
       this.roots.splice(this.roots.indexOf(scope), 1);
+      if (unwindError !== undefined) {
+        throw new AggregateError([error, unwindError], "retained execution mount cleanup failed");
+      }
       throw error;
     }
   }
@@ -812,10 +864,40 @@ export class RetainedExecutionRuntime {
     this.disposeScopeTree(scope);
     const index = this.roots.indexOf(scope);
     if (index !== -1) this.roots.splice(index, 1);
+    // A detached builder can have a queued invalidation when autoFlush is
+    // disabled (or before its scheduled microtask runs). Do not retain the
+    // disposed scope tree through the dirty queue after ownership ends.
+    this.queue = this.queue.filter((queued) => !queued.disposed);
   }
 
   private disposeScopeTree(scope: RetainedExecutionScope): void {
     scope.dispose();
+  }
+
+  /** Commits every pending descendant below an execution owner. */
+  private commitOwnerChildren(owner: ChildOwnerState, removed: RetainedExecutionScope[]): void {
+    for (const record of owner.pendingChildren) {
+      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
+    }
+    if (owner.pendingKeyed !== undefined) {
+      for (const group of owner.pendingKeyed.values()) {
+        this.commitKeyGroup(group, removed);
+      }
+    }
+    promoteOwnedChildren(owner, removed);
+  }
+
+  /** Recursively commits a keyed namespace and all nested namespaces. */
+  private commitKeyGroup(group: KeyGroup, removed: RetainedExecutionScope[]): void {
+    for (const record of group.owner.pendingChildren) {
+      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
+    }
+    if (group.owner.pendingKeyed !== undefined) {
+      for (const nested of group.owner.pendingKeyed.values()) {
+        this.commitKeyGroup(nested, removed);
+      }
+    }
+    promoteOwnedChildren(group.owner, removed);
   }
 
   noteUnmount(_scope: RetainedExecutionScope): void {
@@ -905,7 +987,10 @@ export class RetainedExecutionRuntime {
       executionCounters.execution_scope_prop_skips += 1;
       return typed;
     }
-    typed.currentProps = props;
+    // Props are WIP as well: a failed child evaluation must not make the new
+    // inputs look committed and cause a later parent pass to skip stale UI.
+    typed.pendingProps = props;
+    typed.pendingPropsActive = true;
     // Inline evaluation supersedes queued dirty work (AMENDMENT-C §12.2).
     typed.dirty = false;
     executionCounters.execution_scope_body_calls += 1;
@@ -915,13 +1000,18 @@ export class RetainedExecutionRuntime {
 }
 
 function unwindStaged(staged: ReadonlyArray<RetainedExecutionScope>): void {
+  const errors: unknown[] = [];
   for (const scope of staged) {
     try {
       scope.stagedPublication?.abort();
-    } catch {
-      /* best-effort during an already-failing batch */
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      scope.stagedPublication = undefined;
     }
-    scope.stagedPublication = undefined;
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "retained execution publication cleanup failed");
   }
 }
 
@@ -972,6 +1062,27 @@ function collectGroupScopes(group: KeyGroup, removed: RetainedExecutionScope[]):
   }
 }
 
+/** Disposes all owned descendants, including pending WIP and nested keys. */
+function disposeOwnedChildren(owner: ChildOwnerState): void {
+  const records = [...owner.committedChildren, ...owner.pendingChildren];
+  for (const record of records) record.scope.dispose();
+  const groups = new Set<KeyGroup>();
+  for (const group of owner.committedKeyed?.values() ?? []) groups.add(group);
+  for (const group of owner.pendingKeyed?.values() ?? []) groups.add(group);
+  for (const group of groups) disposeKeyGroup(group);
+  owner.release();
+}
+
+function disposeKeyGroup(group: KeyGroup): void {
+  const records = [...group.owner.committedChildren, ...group.owner.pendingChildren];
+  for (const record of records) record.scope.dispose();
+  const nestedGroups = new Set<KeyGroup>();
+  for (const nested of group.owner.committedKeyed?.values() ?? []) nestedGroups.add(nested);
+  for (const nested of group.owner.pendingKeyed?.values() ?? []) nestedGroups.add(nested);
+  for (const nested of nestedGroups) disposeKeyGroup(nested);
+  group.owner.release();
+}
+
 /** Collects fresh never-committed pending scopes after an aborted pass. */
 function disposeFreshPending(owner: ChildOwnerState): void {
   for (const record of owner.pendingChildren) {
@@ -1002,14 +1113,20 @@ export function keyGroupOf(scope: RetainedExecutionScope): ViewKey | undefined {
   if (parent === null) return undefined;
   // Check WIP first (group may have been touched but not yet promoted), then
   // the committed namespace.
-  const owners = [parent.owner.pendingKeyed, parent.owner.committedKeyed];
-  for (const map of owners) {
+  return findKeyGroup(parent.owner, scope);
+}
+
+function findKeyGroup(owner: ChildOwnerState, scope: RetainedExecutionScope): ViewKey | undefined {
+  const maps = [owner.pendingKeyed, owner.committedKeyed];
+  for (const map of maps) {
     if (map === undefined) continue;
     for (const [key, group] of map) {
       const pools = [group.owner.pendingChildren, group.owner.committedChildren];
       for (const pool of pools) {
         if (pool.some((record) => record.scope === scope)) return key;
       }
+      const nested = findKeyGroup(group.owner, scope);
+      if (nested !== undefined) return nested;
     }
   }
   return undefined;

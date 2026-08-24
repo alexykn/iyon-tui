@@ -43,22 +43,16 @@ export const toolCardExecutionCounters = new Map<string, number>();
 
 const ToolCallCard = defineView<{
   readonly cardState: State<LiveTool>;
-  readonly tools: ToolResolver | undefined;
+  readonly animation: ViewSlot;
   readonly fallbackKey: string;
-}>(({ cardState, tools, fallbackKey }) => {
+}>(({ cardState, animation, fallbackKey }) => {
   toolCardExecutionCounters.set(fallbackKey, (toolCardExecutionCounters.get(fallbackKey) ?? 0) + 1);
-  const card = cardState.value;
-  const call: ToolCall = {
-    id: (card.toolCallId ?? fallbackKey) as never,
-    name: card.toolName ?? "tool",
-    arguments: card.arguments,
-    state: card.status,
-    argumentPreview: card.argumentPreview,
-    showArgPreview: false,
-    pulse: false,
-  };
-  const contribution = tools?.get(call.name);
-  return contribution?.renderCall?.(call) ?? renderGenericCall(call);
+  // The call line is animated by a separate specialized slot. Keeping the
+  // retained component scope mounted means progressive State updates still
+  // execute this card only, while animation ownership can correctly take over
+  // its own slot without disposing the component scope.
+  void cardState.value;
+  return View.component(animation);
 });
 
 export interface IyonAppDependencies {
@@ -110,6 +104,7 @@ class IyonAppImpl implements IyonApp {
   private assistantStream?: NativeAssistantStream;
   private readonly toolCards = new ToolCardStore();
   private readonly toolSlots = new Map<string, ViewSlot>();
+  private readonly toolAnimationSlots = new Map<string, ViewSlot>();
   private readonly toolPanes = new Map<string, ScrollPane>();
   private readonly toolCardStates = new Map<string, State<LiveTool>>();
   private readonly toolHistoryUnits = new Map<string, number>();
@@ -199,6 +194,8 @@ class IyonAppImpl implements IyonApp {
       await this.assistantStream?.dispose();
       for (const slot of this.toolSlots.values()) await slot.dispose();
       this.toolSlots.clear();
+      for (const slot of this.toolAnimationSlots.values()) await slot.dispose();
+      this.toolAnimationSlots.clear();
       for (const pane of this.toolPanes.values()) await pane.dispose();
       this.toolPanes.clear();
       this.toolCardStates.clear();
@@ -480,10 +477,13 @@ class IyonAppImpl implements IyonApp {
     const slot = this.toolSlots.get(key);
     if (slot !== undefined) {
       await this.updateToolContent(key, card);
-      if (pulsing) {
-        await slot.setAnimation([this.renderToolCall(card, key, false) as never, this.renderToolCall(card, key, true) as never], 480);
-      } else {
-        await slot.stopAnimation(this.renderToolCall(card, key, false) as never);
+      const animation = this.toolAnimationSlots.get(key);
+      if (animation !== undefined) {
+        if (pulsing) {
+          await animation.setAnimation([this.renderToolCall(card, key, false) as never, this.renderToolCall(card, key, true) as never], 480);
+        } else {
+          await animation.stopAnimation(this.renderToolCall(card, key, false) as never);
+        }
       }
       return;
     }
@@ -497,20 +497,22 @@ class IyonAppImpl implements IyonApp {
     const pane = this.tui.createScrollPane(View.spacer(0));
     this.toolPanes.set(key, pane);
     const created = this.tui.createViewSlot(View.spacer(0));
+    const animation = this.tui.createViewSlot(View.spacer(0));
     this.toolSlots.set(key, created);
+    this.toolAnimationSlots.set(key, animation);
     this.mountedToolCards.add(key);
     // Builder ownership: the card line is a retained component reading its
     // tracked snapshot; progressive updates execute exactly this scope.
     const cardState = state<LiveTool>(card);
     this.toolCardStates.set(key, cardState);
-    created.setView(() => ToolCallCard({ cardState, tools: this.dependencies.tools, fallbackKey: key }));
+    created.setView(() => ToolCallCard({ cardState, animation, fallbackKey: key }));
     await this.updateToolContent(key, card);
     const historyUnit = await this.history.push(View.vertical((column) => {
       column.child(View.component(created).fillWidth());
       column.flexMax(16, View.component(pane).fillWidth());
     }).fillWidth());
     this.toolHistoryUnits.set(key, historyUnit);
-    if (pulsing) await created.setAnimation([this.renderToolCall(card, key, false) as never, this.renderToolCall(card, key, true) as never], 480);
+    if (pulsing) await animation.setAnimation([this.renderToolCall(card, key, false) as never, this.renderToolCall(card, key, true) as never], 480);
   }
 
   private async updateToolContent(key: string, card: LiveTool | undefined): Promise<void> {
@@ -547,10 +549,13 @@ class IyonAppImpl implements IyonApp {
     await this.history.freeze(unit, view as never);
     const slot = this.toolSlots.get(key);
     if (slot !== undefined) await slot.dispose();
+    const animation = this.toolAnimationSlots.get(key);
+    if (animation !== undefined) await animation.dispose();
     const pane = this.toolPanes.get(key);
     if (pane !== undefined) await pane.dispose();
     this.toolHistoryUnits.delete(key);
     this.toolSlots.delete(key);
+    this.toolAnimationSlots.delete(key);
     this.toolPanes.delete(key);
     this.toolCardStates.delete(key);
   }

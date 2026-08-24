@@ -12,7 +12,7 @@ import {
   OwnedBuilderRoot,
   type RetainedExecutionRuntime,
 } from "./execution.ts";
-import { protocolState } from "./execution-context.ts";
+import { activeExecutionScope, protocolState } from "./execution-context.ts";
 import { nodeForBridge, View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "../native.ts";
 
@@ -128,10 +128,14 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
     this.setViewDirect(viewOrBuilder);
   }
 
-  private assertBuilderAllowed(): void {
-    if (protocolState.mutating) {
-      throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: slot builder mutation during a retained protocol pass");
+  private assertUserMutationAllowed(operation: string): void {
+    if ((protocolState.mutating && !protocolState.internalPublication) || activeExecutionScope() !== undefined) {
+      throw new Error(`TUI_EXECUTION_REENTRANT_MUTATION: ${operation} during a retained protocol pass`);
     }
+  }
+
+  private assertBuilderAllowed(): void {
+    this.assertUserMutationAllowed("slot builder mutation");
     if (this.retainedRuntime === undefined) {
       throw new Error(
         "TUI_EXECUTION_BUILDER_UNSUPPORTED: builder mode requires a Tui-created slot (shared execution runtime)",
@@ -154,6 +158,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
 
   /** Direct ownership: install now, then dispose any owned builder root. */
   private setViewDirect(view: View): void {
+    this.assertUserMutationAllowed("slot mutation");
     this.call(() => {
       // PERF-12 T13 retained path: identity-first install through the slot's
       // own §18 boundary. Previous content stays leased until the replacement
@@ -200,7 +205,11 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
    */
   prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed || this.boundary === undefined) return undefined;
-    const publication = this.boundary.prepareInstall(view);
+    // A retained preparation can refuse for a budget/unsupported-kind
+    // reason. Complete cold materialization is still a valid transactional
+    // fallback, and must happen before publication rather than turning a
+    // renderable update into an unnecessary abort.
+    const publication = this.boundary.prepareInstall(view) ?? this.boundary.prepareColdInstall(view);
     if (publication === undefined) return undefined;
     const setCurrentView = (promoted: View): void => this.currentViewSet(promoted);
     return {
@@ -221,6 +230,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
     this.setAnimationWithRefs(frames, intervalMs, true);
   }
   private setAnimationWithRefs(frames: readonly View[], intervalMs: number, atCycleBoundary: boolean): void {
+    this.assertUserMutationAllowed("slot animation mutation");
     this.call(() => {
       if (frames.length === 0) throw new Error("native view slot animation requires at least one frame");
       // Small animations can stay scalar. Large animations write acquired refs
@@ -260,6 +270,10 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
         }
       }
     });
+    // Animation is an ownership transition just like direct setView: the
+    // builder relinquishes control only after the native animation install
+    // succeeds, so a failed install leaves the builder authoritative.
+    this.disposeOwnedBuilder();
   }
 
   private animationScratch(requiredLength: number): Uint32Array {
@@ -320,6 +334,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
   }
 
   stopAnimation(view: View): void {
+    this.assertUserMutationAllowed("slot animation mutation");
     this.call(() => {
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
@@ -332,15 +347,25 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       }
       this.nativeHandle.stopAnimation(nodeForBridge(view));
     });
+    this.disposeOwnedBuilder();
   }
 
-  /** Releases the boundary's root lease exactly once before native teardown. */
+  /** Releases owned execution state and the root lease before native teardown. */
   dispose(): void {
     if (!this.disposed) {
+      // A disposed slot must not leave its builder root subscribed to State or
+      // queued in the shared runtime. Dispose the producer first, while the
+      // native slot is still a valid target, then release its root lease.
+      const root = this.ownedBuilderRoot;
+      if (root !== undefined) {
+        this.ownedBuilderRoot = undefined;
+        root.dispose();
+      }
       try {
         this.boundary?.close();
       } finally {
         this.boundary = undefined;
+        this.currentView = undefined;
       }
     }
     super.dispose();

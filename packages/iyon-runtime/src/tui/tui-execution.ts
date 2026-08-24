@@ -37,6 +37,9 @@ export function bindExecutionRuntime(
       return {
         view,
         install(output: View): void {
+          // Commit publication runs with the framework's internal publication
+          // token; use the ordinary setter rather than exposing an execution-
+          // only mutation method on ViewSlot.
           slot.setView(output);
         },
         preparePublication(output: View): { commit(): void; abort(): void } | undefined {

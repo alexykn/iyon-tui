@@ -19,7 +19,7 @@ import {
 } from "./retained_dag.ts";
 import type { RootPublication } from "./retained_dag.ts";
 import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./execution.ts";
-import { protocolState } from "./execution-context.ts";
+import { activeExecutionScope, protocolState, withoutRetainedComposition } from "./execution-context.ts";
 import type {
   OutputHandle,
   ScrollPane,
@@ -53,7 +53,6 @@ export class Tui implements TuiRuntime {
   private readonly retainedRuntime: RetainedExecutionRuntime;
   /** Root execution scope (created on first canonical render). */
   private rootBuilder?: OwnedBuilderRoot;
-  private rootProducerStaged?: () => SceneContract;
   private rootScopeCreated = false;
   /** History sideband: attach-once ownership per the Rust audit (SS32.2.4). */
   private stagedHistory?: HistoryContract;
@@ -75,11 +74,16 @@ export class Tui implements TuiRuntime {
     this.retainedRuntime = new RetainedExecutionRuntime({
       createScopeProjection: () => {
         // Component scopes project as native view slots (R6a machinery).
-        const slot = new ViewSlot(hostRef, View.spacer(0));
+        // The seed is framework plumbing, not a user semantic construction;
+        // do not consume a parent scope's semantic slot for it.
+        const slot = new ViewSlot(hostRef, withoutRetainedComposition(() => View.spacer(0)));
         const view = slot.view();
         return {
           view,
           install(output: View): void {
+            // Commit publication runs with the framework's internal publication
+            // token, so the ordinary direct setter is safe here without
+            // exposing an execution-only mutation method on ViewSlot.
             slot.setView(output);
           },
           preparePublication(output: View) {
@@ -109,6 +113,10 @@ export class Tui implements TuiRuntime {
       // Cold materialize-only: decode WITHOUT painting (\u00a732.2.3 hard rule).
       prepared = this.boundary!.prepareColdInstall(output);
     }
+    // Both retained and cold routes can refuse (for example when the native
+    // session has been torn down). Report a normal preparation refusal so the
+    // enclosing transaction can abort without dereferencing an absent ref.
+    if (prepared === undefined) return undefined;
     // History sideband validation happens at prepare time via stageHistory;
     // commit swaps the binding before the body publishes.
     const historyToBind = this.stagedHistory;
@@ -167,9 +175,6 @@ export class Tui implements TuiRuntime {
   }
 
   get size(): TerminalMetadata { return { width: this.width, height: this.height }; }
-
-  /** PERF-12 T13.1 R8: the ONE retained execution runtime owned by this Tui. */
-  get executionRuntime(): RetainedExecutionRuntime { return this.retainedRuntime; }
 
   async nextEvent(signal?: AbortSignal): Promise<TuiEvent> {
     if (signal?.aborted) throw tuiError("cancelled", "TUI event wait was cancelled");
@@ -246,11 +251,8 @@ export class Tui implements TuiRuntime {
   }
 
   private assertNotMutating(operation: string): void {
-    if (protocolState.mutating || this.closed === false) {
-      // Only reject when a retained protocol pass is actually running.
-      if (protocolState.mutating) {
-        throw tuiError("terminal", `${operation} during a retained protocol pass is forbidden`);
-      }
+    if ((protocolState.mutating && !protocolState.internalPublication) || activeExecutionScope() !== undefined) {
+      throw tuiError("terminal", `${operation} during a retained protocol pass is forbidden`);
     }
   }
 
@@ -267,21 +269,39 @@ export class Tui implements TuiRuntime {
     };
 
     if (!this.rootScopeCreated) {
-      this.rootScopeCreated = true;
       const rootTarget = {
         preparePublication: (output: View): RootPublication | undefined =>
           this.prepareRootPublication(nativeViewAbiSession()!, output),
+        needsPublication: (_output: View): boolean => this.stagedHistory !== this.boundHistory,
       };
-      this.rootBuilder = OwnedBuilderRoot.start(this.retainedRuntime, producer, rootTarget);
-      return;
+      // Do not mark the boundary live until the initial body/materialization
+      // succeeds. A failed first render must leave the Tui retryable rather
+      // than making the next render dereference an absent root builder.
+      const previousStagedHistory = this.stagedHistory;
+      try {
+        const root = OwnedBuilderRoot.start(this.retainedRuntime, producer, rootTarget);
+        this.rootBuilder = root;
+        this.rootScopeCreated = true;
+        return;
+      } catch (error) {
+        this.stagedHistory = previousStagedHistory;
+        throw error;
+      }
     }
-    this.rootBuilder!.replaceProducer(producer);
+    const previousStagedHistory = this.stagedHistory;
+    try {
+      this.rootBuilder!.replaceProducer(producer);
+    } catch (error) {
+      this.stagedHistory = previousStagedHistory;
+      throw error;
+    }
   }
 
   private renderDirect(scene: SceneContract, signal?: AbortSignal): void {
     ensureSignal(signal);
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
     this.drainExecution();
+    this.assertNotMutating("tui.render(scene)");
     const normalized = Scene.from(scene);
     if (
       this.currentScene !== undefined
@@ -292,8 +312,12 @@ export class Tui implements TuiRuntime {
       return;
     }
     if (normalized.history !== undefined) {
+      if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
+        throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
+      }
       const history = (normalized.history as unknown as { nativeObject(): object }).nativeObject() as { isDetached?: () => boolean };
       if (history.isDetached?.() === true) this.host.setHistory(history as object);
+      this.boundHistory = normalized.history;
     }
     const previousBody = this.currentScene?.body;
     const session = nativeViewAbiSession();
@@ -308,6 +332,7 @@ export class Tui implements TuiRuntime {
       if (exact.status === "ok") {
         recordNativeViewRoute("render_ref");
         this.currentScene = normalized;
+        this.disposeRootBuilder();
         return;
       }
       // Miss falls through to the full retained install (§47 recovery).
@@ -334,6 +359,7 @@ export class Tui implements TuiRuntime {
       if (session !== undefined) this.boundary!.adopt(normalized.body);
     }
     this.currentScene = normalized;
+    this.disposeRootBuilder();
   }
 
   private ensureBoundary(session: NonNullable<ReturnType<typeof nativeViewAbiSession>>): RetainedRootBoundary {
@@ -379,10 +405,28 @@ export class Tui implements TuiRuntime {
     this.host.resize(width, height);
   }
 
+  private disposeRootBuilder(): void {
+    const root = this.rootBuilder;
+    this.rootBuilder = undefined;
+    this.rootScopeCreated = false;
+    root?.dispose();
+  }
+
+  private disposeRetainedExecution(): void {
+    // Scope projections and builder roots own native leases/handles. They must
+    // be retired while the host is still alive; otherwise State subscribers
+    // and scheduled microtasks can outlive the Tui and target disposed slots.
+    this.disposeRootBuilder();
+    this.retainedRuntime.dispose();
+    this.stagedHistory = undefined;
+    this.boundHistory = undefined;
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
     try {
+      this.disposeRetainedExecution();
       this.boundary?.close();
     } finally {
       this.boundary = undefined;
@@ -394,6 +438,7 @@ export class Tui implements TuiRuntime {
   exit(): void {
     if (this.closed) return;
     try {
+      this.disposeRetainedExecution();
       this.boundary?.close();
     } finally {
       this.boundary = undefined;

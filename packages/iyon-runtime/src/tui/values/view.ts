@@ -77,7 +77,43 @@ import {
 import { PersistentSeq } from "../persistent_seq.ts";
 import { StyleSpec } from "./style.ts";
 import { TextSpan, type HorizontalAlign, type WrapMode } from "./text.ts";
-import { withKeyedChildOwner, activeChildOwnerOrThrow } from "../execution-context.ts";
+import {
+  activeChildOwnerOrThrow,
+  executionContext,
+  semanticConstruction,
+  withKeyedChildOwner,
+} from "../execution-context.ts";
+import {
+  composeBackground,
+  composeBorder,
+  composeClampRows,
+  composeComponent,
+  composeContainer,
+  composeContentMax,
+  composeDiff,
+  composeFillHeight,
+  composeFillWidth,
+  composeFitHeight,
+  composeFitWidth,
+  composeForeground,
+  composeGrid,
+  composeHanging,
+  composeHorizontal,
+  composeMaxHeight,
+  composeMaxWidth,
+  composeMinHeight,
+  composeMinWidth,
+  composePadding,
+  composeSpacer,
+  composeStyle,
+  composeStyleState,
+  composeStyledText,
+  composeText,
+  composeTextAlign,
+  composeTextAttribute,
+  composeVertical,
+  composeWrap,
+} from "../compose.ts";
 
 type ChildBuilder = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
@@ -86,6 +122,10 @@ const globalRoot = globalThis as typeof globalThis & { [NODE_ID_COUNTER]?: Count
 const nodeIdCounter = globalRoot[NODE_ID_COUNTER] ??= { next: 1 };
 const WIDE_AXIS_SEQUENCE_THRESHOLD = 1_024;
 const WIDE_GRID_SEQUENCE_THRESHOLD = 1_024;
+
+function isRetainedConstruction(): boolean {
+  return executionContext.top !== undefined && !semanticConstruction.raw;
+}
 
 function nextNodeId(): number {
   if (nodeIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI View node identity exhausted");
@@ -365,19 +405,23 @@ export class View {
 
   static contentMax(maxRows: number, child: View): View {
     validateU16(maxRows, "maxRows");
+    if (isRetainedConstruction()) return composeContentMax(maxRows, child);
     return new View({ kind: BRIDGE_VIEW_KIND.contentMax, child: nodeForBridge(child), maxRows });
   }
 
   static diff(hunks: readonly DiffHunkNode[]): View {
+    if (isRetainedConstruction()) return composeDiff(hunks);
     return new View({ kind: BRIDGE_VIEW_KIND.diff, hunks: hunks.map(toBridgeHunk) });
   }
 
   static text(value: string): View {
     if (typeof value !== "string") throw new TypeError("View.text requires a string");
+    if (isRetainedConstruction()) return composeText(value);
     return new View({ kind: BRIDGE_VIEW_KIND.text, spans: [{ text: value }], wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
   }
 
   static styledText(spans: readonly TextSpan[]): View {
+    if (isRetainedConstruction()) return composeStyledText(spans);
     return new View({ kind: BRIDGE_VIEW_KIND.text, spans: spans.map((span) => ({
       ...span.value,
       style: span.value.style === undefined ? undefined : cloneStyle(span.value.style),
@@ -386,10 +430,15 @@ export class View {
 
   static spacer(rows: number): View {
     validateU16(rows, "rows");
+    if (isRetainedConstruction()) return composeSpacer(rows);
     return new View({ kind: BRIDGE_VIEW_KIND.spacer, rows });
   }
 
   static horizontal(children: ChildBuilder): View {
+    if (isRetainedConstruction()) {
+      const build = typeof children === "function" ? children : (builder: ChildrenBuilder) => builder.childrenOf(children);
+      return composeHorizontal(build);
+    }
     const builder = buildChildren(children);
     const view = new View({ kind: BRIDGE_VIEW_KIND.row, children: builder.children, gap: builder.gapValue() });
     seedWideAxisSequence(view, builder.children);
@@ -397,6 +446,10 @@ export class View {
   }
 
   static vertical(children: ChildBuilder): View {
+    if (isRetainedConstruction()) {
+      const build = typeof children === "function" ? children : (builder: ChildrenBuilder) => builder.childrenOf(children);
+      return composeVertical(build);
+    }
     const builder = buildChildren(children);
     const view = new View({ kind: BRIDGE_VIEW_KIND.column, children: builder.children, gap: builder.gapValue() });
     seedWideAxisSequence(view, builder.children);
@@ -404,10 +457,17 @@ export class View {
   }
 
   static hanging(prefix: View, continuation: View, body: View): View {
+    if (isRetainedConstruction()) return composeHanging(prefix, continuation, body);
     return new View({ kind: BRIDGE_VIEW_KIND.hanging, prefix: nodeForBridge(prefix), continuation: nodeForBridge(continuation), body: nodeForBridge(body) });
   }
 
   static grid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
+    if (isRetainedConstruction()) return composeGrid(specification);
+    return View.__rawGrid(specification);
+  }
+
+  /** @internal raw grid construction used by the scoped comparator. */
+  static __rawGrid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
     const builder = new GridBuilder();
     if (Array.isArray(specification)) {
       builder.columns(specification.map(() => ({ kind: "content" as const })));
@@ -551,6 +611,7 @@ export class View {
   }
 
   static component(handle: { readonly id: NativeHandleId; nativeComponentId?: () => number | undefined }): View {
+    if (isRetainedConstruction()) return composeComponent(handle);
     const nativeId = handle.nativeComponentId?.();
     return new View({ kind: BRIDGE_VIEW_KIND.component, handle: (nativeId ?? handle.id) as NativeHandleId });
   }
@@ -619,37 +680,41 @@ export class View {
   underline(): View { return this.textAttribute("underline"); }
   reversed(): View { return this.textAttribute("reversed"); }
   strikethrough(): View { return this.textAttribute("strikethrough"); }
-  textAttribute(name: string, enabled = true): View { return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } }); }
-  padding(value: number | Insets): View { return this.decorate({ padding: insets(value) }); }
-  background(color: ColorNode): View { return this.decorate({ background: color }); }
-  foreground(color: ColorNode): View { return this.decorate({ foreground: color }); }
-  border(border: BorderNode): View { return this.decorate({ border }); }
-  style(style: StyleSpec): View { return this.decorate({ style: mergeStyles(emptyStyle(), style.value) }); }
+  textAttribute(name: string, enabled = true): View {
+    if (isRetainedConstruction()) return composeTextAttribute(this, name, enabled);
+    return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } });
+  }
+  padding(value: number | Insets): View { return isRetainedConstruction() ? composePadding(this, value) : this.decorate({ padding: insets(value) }); }
+  background(color: ColorNode): View { return isRetainedConstruction() ? composeBackground(this, color) : this.decorate({ background: color }); }
+  foreground(color: ColorNode): View { return isRetainedConstruction() ? composeForeground(this, color) : this.decorate({ foreground: color }); }
+  border(border: BorderNode): View { return isRetainedConstruction() ? composeBorder(this, border) : this.decorate({ border }); }
+  style(style: StyleSpec): View { return isRetainedConstruction() ? composeStyle(this, style) : this.decorate({ style: mergeStyles(emptyStyle(), style.value) }); }
 
   styleState(key: string, value: string): View {
     if (key.length === 0 || value.length === 0) throw new RangeError("style state key and value cannot be empty");
+    if (isRetainedConstruction()) return composeStyleState(this, key, value);
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
     const child = decorated?.child ?? nodeForBridge(this);
     return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [key]: value } } });
   }
 
-  container(): View { return new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
+  container(): View { return isRetainedConstruction() ? composeContainer(this) : new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
   clampRows(maxRows: number, overflow: OverflowIndicator = { kind: "none" }): View {
     validateU16(maxRows, "maxRows");
-    return new View({ kind: BRIDGE_VIEW_KIND.clamp, child: nodeForBridge(this), maxRows, overflow: bridgeOverflow(overflow) });
+    return isRetainedConstruction() ? composeClampRows(this, maxRows, overflow) : new View({ kind: BRIDGE_VIEW_KIND.clamp, child: nodeForBridge(this), maxRows, overflow: bridgeOverflow(overflow) });
   }
-  fitWidth(): View { return this.decorate({ width: "fit" }); }
-  fillWidth(): View { return this.decorate({ width: "fill" }); }
-  fitHeight(): View { return this.decorate({ height: "fit" }); }
-  fillHeight(): View { return this.decorate({ height: "fill" }); }
-  minWidth(value: number): View { return this.decorate({ minWidth: validateU16(value, "minWidth") }); }
-  maxWidth(value: number): View { return this.decorate({ maxWidth: validateU16(value, "maxWidth") }); }
-  minHeight(value: number): View { return this.decorate({ minHeight: validateU16(value, "minHeight") }); }
-  maxHeight(value: number): View { return this.decorate({ maxHeight: validateU16(value, "maxHeight") }); }
-  wrap(mode: WrapMode): View { return this.textLayoutPatch(wrapCode(mode), undefined); }
+  fitWidth(): View { return isRetainedConstruction() ? composeFitWidth(this) : this.decorate({ width: "fit" }); }
+  fillWidth(): View { return isRetainedConstruction() ? composeFillWidth(this) : this.decorate({ width: "fill" }); }
+  fitHeight(): View { return isRetainedConstruction() ? composeFitHeight(this) : this.decorate({ height: "fit" }); }
+  fillHeight(): View { return isRetainedConstruction() ? composeFillHeight(this) : this.decorate({ height: "fill" }); }
+  minWidth(value: number): View { const validated = validateU16(value, "minWidth"); return isRetainedConstruction() ? composeMinWidth(this, validated) : this.decorate({ minWidth: validated }); }
+  maxWidth(value: number): View { const validated = validateU16(value, "maxWidth"); return isRetainedConstruction() ? composeMaxWidth(this, validated) : this.decorate({ maxWidth: validated }); }
+  minHeight(value: number): View { const validated = validateU16(value, "minHeight"); return isRetainedConstruction() ? composeMinHeight(this, validated) : this.decorate({ minHeight: validated }); }
+  maxHeight(value: number): View { const validated = validateU16(value, "maxHeight"); return isRetainedConstruction() ? composeMaxHeight(this, validated) : this.decorate({ maxHeight: validated }); }
+  wrap(mode: WrapMode): View { return isRetainedConstruction() ? composeWrap(this, mode) : this.textLayoutPatch(wrapCode(mode), undefined); }
   noWrap(): View { return this.wrap("noWrap"); }
-  textAlign(align: HorizontalAlign): View { return this.textLayoutPatch(undefined, horizontalAlignCode(align)); }
+  textAlign(align: HorizontalAlign): View { return isRetainedConstruction() ? composeTextAlign(this, align) : this.textLayoutPatch(undefined, horizontalAlignCode(align)); }
 
   private decoratedNode(): Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }> | undefined {
     const node = nodeForBridge(this);

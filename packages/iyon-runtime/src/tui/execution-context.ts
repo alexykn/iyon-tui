@@ -39,7 +39,20 @@ export const executionContext: {
  * True while the retained protocol (evaluate/prepare/commit) is running.
  * Builder-boundary user mutations consult this and reject deterministically.
  */
-export const protocolState = { mutating: false };
+export const protocolState = { mutating: false, internalPublication: false };
+
+/** Guards public View constructors while compose helpers invoke raw builders. */
+export const semanticConstruction = { raw: false };
+
+export function withoutRetainedComposition<T>(build: () => T): T {
+  const previous = semanticConstruction.raw;
+  semanticConstruction.raw = true;
+  try {
+    return build();
+  } finally {
+    semanticConstruction.raw = previous;
+  }
+}
 
 export function activeExecutionScope(): RetainedExecutionScope | undefined {
   return executionContext.top;

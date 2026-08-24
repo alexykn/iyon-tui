@@ -13,7 +13,7 @@
 | Cold fall-through gate (`PERF-12-T13.1-R0-cold-fallthrough.jsonl`) | measured at `4e32761` | smoke gate instrument | ≤3% gate |
 | Projection overhead instrument (`PERF-12-T13.1-R3-projection-overhead.jsonl`) | measured at `4e32761` | smoke gate instrument | R6b go/no-go input |
 | End-to-end overhead instrument (`PERF-12-T13.1-R6a-end-to-end-overhead.jsonl`) | measured at `4e32761` | smoke gate instrument | resolver-gap curve |
-| Memory soak (`bench/perf12_t13_1_r10_memory_soak.ts`, console record below) | this revision | full scale | §22/§43 targets |
+| Memory soak (`bench/perf12_t13_1_r10_memory_soak.ts`, raw console record: `bench/PERF-12-T13.1-R10-memory-soak.log`) | `5492290` (clean tree) | full scale | §22/§43 targets |
 
 bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`); native addon unchanged since the T13-era staged artifact; no Rust changes after `b382d75`/`33bb5c7`.
 
@@ -87,13 +87,13 @@ Reading:
 
 **Memory**
 
-- Full-scale soak (this revision): **100,000 keyed mount/unmount cycles** over a bounded 64-key sliding window with 6,250 interleaved abort-churn passes. RSS plateaued at 78 MB from cycle 20k onward (no growth across 80k further cycles); State subscriber count held exactly at the live-window size throughout; post-dispose subscriber count 0. Targets met: bounded live set, subscribers follow live scopes, aborted pendings reclaimed, disposal immediate.
+- Full-scale soak (`5492290`, clean tree): **100,000 keyed mount/unmount cycles** over a bounded 64-key sliding window with 6,250 interleaved abort-churn passes. RSS plateaued by cycle 20k (78–80 MB across runs; no growth across 80k further cycles); State subscriber count held exactly at the live-window size (64) throughout; post-dispose subscriber count 0. Targets met: bounded live set, subscribers follow live scopes, aborted pendings reclaimed, disposal immediate. Raw console record committed as `packages/iyon-runtime/bench/PERF-12-T13.1-R10-memory-soak.log`; independently reproduced twice.
 
 **Cleanup (Step 14R)**
 
 - Lexical SiteId architecture: gone since R0; no Oxc/AST dependency added (`package.json` deps unchanged).
 - `bodyKey`: removed (commit `a17ff2b`); spinner advance side effect preserved and pinned by `perf12_t13_1_r9_production.test.ts`.
-- Dead code: `disposeFreshPending` removed (commit `814132c`). Full runtime battery before/after identical: 261 pass / 1 documented pre-existing perf11v4 weak-cache interference failure (passes isolated); plugins 114/114; fixture 10/10; typecheck clean.
+- Dead code: `disposeFreshPending` removed (commit `814132c`). Full runtime battery before/after identical: 261 pass / 1 documented pre-existing perf11v4 weak-cache interference failure (passes isolated); app plugin suite 113 pass / 1 documented pre-existing recovery3 viewport failure (predates all T13.1 work — R9 record Finding 5); iyon-plugins packages 30/30; fixture 10/10; typecheck clean.
 
 ## 4. §31.5 sibling independence — BLOCKED BY DEFERRAL (never waived)
 

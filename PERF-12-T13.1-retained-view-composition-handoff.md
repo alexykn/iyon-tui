@@ -1504,6 +1504,33 @@ The decisive evidence is the two 1-of-1000 sibling tests: same-geometry and geom
 
 **7. Status line.** **Tranche R9 status: COMPLETE.** The external fixture proves zero-setup scoped invalidation through the public API, and the shipped app plugin now runs its chrome and live tool cards through retained execution scopes with counter-proven sibling skipping. Remaining for R10: authoritative four-arm-plus-scopes benchmark matrix, adoption decision, bodyKey removal + lexical remnant cleanup after gates pass.
 
+### R10 implementation record
+
+**1. Scope statement.** Tranche R10 (Step 14R; handoff §29/§32.1/§37, AMENDMENT-C §18): authoritative four-arm-plus-scopes benchmark matrix at §102 minimums, adoption decision, oracle-divergence resolution (§39 standing note), full-scale memory soak, and — only after gates pass — bodyKey removal and dead-code cleanup. Full evidence lives in `PERF-12-T13.1-R10-report.md`; this record summarizes and pins the gate rows.
+
+**2. Commits.** `becd990` (gate-evidence refresh at post-R9 fix revision `4e32761`, clean tree) → `513e0cf` (four-arm probe extension: retained_scopes candidate arm, 1,000 measured ops/case, cross-arm screen parity enforcement) → `dd6ae3d` (single-encode provenance line; authoritative JSONL captured clean-tree at this revision) → `a17ff2b` (bodyKey removal) → `814132c` (`disposeFreshPending` dead-code removal; battery identical before/after) → `5492290` (R10 report + memory soak).
+
+**3. Review findings.**
+- Finding 1: the retained candidate regressed one matrix case honestly (`effort_style_state`, ~+47 µs median vs `rebuild_uncomposed`): an effort change legitimately re-executes Composer AND Footer through two scoped ViewSlot boundaries versus one whole-scene install on the uncomposed arms. Bounded (~0.11 ms median, p99 ~0.21 ms); dominated by wins on every other case. Accepted and recorded rather than tuned away.
+- Finding 2: post-R10 record review found the cleanup section claimed "plugins 114/114" while the app plugin suite is actually 113 pass / 1 fail — the documented pre-existing recovery3 viewport failure predating all T13.1 work (R9 Finding 5). Corrected in the report per §37's honest-failure reporting duty; reproduced at HEAD during review.
+- Finding 3: post-R10 record review found the memory soak cited "console record below" without a committed raw artifact. Committed as `bench/PERF-12-T13.1-R10-memory-soak.log` from a clean tree at `5492290` and independently reproduced twice (RSS plateau 78–80 MB, subscribers exactly 64, post-dispose 0 both runs).
+- Finding 4: independent review reproduction of the authoritative matrix at HEAD matched all committed medians within noise (retained arm: 375 / 58,959 / 113,333 / 45,500 ns for exact_noop/footer_only/effort_style_state/working_toggle vs committed 375 / 59,083 / 113,250 / 45,833) with parity enforced and zero cold fallbacks/host mutations on scoped cases.
+
+**4. Implementation summary.** Probe extended with the `retained_scopes` arm: production-chrome shape decomposed into defineView components over tracked State slices, own headless session, canonical initial publish before measurement, publish-only state mirroring in each op; sampling raised to 1,000 measured ops (valid p99); records marked profile:"authoritative"; artifact written to `PERF-12-T13.1-R10-composition-authoritative.jsonl`. App: bodyKey/bodyKey bookkeeping removed — syncChromeStates' Object.is-deduped tracked-state writes are the sole update provenance; spinner advance tick preserved verbatim. Runtime: unused `disposeFreshPending` removed.
+
+**5. Provenance block.** bun 1.4.0 (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`); rustc 1.97.1; target aarch64-apple-darwin; addon SHA `c960d943…` (unchanged since T13-era staging). Matrix provenance line records git SHA `dd6ae3d…`; soak log records `5492290…`; both clean trees.
+
+**6. Gate evidence.** Full table in `PERF-12-T13.1-R10-report.md` §§2–4. Headlines:
+- *Four-arm matrix:* retained beats the shipped body-key guard on every case except effort_style_state (footer_only −12%, tool_slot −98%, pane −43%); exact_noop 375 ns with ZERO materializer calls and zero host mutations; materializer density 2,000/1,500 per window on footer/approval cases vs 10,000–10,500 uncomposed.
+- *Cross-arm screen parity:* enforced per case across all four arms; mismatch throws (verified by rerun).
+- *Carried cold gate ≤3%:* +1.31% at `4e32761` clean tree (`PERF-12-T13.1-R0-cold-fallthrough.jsonl`).
+- *Projection overhead flat:* 31.7 / 24.7 / 22.9 µs leaf update at 10/100/1,000 scopes (R3 instrument).
+- *Memory soak:* PASS — see Finding 3.
+- *Battery after cleanup:* runtime 261 pass / 1 documented perf11v4 interference failure (passes isolated); app plugin 113 pass / 1 documented pre-existing recovery3 viewport failure; fixture 10/10; typecheck clean. Zero behavioral delta across `814132c`/`a17ff2b`.
+- *§31.5 sibling independence:* **blocked-by-deferral** (sanctioned R6b deferral), never waived — resolver-gap curve ≈2.2 µs/mounted-scope/update committed with the N≈400 revisit trigger (report §4).
+
+**7. Status line.** **Tranche R10 status: COMPLETE.** The authoritative matrix adopts retained execution as the supported rendering path; Step 14R cleanup (bodyKey, dead code) landed with zero behavioral delta; the sanctioned R6b deferral keeps T13.1 formally PARTIAL until R6b runs against the finalized PERF-12v2 transport or the recorded N≈400 trigger fires.
+
 ## 32.3 Post-R9 correctness review invariants
 
 Normative. Established by the adversarial review of R0–R9 (`perf12_t13_1_abort_retry.test.ts`, `perf12_t13_1_ownership.test.ts`); every rule below has a failing-before/passing-after test. Where any earlier prose conflicts with this section, this section wins.

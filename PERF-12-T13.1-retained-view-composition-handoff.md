@@ -1472,3 +1472,33 @@ Adapt the implemented T2 runtime/transaction machinery into the retained executi
 Preserve the immutable `View -> BridgeViewNode` DAG, NodeId semantics, hint/lease separation, `RetainedRootBoundary`, PersistentSeq, History, streams, ScrollPane, and every PERF-12 transport invariant. No second semantic graph, no mutable semantic nodes, no deep diffs.
 
 The decisive evidence is the two 1-of-1000 sibling tests: same-geometry and geometry-changing. If the implementation executes, reconstructs, resolves, or remeasures clean scopes to discover the one changed branch — at any layer — T13.1 has failed. The end state is an external developer writing boring `defineView`/`state`/`View` code on the normal documented `iyon-tui` API and receiving dirty-scope-only retained updates without ever knowing that scopes, State tracking, NodeIds, NativeRefs, layout dependency graphs, or a retained DAG exist.
+
+### R9 implementation record
+
+**1. Scope statement.** Tranche R9 (Step 13R; handoff §24/§32.1, AMENDMENT-C §16/§30): external-consumer fixture extension to direct scoped-invalidation acceptance gates, plus production conversion of the app plugin (and its bundled tools' live rendering) to public retained APIs only. bodyKey stays armed as benchmark control until R10.
+
+**2. Commits.** `808423f` — feat(tui): land T13.1 R9 — external fixture scoped-invalidation gates + production defineView conversion.
+
+**3. Review findings.**
+- Finding 1 (projection factory gap): the Tui's `createScopeProjection` factory constructed `new ViewSlot(hostRef)` without a seed view, so scope projections never owned boundaries and every child prepare refused (`TUI_EXECUTION_PREPARE_REFUSED`). Fixed: factory seeds `View.spacer(0)`. This is exactly the class of silent-activation gap §32.6 declares a framework bug — caught by the external fixture, as designed.
+- Finding 2 (canonical history binding vs host-fabricated histories): `Tui.createHistory()` returns the host's own History (born attached); the R7 canonical commit closure called `host.setHistory` unconditionally → `ION_INVALID_INPUT: history is already attached to a native host`. Fixed with the same `isDetached()` guard the direct path has always had; attach-once semantics preserved.
+- Finding 3 (state granularity): mirroring `info` as one tracked State made Composer re-execute on footer-only status edits (Object.is on a fresh slice object notifies all readers). Split into `footerInfo` + `effort` states so effort style-state edits skip nothing else and status edits skip Composer.
+- Finding 4 (test premises): `turnStarted` alone does not flip `activityVisible`; `turnFinished` with live drafts keeps activity visible (`hasPreparedTool`). Structural-toggle gate uses `toolCallPreparing`/`turnCancelled`.
+- Finding 5 (pre-existing failure, out of scope): `recovery3_production.test.ts > production_successful_ls_is_green_finished` fails because long tool-result output pushes the finished card above the fold (screen findIndex −1). Bisected: fails at clean HEAD `2838475`, at `83afefc`, and earlier — predates all T13.1 work; unrelated to this tranche. Recorded here per §37 reporting duty.
+
+**4. Implementation summary.** Fixture: `buildScopedConsumer(tui)` (public APIs only: defineView/state/View.key/Tui.render builder) + 4 acceptance tests (§31.1 frontier gate with closure counters; keyed reorder skips bodies; ownership modes never ghost incl. tracked-write-driven repaint without setView; 10k stream-append isolation gate). Production: view.ts rewritten as defineView chrome components (Working/Approval/ComposerChrome/Footer/IyonRootView) over ChromeState tracked slices; app.ts start() publishes once canonically (`tui.render(() => new Scene(App(...), history))`), applyChrome replaces whole-scene renders (spinner choreography verbatim + syncChromeStates + bodyKey bookkeeping + advance tick), live tool cards become builder-owned slots reading per-card `State<LiveTool>` via ToolCallCard component; panes/freeze/history stay on specialized channels. Framework surface: TuiRuntime.render accepts SceneProducer; ViewSlot contract gains builder setView overload; virtual module iyon:tui exports defineView/state (+d.ts). Bundled tool renderers remain pure functions invoked inside card scopes (no SDK signature change).
+
+**5. Provenance block.** bun 1.4.0 (34cbb9a40b4bd1bd767d134a7065e66c2432a676). No Rust changes this tranche; addon unchanged.
+
+**6. Gate evidence.**
+- *Fixture §31.1 frontier gate:* status write ⇒ Header executions +1, both keyed cards +0, new header text visible after microtask drain with zero explicit renders.
+- *Fixture keyed reorder:* swap with shallow-equal props ⇒ card bodies +0/+0; content change on one key ⇒ exactly that card +1.
+- *Fixture ownership:* builder paint → tracked write drives repaint without setView → direct takeover paints → stale builder writes are inert.
+- *Fixture isolation (§32.2.6):* 10k stream appends ⇒ zero chrome/card body executions.
+- *Production scope confinement (counters):* no-op dispatch ⇒ zero bodies; configChanged ⇒ Footer=1, Composer/Working/Approval/root=0; effort cycle ⇒ Composer=1+Footer=1, others 0; preparing/cancelled structural flips ⇒ Working=1 each, siblings 0.
+- *Production tool-card isolation:* progressive events execute only that card's scope (card B mount+stream leaves card A count fixed); bullet lifecycle text correct ("ls . — running").
+- *§24.3 side effect:* spinner animates across no-op dispatches; native animation channel undisturbed (frame deltas observed via harness.advance).
+- *Parity:* full plugins/app/iyon suite green except the documented pre-existing recovery3 viewport failure; visual contracts (steer echo, queue tail, red/green bullets, composer border) locked by existing suites pass unchanged.
+- *Battery:* typecheck clean; runtime+fixture+app+plugins 357 pass / 2 fail (both pre-existing & documented: perf11v4 weak-cache interference passes isolated; recovery3 viewport failure predates T13.1).
+
+**7. Status line.** **Tranche R9 status: COMPLETE.** The external fixture proves zero-setup scoped invalidation through the public API, and the shipped app plugin now runs its chrome and live tool cards through retained execution scopes with counter-proven sibling skipping. Remaining for R10: authoritative four-arm-plus-scopes benchmark matrix, adoption decision, bodyKey removal + lexical remnant cleanup after gates pass.

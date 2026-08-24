@@ -128,21 +128,23 @@ describe("T13.1 R4 — tracked State<T>", () => {
     expect(() => runtime.update(sScope)).toThrow("boom-after-read");
     expect(S.calls()).toBe(callsAfterMount + 1);
 
-    // The aborted read must NOT have subscribed us to `second`...
-    second.set("s2-changed");
-    runtime.flush();
-    expect(S.calls()).toBe(callsAfterMount + 1);
+    // The aborted read must NOT have subscribed us to `second`. Pinned at the
+    // subscriber level: since the post-R9 review, an aborted pass RESTORES its
+    // dirty obligation (§32.3), so a later flush re-runs this scope and a
+    // behavioral "no execution" probe can no longer isolate subscription state.
+    expect(trackedStateSubscriberCount(second)).toBe(0);
+    expect(trackedStateSubscriberCount(first)).toBe(1); // committed set retained
 
-    // ...but the committed `first` subscription still drives re-execution
-    // (the body throws again since failAfterRead is still armed).
-    expect(() => {
-      first.set("f2");
-      runtime.flush();
-    }).toThrow("boom-after-read");
+    // The restored obligation re-executes while the bomb is armed — invalida-
+    // tion ≠ success — and STILL does not subscribe the aborted read.
+    expect(() => runtime.flush()).toThrow("boom-after-read");
+    expect(trackedStateSubscriberCount(second)).toBe(0);
+    expect(S.calls()).toBe(callsAfterMount + 2);
 
-    // Clear the failure: successful evaluation adopts BOTH reads going forward.
+    // Clear the failure: the SAME preserved obligation now commits, adopting
+    // BOTH reads going forward. No new invalidation was required.
     failAfterRead = false;
-    runtime.update(sScope);
+    runtime.flush();
     const adopted = S.calls();
 
     // Both dependencies now drive invalidation.

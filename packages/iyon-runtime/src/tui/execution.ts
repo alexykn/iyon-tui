@@ -389,6 +389,14 @@ export class RetainedExecutionRuntime {
   private readonly roots: RetainedExecutionScope[] = [];
   private readonly projectionFactory: ScopeProjectionFactory | undefined;
   private readonly autoFlush: boolean;
+  /**
+   * Scheduled-flush token (post-R9 review): a generation counter, not a bare
+   * boolean, so an EXPLICIT flush can consume an already-pending microtask.
+   * Without this, `invalidate(); update()` that fails mid-flush would be
+   * silently retried by the stale microtask — violating "abort preserves the
+   * retry obligation but never retries automatically".
+   */
+  private scheduledGeneration = 0;
   private flushScheduled = false;
   /** Set while any scope body is evaluating or a batch is committing (§32.2.7 guard). */
   private mutating = false;
@@ -454,6 +462,9 @@ export class RetainedExecutionRuntime {
     if (scope.disposed) return;
     if (scope.dirty) {
       executionCounters.execution_scope_duplicate_invalidations += 1;
+      // Already queued (possibly as a restored retry obligation, §32.3):
+      // never enqueue twice, but DO make sure a future flush is armed.
+      this.scheduleFlush();
       return;
     }
     scope.dirty = true;
@@ -465,7 +476,10 @@ export class RetainedExecutionRuntime {
   private scheduleFlush(): void {
     if (!this.autoFlush || this.flushing || this.flushScheduled) return;
     this.flushScheduled = true;
+    const generation = ++this.scheduledGeneration;
     queueMicrotask(() => {
+      // A stale token: an explicit drain already consumed this schedule.
+      if (!this.flushScheduled || generation !== this.scheduledGeneration) return;
       this.flushScheduled = false;
       if (this.queue.length > 0) this.flush();
     });
@@ -473,12 +487,26 @@ export class RetainedExecutionRuntime {
 
   flush(): void {
     if (this.flushing) return; // re-entrant flush joins the outer one
+    // An explicit/synchronous drain OWNS pending scheduled work now: consume
+    // the token so a failure below cannot be auto-retried by the stale
+    // microtask (post-R9 invariant §32.3).
+    if (this.flushScheduled) {
+      this.flushScheduled = false;
+      ++this.scheduledGeneration;
+    }
     this.flushing = true;
     protocolState.mutating = true;
     try {
       while (this.queue.length > 0) {
         const batch = this.queue;
         this.queue = [];
+        // Level-triggered dirty (§32.3): every still-live scope in this batch
+        // carries an invalidation OBLIGATION — its committed output may not
+        // reflect its current authoritative inputs (State values mutate before
+        // invalidation and survive aborts). Snapshot it at acquisition; on an
+        // evaluation/PREPARE abort the whole set is restored, so no obligation
+        // is consumed by a transaction that did not commit.
+        const retryObligations = batch.filter((scope) => !scope.disposed && scope.dirty);
         executionCounters.execution_flush_passes += 1;
         // Parent-before-child within a pass (AMENDMENT-C §12.2).
         batch.sort((a, b) => a.depth - b.depth || a.ordinal - b.ordinal || a.id - b.id);
@@ -499,14 +527,13 @@ export class RetainedExecutionRuntime {
             this.runWork(scope);
           }
         } catch (error) {
-          // The batch was removed from the queue before evaluation. A scope
-          // that was not reached (for example a later child after a failing
-          // parent) must not remain dirty without a queue entry: clear the
-          // consumed notification so an explicit retry can enqueue it.
-          for (const scope of batch) {
-            if (!processed.includes(scope)) scope.dirty = false;
-          }
+          // Evaluation failed: roll back all WIP, then RESTORE the original
+          // batch's dirty obligations (processed, unprocessed, superseded,
+          // dropped-in-WIP alike — no commit happened, so the previous frame
+          // stays authoritative while inputs stay current). No automatic
+          // retry is armed; a later re-drive drains them (§32.3).
           this.abortBatch(processed);
+          this.restoreRetryObligations(retryObligations);
           throw error;
         } finally {
           this.mutating = false;
@@ -530,7 +557,10 @@ export class RetainedExecutionRuntime {
           } catch (cleanupError) {
             unwindError = cleanupError;
           }
+          // Same contract as evaluation failure: PREPARE aborted, nothing
+          // committed, so the original batch's dirty obligations survive.
           this.abortBatch(processed);
+          this.restoreRetryObligations(retryObligations);
           if (unwindError !== undefined) {
             throw new AggregateError([prepareError, unwindError], "retained execution batch cleanup failed");
           }
@@ -569,6 +599,39 @@ export class RetainedExecutionRuntime {
     if (scope.disposed) return;
     executionCounters.execution_scope_state_invalidations += 1;
     this.invalidate(scope);
+  }
+
+  /**
+   * Restores failed-batch invalidation obligations WITHOUT arming the
+   * scheduler (§32.3): recovery requires an application re-drive — an
+   * explicit {@link flush}, a later State write, or any other normal
+   * scheduling trigger. Automatic retry would turn a persistent throwing
+   * component into an infinite microtask loop.
+   *
+   * @internal also used by OwnedBuilderRoot producer rollback via cancelRetry.
+   */
+  private restoreRetryObligations(obligations: ReadonlyArray<RetainedExecutionScope>): void {
+    for (const scope of obligations) {
+      if (scope.disposed) continue;
+      scope.dirty = true;
+      if (!this.queue.includes(scope)) this.queue.push(scope);
+    }
+  }
+
+  /**
+   * Cancels one scope's retry obligation: used ONLY by producer rollback
+   * (OwnedBuilderRoot.replaceProducer) when the attempted replacement input
+   * itself was rolled back to the previously authoritative producer, so the
+   * obligation introduced solely by that attempt must not linger. A scope
+   * with a pre-existing obligation keeps it (the restored producer plus the
+   * still-newer State values is exactly what a retry should render).
+   *
+   * @internal narrow framework operation — not public dirty manipulation.
+   */
+  cancelRetry(scope: RetainedExecutionScope): void {
+    scope.dirty = false;
+    const index = this.queue.indexOf(scope);
+    if (index !== -1) this.queue.splice(index, 1);
   }
 
   update(scope: RetainedExecutionScope): void {
@@ -694,17 +757,29 @@ export class RetainedExecutionRuntime {
 
   private commitBatch(batch: ReadonlyArray<RetainedExecutionScope>): void {
     executionCounters.execution_commit_batches += 1;
-    for (const scope of batch) this.commitScope(scope, this.batchRemoved);
+    // A scope can be reached TWICE in one pass: recursively as a descendant
+    // of an evaluating parent AND as its own queue entry (independently dirty
+    // child whose parent re-invoked it with UNCHANGED props — the skip gate
+    // leaves the queued obligation intact). The first commit wins; the second
+    // must be a no-op, not a "without prepared output" protocol failure.
+    const committed = new Set<RetainedExecutionScope>();
+    for (const scope of batch) this.commitScope(scope, this.batchRemoved, committed);
   }
 
   /** Removal sink for the batch in flight (R8 deferred finalization). */
   private batchRemoved: RetainedExecutionScope[] = [];
 
-  private commitScope(scope: RetainedExecutionScope, removed: RetainedExecutionScope[]): void {
+  private commitScope(
+    scope: RetainedExecutionScope,
+    removed: RetainedExecutionScope[],
+    committed: Set<RetainedExecutionScope>,
+  ): void {
+    if (committed.has(scope)) return; // already promoted earlier this pass
+    committed.add(scope);
     // Commit descendants before their parent so every embedded projection is
     // authoritative when the parent output is promoted. This is recursive
     // rather than bounded to the two keyed levels used by the first R8 pass.
-    this.commitOwnerChildren(scope.owner, removed);
+    this.commitOwnerChildren(scope.owner, removed, committed);
 
     if (scope.pendingOutput === undefined) {
       throw new ExecutionError("TUI_EXECUTION_STATE", `committing scope ${scope.id} without prepared output`);
@@ -875,26 +950,34 @@ export class RetainedExecutionRuntime {
   }
 
   /** Commits every pending descendant below an execution owner. */
-  private commitOwnerChildren(owner: ChildOwnerState, removed: RetainedExecutionScope[]): void {
+  private commitOwnerChildren(
+    owner: ChildOwnerState,
+    removed: RetainedExecutionScope[],
+    committed: Set<RetainedExecutionScope>,
+  ): void {
     for (const record of owner.pendingChildren) {
-      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
+      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed, committed);
     }
     if (owner.pendingKeyed !== undefined) {
       for (const group of owner.pendingKeyed.values()) {
-        this.commitKeyGroup(group, removed);
+        this.commitKeyGroup(group, removed, committed);
       }
     }
     promoteOwnedChildren(owner, removed);
   }
 
   /** Recursively commits a keyed namespace and all nested namespaces. */
-  private commitKeyGroup(group: KeyGroup, removed: RetainedExecutionScope[]): void {
+  private commitKeyGroup(
+    group: KeyGroup,
+    removed: RetainedExecutionScope[],
+    committed: Set<RetainedExecutionScope>,
+  ): void {
     for (const record of group.owner.pendingChildren) {
-      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed);
+      if (record.scope.pendingOutput !== undefined) this.commitScope(record.scope, removed, committed);
     }
     if (group.owner.pendingKeyed !== undefined) {
       for (const nested of group.owner.pendingKeyed.values()) {
-        this.commitKeyGroup(nested, removed);
+        this.commitKeyGroup(nested, removed, committed);
       }
     }
     promoteOwnedChildren(group.owner, removed);
@@ -1151,14 +1234,15 @@ export function invokeComponent<P>(
 
 
 /**
- * PERF-12 T13.1 R8 — OwnedBuilderRoot (handoff §32.2.6).
+ * R8 — OwnedBuilderRoot (handoff §32.2.6).
  *
  * A retained execution root whose View producer is owned by a boundary
  * (Tui body / ViewSlot content / ScrollPane content). The producer is part
- * of the transaction: `replaceProducer` stages the new producer, re-drives
- * the scope, and only PROMOTES it when evaluation/publication succeed;
- * failure restores the previous producer so the boundary keeps rendering
- * its last authoritative content.
+ * of the transaction INVARIANT (§32.3): a failed replacement must restore
+ * the previously authoritative producer and cancel any retry obligation
+ * introduced solely by that attempted replacement. The implementation
+ * assigns `currentProducer` optimistically and restores it in the failure
+ * path — representation may vary; the invariant above may not.
  *
  * Ownership transitions (direct↔builder↔animation) are transactional too:
  * the new owner takes over only after its initial publication succeeds.
@@ -1204,12 +1288,20 @@ export class OwnedBuilderRoot {
   replaceProducer(producer: () => View): void {
     if (this.currentProducer === producer) return;
     const previous = this.currentProducer;
+    // A scope already carrying an invalidation obligation keeps it across a
+    // FAILED replacement: the restored producer plus the still-newer inputs
+    // is exactly what the retry should render (post-R9 invariant §32.3).
+    const hadPendingObligation = this.scope.dirty;
     this.currentProducer = producer;
     try {
       this.scope.runtime.update(this.scope);
     } catch (error) {
       // Restore: the failed producer must not be retried implicitly.
       this.currentProducer = previous;
+      // Cancel ONLY the retry obligation introduced solely by this failed
+      // attempt — the producer input itself was rolled back, so re-running is
+      // pointless. Pre-existing obligations survive untouched.
+      if (!hadPendingObligation) this.scope.runtime.cancelRetry(this.scope);
       throw error;
     }
   }

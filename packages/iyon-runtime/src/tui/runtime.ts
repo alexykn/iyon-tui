@@ -309,6 +309,14 @@ export class Tui implements TuiRuntime {
       && this.currentScene.history === normalized.history
     ) {
       recordNativeViewRoute("no_op");
+      // Direct takeover is SEMANTIC even when no pixel can change: the direct
+      // scene now owns this boundary, so the canonical builder root must be
+      // relinquished NOW. Leaving it subscribed lets its State subscriptions
+      // ghost-update the screen later — exactly the R8 ownership-mode ghost.
+      // Projected components freeze rather than vanish: their JS scopes die
+      // here while native retirement stays deferred until a successful frame
+      // proves them unmounted (post-R9 invariant §32.3).
+      this.disposeRootBuilder();
       return;
     }
     if (normalized.history !== undefined) {

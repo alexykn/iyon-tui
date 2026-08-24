@@ -86,7 +86,6 @@ function fakeProjection(probe: FakeProbe): ScopeProjection {
 
 describe("T13.1 R7 — transactional retained-root publication", () => {
   test("atomicity: prepare failure on ONE scope publishes NOTHING anywhere", () => {
-    const runtime = new RetainedExecutionRuntime({ autoFlush: false });
     const probes: FakeProbe[] = [];
     const makeProjectedLeaf = (name: string) => {
       const value = state(`${name}0`);
@@ -135,15 +134,13 @@ describe("T13.1 R7 — transactional retained-root publication", () => {
     const after = executionCounterSnapshot();
     expect(after.execution_commit_aborts - before.execution_commit_aborts).toBe(1);
 
-    // Recovery: clear the failure; the application re-triggers (notifications
-    // are consumed once — an aborted batch requires an explicit re-drive,
-    // exactly like §41's "retry from same application state").
+    // Recovery: clear the refusal and re-drive with a bare flush. NO
+    // re-invalidation is needed or performed: an aborted PREPARE preserves
+    // every still-live scope's dirty obligation on the OWNING runtime
+    // (post-R9 invariant §32.3 — State values survive the abort, so their
+    // render obligations survive too). The retry commits all three.
     probes[2]!.failPrepare = false;
-    const [scopeA, scopeB, scopeC] = root.children.map((record) => record.scope);
-    runtime.invalidate(scopeA);
-    runtime.invalidate(scopeB);
-    runtime.invalidate(scopeC);
-    runtime.flush();
+    rt.flush();
     expect(probes.map((p) => p.installs)).toEqual(baseInstalls.map((n) => n + 1));
     rt.dispose();
     void b;

@@ -1124,6 +1124,7 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 - Finding 1: publish-refusal handling was redesigned mid-tranche per the planning review. Original plan treated a post-prepare publish refusal as recoverable with full unwind; final design makes it PATHOLOGICAL: after preparation holds a validated lease in the current generation, the only remaining failure input is runtime teardown, so refusal surfaces loudly instead of silently going stale. Cross-scope native atomicity against process death requires the §13.1 native batch primitive — explicitly deferred with R6b.
 - Finding 2: a commit-phase throw intentionally does NOT trigger abortBatch — already-promoted scopes of the same batch would be corrupted by a rollback that runs after their promotion. Post-commit-throw state is unspecified by protocol; tests assert only that the error surfaces loudly.
 - Finding 3: consumed notifications do not replay after an aborted batch — an application re-drive (any subsequent state write or explicit update) is required for recovery. Pinned by test with explanatory comment; matches handoff §41's retry semantics.
+  **[SUPERSEDED by the post-R9 correctness review — see §32.3.]** The original implementation consumed dirty flags on abort, which silently discarded invalidations whose State values remain current (State.set mutates before publishing). Final invariant: an evaluation/PREPARE abort RESTORES the original batch's still-live dirty obligations to the retry queue without arming a scheduler retry; a later application re-drive (any flush trigger) drains those already-current inputs. "Re-drive" means *cause the pending transaction to be retried* — never *reproduce/rewrite every State value whose invalidation was consumed*. Commit-phase pathology remains unspecified.
 - Finding 4: R3's legacy-path failure test updated — legacy projections fail at COMMIT phase (no prepare), which under the R7 protocol is pathological rather than a batch abort; counter expectation corrected from 1 to 0 with protocol documentation.
 
 **4. Implementation summary.** `retained_dag.ts`: RootPublication type, prepareInstall / prepareFrom / publishPrepared / unwindPrepared (install recomposed, behavior identical); `component.ts`: ViewSlot.prepareSetView wrapper; `execution.ts`: ScopeProjection.preparePublication optional hook, scope.stagedPublication cell, three-phase flush (evaluate → stage → commit+promote) with staging-failure atomic unwind; `tui-execution.ts`: production factory publishes via ViewSlot.prepareSetView. 4-test proof suite added.
@@ -1502,3 +1503,71 @@ The decisive evidence is the two 1-of-1000 sibling tests: same-geometry and geom
 - *Battery:* typecheck clean; runtime+fixture+app+plugins 357 pass / 2 fail (both pre-existing & documented: perf11v4 weak-cache interference passes isolated; recovery3 viewport failure predates T13.1).
 
 **7. Status line.** **Tranche R9 status: COMPLETE.** The external fixture proves zero-setup scoped invalidation through the public API, and the shipped app plugin now runs its chrome and live tool cards through retained execution scopes with counter-proven sibling skipping. Remaining for R10: authoritative four-arm-plus-scopes benchmark matrix, adoption decision, bodyKey removal + lexical remnant cleanup after gates pass.
+
+## 32.3 Post-R9 correctness review invariants
+
+Normative. Established by the adversarial review of R0–R9 (`perf12_t13_1_abort_retry.test.ts`, `perf12_t13_1_ownership.test.ts`); every rule below has a failing-before/passing-after test. Where any earlier prose conflicts with this section, this section wins.
+
+### Dirty is level-triggered, not edge-triggered
+
+```text
+dirty === true  <=>  "the committed output may not reflect the scope's current authoritative inputs"
+```
+
+It is NOT a consumable event notification. `State.set()` mutates the authoritative value FIRST and publishes second; render aborts never roll State values back. Therefore aborting rendering cannot consume the invalidation obligation that made the work necessary:
+
+```text
+failure
+   ↓
+committed frame stays old · State values stay new
+dirty obligations survive · queue retains retry work
+```
+
+### Evaluation/PREPARE abort preserves the whole original dirty batch
+
+At batch acquisition, snapshot `retryObligations = batch.filter(s => !s.disposed && s.dirty)`. After a phase-1 (evaluation) OR phase-2 (PREPARE) failure: roll back all WIP/publications, then restore every still-live scope from the snapshot — `dirty = true`, queued exactly once. This includes processed scopes, unreached scopes, superseded-inline scopes, and structurally-dropped-in-WIP scopes: no commit happened, so the previous committed world remains authoritative while every input stays current.
+
+### Abort never arms a scheduler retry; explicit drains consume pending tokens
+
+- The abort path itself must NOT call `scheduleFlush()` — otherwise a persistently throwing component becomes an infinite microtask loop.
+- An already-scheduled microtask MUST be invalidated when a synchronous `flush()` starts (`flushScheduled = false` + generation bump). Without this, `invalidate(); flush() /* throws */` would be silently auto-retried by the stale microtask.
+- The schedule token is a GENERATION counter, not a bare boolean, so an obsolete callback can be recognized and dropped.
+
+The resulting distinction:
+
+```text
+retry obligation preserved      YES
+automatic retry after failure   NO
+```
+
+Recovery is any later re-drive: an explicit `flush()`, `runtime.update(scope)`, a later State write (which schedules normally), or any other scheduling trigger. A duplicate invalidation of an already-dirty scope counts itself as duplicate, enqueues nothing, but DOES ensure a future flush remains armed.
+
+### Commit-phase failure stays pathological
+
+R7's contract stands: a phase-3 throw is teardown-class, leaves unspecified state, surfaces loudly via `pathologicalCommitFailures`, and does NOT use retry restoration (the previous frame is no longer provably authoritative).
+
+### Producer rollback cancels only its own obligation
+
+`OwnedBuilderRoot.replaceProducer` restores the previously authoritative producer on failure and cancels the retry obligation introduced SOLELY by that attempt (`runtime.cancelRetry(scope)` — a narrow internal op, not public dirty manipulation). A pre-existing dirty obligation survives: restored producer + still-newer State values is exactly what the retry should render.
+
+### Props skip does not consume independent dirtiness
+
+Parent re-invocation with UNCHANGED props skips the child inline but must leave a queued independent (State-driven) obligation intact: the child still executes exactly once from its queue entry later in the same pass. Changed props instead supersede the queued entry and execute exactly once with new props + latest State. Both directions are pinned by test.
+
+### Double-reach commits once
+
+A child can be reached twice in one pass: recursively under its committing parent AND as its own queue entry (independently dirty, skipped inline). The first commit wins; the second is a no-op (`commitBatch` dedupes with a per-batch committed set) — never a "without prepared output" protocol failure.
+
+### Ownership changes are semantic even when pixels do not change
+
+`render(scene)` taking over from `render(() => scene)` must dispose the canonical builder root EVEN WHEN body+History identity makes native rendering a pixel no-op (`renderDirect`'s early branch calls `disposeRootBuilder()` before returning). Leaving it subscribed lets the old builder ghost-update the screen later — precisely the ownership-mode ghost R8 eliminates.
+
+Direct takeover of a builder-produced scene FREEZES projected components rather than vanishing them: JS scopes/subscriptions die immediately while native ComponentIds referenced by the still-mounted direct snapshot stay registered until a later successful reconciliation proves them unmounted (deferred retirement). This is why the takeover is safe even when the body contains child projections.
+
+### History sideband participates independently of body identity
+
+Same `View` body plus first History attachment must still publish (`needsPublication()` observes `stagedHistory !== boundHistory`). Different History after binding remains the deterministic attach-once error (`TUI_HISTORY_ALREADY_BOUND`). A third same-body/same-History render is a true no-op.
+
+### Benchmark provenance is clean-tree only
+
+Authoritative JSONL evidence records `git rev-parse HEAD`; benchmarks execute whatever is in the working tree. Evidence is therefore valid ONLY from a clean worktree at the commit it names. Sequence: correctness fixes → full tests → commit → clean worktree → run authoritative benches → commit evidence separately. Ad-hoc dirty-tree runs are exploratory and never committed as gate evidence.

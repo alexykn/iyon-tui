@@ -1141,6 +1141,35 @@ Either way the decision is made once, from committed benchmark evidence, and doc
 
 **7. Status line.** **Tranche R7 status: COMPLETE.** Multi-scope updates now have a correctness model: prepare-everything → commit-once, with prepare failures fully atomic and commit failures structurally confined to pathological teardown. Ready for R8 (canonical boundaries + keyed reconciliation).
 
+### R8 implementation record
+
+**1. Scope statement.** Tranche R8 (Steps 11R+12R; AMENDMENT-C §18/§32.2 addendum): canonical retained boundaries — `tui.render(() => Scene)` root execution scope, ViewSlot/ScrollPane builder overloads with transactional ownership modes, keyed child-owner groups + `View.key`, PublicationTarget split, Rust deferred component retirement, isolation gates.
+
+**2. Commits.** WIP checkpoint (core substrate) + `33bb5c7` — feat(tui): add T13.1 canonical boundaries, keyed groups & isolation gates (R8).
+
+**3. Review findings.**
+- Finding 1 (Rust ownership audit): `take_for_host()` rejects already-attached Histories and scene replacement drops the old value without returning it — History binding is attach-once, NOT a reversible pointer. Codified as attach-once invariant with deterministic `TUI_HISTORY_ALREADY_BOUND` error on different-handle rebinding.
+- Finding 2: cold fallback must NEVER paint during PREPARE (§32.2.3). Root publication uses `prepareColdInstall` via an injectable cold materializer (`setRootColdMaterializer` → tryNativeMaterialize) that decodes WITHOUT painting; commit paints once via hostRenderRef and transfers the lease.
+- Finding 3: native component retirement was missing (dispose only marked alive=false; registry entries survived forever). Added deferred retirement: dispose REQUESTS retirement by ComponentId; RunningApp reaps after successful frame reconciliation proves unmount (never after failed frames).
+- Finding 4: pendingKeyed WIP maps mean evaluation never mutates committed keyed state; wipActive distinguishes 'evaluated with zero keys' from 'not evaluated'.
+- Finding 5: keyed invoke routes through resolveKeyedGroup (one mechanism); View.key swaps only ACTIVE_CHILD_OWNER (execution scope unchanged); key lives on the group, not child records (keyGroupOf diagnostic added).
+
+**4. Implementation summary.** New modules: execution-context.ts (active frames, no View import), child-owner.ts (ChildOwnerState/KeyGroup); execution.ts: PublicationTarget split, OwnedBuilderRoot (transactional producer), mountExistingRoot, keyed reconcile/promote/abort walks; runtime.ts: eager runtime, render(() => Scene) canonical overload, drainExecution, history sideband, cold materializer bootstrap; component.ts/scroll-pane.ts: builder overloads + ownership modes + reentrancy guards; view.ts: View.key public API. Rust: ComponentRegistry::remove_id, PasteInterceptors::remove_id, SceneHost::is_mounted, RunningApp::host_retire_component/reap_retired_components (reaps after successful frames only), NativeViewSlot/NativeScrollPane dispose requests retirement.
+
+**5. Provenance block.** bun 1.4.0 (34cbb9a40b4bd1bd767d134a7065e66c2432a676). Rust compiled clean but addon not rebuilt this tranche (retirement exercised in R9+ integration).
+
+**6. Gate evidence.**
+- *Keyed reorder:* identity follows keys (same scopes across passes), bodies skip on shallow-equal props (calls delta 0).
+- *Content change on one key:* exactly one body executes (+1).
+- *Removal:* exactly that instance's body stops; removed scopes disposed post-commit.
+- *Nested/duplicate/abort:* duplicate keys reject deterministically; abort preserves committed groups; nested namespaces independent.
+- *Ownership modes:* builder→direct→builder never ghosts (stale builder cannot overwrite direct values); animation takeover transactional.
+- *Isolation gate (§32.2.6):* 10k TextStream appends ⇒ zero scope executions, zero new views, appends accepted at the TS boundary.
+- *Lifecycle:* state.set + close + microtask ⇒ no use-after-dispose.
+- *Battery:* typecheck clean; full suite 220 pass / 1 fail (documented perf11v4 interference); cold gate +0.31% (≤3%); cargo check clean for iyon-native + iyon-tui.
+
+**7. Status line.** **Tranche R8 status: COMPLETE.** Canonical boundaries are live (root/slot/pane builders through one transaction model), keyed identity works across reorder/insert/remove/nesting, ownership modes never ghost, and retained-content engines (History/TextStream) are proven isolated from the execution graph. Ready for R9 (fixture scoped-invalidation acceptance + production conversion).
+
 ## 32.2 R8 design addendum — CORRECTED (builder boundaries, key groups, retained-content isolation)
 
 Supersedes the earlier draft addendum after the Rust ownership audit and design review. Normative for R8.

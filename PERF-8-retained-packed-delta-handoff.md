@@ -1,7 +1,7 @@
 # PERF-8 — journaled retained graph + structural-delta packed View transport
 
 **Status:** proposed handoff after PERF-7v2  
-**Baseline repository:** `alexykn/iyon`  
+**Baseline repository:** `alexykn/iyon-tui`
 **Baseline branch:** `perf-refactor`  
 **Baseline implementation commit:** `84a7d117c777fbd5c2f0d5d072e63769be842e7c` (`test: bench 7v2`)  
 **PERF-7v2 result payload:** `packages/iyon-runtime/bench/PERF-7v2-results.jsonl`  
@@ -4511,23 +4511,23 @@ That is the design I would pursue if the goal is the fastest technically coheren
 ## Iyon baseline
 
 - PERF-7v2 baseline commit:  
-  https://github.com/alexykn/iyon/commit/84a7d117c777fbd5c2f0d5d072e63769be842e7c
+  https://github.com/alexykn/iyon-tui/commit/84a7d117c777fbd5c2f0d5d072e63769be842e7c
 - Packed V2 TypeScript encoder:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/packed.ts
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/packed.ts
 - Packed V2 Rust decoder:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/crates/iyon-native/src/tui/packed.rs
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/crates/iyon-native/src/tui/packed.rs
 - TypeScript retained bridge IR:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/ir.ts
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/ir.ts
 - TypeScript View construction:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/values/view.ts
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/src/tui/values/view.ts
 - Rust retained View IR:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/crates/iyon-tui/src/presentation/ir.rs
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/crates/iyon-tui/src/presentation/ir.rs
 - PERF-7v2 harness:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/bench/tui_performance.ts
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/bench/tui_performance.ts
 - PERF-7v2 raw samples:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/bench/PERF-7v2-results.jsonl
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/bench/PERF-7v2-results.jsonl
 - PERF-7v2 packed tests:  
-  https://github.com/alexykn/iyon/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/tests/tui_packed.test.ts
+  https://github.com/alexykn/iyon-tui/blob/84a7d117c777fbd5c2f0d5d072e63769be842e7c/packages/iyon-runtime/tests/tui_packed.test.ts
 
 ## External research
 

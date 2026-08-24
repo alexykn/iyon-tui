@@ -5,7 +5,7 @@
 **Status:** normative implementation handoff — **REWRITTEN to the Amendment C end state**
 **Normative amendment:** `PERF-12-T13.1-AMENDMENT-C-optimal-retained-dag-execution.md` (supersedes Amendments A and B). Where this document and Amendment C conflict, **Amendment C wins**; this document incorporates its requirements and points to it as `AMENDMENT-C §N`.
 **Superseded in place:** the original "Retained View Composition" design (lexical SiteId source transform, globally addressed composition slots, whole-root replay with exact reuse). See §42 for the authoritative list of retired sections.
-**Repository:** `alexykn/iyon`
+**Repository:** `alexykn/iyon-tui`
 **Branch:** `perf-refactor`
 **Baseline:** `f665c9ef913a7a8eda552a385b072f25f853b359` plus local T13.1 Steps 1–3 commits (`379e1cf`, `235a9da`, `dad92b5`).
 **Parent tranche:** PERF-12 T13 production boundary integration/review

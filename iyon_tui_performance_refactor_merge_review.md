@@ -1,6 +1,6 @@
 # Iyon TUI `perf-refactor` Remediation Handoff
 
-**Target:** `alexykn/iyon`, branch `perf-refactor`  
+**Target:** `alexykn/iyon-tui`, branch `perf-refactor`
 **Purpose:** take the current refactor from “substantially faster and architecturally promising” to **correct, demonstrably incremental, reproducibly benchmarked, and merge-ready**.
 
 This document is intentionally prescriptive. Implementation agents should treat the algorithms, invariants, tests, and acceptance gates below as requirements. Do not substitute a superficially simpler implementation because a test happens to pass.

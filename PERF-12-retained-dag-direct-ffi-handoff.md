@@ -3,7 +3,7 @@
 ## Persist semantic identity, not transport bytes
 
 **Status:** final architecture and implementation handoff  
-**Repository:** `alexykn/iyon`  
+**Repository:** `alexykn/iyon-tui`
 **Branch family:** `perf-refactor`  
 **Historical semantic baseline:** PERF-7v2 Candidate A / Direct at `e5292d62c4011610850cbdc1ba4a35f296f78e4f`  
 **Repository state re-audited while preparing this handoff:** `67741eb588e70ffe8ce7b08805040d0a9cc65f8c`  
@@ -4417,39 +4417,39 @@ This is a better future-proof boundary than making packet format the architectur
 
 Historical 7v2 semantic construction:
 
-- <https://github.com/alexykn/iyon/blob/e5292d62c4011610850cbdc1ba4a35f296f78e4f/packages/iyon-runtime/src/tui/values/view.ts>
+- <https://github.com/alexykn/iyon-tui/blob/e5292d62c4011610850cbdc1ba4a35f296f78e4f/packages/iyon-runtime/src/tui/values/view.ts>
 
 Re-audited current branch revision:
 
-- <https://github.com/alexykn/iyon/commit/67741eb588e70ffe8ce7b08805040d0a9cc65f8c>
+- <https://github.com/alexykn/iyon-tui/commit/67741eb588e70ffe8ce7b08805040d0a9cc65f8c>
 
 Current semantic/View backing:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/values/view.ts>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/values/view.ts>
 
 Current generated/native JS path:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/native_view_abi.ts>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/native_view_abi.ts>
 
 Current native View ABI/runtime:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/crates/iyon-native/src/tui/view_abi.rs>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/crates/iyon-native/src/tui/view_abi.rs>
 
 Current Direct N-API decoder:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/crates/iyon-native/src/tui.rs>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/crates/iyon-native/src/tui.rs>
 
 Current persistent sequence:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/persistent_seq.ts>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/packages/iyon-runtime/src/tui/persistent_seq.ts>
 
 Current generated ABI schema / Bun qualification:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/tools/tui-abi/view_abi.toml>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/tools/tui-abi/view_abi.toml>
 
 Current runtime pin:
 
-- <https://github.com/alexykn/iyon/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/package.json>
+- <https://github.com/alexykn/iyon-tui/blob/67741eb588e70ffe8ce7b08805040d0a9cc65f8c/package.json>
 
 ## External research
 

@@ -1,7 +1,7 @@
 # PERF-9 — dual-lane packed transport: `Uint32Array` structure + `Uint8Array` UTF-8 arena
 
 **Status:** proposed handoff after PERF-8  
-**Repository:** `alexykn/iyon`  
+**Repository:** `alexykn/iyon-tui`
 **Required predecessor:** PERF-8 / Packed V3 must be implemented, correctness-complete, and benchmarked first  
 **Historical reference baseline:** `84a7d117c777fbd5c2f0d5d072e63769be842e7c` (`test: bench 7v2`)  
 **Scope:** string/payload transport and retained string storage; all PERF-7v2 and PERF-8 structural optimizations are mandatory invariants, not optional context  

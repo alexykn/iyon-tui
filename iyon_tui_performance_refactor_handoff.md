@@ -16,7 +16,7 @@ This handoff is intentionally prescriptive. The architecture has already been re
 
 At research time:
 
-- `alexykn/iyon` `main` points at `223bf4840a03c90d713f12419bba25a501ae217f`.
+- `alexykn/iyon-tui` `main` points at `223bf4840a03c90d713f12419bba25a501ae217f`.
 - That latest commit is documentation-only. The code state inspected by the second supplied audit was `88c66f9073c425c049a1ac31c7fbb4b0e771a4d1`, and the code paths re-inspected for this handoff still match the architectural findings from that audit.
 
 **Before the first edit, run:**

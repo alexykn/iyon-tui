@@ -4013,11 +4013,11 @@
     }
   ],
   "generated_outputs": [
-    "crates/iyon-native/src/generated/view_abi_types.rs",
-    "crates/iyon-native/src/generated/view_abi_exports.rs",
-    "crates/iyon-native/src/generated/view_abi_conformance.rs",
-    "crates/iyon-native/src/generated/view_abi_table.rs",
-    "crates/iyon-native/include/iyon_view_abi.h",
+    "crates/iyon-tui-native/src/generated/view_abi_types.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_table.rs",
+    "crates/iyon-tui-native/include/iyon_view_abi.h",
     "packages/iyon-runtime/src/tui/generated/view_abi.ts",
     "packages/iyon-runtime/src/tui/generated/view_abi_conformance.ts",
     "packages/iyon-runtime/src/tui/generated/view_calls.ts",
@@ -4025,10 +4025,10 @@
     "packages/iyon-runtime/src/tui/generated/view_abi_manifest.json",
     "packages/iyon-runtime/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-runtime/bench/generated/view_abi_cases.ts",
-    "crates/iyon-native/tests/generated_view_abi.rs",
+    "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2",
+  "generator_blake3": "01652a304d028d2fab4b86ff6d6a5bf321515448c249849b66599b7f01aea988",
   "handles": [
     {
       "kind": null,

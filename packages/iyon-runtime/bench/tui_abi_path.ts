@@ -135,7 +135,7 @@ const host = new Host(40, 8, true);
 const prepared = [1, 2, 3, 4].map((depth) => ({ depth, value: prepare(depth, session, host) }));
 const results = Object.fromEntries(prepared.map(({ depth, value }) => [`depth_${depth}`, measure(value)]));
 host.dispose();
-const nativeArtifact = await Bun.file(new URL("../native/iyon-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 console.log(JSON.stringify({
   benchmark: "PERF-11.4-generated-path",

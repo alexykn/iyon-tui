@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0
-// generator_blake3 = 0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2
+// generator_blake3 = 01652a304d028d2fab4b86ff6d6a5bf321515448c249849b66599b7f01aea988
 import { linkSymbols, type Pointer } from "bun:ffi";
 export type NativeAbiConformancePointers = {
   u8_8: Pointer;

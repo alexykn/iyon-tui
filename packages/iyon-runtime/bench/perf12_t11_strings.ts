@@ -218,7 +218,7 @@ const artifact = [
     bun_revision: commandText(["bun", "--revision"]),
     rustc_version: commandText(["rustc", "--version"]),
     target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
   }),
   ...caseRecords,
   ...laneProbes,

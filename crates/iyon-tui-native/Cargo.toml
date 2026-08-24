@@ -1,0 +1,52 @@
+[package]
+name = "iyon-tui-native"
+license = "MIT"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+perf-counters = ["iyon-tui/perf-counters"]
+perf-packed-transport = ["iyon-tui/native-shared-memory"]
+perf-packed-benchmark = ["perf-packed-transport", "perf-counters"]
+perf-packed-timing = ["perf-packed-transport", "perf-counters", "iyon-tui/perf-timing"]
+fast-view-abi = []
+
+[dependencies]
+bytemuck.workspace = true
+iyon-tui = { workspace = true, features = ["native-host"] }
+napi.workspace = true
+napi-derive.workspace = true
+serde_json.workspace = true
+static_assertions.workspace = true
+
+[build-dependencies]
+napi-build = "2.4.1"
+serde_json.workspace = true
+
+# The bridge deliberately exposes generated ABI tables and owner-thread
+# retained handles; these are validated by the ABI and runtime tests rather
+# than by Clippy's general-purpose heuristics.
+[lints.rust]
+dead_code = "allow"
+
+[lints.clippy]
+arc_with_non_send_sync = "allow"
+bind_instead_of_map = "allow"
+collapsible_if = "allow"
+derivable_impls = "allow"
+if_same_then_else = "allow"
+manual_c_str_literals = "allow"
+manual_inspect = "allow"
+manual_is_multiple_of = "allow"
+needless_borrow = "allow"
+missing_safety_doc = "allow"
+obfuscated_if_else = "allow"
+redundant_closure_call = "allow"
+too_many_arguments = "allow"
+unnecessary_cast = "allow"
+unnecessary_mut_passed = "allow"
+useless_conversion = "allow"

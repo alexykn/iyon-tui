@@ -184,7 +184,7 @@ async function main() {
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.slice(6),
     macos_version: commandText(["sw_vers", "-productVersion"]),
     cpu_model: commandText(["sysctl", "-n", "machdep.cpu.brand_string"]),
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
     warmup_blocks: WARMUP_BLOCKS,
     max_blocks: MAX_BLOCKS,
     ops_per_block: OPS_PER_BLOCK,

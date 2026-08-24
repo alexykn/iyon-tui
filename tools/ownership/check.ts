@@ -84,12 +84,11 @@ function rustDependencyGate(): void {
   if (leaked.length > 0) fail("rust-dependency-direction", `closure(iyon-tui) reaches ${leaked.join(", ")}`);
   else pass("rust-dependency-direction", `closure(iyon-tui) excludes ${forbidden.join(" and ")}`);
 
-  // The mixed native crate is module-gated until S3 splits it.
   const tuiNativePaths = [
-    "crates/iyon-native/src/tui.rs",
-    "crates/iyon-native/src/tui",
-    "crates/iyon-native/src/generated",
-    "crates/iyon-native/tests/generated_view_abi.rs",
+    "crates/iyon-tui-native/src/tui.rs",
+    "crates/iyon-tui-native/src/tui",
+    "crates/iyon-tui-native/src/generated",
+    "crates/iyon-tui-native/tests/generated_view_abi.rs",
   ];
   const offenders: string[] = [];
   for (const path of tuiNativePaths) {
@@ -105,13 +104,10 @@ function rustDependencyGate(): void {
   if (offenders.length > 0) fail("tui-native-module-purity", `references iyon_core/iyon_api: ${offenders.join(", ")}`);
   else pass("tui-native-module-purity", "TUI-native modules reference no application crate");
 
-  const appNativeFiles = Array.from(new Bun.Glob("src/*.rs").scanSync({ cwd: join(ROOT, "crates/iyon-native") }))
-    .filter((f) => !f.startsWith("tui"))
-    .map((f) => join(ROOT, "crates/iyon-native", f));
-  const appOffenders = appNativeFiles.filter((f) => /\bcrate::tui\b/.test(readFileSync(f, "utf8")));
-  if (appOffenders.length > 0)
-    fail("app-native-module-purity", `application native modules import TUI ABI: ${appOffenders.map((f) => relative(ROOT, f)).join(", ")}`);
-  else pass("app-native-module-purity", "application native modules reference no TUI module");
+  const obsoleteNativeManifest = join(ROOT, "crates/iyon-native/Cargo.toml");
+  if (existsSync(obsoleteNativeManifest))
+    fail("application-native-surface-removed", "obsolete mixed crates/iyon-native still exists");
+  else pass("application-native-surface-removed", "mixed application/TUI native crate is absent");
 
   const tuiRustOffenders = Array.from(
     new Bun.Glob("**/*.rs").scanSync({ cwd: join(ROOT, "crates/iyon-tui") }),

@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     bun_revision: commandText(["bun", "--revision"]),
     rustc_version: commandText(["rustc", "--version"]),
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.slice(6),
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
     macos_version: commandText(["sw_vers", "-productVersion"]),
   });
   mkdirSync("packages/iyon-runtime/bench", { recursive: true });

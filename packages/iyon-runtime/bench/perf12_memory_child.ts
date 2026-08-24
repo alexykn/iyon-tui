@@ -250,7 +250,7 @@ async function main(): Promise<void> {
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.split(/\s+/)[1] ?? "unknown",
     macos_version: commandText(["sw_vers", "-productVersion"]),
     cpu_model: commandText(["sysctl", "-n", "machdep.cpu.brand_string"]),
-    native_artifact_sha256: sha256(new URL("../native/iyon-native.node", import.meta.url).pathname),
+    native_artifact_sha256: sha256(new URL("../native/iyon-tui-native.node", import.meta.url).pathname),
     phases: {
       pre,
       fixtures_loaded: fixturesSnapshot,

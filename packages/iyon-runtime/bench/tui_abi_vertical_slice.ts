@@ -109,7 +109,7 @@ viewReleaseMany(session.symbols, session.runtime, commonPatchRefs, ALLOCATION_IT
 viewReleaseMany(session.symbols, session.runtime, new Uint32Array([textRef]), 1);
 host.dispose();
 
-const nativeArtifact = await Bun.file(new URL("../native/iyon-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 const output = {
   benchmark: "PERF-11.1-generated-vertical-slice",

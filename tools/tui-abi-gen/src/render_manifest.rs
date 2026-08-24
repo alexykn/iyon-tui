@@ -305,6 +305,6 @@ pub fn human_reference(document: &AbiDocument, schema_hash: &str, generator_hash
             spec.args.join(", ")
         ));
     }
-    output.push_str("\n");
+    output.push('\n');
     output
 }

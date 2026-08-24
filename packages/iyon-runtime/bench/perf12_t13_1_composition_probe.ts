@@ -600,7 +600,7 @@ const provenance = {
   bun_revision: commandText(["bun", "--revision"]),
   rustc_version: commandText(["rustc", "--version"]),
   target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
-  addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-native.node"]).split(" ")[0],
+  addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
   note: "R10 authoritative decision run (§102.1): four arms — body-key guard, uncomposed rebuild, manual stable oracle, and the T13.1 retained-scope candidate over defineView/state. Arms run sequentially in one process with per-arm headless sessions and cross-arm screen parity enforcement; counter deltas isolate per-case windows.",
 };
 

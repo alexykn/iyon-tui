@@ -84,7 +84,7 @@ viewReleaseMany(session.symbols, session.runtime, patchRefs, ALLOCATION_ITERATIO
 viewReleaseMany(session.symbols, session.runtime, new Uint32Array([baseRef]), 1);
 host.dispose();
 
-const nativeArtifact = await Bun.file(new URL("../native/iyon-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 console.log(JSON.stringify({
   benchmark: "PERF-11.3-generated-scalar",

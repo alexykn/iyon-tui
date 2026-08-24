@@ -12,14 +12,14 @@ consumer after the repository separation completes.
 ```text
 TypeScript public facade        packages/iyon-runtime/src/tui/**   (becomes @iyon/tui in S4)
         |  private native contract seam (src/native.ts)
-N-API / direct-FFI addon        crates/iyon-native (TUI modules; becomes iyon-tui-native in S3)
+N-API / direct-FFI addon        crates/iyon-tui-native
         |
 Rust framework                  crates/iyon-tui
 ```
 
 ## Ownership rules
 
-- `crates/iyon-tui` and the TUI-native modules must never depend on or import
+- `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import
   `iyon-core` or `iyon-api`. Enforced by `bun run check:ownership`.
 - Framework TypeScript may import only framework modules plus the single
   native-contract seam (`packages/iyon-runtime/src/native.ts`). The

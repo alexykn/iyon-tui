@@ -21,11 +21,11 @@ use crate::{model::ModelError, validate::ValidationError};
 const DEFAULT_SCHEMA: &str = "tools/tui-abi/view_abi.toml";
 const BRIDGE_SCHEMA: &str = "packages/iyon-runtime/src/tui/bridge-schema.json";
 const GENERATOR_OUTPUTS: &[&str] = &[
-    "crates/iyon-native/src/generated/view_abi_types.rs",
-    "crates/iyon-native/src/generated/view_abi_exports.rs",
-    "crates/iyon-native/src/generated/view_abi_conformance.rs",
-    "crates/iyon-native/src/generated/view_abi_table.rs",
-    "crates/iyon-native/include/iyon_view_abi.h",
+    "crates/iyon-tui-native/src/generated/view_abi_types.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_table.rs",
+    "crates/iyon-tui-native/include/iyon_view_abi.h",
     "packages/iyon-runtime/src/tui/generated/view_abi.ts",
     "packages/iyon-runtime/src/tui/generated/view_abi_conformance.ts",
     "packages/iyon-runtime/src/tui/generated/view_calls.ts",
@@ -33,7 +33,7 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "packages/iyon-runtime/src/tui/generated/view_abi_manifest.json",
     "packages/iyon-runtime/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-runtime/bench/generated/view_abi_cases.ts",
-    "crates/iyon-native/tests/generated_view_abi.rs",
+    "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md",
 ];
 
@@ -305,7 +305,7 @@ mod tests {
         let schema = workspace.join(DEFAULT_SCHEMA);
         let outputs = render_outputs(&workspace, &schema).expect("canonical schema validates");
         assert_eq!(outputs.len(), GENERATOR_OUTPUTS.len());
-        assert!(outputs.contains_key("crates/iyon-native/src/generated/view_abi_types.rs"));
+        assert!(outputs.contains_key("crates/iyon-tui-native/src/generated/view_abi_types.rs"));
         insta::assert_snapshot!(
             outputs
                 .get("packages/iyon-runtime/src/tui/generated/view_abi_manifest.json")

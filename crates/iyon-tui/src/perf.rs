@@ -209,10 +209,10 @@ const NAMES: [&str; Counter::COUNT] = [
 #[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
 static VALUES: [AtomicU64; Counter::COUNT] = [const { AtomicU64::new(0) }; Counter::COUNT];
 
-#[cfg(all(test, feature = "perf-counters", not(feature = "perf-timing")))]
+#[cfg(all(test, feature = "perf-counters"))]
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-#[cfg(all(test, feature = "perf-counters", not(feature = "perf-timing")))]
+#[cfg(all(test, feature = "perf-counters"))]
 pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK.lock().expect("performance test lock poisoned")
 }

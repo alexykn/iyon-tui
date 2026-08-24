@@ -4,24 +4,24 @@ const runtimeDirectory = new URL("../", import.meta.url);
 const repositoryDirectory = new URL("../../", runtimeDirectory);
 const targetDirectory = new URL("target/release/", repositoryDirectory);
 const nativeDirectory = new URL("native/", runtimeDirectory);
-const stagedAddon = new URL("iyon-native.node", nativeDirectory);
+const stagedAddon = new URL("iyon-tui-native.node", nativeDirectory);
 
 const targetKey = `${process.platform}-${process.arch}`;
 const artifactByTarget: Record<string, string> = {
-  "darwin-arm64": "libiyon_native.dylib",
-  "darwin-x64": "libiyon_native.dylib",
-  "linux-x64": "libiyon_native.so",
-  "linux-arm64": "libiyon_native.so",
-  "win32-x64": "iyon_native.dll",
+  "darwin-arm64": "libiyon_tui_native.dylib",
+  "darwin-x64": "libiyon_tui_native.dylib",
+  "linux-x64": "libiyon_tui_native.so",
+  "linux-arm64": "libiyon_tui_native.so",
+  "win32-x64": "iyon_tui_native.dll",
 };
 const artifactName = artifactByTarget[targetKey];
 
 if (artifactName === undefined) {
-  throw new Error(`unsupported iyon-native staging target: ${targetKey}`);
+  throw new Error(`unsupported iyon-tui-native staging target: ${targetKey}`);
 }
 
 const nativeFeatures = process.env.ION_NATIVE_FEATURES?.split(",").map((feature) => feature.trim()).filter(Boolean) ?? [];
-const cargoCommand = ["cargo", "build", "--release", "-p", "iyon-native"];
+const cargoCommand = ["cargo", "build", "--release", "-p", "iyon-tui-native"];
 if (nativeFeatures.length > 0) cargoCommand.push("--features", nativeFeatures.join(","));
 
 const cargo = Bun.spawnSync({
@@ -37,7 +37,7 @@ const cargo = Bun.spawnSync({
 
 if (cargo.exitCode !== 0) {
   const stderr = new TextDecoder().decode(cargo.stderr);
-  throw new Error(`cargo failed while building iyon-native (${cargo.exitCode}):\n${stderr}`);
+  throw new Error(`cargo failed while building iyon-tui-native (${cargo.exitCode}):\n${stderr}`);
 }
 
 const nativeArtifact = new URL(artifactName, targetDirectory);
@@ -52,7 +52,7 @@ const addon = require(stagedAddon.pathname) as {
   nativeVersion?: () => string;
   tuiSmoke?: () => string;
 };
-if (addon.nativeVersion?.() !== "iyon-native/t1" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
+if (addon.nativeVersion?.() !== "iyon-tui-native/s3" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
   throw new Error(`staged addon failed the Bun load probe: ${stagedAddon.pathname}`);
 }
 

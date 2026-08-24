@@ -284,7 +284,7 @@ export interface NativeTuiHostContract {
 // This is the one static addon seam. The stage script materializes this exact
 // path before Bun typechecking, tests, or standalone compilation. A static
 // require keeps the .node reachable to Bun's compiler for embedding.
-export const native = require("../native/iyon-native.node") as NativeAddon;
+export const native = require("../native/iyon-tui-native.node") as NativeAddon;
 
 export const {
   nativeVersion,

@@ -15,7 +15,7 @@ pub enum ModelError {
     Parse {
         path: String,
         #[source]
-        source: serde_path_to_error::Error<toml::de::Error>,
+        source: Box<serde_path_to_error::Error<toml::de::Error>>,
     },
     #[error("failed to parse ABI schema {path}: {source}")]
     ParseToml {
@@ -307,7 +307,7 @@ pub fn load(path: &Path) -> Result<(AbiDocument, String, toml_edit::Document<Str
     let deserializer = serde_path_to_error::Deserializer::new(toml_deserializer, &mut track);
     let document = AbiDocument::deserialize(deserializer).map_err(|source| ModelError::Parse {
         path: path_display,
-        source: serde_path_to_error::Error::new(track.path(), source),
+        source: Box::new(serde_path_to_error::Error::new(track.path(), source)),
     })?;
     Ok((document, source, syntax))
 }

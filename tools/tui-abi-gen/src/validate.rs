@@ -575,7 +575,7 @@ fn primitive_layout(type_name: &str) -> Option<(u32, u32)> {
 }
 
 fn align_up(value: u32, align: u32) -> u32 {
-    (value + align - 1) / align * align
+    value.div_ceil(align) * align
 }
 
 /// PERF-12 T5 (§64): generator validation for semantic materializer

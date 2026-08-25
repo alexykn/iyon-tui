@@ -1,9 +1,0 @@
-{
-  "name": "fixture-replace-read",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "keywords": ["iyon-package"],
-  "dependencies": { "@iyon/sdk": "workspace:*" },
-  "iyon": { "extensions": "./src/index.ts" }
-}

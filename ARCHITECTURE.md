@@ -25,11 +25,12 @@ Rust framework                  crates/iyon-tui
   native-contract seam (`packages/iyon-tui/src/native.ts`). The
   `bun:ffi` transport lowering is transitional until S6 replaces it with
   generated safe N-API; do not build public API around transport details.
-- Application code may consume the framework only through public surfaces:
-  the `@iyon/tui` package or the application-owned `iyon:tui` alias. Deep
-  imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI internals,
-  NodeId/NativeRef sidecars, or native addon implementation modules are
-  forbidden and machine-checked.
+- Application code in `alexykn/iyon` consumes the framework only through public
+  surfaces: the `@iyon/tui` package or its application-owned `iyon:tui` alias.
+  Deep imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI
+  internals, NodeId/NativeRef sidecars, or native addon implementation modules
+  are forbidden. The application repository owns the corresponding consumer
+  gate; this repository checks the public package and standalone fixture.
 - Themes, renderers, defaults, labels, and spinner/footer/composer policy are
   caller-owned. No product policy enters this framework behind generic names.
 
@@ -53,6 +54,5 @@ bun run check:ownership
 ```
 
 The gates cover: Rust dependency direction, TUI-native module purity,
-application-native module purity, framework Rust purity, framework TypeScript
-import direction, application/runtime public-entrypoint-only imports, and both
-public-surface snapshots.
+framework Rust/TypeScript purity, the standalone consumer's public dependency,
+and both public-surface snapshots.

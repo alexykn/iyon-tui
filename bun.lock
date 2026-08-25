@@ -4,52 +4,13 @@
   "workspaces": {
     "": {
       "name": "iyon-workspace",
-      "dependencies": {
-        "@iyon/cli": "workspace:*",
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
       "devDependencies": {
         "bun-types": "1.4.0",
       },
     },
-    "packages/iyon-cli": {
-      "name": "@iyon/cli",
-      "version": "0.1.0",
-      "bin": {
-        "iyon-smoke": "./src/index.ts",
-      },
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "packages/iyon-plugins": {
-      "name": "@iyon/plugins",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "packages/iyon-runtime": {
-      "name": "@iyon/runtime",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-        "@iyon/tui": "workspace:*",
-      },
-    },
-    "packages/iyon-sdk": {
-      "name": "@iyon/sdk",
-      "version": "0.1.0",
-    },
     "packages/iyon-tui": {
       "name": "@iyon/tui",
-      "version": "0.1.0",
+      "version": "0.1.0-s5.0",
       "devDependencies": {
         "bun-types": "1.4.0",
       },
@@ -61,141 +22,8 @@
         "@iyon/tui": "workspace:*",
       },
     },
-    "plugins/agents/iyon": {
-      "name": "@iyon/agent-iyon",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/app/iyon": {
-      "name": "@iyon/app-iyon",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/providers/mock": {
-      "name": "@iyon/provider-mock",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/providers/openai-codex": {
-      "name": "@iyon/provider-openai-codex",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/providers/openrouter": {
-      "name": "@iyon/provider-openrouter",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/bash": {
-      "name": "@iyon/tool-bash",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/runtime": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/edit": {
-      "name": "@iyon/tool-edit",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/find": {
-      "name": "@iyon/tool-find",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/grep": {
-      "name": "@iyon/tool-grep",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/ls": {
-      "name": "@iyon/tool-ls",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/read": {
-      "name": "@iyon/tool-read",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
-    "plugins/tools/write": {
-      "name": "@iyon/tool-write",
-      "version": "0.1.0",
-      "dependencies": {
-        "@iyon/plugins": "workspace:*",
-        "@iyon/sdk": "workspace:*",
-      },
-    },
   },
   "packages": {
-    "@iyon/agent-iyon": ["@iyon/agent-iyon@workspace:plugins/agents/iyon"],
-
-    "@iyon/app-iyon": ["@iyon/app-iyon@workspace:plugins/app/iyon"],
-
-    "@iyon/cli": ["@iyon/cli@workspace:packages/iyon-cli"],
-
-    "@iyon/plugins": ["@iyon/plugins@workspace:packages/iyon-plugins"],
-
-    "@iyon/provider-mock": ["@iyon/provider-mock@workspace:plugins/providers/mock"],
-
-    "@iyon/provider-openai-codex": ["@iyon/provider-openai-codex@workspace:plugins/providers/openai-codex"],
-
-    "@iyon/provider-openrouter": ["@iyon/provider-openrouter@workspace:plugins/providers/openrouter"],
-
-    "@iyon/runtime": ["@iyon/runtime@workspace:packages/iyon-runtime"],
-
-    "@iyon/sdk": ["@iyon/sdk@workspace:packages/iyon-sdk"],
-
-    "@iyon/tool-bash": ["@iyon/tool-bash@workspace:plugins/tools/bash"],
-
-    "@iyon/tool-edit": ["@iyon/tool-edit@workspace:plugins/tools/edit"],
-
-    "@iyon/tool-find": ["@iyon/tool-find@workspace:plugins/tools/find"],
-
-    "@iyon/tool-grep": ["@iyon/tool-grep@workspace:plugins/tools/grep"],
-
-    "@iyon/tool-ls": ["@iyon/tool-ls@workspace:plugins/tools/ls"],
-
-    "@iyon/tool-read": ["@iyon/tool-read@workspace:plugins/tools/read"],
-
-    "@iyon/tool-write": ["@iyon/tool-write@workspace:plugins/tools/write"],
-
     "@iyon/tui": ["@iyon/tui@workspace:packages/iyon-tui"],
 
     "@iyon/tui-consumer-fixture": ["@iyon/tui-consumer-fixture@workspace:packages/tui-consumer-fixture"],

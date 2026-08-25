@@ -1,11 +1,15 @@
 {
   "name": "@iyon/tui",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.0-s5.0",
+  "license": "MIT",
   "type": "module",
   "description": "Generic terminal UI framework for Bun and TypeScript consumers",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./native-stage": "./scripts/stage-native.ts"
+  },
+  "bin": {
+    "iyon-tui-native-stage": "./scripts/stage-native.ts"
   },
   "scripts": {
     "native:stage": "bun run scripts/stage-native.ts",

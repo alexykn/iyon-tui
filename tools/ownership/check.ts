@@ -1,9 +1,9 @@
 /**
- * S1 ownership gates (IYON-TUI-REPOSITORY-SEPARATION-HANDOFF §7).
+ * Standalone TUI ownership gates (IYON-TUI-REPOSITORY-SEPARATION-HANDOFF §7).
  *
- * Machine-checks framework/application ownership while both still live in one
- * checkout. Run with `bun run check:ownership`. Every failure names the file
- * and rule; no gate relies on prose alone.
+ * Machine-checks the generic framework, native bridge, public surface, and
+ * external-consumer fixture. Run with `bun run check:ownership`. Every
+ * failure names the file and rule; no gate relies on prose alone.
  */
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
@@ -104,11 +104,6 @@ function rustDependencyGate(): void {
   if (offenders.length > 0) fail("tui-native-module-purity", `references iyon_core/iyon_api: ${offenders.join(", ")}`);
   else pass("tui-native-module-purity", "TUI-native modules reference no application crate");
 
-  const obsoleteNativeManifest = join(ROOT, "crates/iyon-native/Cargo.toml");
-  if (existsSync(obsoleteNativeManifest))
-    fail("application-native-surface-removed", "obsolete mixed crates/iyon-native still exists");
-  else pass("application-native-surface-removed", "mixed application/TUI native crate is absent");
-
   const tuiRustOffenders = Array.from(
     new Bun.Glob("**/*.rs").scanSync({ cwd: join(ROOT, "crates/iyon-tui") }),
   ).filter((f) => /\biyon_(core|api)\b/.test(readFileSync(join(ROOT, "crates/iyon-tui", f), "utf8")));
@@ -153,81 +148,10 @@ function tsImportGate(): void {
   if (violations.length > 0) fail("framework-ts-import-direction", violations.join("; "));
   else pass("framework-ts-import-direction", `${files.length} files import only framework modules (+${seams.length} recorded native-contract seams)`);
 
-  // Application production sources must use public TUI entrypoints only.
-  const appRoots = [
-    "plugins",
-    "packages/iyon-cli/src",
-    "packages/iyon-plugins/src",
-    "packages/iyon-sdk/src",
-  ].map((p) => join(ROOT, p));
-  const bannedInternals =
-    /retained_dag|view_abi|native_view_policy|internal-composition|tui-execution|execution-context|persistent_seq|packed(_v[34])?_meta/;
-  const subpathImport = /^@iyon\/(?:runtime\/tui|tui)\/.+$/;
-
-  const appViolations: string[] = [];
-  let appFilesChecked = 0;
-  const seenAppFiles = new Set<string>();
-  for (const root of appRoots) {
-    if (!existsSync(root)) continue;
-    for (const file of walk(root)) {
-      if (file.includes("/test/") || file.includes("/tests/") || file.endsWith(".test.ts")) continue;
-      seenAppFiles.add(file);
-    }
-  }
-  for (const file of seenAppFiles) {
-    appFilesChecked += 1;
-    const source = readFileSync(file, "utf8");
-    const specs = specifiersOf(source);
-    for (const spec of specs) {
-      const rel = relative(ROOT, file);
-      // Path-pattern rules apply to bare specifiers only; relative imports are
-      // judged by where they actually resolve.
-      if (!spec.startsWith(".") && !spec.startsWith("/")) {
-        if (bannedInternals.test(spec)) appViolations.push(`${rel} -> "${spec}"`);
-        else if (subpathImport.test(spec)) appViolations.push(`${rel} -> "${spec}"`);
-        continue;
-      }
-      const resolved = resolveRelative(file, spec);
-      if (resolved !== null && resolved.startsWith(FRAMEWORK_SRC) && resolved !== join(FRAMEWORK_SRC, "index.ts")) {
-        appViolations.push(`${rel} -> "${spec}" (non-public framework path)`);
-      }
-    }
-  }
-  if (appViolations.length > 0) fail("app-ts-public-entrypoints-only", appViolations.join("; "));
-  else pass("app-ts-public-entrypoints-only", `${appFilesChecked} application source files use public TUI surfaces only`);
-
-  // Runtime non-TUI sources enter the standalone package through its public
-  // @iyon/tui entrypoint; virtual-modules.ts remains the recorded alias seam.
-  const runtimeRoot = join(ROOT, "packages/iyon-runtime/src");
-  const runtimeViolations: string[] = [];
-  const runtimeSeams: string[] = [];
-  for (const file of walk(runtimeRoot)) {
-    if (file.startsWith(FRAMEWORK_SRC)) continue;
-    if (file.endsWith(".test.ts")) continue;
-    const rel = relative(ROOT, file);
-    const isVirtualModuleSeam =
-      rel === "packages/iyon-runtime/src/virtual-modules.ts" ||
-      rel === "packages/iyon-runtime/src/virtual-modules.d.ts";
-    const specs = specifiersOf(readFileSync(file, "utf8"));
-    for (const spec of specs) {
-      if (!spec.startsWith(".")) continue;
-      const resolved = resolveRelative(file, spec);
-      if (resolved !== null && resolved.startsWith(FRAMEWORK_SRC) && resolved !== join(FRAMEWORK_SRC, "index.ts")) {
-        if (isVirtualModuleSeam) runtimeSeams.push(`virtual-modules.ts -> "${spec}"`);
-        else runtimeViolations.push(`${rel} -> "${spec}"`);
-      }
-    }
-  }
-  if (runtimeViolations.length > 0) fail("runtime-ts-public-entrypoints-only", runtimeViolations.join("; "));
-  else
-    pass(
-      "runtime-ts-public-entrypoints-only",
-      `runtime non-TUI sources enter via @iyon/tui only (${runtimeSeams.length} recorded virtual-module alias seams)`,
-    );
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: Standalone external-consumer fixture
+// Gate 2: Standalone external-consumer fixture
 // ---------------------------------------------------------------------------
 
 function consumerFixtureGate(): void {
@@ -257,7 +181,7 @@ function consumerFixtureGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: Public API surface guard
+// Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
 const BANNED_SURFACE_NAMES = [

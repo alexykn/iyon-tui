@@ -26,7 +26,9 @@ rollback arm
 
 The default package/addon must expose only the generated N-API contract and no raw pointer/bootstrap surface. The feature-gated direct arm must remain buildable and tested against the same semantic/runtime architecture. Any future direct-FFI removal would require a separate explicit transport decision after PERF-12 T15; it is not part of repository extraction or conditional T16 cleanup.
 
-**PERF-12 is not finished by the S6 transport qualification.** T14 hardening, the full T15 authoritative matrix/adoption decision, and any applicable T16 non-transport cleanup still must run. The S6 smoke comparison is evidence for the N-API lowering only, not the final PERF-12 adoption result. Unless a section explicitly describes the current transport, references below to the “Direct FFI” candidate describe the historical retained-DAG architecture and its retained feature-gated comparison arm; they do not override the N-API default.
+**Decision-owner hold.** T15 and T16 are evidence/conditional-cleanup tranches, not self-authorizing transport decisions. Neither T branch may remove, disable, replace, or make unreachable either the generated safe N-API arm or the feature-gated direct-FFI arm. Both arms remain buildable, testable, and available for comparison/rollback regardless of the T15 result until the repository owner explicitly decides otherwise in a separately authorized change. T16 may remove only explicitly approved, provably dead non-transport machinery; it must not remove either transport arm.
+
+**PERF-12 is not finished by the S6 transport qualification.** T14 hardening, the full T15 authoritative matrix and owner adoption decision, and any applicable T16 non-transport cleanup still must run. The S6 smoke comparison is evidence for the N-API lowering only, not the final PERF-12 adoption result. Unless a section explicitly describes the current transport, references below to the “Direct FFI” candidate describe the historical retained-DAG architecture and its retained feature-gated comparison arm; they do not override the N-API default.
 
 ---
 
@@ -54,15 +56,16 @@ This experiment has **16 implementation tranches**. Each tranche below names the
 | **T12** | 12.9 | Transaction integrity: multi-branch DAG materialization `§43`; temporary lease transaction `§44`; host atomicity rule `§45`; stale hints `§46`; targeted one-retry recovery `§47`; recovery helper `§73`; failure injection suite `§118` | Common ancestors built once across branches; exactly one host mutation; every success/error/failure-injection path drains temporary leases; one bounded retry then authoritative fallback |
 | **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77` (traced: `PERF-12-production-boundary-trace.md`); History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
 | **T14** | 12.12 | Hardening: randomized DAG differential testing `§87`; cross-transport identity tests `§112`; fuzzing targets `§117`; full-schema coverage proof `§76`; banned-shortcut review `§107` | 100-seed differential suite, fuzz targets, and full-schema coverage green; no UAF, no retained borrowed pointer, no partial host mutation demonstrated under fault injection |
-| **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate, including default N-API and the feature-gated direct-FFI oracle; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
-| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak, and ONLY for provably dead non-transport pending/recipe machinery that production can no longer reach (`§26`). This is not permission to remove the direct-FFI feature: every transport-independent PERF-12 win — the shared publication funnel, paged NativeRef table, weak-cache scavenging, retained text/style/diff payloads, PersistentSeq wide edits, derivation hints, and the §18 boundary routing landed in T6–T13 — is adopted architecture and MUST survive T16 intact, and the gated direct-FFI arm remains available for oracle/rollback use. Final shape matches `§121` ownership map without regrowing a pending state machine |
+| **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate, including default N-API and the feature-gated direct-FFI oracle; publish the `§104` result and recommendation, but do not apply transport adoption/rejection automatically. Both arms remain available until an explicit owner decision, regardless of the result. Report published regardless of outcome |
+| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15, soak, and explicit owner authorization, and ONLY for provably dead non-transport pending/recipe machinery that production can no longer reach (`§26`). T16 must not remove, disable, or replace either transport arm. Every transport-independent PERF-12 win — the shared publication funnel, paged NativeRef table, weak-cache scavenging, retained text/style/diff payloads, PersistentSeq wide edits, derivation hints, and the §18 boundary routing landed in T6–T13 — MUST survive T16 intact. Final shape matches `§121` ownership map without regrowing a pending state machine |
 
 ## Registry rules
 
 - **Parent mapping:** T1=12.0, T2+T3=12.2, T4=12.1, T5+T6/T7=12.3+12.4 (generator first), T8=12.5, T9=12.6, T10=12.7, T11=12.8, T12=12.9, T13=12.10+12.11, T14=12.12, T15=12.13, T16=12.14.
-- **Order is mandatory:** T2/T3 precede everything that touches native state; T4 must prove semantic parity before any FFI materializer lands; T5 precedes all generated transport work; T15 decides; T16 is conditional.
+- **Order is mandatory:** T2/T3 precede everything that touches native state; T4 must prove semantic parity before any FFI materializer lands; T5 precedes all generated transport work; T15 measures and recommends; T16 is conditional and requires explicit owner authorization.
+- **Decision-owner hold:** no T tranche self-authorizes transport adoption, rejection, removal, disabling, replacement, or cleanup. The generated safe N-API and feature-gated direct-FFI arms remain buildable and available until the repository owner makes an explicit decision, regardless of benchmark results.
 - **Benchmark cost control:** tranche gates T1–T14 use the smoke profile (`§102.1`), never the full matrix; the incremental benchmark cache (`§102.2`) may skip re-running unchanged candidate arms within a tranche. The full authoritative suite runs exactly once, at T15.
-- **Highest-risk boundaries are isolated:** T1 (stop-or-go), T2/T3 (shared-runtime rewrite affects every transport), T10 (wide asymptotics), T12 (failure atomicity), T13 (boundary completeness), T14 (unsafe-surface audit), and T15 (decision) each require their own commit and may not be merged together with neighbors.
+- **Highest-risk boundaries are isolated:** T1 (stop-or-go), T2/T3 (shared-runtime rewrite affects every transport), T10 (wide asymptotics), T12 (failure atomicity), T13 (boundary completeness), T14 (unsafe-surface audit), and T15 (comparison/recommendation) each require their own commit and may not be merged together with neighbors.
 - **Commit mapping:** `§108` commits 1→T1, 2→T4, 3→T2+T3, 4→T6+T7, 5→T8, 6→T9, 7→T10, 8→T11, 9→T12, 10→T13, 11→T14, 12→T15, 13→T16. Where a commit spans two tranches, run both tranches' gates separately.
 - Any tranche whose gate fails triggers the corresponding stop condition in `§106`. Do not lower a gate because later work depends on it.
 
@@ -110,7 +113,7 @@ Rules:
 - Records are append-only history. Later tranches may correct factual errors in earlier records via an added errata paragraph; they may not rewrite prior claims.
 - A record claiming COMPLETE must show gate evidence for **every** row of that tranche's Required-result column. Missing evidence forces PARTIAL.
 - Timing numbers must state whether they come from the checked or timing build (`§68`) and must not be phase-subtracted claims (`§90`).
-- The final record (T15) additionally links the adoption decision, raw JSONL artifacts, and the published report; the T16 record (if executed) documents exactly which machinery was removed or test-gated.
+- The final record (T15) additionally links the gate result, recommendation, raw JSONL artifacts, and the published report; any explicit owner adoption decision is recorded separately. The T16 record (if executed) documents exactly which non-transport machinery was removed or test-gated.
 
 ---
 
@@ -1344,6 +1347,8 @@ Do not rewrite a native constructor merely to rename it PERF-12.
 ---
 
 # 26. What should disappear after adoption
+
+This section is a candidate list, not an automatic cleanup instruction. No T tranche may execute it without explicit owner authorization, and neither transport arm may be removed or disabled before that decision.
 
 If PERF-12 wins, the production semantic layer should not retain native-oriented state merely to route common operations.
 
@@ -3653,7 +3658,7 @@ Memory/churn results should be separate records rather than inflating tiny timin
 
 # 104. Adoption gates
 
-PERF-12 replaces the current private View path only if all correctness, structural, performance, and memory gates pass.
+PERF-12 replaces the current private View path only if all correctness, structural, performance, and memory gates pass. These are technical decision gates, not self-executing cleanup or transport-selection authority: T15 publishes the result and recommendation, while both transport arms remain available until the repository owner explicitly decides what to adopt or remove.
 
 ## Correctness
 
@@ -3961,7 +3966,7 @@ cross-transport cache tests
 ## Commit 12
 
 ```text
-bench(tui): complete PERF-12 retained DAG FFI decision
+bench(tui): complete PERF-12 retained DAG transport comparison
 ```
 
 Contains:
@@ -3970,19 +3975,25 @@ Contains:
 raw JSONL
 performance review
 memory review
-adoption decision
+§104 gate result and recommendation
 ```
 
-## Commit 13 - only after adoption
+The comparison does not itself remove, disable, replace, or select either
+transport. Both N-API and direct-FFI remain available until an explicit owner
+decision.
+
+## Commit 13 - only after explicit owner decision and authorization
 
 ```text
 refactor(tui): remove superseded View transport recipe machinery
 ```
 
-Contains only cleanup proven safe by the selected architecture, scoped exactly
-as `§26`: provably unreachable pending/recipe code paths only. Transport-
-independent shared-runtime and retained improvements are adopted architecture
-and are explicitly out of scope for this commit.
+Contains only explicitly authorized cleanup proven safe by the selected
+architecture, scoped exactly as `§26`: provably unreachable pending/recipe code
+paths only. Transport-independent shared-runtime and retained improvements are
+adopted architecture and are explicitly out of scope for this commit. This
+commit must not remove or disable either transport unless a separate explicit
+owner decision authorizes that transport change.
 
 ---
 
@@ -7369,7 +7380,7 @@ generator BLAKE3:           7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e6
 
 ### 7. Status line
 
-**Tranche T14 status: COMPLETE.** Randomized retained/cold differential, malformed-boundary property coverage, generated full-schema coverage, cross-transport lifetime checks, and banned-shortcut review are green. T15 remains the outstanding authoritative performance/memory/adoption decision; the direct-FFI feature remains retained and is not removed by T15/T16.
+**Tranche T14 status: COMPLETE.** Randomized retained/cold differential, malformed-boundary property coverage, generated full-schema coverage, cross-transport lifetime checks, and banned-shortcut review are green. T15 remains the outstanding authoritative performance/memory comparison and owner adoption decision; both transport arms remain retained and are not removed by T15/T16.
 ```
 
 ## T15 draft / blocker record

@@ -9,7 +9,7 @@ import {
   type RetainedPhaseSample,
 } from "../src/retained_dag.ts";
 import { nativeViewAbiSession, tryNativeMaterialize } from "../src/native_view_abi.ts";
-import { makeT15Pair } from "./perf12_t15_workload.ts";
+import { makeT15Scenario } from "./perf12_t15_workload.ts";
 
 const workload = process.env.T15_WORKLOAD ?? "plain_text";
 const mode = process.env.T15_MODE ?? "shared_path";
@@ -35,10 +35,6 @@ function bootstrap(values: readonly number[], rounds = 1_000): [number, number] 
   return [medians[Math.floor(rounds * 0.025)]!, medians[Math.floor(rounds * 0.975)]!];
 }
 
-function makePair(seed: number): ReturnType<typeof makeT15Pair> {
-  return makeT15Pair({ workload, mode, size }, seed);
-}
-
 const Host = native.NativeTuiHost;
 if (Host === undefined) throw new Error("default addon does not expose NativeTuiHost");
 const host = new Host(80, 24, true);
@@ -57,11 +53,10 @@ function render(view: View): void {
 }
 
 try {
-  const initial = makePair(0);
-  render(initial.base);
+  const scenario = makeT15Scenario({ workload, mode, size });
+  render(scenario.initial);
   for (let index = 0; index < warmup; index++) {
-    const pair = makePair(index);
-    render(pair.next);
+    render(scenario.next(index));
   }
   resetRetainedIdentityCounters();
   const phaseSamples: RetainedPhaseSample[] = [];
@@ -74,10 +69,10 @@ try {
   try {
     for (let index = 0; index < measured; index++) {
       const constructStart = Bun.nanoseconds();
-      const pair = makePair(warmup + index);
+      const next = scenario.next(warmup + index);
       semanticConstruction.push(Bun.nanoseconds() - constructStart);
       const renderStart = Bun.nanoseconds();
-      render(pair.next);
+      render(next);
       transportAndHost.push(Bun.nanoseconds() - renderStart);
     }
   } finally {

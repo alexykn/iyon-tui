@@ -42,14 +42,18 @@ const session = nativeViewAbiSession();
 if (session === undefined) throw new Error("default addon does not expose tuiViewAbiSession");
 const boundary = new RetainedRootBoundary(session, () => host);
 setRootColdMaterializer(tryNativeMaterialize);
+let phaseSamples: RetainedPhaseSample[] | undefined;
 function render(view: View): void {
   const publication = boundary.prepareInstall(view) ?? boundary.prepareColdInstall(view);
   if (publication !== undefined) {
     publication.commit();
     return;
   }
+  const fallbackStart = Bun.nanoseconds();
   host.render(nodeForBridge(view));
   if (!boundary.adopt(view)) throw new Error("cold fallback could not adopt root");
+  const fallbackEnd = Bun.nanoseconds();
+  phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });
 }
 
 try {
@@ -59,10 +63,10 @@ try {
     render(scenario.next(index));
   }
   resetRetainedIdentityCounters();
-  const phaseSamples: RetainedPhaseSample[] = [];
+  phaseSamples = [];
   setRetainedPhaseInstrumentation({
     now_ns: () => Bun.nanoseconds(),
-    record: (sample) => phaseSamples.push(sample),
+    record: (sample) => phaseSamples?.push(sample),
   });
   const semanticConstruction: number[] = [];
   const transportAndHost: number[] = [];
@@ -99,9 +103,9 @@ try {
     measured,
     process_isolated: true,
     semantic_construction_samples_ns: semanticConstruction,
-    transport_prepare_samples_ns: phaseSamples.map((sample) => sample.transport_prepare_ns),
-    native_materialize_samples_ns: phaseSamples.map((sample) => sample.native_materialize_ns),
-    host_commit_samples_ns: phaseSamples.map((sample) => sample.host_commit_ns),
+    transport_prepare_samples_ns: phaseSamples?.map((sample) => sample.transport_prepare_ns) ?? [],
+    native_materialize_samples_ns: phaseSamples?.map((sample) => sample.native_materialize_ns) ?? [],
+    host_commit_samples_ns: phaseSamples?.map((sample) => sample.host_commit_ns) ?? [],
     phase_visibility: "semantic_construction_plus_retained_prepare_materialize_commit",
     samples_ns: total,
     median_ns: median(total),
@@ -112,6 +116,8 @@ try {
     first_screen_row: host.screenRows()[0] ?? "",
   }));
 } finally {
+  setRetainedPhaseInstrumentation(undefined);
+  phaseSamples = undefined;
   boundary.close();
   host.dispose();
 }

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568
+// generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232
 #![allow(dead_code)]
 
 #[derive(Clone, Copy, Debug)]

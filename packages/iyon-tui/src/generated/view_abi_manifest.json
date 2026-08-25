@@ -4029,7 +4029,7 @@
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568",
+  "generator_blake3": "3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232",
   "handles": [
     {
       "kind": null,

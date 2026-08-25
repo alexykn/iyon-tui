@@ -1,664 +1,1180 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568
+// generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
     use super::{AxisChildInputV1, NativeHost, NativeViewRuntime};
-    unsafe extern "Rust" {
-        pub fn runtime_noop_impl(runtime: *mut NativeViewRuntime) -> u32;
+    pub(super) unsafe fn runtime_noop_impl(runtime: *mut NativeViewRuntime) -> u32 {
+        unsafe { super::super::runtime_noop_impl(runtime) }
     }
-    unsafe extern "Rust" {
-        pub fn view_status_detail_impl(runtime: *mut NativeViewRuntime) -> u32;
+    pub(super) unsafe fn view_status_detail_impl(runtime: *mut NativeViewRuntime) -> u32 {
+        unsafe { super::super::view_status_detail_impl(runtime) }
     }
-    unsafe extern "Rust" {
-        pub fn view_render_ref_impl(runtime: *mut NativeViewRuntime, base: u32) -> u32;
+    pub(super) unsafe fn view_render_ref_impl(runtime: *mut NativeViewRuntime, base: u32) -> u32 {
+        unsafe { super::super::view_render_ref_impl(runtime, base) }
     }
-    unsafe extern "Rust" {
-        pub fn host_render_ref_impl(
-            runtime: *mut NativeViewRuntime,
-            host: *mut NativeHost,
-            base: u32,
-        ) -> i32;
+    pub(super) unsafe fn host_render_ref_impl(
+        runtime: *mut NativeViewRuntime,
+        host: *mut NativeHost,
+        base: u32,
+    ) -> i32 {
+        unsafe { super::super::host_render_ref_impl(runtime, host, base) }
     }
-    unsafe extern "Rust" {
-        pub fn view_spacer_create_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            rows: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_spacer_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        rows: u32,
+    ) -> u32 {
+        unsafe { super::super::view_spacer_create_impl(runtime, node_id_low, node_id_high, rows) }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_root_impl(
-            runtime: *mut NativeViewRuntime,
-            base: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_root_impl(
+        runtime: *mut NativeViewRuntime,
+        base: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_root_impl(
+                runtime,
+                base,
+                node_id_low,
+                node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_common_patch_root_impl(
-            runtime: *mut NativeViewRuntime,
-            base: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            mask: u32,
-            padding_tr: u32,
-            padding_bl: u32,
-            width_rule: u32,
-            height_rule: u32,
-            min_width: u32,
-            max_width: u32,
-            min_height: u32,
-            max_height: u32,
-            decoration_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_common_patch_root_impl(
+        runtime: *mut NativeViewRuntime,
+        base: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        mask: u32,
+        padding_tr: u32,
+        padding_bl: u32,
+        width_rule: u32,
+        height_rule: u32,
+        min_width: u32,
+        max_width: u32,
+        min_height: u32,
+        max_height: u32,
+        decoration_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_common_patch_root_impl(
+                runtime,
+                base,
+                node_id_low,
+                node_id_high,
+                mask,
+                padding_tr,
+                padding_bl,
+                width_rule,
+                height_rule,
+                min_width,
+                max_width,
+                min_height,
+                max_height,
+                decoration_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_axis_create_buffer_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            axis_kind: u32,
-            gap: u32,
-            children: *const AxisChildInputV1,
-            children_capacity_bytes: usize,
-            used_child_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_axis_create_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        axis_kind: u32,
+        gap: u32,
+        children: *const AxisChildInputV1,
+        children_capacity_bytes: usize,
+        used_child_count: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_axis_create_buffer_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                axis_kind,
+                gap,
+                children,
+                children_capacity_bytes,
+                used_child_count,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_row_create_0_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_row_create_0_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+    ) -> u32 {
+        unsafe { super::super::view_row_create_0_impl(runtime, node_id_low, node_id_high, gap) }
     }
-    unsafe extern "Rust" {
-        pub fn view_row_create_1_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_row_create_1_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_row_create_1_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_row_create_2_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_row_create_2_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_row_create_2_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_row_create_3_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-            track2: u32,
-            child2: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_row_create_3_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+        track2: u32,
+        child2: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_row_create_3_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+                track2,
+                child2,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_row_create_4_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-            track2: u32,
-            child2: u32,
-            track3: u32,
-            child3: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_row_create_4_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+        track2: u32,
+        child2: u32,
+        track3: u32,
+        child3: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_row_create_4_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+                track2,
+                child2,
+                track3,
+                child3,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_column_create_0_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_column_create_0_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+    ) -> u32 {
+        unsafe { super::super::view_column_create_0_impl(runtime, node_id_low, node_id_high, gap) }
     }
-    unsafe extern "Rust" {
-        pub fn view_column_create_1_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_column_create_1_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_column_create_1_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_column_create_2_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_column_create_2_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_column_create_2_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_column_create_3_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-            track2: u32,
-            child2: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_column_create_3_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+        track2: u32,
+        child2: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_column_create_3_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+                track2,
+                child2,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_column_create_4_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-            track0: u32,
-            child0: u32,
-            track1: u32,
-            child1: u32,
-            track2: u32,
-            child2: u32,
-            track3: u32,
-            child3: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_column_create_4_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+        track0: u32,
+        child0: u32,
+        track1: u32,
+        child1: u32,
+        track2: u32,
+        child2: u32,
+        track3: u32,
+        child3: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_column_create_4_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                gap,
+                track0,
+                child0,
+                track1,
+                child1,
+                track2,
+                child2,
+                track3,
+                child3,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn axis_builder_begin_impl(
-            runtime: *mut NativeViewRuntime,
-            axis_kind: u32,
-            expected_children: u32,
-        ) -> u32;
+    pub(super) unsafe fn axis_builder_begin_impl(
+        runtime: *mut NativeViewRuntime,
+        axis_kind: u32,
+        expected_children: u32,
+    ) -> u32 {
+        unsafe { super::super::axis_builder_begin_impl(runtime, axis_kind, expected_children) }
     }
-    unsafe extern "Rust" {
-        pub fn axis_builder_push_impl(
-            runtime: *mut NativeViewRuntime,
-            builder_ref: u32,
-            track_word: u32,
-            child_ref: u32,
-        ) -> i32;
+    pub(super) unsafe fn axis_builder_push_impl(
+        runtime: *mut NativeViewRuntime,
+        builder_ref: u32,
+        track_word: u32,
+        child_ref: u32,
+    ) -> i32 {
+        unsafe { super::super::axis_builder_push_impl(runtime, builder_ref, track_word, child_ref) }
     }
-    unsafe extern "Rust" {
-        pub fn axis_builder_finish_impl(
-            runtime: *mut NativeViewRuntime,
-            builder_ref: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            gap: u32,
-        ) -> u32;
+    pub(super) unsafe fn axis_builder_finish_impl(
+        runtime: *mut NativeViewRuntime,
+        builder_ref: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        gap: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::axis_builder_finish_impl(
+                runtime,
+                builder_ref,
+                node_id_low,
+                node_id_high,
+                gap,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn axis_builder_abort_impl(runtime: *mut NativeViewRuntime, builder_ref: u32) -> i32;
+    pub(super) unsafe fn axis_builder_abort_impl(
+        runtime: *mut NativeViewRuntime,
+        builder_ref: u32,
+    ) -> i32 {
+        unsafe { super::super::axis_builder_abort_impl(runtime, builder_ref) }
     }
-    unsafe extern "Rust" {
-        pub fn view_axis_set_child_impl(
-            runtime: *mut NativeViewRuntime,
-            base_axis_ref: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            child_index: u32,
-            track_word: u32,
-            child_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_axis_set_child_impl(
+        runtime: *mut NativeViewRuntime,
+        base_axis_ref: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        child_index: u32,
+        track_word: u32,
+        child_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_axis_set_child_impl(
+                runtime,
+                base_axis_ref,
+                node_id_low,
+                node_id_high,
+                child_index,
+                track_word,
+                child_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_axis_splice_buffer_impl(
-            runtime: *mut NativeViewRuntime,
-            base_axis_ref: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            index: u32,
-            remove_count: u32,
-            children: *const AxisChildInputV1,
-            children_capacity_bytes: usize,
-            used_child_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_axis_splice_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        base_axis_ref: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        index: u32,
+        remove_count: u32,
+        children: *const AxisChildInputV1,
+        children_capacity_bytes: usize,
+        used_child_count: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_axis_splice_buffer_impl(
+                runtime,
+                base_axis_ref,
+                node_id_low,
+                node_id_high,
+                index,
+                remove_count,
+                children,
+                children_capacity_bytes,
+                used_child_count,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_grid_set_cell_impl(
-            runtime: *mut NativeViewRuntime,
-            base_grid_ref: u32,
-            node_id_low: u32,
-            node_id_high: u32,
-            row: u32,
-            column: u32,
-            child_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_grid_set_cell_impl(
+        runtime: *mut NativeViewRuntime,
+        base_grid_ref: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        row: u32,
+        column: u32,
+        child_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_grid_set_cell_impl(
+                runtime,
+                base_grid_ref,
+                node_id_low,
+                node_id_high,
+                row,
+                column,
+                child_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_axis_set_child_path_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            path_depth: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            ancestor3_node_id_low: u32,
-            ancestor3_node_id_high: u32,
-            axis_index: u32,
-            track_word: u32,
-            child_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_axis_set_child_path_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        path_depth: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        ancestor3_node_id_low: u32,
+        ancestor3_node_id_high: u32,
+        axis_index: u32,
+        track_word: u32,
+        child_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_axis_set_child_path_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                path_depth,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                ancestor3_node_id_low,
+                ancestor3_node_id_high,
+                axis_index,
+                track_word,
+                child_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_grid_create_buffer_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            column_gap: u32,
-            row_gap: u32,
-            words: *const u32,
-            words_capacity_bytes: usize,
-            used_word_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_grid_create_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        column_gap: u32,
+        row_gap: u32,
+        words: *const u32,
+        words_capacity_bytes: usize,
+        used_word_count: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_grid_create_buffer_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                column_gap,
+                row_gap,
+                words,
+                words_capacity_bytes,
+                used_word_count,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_diff_create_buffer_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            words: *const u32,
-            words_capacity_bytes: usize,
-            used_word_count: u32,
-            bytes: *const u8,
-            bytes_capacity_bytes: usize,
-            used_byte_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_diff_create_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        words: *const u32,
+        words_capacity_bytes: usize,
+        used_word_count: u32,
+        bytes: *const u8,
+        bytes_capacity_bytes: usize,
+        used_byte_count: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_diff_create_buffer_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                words,
+                words_capacity_bytes,
+                used_word_count,
+                bytes,
+                bytes_capacity_bytes,
+                used_byte_count,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_hanging_create_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            prefix_ref: u32,
-            continuation_ref: u32,
-            body_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_hanging_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        prefix_ref: u32,
+        continuation_ref: u32,
+        body_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_hanging_create_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                prefix_ref,
+                continuation_ref,
+                body_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_container_create_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            child_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_container_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        child_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_container_create_impl(runtime, node_id_low, node_id_high, child_ref)
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_clamp_create_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            child_ref: u32,
-            max_rows: u32,
-            overflow_kind: u32,
-            overflow_style_ref: u32,
-            prefix: *const ::core::ffi::c_char,
-        ) -> u32;
+    pub(super) unsafe fn view_clamp_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        child_ref: u32,
+        max_rows: u32,
+        overflow_kind: u32,
+        overflow_style_ref: u32,
+        prefix: *const ::core::ffi::c_char,
+    ) -> u32 {
+        unsafe {
+            super::super::view_clamp_create_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                child_ref,
+                max_rows,
+                overflow_kind,
+                overflow_style_ref,
+                prefix,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_component_create_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            handle_low: u32,
-            handle_high: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_component_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        handle_low: u32,
+        handle_high: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_component_create_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                handle_low,
+                handle_high,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_decorated_create_buffer_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            child_ref: u32,
-            style_ref: u32,
-            words: *const u32,
-            words_capacity_bytes: usize,
-            used_word_count: u32,
-            bytes: *const u8,
-            bytes_capacity_bytes: usize,
-            used_byte_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_decorated_create_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        child_ref: u32,
+        style_ref: u32,
+        words: *const u32,
+        words_capacity_bytes: usize,
+        used_word_count: u32,
+        bytes: *const u8,
+        bytes_capacity_bytes: usize,
+        used_byte_count: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_decorated_create_buffer_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                child_ref,
+                style_ref,
+                words,
+                words_capacity_bytes,
+                used_word_count,
+                bytes,
+                bytes_capacity_bytes,
+                used_byte_count,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_grid_set_cell_path_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            path_depth: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            ancestor3_node_id_low: u32,
-            ancestor3_node_id_high: u32,
-            grid_row: u32,
-            grid_column: u32,
-            child_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_grid_set_cell_path_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        path_depth: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        ancestor3_node_id_low: u32,
+        ancestor3_node_id_high: u32,
+        grid_row: u32,
+        grid_column: u32,
+        child_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_grid_set_cell_path_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                path_depth,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                ancestor3_node_id_low,
+                ancestor3_node_id_high,
+                grid_row,
+                grid_column,
+                child_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_release_many_impl(
-            runtime: *mut NativeViewRuntime,
-            refs: *const u32,
-            refs_capacity_bytes: usize,
-            used_ref_count: u32,
-        ) -> i32;
+    pub(super) unsafe fn view_release_many_impl(
+        runtime: *mut NativeViewRuntime,
+        refs: *const u32,
+        refs_capacity_bytes: usize,
+        used_ref_count: u32,
+    ) -> i32 {
+        unsafe {
+            super::super::view_release_many_impl(runtime, refs, refs_capacity_bytes, used_ref_count)
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_ref_for_node_id_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_ref_for_node_id_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+    ) -> u32 {
+        unsafe { super::super::view_ref_for_node_id_impl(runtime, node_id_low, node_id_high) }
     }
-    unsafe extern "Rust" {
-        pub fn path_root_impl(runtime: *mut NativeViewRuntime) -> u32;
+    pub(super) unsafe fn path_root_impl(runtime: *mut NativeViewRuntime) -> u32 {
+        unsafe { super::super::path_root_impl(runtime) }
     }
-    unsafe extern "Rust" {
-        pub fn path_child_impl(
-            runtime: *mut NativeViewRuntime,
-            parent_path_ref: u32,
-            step_kind: u32,
-            expected_view_kind: u32,
-            selector: u32,
-        ) -> u32;
+    pub(super) unsafe fn path_child_impl(
+        runtime: *mut NativeViewRuntime,
+        parent_path_ref: u32,
+        step_kind: u32,
+        expected_view_kind: u32,
+        selector: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::path_child_impl(
+                runtime,
+                parent_path_ref,
+                step_kind,
+                expected_view_kind,
+                selector,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_path_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            path_depth: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            ancestor3_node_id_low: u32,
-            ancestor3_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_path_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        path_depth: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        ancestor3_node_id_low: u32,
+        ancestor3_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_path_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                path_depth,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                ancestor3_node_id_low,
+                ancestor3_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_path_d1_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_path_d1_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_path_d1_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_path_d2_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_path_d2_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_path_d2_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_path_d3_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_path_d3_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_path_d3_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_layout_patch_path_d4_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            path_ref: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            ancestor3_node_id_low: u32,
-            ancestor3_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_layout_patch_path_d4_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        path_ref: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        ancestor3_node_id_low: u32,
+        ancestor3_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_layout_patch_path_d4_impl(
+                runtime,
+                base_root_ref,
+                path_ref,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                ancestor3_node_id_low,
+                ancestor3_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn edit_txn_begin_impl(
-            runtime: *mut NativeViewRuntime,
-            base_root_ref: u32,
-            expected_edit_count: u32,
-        ) -> u32;
+    pub(super) unsafe fn edit_txn_begin_impl(
+        runtime: *mut NativeViewRuntime,
+        base_root_ref: u32,
+        expected_edit_count: u32,
+    ) -> u32 {
+        unsafe { super::super::edit_txn_begin_impl(runtime, base_root_ref, expected_edit_count) }
     }
-    unsafe extern "Rust" {
-        pub fn edit_txn_add_text_layout_impl(
-            runtime: *mut NativeViewRuntime,
-            txn_ref: u32,
-            path_ref: u32,
-            path_depth: u32,
-            target_node_id_low: u32,
-            target_node_id_high: u32,
-            ancestor0_node_id_low: u32,
-            ancestor0_node_id_high: u32,
-            ancestor1_node_id_low: u32,
-            ancestor1_node_id_high: u32,
-            ancestor2_node_id_low: u32,
-            ancestor2_node_id_high: u32,
-            ancestor3_node_id_low: u32,
-            ancestor3_node_id_high: u32,
-            wrap: u32,
-            align: u32,
-        ) -> i32;
+    pub(super) unsafe fn edit_txn_add_text_layout_impl(
+        runtime: *mut NativeViewRuntime,
+        txn_ref: u32,
+        path_ref: u32,
+        path_depth: u32,
+        target_node_id_low: u32,
+        target_node_id_high: u32,
+        ancestor0_node_id_low: u32,
+        ancestor0_node_id_high: u32,
+        ancestor1_node_id_low: u32,
+        ancestor1_node_id_high: u32,
+        ancestor2_node_id_low: u32,
+        ancestor2_node_id_high: u32,
+        ancestor3_node_id_low: u32,
+        ancestor3_node_id_high: u32,
+        wrap: u32,
+        align: u32,
+    ) -> i32 {
+        unsafe {
+            super::super::edit_txn_add_text_layout_impl(
+                runtime,
+                txn_ref,
+                path_ref,
+                path_depth,
+                target_node_id_low,
+                target_node_id_high,
+                ancestor0_node_id_low,
+                ancestor0_node_id_high,
+                ancestor1_node_id_low,
+                ancestor1_node_id_high,
+                ancestor2_node_id_low,
+                ancestor2_node_id_high,
+                ancestor3_node_id_low,
+                ancestor3_node_id_high,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn edit_txn_commit_render_impl(
-            runtime: *mut NativeViewRuntime,
-            host: *mut NativeHost,
-            txn_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn edit_txn_commit_render_impl(
+        runtime: *mut NativeViewRuntime,
+        host: *mut NativeHost,
+        txn_ref: u32,
+    ) -> u32 {
+        unsafe { super::super::edit_txn_commit_render_impl(runtime, host, txn_ref) }
     }
-    unsafe extern "Rust" {
-        pub fn edit_txn_abort_impl(runtime: *mut NativeViewRuntime, txn_ref: u32) -> i32;
+    pub(super) unsafe fn edit_txn_abort_impl(runtime: *mut NativeViewRuntime, txn_ref: u32) -> i32 {
+        unsafe { super::super::edit_txn_abort_impl(runtime, txn_ref) }
     }
-    unsafe extern "Rust" {
-        pub fn style_atom_create_cstring_impl(
-            runtime: *mut NativeViewRuntime,
-            value: *const ::core::ffi::c_char,
-        ) -> u32;
+    pub(super) unsafe fn style_atom_create_cstring_impl(
+        runtime: *mut NativeViewRuntime,
+        value: *const ::core::ffi::c_char,
+    ) -> u32 {
+        unsafe { super::super::style_atom_create_cstring_impl(runtime, value) }
     }
-    unsafe extern "Rust" {
-        pub fn style_create_bits_impl(
-            runtime: *mut NativeViewRuntime,
-            flags: u32,
-            attribute_present: u32,
-            attribute_true: u32,
-            foreground_ref: u32,
-            background_ref: u32,
-            theme_atom_ref: u32,
-        ) -> u32;
+    pub(super) unsafe fn style_create_bits_impl(
+        runtime: *mut NativeViewRuntime,
+        flags: u32,
+        attribute_present: u32,
+        attribute_true: u32,
+        foreground_ref: u32,
+        background_ref: u32,
+        theme_atom_ref: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::style_create_bits_impl(
+                runtime,
+                flags,
+                attribute_present,
+                attribute_true,
+                foreground_ref,
+                background_ref,
+                theme_atom_ref,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_cstring_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            text: *const ::core::ffi::c_char,
-            style_ref: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_cstring_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        text: *const ::core::ffi::c_char,
+        style_ref: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_cstring_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                text,
+                style_ref,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_utf8_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            bytes: *const u8,
-            bytes_capacity: usize,
-            used_bytes: u32,
-            style_ref: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_utf8_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        bytes: *const u8,
+        bytes_capacity: usize,
+        used_bytes: u32,
+        style_ref: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_utf8_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                bytes,
+                bytes_capacity,
+                used_bytes,
+                style_ref,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_utf8_2_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            bytes: *const u8,
-            bytes_capacity: usize,
-            used_bytes: u32,
-            span0_bytes: u32,
-            style0: u32,
-            span1_bytes: u32,
-            style1: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_utf8_2_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        bytes: *const u8,
+        bytes_capacity: usize,
+        used_bytes: u32,
+        span0_bytes: u32,
+        style0: u32,
+        span1_bytes: u32,
+        style1: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_utf8_2_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                bytes,
+                bytes_capacity,
+                used_bytes,
+                span0_bytes,
+                style0,
+                span1_bytes,
+                style1,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_utf8_3_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            bytes: *const u8,
-            bytes_capacity: usize,
-            used_bytes: u32,
-            span0_bytes: u32,
-            style0: u32,
-            span1_bytes: u32,
-            style1: u32,
-            span2_bytes: u32,
-            style2: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_utf8_3_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        bytes: *const u8,
+        bytes_capacity: usize,
+        used_bytes: u32,
+        span0_bytes: u32,
+        style0: u32,
+        span1_bytes: u32,
+        style1: u32,
+        span2_bytes: u32,
+        style2: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_utf8_3_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                bytes,
+                bytes_capacity,
+                used_bytes,
+                span0_bytes,
+                style0,
+                span1_bytes,
+                style1,
+                span2_bytes,
+                style2,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_utf8_4_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            bytes: *const u8,
-            bytes_capacity: usize,
-            used_bytes: u32,
-            span0_bytes: u32,
-            style0: u32,
-            span1_bytes: u32,
-            style1: u32,
-            span2_bytes: u32,
-            style2: u32,
-            span3_bytes: u32,
-            style3: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_utf8_4_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        bytes: *const u8,
+        bytes_capacity: usize,
+        used_bytes: u32,
+        span0_bytes: u32,
+        style0: u32,
+        span1_bytes: u32,
+        style1: u32,
+        span2_bytes: u32,
+        style2: u32,
+        span3_bytes: u32,
+        style3: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_utf8_4_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                bytes,
+                bytes_capacity,
+                used_bytes,
+                span0_bytes,
+                style0,
+                span1_bytes,
+                style1,
+                span2_bytes,
+                style2,
+                span3_bytes,
+                style3,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_cstring_2_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            text0: *const ::core::ffi::c_char,
-            style0: u32,
-            text1: *const ::core::ffi::c_char,
-            style1: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_cstring_2_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        text0: *const ::core::ffi::c_char,
+        style0: u32,
+        text1: *const ::core::ffi::c_char,
+        style1: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_cstring_2_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                text0,
+                style0,
+                text1,
+                style1,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_cstring_3_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            text0: *const ::core::ffi::c_char,
-            style0: u32,
-            text1: *const ::core::ffi::c_char,
-            style1: u32,
-            text2: *const ::core::ffi::c_char,
-            style2: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_cstring_3_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        text0: *const ::core::ffi::c_char,
+        style0: u32,
+        text1: *const ::core::ffi::c_char,
+        style1: u32,
+        text2: *const ::core::ffi::c_char,
+        style2: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_cstring_3_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                text0,
+                style0,
+                text1,
+                style1,
+                text2,
+                style2,
+                wrap,
+                align,
+            )
+        }
     }
-    unsafe extern "Rust" {
-        pub fn view_text_create_cstring_4_impl(
-            runtime: *mut NativeViewRuntime,
-            node_id_low: u32,
-            node_id_high: u32,
-            text0: *const ::core::ffi::c_char,
-            style0: u32,
-            text1: *const ::core::ffi::c_char,
-            style1: u32,
-            text2: *const ::core::ffi::c_char,
-            style2: u32,
-            text3: *const ::core::ffi::c_char,
-            style3: u32,
-            wrap: u32,
-            align: u32,
-        ) -> u32;
+    pub(super) unsafe fn view_text_create_cstring_4_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        text0: *const ::core::ffi::c_char,
+        style0: u32,
+        text1: *const ::core::ffi::c_char,
+        style1: u32,
+        text2: *const ::core::ffi::c_char,
+        style2: u32,
+        text3: *const ::core::ffi::c_char,
+        style3: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_cstring_4_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                text0,
+                style0,
+                text1,
+                style1,
+                text2,
+                style2,
+                text3,
+                style3,
+                wrap,
+                align,
+            )
+        }
     }
 }
 
@@ -758,8 +1274,7 @@ fn generated_enum<T: Copy>(value: u32, allowed: &[u32], error: T) -> Result<u32,
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_runtime_noop_v1(runtime: *mut NativeViewRuntime) -> u32 {
+pub(super) unsafe fn invoke_iyon_runtime_noop_v1(runtime: *mut NativeViewRuntime) -> u32 {
     generated_catch_unwind(
         || {
             (|| -> Result<u32, u32> {
@@ -771,8 +1286,13 @@ pub unsafe extern "C" fn iyon_runtime_noop_v1(runtime: *mut NativeViewRuntime) -
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_status_detail_v1(runtime: *mut NativeViewRuntime) -> u32 {
+pub unsafe extern "C" fn iyon_runtime_noop_v1(runtime: *mut NativeViewRuntime) -> u32 {
+    unsafe { invoke_iyon_runtime_noop_v1(runtime) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_status_detail_v1(runtime: *mut NativeViewRuntime) -> u32 {
     generated_catch_unwind(
         || {
             (|| -> Result<u32, u32> {
@@ -784,8 +1304,13 @@ pub unsafe extern "C" fn iyon_view_status_detail_v1(runtime: *mut NativeViewRunt
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_render_ref_v1(
+pub unsafe extern "C" fn iyon_view_status_detail_v1(runtime: *mut NativeViewRuntime) -> u32 {
+    unsafe { invoke_iyon_view_status_detail_v1(runtime) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_render_ref_v1(
     runtime: *mut NativeViewRuntime,
     base: u32,
 ) -> u32 {
@@ -801,8 +1326,16 @@ pub unsafe extern "C" fn iyon_view_render_ref_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_host_render_ref_v1(
+pub unsafe extern "C" fn iyon_view_render_ref_v1(
+    runtime: *mut NativeViewRuntime,
+    base: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_render_ref_v1(runtime, base) }
+}
+
+pub(super) unsafe fn invoke_iyon_host_render_ref_v1(
     runtime: *mut NativeViewRuntime,
     host: *mut NativeHost,
     base: u32,
@@ -820,8 +1353,17 @@ pub unsafe extern "C" fn iyon_host_render_ref_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_spacer_create_v1(
+pub unsafe extern "C" fn iyon_host_render_ref_v1(
+    runtime: *mut NativeViewRuntime,
+    host: *mut NativeHost,
+    base: u32,
+) -> i32 {
+    unsafe { invoke_iyon_host_render_ref_v1(runtime, host, base) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_spacer_create_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -847,8 +1389,18 @@ pub unsafe extern "C" fn iyon_view_spacer_create_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_root_v1(
+pub unsafe extern "C" fn iyon_view_spacer_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    rows: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_spacer_create_v1(runtime, node_id_low, node_id_high, rows) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_root_v1(
     runtime: *mut NativeViewRuntime,
     base: u32,
     node_id_low: u32,
@@ -881,8 +1433,29 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_root_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_common_patch_root_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_root_v1(
+    runtime: *mut NativeViewRuntime,
+    base: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_root_v1(
+            runtime,
+            base,
+            node_id_low,
+            node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_common_patch_root_v1(
     runtime: *mut NativeViewRuntime,
     base: u32,
     node_id_low: u32,
@@ -929,8 +1502,45 @@ pub unsafe extern "C" fn iyon_view_common_patch_root_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_axis_create_buffer_v1(
+pub unsafe extern "C" fn iyon_view_common_patch_root_v1(
+    runtime: *mut NativeViewRuntime,
+    base: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    mask: u32,
+    padding_tr: u32,
+    padding_bl: u32,
+    width_rule: u32,
+    height_rule: u32,
+    min_width: u32,
+    max_width: u32,
+    min_height: u32,
+    max_height: u32,
+    decoration_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_common_patch_root_v1(
+            runtime,
+            base,
+            node_id_low,
+            node_id_high,
+            mask,
+            padding_tr,
+            padding_bl,
+            width_rule,
+            height_rule,
+            min_width,
+            max_width,
+            min_height,
+            max_height,
+            decoration_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_axis_create_buffer_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -978,8 +1588,33 @@ pub unsafe extern "C" fn iyon_view_axis_create_buffer_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_row_create_0_v1(
+pub unsafe extern "C" fn iyon_view_axis_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    axis_kind: u32,
+    gap: u32,
+    children: *const AxisChildInputV1,
+    children_capacity_bytes: usize,
+    used_child_count: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_axis_create_buffer_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            axis_kind,
+            gap,
+            children,
+            children_capacity_bytes,
+            used_child_count,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_row_create_0_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1000,8 +1635,18 @@ pub unsafe extern "C" fn iyon_view_row_create_0_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_row_create_1_v1(
+pub unsafe extern "C" fn iyon_view_row_create_0_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_row_create_0_v1(runtime, node_id_low, node_id_high, gap) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_row_create_1_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1032,8 +1677,22 @@ pub unsafe extern "C" fn iyon_view_row_create_1_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_row_create_2_v1(
+pub unsafe extern "C" fn iyon_view_row_create_1_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_row_create_1_v1(runtime, node_id_low, node_id_high, gap, track0, child0)
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_row_create_2_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1069,8 +1728,33 @@ pub unsafe extern "C" fn iyon_view_row_create_2_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_row_create_3_v1(
+pub unsafe extern "C" fn iyon_view_row_create_2_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_row_create_2_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_row_create_3_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1111,8 +1795,37 @@ pub unsafe extern "C" fn iyon_view_row_create_3_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_row_create_4_v1(
+pub unsafe extern "C" fn iyon_view_row_create_3_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+    track2: u32,
+    child2: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_row_create_3_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+            track2,
+            child2,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_row_create_4_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1158,8 +1871,41 @@ pub unsafe extern "C" fn iyon_view_row_create_4_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_column_create_0_v1(
+pub unsafe extern "C" fn iyon_view_row_create_4_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+    track2: u32,
+    child2: u32,
+    track3: u32,
+    child3: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_row_create_4_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+            track2,
+            child2,
+            track3,
+            child3,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_column_create_0_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1185,8 +1931,18 @@ pub unsafe extern "C" fn iyon_view_column_create_0_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_column_create_1_v1(
+pub unsafe extern "C" fn iyon_view_column_create_0_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_column_create_0_v1(runtime, node_id_low, node_id_high, gap) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_column_create_1_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1217,8 +1973,22 @@ pub unsafe extern "C" fn iyon_view_column_create_1_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_column_create_2_v1(
+pub unsafe extern "C" fn iyon_view_column_create_1_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_column_create_1_v1(runtime, node_id_low, node_id_high, gap, track0, child0)
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_column_create_2_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1254,8 +2024,33 @@ pub unsafe extern "C" fn iyon_view_column_create_2_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_column_create_3_v1(
+pub unsafe extern "C" fn iyon_view_column_create_2_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_column_create_2_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_column_create_3_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1296,8 +2091,37 @@ pub unsafe extern "C" fn iyon_view_column_create_3_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_column_create_4_v1(
+pub unsafe extern "C" fn iyon_view_column_create_3_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+    track2: u32,
+    child2: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_column_create_3_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+            track2,
+            child2,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_column_create_4_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1343,8 +2167,41 @@ pub unsafe extern "C" fn iyon_view_column_create_4_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_axis_builder_begin_v1(
+pub unsafe extern "C" fn iyon_view_column_create_4_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+    track0: u32,
+    child0: u32,
+    track1: u32,
+    child1: u32,
+    track2: u32,
+    child2: u32,
+    track3: u32,
+    child3: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_column_create_4_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            gap,
+            track0,
+            child0,
+            track1,
+            child1,
+            track2,
+            child2,
+            track3,
+            child3,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_axis_builder_begin_v1(
     runtime: *mut NativeViewRuntime,
     axis_kind: u32,
     expected_children: u32,
@@ -1362,8 +2219,17 @@ pub unsafe extern "C" fn iyon_axis_builder_begin_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_axis_builder_push_v1(
+pub unsafe extern "C" fn iyon_axis_builder_begin_v1(
+    runtime: *mut NativeViewRuntime,
+    axis_kind: u32,
+    expected_children: u32,
+) -> u32 {
+    unsafe { invoke_iyon_axis_builder_begin_v1(runtime, axis_kind, expected_children) }
+}
+
+pub(super) unsafe fn invoke_iyon_axis_builder_push_v1(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
     track_word: u32,
@@ -1389,8 +2255,18 @@ pub unsafe extern "C" fn iyon_axis_builder_push_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_axis_builder_finish_v1(
+pub unsafe extern "C" fn iyon_axis_builder_push_v1(
+    runtime: *mut NativeViewRuntime,
+    builder_ref: u32,
+    track_word: u32,
+    child_ref: u32,
+) -> i32 {
+    unsafe { invoke_iyon_axis_builder_push_v1(runtime, builder_ref, track_word, child_ref) }
+}
+
+pub(super) unsafe fn invoke_iyon_axis_builder_finish_v1(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
     node_id_low: u32,
@@ -1419,8 +2295,21 @@ pub unsafe extern "C" fn iyon_axis_builder_finish_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_axis_builder_abort_v1(
+pub unsafe extern "C" fn iyon_axis_builder_finish_v1(
+    runtime: *mut NativeViewRuntime,
+    builder_ref: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    gap: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_axis_builder_finish_v1(runtime, builder_ref, node_id_low, node_id_high, gap)
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_axis_builder_abort_v1(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
 ) -> i32 {
@@ -1436,8 +2325,16 @@ pub unsafe extern "C" fn iyon_axis_builder_abort_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_axis_set_child_v1(
+pub unsafe extern "C" fn iyon_axis_builder_abort_v1(
+    runtime: *mut NativeViewRuntime,
+    builder_ref: u32,
+) -> i32 {
+    unsafe { invoke_iyon_axis_builder_abort_v1(runtime, builder_ref) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_axis_set_child_v1(
     runtime: *mut NativeViewRuntime,
     base_axis_ref: u32,
     node_id_low: u32,
@@ -1471,8 +2368,31 @@ pub unsafe extern "C" fn iyon_view_axis_set_child_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_axis_splice_buffer_v1(
+pub unsafe extern "C" fn iyon_view_axis_set_child_v1(
+    runtime: *mut NativeViewRuntime,
+    base_axis_ref: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_index: u32,
+    track_word: u32,
+    child_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_axis_set_child_v1(
+            runtime,
+            base_axis_ref,
+            node_id_low,
+            node_id_high,
+            child_index,
+            track_word,
+            child_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_axis_splice_buffer_v1(
     runtime: *mut NativeViewRuntime,
     base_axis_ref: u32,
     node_id_low: u32,
@@ -1523,8 +2443,35 @@ pub unsafe extern "C" fn iyon_view_axis_splice_buffer_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_grid_set_cell_v1(
+pub unsafe extern "C" fn iyon_view_axis_splice_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    base_axis_ref: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    index: u32,
+    remove_count: u32,
+    children: *const AxisChildInputV1,
+    children_capacity_bytes: usize,
+    used_child_count: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_axis_splice_buffer_v1(
+            runtime,
+            base_axis_ref,
+            node_id_low,
+            node_id_high,
+            index,
+            remove_count,
+            children,
+            children_capacity_bytes,
+            used_child_count,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_grid_set_cell_v1(
     runtime: *mut NativeViewRuntime,
     base_grid_ref: u32,
     node_id_low: u32,
@@ -1558,8 +2505,31 @@ pub unsafe extern "C" fn iyon_view_grid_set_cell_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_axis_set_child_path_v1(
+pub unsafe extern "C" fn iyon_view_grid_set_cell_v1(
+    runtime: *mut NativeViewRuntime,
+    base_grid_ref: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    row: u32,
+    column: u32,
+    child_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_grid_set_cell_v1(
+            runtime,
+            base_grid_ref,
+            node_id_low,
+            node_id_high,
+            row,
+            column,
+            child_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_axis_set_child_path_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -1634,8 +2604,51 @@ pub unsafe extern "C" fn iyon_view_axis_set_child_path_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_grid_create_buffer_v1(
+pub unsafe extern "C" fn iyon_view_axis_set_child_path_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    path_depth: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    ancestor3_node_id_low: u32,
+    ancestor3_node_id_high: u32,
+    axis_index: u32,
+    track_word: u32,
+    child_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_axis_set_child_path_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            path_depth,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            ancestor3_node_id_low,
+            ancestor3_node_id_high,
+            axis_index,
+            track_word,
+            child_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_grid_create_buffer_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1678,8 +2691,33 @@ pub unsafe extern "C" fn iyon_view_grid_create_buffer_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_diff_create_buffer_v1(
+pub unsafe extern "C" fn iyon_view_grid_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    column_gap: u32,
+    row_gap: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_grid_create_buffer_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            column_gap,
+            row_gap,
+            words,
+            words_capacity_bytes,
+            used_word_count,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_diff_create_buffer_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1733,8 +2771,35 @@ pub unsafe extern "C" fn iyon_view_diff_create_buffer_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_hanging_create_v1(
+pub unsafe extern "C" fn iyon_view_diff_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_diff_create_buffer_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            words,
+            words_capacity_bytes,
+            used_word_count,
+            bytes,
+            bytes_capacity_bytes,
+            used_byte_count,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_hanging_create_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1767,8 +2832,29 @@ pub unsafe extern "C" fn iyon_view_hanging_create_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_container_create_v1(
+pub unsafe extern "C" fn iyon_view_hanging_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    prefix_ref: u32,
+    continuation_ref: u32,
+    body_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_hanging_create_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            prefix_ref,
+            continuation_ref,
+            body_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_container_create_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1795,8 +2881,18 @@ pub unsafe extern "C" fn iyon_view_container_create_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_clamp_create_v1(
+pub unsafe extern "C" fn iyon_view_container_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_container_create_v1(runtime, node_id_low, node_id_high, child_ref) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_clamp_create_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1832,8 +2928,33 @@ pub unsafe extern "C" fn iyon_view_clamp_create_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_component_create_v1(
+pub unsafe extern "C" fn iyon_view_clamp_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    max_rows: u32,
+    overflow_kind: u32,
+    overflow_style_ref: u32,
+    prefix: *const ::core::ffi::c_char,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_clamp_create_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            child_ref,
+            max_rows,
+            overflow_kind,
+            overflow_style_ref,
+            prefix,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_component_create_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1861,8 +2982,27 @@ pub unsafe extern "C" fn iyon_view_component_create_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_decorated_create_buffer_v1(
+pub unsafe extern "C" fn iyon_view_component_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    handle_low: u32,
+    handle_high: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_component_create_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            handle_low,
+            handle_high,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_decorated_create_buffer_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -1921,8 +3061,39 @@ pub unsafe extern "C" fn iyon_view_decorated_create_buffer_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_grid_set_cell_path_v1(
+pub unsafe extern "C" fn iyon_view_decorated_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    child_ref: u32,
+    style_ref: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_decorated_create_buffer_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            child_ref,
+            style_ref,
+            words,
+            words_capacity_bytes,
+            used_word_count,
+            bytes,
+            bytes_capacity_bytes,
+            used_byte_count,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_grid_set_cell_path_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -1997,8 +3168,51 @@ pub unsafe extern "C" fn iyon_view_grid_set_cell_path_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_release_many_v1(
+pub unsafe extern "C" fn iyon_view_grid_set_cell_path_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    path_depth: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    ancestor3_node_id_low: u32,
+    ancestor3_node_id_high: u32,
+    grid_row: u32,
+    grid_column: u32,
+    child_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_grid_set_cell_path_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            path_depth,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            ancestor3_node_id_low,
+            ancestor3_node_id_high,
+            grid_row,
+            grid_column,
+            child_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_release_many_v1(
     runtime: *mut NativeViewRuntime,
     refs: *const u32,
     refs_capacity_bytes: usize,
@@ -2025,8 +3239,18 @@ pub unsafe extern "C" fn iyon_view_release_many_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_ref_for_node_id_v1(
+pub unsafe extern "C" fn iyon_view_release_many_v1(
+    runtime: *mut NativeViewRuntime,
+    refs: *const u32,
+    refs_capacity_bytes: usize,
+    used_ref_count: u32,
+) -> i32 {
+    unsafe { invoke_iyon_view_release_many_v1(runtime, refs, refs_capacity_bytes, used_ref_count) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_ref_for_node_id_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2046,8 +3270,17 @@ pub unsafe extern "C" fn iyon_view_ref_for_node_id_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_path_root_v1(runtime: *mut NativeViewRuntime) -> u32 {
+pub unsafe extern "C" fn iyon_view_ref_for_node_id_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+) -> u32 {
+    unsafe { invoke_iyon_view_ref_for_node_id_v1(runtime, node_id_low, node_id_high) }
+}
+
+pub(super) unsafe fn invoke_iyon_path_root_v1(runtime: *mut NativeViewRuntime) -> u32 {
     generated_catch_unwind(
         || {
             (|| -> Result<u32, u32> {
@@ -2059,8 +3292,13 @@ pub unsafe extern "C" fn iyon_path_root_v1(runtime: *mut NativeViewRuntime) -> u
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_path_child_v1(
+pub unsafe extern "C" fn iyon_path_root_v1(runtime: *mut NativeViewRuntime) -> u32 {
+    unsafe { invoke_iyon_path_root_v1(runtime) }
+}
+
+pub(super) unsafe fn invoke_iyon_path_child_v1(
     runtime: *mut NativeViewRuntime,
     parent_path_ref: u32,
     step_kind: u32,
@@ -2087,8 +3325,27 @@ pub unsafe extern "C" fn iyon_path_child_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_path_v1(
+pub unsafe extern "C" fn iyon_path_child_v1(
+    runtime: *mut NativeViewRuntime,
+    parent_path_ref: u32,
+    step_kind: u32,
+    expected_view_kind: u32,
+    selector: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_path_child_v1(
+            runtime,
+            parent_path_ref,
+            step_kind,
+            expected_view_kind,
+            selector,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_path_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -2162,8 +3419,49 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_path_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d1_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_path_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    path_depth: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    ancestor3_node_id_low: u32,
+    ancestor3_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_path_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            path_depth,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            ancestor3_node_id_low,
+            ancestor3_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_path_d1_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -2208,8 +3506,35 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d1_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d2_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d1_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_path_d1_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_path_d2_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -2263,8 +3588,39 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d2_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d3_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d2_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_path_d2_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_path_d3_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -2327,8 +3683,43 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d3_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d4_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d3_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_path_d3_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_layout_patch_path_d4_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     path_ref: u32,
@@ -2400,8 +3791,47 @@ pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d4_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_edit_txn_begin_v1(
+pub unsafe extern "C" fn iyon_view_text_layout_patch_path_d4_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    path_ref: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    ancestor3_node_id_low: u32,
+    ancestor3_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_layout_patch_path_d4_v1(
+            runtime,
+            base_root_ref,
+            path_ref,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            ancestor3_node_id_low,
+            ancestor3_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_edit_txn_begin_v1(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
     expected_edit_count: u32,
@@ -2424,8 +3854,17 @@ pub unsafe extern "C" fn iyon_edit_txn_begin_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_edit_txn_add_text_layout_v1(
+pub unsafe extern "C" fn iyon_edit_txn_begin_v1(
+    runtime: *mut NativeViewRuntime,
+    base_root_ref: u32,
+    expected_edit_count: u32,
+) -> u32 {
+    unsafe { invoke_iyon_edit_txn_begin_v1(runtime, base_root_ref, expected_edit_count) }
+}
+
+pub(super) unsafe fn invoke_iyon_edit_txn_add_text_layout_v1(
     runtime: *mut NativeViewRuntime,
     txn_ref: u32,
     path_ref: u32,
@@ -2487,8 +3926,49 @@ pub unsafe extern "C" fn iyon_edit_txn_add_text_layout_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_edit_txn_commit_render_v1(
+pub unsafe extern "C" fn iyon_edit_txn_add_text_layout_v1(
+    runtime: *mut NativeViewRuntime,
+    txn_ref: u32,
+    path_ref: u32,
+    path_depth: u32,
+    target_node_id_low: u32,
+    target_node_id_high: u32,
+    ancestor0_node_id_low: u32,
+    ancestor0_node_id_high: u32,
+    ancestor1_node_id_low: u32,
+    ancestor1_node_id_high: u32,
+    ancestor2_node_id_low: u32,
+    ancestor2_node_id_high: u32,
+    ancestor3_node_id_low: u32,
+    ancestor3_node_id_high: u32,
+    wrap: u32,
+    align: u32,
+) -> i32 {
+    unsafe {
+        invoke_iyon_edit_txn_add_text_layout_v1(
+            runtime,
+            txn_ref,
+            path_ref,
+            path_depth,
+            target_node_id_low,
+            target_node_id_high,
+            ancestor0_node_id_low,
+            ancestor0_node_id_high,
+            ancestor1_node_id_low,
+            ancestor1_node_id_high,
+            ancestor2_node_id_low,
+            ancestor2_node_id_high,
+            ancestor3_node_id_low,
+            ancestor3_node_id_high,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_edit_txn_commit_render_v1(
     runtime: *mut NativeViewRuntime,
     host: *mut NativeHost,
     txn_ref: u32,
@@ -2506,8 +3986,17 @@ pub unsafe extern "C" fn iyon_edit_txn_commit_render_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_edit_txn_abort_v1(
+pub unsafe extern "C" fn iyon_edit_txn_commit_render_v1(
+    runtime: *mut NativeViewRuntime,
+    host: *mut NativeHost,
+    txn_ref: u32,
+) -> u32 {
+    unsafe { invoke_iyon_edit_txn_commit_render_v1(runtime, host, txn_ref) }
+}
+
+pub(super) unsafe fn invoke_iyon_edit_txn_abort_v1(
     runtime: *mut NativeViewRuntime,
     txn_ref: u32,
 ) -> i32 {
@@ -2523,8 +4012,16 @@ pub unsafe extern "C" fn iyon_edit_txn_abort_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_style_atom_create_cstring_v1(
+pub unsafe extern "C" fn iyon_edit_txn_abort_v1(
+    runtime: *mut NativeViewRuntime,
+    txn_ref: u32,
+) -> i32 {
+    unsafe { invoke_iyon_edit_txn_abort_v1(runtime, txn_ref) }
+}
+
+pub(super) unsafe fn invoke_iyon_style_atom_create_cstring_v1(
     runtime: *mut NativeViewRuntime,
     value: *const ::core::ffi::c_char,
 ) -> u32 {
@@ -2540,8 +4037,16 @@ pub unsafe extern "C" fn iyon_style_atom_create_cstring_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_style_create_bits_v1(
+pub unsafe extern "C" fn iyon_style_atom_create_cstring_v1(
+    runtime: *mut NativeViewRuntime,
+    value: *const ::core::ffi::c_char,
+) -> u32 {
+    unsafe { invoke_iyon_style_atom_create_cstring_v1(runtime, value) }
+}
+
+pub(super) unsafe fn invoke_iyon_style_create_bits_v1(
     runtime: *mut NativeViewRuntime,
     flags: u32,
     attribute_present: u32,
@@ -2571,8 +4076,31 @@ pub unsafe extern "C" fn iyon_style_create_bits_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_cstring_v1(
+pub unsafe extern "C" fn iyon_style_create_bits_v1(
+    runtime: *mut NativeViewRuntime,
+    flags: u32,
+    attribute_present: u32,
+    attribute_true: u32,
+    foreground_ref: u32,
+    background_ref: u32,
+    theme_atom_ref: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_style_create_bits_v1(
+            runtime,
+            flags,
+            attribute_present,
+            attribute_true,
+            foreground_ref,
+            background_ref,
+            theme_atom_ref,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_cstring_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2607,8 +4135,31 @@ pub unsafe extern "C" fn iyon_view_text_create_cstring_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_utf8_v1(
+pub unsafe extern "C" fn iyon_view_text_create_cstring_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    text: *const ::core::ffi::c_char,
+    style_ref: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_cstring_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            text,
+            style_ref,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_utf8_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2649,8 +4200,35 @@ pub unsafe extern "C" fn iyon_view_text_create_utf8_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_utf8_2_v1(
+pub unsafe extern "C" fn iyon_view_text_create_utf8_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    bytes: *const u8,
+    bytes_capacity: usize,
+    used_bytes: u32,
+    style_ref: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_utf8_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            bytes,
+            bytes_capacity,
+            used_bytes,
+            style_ref,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_utf8_2_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2697,8 +4275,41 @@ pub unsafe extern "C" fn iyon_view_text_create_utf8_2_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_utf8_3_v1(
+pub unsafe extern "C" fn iyon_view_text_create_utf8_2_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    bytes: *const u8,
+    bytes_capacity: usize,
+    used_bytes: u32,
+    span0_bytes: u32,
+    style0: u32,
+    span1_bytes: u32,
+    style1: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_utf8_2_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            bytes,
+            bytes_capacity,
+            used_bytes,
+            span0_bytes,
+            style0,
+            span1_bytes,
+            style1,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_utf8_3_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2749,8 +4360,45 @@ pub unsafe extern "C" fn iyon_view_text_create_utf8_3_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_utf8_4_v1(
+pub unsafe extern "C" fn iyon_view_text_create_utf8_3_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    bytes: *const u8,
+    bytes_capacity: usize,
+    used_bytes: u32,
+    span0_bytes: u32,
+    style0: u32,
+    span1_bytes: u32,
+    style1: u32,
+    span2_bytes: u32,
+    style2: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_utf8_3_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            bytes,
+            bytes_capacity,
+            used_bytes,
+            span0_bytes,
+            style0,
+            span1_bytes,
+            style1,
+            span2_bytes,
+            style2,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_utf8_4_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2805,8 +4453,49 @@ pub unsafe extern "C" fn iyon_view_text_create_utf8_4_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_cstring_2_v1(
+pub unsafe extern "C" fn iyon_view_text_create_utf8_4_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    bytes: *const u8,
+    bytes_capacity: usize,
+    used_bytes: u32,
+    span0_bytes: u32,
+    style0: u32,
+    span1_bytes: u32,
+    style1: u32,
+    span2_bytes: u32,
+    style2: u32,
+    span3_bytes: u32,
+    style3: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_utf8_4_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            bytes,
+            bytes_capacity,
+            used_bytes,
+            span0_bytes,
+            style0,
+            span1_bytes,
+            style1,
+            span2_bytes,
+            style2,
+            span3_bytes,
+            style3,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_cstring_2_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2846,8 +4535,35 @@ pub unsafe extern "C" fn iyon_view_text_create_cstring_2_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_cstring_3_v1(
+pub unsafe extern "C" fn iyon_view_text_create_cstring_2_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    text0: *const ::core::ffi::c_char,
+    style0: u32,
+    text1: *const ::core::ffi::c_char,
+    style1: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_cstring_2_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            text0,
+            style0,
+            text1,
+            style1,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_cstring_3_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2892,8 +4608,39 @@ pub unsafe extern "C" fn iyon_view_text_create_cstring_3_v1(
     )
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_view_text_create_cstring_4_v1(
+pub unsafe extern "C" fn iyon_view_text_create_cstring_3_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    text0: *const ::core::ffi::c_char,
+    style0: u32,
+    text1: *const ::core::ffi::c_char,
+    style1: u32,
+    text2: *const ::core::ffi::c_char,
+    style2: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_cstring_3_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            text0,
+            style0,
+            text1,
+            style1,
+            text2,
+            style2,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_cstring_4_v1(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
     node_id_high: u32,
@@ -2941,4 +4688,40 @@ pub unsafe extern "C" fn iyon_view_text_create_cstring_4_v1(
         },
         0x8000_00ffu32,
     )
+}
+
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_text_create_cstring_4_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    text0: *const ::core::ffi::c_char,
+    style0: u32,
+    text1: *const ::core::ffi::c_char,
+    style1: u32,
+    text2: *const ::core::ffi::c_char,
+    style2: u32,
+    text3: *const ::core::ffi::c_char,
+    style3: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_cstring_4_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            text0,
+            style0,
+            text1,
+            style1,
+            text2,
+            style2,
+            text3,
+            style3,
+            wrap,
+            align,
+        )
+    }
 }

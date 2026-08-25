@@ -1,13 +1,12 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232
-import type { NativeViewAbiHandle, NativeTuiHostContract } from "../native.ts";
-import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
-import type { ViewAbiSymbols } from "./view_calls";
-import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../ir.ts";
-import { RetainedFastFallbackError, ensureNative } from "../retained_dag.ts";
-import { MAX_DIRECT_AXIS_REFS } from "../native_view_policy.ts";
-import type { MaterializeTx } from "../retained_dag.ts";
+// generator_blake3 = 99901fd5ac04c07b1365ddc232714345a1a325ca6c2d6deaffc6b4866dc1ffeb
+import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls.ts";
+import type { ViewAbiSymbols } from "./view_calls.ts";
+import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../src/ir.ts";
+import { RetainedFastFallbackError, ensureNative } from "./retained_dag.ts";
+import { MAX_DIRECT_AXIS_REFS } from "../../src/native_view_policy.ts";
+import type { MaterializeTx } from "./retained_dag.ts";
 export type { MaterializeTx };
 
 const ERROR_BIT = 0x8000_0000;

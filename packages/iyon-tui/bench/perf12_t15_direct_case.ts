@@ -1,14 +1,18 @@
-import { native } from "../src/native.ts";
-import { nodeForBridge, type View } from "../src/values/view.ts";
+import { View } from "../src/index.ts";
+import { nodeForBridge } from "../src/values/view.ts";
 import {
-  RetainedRootBoundary,
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
+  RetainedRootBoundary,
   setRetainedPhaseInstrumentation,
   setRootColdMaterializer,
   type RetainedPhaseSample,
-} from "../src/retained_dag.ts";
-import { nativeViewAbiSession, tryNativeMaterialize } from "../src/native_view_abi.ts";
+} from "./direct_ffi/retained_dag.ts";
+import {
+  nativeViewAbiSession,
+  tryNativeMaterialize,
+} from "./direct_ffi/native_view_abi.ts";
+import { native } from "./direct_ffi/native.ts";
 import { makeT15Pair } from "./perf12_t15_workload.ts";
 
 const workload = process.env.T15_WORKLOAD ?? "plain_text";
@@ -40,12 +44,13 @@ function makePair(seed: number): ReturnType<typeof makeT15Pair> {
 }
 
 const Host = native.NativeTuiHost;
-if (Host === undefined) throw new Error("default addon does not expose NativeTuiHost");
+if (Host === undefined) throw new Error("direct-ffi addon does not expose NativeTuiHost");
 const host = new Host(80, 24, true);
 const session = nativeViewAbiSession();
-if (session === undefined) throw new Error("default addon does not expose tuiViewAbiSession");
-const boundary = new RetainedRootBoundary(session, () => host);
+if (session === undefined) throw new Error("direct-ffi addon does not expose tuiViewAbiBootstrap");
+const boundary = new RetainedRootBoundary(session, () => host.tuiViewAbiHostPointer());
 setRootColdMaterializer(tryNativeMaterialize);
+
 function render(view: View): void {
   const publication = boundary.prepareInstall(view) ?? boundary.prepareColdInstall(view);
   if (publication !== undefined) {
@@ -53,9 +58,10 @@ function render(view: View): void {
     return;
   }
   host.render(nodeForBridge(view));
-  if (!boundary.adopt(view)) throw new Error("cold fallback could not adopt root");
+  if (!boundary.adopt(view)) throw new Error("direct-ffi cold fallback could not adopt root");
 }
 
+const phaseSamples: RetainedPhaseSample[] = [];
 try {
   const initial = makePair(0);
   render(initial.base);
@@ -64,7 +70,6 @@ try {
     render(pair.next);
   }
   resetRetainedIdentityCounters();
-  const phaseSamples: RetainedPhaseSample[] = [];
   setRetainedPhaseInstrumentation({
     now_ns: () => Bun.nanoseconds(),
     record: (sample) => phaseSamples.push(sample),
@@ -87,8 +92,8 @@ try {
   console.log(JSON.stringify({
     benchmark_version: "PERF-12-T15",
     profile: process.env.T15_PROFILE ?? "draft",
-    candidate: process.env.T15_CANDIDATE ?? "napi_default",
-    transport: process.env.T15_TRANSPORT ?? "generated_safe_napi",
+    candidate: process.env.T15_CANDIDATE ?? "direct_ffi_oracle",
+    transport: process.env.T15_TRANSPORT ?? "feature_gated_direct_ffi",
     workload,
     size,
     mode,

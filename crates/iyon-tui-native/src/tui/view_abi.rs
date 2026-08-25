@@ -1422,7 +1422,7 @@ impl NativeViewAbiSession {
         let runtime = self.runtime_ptr()?;
         let mut result = 0;
         for _ in 0..count {
-            result = unsafe { generated_exports::iyon_runtime_noop_v1(runtime) };
+            result = unsafe { generated_exports::invoke_iyon_runtime_noop_v1(runtime) };
         }
         Ok(result)
     }
@@ -1770,7 +1770,7 @@ fn record_base_cache_miss(runtime: &NativeViewRuntime) -> u32 {
     record_result_with_detail(runtime, FAST_CACHE_MISS, base_status_detail())
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_status_detail_impl(runtime: *mut NativeViewRuntime) -> u32 {
     let Ok(runtime) = runtime_mut(runtime) else {
         return 0;
@@ -1783,7 +1783,7 @@ fn record_host_status(runtime: &NativeViewRuntime, status: i32) -> i32 {
     status
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn runtime_noop_impl(runtime: *mut NativeViewRuntime) -> u32 {
     let Ok(runtime) = runtime_mut(runtime) else {
         return FAST_INVALID;
@@ -1791,7 +1791,7 @@ pub unsafe extern "Rust" fn runtime_noop_impl(runtime: *mut NativeViewRuntime) -
     record_result(runtime, 1)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_render_ref_impl(
     runtime: *mut NativeViewRuntime,
     base: u32,
@@ -1806,7 +1806,7 @@ pub unsafe extern "Rust" fn view_render_ref_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn host_render_ref_impl(
     runtime: *mut NativeViewRuntime,
     host: *mut NativeHost,
@@ -1833,7 +1833,7 @@ pub unsafe extern "Rust" fn host_render_ref_impl(
     record_host_status(runtime, status)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_ref_for_node_id_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -1852,7 +1852,7 @@ pub unsafe extern "Rust" fn view_ref_for_node_id_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn path_root_impl(runtime: *mut NativeViewRuntime) -> u32 {
     let Ok(runtime) = runtime_mut(runtime) else {
         return FAST_INVALID;
@@ -1861,7 +1861,7 @@ pub unsafe extern "Rust" fn path_root_impl(runtime: *mut NativeViewRuntime) -> u
     record_result(runtime, reference)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn path_child_impl(
     runtime: *mut NativeViewRuntime,
     parent_path_ref: u32,
@@ -1974,7 +1974,7 @@ fn validate_path_publication(
     Ok(())
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_path_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2018,7 +2018,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_path_d1_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2048,7 +2048,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d1_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_path_d2_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2081,7 +2081,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d2_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_path_d3_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2117,7 +2117,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d3_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_path_d4_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2156,7 +2156,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_path_d4_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn edit_txn_begin_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -2171,7 +2171,7 @@ pub unsafe extern "Rust" fn edit_txn_begin_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn edit_txn_add_text_layout_impl(
     runtime: *mut NativeViewRuntime,
     txn_ref: u32,
@@ -2220,7 +2220,7 @@ pub unsafe extern "Rust" fn edit_txn_add_text_layout_impl(
     record_host_status(runtime, status)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn edit_txn_commit_render_impl(
     runtime: *mut NativeViewRuntime,
     host: *mut NativeHost,
@@ -2268,7 +2268,7 @@ pub unsafe extern "Rust" fn edit_txn_commit_render_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn edit_txn_abort_impl(
     runtime: *mut NativeViewRuntime,
     txn_ref: u32,
@@ -2287,7 +2287,7 @@ pub unsafe extern "Rust" fn edit_txn_abort_impl(
     record_host_status(runtime, status)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_spacer_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -2318,7 +2318,7 @@ pub unsafe extern "Rust" fn view_spacer_create_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_layout_patch_root_impl(
     runtime: *mut NativeViewRuntime,
     base: u32,
@@ -2359,7 +2359,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_root_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_common_patch_root_impl(
     runtime: *mut NativeViewRuntime,
     base: u32,
@@ -2570,7 +2570,7 @@ fn publish_structural_path(
     runtime.commit_staged_publication(publication)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_axis_create_buffer_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -2667,7 +2667,7 @@ fn create_small_axis(
 
 macro_rules! define_small_axis_constructor {
     ($name:ident, $axis_kind:expr, [$($track:ident, $child:ident),* $(,)?]) => {
-        #[unsafe(no_mangle)]
+        #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
         pub unsafe extern "Rust" fn $name(
             runtime: *mut NativeViewRuntime,
             node_id_low: u32,
@@ -2729,7 +2729,7 @@ define_small_axis_constructor!(
     ]
 );
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn axis_builder_begin_impl(
     runtime: *mut NativeViewRuntime,
     axis_kind: u32,
@@ -2744,7 +2744,7 @@ pub unsafe extern "Rust" fn axis_builder_begin_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn axis_builder_push_impl(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
@@ -2758,7 +2758,7 @@ pub unsafe extern "Rust" fn axis_builder_push_impl(
     record_host_status(runtime, status)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn axis_builder_finish_impl(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
@@ -2778,7 +2778,7 @@ pub unsafe extern "Rust" fn axis_builder_finish_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn axis_builder_abort_impl(
     runtime: *mut NativeViewRuntime,
     builder_ref: u32,
@@ -2790,7 +2790,7 @@ pub unsafe extern "Rust" fn axis_builder_abort_impl(
     record_host_status(runtime, status)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_axis_set_child_impl(
     runtime: *mut NativeViewRuntime,
     base_axis_ref: u32,
@@ -2828,7 +2828,7 @@ pub unsafe extern "Rust" fn view_axis_set_child_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_axis_splice_buffer_impl(
     runtime: *mut NativeViewRuntime,
     base_axis_ref: u32,
@@ -2870,7 +2870,7 @@ pub unsafe extern "Rust" fn view_axis_splice_buffer_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_grid_set_cell_impl(
     runtime: *mut NativeViewRuntime,
     base_grid_ref: u32,
@@ -3015,7 +3015,7 @@ fn parse_and_build_grid(
     }))
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3176,7 +3176,7 @@ fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
     Ok(DiffRenderer::new().render(hunks.as_slice()))
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_diff_create_buffer_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3219,7 +3219,7 @@ pub unsafe extern "Rust" fn view_diff_create_buffer_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -3406,7 +3406,7 @@ fn parse_and_build_decorated(
     Ok(view)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3458,7 +3458,7 @@ pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_hanging_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3516,7 +3516,7 @@ pub unsafe extern "Rust" fn view_hanging_create_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_container_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3547,7 +3547,7 @@ pub unsafe extern "Rust" fn view_container_create_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_clamp_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3602,7 +3602,7 @@ pub unsafe extern "Rust" fn view_clamp_create_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_component_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3628,7 +3628,7 @@ pub unsafe extern "Rust" fn view_component_create_impl(
     }
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_grid_set_cell_path_impl(
     runtime: *mut NativeViewRuntime,
     base_root_ref: u32,
@@ -3676,7 +3676,7 @@ pub unsafe extern "Rust" fn view_grid_set_cell_path_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_release_many_impl(
     runtime: *mut NativeViewRuntime,
     refs: *const u32,
@@ -3879,7 +3879,7 @@ fn publish_cstring_text(
     runtime.publish(node_id, view)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn style_atom_create_cstring_impl(
     runtime: *mut NativeViewRuntime,
     value: *const std::ffi::c_char,
@@ -3894,7 +3894,7 @@ pub unsafe extern "Rust" fn style_atom_create_cstring_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn style_create_bits_impl(
     runtime: *mut NativeViewRuntime,
     flags: u32,
@@ -3921,7 +3921,7 @@ pub unsafe extern "Rust" fn style_create_bits_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_cstring_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -3955,7 +3955,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_utf8_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4051,7 +4051,7 @@ fn publish_utf8_text(
     runtime.publish(node_id, view)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_utf8_2_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4093,7 +4093,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_2_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_utf8_3_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4137,7 +4137,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_3_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_utf8_4_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4183,7 +4183,7 @@ pub unsafe extern "Rust" fn view_text_create_utf8_4_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_cstring_2_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4219,7 +4219,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_2_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_cstring_3_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4257,7 +4257,7 @@ pub unsafe extern "Rust" fn view_text_create_cstring_3_impl(
     record_result(runtime, result)
 }
 
-#[unsafe(no_mangle)]
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_text_create_cstring_4_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,
@@ -4486,11 +4486,11 @@ mod tests {
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let stale_child = 0x7fff_fe00;
         let result = unsafe {
-            generated_exports::iyon_view_row_create_1_v1(pointer, 91, 0, 0, 0, stale_child)
+            generated_exports::invoke_iyon_view_row_create_1_v1(pointer, 91, 0, 0, 0, stale_child)
         };
         assert_eq!(result, FAST_CACHE_MISS);
         assert_eq!(
-            unsafe { generated_exports::iyon_view_status_detail_v1(pointer) },
+            unsafe { generated_exports::invoke_iyon_view_status_detail_v1(pointer) },
             STATUS_DETAIL_CHILD_INDEX
         );
         assert_eq!(runtime.ref_for_node_id(91), Err(FAST_CACHE_MISS));
@@ -4501,26 +4501,31 @@ mod tests {
     fn generated_spacer_publish_lookup_and_release_share_the_semantic_cache() {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let reference = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 7, 0, 2) };
+        let reference =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 7, 0, 2) };
         assert!(reference < 0x8000_0000);
         assert_eq!(
-            unsafe { generated_exports::iyon_view_render_ref_v1(pointer, reference) },
+            unsafe { generated_exports::invoke_iyon_view_render_ref_v1(pointer, reference) },
             reference
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_view_ref_for_node_id_v1(pointer, 7, 0) },
+            unsafe { generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 7, 0) },
             reference
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_view_release_many_v1(pointer, &reference, 4, 1) },
+            unsafe {
+                generated_exports::invoke_iyon_view_release_many_v1(pointer, &reference, 4, 1)
+            },
             1
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_view_release_many_v1(pointer, &reference, 4, 1) },
+            unsafe {
+                generated_exports::invoke_iyon_view_release_many_v1(pointer, &reference, 4, 1)
+            },
             1
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_view_render_ref_v1(pointer, reference) },
+            unsafe { generated_exports::invoke_iyon_view_render_ref_v1(pointer, reference) },
             FAST_CACHE_MISS
         );
     }
@@ -4540,7 +4545,7 @@ mod tests {
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let cstring = CString::new("héllo ✓").expect("cstring text has no NUL");
         let cstring_ref = unsafe {
-            generated_exports::iyon_view_text_create_cstring_v1(
+            generated_exports::invoke_iyon_view_text_create_cstring_v1(
                 pointer,
                 501,
                 0,
@@ -4558,7 +4563,7 @@ mod tests {
 
         let bytes = b"left\0right";
         let buffer_ref = unsafe {
-            generated_exports::iyon_view_text_create_utf8_v1(
+            generated_exports::invoke_iyon_view_text_create_utf8_v1(
                 pointer,
                 502,
                 0,
@@ -4578,7 +4583,7 @@ mod tests {
 
         let spans = [b"left\0".as_slice(), "right\0✓".as_bytes()].concat();
         let multi_ref = unsafe {
-            generated_exports::iyon_view_text_create_utf8_2_v1(
+            generated_exports::invoke_iyon_view_text_create_utf8_2_v1(
                 pointer,
                 503,
                 0,
@@ -4610,22 +4615,34 @@ mod tests {
         let child_b_ref = runtime.publish_bulk(2, child_b.clone()).expect("child b");
         let pointer = &mut runtime as *mut NativeViewRuntime;
 
-        let builder = unsafe { generated_exports::iyon_axis_builder_begin_v1(pointer, 2, 2) };
+        let builder =
+            unsafe { generated_exports::invoke_iyon_axis_builder_begin_v1(pointer, 2, 2) };
         assert!(is_valid_builder_ref(builder));
         assert_eq!(
             unsafe {
-                generated_exports::iyon_axis_builder_push_v1(pointer, builder, 0, child_a_ref)
+                generated_exports::invoke_iyon_axis_builder_push_v1(
+                    pointer,
+                    builder,
+                    0,
+                    child_a_ref,
+                )
             },
             0
         );
         assert_eq!(
             unsafe {
-                generated_exports::iyon_axis_builder_push_v1(pointer, builder, 0, child_b_ref)
+                generated_exports::invoke_iyon_axis_builder_push_v1(
+                    pointer,
+                    builder,
+                    0,
+                    child_b_ref,
+                )
             },
             0
         );
-        let built_ref =
-            unsafe { generated_exports::iyon_axis_builder_finish_v1(pointer, builder, 3, 0, 1) };
+        let built_ref = unsafe {
+            generated_exports::invoke_iyon_axis_builder_finish_v1(pointer, builder, 3, 0, 1)
+        };
         let expected = View::native_axis_from_children(false, 1, vec![(0, child_a), (0, child_b)])
             .expect("expected native axis");
         assert_eq!(
@@ -4634,11 +4651,11 @@ mod tests {
         );
 
         let small_ref = unsafe {
-            generated_exports::iyon_view_row_create_1_v1(pointer, 4, 0, 0, 0, child_a_ref)
+            generated_exports::invoke_iyon_view_row_create_1_v1(pointer, 4, 0, 0, 0, child_a_ref)
         };
         assert!(runtime.resolve_ref(small_ref).is_ok());
         assert_eq!(
-            unsafe { generated_exports::iyon_axis_builder_abort_v1(pointer, builder) },
+            unsafe { generated_exports::invoke_iyon_axis_builder_abort_v1(pointer, builder) },
             1
         );
     }
@@ -4845,11 +4862,11 @@ mod tests {
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let patched = unsafe {
-            generated_exports::iyon_view_text_layout_patch_root_v1(pointer, base, 2, 0, 3, 2)
+            generated_exports::invoke_iyon_view_text_layout_patch_root_v1(pointer, base, 2, 0, 3, 2)
         };
         assert!(patched < 0x8000_0000);
         let common = unsafe {
-            generated_exports::iyon_view_common_patch_root_v1(
+            generated_exports::invoke_iyon_view_common_patch_root_v1(
                 pointer, patched, 3, 0, 32, 0, 0, 0, 0, 4, 20, 0, 24, base,
             )
         };
@@ -4867,14 +4884,14 @@ mod tests {
         .into_view();
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let root = unsafe { generated_exports::iyon_path_root_v1(pointer) };
-        let path = unsafe { generated_exports::iyon_path_child_v1(pointer, root, 4, 3, 0) };
+        let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
+        let path = unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, root, 4, 3, 0) };
         assert_eq!(
-            unsafe { generated_exports::iyon_path_child_v1(pointer, root, 4, 3, 0) },
+            unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, root, 4, 3, 0) },
             path
         );
         let patched = unsafe {
-            generated_exports::iyon_view_text_layout_patch_path_d1_v1(
+            generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
                 pointer, base, path, 2, 0, 3, 0, 3, 2,
             )
         };
@@ -4896,7 +4913,7 @@ mod tests {
         );
         assert!(runtime.resolve_ref(patched).is_ok());
         let generic = unsafe {
-            generated_exports::iyon_view_text_layout_patch_path_v1(
+            generated_exports::invoke_iyon_view_text_layout_patch_path_v1(
                 pointer, base, path, 1, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0, 3, 2,
             )
         };
@@ -4930,12 +4947,12 @@ mod tests {
             )
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let root = unsafe { generated_exports::iyon_path_root_v1(pointer) };
-        let path = unsafe { generated_exports::iyon_path_child_v1(pointer, root, 4, 3, 0) };
+        let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
+        let path = unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, root, 4, 3, 0) };
         assert_eq!(runtime.release_many(&base, 1), Ok(1));
         assert_eq!(
             unsafe {
-                generated_exports::iyon_view_text_layout_patch_path_d1_v1(
+                generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
                     pointer, base, path, 2, 0, 3, 0, 3, 2,
                 )
             },
@@ -4951,7 +4968,7 @@ mod tests {
             )
             .expect("recovered base ref");
         let patched = unsafe {
-            generated_exports::iyon_view_text_layout_patch_path_d1_v1(
+            generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
                 pointer, recovered, path, 2, 0, 3, 0, 3, 2,
             )
         };
@@ -4970,14 +4987,16 @@ mod tests {
         .into_view();
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let path_root = unsafe { generated_exports::iyon_path_root_v1(pointer) };
-        let path0 = unsafe { generated_exports::iyon_path_child_v1(pointer, path_root, 4, 3, 0) };
-        let path1 = unsafe { generated_exports::iyon_path_child_v1(pointer, path_root, 4, 3, 1) };
-        let txn = unsafe { generated_exports::iyon_edit_txn_begin_v1(pointer, base, 2) };
+        let path_root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
+        let path0 =
+            unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, path_root, 4, 3, 0) };
+        let path1 =
+            unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, path_root, 4, 3, 1) };
+        let txn = unsafe { generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, base, 2) };
         assert!(is_valid_edit_txn_ref(txn));
         assert_eq!(
             unsafe {
-                generated_exports::iyon_edit_txn_add_text_layout_v1(
+                generated_exports::invoke_iyon_edit_txn_add_text_layout_v1(
                     pointer, txn, path0, 1, 11, 0, 21, 0, 21, 0, 21, 0, 21, 0, 3, 2,
                 )
             },
@@ -4985,7 +5004,7 @@ mod tests {
         );
         assert_eq!(
             unsafe {
-                generated_exports::iyon_edit_txn_add_text_layout_v1(
+                generated_exports::invoke_iyon_edit_txn_add_text_layout_v1(
                     pointer, txn, path1, 1, 12, 0, 21, 0, 21, 0, 21, 0, 21, 0, 3, 2,
                 )
             },
@@ -5013,26 +5032,28 @@ mod tests {
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         assert_eq!(
-            unsafe { generated_exports::iyon_edit_txn_begin_v1(pointer, base, 0) },
+            unsafe { generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, base, 0) },
             FAST_INVALID
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_edit_txn_begin_v1(pointer, base, MAX_EDIT_COUNT + 1) },
+            unsafe {
+                generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, base, MAX_EDIT_COUNT + 1)
+            },
             FAST_INVALID
         );
-        let txn = unsafe { generated_exports::iyon_edit_txn_begin_v1(pointer, base, 1) };
+        let txn = unsafe { generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, base, 1) };
         assert!(is_valid_edit_txn_ref(txn));
         assert_eq!(
-            unsafe { generated_exports::iyon_edit_txn_abort_v1(pointer, txn) },
+            unsafe { generated_exports::invoke_iyon_edit_txn_abort_v1(pointer, txn) },
             0
         );
         assert!(!runtime.edit_txns.contains_key(&txn));
         assert_eq!(
-            unsafe { generated_exports::iyon_edit_txn_abort_v1(pointer, txn) },
+            unsafe { generated_exports::invoke_iyon_edit_txn_abort_v1(pointer, txn) },
             1
         );
         assert_eq!(
-            unsafe { generated_exports::iyon_edit_txn_begin_v1(pointer, PATH_ROOT_REF, 1) },
+            unsafe { generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, PATH_ROOT_REF, 1) },
             FAST_INVALID
         );
     }
@@ -5051,7 +5072,7 @@ mod tests {
         let child_ref = runtime.publish(2, child.clone()).expect("child ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let replaced = unsafe {
-            generated_exports::iyon_view_axis_set_child_v1(
+            generated_exports::invoke_iyon_view_axis_set_child_v1(
                 pointer, base_axis, 3, 0, 1_337, 0, child_ref,
             )
         };
@@ -5063,7 +5084,7 @@ mod tests {
             child_ref,
         }];
         let spliced = unsafe {
-            generated_exports::iyon_view_axis_splice_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_splice_buffer_v1(
                 pointer,
                 base_axis,
                 4,
@@ -5086,13 +5107,15 @@ mod tests {
         .into_view();
         let base_grid = runtime.publish(5, grid.clone()).expect("grid base ref");
         let grid_replaced = unsafe {
-            generated_exports::iyon_view_grid_set_cell_v1(pointer, base_grid, 6, 0, 0, 0, child_ref)
+            generated_exports::invoke_iyon_view_grid_set_cell_v1(
+                pointer, base_grid, 6, 0, 0, 0, child_ref,
+            )
         };
         assert!(grid_replaced < 0x8000_0000);
         assert_eq!(runtime.resolve_ref(base_grid), Ok((grid, true)));
 
         let path_grid_replaced = unsafe {
-            generated_exports::iyon_view_grid_set_cell_path_v1(
+            generated_exports::invoke_iyon_view_grid_set_cell_path_v1(
                 pointer,
                 base_grid,
                 PATH_ROOT_REF,
@@ -5114,9 +5137,9 @@ mod tests {
         };
         assert!(path_grid_replaced < 0x8000_0000);
 
-        let path_root = unsafe { generated_exports::iyon_path_root_v1(pointer) };
+        let path_root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
         let path_replaced = unsafe {
-            generated_exports::iyon_view_axis_set_child_path_v1(
+            generated_exports::invoke_iyon_view_axis_set_child_path_v1(
                 pointer, base_axis, path_root, 0, 7, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1_000, 0, child_ref,
             )
         };
@@ -5138,7 +5161,7 @@ mod tests {
         scratch[3] = child;
         let children = scratch.as_ptr() as *const AxisChildInputV1;
         let result = unsafe {
-            generated_exports::iyon_view_axis_create_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_create_buffer_v1(
                 pointer, 500_001, 0, 2, 0, children, 16, 4,
             )
         };
@@ -5146,7 +5169,7 @@ mod tests {
         assert!(!runtime.nodes.contains_key(&500_001));
         // A matching count on the same buffer shape still validates.
         let ok = unsafe {
-            generated_exports::iyon_view_axis_create_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_create_buffer_v1(
                 pointer, 500_002, 0, 2, 0, children, 16, 2,
             )
         };
@@ -5159,8 +5182,10 @@ mod tests {
         // buffer; a live NodeId short-circuits without parsing (§23).
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let child_a = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 600, 0, 1) };
-        let child_b = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 601, 0, 2) };
+        let child_a =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 600, 0, 1) };
+        let child_b =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 601, 0, 2) };
         assert!(child_a < 0x8000_0000 && child_b < 0x8000_0000);
         // One column track (content), one row (content track) with two cells.
         let words: [u32; 11] = [
@@ -5177,7 +5202,7 @@ mod tests {
             3 | (2 << 16),
         ];
         let grid = unsafe {
-            generated_exports::iyon_view_grid_create_buffer_v1(
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
                 pointer,
                 700,
                 0,
@@ -5190,11 +5215,11 @@ mod tests {
         };
         assert!(grid < 0x8000_0000);
         assert_eq!(grid, unsafe {
-            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 700, 0)
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 700, 0)
         });
         // §23 consult: same NodeId with garbage words must return the cache.
         let again = unsafe {
-            generated_exports::iyon_view_grid_create_buffer_v1(
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
                 pointer,
                 700,
                 0,
@@ -5208,7 +5233,7 @@ mod tests {
         assert_eq!(again, grid);
         // Truncated buffer must be rejected before construction.
         let truncated = unsafe {
-            generated_exports::iyon_view_grid_create_buffer_v1(
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
                 pointer,
                 701,
                 0,
@@ -5224,7 +5249,7 @@ mod tests {
         // silently discarded by the packed parser.
         let malformed_track = [1, GRID_TRACK_CONTENT_WORD | (1 << 8), 0];
         let malformed = unsafe {
-            generated_exports::iyon_view_grid_create_buffer_v1(
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
                 pointer,
                 702,
                 0,
@@ -5246,7 +5271,7 @@ mod tests {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let original = unsafe {
-            generated_exports::iyon_view_text_create_cstring_v1(
+            generated_exports::invoke_iyon_view_text_create_cstring_v1(
                 pointer,
                 850,
                 0,
@@ -5259,7 +5284,7 @@ mod tests {
         assert!(original < 0x8000_0000);
         // Same NodeId with garbage payload arguments must return the cache.
         let again = unsafe {
-            generated_exports::iyon_view_text_create_cstring_v1(
+            generated_exports::invoke_iyon_view_text_create_cstring_v1(
                 pointer,
                 850,
                 0,
@@ -5272,7 +5297,7 @@ mod tests {
         assert_eq!(again, original);
         let bytes = b"\xf0\x90\x80\x80"; // U+10000
         let utf8_again = unsafe {
-            generated_exports::iyon_view_text_create_utf8_v1(
+            generated_exports::invoke_iyon_view_text_create_utf8_v1(
                 pointer,
                 850,
                 0,
@@ -5338,7 +5363,7 @@ mod tests {
             "byte lengths must frame the payload exactly"
         );
         let diff = unsafe {
-            generated_exports::iyon_view_diff_create_buffer_v1(
+            generated_exports::invoke_iyon_view_diff_create_buffer_v1(
                 pointer,
                 800,
                 0,
@@ -5352,11 +5377,11 @@ mod tests {
         };
         assert!(diff < 0x8000_0000);
         assert_eq!(diff, unsafe {
-            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 800, 0)
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 800, 0)
         });
         // §23 consult: same NodeId with garbage payload returns the cache.
         let again = unsafe {
-            generated_exports::iyon_view_diff_create_buffer_v1(
+            generated_exports::invoke_iyon_view_diff_create_buffer_v1(
                 pointer,
                 800,
                 0,
@@ -5371,7 +5396,7 @@ mod tests {
         assert_eq!(again, diff);
         // Truncated word buffer must be rejected before construction.
         let truncated = unsafe {
-            generated_exports::iyon_view_diff_create_buffer_v1(
+            generated_exports::invoke_iyon_view_diff_create_buffer_v1(
                 pointer,
                 801,
                 0,
@@ -5389,7 +5414,7 @@ mod tests {
         let mut mismatched = words;
         mismatched[11] = 5; // context claims old line 5, hunk expects 1
         let mismatch = unsafe {
-            generated_exports::iyon_view_diff_create_buffer_v1(
+            generated_exports::invoke_iyon_view_diff_create_buffer_v1(
                 pointer,
                 802,
                 0,
@@ -5406,7 +5431,7 @@ mod tests {
         let mut overlong = words;
         overlong[11] = u32::MAX;
         let overlong_status = unsafe {
-            generated_exports::iyon_view_diff_create_buffer_v1(
+            generated_exports::invoke_iyon_view_diff_create_buffer_v1(
                 pointer,
                 803,
                 0,
@@ -5428,18 +5453,23 @@ mod tests {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let base_child =
-            unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 800, 0, 1) };
-        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 801, 0, 1) };
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 800, 0, 1) };
+        let child =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 801, 0, 1) };
         let base = unsafe {
-            generated_exports::iyon_view_column_create_1_v1(pointer, 802, 0, 0, 0, base_child)
+            generated_exports::invoke_iyon_view_column_create_1_v1(
+                pointer, 802, 0, 0, 0, base_child,
+            )
         };
         let edited = unsafe {
-            generated_exports::iyon_view_axis_set_child_v1(pointer, base, 900, 0, 0, 0, child)
+            generated_exports::invoke_iyon_view_axis_set_child_v1(
+                pointer, base, 900, 0, 0, 0, child,
+            )
         };
         assert!(edited < 0x8000_0000);
         // Live NodeId + stale base and child: consult must win.
         let again = unsafe {
-            generated_exports::iyon_view_axis_set_child_v1(
+            generated_exports::invoke_iyon_view_axis_set_child_v1(
                 pointer,
                 0x7fff_fe00,
                 900,
@@ -5452,7 +5482,7 @@ mod tests {
         assert_eq!(again, edited);
         // Splice path: live NodeId wins over a stale base before any parse.
         let spliced_again = unsafe {
-            generated_exports::iyon_view_axis_splice_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_splice_buffer_v1(
                 pointer,
                 0x7fff_fe02,
                 900,
@@ -5466,7 +5496,8 @@ mod tests {
         };
         assert_eq!(spliced_again, edited);
         // Grid path: build a real grid, then re-request via stale args.
-        let cell = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 802, 0, 1) };
+        let cell =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 802, 0, 1) };
         let words: [u32; 8] = [
             1,
             GRID_TRACK_CONTENT_WORD,
@@ -5478,7 +5509,7 @@ mod tests {
             1 | (1 << 16),
         ];
         let grid = unsafe {
-            generated_exports::iyon_view_grid_create_buffer_v1(
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
                 pointer,
                 950,
                 0,
@@ -5491,7 +5522,7 @@ mod tests {
         };
         assert!(grid < 0x8000_0000);
         let cell_edit = unsafe {
-            generated_exports::iyon_view_grid_set_cell_v1(
+            generated_exports::invoke_iyon_view_grid_set_cell_v1(
                 pointer,
                 0x7fff_fe03,
                 950,
@@ -5512,7 +5543,7 @@ mod tests {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let base = unsafe {
-            generated_exports::iyon_view_text_create_cstring_v1(
+            generated_exports::invoke_iyon_view_text_create_cstring_v1(
                 pointer,
                 100,
                 0,
@@ -5525,17 +5556,19 @@ mod tests {
         assert!(base < 0x8000_0000);
         // WrapMode::Grapheme = 2, HorizontalAlign::Center = 2 (schema codes).
         let patched = unsafe {
-            generated_exports::iyon_view_text_layout_patch_root_v1(pointer, base, 101, 0, 2, 2)
+            generated_exports::invoke_iyon_view_text_layout_patch_root_v1(
+                pointer, base, 101, 0, 2, 2,
+            )
         };
         assert!(patched < 0x8000_0000);
         assert_ne!(patched, base);
         assert_eq!(patched, unsafe {
-            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 101, 0)
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 101, 0)
         });
         // Cache-first consult: same NodeId with a stale base must return the
         // cached ref instead of failing on the base resolution.
         let again = unsafe {
-            generated_exports::iyon_view_text_layout_patch_root_v1(
+            generated_exports::invoke_iyon_view_text_layout_patch_root_v1(
                 pointer,
                 0x7fff_ff00,
                 101,
@@ -5553,12 +5586,13 @@ mod tests {
         // base view; decoration_ref = 0 means absent and must not fail.
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let base = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 200, 0, 1) };
+        let base =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 200, 0, 1) };
         assert!(base < 0x8000_0000);
         // PATCH_PADDING = 4 | PATCH_WIDTH = 8; padding_tr packs top|right<<16.
         const MASK: u32 = 4 | 8;
         let patched = unsafe {
-            generated_exports::iyon_view_common_patch_root_v1(
+            generated_exports::invoke_iyon_view_common_patch_root_v1(
                 pointer,
                 base,
                 201,
@@ -5577,11 +5611,11 @@ mod tests {
         };
         assert!(patched < 0x8000_0000);
         assert_eq!(patched, unsafe {
-            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 201, 0)
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 201, 0)
         });
         // Cache-first consult: live NodeId wins over a stale base ref.
         let again = unsafe {
-            generated_exports::iyon_view_common_patch_root_v1(
+            generated_exports::invoke_iyon_view_common_patch_root_v1(
                 pointer,
                 0x7fff_ff00,
                 201,
@@ -5601,7 +5635,7 @@ mod tests {
         assert_eq!(again, patched);
         // An empty mask stays invalid.
         let invalid = unsafe {
-            generated_exports::iyon_view_common_patch_root_v1(
+            generated_exports::invoke_iyon_view_common_patch_root_v1(
                 pointer, base, 202, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             )
         };
@@ -5614,25 +5648,29 @@ mod tests {
         // the cached ref without consuming child refs (which may be stale).
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let first = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 7, 0, 3) };
+        let first =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 7, 0, 3) };
         assert!(first < 0x8000_0000);
         // Same NodeId, different payload and a stale child ref on the axis:
         // the cache-first consult must win before either is inspected.
-        let again = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 7, 0, 9) };
+        let again =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 7, 0, 9) };
         assert_eq!(again, first);
         // Axis path: build a column normally, then re-request the same
         // NodeId through a stale child ref - cache-first must win.
-        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 8, 0, 1) };
+        let child =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 8, 0, 1) };
         assert!(child < 0x8000_0000);
-        let built =
-            unsafe { generated_exports::iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, child) };
+        let built = unsafe {
+            generated_exports::invoke_iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, child)
+        };
         assert!(built < 0x8000_0000);
         let recovered = unsafe {
-            generated_exports::iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, 0x7fff_ff00)
+            generated_exports::invoke_iyon_view_column_create_1_v1(pointer, 9, 0, 0, 0, 0x7fff_ff00)
         };
         assert_eq!(recovered, built);
         assert_eq!(built, unsafe {
-            generated_exports::iyon_view_ref_for_node_id_v1(pointer, 9, 0)
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 9, 0)
         });
     }
 
@@ -5640,28 +5678,34 @@ mod tests {
     fn t13_structural_kinds_build_and_consult_semantic_cache_perf12() {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let child = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 11, 0, 2) };
+        let child =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 11, 0, 2) };
         assert!(child < 0x8000_0000);
         // Container: builds, publishes, and re-requests through the cache.
-        let container =
-            unsafe { generated_exports::iyon_view_container_create_v1(pointer, 12, 0, child) };
+        let container = unsafe {
+            generated_exports::invoke_iyon_view_container_create_v1(pointer, 12, 0, child)
+        };
         assert!(container < 0x8000_0000);
         assert_eq!(
             unsafe {
-                generated_exports::iyon_view_container_create_v1(pointer, 12, 0, 0x7fff_fe00)
+                generated_exports::invoke_iyon_view_container_create_v1(pointer, 12, 0, 0x7fff_fe00)
             },
             container
         );
         // Hanging: three children resolve in order.
-        let prefix = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 13, 0, 1) };
-        let body = unsafe { generated_exports::iyon_view_spacer_create_v1(pointer, 14, 0, 4) };
+        let prefix =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 13, 0, 1) };
+        let body =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 14, 0, 4) };
         let hanging = unsafe {
-            generated_exports::iyon_view_hanging_create_v1(pointer, 15, 0, prefix, prefix, body)
+            generated_exports::invoke_iyon_view_hanging_create_v1(
+                pointer, 15, 0, prefix, prefix, body,
+            )
         };
         assert!(hanging < 0x8000_0000);
         // Stale middle child reports child ordinal 1 via the detail cell.
         let stale = unsafe {
-            generated_exports::iyon_view_hanging_create_v1(
+            generated_exports::invoke_iyon_view_hanging_create_v1(
                 pointer,
                 16,
                 0,
@@ -5672,19 +5716,19 @@ mod tests {
         };
         assert!(stale >= 0x8000_0000);
         assert_eq!(
-            unsafe { generated_exports::iyon_view_status_detail_v1(pointer) },
+            unsafe { generated_exports::invoke_iyon_view_status_detail_v1(pointer) },
             0x4000_0000 | 1
         );
         // Clamp: footer overflow with a themed style atom.
         let atom = unsafe {
-            generated_exports::iyon_style_atom_create_cstring_v1(
+            generated_exports::invoke_iyon_style_atom_create_cstring_v1(
                 pointer,
                 b"theme:text.muted\0".as_ptr() as *const std::ffi::c_char,
             )
         };
         assert!(atom < 0x8000_0000);
         let clamp = unsafe {
-            generated_exports::iyon_view_clamp_create_v1(
+            generated_exports::invoke_iyon_view_clamp_create_v1(
                 pointer,
                 17,
                 0,
@@ -5698,7 +5742,7 @@ mod tests {
         assert!(clamp < 0x8000_0000);
         // contentMax shape: overflow kind 0 ignores the style/prefix.
         let content_max = unsafe {
-            generated_exports::iyon_view_clamp_create_v1(
+            generated_exports::invoke_iyon_view_clamp_create_v1(
                 pointer,
                 18,
                 0,
@@ -5711,11 +5755,14 @@ mod tests {
         };
         assert!(content_max < 0x8000_0000);
         // Component: handle id round-trips through the semantic cache.
-        let component =
-            unsafe { generated_exports::iyon_view_component_create_v1(pointer, 19, 0, 41, 0) };
+        let component = unsafe {
+            generated_exports::invoke_iyon_view_component_create_v1(pointer, 19, 0, 41, 0)
+        };
         assert!(component < 0x8000_0000);
         assert_eq!(
-            unsafe { generated_exports::iyon_view_component_create_v1(pointer, 19, 0, 41, 0) },
+            unsafe {
+                generated_exports::invoke_iyon_view_component_create_v1(pointer, 19, 0, 41, 0)
+            },
             component
         );
     }
@@ -5725,7 +5772,7 @@ mod tests {
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let child = unsafe {
-            generated_exports::iyon_view_text_create_cstring_v1(
+            generated_exports::invoke_iyon_view_text_create_cstring_v1(
                 pointer,
                 21,
                 0,
@@ -5737,7 +5784,7 @@ mod tests {
         };
         assert!(child < 0x8000_0000);
         let atom = unsafe {
-            generated_exports::iyon_style_atom_create_cstring_v1(
+            generated_exports::invoke_iyon_style_atom_create_cstring_v1(
                 pointer,
                 b"#ff8000\0".as_ptr() as *const std::ffi::c_char,
             )
@@ -5774,7 +5821,7 @@ mod tests {
         words[13] = offset as u32;
         offset += value.len();
         let decorated = unsafe {
-            generated_exports::iyon_view_decorated_create_buffer_v1(
+            generated_exports::invoke_iyon_view_decorated_create_buffer_v1(
                 pointer,
                 22,
                 0,
@@ -5792,7 +5839,7 @@ mod tests {
         // Cache-first consult wins over a stale child ref.
         assert_eq!(
             unsafe {
-                generated_exports::iyon_view_decorated_create_buffer_v1(
+                generated_exports::invoke_iyon_view_decorated_create_buffer_v1(
                     pointer,
                     22,
                     0,
@@ -5810,7 +5857,7 @@ mod tests {
         );
         // Truncated state framing is FAST_INVALID, not a crash.
         let truncated = unsafe {
-            generated_exports::iyon_view_decorated_create_buffer_v1(
+            generated_exports::invoke_iyon_view_decorated_create_buffer_v1(
                 pointer,
                 23,
                 0,
@@ -5828,7 +5875,7 @@ mod tests {
         // Unknown mask bits are rejected.
         words[0] |= 1 << 20;
         let bad_mask = unsafe {
-            generated_exports::iyon_view_decorated_create_buffer_v1(
+            generated_exports::invoke_iyon_view_decorated_create_buffer_v1(
                 pointer,
                 24,
                 0,
@@ -5858,27 +5905,27 @@ mod tests {
             )
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let root = unsafe { generated_exports::iyon_path_root_v1(pointer) };
-        let path = unsafe { generated_exports::iyon_path_child_v1(pointer, root, 4, 3, 0) };
+        let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
+        let path = unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, root, 4, 3, 0) };
         let invalid = unsafe {
-            generated_exports::iyon_view_text_layout_patch_path_d1_v1(
+            generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
                 pointer, base, path, 9, 0, 1, 0, 3, 2,
             )
         };
         assert!(invalid >= 0x8000_0000);
         assert!(!runtime.nodes.contains_key(&9));
         assert_eq!(
-            unsafe { generated_exports::iyon_path_child_v1(pointer, root, 4, 1, 0) },
+            unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, root, 4, 1, 0) },
             FAST_INVALID
         );
         assert!(base < super::PATH_ROOT_REF);
         assert_eq!(
-            unsafe { generated_exports::iyon_path_child_v1(pointer, base, 4, 3, 0) },
+            unsafe { generated_exports::invoke_iyon_path_child_v1(pointer, base, 4, 3, 0) },
             FAST_INVALID
         );
         assert_eq!(
             unsafe {
-                generated_exports::iyon_view_text_layout_patch_path_d1_v1(
+                generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
                     pointer, base, base, 2, 0, 3, 0, 3, 2,
                 )
             },

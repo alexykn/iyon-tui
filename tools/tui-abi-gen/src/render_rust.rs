@@ -84,10 +84,12 @@ pub fn exports(
 
     for function in &document.functions {
         source.push_str(&format!(
-            "    unsafe extern \"Rust\" {{\n        pub fn {}({}) -> {};\n    }}\n",
+            "    pub(super) unsafe fn {}({}) -> {} {{\n        unsafe {{ super::super::{}({}) }}\n    }}\n",
             function.implementation,
             rust_arguments(&function.args, document),
-            rust_type(function.return_type.as_str())
+            rust_type(function.return_type.as_str()),
+            function.implementation,
+            rust_call_arguments(&function.args)
         ));
     }
     source.push_str("}\n\n");
@@ -95,9 +97,8 @@ pub fn exports(
     for function in &document.functions {
         let result_type = rust_type(function.return_type.as_str());
         let panic_error = error_literal(function, "panic");
-        source.push_str("#[unsafe(no_mangle)]\n");
         source.push_str(&format!(
-            "pub unsafe extern \"C\" fn iyon_{}_v1({}) -> {} {{\n    generated_catch_unwind(|| {{\n        (|| -> Result<{}, {}> {{\n",
+            "pub(super) unsafe fn invoke_iyon_{}_v1({}) -> {} {{\n    generated_catch_unwind(|| {{\n        (|| -> Result<{}, {}> {{\n",
             function.name,
             rust_arguments(&function.args, document),
             result_type,
@@ -106,10 +107,15 @@ pub fn exports(
         ));
         source.push_str(&validation_statements(function, document, bridge_schema));
         source.push_str(&format!(
-            "            Ok(unsafe {{ generated_impls::{}({}) }})\n        }})()\n    }},\n        {}\n    )\n}}\n\n",
+            "            Ok(unsafe {{ generated_impls::{}({}) }})\n        }})()\n    }},\n        {}\n    )\n}}\n\n#[cfg(feature = \"direct-ffi\")]\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn iyon_{}_v1({}) -> {} {{\n    unsafe {{ invoke_iyon_{}_v1({}) }}\n}}\n\n",
             function.implementation,
             rust_call_arguments(&function.args),
-            panic_error
+            panic_error,
+            function.name,
+            rust_arguments(&function.args, document),
+            result_type,
+            function.name,
+            rust_call_arguments(&function.args)
         ));
     }
     format_rust(source)
@@ -171,7 +177,7 @@ pub fn napi_methods(document: &AbiDocument, schema_hash: &str, generator_hash: &
             .collect::<Vec<_>>()
             .join(", ");
         output.push_str(&format!(
-            "        Ok(unsafe {{ generated_exports::iyon_{}_v1({}) }})\n    }}\n\n",
+            "        Ok(unsafe {{ generated_exports::invoke_iyon_{}_v1({}) }})\n    }}\n\n",
             function.name, call_arguments
         ));
     }
@@ -221,7 +227,7 @@ pub fn napi_methods(document: &AbiDocument, schema_hash: &str, generator_hash: &
             }
         }
         let call = format!(
-            "unsafe {{ super::generated_view_abi_conformance::iyon_abi_conformance_{}_v1({}) }}",
+            "unsafe {{ super::generated_view_abi_conformance::invoke_iyon_abi_conformance_{}_v1({}) }}",
             conformance.name,
             call_arguments.join(", ")
         );
@@ -340,8 +346,15 @@ pub fn conformance(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             .map(|(index, type_name)| format!("a{index}: {}", conformance_rust_type(type_name)))
             .collect::<Vec<_>>()
             .join(", ");
+        let call_args = spec
+            .args
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("a{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         output.push_str(&format!(
-            "#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn iyon_abi_conformance_{}_v1({}) -> {} {{\n",
+            "pub(super) unsafe fn invoke_iyon_abi_conformance_{}_v1({}) -> {} {{\n",
             spec.name,
             args,
             conformance_rust_type(&spec.return_type)
@@ -362,7 +375,14 @@ pub fn conformance(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             ),
             operation => panic!("unsupported conformance operation {operation}"),
         }
-        output.push_str("}\n\n");
+        output.push_str(&format!(
+            "}}\n\n#[cfg(feature = \"direct-ffi\")]\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn iyon_abi_conformance_{}_v1({}) -> {} {{\n    unsafe {{ invoke_iyon_abi_conformance_{}_v1({}) }}\n}}\n\n",
+            spec.name,
+            args,
+            conformance_rust_type(&spec.return_type),
+            spec.name,
+            call_args
+        ));
     }
     format_rust(output)
 }
@@ -816,6 +836,10 @@ pub fn layout_tests(document: &AbiDocument, schema_hash: &str, generator_hash: &
         ));
     }
     output.push_str("}\n");
+    output = output.replace(
+        "generated_exports::iyon_",
+        "generated_exports::invoke_iyon_",
+    );
     format_rust(output)
 }
 
@@ -830,7 +854,7 @@ fn test_stub_value(return_type: &str, index: usize) -> String {
 
 fn conformance_test_call(spec: &crate::model::ConformanceSpec) -> String {
     let symbol = format!(
-        "generated_conformance::iyon_abi_conformance_{}_v1",
+        "generated_conformance::invoke_iyon_abi_conformance_{}_v1",
         spec.name
     );
     match spec.operation.as_str() {
@@ -891,7 +915,7 @@ fn camel_case(value: &str) -> String {
 }
 
 fn format_rust(source: String) -> String {
-    let body_start = ["\n//!", "\n#[", "\npub "]
+    let body_start = ["\n//!", "\n#[", "\npub ", "\npub(super)"]
         .iter()
         .filter_map(|marker| source.find(marker).map(|index| index + 1))
         .min();

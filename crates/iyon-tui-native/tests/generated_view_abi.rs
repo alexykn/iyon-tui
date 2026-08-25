@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568
+// generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232
 #[allow(dead_code)]
 pub struct NativeViewRuntime;
 
@@ -1262,7 +1262,7 @@ fn generated_conformance_count_is_stable() {
 fn generated_conformance_functions_are_callable() {
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_u8_8_v1(
+            generated_conformance::invoke_iyon_abi_conformance_u8_8_v1(
                 1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8,
             )
         },
@@ -1270,7 +1270,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_u16_8_v1(
+            generated_conformance::invoke_iyon_abi_conformance_u16_8_v1(
                 1 as u16, 2 as u16, 3 as u16, 4 as u16, 5 as u16, 6 as u16, 7 as u16, 8 as u16,
             )
         },
@@ -1278,7 +1278,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_u32_8_v1(
+            generated_conformance::invoke_iyon_abi_conformance_u32_8_v1(
                 1 as u32, 2 as u32, 3 as u32, 4 as u32, 5 as u32, 6 as u32, 7 as u32, 8 as u32,
             )
         },
@@ -1286,7 +1286,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_u32_16_v1(
+            generated_conformance::invoke_iyon_abi_conformance_u32_16_v1(
                 1 as u32, 2 as u32, 3 as u32, 4 as u32, 5 as u32, 6 as u32, 7 as u32, 8 as u32,
                 9 as u32, 10 as u32, 11 as u32, 12 as u32, 13 as u32, 14 as u32, 15 as u32,
                 16 as u32,
@@ -1296,7 +1296,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_i32_4_v1(
+            generated_conformance::invoke_iyon_abi_conformance_i32_4_v1(
                 1 as i32, 2 as i32, 3 as i32, 4 as i32,
             )
         },
@@ -1304,7 +1304,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert!(
         (unsafe {
-            generated_conformance::iyon_abi_conformance_f32_4_v1(
+            generated_conformance::invoke_iyon_abi_conformance_f32_4_v1(
                 1 as f32, 2 as f32, 3 as f32, 4 as f32,
             )
         } - 78.0)
@@ -1313,7 +1313,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert!(
         (unsafe {
-            generated_conformance::iyon_abi_conformance_f64_4_v1(
+            generated_conformance::invoke_iyon_abi_conformance_f64_4_v1(
                 1 as f64, 2 as f64, 3 as f64, 4 as f64,
             )
         } - 78.0)
@@ -1322,7 +1322,7 @@ fn generated_conformance_functions_are_callable() {
     );
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_pointer_v1(
+            generated_conformance::invoke_iyon_abi_conformance_pointer_v1(
                 core::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr(),
             )
         },
@@ -1331,13 +1331,16 @@ fn generated_conformance_functions_are_callable() {
     let bytes = [0x7b_u8, 0x01, 0x02, 0x03];
     assert_eq!(
         unsafe {
-            generated_conformance::iyon_abi_conformance_buffer_v1(bytes.as_ptr(), bytes.len())
+            generated_conformance::invoke_iyon_abi_conformance_buffer_v1(
+                bytes.as_ptr(),
+                bytes.len(),
+            )
         },
         4 * 257 + 0x7b
     );
     let text = std::ffi::CString::new("ABI ✓").expect("test text has no NUL");
     assert_ne!(
-        unsafe { generated_conformance::iyon_abi_conformance_cstring_v1(text.as_ptr()) },
+        unsafe { generated_conformance::invoke_iyon_abi_conformance_cstring_v1(text.as_ptr()) },
         0
     );
 }
@@ -1347,32 +1350,39 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     let mut runtime = NativeViewRuntime;
     let runtime_ptr = &mut runtime as *mut NativeViewRuntime;
     assert_eq!(
-        unsafe { generated_exports::iyon_runtime_noop_v1(runtime_ptr) },
+        unsafe { generated_exports::invoke_iyon_runtime_noop_v1(runtime_ptr) },
         0x100
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 1) },
+        unsafe { generated_exports::invoke_iyon_view_render_ref_v1(runtime_ptr, 1) },
         0x102
     );
     let mut host = NativeHost;
     let host_ptr = &mut host as *mut NativeHost;
     assert_eq!(
-        unsafe { generated_exports::iyon_host_render_ref_v1(runtime_ptr, host_ptr, 1) },
+        unsafe { generated_exports::invoke_iyon_host_render_ref_v1(runtime_ptr, host_ptr, 1) },
         103
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 1, 0, 2) },
+        unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(runtime_ptr, 1, 0, 2) },
         0x104
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 1, 2)
+            generated_exports::invoke_iyon_view_text_layout_patch_root_v1(
+                runtime_ptr,
+                1,
+                1,
+                0,
+                1,
+                2,
+            )
         },
         0x105
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_common_patch_root_v1(
+            generated_exports::invoke_iyon_view_common_patch_root_v1(
                 runtime_ptr,
                 1,
                 1,
@@ -1397,7 +1407,7 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     }];
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_axis_create_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_create_buffer_v1(
                 runtime_ptr,
                 1,
                 0,
@@ -1413,7 +1423,7 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     let refs = [1_u32];
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_release_many_v1(
+            generated_exports::invoke_iyon_view_release_many_v1(
                 runtime_ptr,
                 refs.as_ptr(),
                 core::mem::size_of_val(&refs),
@@ -1427,26 +1437,33 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     // five-function insertion; prefer test_stub_value-style computation when
     // touching this block again.
     assert_eq!(
-        unsafe { generated_exports::iyon_runtime_noop_v1(core::ptr::null_mut()) },
+        unsafe { generated_exports::invoke_iyon_runtime_noop_v1(core::ptr::null_mut()) },
         0x8000_0001
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_render_ref_v1(runtime_ptr, 0) },
+        unsafe { generated_exports::invoke_iyon_view_render_ref_v1(runtime_ptr, 0) },
         0x8000_0001
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_spacer_create_v1(runtime_ptr, 0, 0, 1) },
+        unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(runtime_ptr, 0, 0, 1) },
         0x8000_0001
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_text_layout_patch_root_v1(runtime_ptr, 1, 1, 0, 0, 1)
+            generated_exports::invoke_iyon_view_text_layout_patch_root_v1(
+                runtime_ptr,
+                1,
+                1,
+                0,
+                0,
+                1,
+            )
         },
         0x8000_0001
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_axis_create_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_create_buffer_v1(
                 runtime_ptr,
                 1,
                 0,
@@ -1461,7 +1478,7 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_axis_create_buffer_v1(
+            generated_exports::invoke_iyon_view_axis_create_buffer_v1(
                 runtime_ptr,
                 1,
                 0,
@@ -1476,22 +1493,32 @@ fn generated_wrappers_reject_invalid_inputs_and_delegate() {
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 4, 0)
+            generated_exports::invoke_iyon_view_release_many_v1(
+                runtime_ptr,
+                core::ptr::null(),
+                4,
+                0,
+            )
         },
         -2
     );
     assert_eq!(
         unsafe {
-            generated_exports::iyon_view_release_many_v1(runtime_ptr, core::ptr::null(), 0, 1)
+            generated_exports::invoke_iyon_view_release_many_v1(
+                runtime_ptr,
+                core::ptr::null(),
+                0,
+                1,
+            )
         },
         -3
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 1, 0) },
+        unsafe { generated_exports::invoke_iyon_view_ref_for_node_id_v1(runtime_ptr, 1, 0) },
         0x123
     );
     assert_eq!(
-        unsafe { generated_exports::iyon_view_ref_for_node_id_v1(runtime_ptr, 0, 0) },
+        unsafe { generated_exports::invoke_iyon_view_ref_for_node_id_v1(runtime_ptr, 0, 0) },
         0x8000_0001
     );
 }

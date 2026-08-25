@@ -67,6 +67,23 @@ const legacyExports = [
   "tuiPerfAbiConformanceProbe",
 ];
 const directFeature = nativeFeatures.includes("direct-ffi");
+if (process.platform !== "win32") {
+  const nm = Bun.spawnSync({
+    cmd: ["nm", process.platform === "darwin" ? "-gU" : "-D", stagedAddon.pathname],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (nm.exitCode === 0) {
+    const symbols = new TextDecoder().decode(nm.stdout);
+    const directSymbols = symbols.match(/(?:^|[\\s_])_?iyon_(?:abi_(?:probe|conformance)_|(?:runtime|view|host|axis|path|edit|style)_.*_v1)\\b/g) ?? [];
+    if (directFeature && (!symbols.includes("iyon_abi_probe_noop") || !symbols.includes("iyon_runtime_noop_v1"))) {
+      throw new Error("direct-ffi staged addon is missing its qualification symbol surface");
+    }
+    if (!directFeature && directSymbols.length > 0) {
+      throw new Error(`default staged addon exposes direct-ffi symbols: ${directSymbols.slice(0, 8).join(", ")}`);
+    }
+  }
+}
 if (directFeature) {
   const missing = legacyExports.filter((name) => typeof addon[name] !== "function");
   if (missing.length > 0) throw new Error(`direct-ffi staged addon is missing qualification exports: ${missing.join(", ")}`);

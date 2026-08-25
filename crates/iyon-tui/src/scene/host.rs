@@ -963,8 +963,12 @@ mod tests {
             let counters = crate::perf::snapshot();
             assert!(counters.value(crate::perf::Counter::ResolverNodesVisited) <= 4);
             assert!(counters.value(crate::perf::Counter::MeasureNodeCalls) <= 16);
-            assert!(counters.value(crate::perf::Counter::PaintCacheHits) >= 999);
-            assert!(counters.value(crate::perf::Counter::PaintCacheMisses) <= 2);
+            // Incremental painting patches the retained surface directly; it does
+            // not walk clean siblings through the full-tree paint cache.
+            assert!(counters.value(crate::perf::Counter::PaintNodesVisited) <= 2);
+            assert_eq!(counters.value(crate::perf::Counter::PaintCacheHits), 0);
+            assert!(counters.value(crate::perf::Counter::PaintCacheMisses) <= 1);
+            assert!(counters.value(crate::perf::Counter::SurfaceCellsComposited) <= 8);
         }
 
         registry

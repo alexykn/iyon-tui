@@ -54,11 +54,13 @@ pub fn tui_smoke() -> Result<String> {
     Ok("iyon-tui/t1".to_owned())
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub extern "C" fn iyon_abi_probe_noop(value: u32) -> u32 {
     value.wrapping_add(1)
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub extern "C" fn iyon_abi_probe_u32_8(
     a0: u32,
@@ -80,6 +82,7 @@ pub extern "C" fn iyon_abi_probe_u32_8(
         .wrapping_add(a7.wrapping_mul(23))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub extern "C" fn iyon_abi_probe_i32_4(a0: i32, a1: i32, a2: i32, a3: i32) -> i32 {
     a0.wrapping_mul(3)
@@ -88,6 +91,7 @@ pub extern "C" fn iyon_abi_probe_i32_4(a0: i32, a1: i32, a2: i32, a3: i32) -> i3
         .wrapping_add(a3.wrapping_mul(11))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iyon_abi_probe_buffer(bytes: *const u8, byte_length: usize) -> u32 {
     if bytes.is_null() {
@@ -97,6 +101,7 @@ pub unsafe extern "C" fn iyon_abi_probe_buffer(bytes: *const u8, byte_length: us
     (byte_length as u32).wrapping_mul(257).wrapping_add(first)
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iyon_abi_probe_cstring(value: *const std::ffi::c_char) -> u32 {
     if value.is_null() {

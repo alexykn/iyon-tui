@@ -24,15 +24,16 @@
  * complete cold path (§49).
  */
 
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
+import type { Pointer } from "bun:ffi";
+import { native } from "./native.ts";
 import {
   materializeColumn,
   materializeRow,
   materializeSpacer,
-} from "./generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
-import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
+} from "./view_materialize.ts";
+import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./view_calls.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/ir.ts";
+import { nodeForBridge, viewNodeIdHighWater, type View } from "../../src/values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
   MAX_DIRECT_AXIS_REFS,
@@ -42,7 +43,7 @@ import {
   MAX_DIRECT_TEXT_BYTES,
   MAX_RETAINED_DEPTH,
   MAX_RETAINED_NEW_NODES,
-} from "./native_view_policy.ts";
+} from "../../src/native_view_policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
 export interface BridgeNativeHint {
@@ -60,19 +61,19 @@ const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
  * accumulates across environment resets. Native retains no pointer into it
  * after any call returns (§29).
  */
-const AXIS_REF_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
+const AXIS_REF_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
   runtime: undefined,
   array: new Uint32Array(0),
 };
 
 /** PERF-12 T10 (§30/§36): reusable medium-tier flat-grid word scratch. */
-const GRID_WORD_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
+const GRID_WORD_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
   runtime: undefined,
   array: new Uint32Array(0),
 };
 
 /** PERF-12 T11 (§30): reusable byte tier for text/diff UTF-8 payloads. */
-const BYTE_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint8Array } = {
+const BYTE_SCRATCH: { runtime: Pointer | undefined; array: Uint8Array } = {
   runtime: undefined,
   array: new Uint8Array(0),
 };
@@ -85,7 +86,7 @@ const BYTE_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint8Arra
  * Refs die with the generation; the single-slot reset mirrors AXIS_REF_SCRATCH.
  */
 const STYLE_REF_CACHE: {
-  runtime: NativeViewAbiHandle | undefined;
+  runtime: Pointer | undefined;
   generation: number;
   refs: WeakMap<object, number>;
   atoms: Map<string, number>;
@@ -206,7 +207,7 @@ export class MaterializeTx {
 
   constructor(
     readonly symbols: NativeViewAbiSession["symbols"],
-    readonly runtime: NativeViewAbiHandle,
+    readonly runtime: Pointer,
     readonly generation: number,
     readonly nativeLookupCeiling: number,
   ) {}
@@ -1214,7 +1215,7 @@ export type ExactRootRender =
  */
 export function renderExactRoot(
   session: NativeViewAbiSession,
-  host: NativeTuiHostContract,
+  hostPointer: Pointer,
   view: View,
 ): ExactRootRender {
   const node = nodeForBridge(view);
@@ -1224,7 +1225,7 @@ export function renderExactRoot(
   if (hint !== undefined && hint.generation === generation) {
     counters.bridge_hint_hits += 1;
     const hostStart = phaseNow();
-    const status = hostRenderRef(session.symbols, session.runtime, host, hint.nativeRef);
+    const status = hostRenderRef(session.symbols, session.runtime, hostPointer, hint.nativeRef);
     const hostEnd = phaseNow();
     if (status === HOST_STATUS_OK) {
       counters.host_mutations += 1;
@@ -1258,7 +1259,7 @@ export function renderExactRoot(
       installHint(node, generation, recoveredRef);
       try {
         const retryStart = phaseNow();
-        const retryStatus = hostRenderRef(session.symbols, session.runtime, host, recoveredRef);
+        const retryStatus = hostRenderRef(session.symbols, session.runtime, hostPointer, recoveredRef);
         const retryEnd = phaseNow();
         if (retryStatus === HOST_STATUS_OK) {
           counters.host_mutations += 1;
@@ -1382,7 +1383,7 @@ export class RetainedRootBoundary {
 
   constructor(
     private readonly session: NativeViewAbiSession,
-    private readonly host: () => NativeTuiHostContract | undefined,
+    private readonly hostPointer: () => Pointer | undefined,
     /**
      * PERF-12 T13 (§80): optional alternative commit step for boundaries whose
      * mutation is a direct ref install (`ViewSlot.setViewRef`,
@@ -1575,11 +1576,11 @@ export class RetainedRootBoundary {
               throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: component target refused");
             }
           } else {
-            const host = this.host();
-            if (host === undefined) {
-              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host");
+            const hostPointer = this.hostPointer();
+            if (hostPointer === undefined) {
+              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host pointer");
             }
-            const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
+            const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
             if (status !== HOST_STATUS_OK) {
               throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
             }
@@ -1642,9 +1643,9 @@ export class RetainedRootBoundary {
           return false;
         }
       } else {
-        const host = this.host();
-        if (host !== undefined) {
-          const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
+        const hostPointer = this.hostPointer();
+        if (hostPointer !== undefined) {
+          const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
           if (status !== HOST_STATUS_OK) {
             // Release only a freshly acquired boundary lease whose ref is not
             // already the boundary's leased previous root (§18 failure keeps
@@ -1692,9 +1693,9 @@ export class RetainedRootBoundary {
   /** §20 exact-root fast path against the currently installed root hint. */
   renderExact(view: View): ExactRootRender {
     if (this.closed) throw new Error("boundary is closed");
-    const host = this.host();
-    if (host === undefined) return { status: "no_root_ref" };
-    return renderExactRoot(this.session, host, view);
+    const hostPointer = this.hostPointer();
+    if (hostPointer === undefined) return { status: "no_root_ref" };
+    return renderExactRoot(this.session, hostPointer, view);
   }
 
   /** Releases the boundary's root lease exactly once (§18 close protocol). */

@@ -1,8 +1,7 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_u8_8_v1(
+// generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232
+pub(super) unsafe fn invoke_iyon_abi_conformance_u8_8_v1(
     a0: u8,
     a1: u8,
     a2: u8,
@@ -23,8 +22,22 @@ pub unsafe extern "C" fn iyon_abi_conformance_u8_8_v1(
         .wrapping_add(u32::from(a7).wrapping_mul(23))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_u16_8_v1(
+pub unsafe extern "C" fn iyon_abi_conformance_u8_8_v1(
+    a0: u8,
+    a1: u8,
+    a2: u8,
+    a3: u8,
+    a4: u8,
+    a5: u8,
+    a6: u8,
+    a7: u8,
+) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_u8_8_v1(a0, a1, a2, a3, a4, a5, a6, a7) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_u16_8_v1(
     a0: u16,
     a1: u16,
     a2: u16,
@@ -45,8 +58,22 @@ pub unsafe extern "C" fn iyon_abi_conformance_u16_8_v1(
         .wrapping_add(u32::from(a7).wrapping_mul(23))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_u32_8_v1(
+pub unsafe extern "C" fn iyon_abi_conformance_u16_8_v1(
+    a0: u16,
+    a1: u16,
+    a2: u16,
+    a3: u16,
+    a4: u16,
+    a5: u16,
+    a6: u16,
+    a7: u16,
+) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_u16_8_v1(a0, a1, a2, a3, a4, a5, a6, a7) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_u32_8_v1(
     a0: u32,
     a1: u32,
     a2: u32,
@@ -66,8 +93,22 @@ pub unsafe extern "C" fn iyon_abi_conformance_u32_8_v1(
         .wrapping_add(a7.wrapping_mul(23))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_u32_16_v1(
+pub unsafe extern "C" fn iyon_abi_conformance_u32_8_v1(
+    a0: u32,
+    a1: u32,
+    a2: u32,
+    a3: u32,
+    a4: u32,
+    a5: u32,
+    a6: u32,
+    a7: u32,
+) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_u32_8_v1(a0, a1, a2, a3, a4, a5, a6, a7) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_u32_16_v1(
     a0: u32,
     a1: u32,
     a2: u32,
@@ -103,31 +144,92 @@ pub unsafe extern "C" fn iyon_abi_conformance_u32_16_v1(
         .wrapping_add(a15.wrapping_mul(59))
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_i32_4_v1(a0: i32, a1: i32, a2: i32, a3: i32) -> i32 {
+pub unsafe extern "C" fn iyon_abi_conformance_u32_16_v1(
+    a0: u32,
+    a1: u32,
+    a2: u32,
+    a3: u32,
+    a4: u32,
+    a5: u32,
+    a6: u32,
+    a7: u32,
+    a8: u32,
+    a9: u32,
+    a10: u32,
+    a11: u32,
+    a12: u32,
+    a13: u32,
+    a14: u32,
+    a15: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_abi_conformance_u32_16_v1(
+            a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_i32_4_v1(
+    a0: i32,
+    a1: i32,
+    a2: i32,
+    a3: i32,
+) -> i32 {
     a0.wrapping_mul(3)
         .wrapping_add(a1.wrapping_mul(5))
         .wrapping_add(a2.wrapping_mul(7))
         .wrapping_add(a3.wrapping_mul(11))
 }
 
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_abi_conformance_i32_4_v1(a0: i32, a1: i32, a2: i32, a3: i32) -> i32 {
+    unsafe { invoke_iyon_abi_conformance_i32_4_v1(a0, a1, a2, a3) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_f32_4_v1(
+    a0: f32,
+    a1: f32,
+    a2: f32,
+    a3: f32,
+) -> f32 {
+    a0 * 3.0 + a1 * 5.0 + a2 * 7.0 + a3 * 11.0
+}
+
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iyon_abi_conformance_f32_4_v1(a0: f32, a1: f32, a2: f32, a3: f32) -> f32 {
+    unsafe { invoke_iyon_abi_conformance_f32_4_v1(a0, a1, a2, a3) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_f64_4_v1(
+    a0: f64,
+    a1: f64,
+    a2: f64,
+    a3: f64,
+) -> f64 {
     a0 * 3.0 + a1 * 5.0 + a2 * 7.0 + a3 * 11.0
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn iyon_abi_conformance_f64_4_v1(a0: f64, a1: f64, a2: f64, a3: f64) -> f64 {
-    a0 * 3.0 + a1 * 5.0 + a2 * 7.0 + a3 * 11.0
+    unsafe { invoke_iyon_abi_conformance_f64_4_v1(a0, a1, a2, a3) }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_pointer_v1(a0: *mut ::core::ffi::c_void) -> u32 {
+pub(super) unsafe fn invoke_iyon_abi_conformance_pointer_v1(a0: *mut ::core::ffi::c_void) -> u32 {
     if a0.is_null() { 0 } else { 1 }
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_buffer_v1(a0: *const u8, a1: usize) -> u32 {
+pub unsafe extern "C" fn iyon_abi_conformance_pointer_v1(a0: *mut ::core::ffi::c_void) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_pointer_v1(a0) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_buffer_v1(a0: *const u8, a1: usize) -> u32 {
     if a0.is_null() {
         u32::MAX
     } else {
@@ -137,8 +239,13 @@ pub unsafe extern "C" fn iyon_abi_conformance_buffer_v1(a0: *const u8, a1: usize
     }
 }
 
+#[cfg(feature = "direct-ffi")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_conformance_cstring_v1(a0: *const ::core::ffi::c_char) -> u32 {
+pub unsafe extern "C" fn iyon_abi_conformance_buffer_v1(a0: *const u8, a1: usize) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_buffer_v1(a0, a1) }
+}
+
+pub(super) unsafe fn invoke_iyon_abi_conformance_cstring_v1(a0: *const ::core::ffi::c_char) -> u32 {
     if a0.is_null() {
         0
     } else {
@@ -149,4 +256,10 @@ pub unsafe extern "C" fn iyon_abi_conformance_cstring_v1(a0: *const ::core::ffi:
                 hash.wrapping_mul(16777619).wrapping_add(u32::from(*byte))
             })
     }
+}
+
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_abi_conformance_cstring_v1(a0: *const ::core::ffi::c_char) -> u32 {
+    unsafe { invoke_iyon_abi_conformance_cstring_v1(a0) }
 }

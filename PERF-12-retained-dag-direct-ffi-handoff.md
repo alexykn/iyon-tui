@@ -7372,82 +7372,54 @@ generator BLAKE3:           7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e6
 **Tranche T14 status: COMPLETE.** Randomized retained/cold differential, malformed-boundary property coverage, generated full-schema coverage, cross-transport lifetime checks, and banned-shortcut review are green. T15 remains the outstanding authoritative performance/memory/adoption decision; the direct-FFI feature remains retained and is not removed by T15/T16.
 ```
 
-## T14 implementation record
+## T15 draft / blocker record
 
 ### 1. Scope statement
 
-```text
-tranche:   T14 (PERF-12.12)
-sections:  §87 randomized DAG differential testing, §112 cross-transport
-           identity/lifetime tests, §117 fuzz/property targets, §76 full-schema
-           coverage, §107 banned-shortcut review
-transport: generated safe N-API default plus feature-gated direct-FFI oracle
-```
+T15 (§12.13) was started with the authoritative-harness inventory and a
+transport-neutral case runner, but the adoption run was deliberately stopped
+before publishing a decision. This is a blocker record, not a T15 completion
+record.
 
 ### 2. Commits
 
 ```text
-f6859cb  perf(tui): add retained R6b host frontier
-04b9845  fix(tui): preserve R6b host fallback semantics
-cfcca18  test(tui): add T14 randomized retained differential
-e41852e  test(tui): add T14 malformed-boundary properties
+eba1268  bench(perf): add T15 matrix draft harness
 ```
 
 ### 3. Review findings
 
-```text
-finding 1: the extracted TUI package had generated ABI conformance and
-       boundary suites but no deterministic 100-seed retained-vs-cold DAG
-       differential. Correction: tui_t14_differential.test.ts generates
-       shared/reused immutable DAGs with text, Unicode, NUL, axes, containers,
-       clamps, and modifier changes; every seed renders a retained update and
-       a fresh cold reference and compares complete screen rows.
-
-finding 2: malformed N-API View objects and invalid NativeRefs had no single
-       property harness proving host atomicity. Correction:
-       tui_t14_fuzz_property.test.ts drives 100 malformed object seeds,
-       cycles, invalid kinds/fields, and invalid refs; expected errors leave
-       the previously rendered screen unchanged.
-
-finding 3: the safe N-API migration could have hidden a pointer or generic
-       changed-closure shortcut behind generated names. The ownership gate,
-       generated ABI manifest/conformance outputs, active-source scan, and
-       code review found no Bun FFI import, public pointer contract, persistent
-       mirror, content-hash identity, or generic packet VM in the default path.
-```
+- The current S6 TypeScript package routes the retained semantic runtime through generated N-API. The `direct-ffi` Cargo feature exposes the private legacy native qualification surface, but there is no current TypeScript lowering selector that runs the same retained JS path through that feature. The draft direct arm therefore used the clean S5/e2b legacy checkout, not the finalized R6b host/runtime.
+- The draft runner records semantic-construction and total-render timings, but its native-materialization and host-commit phase arrays are empty. It therefore does not satisfy §90 or the complete §103 schema.
+- The draft matrix used 9 workload families, sizes 20/200, 6 retained modes, 200 measured operations per case, and fresh processes. It produced 108 successful cases per arm with no case errors, but this is exploratory evidence only: it is not the full §93 matrix, not the §102 authoritative sample count, and not a memory/realistic-trace decision run.
 
 ### 4. Implementation summary
 
-The T14 proof is deliberately composed from the canonical generated schema,
-Rust ABI/conformance suites, retained-DAG transaction tests, the R6b host
-frontier tests, and two deterministic public-package property suites. The
-schema reports 57 generated semantic functions; the N-API ABI generator emits
-all signatures from `tools/tui-abi/view_abi.toml`; the direct-FFI feature is
-compiled and loaded separately but shares the same semantic/runtime code. No
-third-party fuzzing dependency or application-specific test fixture was added.
+`packages/iyon-tui/bench/perf12_t15_authoritative_case.ts` now provides a
+process-isolated case runner with retained/cold modes, semantic construction
+and total-render samples, bootstrap median intervals, structural deltas, and
+frozen PERF-7v2/PERF-11v4 provenance fields. It is intentionally marked
+`profile: "draft"` until the direct lowering and phase instrumentation are
+complete.
 
 ### 5. Provenance block
 
 ```text
-source revision at capture: e41852e3acbc4480872be80628cc2b3686aa54d4
-bun --version:              1.4.0
-bun --revision:             34cbb9a40b4bd1bd767d134a7065e66c2432a676
-rustc:                      1.97.1 (8bab26f4f 2026-07-14)
-target:                     aarch64-apple-darwin
-schema BLAKE3:              5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-generator BLAKE3:           7b78d1762bb7d796d3536e7f77c50ec7913f999797661d7d49e684fe74048568
+runner commit:  eba126881610d833c2261d90fb6a3308feeb7e3c
+bun:            1.4.0 / 34cbb9a40b4bd1bd767d134a7065e66c2432a676
+rustc:          1.97.1 (8bab26f4f 2026-07-14)
+target:         aarch64-apple-darwin
+N-API source:   582230974b10d1568c432ded28dd0577fe4b91ac
+direct oracle:  e2b929944e51d5d3b163bcd81c66f2544b43f17a
 ```
 
 ### 6. Gate evidence
 
-- *100-seed retained differential:* `tui_t14_differential.test.ts` passes 100/100 deterministic seeds and 100 screen-parity assertions.
-- *Malformed-input property target:* `tui_t14_fuzz_property.test.ts` passes 100 malformed-view/invalid-ref iterations and 100 host-unchanged assertions.
-- *Full-schema/generated coverage:* `cargo test -p tui-abi-gen` 27/27; generator freshness check PASS; generated metadata `function_count=57`; generated ABI layout/conformance tests PASS; Rust generated ABI integration suites PASS.
-- *Cross-transport/lifetime:* `cargo test --workspace --features direct-ffi` passes 889 / 0 failed / 3 ignored; direct-feature staging/load probes pass; default N-API staging/load and opaque-surface probes pass.
-- *Banned shortcuts:* `bun run check:ownership` 11/11 PASS; default active framework sources contain no `bun:ffi`, `linkSymbols`, raw pointer contract, or application surface; R6b counters prove local resolution/measurement rather than a generic packet path.
-- *Package battery:* TUI plus external fixture tests pass 68/68 with 384 expect calls; TypeScript typecheck PASS; strict workspace Clippy PASS.
+- Draft N-API arm: 108/108 cases executed successfully at 200 samples/case.
+- Draft legacy-direct arm: 108/108 cases executed successfully at 200 samples/case.
+- No draft samples are used as authoritative T15 evidence because the arms do not share the finalized R6b implementation and the required phase arrays are incomplete.
+- T15 correctness/structural/memory/adoption gates remain **unproven**.
 
 ### 7. Status line
 
-**Tranche T14 status: COMPLETE.** Randomized retained/cold differential, malformed-boundary property coverage, generated full-schema coverage, cross-transport lifetime checks, and banned-shortcut review are green. T15 remains the outstanding authoritative performance/memory/adoption decision; the direct-FFI feature remains retained and is not removed by T15/T16.
-```
+**Tranche T15 status: STOPPED.** Finish the current feature-gated direct retained lowering (or provide an explicitly equivalent final oracle arm) and add §90 phase instrumentation before rerunning the full §93/§102 authoritative matrix. T16 must not start.

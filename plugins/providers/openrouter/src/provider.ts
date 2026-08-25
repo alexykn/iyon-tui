@@ -5,7 +5,7 @@ import { createStreamState, flushToolCalls, normalizeChunk } from "./normalize.t
 import { parseSse } from "./sse.ts";
 
 export const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
-export const DEFAULT_MODEL = "deepseek/deepseek-v4-flash:latest";
+export const DEFAULT_MODEL = "meta/muse-spark-1.2-contributor";
 
 export interface OpenRouterProviderConfig {
   readonly apiKey: string;

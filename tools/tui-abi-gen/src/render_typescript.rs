@@ -7,8 +7,7 @@ pub fn abi_bindings(document: &AbiDocument, schema_hash: &str, generator_hash: &
     let mut output = typescript_bindings_header(schema_hash, generator_hash);
     output.push_str("export interface NativeViewAbiMetadata {\n");
     output.push_str("  readonly abi_name: string;\n  readonly abi_version: number;\n  readonly semantic_version: number;\n  readonly schema_blake3: string;\n  readonly generator_blake3: string;\n  readonly generation: number;\n  readonly transport: \"napi\";\n  readonly function_count: number;\n}\n\n");
-    output
-        .push_str("export interface NativeViewAbiHandle {\n  metadata(): NativeViewAbiMetadata;\n");
+    output.push_str("export interface NativeViewAbiHandle {\n  /** S6 dispatch-granularity probe; not a semantic/public TUI operation. */\n  tuiPerfNapiBatchRuntimeNoop?(count: number): number;\n  metadata(): NativeViewAbiMetadata;\n");
     for function in &document.functions {
         let method = camel_case(&function.name);
         let arguments = function

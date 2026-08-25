@@ -1410,6 +1410,23 @@ impl NativeViewAbiSession {
         Ok(runtime as *mut NativeViewRuntime)
     }
 
+    /// S6-only dispatch-granularity probe. It batches calls internally without
+    /// accepting a semantic operation record or retaining any JS value.
+    #[napi(js_name = "tuiPerfNapiBatchRuntimeNoop")]
+    pub fn tui_perf_napi_batch_runtime_noop(&self, count: u32) -> napi::Result<u32> {
+        if count > 1_000_000 {
+            return Err(NativeError::invalid_input(
+                "N-API batch probe count is too large",
+            ));
+        }
+        let runtime = self.runtime_ptr()?;
+        let mut result = 0;
+        for _ in 0..count {
+            result = unsafe { generated_exports::iyon_runtime_noop_v1(runtime) };
+        }
+        Ok(result)
+    }
+
     #[napi]
     pub fn metadata(&self) -> napi::Result<Value> {
         let runtime = runtime_from_handle(&self.runtime)?;

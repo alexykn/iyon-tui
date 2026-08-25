@@ -1631,3 +1631,21 @@ Authoritative JSONL evidence records `git rev-parse HEAD`; benchmarks execute wh
 The original R6b gate record above overstated the meaning of `PaintCacheHits`. The focused test updates one component once, and the incremental paint path intentionally repaints that component into the retained surface without traversing clean siblings through the full-tree two-generation paint cache. Therefore `PaintCacheHits >= 999` was an invalid assertion for this test shape; it did not measure clean-sibling surface reuse.
 
 The gate now proves the intended frontier directly: resolver/measurement bounds remain in force; `PaintNodesVisited <= 2`, `PaintCacheHits == 0`, `PaintCacheMisses <= 1`, and `SurfaceCellsComposited <= 8` for the one-update case. The exact screen parity and cold-host comparison remain unchanged. The focused `perf-counters` test passes with the corrected assertions. The retained-surface/sibling-isolation claim is thus supported by the relevant counters rather than by an unrelated cache-hit target; the R6b status remains COMPLETE.
+
+## R6b follow-up correctness erratum
+
+The review after the original R6b completion record found four implementation gaps in paths not covered by the original text-only leaf proof. Fix commit `77ef1db` closes them without changing the public API or transport policy.
+
+1. **Topology ownership.** `MountGraph` now stores entries and child topology by stable `ComponentId`. Replacing a component subtree retains the owner entry, updates only affected descendants, and does not rebuild a global positional index. A component output changing between a leaf and a nested component is now covered by `retained_topology_replacement_preserves_owner_and_updates_mounts` and `replacing_component_descendants_preserves_the_owner_and_depth_first_order`.
+2. **Failure atomicity.** Local subtree updates are fully prepared and duplicate-checked before any committed retained graph/overlay/capability state is changed. `incremental_prepare_error_preserves_the_committed_frame` proves that a later preparation failure leaves the old graph, overlay, and surface authoritative.
+3. **Incremental physical parity.** Incremental painting restores the nearest inherited surface background and inherited text background before composing the changed component. The 1-of-1,000 test now compares the complete same-geometry screen with a cold render; `retained_component_paint_preserves_ancestor_surface_background` covers styled parents.
+4. **Dependent host state.** `History` now exposes an internal semantic revision, so a component invalidation concurrent with a History/stream mutation falls back to a fresh root resolve. Topology/geometry changes use the complete authoritative layout/focus/tick synchronization path. Topology-preserving updates synchronize changed descendant layout callbacks, dynamically changed tick capabilities, and focus state without an unconditional focus-order scan. The regression gates are `component_incremental_update_falls_back_when_history_changes_too` and `local_capability_sync_updates_a_mounted_tick_without_graph_rescan`.
+
+Additional evidence at `77ef1db`:
+
+- `cargo test -p iyon-tui --features native-host,perf-counters -- --test-threads=1`: **all tests passed**;
+- focused R6b same-geometry, topology, rollback, inherited-background, History, and tick tests: all passed;
+- `cargo test --workspace --features direct-ffi`: passed;
+- same-geometry counters remain bounded (`PaintNodesVisited <= 2`, no full-tree paint-cache hits), and full-screen cold parity is now asserted rather than only the first row.
+
+**Erratum status:** **R6b COMPLETE.** The earlier counter-gate correction remains valid; this record supersedes the prior completion claim only by strengthening its implementation and evidence. T14/T15 and direct-FFI retention remain independent later work.

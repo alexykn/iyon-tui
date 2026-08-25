@@ -151,7 +151,37 @@ function tsImportGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 2: Standalone external-consumer fixture
+// Gate 3: S6 safe N-API transport boundary
+// ---------------------------------------------------------------------------
+
+function napiTransportGate(): void {
+  const files = walk(FRAMEWORK_SRC);
+  const forbidden = /bun:ffi|linkSymbols|NativeAbiPointers|tuiViewAbiBootstrap|runtime_ptr|host_ptr/u;
+  const offenders = files
+    .filter((file) => forbidden.test(readFileSync(file, "utf8")))
+    .map((file) => relative(ROOT, file));
+  const nativeContract = readFileSync(NATIVE_CONTRACT, "utf8");
+  if (/NativeViewAbiBootstrap|tuiViewAbiBootstrap|Pointer|runtime_ptr|host_ptr/u.test(nativeContract)) {
+    offenders.push(relative(ROOT, NATIVE_CONTRACT));
+  }
+  if (offenders.length > 0) {
+    fail("safe-napi-ts-boundary", `unsafe transport surface in ${offenders.join(", ")}`);
+  } else {
+    pass("safe-napi-ts-boundary", `${files.length} active framework files use no Bun FFI or raw pointer contract`);
+  }
+
+  const generatedNapi = join(ROOT, "crates/iyon-tui-native/src/generated/view_abi_napi.rs");
+  const manifest = join(ROOT, "packages/iyon-tui/src/generated/view_abi_manifest.json");
+  const cargo = readFileSync(join(ROOT, "crates/iyon-tui-native/Cargo.toml"), "utf8");
+  if (!existsSync(generatedNapi) || !existsSync(manifest) || !/direct-ffi\s*=\s*\[\]/u.test(cargo)) {
+    fail("generated-napi-lowering", "generated N-API methods, manifest, or feature-gated direct qualification surface is missing");
+  } else {
+    pass("generated-napi-lowering", "canonical ABI emits safe N-API methods and keeps direct qualification feature-gated");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4: Standalone external-consumer fixture
 // ---------------------------------------------------------------------------
 
 function consumerFixtureGate(): void {
@@ -261,6 +291,7 @@ async function publicSurfaceGate(): Promise<void> {
 
 rustDependencyGate();
 tsImportGate();
+napiTransportGate();
 consumerFixtureGate();
 await publicSurfaceGate();
 

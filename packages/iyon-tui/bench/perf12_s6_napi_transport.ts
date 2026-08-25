@@ -9,6 +9,8 @@ const gitSha = process.env.PERF12_GIT_SHA ?? "unknown";
 const nativeArtifactSha256 = process.env.PERF12_NATIVE_SHA256 ?? "unknown";
 const rustcVersion = process.env.PERF12_RUSTC_VERSION ?? "unknown";
 const target = process.env.PERF12_TARGET ?? "unknown";
+const requestedWorkload = process.env.PERF12_WORKLOAD;
+const requestedSize = process.env.PERF12_SIZE === undefined ? undefined : Number(process.env.PERF12_SIZE);
 
 type Workload = "shared_path" | "text_layout";
 
@@ -83,6 +85,7 @@ async function measure(workload: Workload, size: number): Promise<Record<string,
     native_artifact_sha256: nativeArtifactSha256,
     warmup,
     measured: samples,
+    process_isolated: requestedWorkload !== undefined && requestedSize !== undefined,
     samples_ns: measured,
     median_ns: median(measured),
     p95_ns: percentile(measured, 0.95),
@@ -92,8 +95,12 @@ async function measure(workload: Workload, size: number): Promise<Record<string,
   };
 }
 
-for (const workload of ["shared_path", "text_layout"] as const) {
-  for (const size of sizes) {
+const workloads = requestedWorkload === undefined
+  ? (["shared_path", "text_layout"] as const)
+  : [requestedWorkload as Workload];
+const selectedSizes = requestedSize === undefined ? sizes : [requestedSize];
+for (const workload of workloads) {
+  for (const size of selectedSizes) {
     console.log(JSON.stringify(await measure(workload, size)));
   }
 }

@@ -1531,6 +1531,33 @@ The decisive evidence is the two 1-of-1000 sibling tests: same-geometry and geom
 
 **7. Status line.** **Tranche R10 status: COMPLETE.** The authoritative matrix adopts retained execution as the supported rendering path; Step 14R cleanup (bodyKey, dead code) landed with zero behavioral delta; the sanctioned R6b deferral keeps T13.1 formally PARTIAL until R6b runs against the finalized PERF-12v2 transport or the recorded N≈400 trigger fires.
 
+### R6b implementation record
+
+**1. Scope statement.** Tranche R6b (Step 9R remainder; AMENDMENT-C §5.4–§5.6/§18): retained host-side component topology, local resolver invalidation, retained layout measurement/placement state, same-geometry component layout/paint patching, geometry-change fallback with sibling measurement reuse, and scoped native invalidation. The direct-FFI feature and generated N-API default consume the same generic host implementation.
+
+**2. Commits.** `f6859cb8d229838a51bb224a2b768c8e71e739b9` (`perf(tui): add retained R6b host frontier`); `04b984514e2d209ebd66c6566ced5bce24ce4607` (`fix(tui): preserve R6b host fallback semantics`); raw smoke evidence `64a5ebf347fdef3e41af0f07de9f49411551d4cf` (`bench(tui): record R6b frontier smoke evidence`).
+
+**3. Review findings.**
+- Finding 1: `SceneHost` retained a `MountGraph`, but every frame rebuilt the component overlay and mount forest. `MountGraph` now has indexed revision updates and local subtree replacement; changed component snapshots resolve only their owned descendant subtree. Unmounted component invalidations (for example, a newly-created input before its first mount) are ignored by the local path and fall through to the authoritative full frame.
+- Finding 2: the existing two-generation layout/paint caches still caused broad work during local updates. The host now retains the resolved body/layout/surface frame; same-shape/same-geometry component content patches its layout subtree and repaints only that component region. Geometry changes use the complete placement path, while cached clean sibling measurements and paint surfaces are reused.
+- Finding 3: `ViewCompiler::with_interaction` cloned the entire MountGraph for every paint. It now borrows the retained graph. A tick scheduler with no registrations returns before scanning mounted components.
+- Finding 4: the initial local implementation treated the native host's always-present History as a blocker. Resolved roots now retain an independently comparable body root, so a local body component update can patch through the unchanged History/root wrapper.
+- Finding 5: no second semantic graph, content hash, generic packet, mutable View, or transport-specific application path was introduced. Topology-changing component updates remain transactionally conservative: the retained graph is patched, then full layout/paint is used where local shape/geometry cannot be proven safe.
+
+**4. Implementation summary.** `SceneHost` now retains the last resolved root/layout/surface and accepts `ComponentId` invalidations from native slots, panes, and inputs. Resolver work for a topology-preserving local update is one changed component subtree; indexed graph revisions avoid sibling scans. `LayoutTree` retains component roots/parents and supports in-place same-shape subtree patching. `ResolvedSceneLayout` can measure one component under its previous width constraint; full layout remains the correct geometry-changing fallback. `ViewPainter` can repaint one retained component into the previous surface. Layout/focus/tick synchronization is local when topology and focus permit; full reconciliation remains the safe path for topology/focus changes.
+
+**5. Provenance block.** Source capture: `04b984514e2d209ebd66c6566ced5bce24ce4607`; raw R6b capture records that SHA and native artifact `732164d6918f28420c0f101c5c99abe0f419b19dfa4a6b824e9406a987b55537`. Bun `1.4.0` (`34cbb9a40b4bd1bd767d134a7065e66c2432a676`); rustc `1.97.1 (8bab26f4f 2026-07-14)`; target `aarch64-apple-darwin`. The default addon was staged after the R6b implementation; the direct-FFI feature remains an independent native qualification arm.
+
+**6. Gate evidence.**
+- *Same-geometry 1-of-1,000 sibling proof:* the dedicated Rust test passes with exact screen parity against a cold host. With `perf-counters`, 200 measured updates record `resolver_nodes_visited=200`, `measure_node_calls=200`, `prepare_node_calls=200`, `layout_nodes_emitted=200`, `paint_nodes_visited=400`, and `surface_cells_composited=1,200`; clean sibling component content is not re-resolved, remeasured, or repainted.
+- *Geometry-changing proof:* the same test changes the leaf from one row to two and compares the incremental frame with a fresh cold rebuild; parity passes. Over 200 updates, counters record `resolver_nodes_visited=200`, `measure_node_calls=204`, `prepare_node_calls=204`, and `layout_nodes_emitted=2,203`; the suffix placement/paint expansion is real geometry work, while sibling measurement remains cached.
+- *Process-isolated smoke JSONL:* `packages/iyon-tui/bench/PERF-12-T13.1-R6b-frontier.jsonl` runs a fresh Bun process per case, 50 warmups, 200 measured updates, and both same-geometry/geometry-change workloads at 10/100/1,000 scopes. Same-geometry medians are 17,291 / 24,000 / 106,625 ns; geometry-change medians are 18,833 / 24,750 / 107,042 ns. Raw p95/p99/bootstrap intervals and provenance are retained in every record.
+- *Regression battery:* workspace Rust tests 889 passed / 0 failed / 3 ignored; focused perf-counter R6b test PASS; TUI/fixture tests 66/66 with 184 expect calls; typecheck, strict Clippy, staging, and 11/11 ownership gates PASS.
+
+The earlier R10 record's sanctioned-deferral wording is superseded only as to R6b: the measured trigger fired, the finalized N-API-default boundary is now implemented, and the R6b gates above are complete. PERF-12 T14/T15 and the direct-FFI retention policy remain independent later work.
+
+**7. Status line.** **Tranche R6b status: COMPLETE.** Same-geometry local updates now use retained host/layout/paint frontiers with counter-proven sibling isolation; geometry changes retain semantic/measurement locality and expand only the required placement/paint suffix. T13.1's prior R6b deferral is closed; S8 proceeds to PERF-12 T14 and T15.
+
 ## 32.3 Post-R9 correctness review invariants
 
 Normative. Established by the adversarial review of R0–R9 (`perf12_t13_1_abort_retry.test.ts`, `perf12_t13_1_ownership.test.ts`); every rule below has a failing-before/passing-after test. Where any earlier prose conflicts with this section, this section wins.

@@ -6,6 +6,9 @@ const samples = 200;
 const sizes = [20, 200] as const;
 const candidate = process.env.PERF12_CANDIDATE ?? "napi";
 const gitSha = process.env.PERF12_GIT_SHA ?? "unknown";
+const nativeArtifactSha256 = process.env.PERF12_NATIVE_SHA256 ?? "unknown";
+const rustcVersion = process.env.PERF12_RUSTC_VERSION ?? "unknown";
+const target = process.env.PERF12_TARGET ?? "unknown";
 
 type Workload = "shared_path" | "text_layout";
 
@@ -75,6 +78,9 @@ async function measure(workload: Workload, size: number): Promise<Record<string,
     git_sha: gitSha,
     bun_version: Bun.version,
     bun_revision: Bun.revision,
+    rustc_version: rustcVersion,
+    target,
+    native_artifact_sha256: nativeArtifactSha256,
     warmup,
     measured: samples,
     samples_ns: measured,

@@ -7423,3 +7423,11 @@ direct oracle:  e2b929944e51d5d3b163bcd81c66f2544b43f17a
 ### 7. Status line
 
 **Tranche T15 status: STOPPED.** Finish the current feature-gated direct retained lowering (or provide an explicitly equivalent final oracle arm) and add §90 phase instrumentation before rerunning the full §93/§102 authoritative matrix. T16 must not start.
+
+## T15 current-oracle correction record
+
+Correction commit: `f67cba545382ccbfba6de29445a2baf3d58e998f` (`fix(tui): complete S8 transport corrections`). The S8 correction satisfies the implementation blocker without claiming the adoption decision. `packages/iyon-tui/bench/direct_ffi/**` is a benchmark-only current direct-FFI oracle using the finalized retained materialization/lease/frontier path and the same native host commit as the N-API case. `packages/iyon-tui/bench/perf12_t15_case.ts` selects `generated_safe_napi` or `feature_gated_direct_ffi` in a fresh process; the product `@iyon/tui` default remains N-API-only.
+
+Both case runners now install the §90 instrumentation hook and emit non-empty `transport_prepare_samples_ns`, `native_materialize_samples_ns`, and `host_commit_samples_ns` arrays, plus the shared structural-counter schema. A small isolated smoke run produced matching structural deltas for both transports; those dirty-tree smoke samples are exploratory and are not T15 evidence.
+
+The full §93 workload/mode/size matrix, §95 multi-edit, §96 wide, §97 cold, §99 realistic trace, memory gate, §102 authoritative statistics, correctness review, and adoption decision remain outstanding. T15 remains **STOPPED** until those runs execute from a clean committed source; T16 remains blocked.

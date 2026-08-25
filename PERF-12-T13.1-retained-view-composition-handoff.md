@@ -1625,3 +1625,9 @@ Same `View` body plus first History attachment must still publish (`needsPublica
 ### Benchmark provenance is clean-tree only
 
 Authoritative JSONL evidence records `git rev-parse HEAD`; benchmarks execute whatever is in the working tree. Evidence is therefore valid ONLY from a clean worktree at the commit it names. Sequence: correctness fixes → full tests → commit → clean worktree → run authoritative benches → commit evidence separately. Ad-hoc dirty-tree runs are exploratory and never committed as gate evidence.
+
+## R6b counter-gate erratum
+
+The original R6b gate record above overstated the meaning of `PaintCacheHits`. The focused test updates one component once, and the incremental paint path intentionally repaints that component into the retained surface without traversing clean siblings through the full-tree two-generation paint cache. Therefore `PaintCacheHits >= 999` was an invalid assertion for this test shape; it did not measure clean-sibling surface reuse.
+
+The gate now proves the intended frontier directly: resolver/measurement bounds remain in force; `PaintNodesVisited <= 2`, `PaintCacheHits == 0`, `PaintCacheMisses <= 1`, and `SurfaceCellsComposited <= 8` for the one-update case. The exact screen parity and cold-host comparison remain unchanged. The focused `perf-counters` test passes with the corrected assertions. The retained-surface/sibling-isolation claim is thus supported by the relevant counters rather than by an unrelated cache-hit target; the R6b status remains COMPLETE.

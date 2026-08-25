@@ -142,8 +142,9 @@ where
 
     #[cfg(feature = "native-host")]
     pub(crate) fn host_invalidate_component(&mut self, id: u64) {
-        self.components
-            .invalidate(crate::component::ComponentId::from_raw(id));
+        let id = crate::component::ComponentId::from_raw(id);
+        self.components.invalidate(id);
+        self.scene_host.invalidate_component(id);
         self.invalidate_frame();
     }
 
@@ -157,17 +158,20 @@ where
             return;
         }
         self.scene.set_body(body);
+        self.scene_host.invalidate_root();
         self.body_dirty = false;
         self.dirty = true;
     }
 
     pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
         self.theme = theme;
+        self.scene_host.invalidate_root();
         self.invalidate_frame();
     }
 
     pub(crate) fn host_set_history(&mut self, history: crate::History) {
         self.scene.set_history(history);
+        self.scene_host.invalidate_root();
         self.invalidate_frame();
     }
 

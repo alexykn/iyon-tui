@@ -17,7 +17,9 @@ pub(crate) use resolved::{ResolutionOverlay, ResolvedScene};
 pub use root::Scene;
 #[cfg(test)]
 pub(crate) use root::resolve_root_scene;
-pub(crate) use root::{ResolvedRootScene, resolve_root_scene_with_anchor_and_cache};
+pub(crate) use root::{
+    ResolvedRootScene, resolve_component_subtree, resolve_root_scene_with_anchor_and_cache,
+};
 
 #[cfg(test)]
 mod root_tests;

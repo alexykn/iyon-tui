@@ -199,6 +199,12 @@ impl TickScheduler {
         registry: &mut ComponentRegistry,
         queue: &mut OutputQueue,
     ) -> TickOutcome {
+        if self.registrations.is_empty() {
+            return TickOutcome {
+                ran: false,
+                dirty: false,
+            };
+        }
         let due: Vec<_> = self
             .mount_order
             .iter()

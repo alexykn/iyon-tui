@@ -118,9 +118,12 @@ use crate::{
 use super::{ResolveError, ResolveSession, ResolvedScene};
 
 /// Private resolved root state used by the host/layout pipeline.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedRootScene {
     pub(crate) scene: ResolvedScene,
+    /// The independently resolved body root used to decide whether a local
+    /// component update can avoid rebuilding the history/root wrapper.
+    pub(crate) body_view: View,
     pub(crate) history_overlay: Option<HistoryPhysicalOverlay>,
     pub(crate) history_overflow_rows: usize,
     pub(crate) history_height: u16,
@@ -169,6 +172,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
         .as_ref()
         .map_or(0, |_| size.height.saturating_sub(body_height));
 
+    let body_view = body_scene.view.clone();
     let (history_scene, history_overlay, history_overflow_rows) = match root.history.as_ref() {
         Some(history) => {
             let mut session = ResolveSession::new(registry);
@@ -190,6 +194,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
 
     Ok(ResolvedRootScene {
         scene,
+        body_view,
         history_overlay,
         history_overflow_rows,
         history_height,
@@ -204,6 +209,23 @@ fn resolve_branch(
     let mut session = ResolveSession::new(registry);
     let view = session.resolve_root(view)?;
     Ok(session.finish(view))
+}
+
+/// Resolves only the content owned by one changed component. The component
+/// itself remains in the retained graph; direct children are re-parented to
+/// it so the caller can splice this local result into the existing MountGraph.
+pub(crate) fn resolve_component_subtree(
+    view: &View,
+    registry: &ComponentRegistry,
+    parent: ComponentId,
+) -> Result<ResolvedScene, ResolveError> {
+    let mut resolved = resolve_branch(view, registry)?;
+    for node in &mut resolved.mounts.nodes {
+        if node.parent.is_none() {
+            node.parent = Some(parent);
+        }
+    }
+    Ok(resolved)
 }
 
 fn merge_root_scene(

@@ -30,12 +30,39 @@ pub(crate) fn layout_view_with_overlay_and_cache(
     overlay: &ResolutionOverlay,
     cache: &mut LayoutCache,
 ) -> super::tree::LayoutTree {
+    layout_view_with_overlay_and_cache_in_scope(view, constraints, overlay, None, cache)
+}
+
+/// Lays out one retained component root under the component scope that owns
+/// it. This is the R6b local-layout path; it avoids rebuilding the scene tree
+/// when the replacement keeps the existing geometry and shape.
+pub(crate) fn layout_view_with_overlay_and_cache_in_scope(
+    view: &View,
+    constraints: LayoutConstraints,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<crate::component::ComponentId>,
+    cache: &mut LayoutCache,
+) -> super::tree::LayoutTree {
     let width = constraints.width.definite().unwrap_or_else(|| {
-        measure_node(view, u16::MAX, WidthIntent::Semantic, overlay, None, cache)
-            .size
-            .width
+        measure_node(
+            view,
+            u16::MAX,
+            WidthIntent::Semantic,
+            overlay,
+            component_scope,
+            cache,
+        )
+        .size
+        .width
     });
-    let measured = measure_node(view, width, WidthIntent::Semantic, overlay, None, cache);
+    let measured = measure_node(
+        view,
+        width,
+        WidthIntent::Semantic,
+        overlay,
+        component_scope,
+        cache,
+    );
     let prepared = prepare_node(&measured, constraints.height.definite(), cache);
     let root_clip = Rect::new(
         0,
@@ -53,7 +80,10 @@ pub(crate) fn layout_view_with_overlay_and_cache(
         nodes,
         size: prepared.size,
         physically_complete: prepared.complete,
+        component_roots: Default::default(),
+        parents: Vec::new(),
     };
+    tree.index_component_roots();
     if matches!(constraints.height, AxisConstraint::Unbounded) {
         tree.size.height = tree.node(root).rect.height;
     }

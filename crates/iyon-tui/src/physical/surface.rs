@@ -157,6 +157,17 @@ impl Surface {
         cropped
     }
 
+    /// Clears a rectangular region before an incremental subtree composite.
+    pub(crate) fn clear_rect(&mut self, rect: crate::geometry::Rect) {
+        let right = rect.right().min(self.width());
+        let bottom = rect.bottom().min(self.height());
+        for y in rect.y.min(self.height())..bottom {
+            for x in rect.x.min(self.width())..right {
+                *self.get_mut(x, y) = PhysicalCell::transparent();
+            }
+        }
+    }
+
     /// Clear the whole glyph covering `(x, y)` so a later 1-cell write cannot
     /// leave a leader claiming a continuation that now belongs to someone else.
     pub(crate) fn clear_glyph_at(&mut self, x: u16, y: u16) {

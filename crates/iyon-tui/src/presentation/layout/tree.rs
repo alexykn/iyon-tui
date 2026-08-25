@@ -56,6 +56,8 @@ pub(crate) struct LayoutTree {
     pub(crate) nodes: Vec<LayoutNode>,
     pub(crate) size: Size,
     pub(crate) physically_complete: bool,
+    pub(crate) component_roots: HashMap<ComponentId, LayoutNodeId>,
+    pub(crate) parents: Vec<Option<LayoutNodeId>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +70,7 @@ pub(crate) struct ComponentGeometry {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ComponentGeometryMap {
     pub(crate) entries: HashMap<ComponentId, ComponentGeometry>,
+    pub(crate) roots: HashMap<ComponentId, LayoutNodeId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +133,15 @@ impl SignedRect {
     }
 }
 
+fn translate_rect(rect: Rect, dx: i32, dy: i32) -> Rect {
+    Rect::new(
+        (i32::from(rect.x) + dx).clamp(0, i32::from(u16::MAX)) as u16,
+        (i32::from(rect.y) + dy).clamp(0, i32::from(u16::MAX)) as u16,
+        rect.width,
+        rect.height,
+    )
+}
+
 fn contains(outer: Rect, inner: Rect) -> bool {
     if inner.is_empty() {
         return inner.x >= outer.x
@@ -148,11 +160,108 @@ impl LayoutTree {
         &self.nodes[id.0]
     }
 
+    pub(crate) fn index_component_roots(&mut self) {
+        self.component_roots.clear();
+        self.parents = vec![None; self.nodes.len()];
+        self.collect_component_roots(self.root, None);
+    }
+
+    fn collect_component_roots(&mut self, id: LayoutNodeId, parent: Option<LayoutNodeId>) {
+        self.parents[id.0] = parent;
+        let node = &self.nodes[id.0];
+        if let Some(component) = node.component {
+            self.component_roots.insert(component, id);
+        }
+        let children = node.children.clone();
+        for child in children {
+            self.collect_component_roots(child, Some(id));
+        }
+    }
+
+    pub(crate) fn path_to_root(&self, id: LayoutNodeId) -> Vec<LayoutNodeId> {
+        let mut path = Vec::new();
+        let mut current = Some(id);
+        while let Some(node) = current {
+            path.push(node);
+            current = self.parents.get(node.0).copied().flatten();
+        }
+        path.reverse();
+        path
+    }
+
+    /// Replaces a component's content subtree in place when its layout shape
+    /// and geometry remain unchanged. Parent and sibling node ids stay stable,
+    /// so the paint cache can reuse every clean sibling surface.
+    pub(crate) fn patch_component_subtree(
+        &mut self,
+        component: ComponentId,
+        replacement: &LayoutTree,
+    ) -> bool {
+        let Some(component_root) = self.component_roots.get(&component).copied() else {
+            return false;
+        };
+        let Some(old_child) = self.nodes[component_root.0].children.first().copied() else {
+            return false;
+        };
+        let old_ids = self.preorder_ids(old_child);
+        let new_ids = replacement.preorder_ids(replacement.root);
+        if old_ids.len() != new_ids.len() {
+            return false;
+        }
+        let old_origin = self.nodes[old_child.0].rect;
+        let old_clip = self.nodes[old_child.0].clip_rect;
+        for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
+            let old_node = &self.nodes[old_id.0];
+            let new_node = &replacement.nodes[new_id.0];
+            if old_node.children.len() != new_node.children.len()
+                || old_node.component != new_node.component
+            {
+                return false;
+            }
+        }
+        let replacement_root = &replacement.nodes[replacement.root.0];
+        self.nodes[component_root.0].view_id = replacement_root.view_id;
+        self.nodes[component_root.0].paint_cacheable = replacement_root.paint_cacheable;
+        for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
+            let old_node = &self.nodes[old_id.0];
+            let new_node = &replacement.nodes[new_id.0];
+            let dx = i32::from(old_origin.x);
+            let dy = i32::from(old_origin.y);
+            let mut patched = new_node.clone();
+            patched.rect = translate_rect(patched.rect, dx, dy);
+            patched.content_rect = translate_rect(patched.content_rect, dx, dy);
+            patched.clip_rect = translate_rect(patched.clip_rect, dx, dy)
+                .intersection(old_clip)
+                .unwrap_or(Rect::new(old_clip.x, old_clip.y, 0, 0));
+            patched.children = old_node.children.clone();
+            self.nodes[old_id.0] = patched;
+        }
+        self.physically_complete &= replacement.physically_complete;
+        debug_assert!(self.validate(), "invalid patched layout tree: {self:?}");
+        true
+    }
+
+    fn preorder_ids(&self, root: LayoutNodeId) -> Vec<LayoutNodeId> {
+        let mut ids = Vec::new();
+        self.collect_preorder(root, &mut ids);
+        ids
+    }
+
+    fn collect_preorder(&self, id: LayoutNodeId, ids: &mut Vec<LayoutNodeId>) {
+        ids.push(id);
+        for child in &self.nodes[id.0].children {
+            self.collect_preorder(*child, ids);
+        }
+    }
+
     pub(crate) fn component_geometry(&self) -> ComponentGeometryMap {
         let mut entries = HashMap::new();
         let root = SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
         self.collect_component_geometry(self.root, 0, root, &mut entries);
-        ComponentGeometryMap { entries }
+        ComponentGeometryMap {
+            entries,
+            roots: self.component_roots.clone(),
+        }
     }
 
     fn collect_component_geometry(

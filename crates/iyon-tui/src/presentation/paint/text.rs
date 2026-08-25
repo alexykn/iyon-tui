@@ -29,7 +29,7 @@ pub(crate) struct CompiledTextRow {
     pub(crate) width: usize,
 }
 
-impl ViewCompiler {
+impl ViewCompiler<'_> {
     pub(crate) fn paint_text(
         &self,
         text: &TextView,

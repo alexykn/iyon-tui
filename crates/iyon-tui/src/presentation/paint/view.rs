@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     Theme,
+    component::ComponentId,
     geometry::Rect,
     perf::{self, Counter},
     physical::{PhysicalStyle, Surface},
@@ -122,6 +123,56 @@ impl ViewPainter {
         cache: &mut PaintCache,
     ) -> Surface {
         self.paint_tree_with_style_and_cache(compiler, tree, PhysicalStyle::default(), cache)
+    }
+
+    /// Repaints one component root into an existing frame surface. The
+    /// retained layout tree supplies the ancestor style context and stable
+    /// coordinates, so clean sibling surfaces are neither painted nor
+    /// composited again.
+    pub(crate) fn paint_component_into(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        component: ComponentId,
+        surface: &mut Surface,
+        cache: &mut PaintCache,
+    ) -> bool {
+        let Some(component_root) = tree.component_roots.get(&component).copied() else {
+            return false;
+        };
+        let path = tree.path_to_root(component_root);
+        if path.is_empty() {
+            return false;
+        }
+        let mut inherited = PhysicalStyle::default();
+        let mut context = compiler.style_context(tree.node(tree.root).style.component_scope);
+        for ancestor in path.iter().copied().take(path.len().saturating_sub(1)) {
+            let node = tree.node(ancestor);
+            let node_context = context.enter_node(
+                &node.style.style_states,
+                &node.style.style_facts,
+                compiler.style_context(node.style.component_scope),
+            );
+            inherited = compiler.theme.resolve_text_style(
+                inherited,
+                &node.style.decoration.text_style,
+                &node_context,
+            );
+            context = node_context.for_descendant();
+        }
+        let node = tree.node(component_root);
+        let painted = self.paint_node(
+            compiler,
+            tree,
+            component_root,
+            inherited,
+            context,
+            cache,
+            false,
+        );
+        surface.clear_rect(node.rect);
+        surface.composite(&painted, node.rect.x, node.rect.y);
+        true
     }
 
     pub(crate) fn paint_tree_with_style(

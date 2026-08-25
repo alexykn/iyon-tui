@@ -6,6 +6,7 @@ use crate::{
     interaction::MountedCapabilities,
     presentation::layout::{
         ComponentGeometryMap, LayoutCache, LayoutTree, layout_view_with_overlay_and_cache,
+        layout_view_with_overlay_and_cache_in_scope,
     },
 };
 
@@ -39,6 +40,41 @@ pub(crate) fn layout_resolved_scene_with_cache(
     ResolvedSceneLayout { tree, components }
 }
 
+impl ResolvedSceneLayout {
+    /// Re-lays out one component content root and patches it in place when its
+    /// measured shape/geometry is unchanged. A geometry change returns false
+    /// so the caller can perform the authoritative full layout pass.
+    pub(crate) fn patch_component_with_cache(
+        &mut self,
+        component: ComponentId,
+        view: &crate::presentation::View,
+        overlay: &super::ResolutionOverlay,
+        cache: &mut LayoutCache,
+    ) -> bool {
+        let Some(component_root) = self.components.roots.get(&component).copied() else {
+            return false;
+        };
+        let Some(child) = self.tree.node(component_root).children.first().copied() else {
+            return false;
+        };
+        let old_size = self.tree.node(child).rect.size();
+        let replacement = layout_view_with_overlay_and_cache_in_scope(
+            view,
+            LayoutConstraints::width_only(old_size.width),
+            overlay,
+            Some(component),
+            cache,
+        );
+        if replacement.size != old_size
+            || !self.tree.patch_component_subtree(component, &replacement)
+        {
+            return false;
+        }
+        self.components = self.tree.component_geometry();
+        true
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayoutSync {
     Stable,
@@ -61,29 +97,42 @@ impl LayoutSynchronizer {
         self.delivered.retain(|id, _| graph.contains(*id));
         let mut dirty = false;
         for node in &graph.nodes {
-            let Some(handler) = capabilities
-                .get(node.id)
-                .and_then(|caps| caps.layout_changed.as_ref())
-                .cloned()
-            else {
-                self.delivered.remove(&node.id);
-                continue;
-            };
-            let Some(entry) = geometry.entries.get(&node.id) else {
-                unreachable!("mounted component has no layout geometry");
-            };
-            let size = entry.content.size();
-            if self.delivered.get(&node.id).copied() == Some(size) {
-                continue;
-            }
-            self.delivered.insert(node.id, size);
-            registry.with_any_mut(node.id, |component| handler(component, size));
-            dirty = true;
+            dirty |= self.synchronize_component(node.id, capabilities, geometry, registry)
+                == LayoutSync::Dirty;
         }
         if dirty {
             LayoutSync::Dirty
         } else {
             LayoutSync::Stable
         }
+    }
+
+    /// Synchronizes only one retained component's layout callback. This is
+    /// the R6b path for a topology-preserving local scope update.
+    pub(crate) fn synchronize_component(
+        &mut self,
+        id: ComponentId,
+        capabilities: &MountedCapabilities,
+        geometry: &ComponentGeometryMap,
+        registry: &mut ComponentRegistry,
+    ) -> LayoutSync {
+        let Some(handler) = capabilities
+            .get(id)
+            .and_then(|caps| caps.layout_changed.as_ref())
+            .cloned()
+        else {
+            self.delivered.remove(&id);
+            return LayoutSync::Stable;
+        };
+        let Some(entry) = geometry.entries.get(&id) else {
+            unreachable!("mounted component has no layout geometry");
+        };
+        let size = entry.content.size();
+        if self.delivered.get(&id).copied() == Some(size) {
+            return LayoutSync::Stable;
+        }
+        self.delivered.insert(id, size);
+        registry.with_any_mut(id, |component| handler(component, size));
+        LayoutSync::Dirty
     }
 }

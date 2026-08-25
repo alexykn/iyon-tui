@@ -38,8 +38,8 @@ pub(crate) use cache::LayoutCache;
 #[cfg(test)]
 pub(crate) use engine::layout_view_with_overlay;
 pub(crate) use engine::{
-    layout_view, layout_view_with_overlay_and_cache, measure_view, measure_view_with_overlay,
-    measure_view_with_overlay_and_cache,
+    layout_view, layout_view_with_overlay_and_cache, layout_view_with_overlay_and_cache_in_scope,
+    measure_view, measure_view_with_overlay, measure_view_with_overlay_and_cache,
 };
 pub(crate) use tree::{ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree};
 
@@ -99,13 +99,13 @@ pub(crate) struct LayoutBlock {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ViewCompiler {
+pub(crate) struct ViewCompiler<'a> {
     pub(crate) theme: ThemeResolver,
     pub(crate) focused: Option<ComponentId>,
-    pub(crate) graph: Option<MountGraph>,
+    pub(crate) graph: Option<&'a MountGraph>,
 }
 
-impl ViewCompiler {
+impl<'a> ViewCompiler<'a> {
     pub(crate) fn new(theme: &Theme) -> Self {
         Self {
             theme: ThemeResolver::new(theme),
@@ -117,12 +117,12 @@ impl ViewCompiler {
     pub(crate) fn with_interaction(
         theme: &Theme,
         focused: Option<ComponentId>,
-        graph: &MountGraph,
+        graph: &'a MountGraph,
     ) -> Self {
         Self {
             theme: ThemeResolver::new(theme),
             focused,
-            graph: Some(graph.clone()),
+            graph: Some(graph),
         }
     }
 
@@ -135,7 +135,7 @@ impl ViewCompiler {
     }
 
     pub(crate) fn style_context(&self, scope: Option<ComponentId>) -> StyleContext {
-        StyleContext::for_scope(scope, self.focused, self.graph.as_ref())
+        StyleContext::for_scope(scope, self.focused, self.graph)
     }
 
     pub(crate) fn compile(&self, view: &View, max_width: u16) -> LayoutBlock {

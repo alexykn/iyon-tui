@@ -671,7 +671,7 @@ fn layout_performance_probe() {
     }
 }
 
-impl ViewCompiler {
+impl ViewCompiler<'_> {
     fn compile_bounded_for_probe(&self, view: &View, size: Size) -> LayoutBlock {
         let tree = self.layout_tree(view, LayoutConstraints::bounded(size));
         let surface = ViewPainter.paint_tree(self, &tree);

@@ -5,8 +5,8 @@
 **Status:** proposed architecture and migration handoff  
 **Current repository:** `alexykn/iyon`  
 **Recommended destination:** rename the current repository to `alexykn/iyon-tui`; extract the application/kernel side into a new `alexykn/iyon` repository  
-**Transport sequence:** behavior-neutral repository separation first; safe N-API migration second  
-**PERF relationship:** preserve PERF-12 T1–T13 and PERF-12 T13.1 R0–R10; keep T13.1 R6b blocked until the post-extraction transport is finalized
+**Transport sequence:** behavior-neutral repository separation first; safe N-API migration second; retain direct FFI behind an explicit feature gate thereafter
+**PERF relationship:** preserve PERF-12 T1–T13 and PERF-12 T13.1 R0–R10; keep T13.1 R6b blocked until the post-extraction transport is finalized; finish PERF-12 against the N-API default and gated direct-FFI oracle
 
 ---
 
@@ -518,8 +518,8 @@ The separation is divided into independently reviewable tranches. Every tranche 
 | **S4** | Extract/rename TypeScript TUI package and native loader | `@iyon/tui` builds/tests standalone; external fixture imports public package only |
 | **S5** | Convert `iyon` application repository to external consumer | App builds and tests against exact `@iyon/tui` and Rust dependency versions; no deep imports |
 | **S6** | Move TUI native transport from unsafe Bun FFI to generated safe N-API | Differential correctness and structural gates green; performance delta measured honestly |
-| **S7** | Delete obsolete unsafe/bootstrap machinery only after S6 adoption | No `bun:ffi`, pointer bootstrap, or unsafe generated export surface remains |
-| **S8** | Resume deferred PERF work on final repository/transport | T13.1 R6b, PERF-12 T14/T15, then conditional T16 execute in order |
+| **S7** | Retain direct FFI as an explicit qualification/oracle/rollback feature; do not delete the path | N-API is the default; the default build has no FFI/pointer surface, while the gated direct-FFI build remains available and tested |
+| **S8** | Resume deferred PERF work against the N-API default and gated direct-FFI oracle | T13.1 R6b, PERF-12 T14/T15, then conditional non-transport cleanup execute in order; no later S tranche removes the gated FFI path |
 
 Order is mandatory. Do not combine repository extraction and transport replacement in one tranche.
 
@@ -1034,18 +1034,16 @@ status/error mapping
 full-schema materializer coverage
 ```
 
-## 12.5 Temporary dual-backend qualification
+## 12.5 Dual-backend qualification and retention
 
-During S6 only, the extracted TUI repository may build both:
+Starting in S6 and continuing through all later S tranches, the extracted TUI repository must retain both lowering arms:
 
 ```text
-current direct-FFI backend
-new N-API backend
+feature-gated direct-FFI backend  # oracle / qualification / rollback only
+ default generated N-API backend  # supported product path
 ```
 
-This is a qualification mechanism, not a permanent product architecture.
-
-Both backends consume the same semantic DAG, retained runtime, fixtures, counters, and host. A build switch selects the lowering. No application code or public API changes between arms.
+This is a deliberate transport boundary, not a temporary permission to delete the direct arm. The default package and addon expose only the safe N-API contract; an explicit native/build feature enables the private direct-FFI qualification surface. Both backends consume the same semantic DAG, retained runtime, fixtures, counters, and host. No application code or public API changes between arms.
 
 ## 12.6 N-API adoption gates
 
@@ -1089,65 +1087,65 @@ If N-API regresses an important workload, do not silently accept or immediately 
 
 ---
 
-# 13. Tranche S7 — remove unsafe FFI after adoption
+# 13. Tranche S7 — retain direct FFI behind an explicit feature gate
 
-Only after S6 gates pass:
+S7 and every later S tranche must **not remove the direct-FFI path**. N-API is the default supported lowering; direct FFI remains private, feature-gated, and available for qualification, oracle comparison, and rollback.
 
-```text
-delete bun:ffi bindings
-delete NativeAbiPointers
-delete runtime_ptr/host-pointer exposure
-delete bootstrap function pointer table
-delete unsafe generated extern exports
-delete handwritten pointer-map maintenance
-delete FFI-only conformance fixtures
-remove Bun-FFI-only package/runtime requirements
-```
-
-Keep:
+S7 may harden the split:
 
 ```text
-canonical ABI/schema model where useful
-N-API generated bindings
-Direct N-API cold/oracle decoder
-retained semantic runtime
-all PERF-12 transport-independent improvements
+keep the canonical ABI/schema and generated N-API bindings
+keep the direct-FFI implementation behind the explicit `direct-ffi` feature
+keep direct-FFI symbols absent from the default addon and public TypeScript contract
+keep separate conformance/benchmark arms for both transports
+keep all PERF-12/T13.1 transport-independent improvements shared
 ```
 
-Run a banned-surface audit:
+The default-build audit must prove:
 
 ```text
-no linkSymbols or CFunction imports
-no raw native pointer fields in TS contracts
-no generated pub unsafe extern transport functions
-no application exports in TUI addon
+no Bun FFI import or pointer bootstrap in the default package/addon surface
+no raw native pointer fields in public TypeScript contracts
+N-API generated methods are the default lowering
+application exports remain absent
 ```
 
-The Rust implementation may still contain isolated `unsafe` required by terminal/platform libraries or audited N-API internals. The goal is not a meaningless repository-wide zero-unsafe slogan; it is removal of the application-maintained raw FFI ABI and borrowed-pointer surface.
+The feature-build audit must prove:
+
+```text
+`direct-ffi` explicitly enables the private legacy qualification surface
+its symbols are not reachable through the public @iyon/tui API
+its ABI/behavior remains covered as the rollback/oracle arm
+```
+
+Do not interpret the absence of FFI symbols in the default artifact as permission to delete the feature implementation. Any future proposal to remove it requires a separate explicit transport decision after PERF-12 T15 and is outside S7 and the later repository-extraction tranches.
 
 ---
 
-# 14. Tranche S8 — resume PERF work
+# 14. Tranche S8 — resume PERF work with both transport arms retained
 
-Repository and transport finalization precede deferred optimization work.
+Repository and transport finalization precede deferred optimization work. N-API remains the default product lowering; the feature-gated direct-FFI arm remains the private oracle/rollback comparison throughout.
 
 Required sequence:
 
 ```text
 1. T13.1 R6b
-   incremental MountGraph/layout/paint frontier against final N-API commit boundary
+   incremental MountGraph/layout/paint frontier against the N-API default,
+   with direct-FFI parity retained for qualification
 
 2. PERF-12 T14
    randomized DAG differential tests, fuzzing, cross-transport/lifetime hardening
 
 3. PERF-12 T15
-   authoritative process-isolated comparison and adoption decision
+   authoritative process-isolated comparison of N-API and the gated direct-FFI
+   oracle, plus all required completed alternatives and adoption decision
 
 4. PERF-12 T16
-   conditional dead recipe/transport cleanup only after adoption
+   conditional cleanup only for proven-dead non-transport machinery; preserve
+   the direct-FFI feature path
 ```
 
-T15 must measure the T13.1-adopted execution system and final N-API transport. Do not publish a decision run over the pre-extraction mixed addon or temporary dual-backend state.
+T15 must measure the T13.1-adopted execution system and final N-API transport, while retaining the direct-FFI arm as the comparison/oracle. Do not publish a decision run over the pre-extraction mixed addon, and do not treat the deliberate two-arm final shape as a temporary state to be deleted.
 
 ---
 
@@ -1287,11 +1285,11 @@ Treat this as an acceptance property, not merely aesthetics.
 
 **Mitigation:** this is intentional architectural friction. Pin exact versions and keep public contracts small. Do not defeat the boundary with local deep imports.
 
-## 17.5 Temporary unsafe FFI remains after extraction
+## 17.5 Feature-gated direct FFI remains after extraction
 
-**Risk:** agents continue optimizing around it during S3–S5.
+**Risk:** agents accidentally make the legacy transport the default, expose its pointers publicly, or delete the rollback/oracle arm before PERF-12 is finished.
 
-**Mitigation:** mark it private and transitional in `ARCHITECTURE.md`; prohibit public API changes around transport details; begin S6 immediately after consumer cutover.
+**Mitigation:** N-API is the only default package/addon lowering; the direct-FFI implementation is private and enabled only by an explicit feature; both arms share the semantic/runtime architecture and remain covered by qualification tests. Prohibit public API changes around transport details and preserve the feature through all later S tranches.
 
 ## 17.6 N-API call overhead
 
@@ -1397,7 +1395,8 @@ known issue/PR migration disposition
 [ ] two independent addon artifacts
 [ ] no shared giant NativeAddon contract
 [ ] N-API transport qualified after extraction
-[ ] raw pointer/bootstrap Bun FFI removed after evidence
+[ ] default addon has no raw pointer/bootstrap Bun FFI surface
+[ ] direct FFI remains available only behind the explicit qualification feature
 [ ] no borrowed pointer retained across calls
 ```
 
@@ -1433,7 +1432,7 @@ Preserve the current repository as the historical and technical home of the gene
 
 Make each repository own one native addon and one public responsibility. The TUI addon and TypeScript facade must contain no application concepts. The application addon must contain no TUI framework implementation. TypeScript public APIs are the only integration surface.
 
-Perform the repository separation without changing behavior. Only after both repositories build and test independently should the standalone TUI repository replace its unsafe Bun FFI lowering with generated safe N-API bindings. Preserve every transport-independent PERF-12 and T13.1 invariant throughout. Then run T13.1 R6b and the remaining PERF-12 hardening/decision work against the final repository and transport shape.
+Perform the repository separation without changing behavior. Only after both repositories build and test independently should the standalone TUI repository make generated safe N-API the default lowering. Preserve the direct Bun FFI implementation behind an explicit private feature for qualification, oracle comparison, and rollback; do not remove it in S7 or later repository-extraction tranches. Preserve every transport-independent PERF-12 and T13.1 invariant throughout. Then finish T13.1 R6b and the remaining PERF-12 hardening/decision work against the final N-API default while retaining the gated direct-FFI arm.
 
 The objective is not merely cleaner code. It is a filesystem and dependency graph that make the correct architecture the easiest path for both humans and AI agents, while making plausible-but-wrong product/framework coupling physically difficult to create.
 
@@ -1553,4 +1552,4 @@ The objective is not merely cleaner code. It is a filesystem and dependency grap
 
 The raw smoke comparison in `packages/iyon-tui/bench/PERF-12-s6-napi-transport.jsonl` uses four fresh Bun processes per candidate, 50 warmup operations and 200 measured operations per case, with the same Bun/Rust/fixtures and retained route (`retained = 200`, `fallback = 0`) in every record. Safe N-API versus the clean S5 direct-FFI baseline medians are: `shared_path@20` 46,917 ns vs 41,375 ns (+13.4%); `shared_path@200` 56,791 ns vs 54,792 ns (+3.6%); `text_layout@20` 40,000 ns vs 39,916 ns (+0.2%); `text_layout@200` 39,958 ns vs 39,833 ns (+0.3%). These are measured deltas, not a claim that N-API is universally faster; the small shared-path dispatch case remains an observed regression. The separate safe batching probe (`PERF-12-s6-napi-dispatch.jsonl`, 20 rounds × 10,000 calls) measures 141.06 ns per individual N-API call versus 10.11 ns per operation inside one safe native batch (~14x dispatch-density reduction). No batching result is silently promoted into a generic production VM, and no S7 cleanup/adoption decision is claimed from this smoke profile.
 
-**7. Status.** **S6 COMPLETE.** The standalone TUI now defaults to generated safe N-API over opaque native handles, while every transport-independent PERF-12/T13 algorithm and invariant remains active and green. Differential correctness, structural safety, typed-buffer lifetime, ownership, generator, and independent-build gates pass; performance deltas and the remaining dispatch-density regression are recorded honestly, with the direct FFI surface feature-gated for qualification and S7 cleanup held until the final transport adoption decision.
+**7. Status.** **S6 COMPLETE.** The standalone TUI now defaults to generated safe N-API over opaque native handles, while every transport-independent PERF-12/T13 algorithm and invariant remains active and green. Differential correctness, structural safety, typed-buffer lifetime, ownership, generator, and independent-build gates pass; performance deltas and the remaining dispatch-density regression are recorded honestly. Direct FFI is intentionally retained behind the explicit qualification feature for rollback/oracle use; S7 and later S tranches must preserve that gated path while PERF-12 is finished.

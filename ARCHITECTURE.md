@@ -13,7 +13,7 @@ consumer after the repository separation completes.
 TypeScript public facade        packages/iyon-tui/src/**   (`@iyon/tui`)
         |  private native contract seam (src/native.ts)
 generated safe N-API addon       crates/iyon-tui-native
-        | direct-FFI symbols remain feature-gated for S6 qualification only
+        | direct-FFI symbols remain feature-gated for qualification/oracle/rollback
         |
 Rust framework                  crates/iyon-tui
 ```
@@ -27,8 +27,9 @@ Rust framework                  crates/iyon-tui
   transport is generated safe N-API over opaque native session/host objects;
   the generated semantic DAG, leases, NativeRef hints, PersistentSeq edits,
   payload lanes, and stream specialization are transport-independent. The
-  legacy direct-FFI symbols are feature-gated for S6 qualification only and
-  are not part of the package contract.
+  legacy direct-FFI symbols remain feature-gated for qualification, oracle
+  comparison, and rollback through later PERF/S tranches; they are not part of
+  the default addon or public package contract.
 - Application code in `alexykn/iyon` consumes the framework only through public
   surfaces: the `@iyon/tui` package or its application-owned `iyon:tui` alias.
   Deep imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI

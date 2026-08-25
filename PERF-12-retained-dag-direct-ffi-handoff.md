@@ -12,6 +12,22 @@
 **Candidate name:** **Retained DAG Direct FFI** (`retained_dag_ffi`)  
 **Core rule:** **persist identity; transport only newly-created semantic work; never persist a second transport graph**
 
+## Post-extraction transport status (S6 directive)
+
+This handoff's historical candidate name is **Retained DAG Direct FFI**, but the standalone `@iyon/tui` repository now uses generated safe N-API as the **default physical lowering**. The retained DAG, execution, lifetime, cache, lease, derivation, wide-edit, payload, stream, boundary, and host-atomicity architecture remains the PERF-12 implementation; S6 changed the lowering, not those algorithms.
+
+The direct-FFI implementation is **not to be removed by S7 or later repository-extraction tranches**. It is retained behind the explicit private `direct-ffi` feature as:
+
+```text
+qualification arm
+oracle/comparison arm
+rollback arm
+```
+
+The default package/addon must expose only the generated N-API contract and no raw pointer/bootstrap surface. The feature-gated direct arm must remain buildable and tested against the same semantic/runtime architecture. Any future direct-FFI removal would require a separate explicit transport decision after PERF-12 T15; it is not part of repository extraction or conditional T16 cleanup.
+
+**PERF-12 is not finished by the S6 transport qualification.** T14 hardening, the full T15 authoritative matrix/adoption decision, and any applicable T16 non-transport cleanup still must run. The S6 smoke comparison is evidence for the N-API lowering only, not the final PERF-12 adoption result. Unless a section explicitly describes the current transport, references below to the “Direct FFI” candidate describe the historical retained-DAG architecture and its retained feature-gated comparison arm; they do not override the N-API default.
+
 ---
 
 # Exact implementation tranches
@@ -38,8 +54,8 @@ This experiment has **16 implementation tranches**. Each tranche below names the
 | **T12** | 12.9 | Transaction integrity: multi-branch DAG materialization `§43`; temporary lease transaction `§44`; host atomicity rule `§45`; stale hints `§46`; targeted one-retry recovery `§47`; recovery helper `§73`; failure injection suite `§118` | Common ancestors built once across branches; exactly one host mutation; every success/error/failure-injection path drains temporary leases; one bounded retry then authoritative fallback |
 | **T13** | 12.10 + 12.11 | Router and boundaries: cold/rebuilt router and budgets `§49`; every View-bearing boundary inventory `§77` (traced: `PERF-12-production-boundary-trace.md`); History `§78`; Components `§79`; ViewSlot/ScrollPane `§80`; Animations `§81`; dormant-node recovery test `§114`; multi-host test `§115` | No production boundary silently routes through Direct/fallback on retained traces; dormant-node and multi-host lifetime correct; initial cold render chooses best cold path directly without wasted retained prefix |
 | **T14** | 12.12 | Hardening: randomized DAG differential testing `§87`; cross-transport identity tests `§112`; fuzzing targets `§117`; full-schema coverage proof `§76`; banned-shortcut review `§107` | 100-seed differential suite, fuzz targets, and full-schema coverage green; no UAF, no retained borrowed pointer, no partial host mutation demonstrated under fault injection |
-| **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
-| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak, and ONLY for provably dead pending/recipe machinery that production can no longer reach (`§26`). This is not a rollback: every transport-independent PERF-12 win — the shared publication funnel, paged NativeRef table, weak-cache scavenging, retained text/style/diff payloads, PersistentSeq wide edits, derivation hints, and the §18 boundary routing landed in T6–T13 — is adopted architecture and MUST survive T16 intact. Final shape matches `§121` ownership map without regrowing a pending state machine |
+| **T15** | 12.13 | Authoritative comparison: phase visibility `§90`; structural counters `§91`; steady-state traces `§92`; benchmark matrix `§93`; large shared-subtree cutoff incl. cold-sidecar-gap case `§94`; multi-edit `§95`; cold `§97`; realistic agent trace `§99`; process isolation `§100`; statistics `§102`; result schema `§103`; adoption gates `§104`; memory gate recheck `§59` | Raw JSONL retained for every candidate, including default N-API and the feature-gated direct-FFI oracle; adopt/reject decided strictly by `§104` (realistic trace ≥10% over best prior candidate; no >3% credible common-case regression; cold within 5%; memory convergence). Report published regardless of outcome |
+| **T16** | 12.14 | Conditional cleanup: removal candidates `§26`; complexity interpretation `§120`; code ownership end-state `§121`; rejected-architecture guards `§122`–`§124` | Executed **only after** T15 adoption plus soak, and ONLY for provably dead non-transport pending/recipe machinery that production can no longer reach (`§26`). This is not permission to remove the direct-FFI feature: every transport-independent PERF-12 win — the shared publication funnel, paged NativeRef table, weak-cache scavenging, retained text/style/diff payloads, PersistentSeq wide edits, derivation hints, and the §18 boundary routing landed in T6–T13 — is adopted architecture and MUST survive T16 intact, and the gated direct-FFI arm remains available for oracle/rollback use. Final shape matches `§121` ownership map without regrowing a pending state machine |
 
 ## Registry rules
 

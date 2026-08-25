@@ -61,7 +61,7 @@ jobs:
             packages/iyon-runtime/tests/generated \
             packages/iyon-runtime/bench/generated \
             crates/iyon-native/tests/generated_view_abi.rs \
-            PERF-11-generated-abi-reference.md
+            docs/history/perf/PERF-11-generated-abi-reference.md
 
       - name: Stage and load native addon
         run: bun run native:stage

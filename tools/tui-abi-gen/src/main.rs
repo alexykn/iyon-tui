@@ -35,7 +35,7 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
-    "PERF-11-generated-abi-reference.md",
+    "docs/history/perf/PERF-11-generated-abi-reference.md",
 ];
 
 #[derive(Debug, Parser)]

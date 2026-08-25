@@ -1,6 +1,6 @@
 /* DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. */
 /* schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745 */
-/* generator_blake3 = 3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232 */
+/* generator_blake3 = 0b79288012c798d4cc0a43433ed9113b1e50283de95f86b6059047a63a057665 */
 #ifndef IYON_VIEW_ABI_H
 #define IYON_VIEW_ABI_H
 

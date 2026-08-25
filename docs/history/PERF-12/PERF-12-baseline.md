@@ -39,7 +39,7 @@ All transports in one Bun environment share one `NativeViewRuntime`; the semanti
 
 ## 2. PERF-11v4 result category
 
-**Category D — Candidate A wins.** Candidate A (`direct_7v2`, faithful 7v2 reconstruction) beat `native_11v3` on the realistic trace by 49.4% (ratio 1.977×) while Native Shadow won exact identity (0.099×), wide persistent edits (~0.46–0.49× replace/insert), and normal retained aggregate (0.780×). Source: `PERF-11v4-benchmark-report.md`.
+**Category D — Candidate A wins.** Candidate A (`direct_7v2`, faithful 7v2 reconstruction) beat `native_11v3` on the realistic trace by 49.4% (ratio 1.977×) while Native Shadow won exact identity (0.099×), wide persistent edits (~0.46–0.49× replace/insert), and normal retained aggregate (0.780×). Source: `../perf/PERF-11v4-benchmark-report.md`.
 
 Consequences for PERF-12 (`§105`): the stop condition does **not** apply — 11v3 is not a decisive realistic-trace winner. PERF-12 proceeds with the tranches.
 

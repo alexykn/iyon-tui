@@ -1,6 +1,6 @@
 # Repository separation S0 baseline
 
-This directory freezes the pre-separation state required by `IYON-TUI-REPOSITORY-SEPARATION-HANDOFF.md` §6.
+This directory freezes the pre-separation state required by `docs/history/REP-repository-separation.md` §6.
 
 - Source revision: `bd503b0382e34d74a38c562b9662d08c8c96f58a`
 - Source branch: `perf-refactor`

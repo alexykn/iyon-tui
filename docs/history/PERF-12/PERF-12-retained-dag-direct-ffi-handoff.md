@@ -71,7 +71,7 @@ This experiment has **16 implementation tranches**. Each tranche below names the
 
 ## Tranche implementation records (mandatory)
 
-Every completed tranche must append an **implementation record** to this document as a new subsection under `## Tranche implementation records`, titled `### T<N> implementation record`, following the exact convention established by the PERF-11v3 records (`§2.5`–`§2.16` of `PERF-11v3-bun-1.4-zero-encode-native-view-handoff.md`). A tranche without a conforming record is not complete, regardless of whether its code passes tests.
+Every completed tranche must append an **implementation record** to this document as a new subsection under `## Tranche implementation records`, titled `### T<N> implementation record`, following the exact convention established by the PERF-11v3 records (`§2.5`–`§2.16` of `../perf/PERF-11v3-bun-1.4-zero-encode-native-view-handoff.md`). A tranche without a conforming record is not complete, regardless of whether its code passes tests.
 
 Each record must contain, in order:
 

@@ -4032,9 +4032,9 @@ expression: "outputs.get(\"packages/iyon-tui/src/generated/view_abi_manifest.jso
     "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
-    "PERF-11-generated-abi-reference.md"
+    "docs/history/perf/PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "3ec191da668808743dbd8fc0c89380de5015a70d86dcacd7482e00571ef11232",
+  "generator_blake3": "0b79288012c798d4cc0a43433ed9113b1e50283de95f86b6059047a63a057665",
   "handles": [
     {
       "kind": null,

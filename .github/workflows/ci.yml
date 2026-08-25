@@ -30,7 +30,7 @@ jobs:
       - run: bun run check:bun-version
       - run: bun run check:tui-abi
       - run: cargo test -p tui-abi-gen
-      - run: git diff --exit-code -- crates/iyon-native/src/generated crates/iyon-native/include crates/iyon-native/tests/generated_view_abi.rs packages/iyon-runtime/src/tui/generated packages/iyon-runtime/tests/generated packages/iyon-runtime/bench/generated PERF-11-generated-abi-reference.md
+      - run: git diff --exit-code -- crates/iyon-native/src/generated crates/iyon-native/include crates/iyon-native/tests/generated_view_abi.rs packages/iyon-runtime/src/tui/generated packages/iyon-runtime/tests/generated packages/iyon-runtime/bench/generated docs/history/perf/PERF-11-generated-abi-reference.md
       - run: bun run typecheck:plugins
       - run: bun run typecheck
       - run: bun test plugins/providers packages/iyon-runtime/test/providers

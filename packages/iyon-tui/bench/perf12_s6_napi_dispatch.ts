@@ -1,6 +1,10 @@
 import { native } from "../src/native.ts";
 
 const session = native.tuiViewAbiSession?.();
+const gitSha = process.env.PERF12_GIT_SHA ?? "unknown";
+const nativeArtifactSha256 = process.env.PERF12_NATIVE_SHA256 ?? "unknown";
+const rustcVersion = process.env.PERF12_RUSTC_VERSION ?? "unknown";
+const target = process.env.PERF12_TARGET ?? "unknown";
 if (session === undefined || session.tuiPerfNapiBatchRuntimeNoop === undefined) {
   throw new Error("S6 N-API dispatch probe is unavailable");
 }
@@ -31,8 +35,12 @@ console.log(JSON.stringify({
   benchmark_version: "PERF-12-S6-dispatch",
   profile: "smoke",
   candidate: "napi",
+  git_sha: gitSha,
   bun_version: Bun.version,
   bun_revision: Bun.revision,
+  rustc_version: rustcVersion,
+  target,
+  native_artifact_sha256: nativeArtifactSha256,
   count,
   rounds: perCall.length,
   per_call_median_ns: median(perCall),

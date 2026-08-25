@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { defineTool } from "@iyon/sdk";
 import { installIyonVirtualModules } from "../../src/virtual-modules.ts";
-import { View } from "../../src/tui/index.ts";
+import { View } from "../../../iyon-tui/src/index.ts";
 
 installIyonVirtualModules();
 

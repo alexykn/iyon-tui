@@ -14,12 +14,12 @@
  * execution substrate's memory behavior is what is under test.
  */
 
-import { RetainedExecutionRuntime } from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { state, trackedStateSubscriberCount } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
-import { View } from "../src/tui/values/view.ts";
+import { RetainedExecutionRuntime } from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { state, trackedStateSubscriberCount } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
 
 const CYCLES = 100_000;
 const LIVE_WINDOW = 64;

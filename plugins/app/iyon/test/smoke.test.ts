@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { installIyonVirtualModules } from "@iyon/runtime";
-import { createAppHarness } from "@iyon/runtime/tui";
+import { createAppHarness } from "@iyon/tui";
 import { discoverPackageRoot, PackageLoader, selectApp } from "@iyon/plugins";
 import type { IyonApp } from "../src/app.ts";
 

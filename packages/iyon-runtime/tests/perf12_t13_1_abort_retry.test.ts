@@ -22,14 +22,14 @@ import {
   RetainedExecutionRuntime,
   executionCounterSnapshot,
   type ScopeProjection,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { state } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
-import { BRIDGE_VIEW_KIND } from "../src/tui/ir.ts";
-import { View, nodeForBridge } from "../src/tui/values/view.ts";
-import type { ViewComponent } from "../src/tui/execution.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
+import { BRIDGE_VIEW_KIND } from "../../iyon-tui/src/ir.ts";
+import { View, nodeForBridge } from "../../iyon-tui/src/values/view.ts";
+import type { ViewComponent } from "../../iyon-tui/src/execution.ts";
 
 function tracked<P = void>(render: (props: P) => View): { component: ViewComponent<P>; calls: () => number } {
   let calls = 0;

@@ -16,7 +16,7 @@
  *   - nodeForBridge is a WeakMap lookup only
  *   - no pending create/patch backings, no transport own-properties
  */
-import type { NativeHandleId } from "../src/tui/types.ts";
+import type { NativeHandleId } from "../../iyon-tui/src/types.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
   BRIDGE_DIFF_LINE_TERMINATION,
@@ -50,10 +50,10 @@ import {
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
-} from "../src/tui/ir.ts";
-import { insets, Insets } from "../src/tui/values/geometry.ts";
-import { StyleSpec } from "../src/tui/values/style.ts";
-import { TextSpan, type HorizontalAlign, type WrapMode } from "../src/tui/values/text.ts";
+} from "../../iyon-tui/src/ir.ts";
+import { insets, Insets } from "../../iyon-tui/src/values/geometry.ts";
+import { StyleSpec } from "../../iyon-tui/src/values/style.ts";
+import { TextSpan, type HorizontalAlign, type WrapMode } from "../../iyon-tui/src/values/text.ts";
 
 type ChildBuilder = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };

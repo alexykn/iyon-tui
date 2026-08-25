@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { installIyonVirtualModules } from "../../../../packages/iyon-runtime/src/virtual-modules.ts";
-import { nodeForBridge } from "../../../../packages/iyon-runtime/src/tui/values/view.ts";
+import { nodeForBridge } from "../../../../packages/iyon-tui/src/values/view.ts";
 installIyonVirtualModules();
 const { bashTool } = await import("../src/execute.ts");
 const context = (cwd: string, signal = new AbortController().signal) => ({ cwd, workspace: { root: cwd }, signal, update: async () => undefined } as never);

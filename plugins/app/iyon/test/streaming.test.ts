@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { installIyonVirtualModules } from "@iyon/runtime";
-import { Scene, Tui, View } from "@iyon/runtime/tui";
+import { Scene, Tui, View } from "@iyon/tui";
 import { AssistantStreamBuffer, NativeAssistantStream } from "../src/streaming.ts";
 
 installIyonVirtualModules();

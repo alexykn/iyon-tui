@@ -19,9 +19,9 @@
  * 50 measured rounds; per-op medians reported from block medians.
  */
 
-import { View as ProdView, nodeForBridge, textRowsForHarness } from "../src/tui/values/view.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
-import { StyleSpec } from "../src/tui/values/style.ts";
+import { View as ProdView, nodeForBridge, textRowsForHarness } from "../../iyon-tui/src/values/view.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
+import { StyleSpec } from "../../iyon-tui/src/values/style.ts";
 import { View as V7View, nodeForBridge as nodeForBridgeV7, textRowsForHarness as textRowsV7 } from "./perf12_view_7v2.ts";
 
 interface Case {

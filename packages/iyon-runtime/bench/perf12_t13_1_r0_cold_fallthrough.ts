@@ -17,9 +17,9 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { Style } from "../src/tui/values/style.ts";
-import { Insets } from "../src/tui/values/geometry.ts";
-import { View, type View as ViewValue } from "../src/tui/values/view.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import { Insets } from "../../iyon-tui/src/values/geometry.ts";
+import { View, type View as ViewValue } from "../../iyon-tui/src/values/view.ts";
 import {
   composeBackground,
   composeClampRows,
@@ -33,8 +33,8 @@ import {
   composeStyledText,
   composeText,
   composeVertical,
-} from "../src/tui/internal-composition.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
+} from "../../iyon-tui/src/internal-composition.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
 
 const ROUNDS = 30;
 const OPS_PER_ROUND = 2_000;
@@ -43,7 +43,7 @@ const WARMUP_OPS = 5_000;
 // Production-like chrome skeleton (probe harness shape): spacer + styled
 // working hint + composer shell + clamped footer text, all decorated.
 /** Branded handle id; the value is irrelevant to construction cost. */
-const HANDLE = 77 as never as import("../src/tui/types.ts").NativeHandleId;
+const HANDLE = 77 as never as import("../../iyon-tui/src/types.ts").NativeHandleId;
 
 function buildDirect(footer: string, effort: string): ViewValue {
   return View.vertical((column) => {
@@ -85,7 +85,7 @@ function buildComposed(footer: string, effort: string): ViewValue {
 
 // Sanity: both arms must produce equivalent semantics before timing.
 {
-  const { nodeForBridge } = await import("../src/tui/values/view.ts");
+  const { nodeForBridge } = await import("../../iyon-tui/src/values/view.ts");
   const strip = (_key: string, value: unknown): unknown => (_key === "id" ? undefined : value);
   const a = JSON.stringify(nodeForBridge(buildDirect("ready", "high")), strip);
   const b = JSON.stringify(nodeForBridge(buildComposed("ready", "high")), strip);

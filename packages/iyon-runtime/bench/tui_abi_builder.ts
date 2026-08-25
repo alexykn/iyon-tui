@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import {
   nativeViewAbiSession,
   tryNativeAxisCreateRender,
   releaseNativeViewRef,
-} from "../src/tui/native_view_abi.ts";
-import { viewSpacerCreate } from "../src/tui/generated/view_calls.ts";
-import { nodeForBridge, nodeIdPair, View } from "../src/tui/values/view.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+} from "../../iyon-tui/src/native_view_abi.ts";
+import { viewSpacerCreate } from "../../iyon-tui/src/generated/view_calls.ts";
+import { nodeForBridge, nodeIdPair, View } from "../../iyon-tui/src/values/view.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
   NATIVE_COLD_MAX_DEPTH,
   NATIVE_COLD_MAX_NODES,
   NATIVE_SMALL_AXIS_ARITY_MAX,
-} from "../src/tui/native_view_policy.ts";
+} from "../../iyon-tui/src/native_view_policy.ts";
 
 const SIZES = [20, 200, 2_000, 10_000] as const;
 const WARMUP = 2;
@@ -107,7 +107,7 @@ for (const size of SIZES) {
   }
 }
 
-const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 const git = (command: string): string => {
   const result = Bun.spawnSync(["git", ...command.split(" ")], { stdout: "pipe", stderr: "ignore" });

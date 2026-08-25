@@ -17,11 +17,11 @@
  * from these raw numbers.
  */
 
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import { appendFileSync as appendSync } from "node:fs";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { History } from "../src/tui/history.ts";
-import { TextStream } from "../src/tui/stream.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { History } from "../../iyon-tui/src/history.ts";
+import { TextStream } from "../../iyon-tui/src/stream.ts";
 import { buildTracePair, prepareComparisonCase, setComparisonComponentId, type ComparisonMode, type ComparisonWorkload } from "./perf11v4_fixtures.ts";
 
 interface BlockConfig {
@@ -250,7 +250,7 @@ async function main(): Promise<void> {
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.split(/\s+/)[1] ?? "unknown",
     macos_version: commandText(["sw_vers", "-productVersion"]),
     cpu_model: commandText(["sysctl", "-n", "machdep.cpu.brand_string"]),
-    native_artifact_sha256: sha256(new URL("../native/iyon-tui-native.node", import.meta.url).pathname),
+    native_artifact_sha256: sha256(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url).pathname),
     phases: {
       pre,
       fixtures_loaded: fixturesSnapshot,

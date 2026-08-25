@@ -1,18 +1,18 @@
 import { createHash } from "node:crypto";
 import type { Pointer } from "bun:ffi";
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import {
   editTxnAbort,
   editTxnAddTextLayout,
   editTxnBegin,
   editTxnCommitRender,
-} from "../src/tui/generated/view_calls.ts";
+} from "../../iyon-tui/src/generated/view_calls.ts";
 import {
   nativePathRefForLineage,
   nativeViewAbiSession,
   releaseNativeViewRef,
-} from "../src/tui/native_view_abi.ts";
-import { nativeViewRefForNodeId } from "../src/tui/native_view_abi.ts";
+} from "../../iyon-tui/src/native_view_abi.ts";
+import { nativeViewRefForNodeId } from "../../iyon-tui/src/native_view_abi.ts";
 import {
   nativePathChildLineage,
   nodeIdPair,
@@ -20,8 +20,8 @@ import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
   View,
-} from "../src/tui/values/view.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+} from "../../iyon-tui/src/values/view.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 const ITERATIONS = 2_000;
 const REPEATS = 5;
 const EDIT_COUNTS = [2, 4, 8, 16, 64] as const;
@@ -126,7 +126,7 @@ for (const count of EDIT_COUNTS) {
   results[String(count)] = measure(prepared);
 }
 host.dispose();
-const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 const git = (command: string): string => {
   const result = Bun.spawnSync(["git", ...command.split(" ")], { stdout: "pipe", stderr: "ignore" });

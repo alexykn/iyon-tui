@@ -16,12 +16,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { Tui } from "../src/tui/runtime.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { View } from "../src/tui/values/view.ts";
-import type { History } from "../src/tui/history.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { state, trackedStateSubscriberCount, type State } from "../src/tui/tracked-state.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
+import type { History } from "../../iyon-tui/src/history.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { state, trackedStateSubscriberCount, type State } from "../../iyon-tui/src/tracked-state.ts";
 
 function screenContains(tui: Tui, needle: string): boolean {
   return tui.screenRows().some((row: string) => row.includes(needle));

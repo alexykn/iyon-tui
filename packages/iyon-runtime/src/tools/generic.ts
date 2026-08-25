@@ -1,4 +1,4 @@
-import { Style, View } from "../tui/index.ts";
+import { Style, View } from "@iyon/tui";
 import type { ToolCall, ToolResult } from "./contract.ts";
 
 function callStyle(state: ToolCall["state"]) {

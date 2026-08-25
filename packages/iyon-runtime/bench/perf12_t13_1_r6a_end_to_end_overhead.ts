@@ -15,12 +15,12 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { Tui } from "../src/tui/runtime.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { View } from "../src/tui/values/view.ts";
-import { RetainedExecutionRuntime, type ViewComponent } from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { composeVertical } from "../src/tui/compose.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
+import { RetainedExecutionRuntime, type ViewComponent } from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { composeVertical } from "../../iyon-tui/src/compose.ts";
 
 interface LeafProps {
   readonly i: number;

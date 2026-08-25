@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pointer } from "bun:ffi";
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import {
   hostRenderRef,
   viewReleaseMany,
@@ -8,12 +8,12 @@ import {
   viewTextLayoutPatchPathD2,
   viewTextLayoutPatchPathD3,
   viewTextLayoutPatchPathD4,
-} from "../src/tui/generated/view_calls.ts";
+} from "../../iyon-tui/src/generated/view_calls.ts";
 import {
   nativePathRefForLineage,
   nativeViewAbiSession,
-} from "../src/tui/native_view_abi.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+} from "../../iyon-tui/src/native_view_abi.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
@@ -23,8 +23,8 @@ import {
   textLayoutAtNativePathForTransport,
   View,
   type NativePathStep,
-} from "../src/tui/values/view.ts";
-import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../src/tui/ir.ts";
+} from "../../iyon-tui/src/values/view.ts";
+import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../../iyon-tui/src/ir.ts";
 
 const ITERATIONS = 10_000;
 const REPEATS = 5;
@@ -135,7 +135,7 @@ const host = new Host(40, 8, true);
 const prepared = [1, 2, 3, 4].map((depth) => ({ depth, value: prepare(depth, session, host) }));
 const results = Object.fromEntries(prepared.map(({ depth, value }) => [`depth_${depth}`, measure(value)]));
 host.dispose();
-const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 console.log(JSON.stringify({
   benchmark: "PERF-11.4-generated-path",

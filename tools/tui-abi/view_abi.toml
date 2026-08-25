@@ -58,7 +58,7 @@ kind = "style_atom"
 
 [[enum]]
 name = "WrapMode"
-source = "packages/iyon-runtime/src/tui/bridge-schema.json"
+source = "packages/iyon-tui/src/bridge-schema.json"
 repr = "u32"
 
 [[enum.value]]
@@ -75,7 +75,7 @@ source_key = "wrapNoWrap"
 
 [[enum]]
 name = "HorizontalAlign"
-source = "packages/iyon-runtime/src/tui/bridge-schema.json"
+source = "packages/iyon-tui/src/bridge-schema.json"
 repr = "u32"
 
 [[enum.value]]

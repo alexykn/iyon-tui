@@ -22,11 +22,11 @@ import { describe, expect, test } from "bun:test";
 import {
   RetainedExecutionRuntime,
   executionCounterSnapshot,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { state } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
 
 function tracked<P>(render: (props: P) => View): { component: ViewComponent<P>; calls: () => number } {
   let calls = 0;
@@ -278,13 +278,13 @@ describe("T13.1 R5 — dirty scheduler & batching", () => {
   });
 });
 
-function bridgeTextOfNullable(view: import("../src/tui/values/view.ts").View | undefined): string | undefined {
+function bridgeTextOfNullable(view: import("../../iyon-tui/src/values/view.ts").View | undefined): string | undefined {
   if (view === undefined) return undefined;
   const node = nodeForBridge(view) as { kind: unknown; spans: readonly { text?: string }[] };
   if (node.kind !== BRIDGE_VIEW_KIND.text) throw new Error(`expected text node`);
   return node.spans[0]?.text;
 }
 
-import { BRIDGE_VIEW_KIND } from "../src/tui/ir.ts";
-import { View, nodeForBridge } from "../src/tui/values/view.ts";
-import type { ViewComponent } from "../src/tui/execution.ts";
+import { BRIDGE_VIEW_KIND } from "../../iyon-tui/src/ir.ts";
+import { View, nodeForBridge } from "../../iyon-tui/src/values/view.ts";
+import type { ViewComponent } from "../../iyon-tui/src/execution.ts";

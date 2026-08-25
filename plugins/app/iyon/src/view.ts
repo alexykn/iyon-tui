@@ -1,7 +1,7 @@
-import { Insets, View } from "iyon:tui";
-import { defineView, state } from "iyon:tui";
+import { Insets, View } from "@iyon/tui";
+import { defineView, state } from "@iyon/tui";
 import type { ReasoningLevel } from "@iyon/sdk";
-import type { History, State, TextInput, ViewSlot, View as ViewValue } from "@iyon/runtime/tui";
+import type { History, State, TextInput, ViewSlot, View as ViewValue } from "@iyon/tui";
 import type { IyonState, InfoState, PendingApproval } from "./contracts.ts";
 import { MAX_COMPOSER_ROWS } from "./composer.ts";
 import { approvalView } from "./approvals.ts";

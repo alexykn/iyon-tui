@@ -10,7 +10,7 @@ consumer after the repository separation completes.
 ## Layers
 
 ```text
-TypeScript public facade        packages/iyon-runtime/src/tui/**   (becomes @iyon/tui in S4)
+TypeScript public facade        packages/iyon-tui/src/**   (`@iyon/tui`)
         |  private native contract seam (src/native.ts)
 N-API / direct-FFI addon        crates/iyon-tui-native
         |
@@ -22,12 +22,12 @@ Rust framework                  crates/iyon-tui
 - `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import
   `iyon-core` or `iyon-api`. Enforced by `bun run check:ownership`.
 - Framework TypeScript may import only framework modules plus the single
-  native-contract seam (`packages/iyon-runtime/src/native.ts`). The
+  native-contract seam (`packages/iyon-tui/src/native.ts`). The
   `bun:ffi` transport lowering is transitional until S6 replaces it with
   generated safe N-API; do not build public API around transport details.
 - Application code may consume the framework only through public surfaces:
-  the `iyon:tui` alias or `@iyon/runtime/tui` (later `@iyon/tui`). Deep
-  imports into `src/tui/**`, retained-DAG internals, View ABI internals,
+  the `@iyon/tui` package or the application-owned `iyon:tui` alias. Deep
+  imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI internals,
   NodeId/NativeRef sidecars, or native addon implementation modules are
   forbidden and machine-checked.
 - Themes, renderers, defaults, labels, and spinner/footer/composer policy are

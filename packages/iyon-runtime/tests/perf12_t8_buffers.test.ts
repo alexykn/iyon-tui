@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
-import { native } from "../src/native.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
 import {
   MaterializeTx,
   retainedIdentityCounterSnapshot,
   RetainedRootBoundary,
-} from "../src/tui/retained_dag.ts";
-import { MAX_DIRECT_AXIS_REFS } from "../src/tui/native_view_policy.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
+import { MAX_DIRECT_AXIS_REFS } from "../../iyon-tui/src/native_view_policy.ts";
 
 type Host = {
   render(view: object): void;

@@ -17,22 +17,22 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { native } from "../src/native.ts";
-import { Tui } from "../src/tui/runtime.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { View } from "../src/tui/values/view.ts";
-import { ViewSlot } from "../src/tui/component.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
+import { ViewSlot } from "../../iyon-tui/src/component.ts";
 import {
   RetainedExecutionRuntime,
   executionCounterSnapshot,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { state } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
 
 const Host = native.NativeTuiHost as
-  | (new (width: number, height: number, headless: boolean) => import("../src/native.ts").NativeTuiHostContract)
+  | (new (width: number, height: number, headless: boolean) => import("../../iyon-tui/src/native.ts").NativeTuiHostContract)
   | undefined;
 
 const canRun = Host !== undefined;
@@ -199,7 +199,7 @@ describe("T13.1 R8 — ownership modes & isolation & lifecycle", () => {
       const rootScope = runtime.mountRoot(Chrome, {});
       const executionsAtBaseline = chromeExecutions; // initial mount runs once
 
-      const { TextStream } = await import("../src/tui/stream.ts");
+      const { TextStream } = await import("../../iyon-tui/src/stream.ts");
       const stream = new TextStream();
       const history = tui.createHistory();
       history.pushStream(stream as never);

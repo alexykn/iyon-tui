@@ -26,7 +26,33 @@ import {
   asIyonError,
   isCancelledError,
 } from "./modules/core.ts";
-import { AppHarness, Component, DiffHunk, DiffLine, DiffRange, DiffRenderer, History, Insets, NativeScrollPane, Scene, Style, StyleSpec, Tui, TextInput, TextSelector, TextSpan, TextStream, Theme, View } from "./tui/index.ts";
+import {
+  AppHarness,
+  Component,
+  DiffHunk,
+  DiffLine,
+  DiffRange,
+  DiffRenderer,
+  History,
+  Insets,
+  NativeScrollPane,
+  Scene,
+  Style,
+  StyleSpec,
+  Tui,
+  TextInput,
+  TextSelector,
+  TextSpan,
+  TextStream,
+  Theme,
+  View,
+  asTuiError,
+  defineView,
+  isTuiCancelledError,
+  isTuiError,
+  state,
+  TuiError,
+} from "@iyon/tui";
 
 const virtualModules = {
   "iyon:api": `
@@ -47,7 +73,7 @@ const virtualModules = {
     } from "@iyon/runtime/native";
   `,
   "iyon:tui": `
-    export * from "@iyon/runtime/tui";
+    export * from "@iyon/tui";
   `,
   "iyon:plugins": `
     export * from "@iyon/plugins";
@@ -131,12 +157,12 @@ function registerRuntimeModules(build: Bun.PluginBuilder): void {
       NativeScrollPane,
       Theme,
       View,
-      defineView: require("./tui/define-view.ts").defineView,
-      state: require("./tui/tracked-state.ts").state,
-      TuiError: require("./tui/errors.ts").TuiError,
-      asTuiError: require("./tui/errors.ts").asTuiError,
-      isTuiCancelledError: require("./tui/errors.ts").isTuiCancelledError,
-      isTuiError: require("./tui/errors.ts").isTuiError,
+      defineView,
+      state,
+      TuiError,
+      asTuiError,
+      isTuiCancelledError,
+      isTuiError,
     },
     loader: "object",
   }));

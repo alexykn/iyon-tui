@@ -3,7 +3,7 @@
 // Adaptations are mechanical: import paths, the class/export name, and the
 // current schema type imports. The eager frozen DAG and WeakMap lookup are
 // intentionally unchanged; no production View/native transport code is used.
-import type { NativeHandleId } from "../../src/tui/types.ts";
+import type { NativeHandleId } from "../../../iyon-tui/src/types.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
   BRIDGE_DIFF_LINE_TERMINATION,
@@ -37,10 +37,10 @@ import {
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
-} from "../../src/tui/ir.ts";
-import { insets, Insets } from "../../src/tui/values/geometry.ts";
-import { StyleSpec } from "../../src/tui/values/style.ts";
-import { TextSpan, type HorizontalAlign, type WrapMode } from "../../src/tui/values/text.ts";
+} from "../../../iyon-tui/src/ir.ts";
+import { insets, Insets } from "../../../iyon-tui/src/values/geometry.ts";
+import { StyleSpec } from "../../../iyon-tui/src/values/style.ts";
+import { TextSpan, type HorizontalAlign, type WrapMode } from "../../../iyon-tui/src/values/text.ts";
 
 type ChildBuilder = readonly Perf7v2View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };

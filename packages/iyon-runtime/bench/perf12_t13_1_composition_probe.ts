@@ -26,18 +26,18 @@ import { writeFileSync } from "node:fs";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
-} from "../src/tui/retained_dag.ts";
-import { Style } from "../src/tui/values/style.ts";
-import { Insets } from "../src/tui/values/geometry.ts";
-import { View, nodeForBridge, type View as ViewValue } from "../src/tui/values/view.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { History } from "../src/tui/history.ts";
-import type { ScrollPane } from "../src/tui/types.ts";
-import { TextInput } from "../src/tui/text-input.ts";
-import { ViewSlot } from "../src/tui/component.ts";
-import { Tui } from "../src/tui/runtime.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { state } from "../src/tui/tracked-state.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import { Insets } from "../../iyon-tui/src/values/geometry.ts";
+import { View, nodeForBridge, type View as ViewValue } from "../../iyon-tui/src/values/view.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { History } from "../../iyon-tui/src/history.ts";
+import type { ScrollPane } from "../../iyon-tui/src/types.ts";
+import { TextInput } from "../../iyon-tui/src/text-input.ts";
+import { ViewSlot } from "../../iyon-tui/src/component.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
 
 const WARMUP = 50;
 /**
@@ -600,7 +600,7 @@ const provenance = {
   bun_revision: commandText(["bun", "--revision"]),
   rustc_version: commandText(["rustc", "--version"]),
   target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
-  addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
+  addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-tui/native/iyon-tui-native.node"]).split(" ")[0],
   note: "R10 authoritative decision run (§102.1): four arms — body-key guard, uncomposed rebuild, manual stable oracle, and the T13.1 retained-scope candidate over defineView/state. Arms run sequentially in one process with per-arm headless sessions and cross-arm screen parity enforcement; counter deltas isolate per-case windows.",
 };
 

@@ -1,6 +1,6 @@
 import { CFunction, linkSymbols, type Pointer } from "bun:ffi";
-import { native } from "../src/native.ts";
-import { linkViewAbiConformance, type NativeAbiConformancePointers } from "../src/tui/generated/view_abi_conformance.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { linkViewAbiConformance, type NativeAbiConformancePointers } from "../../iyon-tui/src/generated/view_abi_conformance.ts";
 
 type ProbePointers = {
   readonly noop_ptr: Pointer;

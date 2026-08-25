@@ -1,6 +1,6 @@
 import { parseUnifiedDiff } from "./diff.ts";
 import type { DiffHunk as ParsedDiffHunk } from "./diff.ts";
-import { DiffHunk, DiffLine, DiffRange, DiffRenderer, Style, View } from "@iyon/runtime/tui";
+import { DiffHunk, DiffLine, DiffRange, DiffRenderer, Style, View } from "@iyon/tui";
 import type { ToolCall, ToolLifecycleState, ToolResult } from "@iyon/sdk";
 
 export const MAX_COLLAPSED_TOOL_ROWS = 16;

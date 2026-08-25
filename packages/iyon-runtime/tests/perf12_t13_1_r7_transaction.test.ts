@@ -17,22 +17,22 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { native, type NativeTuiHostContract } from "../src/native.ts";
-import { Tui } from "../src/tui/runtime.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { View } from "../src/tui/values/view.ts";
-import { ViewSlot } from "../src/tui/component.ts";
+import { native, type NativeTuiHostContract } from "../../iyon-tui/src/native.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
+import { ViewSlot } from "../../iyon-tui/src/component.ts";
 import {
   RetainedExecutionRuntime,
   executionCounterSnapshot,
   type ScopeProjection,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { state } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
-import { BRIDGE_VIEW_KIND } from "../src/tui/ir.ts";
-import { nodeForBridge } from "../src/tui/values/view.ts";
-import type { ViewComponent } from "../src/tui/execution.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
+import { BRIDGE_VIEW_KIND } from "../../iyon-tui/src/ir.ts";
+import { nodeForBridge } from "../../iyon-tui/src/values/view.ts";
+import type { ViewComponent } from "../../iyon-tui/src/execution.ts";
 
 const Host = native.NativeTuiHost as
   | (new (width: number, height: number, headless: boolean) => NativeTuiHostContract)

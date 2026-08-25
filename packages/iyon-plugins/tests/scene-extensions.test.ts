@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Scene, View } from "@iyon/runtime/tui";
+import { Scene, View } from "@iyon/tui";
 import { SceneExtensions } from "../src/scene-extensions.ts";
 
 describe("Scene extensions", () => {

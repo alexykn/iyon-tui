@@ -36,12 +36,12 @@ import {
   composeTextAttribute,
   composeVertical,
   composeWrap,
-} from "../src/tui/internal-composition.ts";
-import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../src/tui/ir.ts";
-import { ChildrenBuilder, View, nodeForBridge } from "../src/tui/values/view.ts";
-import { Style } from "../src/tui/values/style.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
-import { Insets } from "../src/tui/values/geometry.ts";
+} from "../../iyon-tui/src/internal-composition.ts";
+import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../../iyon-tui/src/ir.ts";
+import { ChildrenBuilder, View, nodeForBridge } from "../../iyon-tui/src/values/view.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
+import { Insets } from "../../iyon-tui/src/values/geometry.ts";
 
 /** Bridge-level semantic equality: frozen normalized records compare deeply. */
 function expectSameBridge(actual: View, expected: View): void {

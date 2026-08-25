@@ -1,4 +1,4 @@
-import { View } from "iyon:tui";
+import { View } from "@iyon/tui";
 import type { ToolCall, ToolResult } from "@iyon/sdk";
 import { resultLines, resultStyle, resultText, statusLabel, toolCallLine, toolResultLine } from "@iyon/plugins";
 

@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import type { Pointer } from "bun:ffi";
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import {
   hostRenderRef,
   viewCommonPatchRoot,
   viewRefForNodeId,
-} from "../src/tui/generated/view_calls.ts";
-import { nativeViewAbiSession, releaseNativeViewRef, tryNativeScalarRender } from "../src/tui/native_view_abi.ts";
-import { nodeForBridge, nodeIdPair, viewBackingState, View } from "../src/tui/values/view.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+} from "../../iyon-tui/src/generated/view_calls.ts";
+import { nativeViewAbiSession, releaseNativeViewRef, tryNativeScalarRender } from "../../iyon-tui/src/native_view_abi.ts";
+import { nodeForBridge, nodeIdPair, viewBackingState, View } from "../../iyon-tui/src/values/view.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 
 const ITERATIONS = 10_000;
 const REPEATS = 5;
@@ -117,7 +117,7 @@ const results = {
 releaseNativeViewRef(session, baseRef);
 host.dispose();
 
-const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 console.log(JSON.stringify({
   benchmark: "PERF-11.5-native-construction",

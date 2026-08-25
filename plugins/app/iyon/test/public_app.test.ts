@@ -10,7 +10,7 @@ import {
   transcriptLines,
   type PublicAppFixture,
 } from "./public_app_fixtures.ts";
-import type { TuiRuntime } from "@iyon/runtime/tui";
+import type { TuiRuntime } from "@iyon/tui";
 
 async function withFixture<T>(width: number, height: number, callback: (fixture: PublicAppFixture) => Promise<T>, withQueueIds = false): Promise<T> {
   const fixture = await openFixture(width, height, withQueueIds);

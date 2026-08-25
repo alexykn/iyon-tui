@@ -13,8 +13,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { state } from "@iyon/runtime/tui";
-import { TextStream, View } from "@iyon/runtime/tui";
+import { state } from "@iyon/tui";
+import { TextStream, View } from "@iyon/tui";
 import {
   buildScopedConsumer,
   openConsumerSession,

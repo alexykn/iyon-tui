@@ -18,19 +18,19 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { native } from "../src/native.ts";
-import { RetainedExecutionRuntime, executionCounterSnapshot, type ViewComponent } from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { composeVertical } from "../src/tui/compose.ts";
-import { View } from "../src/tui/values/view.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { RetainedExecutionRuntime, executionCounterSnapshot, type ViewComponent } from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { composeVertical } from "../../iyon-tui/src/compose.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
 
 interface LeafProps {
   readonly i: number;
 }
-import { ViewSlot } from "../src/tui/component.ts";
+import { ViewSlot } from "../../iyon-tui/src/component.ts";
 
 const Host = native.NativeTuiHost as
-  | (new (width: number, height: number, headless: boolean) => import("../src/native.ts").NativeTuiHostContract)
+  | (new (width: number, height: number, headless: boolean) => import("../../iyon-tui/src/native.ts").NativeTuiHostContract)
   | undefined;
 
 if (Host === undefined) {

@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { View } from "@iyon/runtime/tui";
+import { View } from "@iyon/tui";
 import {
   buildConsumerBody,
   buildItemRows,

@@ -19,18 +19,18 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { native, type NativeTuiHostContract } from "../src/native.ts";
+import { native, type NativeTuiHostContract } from "../../iyon-tui/src/native.ts";
 import {
   RetainedExecutionRuntime,
   executionCounterSnapshot,
   type ViewComponent,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
-import { BRIDGE_VIEW_KIND } from "../src/tui/ir.ts";
-import { View, nodeForBridge } from "../src/tui/values/view.ts";
-import { ViewSlot } from "../src/tui/component.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
+import { BRIDGE_VIEW_KIND } from "../../iyon-tui/src/ir.ts";
+import { View, nodeForBridge } from "../../iyon-tui/src/values/view.ts";
+import { ViewSlot } from "../../iyon-tui/src/component.ts";
 
 const Host = native.NativeTuiHost as
   | (new (width: number, height: number, headless: boolean) => NativeTuiHostContract)

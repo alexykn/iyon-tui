@@ -26,10 +26,10 @@ import {
   invokeComponent,
   resetExecutionCounters,
   type ViewComponentType,
-} from "../src/tui/execution.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
-import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../src/tui/ir.ts";
-import { View, nodeForBridge } from "../src/tui/values/view.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
+import { BRIDGE_VIEW_KIND, type BridgeViewNode } from "../../iyon-tui/src/ir.ts";
+import { View, nodeForBridge } from "../../iyon-tui/src/values/view.ts";
 
 /** Test component factory with body-call accounting. */
 function tracked<P>(render: (props: P) => View): { type: ViewComponentType<P>; calls: () => number } {

@@ -358,7 +358,7 @@ pub fn layout_test(document: &AbiDocument, schema_hash: &str, generator_hash: &s
     let mut output = banner(schema_hash, generator_hash);
     output.push_str(&format!(
         r#"import {{ expect, test }} from "bun:test";
-import manifest from "../../src/tui/generated/view_abi_manifest.json";
+import manifest from "../../src/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {{
   expect(manifest.schema_blake3).toBe("{}");

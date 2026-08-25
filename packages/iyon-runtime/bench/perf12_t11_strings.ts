@@ -1,17 +1,17 @@
 /** PERF-12 T11 §98/§103 smoke evidence: string path choice and payload lanes. */
 
 import { writeFileSync } from "node:fs";
-import { native } from "../src/native.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
-import { StyleSpec } from "../src/tui/values/style.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
+import { StyleSpec } from "../../iyon-tui/src/values/style.ts";
 import {
   retainedIdentityCounterSnapshot,
   resetRetainedIdentityCounters,
   RetainedRootBoundary,
-} from "../src/tui/retained_dag.ts";
-import { viewTextCreateCstring, viewTextCreateUtf8 } from "../src/tui/generated/view_calls.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
+import { viewTextCreateCstring, viewTextCreateUtf8 } from "../../iyon-tui/src/generated/view_calls.ts";
 
 type Host = { render(view: object): void; tuiViewAbiHostPointer(): number; dispose(): void };
 const Host = native.NativeTuiHost as unknown as
@@ -218,7 +218,7 @@ const artifact = [
     bun_revision: commandText(["bun", "--revision"]),
     rustc_version: commandText(["rustc", "--version"]),
     target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-tui/native/iyon-tui-native.node"]).split(" ")[0],
   }),
   ...caseRecords,
   ...laneProbes,

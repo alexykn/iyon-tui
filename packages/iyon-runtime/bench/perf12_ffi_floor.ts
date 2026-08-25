@@ -24,9 +24,9 @@
  */
 
 import { CFunction, linkSymbols, type Pointer } from "bun:ffi";
-import { native } from "../src/native.ts";
-import { linkViewAbi, type NativeAbiPointers } from "../src/tui/generated/view_abi.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+import { native } from "../../iyon-tui/src/native.ts";
+import { linkViewAbi, type NativeAbiPointers } from "../../iyon-tui/src/generated/view_abi.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 
 const BATCH_OPS = 1_000;
 const WARMUP_BLOCKS = Number(Bun.env.PERF12_FLOOR_WARMUP_BLOCKS ?? 30);
@@ -104,7 +104,7 @@ function provenance(): Record<string, unknown> {
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.split(/\s+/)[1] ?? "unknown",
     macos_version: commandText(["sw_vers", "-productVersion"]),
     cpu_model: commandText(["sysctl", "-n", "machdep.cpu.brand_string"]),
-    native_artifact_sha256: sha256(new URL("../native/iyon-tui-native.node", import.meta.url).pathname),
+    native_artifact_sha256: sha256(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url).pathname),
     schema_blake3: manifest.schema_blake3,
     generator_blake3: manifest.generator_blake3,
     batch_ops_per_timed_block: BATCH_OPS,

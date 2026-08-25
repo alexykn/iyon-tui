@@ -5,7 +5,7 @@ import { KernelSession } from "@iyon/runtime";
 import { registerBundledTools } from "@iyon/plugins";
 import type { ModelApi, ModelStreamEvent } from "iyon:api";
 import type { CoreEvent } from "@iyon/sdk";
-import type { AppHarness } from "@iyon/runtime/tui";
+import type { AppHarness } from "@iyon/tui";
 import { advance, draft, send, transcriptLines } from "./public_app_fixtures.ts";
 import type { IyonApp } from "../src/app.ts";
 

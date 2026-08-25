@@ -10,7 +10,7 @@ import type {
   TurnId,
   ToolUpdateEvent,
 } from "./core.ts";
-import type { View } from "iyon:tui";
+import type { View } from "@iyon/tui";
 
 export type ToolExecutionMode = "parallel" | "sequential";
 export type ToolApprovalPolicy = "neverAsk" | "alwaysAsk" | ApprovalRequirement;

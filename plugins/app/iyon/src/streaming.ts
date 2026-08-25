@@ -1,5 +1,5 @@
-import { TextStream } from "@iyon/runtime/tui";
-import type { StreamSnapshot } from "@iyon/runtime/tui";
+import { TextStream } from "@iyon/tui";
+import type { StreamSnapshot } from "@iyon/tui";
 
 export type SegmentKind = "text" | "thinking";
 export interface StreamSegment { readonly kind: SegmentKind; readonly text: string; }

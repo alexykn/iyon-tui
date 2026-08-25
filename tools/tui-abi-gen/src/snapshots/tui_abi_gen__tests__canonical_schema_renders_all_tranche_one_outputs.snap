@@ -1,7 +1,7 @@
 ---
 source: tools/tui-abi-gen/src/main.rs
 assertion_line: 309
-expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_manifest.json\").expect(\"manifest output\")"
+expression: "outputs.get(\"packages/iyon-tui/src/generated/view_abi_manifest.json\").expect(\"manifest output\")"
 ---
 {
   "abi": {
@@ -144,7 +144,7 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
     {
       "name": "WrapMode",
       "repr": "u32",
-      "source": "packages/iyon-runtime/src/tui/bridge-schema.json",
+      "source": "packages/iyon-tui/src/bridge-schema.json",
       "values": [
         {
           "name": "WordThenGrapheme",
@@ -163,7 +163,7 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
     {
       "name": "HorizontalAlign",
       "repr": "u32",
-      "source": "packages/iyon-runtime/src/tui/bridge-schema.json",
+      "source": "packages/iyon-tui/src/bridge-schema.json",
       "values": [
         {
           "name": "Start",
@@ -4023,17 +4023,17 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
     "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
     "crates/iyon-tui-native/src/generated/view_abi_table.rs",
     "crates/iyon-tui-native/include/iyon_view_abi.h",
-    "packages/iyon-runtime/src/tui/generated/view_abi.ts",
-    "packages/iyon-runtime/src/tui/generated/view_abi_conformance.ts",
-    "packages/iyon-runtime/src/tui/generated/view_calls.ts",
-    "packages/iyon-runtime/src/tui/generated/view_materialize.ts",
-    "packages/iyon-runtime/src/tui/generated/view_abi_manifest.json",
-    "packages/iyon-runtime/tests/generated/view_abi_layout.test.ts",
-    "packages/iyon-runtime/bench/generated/view_abi_cases.ts",
+    "packages/iyon-tui/src/generated/view_abi.ts",
+    "packages/iyon-tui/src/generated/view_abi_conformance.ts",
+    "packages/iyon-tui/src/generated/view_calls.ts",
+    "packages/iyon-tui/src/generated/view_materialize.ts",
+    "packages/iyon-tui/src/generated/view_abi_manifest.json",
+    "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
+    "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "01652a304d028d2fab4b86ff6d6a5bf321515448c249849b66599b7f01aea988",
+  "generator_blake3": "07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091",
   "handles": [
     {
       "kind": null,
@@ -4248,5 +4248,5 @@ expression: "outputs.get(\"packages/iyon-runtime/src/tui/generated/view_abi_mani
       "size": 8
     }
   ],
-  "schema_blake3": "8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0"
+  "schema_blake3": "5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745"
 }

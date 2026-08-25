@@ -40,17 +40,25 @@
       "dependencies": {
         "@iyon/plugins": "workspace:*",
         "@iyon/sdk": "workspace:*",
+        "@iyon/tui": "workspace:*",
       },
     },
     "packages/iyon-sdk": {
       "name": "@iyon/sdk",
       "version": "0.1.0",
     },
+    "packages/iyon-tui": {
+      "name": "@iyon/tui",
+      "version": "0.1.0",
+      "devDependencies": {
+        "bun-types": "1.4.0",
+      },
+    },
     "packages/tui-consumer-fixture": {
       "name": "@iyon/tui-consumer-fixture",
       "version": "0.1.0",
       "dependencies": {
-        "@iyon/runtime": "workspace:*",
+        "@iyon/tui": "workspace:*",
       },
     },
     "plugins/agents/iyon": {
@@ -187,6 +195,8 @@
     "@iyon/tool-read": ["@iyon/tool-read@workspace:plugins/tools/read"],
 
     "@iyon/tool-write": ["@iyon/tool-write@workspace:plugins/tools/write"],
+
+    "@iyon/tui": ["@iyon/tui@workspace:packages/iyon-tui"],
 
     "@iyon/tui-consumer-fixture": ["@iyon/tui-consumer-fixture@workspace:packages/tui-consumer-fixture"],
 

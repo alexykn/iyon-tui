@@ -120,8 +120,8 @@ function rustDependencyGate(): void {
 // Gate 2: TypeScript import direction
 // ---------------------------------------------------------------------------
 
-const FRAMEWORK_SRC = join(ROOT, "packages/iyon-runtime/src/tui");
-const NATIVE_CONTRACT = resolve(ROOT, "packages/iyon-runtime/src/native.ts");
+const FRAMEWORK_SRC = join(ROOT, "packages/iyon-tui/src");
+const NATIVE_CONTRACT = resolve(ROOT, "packages/iyon-tui/src/native.ts");
 
 function tsImportGate(): void {
   const files = walk(FRAMEWORK_SRC);
@@ -162,7 +162,7 @@ function tsImportGate(): void {
   ].map((p) => join(ROOT, p));
   const bannedInternals =
     /retained_dag|view_abi|native_view_policy|internal-composition|tui-execution|execution-context|persistent_seq|packed(_v[34])?_meta/;
-  const subpathImport = /^@iyon\/runtime\/tui\/.+$/;
+  const subpathImport = /^@iyon\/(?:runtime\/tui|tui)\/.+$/;
 
   const appViolations: string[] = [];
   let appFilesChecked = 0;
@@ -196,8 +196,8 @@ function tsImportGate(): void {
   if (appViolations.length > 0) fail("app-ts-public-entrypoints-only", appViolations.join("; "));
   else pass("app-ts-public-entrypoints-only", `${appFilesChecked} application source files use public TUI surfaces only`);
 
-  // Runtime non-TUI sources may enter the framework only through tui/index.ts,
-  // except virtual-modules.ts — the recorded S4/S5 bundler-compatibility seam.
+  // Runtime non-TUI sources enter the standalone package through its public
+  // @iyon/tui entrypoint; virtual-modules.ts remains the recorded alias seam.
   const runtimeRoot = join(ROOT, "packages/iyon-runtime/src");
   const runtimeViolations: string[] = [];
   const runtimeSeams: string[] = [];
@@ -222,12 +222,42 @@ function tsImportGate(): void {
   else
     pass(
       "runtime-ts-public-entrypoints-only",
-      `runtime non-TUI sources enter via tui/index.ts only (${runtimeSeams.length} recorded virtual-module alias seams)`,
+      `runtime non-TUI sources enter via @iyon/tui only (${runtimeSeams.length} recorded virtual-module alias seams)`,
     );
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: Public API surface guard
+// Gate 3: Standalone external-consumer fixture
+// ---------------------------------------------------------------------------
+
+function consumerFixtureGate(): void {
+  const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
+  const violations: string[] = [];
+  for (const file of walk(fixtureRoot)) {
+    for (const spec of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!spec.startsWith(".") && !spec.startsWith("/")) {
+        if (spec !== "@iyon/tui" && !/^(bun|node):/.test(spec)) {
+          violations.push(`${relative(ROOT, file)} -> "${spec}"`);
+        }
+        continue;
+      }
+      const resolved = resolveRelative(file, spec);
+      if (resolved !== null && !resolved.startsWith(fixtureRoot)) {
+        violations.push(`${relative(ROOT, file)} -> "${spec}" escapes fixture`);
+      }
+    }
+  }
+  const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/tui-consumer-fixture/package.json"), "utf8"));
+  const dependencies = Object.keys(packageManifest.dependencies ?? {}).sort();
+  if (dependencies.length !== 1 || dependencies[0] !== "@iyon/tui") {
+    violations.push(`package dependencies are [${dependencies.join(", ")}]`);
+  }
+  if (violations.length > 0) fail("standalone-consumer-public-entrypoint", violations.join("; "));
+  else pass("standalone-consumer-public-entrypoint", "fixture source and dependency manifest use only @iyon/tui");
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4: Public API surface guard
 // ---------------------------------------------------------------------------
 
 const BANNED_SURFACE_NAMES = [
@@ -307,6 +337,7 @@ async function publicSurfaceGate(): Promise<void> {
 
 rustDependencyGate();
 tsImportGate();
+consumerFixtureGate();
 await publicSurfaceGate();
 
 if (failed) {

@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { native } from "../src/native.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
-import { StyleSpec } from "../src/tui/values/style.ts";
-import { Theme } from "../src/tui/values/theme.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
+import { StyleSpec } from "../../iyon-tui/src/values/style.ts";
+import { Theme } from "../../iyon-tui/src/values/theme.ts";
 import {
   peekBridgeNativeHint,
   retainedIdentityCounterSnapshot,
   resetRetainedIdentityCounters,
   RetainedRootBoundary,
-} from "../src/tui/retained_dag.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
 
 interface Host {
   render(view: object): void;

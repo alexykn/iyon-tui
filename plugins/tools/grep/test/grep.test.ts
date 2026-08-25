@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installIyonVirtualModules } from "../../../../packages/iyon-runtime/src/virtual-modules.ts";
-import { nodeForBridge } from "../../../../packages/iyon-runtime/src/tui/values/view.ts";
+import { nodeForBridge } from "../../../../packages/iyon-tui/src/values/view.ts";
 installIyonVirtualModules();
 const { grepTool } = await import("../src/execute.ts");
 const context = (root: string) => ({ workspace: { root }, cwd: root, signal: new AbortController().signal } as never);

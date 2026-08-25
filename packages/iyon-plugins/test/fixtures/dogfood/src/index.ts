@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import process from "node:process";
 import { defineTool } from "@iyon/sdk";
-import { View } from "iyon:tui";
+import { View } from "@iyon/tui";
 import type { ModelStreamEvent, ProviderCapabilities, ProviderDefinition } from "iyon:api";
 import type { ExtensionAPI } from "iyon:plugins";
 

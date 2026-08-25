@@ -17,10 +17,10 @@
  * versus the N-API property walk. Total wall time decides (§90/§119).
  */
 
-import { native } from "../src/native.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
-import { RetainedRootBoundary } from "../src/tui/retained_dag.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
+import { RetainedRootBoundary } from "../../iyon-tui/src/retained_dag.ts";
 import { mkdirSync } from "node:fs";
 
 const STABLE_NODES = 200;
@@ -184,7 +184,7 @@ async function main() {
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.slice(6),
     macos_version: commandText(["sw_vers", "-productVersion"]),
     cpu_model: commandText(["sysctl", "-n", "machdep.cpu.brand_string"]),
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-tui/native/iyon-tui-native.node"]).split(" ")[0],
     warmup_blocks: WARMUP_BLOCKS,
     max_blocks: MAX_BLOCKS,
     ops_per_block: OPS_PER_BLOCK,

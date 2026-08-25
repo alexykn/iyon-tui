@@ -17,11 +17,11 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { native } from "../src/native.ts";
+import { native } from "../../iyon-tui/src/native.ts";
 import {
   nativeViewAbiSession,
   tryNativeMaterialize,
-} from "../src/tui/native_view_abi.ts";
+} from "../../iyon-tui/src/native_view_abi.ts";
 import {
   peekBridgeNativeHint,
   resetRetainedIdentityCounters,
@@ -29,12 +29,12 @@ import {
   RetainedRootBoundary,
   forceBridgeNativeHintForTests,
   type RetainedIdentityCounters,
-} from "../src/tui/retained_dag.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { Style } from "../src/tui/values/style.ts";
-import { Insets } from "../src/tui/values/geometry.ts";
-import { Tui } from "../src/tui/runtime.ts";
-import { TextStream } from "../src/tui/stream.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import { Insets } from "../../iyon-tui/src/values/geometry.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { TextStream } from "../../iyon-tui/src/stream.ts";
 
 const Host = native.NativeTuiHost as
   | (new (width: number, height: number, headless: boolean) => {

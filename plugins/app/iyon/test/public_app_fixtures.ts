@@ -1,5 +1,5 @@
 import { createAppHarness, installIyonVirtualModules } from "@iyon/runtime";
-import type { AppHarness } from "@iyon/runtime/tui";
+import type { AppHarness } from "@iyon/tui";
 import { registerBundledTools } from "@iyon/plugins";
 import type { IyonApp } from "../src/app.ts";
 import type { FrontendEvent, ToolDraftKey, ToolRendererContribution } from "../src/contracts.ts";

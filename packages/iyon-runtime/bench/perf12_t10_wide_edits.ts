@@ -8,11 +8,11 @@
  * measured at 2k/10k/100k; insert/remove/splice-four are measured at 2k.
  */
 
-import { native } from "../src/native.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
-import { RetainedRootBoundary, resetRetainedIdentityCounters, retainedIdentityCounterSnapshot } from "../src/tui/retained_dag.ts";
-import { persistentSeqCounters, resetPersistentSeqCounters } from "../src/tui/persistent_seq.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
+import { RetainedRootBoundary, resetRetainedIdentityCounters, retainedIdentityCounterSnapshot } from "../../iyon-tui/src/retained_dag.ts";
+import { persistentSeqCounters, resetPersistentSeqCounters } from "../../iyon-tui/src/persistent_seq.ts";
 import { mkdirSync } from "node:fs";
 
 type Host = { render(view: object): void; tuiViewAbiHostPointer(): number; dispose(): void };
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     bun_revision: commandText(["bun", "--revision"]),
     rustc_version: commandText(["rustc", "--version"]),
     target: commandText(["rustc", "-vV"]).split("\n").find((line) => line.startsWith("host:"))?.slice(6),
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-tui/native/iyon-tui-native.node"]).split(" ")[0],
     macos_version: commandText(["sw_vers", "-productVersion"]),
   });
   mkdirSync("packages/iyon-runtime/bench", { recursive: true });

@@ -6,7 +6,7 @@ import type {
   ToolCallId,
 } from "@iyon/sdk";
 import type { ToolCall, ToolResult } from "@iyon/sdk";
-import type { View } from "@iyon/runtime/tui";
+import type { View } from "@iyon/tui";
 
 export interface ToolDraftKey {
   readonly messageId: MessageId | number;

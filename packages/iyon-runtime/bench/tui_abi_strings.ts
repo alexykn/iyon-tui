@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { native } from "../src/native.ts";
-import { nativeViewAbiSession, tryNativeTextCreateRender, releaseNativeViewRef } from "../src/tui/native_view_abi.ts";
-import { nodeForBridge, View } from "../src/tui/values/view.ts";
-import { TextSpan } from "../src/tui/values/text.ts";
-import { StyleSpec } from "../src/tui/values/style.ts";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nativeViewAbiSession, tryNativeTextCreateRender, releaseNativeViewRef } from "../../iyon-tui/src/native_view_abi.ts";
+import { nodeForBridge, View } from "../../iyon-tui/src/values/view.ts";
+import { TextSpan } from "../../iyon-tui/src/values/text.ts";
+import { StyleSpec } from "../../iyon-tui/src/values/style.ts";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 
 const WARMUP = 2;
 const ITERATIONS = 1_000;
@@ -75,7 +75,7 @@ for (const entry of cases) {
   }
 }
 
-const nativeArtifact = await Bun.file(new URL("../native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
+const nativeArtifact = await Bun.file(new URL("../../../iyon-tui/native/iyon-tui-native.node", import.meta.url)).arrayBuffer();
 const nativeArtifactSha256 = createHash("sha256").update(new Uint8Array(nativeArtifact)).digest("hex");
 const git = (command: string): string => {
   const result = Bun.spawnSync(["git", ...command.split(" ")], { stdout: "pipe", stderr: "ignore" });

@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt::Write as _, fs, path::PathBuf};
 
-const SCHEMA_PATH: &str = "../../packages/iyon-runtime/src/tui/bridge-schema.json";
+const SCHEMA_PATH: &str = "../../packages/iyon-tui/src/bridge-schema.json";
 
 const FIELDS: &[(&str, &str)] = &[
     ("schemaVersion", "VIEW_BRIDGE_SCHEMA_VERSION"),

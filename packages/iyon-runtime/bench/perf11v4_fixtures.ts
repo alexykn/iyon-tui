@@ -9,10 +9,10 @@
  * retained-DAG transports consume.
  */
 
-import { DiffHunk, DiffLine, DiffRange, DiffRenderer, TextSpan } from "../src/tui/index.ts";
-import { Style } from "../src/tui/values/style.ts";
-import type { BorderNode, ColorNode, GridTrackNode } from "../src/tui/ir.ts";
-import { View } from "../src/tui/values/view.ts";
+import { DiffHunk, DiffLine, DiffRange, DiffRenderer, TextSpan } from "../../iyon-tui/src/index.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import type { BorderNode, ColorNode, GridTrackNode } from "../../iyon-tui/src/ir.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
 
 export type ComparisonMode = "COLD" | "FIRST_USE" | "IDENTICAL_IDENTITY" | "SHARED_PATH" | "SHARED_DEEP" | "LARGE_SHARED_SUBTREE_CUTOFF" | "REBUILT_EQUIVALENT" | "TEXT_METADATA_PATCH" | "DECORATION_PATCH" | "WIDE_PARENT_ONE_EDIT" | "WIDE_PARENT_INSERT" | "WIDE_PARENT_REMOVE";
 export type ComparisonWorkload = "plain_text_column" | "styled_span_heavy" | "row_heavy" | "column_track_heavy" | "grid_heavy" | "decoration_heavy" | "diff_heavy" | "component_heavy" | "mixed_realistic" | "long_text_wrap_only" | "long_text_one_span_edit" | "large_diff_one_hunk_edit" | "large_decoration_only_change";

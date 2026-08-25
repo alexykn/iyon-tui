@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { native } from "../src/native.ts";
-import { nodeForBridge, type View } from "../src/tui/values/view.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nodeForBridge, type View } from "../../iyon-tui/src/values/view.ts";
 import {
   buildComparisonPair,
   fullSchemaPair,

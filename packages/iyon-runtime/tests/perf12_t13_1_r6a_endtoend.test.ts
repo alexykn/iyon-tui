@@ -15,21 +15,21 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { Tui } from "../src/tui/runtime.ts";
-import { Scene } from "../src/tui/scene.ts";
-import { View } from "../src/tui/values/view.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
+import { Scene } from "../../iyon-tui/src/scene.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
 import {
   RetainedExecutionRuntime,
   type ViewComponent,
-} from "../src/tui/execution.ts";
-import { defineView } from "../src/tui/define-view.ts";
-import { invokeComponent } from "../src/tui/execution.ts";
-import { state } from "../src/tui/tracked-state.ts";
-import { composeText, composeVertical } from "../src/tui/compose.ts";
+} from "../../iyon-tui/src/execution.ts";
+import { defineView } from "../../iyon-tui/src/define-view.ts";
+import { invokeComponent } from "../../iyon-tui/src/execution.ts";
+import { state } from "../../iyon-tui/src/tracked-state.ts";
+import { composeText, composeVertical } from "../../iyon-tui/src/compose.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
-} from "../src/tui/retained_dag.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
 
 const canRun = true; // native required; guarded by Tui.open failure below
 

@@ -10,15 +10,15 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { native } from "../src/native.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
-} from "../src/tui/retained_dag.ts";
-import { View } from "../src/tui/values/view.ts";
-import { Style } from "../src/tui/values/style.ts";
-import { Tui } from "../src/tui/runtime.ts";
+} from "../../iyon-tui/src/retained_dag.ts";
+import { View } from "../../iyon-tui/src/values/view.ts";
+import { Style } from "../../iyon-tui/src/values/style.ts";
+import { Tui } from "../../iyon-tui/src/runtime.ts";
 
 const WARMUP = 50;
 const MEASURED = 500;
@@ -165,7 +165,7 @@ const artifact = [
     bun_revision: commandText(["bun", "--revision"]),
     rustc_version: commandText(["rustc", "--version"]),
     target: commandText(["rustc", "-vV"]).split("host: ")[1]?.split("\n")[0] ?? "unknown",
-    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-runtime/native/iyon-tui-native.node"]).split(" ")[0],
+    addon_sha256: commandText(["shasum", "-a", "256", "packages/iyon-tui/native/iyon-tui-native.node"]).split(" ")[0],
   }),
 ].join("\n") + "\n";
 writeFileSync("packages/iyon-runtime/bench/PERF-12-t13-boundaries.jsonl", artifact);

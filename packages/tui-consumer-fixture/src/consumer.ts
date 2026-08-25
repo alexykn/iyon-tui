@@ -2,7 +2,7 @@
  * PERF-12 T13.1 §13.3 external-consumer fixture — consumer source.
  *
  * Rules for EVERY file in this package:
- *   - import ONLY documented public iyon-tui APIs (the "@iyon/runtime/tui"
+ *   - import ONLY documented public iyon-tui APIs (the "@iyon/tui"
  *     package specifier);
  *   - no internal runtime imports, no composition/compiler/plugin setup,
  *     no feature flags, no manual View memoization, no identity discipline.
@@ -12,8 +12,8 @@
  * exact sources automatically; this file must never change to opt in.
  */
 
-import { Insets, Scene, Style, Tui, View } from "@iyon/runtime/tui";
-import type { History, ScrollPane, TextInput, View as ViewValue, ViewSlot } from "@iyon/runtime/tui";
+import { Insets, Scene, Style, Tui, View } from "@iyon/tui";
+import type { History, ScrollPane, TextInput, View as ViewValue, ViewSlot } from "@iyon/tui";
 
 export interface ConsumerState {
   readonly title: string;
@@ -104,8 +104,8 @@ export async function openConsumerSession(): Promise<ConsumerSession> {
 // Ordinary defineView/state/View.key usage with ZERO framework setup.
 // The Tui-owned retained runtime activates automatically for these sources.
 
-import { defineView as defineViewPublic } from "@iyon/runtime/tui";
-import { state as createStatePublic } from "@iyon/runtime/tui";
+import { defineView as defineViewPublic } from "@iyon/tui";
+import { state as createStatePublic } from "@iyon/tui";
 
 export interface ScopedEntry {
   readonly id: string;

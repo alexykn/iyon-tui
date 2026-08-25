@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { Pointer } from "bun:ffi";
 
-import { native } from "../src/native.ts";
-import { nativeViewAbiSession } from "../src/tui/native_view_abi.ts";
-import { hostRenderRef, viewRefForNodeId, viewReleaseMany } from "../src/tui/generated/view_calls.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { nativeViewAbiSession } from "../../iyon-tui/src/native_view_abi.ts";
+import { hostRenderRef, viewRefForNodeId, viewReleaseMany } from "../../iyon-tui/src/generated/view_calls.ts";
 import {
   decodeMaterializeStatus,
   materializeSpacer,
   SPACER_STATUS_DETAIL,
   type BridgeSpacerMaterializeNode,
-} from "../src/tui/generated/view_materialize.ts";
-import { nodeForBridge, nodeIdPair, View } from "../src/tui/values/view.ts";
-import { MaterializeTx } from "../src/tui/retained_dag.ts";
+} from "../../iyon-tui/src/generated/view_materialize.ts";
+import { nodeForBridge, nodeIdPair, View } from "../../iyon-tui/src/values/view.ts";
+import { MaterializeTx } from "../../iyon-tui/src/retained_dag.ts";
 
 type AbiHost = {
   render(view: object): void;

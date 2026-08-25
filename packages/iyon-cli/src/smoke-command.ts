@@ -13,7 +13,7 @@ import {
   resetNativeCounterStats,
   runWithAbortSignal,
 } from "iyon:core";
-import { tuiSmoke } from "iyon:tui";
+import { tuiSmoke } from "@iyon/tui";
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

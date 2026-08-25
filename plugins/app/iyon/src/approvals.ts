@@ -1,5 +1,5 @@
 import type { ApprovalId, JsonValue } from "@iyon/sdk";
-import { View } from "@iyon/runtime/tui";
+import { View } from "@iyon/tui";
 import type { PendingApproval } from "./contracts.ts";
 
 export class ApprovalStore {

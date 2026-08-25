@@ -8,7 +8,7 @@ export * from "./tools/execution.ts";
 export * from "./tools/generic.ts";
 export * from "./tools/policy.ts";
 export * from "./tools/approval.ts";
-export * from "./tui/index.ts";
+export * from "@iyon/tui";
 export {
   AgentSession,
   IyonNativeError,

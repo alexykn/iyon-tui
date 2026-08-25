@@ -16,10 +16,10 @@
  * linear slope across checkpoints.
  */
 
-import { native } from "../src/native.ts";
-import { linkViewAbi, type NativeAbiPointers } from "../src/tui/generated/view_abi.ts";
+import { native } from "../../iyon-tui/src/native.ts";
+import { linkViewAbi, type NativeAbiPointers } from "../../iyon-tui/src/generated/view_abi.ts";
 import type { Pointer } from "bun:ffi";
-import manifest from "../src/tui/generated/view_abi_manifest.json";
+import manifest from "../../iyon-tui/src/generated/view_abi_manifest.json";
 
 const TOTAL_TRANSIENTS = Number(Bun.env.PERF12_CHURN_TOTAL ?? 1_000_000);
 const CHECKPOINT_EVERY = Number(Bun.env.PERF12_CHURN_CHECKPOINT_EVERY ?? 100_000);

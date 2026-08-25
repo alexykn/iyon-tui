@@ -1,6 +1,6 @@
-import { Style, TextSelector, Theme } from "iyon:tui";
-import type { StyleSpec } from "@iyon/runtime/tui";
-import type { Theme as RuntimeTheme } from "@iyon/runtime/tui";
+import { Style, TextSelector, Theme } from "@iyon/tui";
+import type { StyleSpec } from "@iyon/tui";
+import type { Theme as RuntimeTheme } from "@iyon/tui";
 
 export type IyonTheme = RuntimeTheme & {
   readonly composer: StyleSpec;

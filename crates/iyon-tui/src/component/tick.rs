@@ -178,6 +178,49 @@ impl TickScheduler {
         }
     }
 
+    /// Updates one already-mounted component without rescanning the complete
+    /// mount graph. This is used after a topology-preserving local snapshot
+    /// replacement.
+    pub(crate) fn sync_component_capability(
+        &mut self,
+        id: ComponentId,
+        capabilities: &MountedCapabilities,
+        now: Instant,
+    ) {
+        let Some(tick) = capabilities.get(id).and_then(|caps| caps.tick.clone()) else {
+            self.registrations.remove(&id);
+            return;
+        };
+        if tick.interval.is_zero() {
+            self.registrations.remove(&id);
+            return;
+        }
+        let driver = Box::new(CapabilityTickDriver {
+            callback: tick.handler.clone(),
+        });
+        match self.registrations.get_mut(&id) {
+            Some(registration) => {
+                let interval_changed = registration.interval != tick.interval;
+                registration.interval = tick.interval;
+                registration.driver = driver;
+                if interval_changed || registration.next_due.is_none() {
+                    self.activate(id, now);
+                }
+            }
+            None => {
+                self.registrations.insert(
+                    id,
+                    TickRegistration {
+                        interval: tick.interval,
+                        next_due: None,
+                        driver,
+                    },
+                );
+                self.activate(id, now);
+            }
+        }
+    }
+
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         self.mount_order
             .iter()

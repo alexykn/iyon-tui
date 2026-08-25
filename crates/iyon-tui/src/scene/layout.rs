@@ -65,9 +65,10 @@ impl ResolvedSceneLayout {
             Some(component),
             cache,
         );
-        if replacement.size != old_size
-            || !self.tree.patch_component_subtree(component, &replacement)
-        {
+        let shape_changed = replacement.size != old_size;
+        let tree_patched =
+            !shape_changed && self.tree.patch_component_subtree(component, &replacement);
+        if !tree_patched {
             return false;
         }
         self.components = self.tree.component_geometry();
@@ -96,7 +97,7 @@ impl LayoutSynchronizer {
     ) -> LayoutSync {
         self.delivered.retain(|id, _| graph.contains(*id));
         let mut dirty = false;
-        for node in &graph.nodes {
+        for node in graph.iter() {
             dirty |= self.synchronize_component(node.id, capabilities, geometry, registry)
                 == LayoutSync::Dirty;
         }

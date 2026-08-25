@@ -132,7 +132,7 @@ fn body_only_root_has_no_history_overlay() {
     assert!(resolved.history_overlay.is_none());
     assert_eq!(resolved.history_height, 0);
     assert_eq!(resolved.body_height, 1);
-    assert!(resolved.scene.mounts.nodes.is_empty());
+    assert!(resolved.scene.mounts.is_empty());
 }
 
 #[test]

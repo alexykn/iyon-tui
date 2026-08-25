@@ -14,13 +14,14 @@ impl MountedComponents {
     pub(crate) fn reconcile(&mut self, next: MountGraph) -> MountTransitions {
         let mut transitions = Vec::new();
 
-        for node in self.current.nodes.iter().rev() {
-            if !next.contains(node.id) {
-                transitions.push(MountTransition::Unmounted { id: node.id });
+        let current_ids = self.current.ids().collect::<Vec<_>>();
+        for id in current_ids.into_iter().rev() {
+            if !next.contains(id) {
+                transitions.push(MountTransition::Unmounted { id });
             }
         }
 
-        for node in &next.nodes {
+        for node in next.iter() {
             if !self.current.contains(node.id) {
                 transitions.push(MountTransition::Mounted {
                     id: node.id,

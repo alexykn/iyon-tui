@@ -39,6 +39,7 @@ pub struct History {
     layout: HistoryLayout,
     cached_total_height: Cell<Option<usize>>,
     stale_cached_heights: Cell<usize>,
+    revision: Cell<u64>,
     pub(super) native: super::native::NativeFrontier,
 }
 
@@ -55,6 +56,7 @@ impl History {
             layout: HistoryLayout::default(),
             cached_total_height: Cell::new(None),
             stale_cached_heights: Cell::new(0),
+            revision: Cell::new(0),
             native: super::native::NativeFrontier::default(),
         }
     }
@@ -84,6 +86,7 @@ impl History {
             content,
             layout: RefCell::new(HistoryUnitLayout::default()),
         });
+        self.bump_revision();
         Ok(id)
     }
 
@@ -104,6 +107,7 @@ impl History {
         let stream = ErasedHistoryStream::new(source).map_err(HistoryError::Stream)?;
         self.units[index].content = HistoryUnitContent::Stream(stream);
         self.invalidate_unit_layout(index);
+        self.bump_revision();
         Ok(HistoryStreamHandle::new(unit))
     }
 
@@ -120,6 +124,7 @@ impl History {
         self.units.remove(index);
         self.cached_total_height.set(None);
         self.stale_cached_heights.set(0);
+        self.bump_revision();
         Ok(())
     }
 
@@ -138,6 +143,7 @@ impl History {
         }
         self.units[index].content = HistoryUnitContent::Static(final_view);
         self.invalidate_unit_layout(index);
+        self.bump_revision();
         Ok(())
     }
 
@@ -172,6 +178,7 @@ impl History {
             content: HistoryUnitContent::Stream(stream),
             layout: RefCell::new(HistoryUnitLayout::default()),
         });
+        self.bump_revision();
         Ok(HistoryStreamHandle::new(id))
     }
 
@@ -187,7 +194,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.update(handle.unit(), update)
+        let result = stream.update(handle.unit(), update);
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     #[allow(dead_code)]
@@ -202,7 +213,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.refresh::<S>(handle.unit())
+        let result = stream.refresh::<S>(handle.unit());
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     pub(crate) fn next_stream_wakeup(&self) -> Option<Instant> {
@@ -222,6 +237,9 @@ impl History {
                 changed |= stream.advance(now)?;
             }
         }
+        if changed {
+            self.bump_revision();
+        }
         Ok(changed)
     }
 
@@ -236,7 +254,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.seal::<S>(handle.unit())
+        let result = stream.seal::<S>(handle.unit());
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
@@ -245,6 +267,14 @@ impl History {
 
     pub fn layout(&self) -> HistoryLayout {
         self.layout
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+
+    fn bump_revision(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
     }
 
     pub(crate) fn physical_rows_inserted(&self) -> u64 {
@@ -257,6 +287,7 @@ impl History {
         }
         self.layout = layout;
         self.invalidate_all_layout();
+        self.bump_revision();
     }
 
     pub fn with_layout(mut self, layout: HistoryLayout) -> Self {

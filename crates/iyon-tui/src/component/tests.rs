@@ -139,13 +139,35 @@ fn nested_component_attachment_wraps_without_overwriting_the_child() {
 
     let resolved = crate::scene::resolve_scene(&View::component(parent), &registry).unwrap();
     assert_eq!(resolved.view, View::component(parent));
-    assert_eq!(resolved.mounts.nodes.len(), 2);
-    assert_eq!(resolved.mounts.nodes[0].id, parent.id());
-    assert_eq!(resolved.mounts.nodes[1].id, child_handle.id());
+    let nodes = resolved.mounts.iter().collect::<Vec<_>>();
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(nodes[0].id, parent.id());
+    assert_eq!(nodes[1].id, child_handle.id());
     assert_eq!(
         resolved.overlay.component(child_handle.id()).unwrap().view,
         View::text("same").into_view()
     );
+}
+
+#[test]
+fn replacing_component_descendants_preserves_the_owner_and_depth_first_order() {
+    let owner = ComponentId::allocate();
+    let old_child = ComponentId::allocate();
+    let new_child = ComponentId::allocate();
+    let node = |id, parent| MountNode {
+        id,
+        parent,
+        revision: ComponentRevision::default(),
+    };
+    let mut graph = MountGraph::new(vec![node(owner, None), node(old_child, Some(owner))]);
+    let replacement = MountGraph::new(vec![node(new_child, Some(owner))]);
+
+    assert!(graph.replace_subtree(owner, replacement));
+    assert_eq!(graph.ids().collect::<Vec<_>>(), vec![owner, new_child]);
+    assert_eq!(graph.parent(owner), None);
+    assert_eq!(graph.parent(new_child), Some(owner));
+    assert_eq!(graph.subtree_ids(owner), vec![owner, new_child]);
+    assert!(!graph.contains(old_child));
 }
 
 #[test]

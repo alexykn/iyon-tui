@@ -159,11 +159,35 @@ impl Surface {
 
     /// Clears a rectangular region before an incremental subtree composite.
     pub(crate) fn clear_rect(&mut self, rect: crate::geometry::Rect) {
+        self.clear_rect_with_background(rect, None);
+    }
+
+    /// Clears a region while restoring the nearest retained ancestor surface
+    /// background. Incremental component painting must not erase a parent
+    /// background merely because the changed child has transparent cells.
+    pub(crate) fn clear_rect_with_background(
+        &mut self,
+        rect: crate::geometry::Rect,
+        background: Option<PhysicalColor>,
+    ) {
         let right = rect.right().min(self.width());
         let bottom = rect.bottom().min(self.height());
         for y in rect.y.min(self.height())..bottom {
             for x in rect.x.min(self.width())..right {
-                *self.get_mut(x, y) = PhysicalCell::transparent();
+                let cell = if let Some(color) = background {
+                    PhysicalCell {
+                        grapheme: None,
+                        style: PhysicalStyle {
+                            background: Some(color),
+                            ..PhysicalStyle::default()
+                        },
+                        painted: true,
+                        continuation: false,
+                    }
+                } else {
+                    PhysicalCell::transparent()
+                };
+                *self.get_mut(x, y) = cell;
             }
         }
     }

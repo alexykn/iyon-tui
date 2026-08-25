@@ -50,7 +50,7 @@ impl FocusState {
     ) -> bool {
         self.geometry = geometry.cloned();
         let previous_modal = self.active_modal;
-        let next_modal = capabilities.modal_ids(graph.nodes.iter()).last();
+        let next_modal = capabilities.modal_ids(graph.iter()).last();
         let modal_changed = next_modal != previous_modal;
         let restored = if modal_changed {
             let restore_index = self
@@ -129,6 +129,49 @@ impl FocusState {
 
         self.modal_restore.clear();
         self.modal_restore.push((next_parent, None));
+    }
+
+    /// Reconciles a topology-preserving local update without rebuilding the
+    /// complete focus order unless the changed capabilities can affect focus
+    /// eligibility or modal ownership.
+    pub(crate) fn reconcile_incremental(
+        &mut self,
+        changed: &[ComponentId],
+        graph: &MountGraph,
+        capabilities: &MountedCapabilities,
+        geometry: Option<&ComponentGeometryMap>,
+        registry: &mut ComponentRegistry,
+    ) -> bool {
+        self.geometry = geometry.cloned();
+        let Some(focused) = self.focused else {
+            return false;
+        };
+        let capability_change_requires_order = changed.iter().any(|id| {
+            capabilities
+                .get(*id)
+                .is_some_and(|caps| caps.focusable || caps.modal_scope)
+        });
+        let active_modal_changed = self
+            .active_modal
+            .is_some_and(|modal| changed.contains(&modal));
+        if capability_change_requires_order || active_modal_changed {
+            return self.reconcile_with_geometry(graph, capabilities, geometry, registry);
+        }
+
+        let still_visible = geometry.is_none_or(|map| {
+            map.entries
+                .get(&focused)
+                .is_some_and(|entry| entry.visible.is_some())
+        });
+        let still_focusable = capabilities.get(focused).is_some_and(|caps| caps.focusable);
+        if !still_visible || !still_focusable {
+            return self.reconcile_with_geometry(graph, capabilities, geometry, registry);
+        }
+        self.focused_handler = capabilities
+            .get(focused)
+            .and_then(|caps| caps.focus_changed.as_ref())
+            .cloned();
+        false
     }
 
     pub(crate) fn focus_next(
@@ -236,7 +279,6 @@ pub(crate) fn eligible_focus_order_with_geometry(
     geometry: Option<&ComponentGeometryMap>,
 ) -> Vec<ComponentId> {
     graph
-        .nodes
         .iter()
         .filter(|node| modal.is_none_or(|modal| is_descendant_or_self(node.id, modal, graph)))
         .filter(|node| capabilities.get(node.id).is_some_and(|caps| caps.focusable))

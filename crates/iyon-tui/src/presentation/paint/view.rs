@@ -145,6 +145,7 @@ impl ViewPainter {
             return false;
         }
         let mut inherited = PhysicalStyle::default();
+        let mut inherited_background = None;
         let mut context = compiler.style_context(tree.node(tree.root).style.component_scope);
         for ancestor in path.iter().copied().take(path.len().saturating_sub(1)) {
             let node = tree.node(ancestor);
@@ -158,7 +159,13 @@ impl ViewPainter {
                 &node.style.decoration.text_style,
                 &node_context,
             );
+            if let Some(color) = &node.style.decoration.surface_background {
+                inherited_background = Some(compiler.theme.resolve_color(color, &node_context));
+            }
             context = node_context.for_descendant();
+        }
+        if let Some(background) = inherited_background {
+            inherited.background = Some(background);
         }
         let node = tree.node(component_root);
         let painted = self.paint_node(
@@ -170,7 +177,7 @@ impl ViewPainter {
             cache,
             false,
         );
-        surface.clear_rect(node.rect);
+        surface.clear_rect_with_background(node.rect, inherited_background);
         surface.composite(&painted, node.rect.x, node.rect.y);
         true
     }

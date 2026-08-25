@@ -226,7 +226,7 @@ fn static_scene_resolves_identically_with_no_mounts() {
 
     let resolved = resolve_scene(&original, &registry).unwrap();
     assert_eq!(resolved.view, original);
-    assert!(resolved.mounts.nodes.is_empty());
+    assert!(resolved.mounts.is_empty());
 }
 
 #[test]
@@ -248,7 +248,6 @@ fn hanging_body_component_is_mounted_once_and_owns_one_body_geometry() {
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
@@ -312,7 +311,6 @@ fn hanging_body_component_reflows_without_mount_duplication() {
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
@@ -346,7 +344,6 @@ fn hanging_prefix_component_is_mounted_once_when_body_wraps() {
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
@@ -386,9 +383,10 @@ fn one_slot_becomes_an_owned_component_root() {
         &source,
         &resolved.view
     ));
-    assert_eq!(resolved.mounts.nodes.len(), 1);
-    assert_eq!(resolved.mounts.nodes[0].id, handle.id());
-    assert_eq!(resolved.mounts.nodes[0].parent, None);
+    let nodes = resolved.mounts.iter().collect::<Vec<_>>();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].id, handle.id());
+    assert_eq!(nodes[0].parent, None);
     assert_eq!(resolved.view, View::component(handle));
     assert_eq!(count_slots(&resolved.view), 1);
 }
@@ -401,15 +399,13 @@ fn nested_child_is_reread_from_registry_on_each_resolution() {
 
     let first = resolve_scene(&View::component(parent), &registry).unwrap();
     assert_eq!(
-        first
-            .mounts
-            .nodes
-            .iter()
-            .map(|node| node.id)
-            .collect::<Vec<_>>(),
+        first.mounts.ids().collect::<Vec<_>>(),
         vec![parent.id(), child.id()]
     );
-    assert_eq!(first.mounts.nodes[1].parent, Some(parent.id()));
+    assert_eq!(
+        first.mounts.iter().nth(1).unwrap().parent,
+        Some(parent.id())
+    );
     assert!(
         compile_view_with_overlay(&first.view, 20, &first.overlay)
             .rows
@@ -425,7 +421,7 @@ fn nested_child_is_reread_from_registry_on_each_resolution() {
             .iter()
             .any(|row| row.plain_text().contains("new"))
     );
-    assert_eq!(second.mounts.nodes[1].revision.value(), 1);
+    assert_eq!(second.mounts.iter().nth(1).unwrap().revision.value(), 1);
 }
 
 #[test]
@@ -566,7 +562,7 @@ fn snapshot_metadata_does_not_create_a_live_mount() {
     let resolved = resolve_scene(&snapshot, &registry).unwrap();
 
     assert_eq!(resolved.view, snapshot);
-    assert!(resolved.mounts.nodes.is_empty());
+    assert!(resolved.mounts.is_empty());
 }
 
 #[test]
@@ -630,7 +626,7 @@ fn component_geometry_distinguishes_mounting_from_visibility() {
     let layout = layout_resolved_scene(&resolved, Size::new(20, 4));
     let geometry = layout.components.entries.get(&handle.id()).unwrap();
     assert_eq!(geometry.visible, None);
-    assert_eq!(resolved.mounts.nodes.len(), 1);
+    assert_eq!(resolved.mounts.len(), 1);
 }
 
 #[test]
@@ -767,7 +763,7 @@ fn clipped_component_remains_semantically_mounted() {
     let view = View::component(handle).clamp_rows(0, crate::presentation::OverflowIndicator::None);
     let resolved = resolve_scene(&view, &registry).unwrap();
 
-    assert_eq!(resolved.mounts.nodes[0].id, handle.id());
+    assert_eq!(resolved.mounts.iter().next().unwrap().id, handle.id());
     assert!(
         compile_view_with_overlay(&resolved.view, 20, &resolved.overlay)
             .rows

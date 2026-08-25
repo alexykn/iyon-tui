@@ -220,11 +220,7 @@ pub(crate) fn resolve_component_subtree(
     parent: ComponentId,
 ) -> Result<ResolvedScene, ResolveError> {
     let mut resolved = resolve_branch(view, registry)?;
-    for node in &mut resolved.mounts.nodes {
-        if node.parent.is_none() {
-            node.parent = Some(parent);
-        }
-    }
+    resolved.mounts.reparent_roots(parent);
     Ok(resolved)
 }
 
@@ -245,8 +241,8 @@ fn merge_root_scene(
     ensure_disjoint_mounts(&history, &body)?;
     let history_view = history.view;
     let body_view = body.view;
-    let mut mounts = history.mounts.nodes;
-    mounts.extend(body.mounts.nodes);
+    let mut mounts = history.mounts.to_nodes();
+    mounts.extend(body.mounts.to_nodes());
     let mut capabilities = history.capabilities;
     capabilities.entries.extend(body.capabilities.entries);
     let mut overlay = history.overlay;

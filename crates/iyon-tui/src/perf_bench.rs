@@ -8,7 +8,7 @@ use std::{process::Command, time::Instant};
 
 use crate::{
     Component, History, IntoView, TextSpan, TextStream, Theme, View,
-    component::ComponentRegistry,
+    component::{ComponentRegistry, MountGraph},
     geometry::{LayoutConstraints, Size},
     history::{HistoryViewportAnchor, project_into_session_for_host},
     perf::{self, PerfSnapshot},
@@ -169,19 +169,14 @@ fn render_view_timed(
     cache: &mut LayoutCache,
     paint_cache: Option<&mut PaintCache>,
 ) -> RenderTiming {
-    let (tree, compiler) = if let Some(registry) = registry {
+    let (tree, graph) = if let Some(registry) = registry {
         let mut session = ResolveSession::new(registry);
         let resolved = session
             .resolve_root(view)
             .expect("deterministic component fixture must resolve");
         let scene = session.finish(resolved);
         let geometry = layout_resolved_scene_with_cache(&scene, Size::new(width, height), cache);
-        let compiler = crate::presentation::layout::ViewCompiler::with_interaction(
-            &Theme::default(),
-            None,
-            &scene.mounts,
-        );
-        (geometry.tree, compiler)
+        (geometry.tree, scene.mounts.clone())
     } else {
         let tree = layout::layout_view_with_overlay_and_cache(
             view,
@@ -189,9 +184,13 @@ fn render_view_timed(
             &crate::scene::ResolutionOverlay::default(),
             cache,
         );
-        let compiler = crate::presentation::layout::ViewCompiler::new(&Theme::default());
-        (tree, compiler)
+        (tree, MountGraph::default())
     };
+    let compiler = crate::presentation::layout::ViewCompiler::with_interaction(
+        &Theme::default(),
+        None,
+        &graph,
+    );
 
     let paint_start = Instant::now();
     let surface = match paint_cache {

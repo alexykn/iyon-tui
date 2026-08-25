@@ -609,6 +609,7 @@ impl SceneHost {
         let roots = invalidated
             .iter()
             .copied()
+            .filter(|candidate| retained.root.scene.mounts.contains(*candidate))
             .filter(|candidate| {
                 !invalidated.iter().any(|ancestor| {
                     ancestor != candidate

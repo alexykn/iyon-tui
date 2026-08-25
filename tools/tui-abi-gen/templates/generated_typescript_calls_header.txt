@@ -1,3 +1,2 @@
-{{ banner }}import type { Pointer } from "bun:ffi";
-import type { linkViewAbi } from "./view_abi";
+{{ banner }}import type { NativeViewAbiHandle, NativeTuiHostContract } from "../native.ts";
 

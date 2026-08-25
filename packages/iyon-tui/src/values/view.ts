@@ -14,8 +14,8 @@
  * The pending create/patch backings and the packed-transport metadata
  * coupling (registerPackedMeta at construction, *ForPackedTransport statics,
  * sequence overrides) have been removed: every transport candidate except
- * direct_7v2 and PERF-12 retained-DAG FFI was ruled out by PERF-11v4
- * category D, so their JS-side machinery is no longer kept alive. The native
+ * direct_7v2 and the retained-DAG semantic transport are the active
+ * candidates; ruled-out packed transports are no longer kept alive. The native
  * packed decoders remain in iyon-tui-native untouched (T4 is a no-native-change
  * tranche); they are simply unreachable from this module.
  *

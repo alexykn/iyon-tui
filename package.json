@@ -1,6 +1,6 @@
 {
   "name": "iyon-tui-workspace",
-  "version": "0.1.0-s5.0",
+  "version": "0.1.0-s6.0",
   "license": "MIT",
   "type": "module",
   "packageManager": "bun@1.4.0",

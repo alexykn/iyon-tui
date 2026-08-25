@@ -14,6 +14,9 @@ perf-packed-transport = ["iyon-tui/native-shared-memory"]
 perf-packed-benchmark = ["perf-packed-transport", "perf-counters"]
 perf-packed-timing = ["perf-packed-transport", "perf-counters", "iyon-tui/perf-timing"]
 fast-view-abi = []
+# S6 keeps the generated C/FFI symbols available only for isolated
+# qualification; the default addon exposes the safe N-API transport.
+direct-ffi = []
 
 [dependencies]
 bytemuck.workspace = true

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091
+// generator_blake3 = cbaa60a2d973bcd75cb8ee49be131d5883f98a31fd8e88aa5344e4280efebfae
 #[allow(dead_code)]
 pub struct NativeViewRuntime;
 

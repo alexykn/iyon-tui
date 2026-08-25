@@ -1396,6 +1396,48 @@ pub(super) fn runtime_handle_for_env(env: &Env) -> napi::Result<ViewRuntimeHandl
     Ok(runtime)
 }
 
+/// Opaque environment-owned N-API session. JavaScript receives the class
+/// handle, never the runtime address or a generated function-pointer table.
+#[napi]
+pub struct NativeViewAbiSession {
+    runtime: ViewRuntimeHandle,
+}
+
+#[napi]
+impl NativeViewAbiSession {
+    fn runtime_ptr(&self) -> napi::Result<*mut NativeViewRuntime> {
+        let runtime = runtime_from_handle(&self.runtime)?;
+        Ok(runtime as *mut NativeViewRuntime)
+    }
+
+    #[napi]
+    pub fn metadata(&self) -> napi::Result<Value> {
+        let runtime = runtime_from_handle(&self.runtime)?;
+        Ok(serde_json::json!({
+            "abi_name": generated_types::ABI_NAME,
+            "abi_version": generated_types::ABI_VERSION,
+            "semantic_version": generated_types::SEMANTIC_SCHEMA_VERSION,
+            "schema_blake3": generated_types::SCHEMA_BLAKE3,
+            "generator_blake3": generated_types::GENERATOR_BLAKE3,
+            "generation": runtime.generation,
+            "transport": "napi",
+            "function_count": generated_table::FUNCTION_COUNT,
+        }))
+    }
+}
+
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/generated/view_abi_napi.rs"
+));
+
+#[napi(js_name = "tuiViewAbiSession")]
+pub fn tui_view_abi_session(env: Env) -> napi::Result<NativeViewAbiSession> {
+    Ok(NativeViewAbiSession {
+        runtime: runtime_handle_for_env(&env)?,
+    })
+}
+
 pub(super) fn runtime_ptr_for_env(env: &Env) -> napi::Result<*mut NativeViewRuntime> {
     let runtime = runtime_handle_for_env(env)?;
     Ok(Arc::as_ptr(&runtime) as *mut NativeViewRuntime)
@@ -1463,6 +1505,7 @@ pub(super) fn abort_all_edit_txns(pointer: *mut NativeViewRuntime) {
     runtime.abort_all_edit_txns();
 }
 
+#[cfg(feature = "direct-ffi")]
 #[napi(js_name = "tuiViewAbiBootstrap")]
 pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
     let runtime = runtime_for_env(&env)?;

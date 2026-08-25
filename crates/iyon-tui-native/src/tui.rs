@@ -108,6 +108,7 @@ pub unsafe extern "C" fn iyon_abi_probe_cstring(value: *const std::ffi::c_char) 
     })
 }
 
+#[cfg(feature = "direct-ffi")]
 #[napi(js_name = "tuiPerfAbiProbe")]
 pub fn tui_perf_abi_probe() -> Value {
     serde_json::json!({
@@ -119,6 +120,7 @@ pub fn tui_perf_abi_probe() -> Value {
     })
 }
 
+#[cfg(feature = "direct-ffi")]
 #[napi(js_name = "tuiPerfAbiConformanceProbe")]
 pub fn tui_perf_abi_conformance_probe() -> Value {
     serde_json::json!({
@@ -870,17 +872,6 @@ impl NativeTuiHost {
             .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
-    /// Stable opaque pointer for generated host-mutating View ABI calls.
-    /// The N-API class allocation owns `self` until finalization; `dispose`
-    /// tombstones the host before the pointer can be used again.
-    #[napi(js_name = "tuiViewAbiHostPointer")]
-    pub fn view_abi_host_pointer(&self) -> i64 {
-        if !self.alive.load(Ordering::Acquire) {
-            return 0;
-        }
-        self as *const Self as usize as i64
-    }
-
     #[napi(js_name = "dispatchKey")]
     pub fn dispatch_key(&self, key: String, modifiers: Option<Vec<String>>) -> Result<()> {
         ensure_alive(&self.alive)?;
@@ -990,6 +981,19 @@ impl NativeTuiHost {
         self.host
             .advance_time(std::time::Duration::from_millis(milliseconds))
             .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+}
+
+#[cfg(feature = "direct-ffi")]
+#[napi]
+impl NativeTuiHost {
+    /// Qualification-only raw host address for the legacy direct FFI backend.
+    #[napi(js_name = "tuiViewAbiHostPointer")]
+    pub fn view_abi_host_pointer(&self) -> i64 {
+        if !self.alive.load(Ordering::Acquire) {
+            return 0;
+        }
+        self as *const Self as usize as i64
     }
 }
 

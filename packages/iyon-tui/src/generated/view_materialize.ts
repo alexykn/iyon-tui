@@ -1,8 +1,7 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091
-import type { Pointer } from "bun:ffi";
-import type { linkViewAbi } from "./view_abi";
+// generator_blake3 = cbaa60a2d973bcd75cb8ee49be131d5883f98a31fd8e88aa5344e4280efebfae
+import type { NativeViewAbiHandle, NativeTuiHostContract } from "../native.ts";
 import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
 import type { ViewAbiSymbols } from "./view_calls";
 import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../ir.ts";

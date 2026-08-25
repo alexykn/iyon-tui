@@ -25,6 +25,7 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
     "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
     "crates/iyon-tui-native/src/generated/view_abi_table.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_napi.rs",
     "crates/iyon-tui-native/include/iyon_view_abi.h",
     "packages/iyon-tui/src/generated/view_abi.ts",
     "packages/iyon-tui/src/generated/view_abi_conformance.ts",
@@ -205,42 +206,46 @@ fn render_outputs(
     );
     outputs.insert(
         GENERATOR_OUTPUTS[4].to_owned(),
-        render_header::header(&document, &bridge_schema, &schema_hash, &generator_hash),
+        render_rust::napi_methods(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[5].to_owned(),
-        render_typescript::abi_bindings(&document, &schema_hash, &generator_hash),
+        render_header::header(&document, &bridge_schema, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[6].to_owned(),
-        render_typescript::conformance_bindings(&document, &schema_hash, &generator_hash),
+        render_typescript::abi_bindings(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[7].to_owned(),
-        render_typescript::calls(&document, &schema_hash, &generator_hash),
+        render_typescript::conformance_bindings(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[8].to_owned(),
-        render_typescript::materialize(&document, &schema_hash, &generator_hash),
+        render_typescript::calls(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[9].to_owned(),
-        render_manifest::manifest(&document, &schema_hash, &generator_hash, &output_paths),
+        render_typescript::materialize(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[10].to_owned(),
-        render_typescript::layout_test(&document, &schema_hash, &generator_hash),
+        render_manifest::manifest(&document, &schema_hash, &generator_hash, &output_paths),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[11].to_owned(),
-        render_typescript::benchmark_registry(&document, &schema_hash, &generator_hash),
+        render_typescript::layout_test(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[12].to_owned(),
-        render_rust::layout_tests(&document, &schema_hash, &generator_hash),
+        render_typescript::benchmark_registry(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[13].to_owned(),
+        render_rust::layout_tests(&document, &schema_hash, &generator_hash),
+    );
+    outputs.insert(
+        GENERATOR_OUTPUTS[14].to_owned(),
         render_manifest::human_reference(&document, &schema_hash, &generator_hash),
     );
     Ok(outputs)

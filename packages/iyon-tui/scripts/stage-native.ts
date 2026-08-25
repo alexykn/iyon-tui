@@ -52,7 +52,7 @@ const addon = require(stagedAddon.pathname) as {
   nativeVersion?: () => string;
   tuiSmoke?: () => string;
 };
-if (addon.nativeVersion?.() !== "iyon-tui-native/s3" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
+if (addon.nativeVersion?.() !== "iyon-tui-native/s6" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
   throw new Error(`staged addon failed the Bun load probe: ${stagedAddon.pathname}`);
 }
 

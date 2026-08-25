@@ -1,28 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import type { Pointer } from "bun:ffi";
-
 import { native } from "../src/native.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
 import { hostRenderRef, runtimeNoop, viewCommonPatchRoot, viewRefForNodeId, viewRenderRef, viewReleaseMany, viewSpacerCreate, viewTextLayoutPatchRoot } from "../src/generated/view_calls.ts";
 import { nodeForBridge, nodeIdPair, View } from "../src/values/view.ts";
 
-type AbiHost = {
-  render(view: object): void;
-  tuiViewAbiHostPointer(): number;
-  screenRows(): string[];
-  dispose(): void;
-};
+type AbiHost = NonNullable<typeof native.NativeTuiHost> extends new (...args: never[]) => infer T ? T : never;
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => AbiHost) | undefined;
 
 describe("PERF-11 generated vertical slice", () => {
-  test("links the generated ABI and keeps the runtime pointer stable", () => {
+  test("loads the generated N-API session and keeps its opaque handle stable", () => {
     const session = nativeViewAbiSession();
     if (session === undefined) return;
     expect(session.abi.function_count).toBe(57);
-    expect(session.abi.runtime_ptr).toBeGreaterThan(0);
+    const addon = native as unknown as Record<string, unknown>;
+    expect(addon.tuiViewAbiBootstrap).toBeUndefined();
+    expect(addon.tuiPerfAbiProbe).toBeUndefined();
+    expect(session.abi.transport).toBe("napi");
+    expect(session.abi.generation).toBeGreaterThan(0);
     expect(session.symbols).toBeDefined();
-    expect(nativeViewAbiSession()?.abi.runtime_ptr ?? 0).toBe(session.abi.runtime_ptr);
+    expect(nativeViewAbiSession()?.runtime).toBe(session.runtime);
     expect(runtimeNoop(session.symbols, session.runtime)).toBe(1);
   });
 
@@ -31,12 +28,13 @@ describe("PERF-11 generated vertical slice", () => {
     const session = nativeViewAbiSession();
     if (session === undefined) return;
     const host = new Host(8, 4, true);
+    expect((host as unknown as Record<string, unknown>).tuiViewAbiHostPointer).toBeUndefined();
     const view = View.spacer(2);
     try {
       host.render(nodeForBridge(view));
       const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
       const reference = viewRefForNodeId(session.symbols, session.runtime, nodeIdLow, nodeIdHigh);
-      expect(hostRenderRef(session.symbols, session.runtime, host.tuiViewAbiHostPointer() as unknown as Pointer, reference)).toBe(0);
+      expect(hostRenderRef(session.symbols, session.runtime, host, reference)).toBe(0);
       expect(host.screenRows()).toEqual(["        ", "        ", "        ", "        "]);
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
     } finally {

@@ -584,7 +584,7 @@ export interface BridgeAxisSpliceDerivation {
   readonly base: BridgeViewNode;
   readonly index: number;
   readonly removeCount: number;
-  /** Only the INSERTED children cross FFI (§35); order matches the splice. */
+  /** Only the INSERTED children cross the native boundary (§35); order matches the splice. */
   readonly inserted: readonly { readonly node: BridgeViewNode; readonly trackWord: number }[];
 }
 

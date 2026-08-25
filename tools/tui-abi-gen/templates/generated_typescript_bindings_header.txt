@@ -1,2 +1,2 @@
-{{ banner }}import { linkSymbols, type Pointer } from "bun:ffi";
+{{ banner }}import type { NativeTuiHostContract } from "../native.ts";
 

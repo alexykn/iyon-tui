@@ -1,125 +1,85 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091
-import { linkSymbols, type Pointer } from "bun:ffi";
-export type NativeAbiPointers = {
-  runtimeNoop: Pointer;
-  viewStatusDetail: Pointer;
-  viewRenderRef: Pointer;
-  hostRenderRef: Pointer;
-  viewSpacerCreate: Pointer;
-  viewTextLayoutPatchRoot: Pointer;
-  viewCommonPatchRoot: Pointer;
-  viewAxisCreateBuffer: Pointer;
-  viewRowCreate0: Pointer;
-  viewRowCreate1: Pointer;
-  viewRowCreate2: Pointer;
-  viewRowCreate3: Pointer;
-  viewRowCreate4: Pointer;
-  viewColumnCreate0: Pointer;
-  viewColumnCreate1: Pointer;
-  viewColumnCreate2: Pointer;
-  viewColumnCreate3: Pointer;
-  viewColumnCreate4: Pointer;
-  axisBuilderBegin: Pointer;
-  axisBuilderPush: Pointer;
-  axisBuilderFinish: Pointer;
-  axisBuilderAbort: Pointer;
-  viewAxisSetChild: Pointer;
-  viewAxisSpliceBuffer: Pointer;
-  viewGridSetCell: Pointer;
-  viewAxisSetChildPath: Pointer;
-  viewGridCreateBuffer: Pointer;
-  viewDiffCreateBuffer: Pointer;
-  viewHangingCreate: Pointer;
-  viewContainerCreate: Pointer;
-  viewClampCreate: Pointer;
-  viewComponentCreate: Pointer;
-  viewDecoratedCreateBuffer: Pointer;
-  viewGridSetCellPath: Pointer;
-  viewReleaseMany: Pointer;
-  viewRefForNodeId: Pointer;
-  pathRoot: Pointer;
-  pathChild: Pointer;
-  viewTextLayoutPatchPath: Pointer;
-  viewTextLayoutPatchPathD1: Pointer;
-  viewTextLayoutPatchPathD2: Pointer;
-  viewTextLayoutPatchPathD3: Pointer;
-  viewTextLayoutPatchPathD4: Pointer;
-  editTxnBegin: Pointer;
-  editTxnAddTextLayout: Pointer;
-  editTxnCommitRender: Pointer;
-  editTxnAbort: Pointer;
-  styleAtomCreateCstring: Pointer;
-  styleCreateBits: Pointer;
-  viewTextCreateCstring: Pointer;
-  viewTextCreateUtf8: Pointer;
-  viewTextCreateUtf82: Pointer;
-  viewTextCreateUtf83: Pointer;
-  viewTextCreateUtf84: Pointer;
-  viewTextCreateCstring2: Pointer;
-  viewTextCreateCstring3: Pointer;
-  viewTextCreateCstring4: Pointer;
-};
+// generator_blake3 = cbaa60a2d973bcd75cb8ee49be131d5883f98a31fd8e88aa5344e4280efebfae
+import type { NativeTuiHostContract } from "../native.ts";
+export interface NativeViewAbiMetadata {
+  readonly abi_name: string;
+  readonly abi_version: number;
+  readonly semantic_version: number;
+  readonly schema_blake3: string;
+  readonly generator_blake3: string;
+  readonly generation: number;
+  readonly transport: "napi";
+  readonly function_count: number;
+}
 
-export function linkViewAbi(abi: NativeAbiPointers) {
-  return linkSymbols({
-    runtimeNoop: { ptr: abi.runtimeNoop, args: ["ptr"], returns: "u32" },
-    viewStatusDetail: { ptr: abi.viewStatusDetail, args: ["ptr"], returns: "u32" },
-    viewRenderRef: { ptr: abi.viewRenderRef, args: ["ptr", "u32"], returns: "u32" },
-    hostRenderRef: { ptr: abi.hostRenderRef, args: ["ptr", "ptr", "u32"], returns: "i32" },
-    viewSpacerCreate: { ptr: abi.viewSpacerCreate, args: ["ptr", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchRoot: { ptr: abi.viewTextLayoutPatchRoot, args: ["ptr", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewCommonPatchRoot: { ptr: abi.viewCommonPatchRoot, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewAxisCreateBuffer: { ptr: abi.viewAxisCreateBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
-    viewRowCreate0: { ptr: abi.viewRowCreate0, args: ["ptr", "u32", "u32", "u32"], returns: "u32" },
-    viewRowCreate1: { ptr: abi.viewRowCreate1, args: ["ptr", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewRowCreate2: { ptr: abi.viewRowCreate2, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewRowCreate3: { ptr: abi.viewRowCreate3, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewRowCreate4: { ptr: abi.viewRowCreate4, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewColumnCreate0: { ptr: abi.viewColumnCreate0, args: ["ptr", "u32", "u32", "u32"], returns: "u32" },
-    viewColumnCreate1: { ptr: abi.viewColumnCreate1, args: ["ptr", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewColumnCreate2: { ptr: abi.viewColumnCreate2, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewColumnCreate3: { ptr: abi.viewColumnCreate3, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewColumnCreate4: { ptr: abi.viewColumnCreate4, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    axisBuilderBegin: { ptr: abi.axisBuilderBegin, args: ["ptr", "u32", "u32"], returns: "u32" },
-    axisBuilderPush: { ptr: abi.axisBuilderPush, args: ["ptr", "u32", "u32", "u32"], returns: "i32" },
-    axisBuilderFinish: { ptr: abi.axisBuilderFinish, args: ["ptr", "u32", "u32", "u32", "u32"], returns: "u32" },
-    axisBuilderAbort: { ptr: abi.axisBuilderAbort, args: ["ptr", "u32"], returns: "i32" },
-    viewAxisSetChild: { ptr: abi.viewAxisSetChild, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewAxisSpliceBuffer: { ptr: abi.viewAxisSpliceBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
-    viewGridSetCell: { ptr: abi.viewGridSetCell, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewAxisSetChildPath: { ptr: abi.viewAxisSetChildPath, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewGridCreateBuffer: { ptr: abi.viewGridCreateBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
-    viewDiffCreateBuffer: { ptr: abi.viewDiffCreateBuffer, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
-    viewHangingCreate: { ptr: abi.viewHangingCreate, args: ["ptr", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewContainerCreate: { ptr: abi.viewContainerCreate, args: ["ptr", "u32", "u32", "u32"], returns: "u32" },
-    viewClampCreate: { ptr: abi.viewClampCreate, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "cstring"], returns: "u32" },
-    viewComponentCreate: { ptr: abi.viewComponentCreate, args: ["ptr", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewDecoratedCreateBuffer: { ptr: abi.viewDecoratedCreateBuffer, args: ["ptr", "u32", "u32", "u32", "u32", "buffer", "buffer_length", "u32", "buffer", "buffer_length", "u32"], returns: "u32" },
-    viewGridSetCellPath: { ptr: abi.viewGridSetCellPath, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewReleaseMany: { ptr: abi.viewReleaseMany, args: ["ptr", "buffer", "buffer_length", "u32"], returns: "i32" },
-    viewRefForNodeId: { ptr: abi.viewRefForNodeId, args: ["ptr", "u32", "u32"], returns: "u32" },
-    pathRoot: { ptr: abi.pathRoot, args: ["ptr"], returns: "u32" },
-    pathChild: { ptr: abi.pathChild, args: ["ptr", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchPath: { ptr: abi.viewTextLayoutPatchPath, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchPathD1: { ptr: abi.viewTextLayoutPatchPathD1, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchPathD2: { ptr: abi.viewTextLayoutPatchPathD2, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchPathD3: { ptr: abi.viewTextLayoutPatchPathD3, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextLayoutPatchPathD4: { ptr: abi.viewTextLayoutPatchPathD4, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    editTxnBegin: { ptr: abi.editTxnBegin, args: ["ptr", "u32", "u32"], returns: "u32" },
-    editTxnAddTextLayout: { ptr: abi.editTxnAddTextLayout, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "i32" },
-    editTxnCommitRender: { ptr: abi.editTxnCommitRender, args: ["ptr", "ptr", "u32"], returns: "u32" },
-    editTxnAbort: { ptr: abi.editTxnAbort, args: ["ptr", "u32"], returns: "i32" },
-    styleAtomCreateCstring: { ptr: abi.styleAtomCreateCstring, args: ["ptr", "cstring"], returns: "u32" },
-    styleCreateBits: { ptr: abi.styleCreateBits, args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateCstring: { ptr: abi.viewTextCreateCstring, args: ["ptr", "u32", "u32", "cstring", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateUtf8: { ptr: abi.viewTextCreateUtf8, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateUtf82: { ptr: abi.viewTextCreateUtf82, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateUtf83: { ptr: abi.viewTextCreateUtf83, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateUtf84: { ptr: abi.viewTextCreateUtf84, args: ["ptr", "u32", "u32", "buffer", "buffer_length", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateCstring2: { ptr: abi.viewTextCreateCstring2, args: ["ptr", "u32", "u32", "cstring", "u32", "cstring", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateCstring3: { ptr: abi.viewTextCreateCstring3, args: ["ptr", "u32", "u32", "cstring", "u32", "cstring", "u32", "cstring", "u32", "u32", "u32"], returns: "u32" },
-    viewTextCreateCstring4: { ptr: abi.viewTextCreateCstring4, args: ["ptr", "u32", "u32", "cstring", "u32", "cstring", "u32", "cstring", "u32", "cstring", "u32", "u32", "u32"], returns: "u32" },
-  } as const);
+export interface NativeViewAbiHandle {
+  metadata(): NativeViewAbiMetadata;
+  runtimeNoop(): number;
+  viewStatusDetail(): number;
+  viewRenderRef(base: number): number;
+  hostRenderRef(host: NativeTuiHostContract, base: number): number;
+  viewSpacerCreate(node_id_low: number, node_id_high: number, rows: number): number;
+  viewTextLayoutPatchRoot(base: number, node_id_low: number, node_id_high: number, wrap: number, align: number): number;
+  viewCommonPatchRoot(base: number, node_id_low: number, node_id_high: number, mask: number, padding_tr: number, padding_bl: number, width_rule: number, height_rule: number, min_width: number, max_width: number, min_height: number, max_height: number, decoration_ref: number): number;
+  viewAxisCreateBuffer(node_id_low: number, node_id_high: number, axis_kind: number, gap: number, children: Uint32Array, used_child_count: number): number;
+  viewRowCreate0(node_id_low: number, node_id_high: number, gap: number): number;
+  viewRowCreate1(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number): number;
+  viewRowCreate2(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number): number;
+  viewRowCreate3(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number, track2: number, child2: number): number;
+  viewRowCreate4(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number, track2: number, child2: number, track3: number, child3: number): number;
+  viewColumnCreate0(node_id_low: number, node_id_high: number, gap: number): number;
+  viewColumnCreate1(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number): number;
+  viewColumnCreate2(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number): number;
+  viewColumnCreate3(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number, track2: number, child2: number): number;
+  viewColumnCreate4(node_id_low: number, node_id_high: number, gap: number, track0: number, child0: number, track1: number, child1: number, track2: number, child2: number, track3: number, child3: number): number;
+  axisBuilderBegin(axis_kind: number, expected_children: number): number;
+  axisBuilderPush(builder_ref: number, track_word: number, child_ref: number): number;
+  axisBuilderFinish(builder_ref: number, node_id_low: number, node_id_high: number, gap: number): number;
+  axisBuilderAbort(builder_ref: number): number;
+  viewAxisSetChild(base_axis_ref: number, node_id_low: number, node_id_high: number, child_index: number, track_word: number, child_ref: number): number;
+  viewAxisSpliceBuffer(base_axis_ref: number, node_id_low: number, node_id_high: number, index: number, remove_count: number, children: Uint32Array, used_child_count: number): number;
+  viewGridSetCell(base_grid_ref: number, node_id_low: number, node_id_high: number, row: number, column: number, child_ref: number): number;
+  viewAxisSetChildPath(base_root_ref: number, path_ref: number, path_depth: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, axis_index: number, track_word: number, child_ref: number): number;
+  viewGridCreateBuffer(node_id_low: number, node_id_high: number, column_gap: number, row_gap: number, words: Uint32Array, used_word_count: number): number;
+  viewDiffCreateBuffer(node_id_low: number, node_id_high: number, words: Uint32Array, used_word_count: number, bytes: Uint8Array, used_byte_count: number): number;
+  viewHangingCreate(node_id_low: number, node_id_high: number, prefix_ref: number, continuation_ref: number, body_ref: number): number;
+  viewContainerCreate(node_id_low: number, node_id_high: number, child_ref: number): number;
+  viewClampCreate(node_id_low: number, node_id_high: number, child_ref: number, max_rows: number, overflow_kind: number, overflow_style_ref: number, prefix: string): number;
+  viewComponentCreate(node_id_low: number, node_id_high: number, handle_low: number, handle_high: number): number;
+  viewDecoratedCreateBuffer(node_id_low: number, node_id_high: number, child_ref: number, style_ref: number, words: Uint32Array, used_word_count: number, bytes: Uint8Array, used_byte_count: number): number;
+  viewGridSetCellPath(base_root_ref: number, path_ref: number, path_depth: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, grid_row: number, grid_column: number, child_ref: number): number;
+  viewReleaseMany(refs: Uint32Array, used_ref_count: number): number;
+  viewRefForNodeId(node_id_low: number, node_id_high: number): number;
+  pathRoot(): number;
+  pathChild(parent_path_ref: number, step_kind: number, expected_view_kind: number, selector: number): number;
+  viewTextLayoutPatchPath(base_root_ref: number, path_ref: number, path_depth: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, wrap: number, align: number): number;
+  viewTextLayoutPatchPathD1(base_root_ref: number, path_ref: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, wrap: number, align: number): number;
+  viewTextLayoutPatchPathD2(base_root_ref: number, path_ref: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, wrap: number, align: number): number;
+  viewTextLayoutPatchPathD3(base_root_ref: number, path_ref: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, wrap: number, align: number): number;
+  viewTextLayoutPatchPathD4(base_root_ref: number, path_ref: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, wrap: number, align: number): number;
+  editTxnBegin(base_root_ref: number, expected_edit_count: number): number;
+  editTxnAddTextLayout(txn_ref: number, path_ref: number, path_depth: number, target_node_id_low: number, target_node_id_high: number, ancestor0_node_id_low: number, ancestor0_node_id_high: number, ancestor1_node_id_low: number, ancestor1_node_id_high: number, ancestor2_node_id_low: number, ancestor2_node_id_high: number, ancestor3_node_id_low: number, ancestor3_node_id_high: number, wrap: number, align: number): number;
+  editTxnCommitRender(host: NativeTuiHostContract, txn_ref: number): number;
+  editTxnAbort(txn_ref: number): number;
+  styleAtomCreateCstring(value: string): number;
+  styleCreateBits(flags: number, attribute_present: number, attribute_true: number, foreground_ref: number, background_ref: number, theme_atom_ref: number): number;
+  viewTextCreateCstring(node_id_low: number, node_id_high: number, text: string, style_ref: number, wrap: number, align: number): number;
+  viewTextCreateUtf8(node_id_low: number, node_id_high: number, bytes: Uint8Array, used_bytes: number, style_ref: number, wrap: number, align: number): number;
+  viewTextCreateUtf82(node_id_low: number, node_id_high: number, bytes: Uint8Array, used_bytes: number, span0_bytes: number, style0: number, span1_bytes: number, style1: number, wrap: number, align: number): number;
+  viewTextCreateUtf83(node_id_low: number, node_id_high: number, bytes: Uint8Array, used_bytes: number, span0_bytes: number, style0: number, span1_bytes: number, style1: number, span2_bytes: number, style2: number, wrap: number, align: number): number;
+  viewTextCreateUtf84(node_id_low: number, node_id_high: number, bytes: Uint8Array, used_bytes: number, span0_bytes: number, style0: number, span1_bytes: number, style1: number, span2_bytes: number, style2: number, span3_bytes: number, style3: number, wrap: number, align: number): number;
+  viewTextCreateCstring2(node_id_low: number, node_id_high: number, text0: string, style0: number, text1: string, style1: number, wrap: number, align: number): number;
+  viewTextCreateCstring3(node_id_low: number, node_id_high: number, text0: string, style0: number, text1: string, style1: number, text2: string, style2: number, wrap: number, align: number): number;
+  viewTextCreateCstring4(node_id_low: number, node_id_high: number, text0: string, style0: number, text1: string, style1: number, text2: string, style2: number, text3: string, style3: number, wrap: number, align: number): number;
+  u8_8(a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number;
+  u16_8(a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number;
+  u32_8(a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number;
+  u32_16(a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number, a8: number, a9: number, a10: number, a11: number, a12: number, a13: number, a14: number, a15: number): number;
+  i32_4(a0: number, a1: number, a2: number, a3: number): number;
+  f32_4(a0: number, a1: number, a2: number, a3: number): number;
+  f64_4(a0: number, a1: number, a2: number, a3: number): number;
+  pointer(a0: boolean): number;
+  buffer(a0: Uint8Array): number;
+  cstring(a0: string): number;
 }

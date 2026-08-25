@@ -12,7 +12,8 @@ consumer after the repository separation completes.
 ```text
 TypeScript public facade        packages/iyon-tui/src/**   (`@iyon/tui`)
         |  private native contract seam (src/native.ts)
-N-API / direct-FFI addon        crates/iyon-tui-native
+generated safe N-API addon       crates/iyon-tui-native
+        | direct-FFI symbols remain feature-gated for S6 qualification only
         |
 Rust framework                  crates/iyon-tui
 ```
@@ -22,9 +23,12 @@ Rust framework                  crates/iyon-tui
 - `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import
   `iyon-core` or `iyon-api`. Enforced by `bun run check:ownership`.
 - Framework TypeScript may import only framework modules plus the single
-  native-contract seam (`packages/iyon-tui/src/native.ts`). The
-  `bun:ffi` transport lowering is transitional until S6 replaces it with
-  generated safe N-API; do not build public API around transport details.
+  native-contract seam (`packages/iyon-tui/src/native.ts`). The default
+  transport is generated safe N-API over opaque native session/host objects;
+  the generated semantic DAG, leases, NativeRef hints, PersistentSeq edits,
+  payload lanes, and stream specialization are transport-independent. The
+  legacy direct-FFI symbols are feature-gated for S6 qualification only and
+  are not part of the package contract.
 - Application code in `alexykn/iyon` consumes the framework only through public
   surfaces: the `@iyon/tui` package or its application-owned `iyon:tui` alias.
   Deep imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI

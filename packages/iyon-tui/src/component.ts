@@ -18,8 +18,8 @@ import type { NativeTuiHostContract } from "./native.ts";
 
 /**
  * PERF-12 T13: builds the native slot for the initial content. Retained
- * materialization first (identity-first, hint-driven), then the cold FFI
- * graph, then the N-API bridge; the temporary lease always drains because
+ * materialization first (identity-first, hint-driven), then the complete
+ * cold decoder through the safe N-API bridge; the temporary lease always drains because
  * the slot natively retains its own strong copy.
  */
 function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): object {

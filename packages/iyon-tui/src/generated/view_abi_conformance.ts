@@ -1,31 +1,47 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 5e7332e72b071e87f451f9710dd21d6d9f707277281abe50f2583dc3509c1745
-// generator_blake3 = 07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091
-import { linkSymbols, type Pointer } from "bun:ffi";
-export type NativeAbiConformancePointers = {
-  u8_8: Pointer;
-  u16_8: Pointer;
-  u32_8: Pointer;
-  u32_16: Pointer;
-  i32_4: Pointer;
-  f32_4: Pointer;
-  f64_4: Pointer;
-  pointer: Pointer;
-  buffer: Pointer;
-  cstring: Pointer;
-};
+// generator_blake3 = cbaa60a2d973bcd75cb8ee49be131d5883f98a31fd8e88aa5344e4280efebfae
+import type { NativeTuiHostContract } from "../native.ts";
+import type { NativeViewAbiHandle } from "./view_abi";
 
-export function linkViewAbiConformance(abi: NativeAbiConformancePointers) {
-  return linkSymbols({
-    u8_8: { ptr: abi.u8_8, args: ["u8", "u8", "u8", "u8", "u8", "u8", "u8", "u8"], returns: "u32" },
-    u16_8: { ptr: abi.u16_8, args: ["u16", "u16", "u16", "u16", "u16", "u16", "u16", "u16"], returns: "u32" },
-    u32_8: { ptr: abi.u32_8, args: ["u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    u32_16: { ptr: abi.u32_16, args: ["u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"], returns: "u32" },
-    i32_4: { ptr: abi.i32_4, args: ["i32", "i32", "i32", "i32"], returns: "i32" },
-    f32_4: { ptr: abi.f32_4, args: ["f32", "f32", "f32", "f32"], returns: "f32" },
-    f64_4: { ptr: abi.f64_4, args: ["f64", "f64", "f64", "f64"], returns: "f64" },
-    pointer: { ptr: abi.pointer, args: ["ptr"], returns: "u32" },
-    buffer: { ptr: abi.buffer, args: ["buffer", "buffer_length"], returns: "u32" },
-    cstring: { ptr: abi.cstring, args: ["cstring"], returns: "u32" },
-  } as const);
+export type NativeAbiConformanceSession = NativeViewAbiHandle;
+
+export function u8_8(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number {
+  return session.u8_8(a0, a1, a2, a3, a4, a5, a6, a7);
+}
+
+export function u16_8(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number {
+  return session.u16_8(a0, a1, a2, a3, a4, a5, a6, a7);
+}
+
+export function u32_8(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number): number {
+  return session.u32_8(a0, a1, a2, a3, a4, a5, a6, a7);
+}
+
+export function u32_16(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number, a4: number, a5: number, a6: number, a7: number, a8: number, a9: number, a10: number, a11: number, a12: number, a13: number, a14: number, a15: number): number {
+  return session.u32_16(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15);
+}
+
+export function i32_4(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number): number {
+  return session.i32_4(a0, a1, a2, a3);
+}
+
+export function f32_4(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number): number {
+  return session.f32_4(a0, a1, a2, a3);
+}
+
+export function f64_4(session: NativeAbiConformanceSession, a0: number, a1: number, a2: number, a3: number): number {
+  return session.f64_4(a0, a1, a2, a3);
+}
+
+export function pointer(session: NativeAbiConformanceSession, a0: boolean): number {
+  return session.pointer(a0);
+}
+
+export function buffer(session: NativeAbiConformanceSession, a0: Uint8Array): number {
+  return session.buffer(a0);
+}
+
+export function cstring(session: NativeAbiConformanceSession, a0: string): number {
+  return session.cstring(a0);
 }

@@ -372,9 +372,7 @@ export class Tui implements TuiRuntime {
 
   private ensureBoundary(session: NonNullable<ReturnType<typeof nativeViewAbiSession>>): RetainedRootBoundary {
     if (this.boundary === undefined) {
-      this.boundary = new RetainedRootBoundary(session, () =>
-        this.host.tuiViewAbiHostPointer?.() as never,
-      );
+      this.boundary = new RetainedRootBoundary(session, () => this.host);
     }
     return this.boundary;
   }

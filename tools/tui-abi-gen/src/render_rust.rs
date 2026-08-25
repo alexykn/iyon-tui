@@ -115,6 +115,221 @@ pub fn exports(
     format_rust(source)
 }
 
+/// Render safe N-API methods over the same validated semantic implementations as
+/// the compatibility C/FFI wrappers. The runtime and host are opaque Rust
+/// objects owned by the N-API classes; JavaScript receives neither pointer.
+pub fn napi_methods(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
+    let mut output = banner(schema_hash, generator_hash);
+    output.push_str("// Generated safe N-API methods. The only unsafe operations are the\n// private calls from typed N-API values into the validated semantic wrappers.\n#[napi]\nimpl NativeViewAbiSession {\n");
+    for function in &document.functions {
+        let rust_method = function.name.clone();
+        let js_method = camel_case(&function.name);
+        let parameters = function
+            .args
+            .iter()
+            .filter(|argument| {
+                !matches!(argument.lowering.as_str(), "runtime_ptr" | "buffer_length")
+            })
+            .flat_map(|argument| {
+                if argument.lowering == "node_id_pair" {
+                    vec![
+                        format!("{}_low: u32", argument.name),
+                        format!("{}_high: u32", argument.name),
+                    ]
+                } else {
+                    vec![format!(
+                        "{}: {}",
+                        argument.name,
+                        napi_argument_type(argument, document)
+                    )]
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_type = napi_return_type(&function.return_type);
+        output.push_str(&format!(
+            "#[napi(js_name = {:?})]\n    pub fn {}(&self{}{}) -> napi::Result<{}> {{\n",
+            js_method,
+            rust_method,
+            if parameters.is_empty() { "" } else { ", " },
+            parameters,
+            return_type
+        ));
+        output.push_str("        let runtime = self.runtime_ptr()?;\n");
+        for argument in &function.args {
+            if argument.lowering == "cstring_ephemeral" {
+                output.push_str(&format!(
+                    "        let {}_cstring = std::ffi::CString::new({}).map_err(|_| napi::Error::from_reason(\"{} must not contain NUL\"))?;\n",
+                    argument.name, argument.name, argument.name
+                ));
+            }
+        }
+        let call_arguments = function
+            .args
+            .iter()
+            .flat_map(|argument| napi_call_arguments(argument, &function.args, document))
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "        Ok(unsafe {{ generated_exports::iyon_{}_v1({}) }})\n    }}\n\n",
+            function.name, call_arguments
+        ));
+    }
+    for conformance in &document.conformance {
+        let method = conformance.name.clone();
+        let parameters = conformance
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(_, argument)| argument.as_str() != "buffer_length")
+            .map(|(index, argument)| format!("a{}: {}", index, napi_conformance_type(argument)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "#[napi(js_name = {:?})]\n    pub fn {}(&self, {}) -> napi::Result<{}> {{\n",
+            method,
+            method,
+            parameters,
+            napi_conformance_return_type(&conformance.return_type)
+        ));
+        for (index, argument) in conformance.args.iter().enumerate() {
+            if argument == "cstring" {
+                output.push_str(&format!(
+                    "        let a{}_cstring = std::ffi::CString::new(a{}).map_err(|_| napi::Error::from_reason(\"cstring must not contain NUL\"))?;\n",
+                    index, index
+                ));
+            }
+        }
+        let mut call_arguments = Vec::new();
+        for (index, argument) in conformance.args.iter().enumerate() {
+            match argument.as_str() {
+                "ptr" => call_arguments.push(format!(
+                    "if a{index} {{ std::ptr::NonNull::<u8>::dangling().as_ptr() as *mut ::core::ffi::c_void }} else {{ std::ptr::null_mut() }}"
+                )),
+                "buffer" => call_arguments.push(format!("a{index}.as_ref().as_ptr()")),
+                "buffer_length" => {
+                    let buffer_index = conformance
+                        .args
+                        .iter()
+                        .position(|candidate| candidate == "buffer")
+                        .expect("validated conformance buffer");
+                    call_arguments.push(format!("a{buffer_index}.as_ref().len()"));
+                }
+                "cstring" => call_arguments.push(format!("a{index}_cstring.as_ptr()")),
+                "f32" => call_arguments.push(format!("a{index} as f32")),
+                _ => call_arguments.push(format!("a{index}")),
+            }
+        }
+        let call = format!(
+            "unsafe {{ super::generated_view_abi_conformance::iyon_abi_conformance_{}_v1({}) }}",
+            conformance.name,
+            call_arguments.join(", ")
+        );
+        let result = if conformance.return_type == "f32" {
+            format!("({call}) as f64")
+        } else {
+            call
+        };
+        output.push_str(&format!("        Ok({result})\n    }}\n\n"));
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn napi_return_type(return_type: &str) -> &'static str {
+    match return_type {
+        "i32" | "status_only" => "i32",
+        _ => "u32",
+    }
+}
+
+fn napi_conformance_return_type(return_type: &str) -> &'static str {
+    match return_type {
+        "i32" => "i32",
+        "f32" => "f64",
+        "f64" => "f64",
+        _ => "u32",
+    }
+}
+
+fn napi_conformance_type(type_name: &str) -> &'static str {
+    match type_name {
+        "ptr" => "bool",
+        "buffer" => "napi::bindgen_prelude::Uint8Array",
+        "u8" => "u8",
+        "u16" => "u16",
+        "u32" => "u32",
+        "i32" => "i32",
+        "f32" => "f64",
+        "f64" => "f64",
+        "buffer_length" => "usize",
+        "cstring" => "String",
+        other => panic!("unsupported N-API conformance type {other}"),
+    }
+}
+
+fn napi_argument_type(argument: &ArgumentSpec, document: &AbiDocument) -> String {
+    match argument.lowering.as_str() {
+        "host_ptr" => "&NativeTuiHost".to_owned(),
+        "buffer" | "pod_slice" if argument.type_name == "u8[]" => {
+            "napi::bindgen_prelude::Uint8Array".to_owned()
+        }
+        "buffer" | "pod_slice" => "napi::bindgen_prelude::Uint32Array".to_owned(),
+        "cstring_ephemeral" => "String".to_owned(),
+        _ => rust_type_for_argument(argument, document),
+    }
+}
+
+fn napi_buffer_pointer(argument: &ArgumentSpec) -> String {
+    match argument.type_name.as_str() {
+        "u8[]" => "*const u8".to_owned(),
+        "u32[]" => "*const u32".to_owned(),
+        type_name => format!("*const {}", type_name.trim_end_matches("[]")),
+    }
+}
+
+fn napi_buffer_storage_bytes(argument: &ArgumentSpec) -> usize {
+    match argument.type_name.as_str() {
+        "u8[]" => 1,
+        _ => 4,
+    }
+}
+
+fn napi_call_arguments(
+    argument: &ArgumentSpec,
+    arguments: &[ArgumentSpec],
+    _document: &AbiDocument,
+) -> Vec<String> {
+    match argument.lowering.as_str() {
+        "runtime_ptr" => vec!["runtime".to_owned()],
+        "host_ptr" => vec!["host as *const NativeTuiHost as *mut NativeHost".to_owned()],
+        "node_id_pair" => vec![
+            format!("{}_low", argument.name),
+            format!("{}_high", argument.name),
+        ],
+        "buffer" | "pod_slice" => vec![format!(
+            "{}.as_ref().as_ptr() as {}",
+            argument.name,
+            napi_buffer_pointer(argument)
+        )],
+        "buffer_length" => {
+            let buffer = arguments
+                .iter()
+                .find(|candidate| {
+                    candidate.name == argument.buffer_length_of.as_deref().unwrap_or_default()
+                })
+                .expect("validated buffer length pair");
+            vec![format!(
+                "{}.as_ref().len().saturating_mul({})",
+                buffer.name,
+                napi_buffer_storage_bytes(buffer)
+            )]
+        }
+        "cstring_ephemeral" => vec![format!("{}_cstring.as_ptr()", argument.name)],
+        _ => vec![argument.name.clone()],
+    }
+}
+
 pub fn conformance(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = banner(schema_hash, generator_hash);
     for spec in &document.conformance {
@@ -655,6 +870,24 @@ fn conformance_test_call(spec: &crate::model::ConformanceSpec) -> String {
         ),
         operation => panic!("unsupported conformance test operation {operation}"),
     }
+}
+
+fn camel_case(value: &str) -> String {
+    let mut output = String::new();
+    let mut uppercase = false;
+    for character in value.chars() {
+        if character == '_' {
+            uppercase = true;
+            continue;
+        }
+        if uppercase {
+            output.extend(character.to_uppercase());
+            uppercase = false;
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 fn format_rust(source: String) -> String {

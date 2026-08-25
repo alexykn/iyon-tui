@@ -24,8 +24,7 @@
  * complete cold path (§49).
  */
 
-import type { Pointer } from "bun:ffi";
-import { native } from "./native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
 import {
   materializeColumn,
   materializeRow,
@@ -61,19 +60,19 @@ const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
  * accumulates across environment resets. Native retains no pointer into it
  * after any call returns (§29).
  */
-const AXIS_REF_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+const AXIS_REF_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
   runtime: undefined,
   array: new Uint32Array(0),
 };
 
 /** PERF-12 T10 (§30/§36): reusable medium-tier flat-grid word scratch. */
-const GRID_WORD_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+const GRID_WORD_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
   runtime: undefined,
   array: new Uint32Array(0),
 };
 
 /** PERF-12 T11 (§30): reusable byte tier for text/diff UTF-8 payloads. */
-const BYTE_SCRATCH: { runtime: Pointer | undefined; array: Uint8Array } = {
+const BYTE_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint8Array } = {
   runtime: undefined,
   array: new Uint8Array(0),
 };
@@ -86,7 +85,7 @@ const BYTE_SCRATCH: { runtime: Pointer | undefined; array: Uint8Array } = {
  * Refs die with the generation; the single-slot reset mirrors AXIS_REF_SCRATCH.
  */
 const STYLE_REF_CACHE: {
-  runtime: Pointer | undefined;
+  runtime: NativeViewAbiHandle | undefined;
   generation: number;
   refs: WeakMap<object, number>;
   atoms: Map<string, number>;
@@ -179,7 +178,7 @@ export class MaterializeTx {
 
   constructor(
     readonly symbols: NativeViewAbiSession["symbols"],
-    readonly runtime: Pointer,
+    readonly runtime: NativeViewAbiHandle,
     readonly generation: number,
     readonly nativeLookupCeiling: number,
   ) {}
@@ -1187,7 +1186,7 @@ export type ExactRootRender =
  */
 export function renderExactRoot(
   session: NativeViewAbiSession,
-  hostPointer: Pointer,
+  host: NativeTuiHostContract,
   view: View,
 ): ExactRootRender {
   const node = nodeForBridge(view);
@@ -1196,7 +1195,7 @@ export function renderExactRoot(
 
   if (hint !== undefined && hint.generation === generation) {
     counters.bridge_hint_hits += 1;
-    const status = hostRenderRef(session.symbols, session.runtime, hostPointer, hint.nativeRef);
+    const status = hostRenderRef(session.symbols, session.runtime, host, hint.nativeRef);
     if (status === HOST_STATUS_OK) {
       counters.host_mutations += 1;
       return { status: "ok", rootRef: hint.nativeRef, recovered: false };
@@ -1225,7 +1224,7 @@ export function renderExactRoot(
       }
       installHint(node, generation, recoveredRef);
       try {
-        const retryStatus = hostRenderRef(session.symbols, session.runtime, hostPointer, recoveredRef);
+        const retryStatus = hostRenderRef(session.symbols, session.runtime, host, recoveredRef);
         if (retryStatus === HOST_STATUS_OK) {
           counters.host_mutations += 1;
           return { status: "ok", rootRef: recoveredRef, recovered: true };
@@ -1341,7 +1340,7 @@ export class RetainedRootBoundary {
 
   constructor(
     private readonly session: NativeViewAbiSession,
-    private readonly hostPointer: () => Pointer | undefined,
+    private readonly host: () => NativeTuiHostContract | undefined,
     /**
      * PERF-12 T13 (§80): optional alternative commit step for boundaries whose
      * mutation is a direct ref install (`ViewSlot.setViewRef`,
@@ -1513,11 +1512,11 @@ export class RetainedRootBoundary {
               throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: component target refused");
             }
           } else {
-            const hostPointer = this.hostPointer();
-            if (hostPointer === undefined) {
-              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host pointer");
+            const host = this.host();
+            if (host === undefined) {
+              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host");
             }
-            const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+            const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
             if (status !== HOST_STATUS_OK) {
               throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
             }
@@ -1567,9 +1566,9 @@ export class RetainedRootBoundary {
           return false;
         }
       } else {
-        const hostPointer = this.hostPointer();
-        if (hostPointer !== undefined) {
-          const status = hostRenderRef(this.session.symbols, this.session.runtime, hostPointer, rootRef);
+        const host = this.host();
+        if (host !== undefined) {
+          const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
           if (status !== HOST_STATUS_OK) {
             // Release only a freshly acquired boundary lease whose ref is not
             // already the boundary's leased previous root (§18 failure keeps
@@ -1610,9 +1609,9 @@ export class RetainedRootBoundary {
   /** §20 exact-root fast path against the currently installed root hint. */
   renderExact(view: View): ExactRootRender {
     if (this.closed) throw new Error("boundary is closed");
-    const hostPointer = this.hostPointer();
-    if (hostPointer === undefined) return { status: "no_root_ref" };
-    return renderExactRoot(this.session, hostPointer, view);
+    const host = this.host();
+    if (host === undefined) return { status: "no_root_ref" };
+    return renderExactRoot(this.session, host, view);
   }
 
   /** Releases the boundary's root lease exactly once (§18 close protocol). */

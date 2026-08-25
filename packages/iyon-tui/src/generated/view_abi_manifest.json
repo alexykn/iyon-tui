@@ -4017,6 +4017,7 @@
     "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
     "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
     "crates/iyon-tui-native/src/generated/view_abi_table.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_napi.rs",
     "crates/iyon-tui-native/include/iyon_view_abi.h",
     "packages/iyon-tui/src/generated/view_abi.ts",
     "packages/iyon-tui/src/generated/view_abi_conformance.ts",
@@ -4028,7 +4029,7 @@
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "07e33f8fb41f10f1d33b73fd996170a4daf181c7ee20e823fed6ee8d4ec70091",
+  "generator_blake3": "cbaa60a2d973bcd75cb8ee49be131d5883f98a31fd8e88aa5344e4280efebfae",
   "handles": [
     {
       "kind": null,

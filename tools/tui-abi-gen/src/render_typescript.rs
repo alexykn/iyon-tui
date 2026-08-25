@@ -5,30 +5,54 @@ use crate::{
 
 pub fn abi_bindings(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = typescript_bindings_header(schema_hash, generator_hash);
-    output.push_str("export type NativeAbiPointers = {\n");
+    output.push_str("export interface NativeViewAbiMetadata {\n");
+    output.push_str("  readonly abi_name: string;\n  readonly abi_version: number;\n  readonly semantic_version: number;\n  readonly schema_blake3: string;\n  readonly generator_blake3: string;\n  readonly generation: number;\n  readonly transport: \"napi\";\n  readonly function_count: number;\n}\n\n");
+    output
+        .push_str("export interface NativeViewAbiHandle {\n  metadata(): NativeViewAbiMetadata;\n");
     for function in &document.functions {
-        output.push_str(&format!("  {}: Pointer;\n", camel_case(&function.name)));
-    }
-    output.push_str("};\n\n");
-    output.push_str(
-        "export function linkViewAbi(abi: NativeAbiPointers) {\n  return linkSymbols({\n",
-    );
-    for function in &document.functions {
+        let method = camel_case(&function.name);
+        let arguments = function
+            .args
+            .iter()
+            .filter(|argument| {
+                !matches!(argument.lowering.as_str(), "runtime_ptr" | "buffer_length")
+            })
+            .flat_map(|argument| {
+                if argument.lowering == "node_id_pair" {
+                    vec![
+                        format!("{}_low: number", argument.name),
+                        format!("{}_high: number", argument.name),
+                    ]
+                } else {
+                    vec![format!("{}: {}", argument.name, ts_napi_type(argument))]
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         output.push_str(&format!(
-            "    {}: {{ ptr: abi.{}, args: [{}], returns: {:?} }},\n",
-            camel_case(&function.name),
-            camel_case(&function.name),
-            function
-                .args
-                .iter()
-                .flat_map(ffi_args)
-                .map(|item| format!("{item:?}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            ffi_return(function.return_type.as_str())
+            "  {}({}): {};\n",
+            method,
+            arguments,
+            ts_return(function.return_type.as_str())
         ));
     }
-    output.push_str("  } as const);\n}\n");
+    for spec in &document.conformance {
+        let arguments = spec
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(_, argument)| argument.as_str() != "buffer_length")
+            .map(|(index, argument)| format!("a{}: {}", index, ts_conformance_type(argument)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!(
+            "  {}({}): {};\n",
+            spec.name,
+            arguments,
+            ts_conformance_return_type(spec.return_type.as_str())
+        ));
+    }
+    output.push_str("}\n");
     output
 }
 
@@ -38,24 +62,37 @@ pub fn conformance_bindings(
     generator_hash: &str,
 ) -> String {
     let mut output = typescript_bindings_header(schema_hash, generator_hash);
-    output.push_str("export type NativeAbiConformancePointers = {\n");
+    output.push_str("import type { NativeViewAbiHandle } from \"./view_abi\";\n\n");
+    output.push_str("export type NativeAbiConformanceSession = NativeViewAbiHandle;\n\n");
     for spec in &document.conformance {
-        output.push_str(&format!("  {}: Pointer;\n", spec.name));
-    }
-    output.push_str("};\n\nexport function linkViewAbiConformance(abi: NativeAbiConformancePointers) {\n  return linkSymbols({\n");
-    for spec in &document.conformance {
-        let args = spec
+        let arguments = spec
             .args
             .iter()
-            .map(|argument| format!("{argument:?}"))
+            .enumerate()
+            .filter(|(_, argument)| argument.as_str() != "buffer_length")
+            .map(|(index, argument)| format!("a{}: {}", index, ts_conformance_type(argument)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let call_arguments = spec
+            .args
+            .iter()
+            .enumerate()
+            .filter(|(_, argument)| argument.as_str() != "buffer_length")
+            .map(|(index, _)| format!("a{}", index))
             .collect::<Vec<_>>()
             .join(", ");
         output.push_str(&format!(
-            "    {}: {{ ptr: abi.{}, args: [{}], returns: {:?} }},\n",
-            spec.name, spec.name, args, spec.return_type
+            "export function {}(session: NativeAbiConformanceSession, {}): {} {{\n  return session.{}({});\n}}\n\n",
+            spec.name,
+            arguments,
+            ts_conformance_return_type(spec.return_type.as_str()),
+            spec.name,
+            call_arguments
         ));
     }
-    output.push_str("  } as const);\n}\n");
+    if output.ends_with("\n\n") {
+        output.pop();
+    }
     output
 }
 
@@ -66,7 +103,7 @@ pub fn conformance_bindings(
 /// family before the parent call. Buffer lowerings land with T8.
 pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = typescript_calls_header(schema_hash, generator_hash);
-    // The calls header already imports Pointer; add the builder imports.
+    // The calls header already imports the opaque N-API handle; add builders.
     let mut builders = document
         .materializers
         .iter()
@@ -123,8 +160,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
         output.push_str("import type { MaterializeTx } from \"../retained_dag.ts\";\n");
         output.push_str("export type { MaterializeTx };\n\n");
     } else {
-        output
-            .push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: Pointer;\n}\n\n");
+        output.push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: NativeViewAbiHandle;\n}\n\n");
     }
     output.push_str("const ERROR_BIT = 0x8000_0000;\n\n");
     output
@@ -284,27 +320,34 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
 
 pub fn calls(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = typescript_calls_header(schema_hash, generator_hash);
-    output
-        .push_str("export type ViewAbiSymbols = ReturnType<typeof linkViewAbi>[\"symbols\"];\n\n");
+    output.push_str("export type ViewAbiSymbols = NativeViewAbiHandle;\n\n");
     output.push_str("const ERROR_BIT = 0x8000_0000;\nconst CACHE_MISS = 0x8000_0004;\n\n");
     output.push_str("export class NativeAbiStatusError extends Error {\n  readonly status: number;\n  readonly detail: number;\n\n  constructor(status: number, detail: number) {\n    super(`native ABI status 0x${status.toString(16)}`);\n    this.name = \"NativeAbiStatusError\";\n    this.status = status;\n    this.detail = detail;\n  }\n}\n\n");
-    output.push_str("function checkedRef(symbols: ViewAbiSymbols, runtime: Pointer, result: number): number {\n  if (result === 0 || result >= ERROR_BIT) {\n    const detail = result === CACHE_MISS ? symbols.viewStatusDetail(runtime) : 0;\n    throw new NativeAbiStatusError(result, detail);\n  }\n  return result;\n}\n\n");
+    output.push_str("function checkedRef(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, result: number): number {\n  if (result === 0 || result >= ERROR_BIT) {\n    const detail = result === CACHE_MISS ? runtime.viewStatusDetail() : 0;\n    throw new NativeAbiStatusError(result, detail);\n  }\n  return result;\n}\n\n");
     for function in &document.functions {
+        let arguments = ts_arguments(&function.args, document);
+        let signature = if arguments.is_empty() {
+            "symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle".to_owned()
+        } else {
+            format!("symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, {arguments}")
+        };
         output.push_str(&format!(
-            "export function {}(symbols: ViewAbiSymbols, {}): {} {{\n",
+            "export function {}({}): {} {{\n",
             camel_case(&function.name),
-            ts_arguments(&function.args, document),
+            signature,
             ts_return(function.return_type.as_str())
         ));
         let call_args = function
             .args
             .iter()
-            .filter(|argument| argument.lowering != "buffer_length")
+            .filter(|argument| {
+                argument.lowering != "runtime_ptr" && argument.lowering != "buffer_length"
+            })
             .flat_map(call_argument_names)
             .collect::<Vec<_>>()
             .join(", ");
         output.push_str(&format!(
-            "  const result = symbols.{}({});\n",
+            "  const result = runtime.{}({});\n",
             camel_case(&function.name),
             call_args
         ));
@@ -408,38 +451,10 @@ test("generated ABI manifest is pinned and ordered", () => {{
     output
 }
 
-fn ffi_args(argument: &ArgumentSpec) -> Vec<&'static str> {
-    match argument.lowering.as_str() {
-        "runtime_ptr" | "host_ptr" => vec!["ptr"],
-        "native_ref" | "u32" | "buffer_used" | "native_ref_result" => vec!["u32"],
-        "node_id_pair" => vec!["u32", "u32"],
-        "i32" | "status_only" => vec!["i32"],
-        "u8" => vec!["u8"],
-        "u16" => vec!["u16"],
-        "f32" => vec!["f32"],
-        "f64" => vec!["f64"],
-        "buffer" | "pod_slice" => vec!["buffer"],
-        "buffer_length" => vec!["buffer_length"],
-        "cstring_ephemeral" => vec!["cstring"],
-        other => panic!("unsupported generated FFI lowering {other}"),
-    }
-}
-
-fn ffi_return(return_type: &str) -> &'static str {
-    match return_type {
-        "i32" | "status_only" => "i32",
-        "u32" | "ViewRefResult" | "PathRefResult" | "StyleRefResult" | "StyleAtomRefResult"
-        | "native_ref_result" => "u32",
-        "f32" => "f32",
-        "f64" => "f64",
-        other => panic!("unsupported generated FFI return {other}"),
-    }
-}
-
 fn ts_arguments(arguments: &[ArgumentSpec], document: &AbiDocument) -> String {
     arguments
         .iter()
-        .filter(|argument| argument.lowering != "buffer_length")
+        .filter(|argument| !matches!(argument.lowering.as_str(), "runtime_ptr" | "buffer_length"))
         .flat_map(|argument| {
             if argument.lowering == "node_id_pair" {
                 vec![
@@ -465,26 +480,44 @@ fn call_argument_names(argument: &ArgumentSpec) -> Vec<String> {
             format!("{}_high", argument.name),
         ];
     }
-    if matches!(argument.lowering.as_str(), "buffer" | "pod_slice") {
-        return vec![argument.name.clone(), argument.name.clone()];
-    }
     vec![argument.name.clone()]
 }
 
-fn ts_type(argument: &ArgumentSpec, document: &AbiDocument) -> &'static str {
+fn ts_napi_type(argument: &ArgumentSpec) -> &'static str {
     match argument.lowering.as_str() {
-        "runtime_ptr" | "host_ptr" => "Pointer",
-        "buffer" | "pod_slice" => "NodeJS.TypedArray | DataView",
+        "host_ptr" => "NativeTuiHostContract",
+        "buffer" | "pod_slice" if argument.type_name == "u8[]" => "Uint8Array",
+        "buffer" | "pod_slice" => "Uint32Array",
         "cstring_ephemeral" => "string",
-        _ if document
-            .enums
-            .iter()
-            .any(|item| item.name == argument.type_name) =>
-        {
-            "number"
-        }
         _ => "number",
     }
+}
+
+fn ts_conformance_type(type_name: &str) -> &'static str {
+    match type_name {
+        "ptr" => "boolean",
+        "buffer" => "Uint8Array",
+        "u8" => "number",
+        "u16" => "number",
+        "u32" => "number",
+        "i32" => "number",
+        "f32" => "number",
+        "f64" => "number",
+        "buffer_length" => "number",
+        "cstring" => "string",
+        other => panic!("unsupported N-API conformance type {other}"),
+    }
+}
+
+fn ts_conformance_return_type(return_type: &str) -> &'static str {
+    match return_type {
+        "f32" | "f64" | "i32" | "u32" => "number",
+        other => panic!("unsupported N-API conformance return type {other}"),
+    }
+}
+
+fn ts_type(argument: &ArgumentSpec, _document: &AbiDocument) -> &'static str {
+    ts_napi_type(argument)
 }
 
 fn ts_return(return_type: &str) -> &'static str {

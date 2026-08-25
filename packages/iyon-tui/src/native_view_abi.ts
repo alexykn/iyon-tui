@@ -1,7 +1,5 @@
-import type { Pointer } from "bun:ffi";
-import { native, type NativeViewAbiBootstrap } from "./native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
 import { ensureNative, MaterializeTx, RetainedCycleError, RetainedFastFallbackError } from "./retained_dag.ts";
-import { linkViewAbi, type NativeAbiPointers } from "./generated/view_abi.ts";
 import {
   hostRenderRef,
   viewRenderRef,
@@ -82,13 +80,25 @@ import {
 } from "./native_view_policy.ts";
 
 export interface NativeViewAbiSession {
-  readonly runtime: Pointer;
+  /** Opaque environment-owned N-API object; no runtime address crosses JS. */
+  readonly runtime: NativeViewAbiHandle;
   readonly symbols: ViewAbiSymbols;
-  readonly abi: NativeViewAbiBootstrap;
+  readonly abi: {
+    readonly abi_name: string;
+    readonly abi_version: number;
+    readonly semantic_version: number;
+    readonly schema_blake3: string;
+    readonly generator_blake3: string;
+    readonly generation: number;
+    readonly transport: "napi";
+    readonly function_count: number;
+  };
 }
 
 export interface NativeViewRenderHost {
-  readonly tuiViewAbiHostPointer?: () => number;
+  readonly [key: string]: unknown;
+  /** Opaque N-API host object for host-mutating retained calls. */
+  readonly tuiViewAbiHost?: NativeTuiHostContract;
   /** Native-ref installation for generic View-bearing controls. */
   readonly tuiViewAbiInstallRef?: (viewRef: number) => void;
 }
@@ -174,169 +184,33 @@ const TEXT_ENCODER = new TextEncoder();
 const STYLE_REFS = new WeakMap<NativeViewAbiSession, WeakMap<object, number>>();
 const STYLE_ATOM_REFS = new WeakMap<NativeViewAbiSession, Map<string, number>>();
 const TEXT_SCRATCH = new WeakMap<NativeViewAbiSession, Uint8Array>();
-const ABI_FUNCTION_NAMES = [
-  "runtimeNoop",
-  "viewStatusDetail",
-  "viewRenderRef",
-  "hostRenderRef",
-  "viewSpacerCreate",
-  "viewTextLayoutPatchRoot",
-  "viewCommonPatchRoot",
-  "viewAxisCreateBuffer",
-  "viewRowCreate0",
-  "viewRowCreate1",
-  "viewRowCreate2",
-  "viewRowCreate3",
-  "viewRowCreate4",
-  "viewColumnCreate0",
-  "viewColumnCreate1",
-  "viewColumnCreate2",
-  "viewColumnCreate3",
-  "viewColumnCreate4",
-  "axisBuilderBegin",
-  "axisBuilderPush",
-  "axisBuilderFinish",
-  "axisBuilderAbort",
-  "viewAxisSetChild",
-  "viewAxisSpliceBuffer",
-  "viewGridSetCell",
-  "viewAxisSetChildPath",
-  "viewGridSetCellPath",
-  "viewGridCreateBuffer",
-  "viewDiffCreateBuffer",
-  "viewHangingCreate",
-  "viewContainerCreate",
-  "viewClampCreate",
-  "viewComponentCreate",
-  "viewDecoratedCreateBuffer",
-  "viewReleaseMany",
-  "viewRefForNodeId",
-  "pathRoot",
-  "pathChild",
-  "viewTextLayoutPatchPath",
-  "viewTextLayoutPatchPathD1",
-  "viewTextLayoutPatchPathD2",
-  "viewTextLayoutPatchPathD3",
-  "viewTextLayoutPatchPathD4",
-  "editTxnBegin",
-  "editTxnAddTextLayout",
-  "editTxnCommitRender",
-  "editTxnAbort",
-  "styleAtomCreateCstring",
-  "styleCreateBits",
-  "viewTextCreateCstring",
-  "viewTextCreateUtf8",
-  "viewTextCreateUtf82",
-  "viewTextCreateUtf83",
-  "viewTextCreateUtf84",
-  "viewTextCreateCstring2",
-  "viewTextCreateCstring3",
-  "viewTextCreateCstring4",
-] as const;
-
-function isValidPointer(value: unknown): value is Pointer {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-
 /**
- * Links the generated first-slice ABI once for this Bun environment.
- * The native runtime pointer is environment-owned and remains stable until
- * N-API cleanup; callers must not retain the session after addon teardown.
+ * Acquires the generated safe N-API session once for this environment.
+ * The Rust runtime and host are opaque class-owned handles; callers must not
+ * retain the session after addon teardown.
  */
 export function nativeViewAbiSession(): NativeViewAbiSession | undefined {
   if (cachedSession !== undefined) return cachedSession;
-  const bootstrap = native.tuiViewAbiBootstrap?.();
-  if (bootstrap === undefined) return undefined;
-  const functionsValue = bootstrap.functions as unknown;
-  if (functionsValue === null || typeof functionsValue !== "object") {
-    throw new Error("native View ABI bootstrap metadata is incompatible");
-  }
-  const functions = functionsValue as Record<string, unknown>;
-  const functionNames = Object.keys(functions);
+  const runtime = native.tuiViewAbiSession?.();
+  if (runtime === undefined) return undefined;
+  const abi = runtime.metadata();
   if (
-    bootstrap.abi_name !== "iyon_tui_view"
-    || bootstrap.abi_version !== 1
-    || bootstrap.semantic_version !== 1
-    || bootstrap.schema_blake3 !== manifest.schema_blake3
-    || bootstrap.generator_blake3 !== manifest.generator_blake3
-    || !Number.isSafeInteger(bootstrap.generation)
-    || bootstrap.generation < 1
-    || bootstrap.function_count !== manifest.functions.length
-    || functionNames.length !== ABI_FUNCTION_NAMES.length
-    || ABI_FUNCTION_NAMES.some((name) => !functionNames.includes(name) || !isValidPointer(functions[name]))
-    || !isValidPointer(bootstrap.runtime_ptr)
+    abi.abi_name !== "iyon_tui_view"
+    || abi.abi_version !== 1
+    || abi.semantic_version !== 1
+    || abi.schema_blake3 !== manifest.schema_blake3
+    || abi.generator_blake3 !== manifest.generator_blake3
+    || abi.transport !== "napi"
+    || !Number.isSafeInteger(abi.generation)
+    || abi.generation < 1
+    || abi.function_count !== manifest.functions.length
   ) {
-    throw new Error("native View ABI bootstrap metadata is incompatible");
+    throw new Error("native View N-API metadata is incompatible");
   }
-  const pointers: NativeAbiPointers = {
-    runtimeNoop: bootstrap.functions.runtimeNoop as Pointer,
-    viewStatusDetail: bootstrap.functions.viewStatusDetail as Pointer,
-    viewRenderRef: bootstrap.functions.viewRenderRef as Pointer,
-    hostRenderRef: bootstrap.functions.hostRenderRef as Pointer,
-    viewSpacerCreate: bootstrap.functions.viewSpacerCreate as Pointer,
-    viewTextLayoutPatchRoot: bootstrap.functions.viewTextLayoutPatchRoot as Pointer,
-    viewCommonPatchRoot: bootstrap.functions.viewCommonPatchRoot as Pointer,
-    viewAxisCreateBuffer: bootstrap.functions.viewAxisCreateBuffer as Pointer,
-    viewGridCreateBuffer: bootstrap.functions.viewGridCreateBuffer as Pointer,
-    viewDiffCreateBuffer: bootstrap.functions.viewDiffCreateBuffer as Pointer,
-    viewHangingCreate: bootstrap.functions.viewHangingCreate as Pointer,
-    viewContainerCreate: bootstrap.functions.viewContainerCreate as Pointer,
-    viewClampCreate: bootstrap.functions.viewClampCreate as Pointer,
-    viewComponentCreate: bootstrap.functions.viewComponentCreate as Pointer,
-    viewDecoratedCreateBuffer: bootstrap.functions.viewDecoratedCreateBuffer as Pointer,
-    viewRowCreate0: bootstrap.functions.viewRowCreate0 as Pointer,
-    viewRowCreate1: bootstrap.functions.viewRowCreate1 as Pointer,
-    viewRowCreate2: bootstrap.functions.viewRowCreate2 as Pointer,
-    viewRowCreate3: bootstrap.functions.viewRowCreate3 as Pointer,
-    viewRowCreate4: bootstrap.functions.viewRowCreate4 as Pointer,
-    viewColumnCreate0: bootstrap.functions.viewColumnCreate0 as Pointer,
-    viewColumnCreate1: bootstrap.functions.viewColumnCreate1 as Pointer,
-    viewColumnCreate2: bootstrap.functions.viewColumnCreate2 as Pointer,
-    viewColumnCreate3: bootstrap.functions.viewColumnCreate3 as Pointer,
-    viewColumnCreate4: bootstrap.functions.viewColumnCreate4 as Pointer,
-    axisBuilderBegin: bootstrap.functions.axisBuilderBegin as Pointer,
-    axisBuilderPush: bootstrap.functions.axisBuilderPush as Pointer,
-    axisBuilderFinish: bootstrap.functions.axisBuilderFinish as Pointer,
-    axisBuilderAbort: bootstrap.functions.axisBuilderAbort as Pointer,
-    viewAxisSetChild: bootstrap.functions.viewAxisSetChild as Pointer,
-    viewAxisSpliceBuffer: bootstrap.functions.viewAxisSpliceBuffer as Pointer,
-    viewGridSetCell: bootstrap.functions.viewGridSetCell as Pointer,
-    viewAxisSetChildPath: bootstrap.functions.viewAxisSetChildPath as Pointer,
-    viewGridSetCellPath: bootstrap.functions.viewGridSetCellPath as Pointer,
-    viewReleaseMany: bootstrap.functions.viewReleaseMany as Pointer,
-    viewRefForNodeId: bootstrap.functions.viewRefForNodeId as Pointer,
-    pathRoot: bootstrap.functions.pathRoot as Pointer,
-    pathChild: bootstrap.functions.pathChild as Pointer,
-    viewTextLayoutPatchPath: bootstrap.functions.viewTextLayoutPatchPath as Pointer,
-    viewTextLayoutPatchPathD1: bootstrap.functions.viewTextLayoutPatchPathD1 as Pointer,
-    viewTextLayoutPatchPathD2: bootstrap.functions.viewTextLayoutPatchPathD2 as Pointer,
-    viewTextLayoutPatchPathD3: bootstrap.functions.viewTextLayoutPatchPathD3 as Pointer,
-    viewTextLayoutPatchPathD4: bootstrap.functions.viewTextLayoutPatchPathD4 as Pointer,
-    editTxnBegin: bootstrap.functions.editTxnBegin as Pointer,
-    editTxnAddTextLayout: bootstrap.functions.editTxnAddTextLayout as Pointer,
-    editTxnCommitRender: bootstrap.functions.editTxnCommitRender as Pointer,
-    editTxnAbort: bootstrap.functions.editTxnAbort as Pointer,
-    styleAtomCreateCstring: bootstrap.functions.styleAtomCreateCstring as Pointer,
-    styleCreateBits: bootstrap.functions.styleCreateBits as Pointer,
-    viewTextCreateCstring: bootstrap.functions.viewTextCreateCstring as Pointer,
-    viewTextCreateUtf8: bootstrap.functions.viewTextCreateUtf8 as Pointer,
-    viewTextCreateUtf82: bootstrap.functions.viewTextCreateUtf82 as Pointer,
-    viewTextCreateUtf83: bootstrap.functions.viewTextCreateUtf83 as Pointer,
-    viewTextCreateUtf84: bootstrap.functions.viewTextCreateUtf84 as Pointer,
-    viewTextCreateCstring2: bootstrap.functions.viewTextCreateCstring2 as Pointer,
-    viewTextCreateCstring3: bootstrap.functions.viewTextCreateCstring3 as Pointer,
-    viewTextCreateCstring4: bootstrap.functions.viewTextCreateCstring4 as Pointer,
-  };
-  const linked = linkViewAbi(pointers);
-  const runtime = bootstrap.runtime_ptr as Pointer;
-  if (linked.symbols.runtimeNoop(runtime) !== 1) {
-    throw new Error("native View ABI bootstrap probe failed");
+  cachedSession = { runtime, symbols: runtime, abi };
+  if (runtime.runtimeNoop() !== 1) {
+    throw new Error("native View N-API bootstrap probe failed");
   }
-  cachedSession = {
-    runtime,
-    symbols: linked.symbols,
-    abi: bootstrap,
-  };
   return cachedSession;
 }
 
@@ -370,7 +244,7 @@ export function tryNativeRenderRef(
   }
 }
 
-/** Materializes one pending text span through the direct cstring/buffer ABI. */
+/** Materializes one text span through the generated typed N-API ABI. */
 export function tryNativeTextCreateRender(
   host: NativeViewRenderHost,
   next: View,
@@ -1017,8 +891,8 @@ export function tryNativeEditTransactionRender(
   edits: readonly NativeTextLayoutTransactionEdit[],
 ): number | undefined {
   if (edits.length === 0 || edits.length > 256 || !isValidNativeRef(previousRef)) return undefined;
-  const hostPointer = host.tuiViewAbiHostPointer?.();
-  if (!isValidPointer(hostPointer)) return undefined;
+  const hostObject = resolveNativeHost(host);
+  if (hostObject === undefined) return undefined;
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
   let txnRef: number | undefined;
@@ -1070,7 +944,7 @@ export function tryNativeEditTransactionRender(
         return undefined;
       }
     }
-    const result = editTxnCommitRender(session.symbols, session.runtime, hostPointer as Pointer, txnRef);
+    const result = editTxnCommitRender(session.symbols, session.runtime, hostObject, txnRef);
     txnRef = undefined;
     return result;
   } catch (error) {
@@ -1260,8 +1134,7 @@ function transactionNodeIdPairs(
 }
 
 function canInstallNativeRef(target: NativeViewRenderHost): boolean {
-  const hostPointer = target.tuiViewAbiHostPointer?.();
-  return isValidPointer(hostPointer) || target.tuiViewAbiInstallRef !== undefined;
+  return resolveNativeHost(target) !== undefined || target.tuiViewAbiInstallRef !== undefined;
 }
 
 function installNativeRef(
@@ -1269,9 +1142,9 @@ function installNativeRef(
   session: NativeViewAbiSession,
   viewRef: number,
 ): number {
-  const hostPointer = target.tuiViewAbiHostPointer?.();
-  if (isValidPointer(hostPointer)) {
-    return hostRenderRef(session.symbols, session.runtime, hostPointer as Pointer, viewRef);
+  const hostObject = resolveNativeHost(target);
+  if (hostObject !== undefined) {
+    return hostRenderRef(session.symbols, session.runtime, hostObject, viewRef);
   }
   const install = target.tuiViewAbiInstallRef;
   if (install === undefined) return -1;
@@ -1283,6 +1156,16 @@ export function releaseNativeViewRef(session: NativeViewAbiSession | undefined, 
   if (session === undefined || !isValidNativeRef(ref)) return;
   SINGLE_REF_RELEASE[0] = ref;
   viewReleaseMany(session.symbols, session.runtime, SINGLE_REF_RELEASE, 1);
+}
+
+function resolveNativeHost(target: NativeViewRenderHost): NativeTuiHostContract | undefined {
+  if (target.tuiViewAbiHost !== undefined) return target.tuiViewAbiHost;
+  const candidate = target as Partial<NativeTuiHostContract>;
+  return typeof candidate.history === "function"
+    && typeof candidate.createViewSlot === "function"
+    && typeof candidate.scrollPane === "function"
+    ? target as unknown as NativeTuiHostContract
+    : undefined;
 }
 
 function isValidNativeRef(value: number): boolean {

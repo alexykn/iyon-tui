@@ -2,98 +2,12 @@
  * Private native contract for the generic TUI package.
  *
  * Application/session bindings deliberately do not belong here. The addon is
- * the S3 `iyon-tui-native` artifact and this contract exposes only framework
+ * the S6 `iyon-tui-native` artifact and this contract exposes only framework
  * handles, View ABI calls, and generic terminal operations.
  */
 
-export interface NativeViewAbiBootstrap {
-  runtime_ptr: number;
-  abi_name: string;
-  abi_version: number;
-  semantic_version: number;
-  schema_blake3: string;
-  generator_blake3: string;
-  generation: number;
-  fast_view_abi: boolean;
-  function_count: number;
-  diagnostics?: {
-    semantic_cache_entries: number;
-    native_ref_slots: number;
-    leased_slots: number;
-    path_nodes: number;
-    builders: number;
-    edit_transactions: number;
-    style_atoms: number;
-    styles: number;
-    fast_slot_tables: number;
-    fast_slots: number;
-    stale_removals: number;
-    release_batches: number;
-    released_refs: number;
-    live_weak_upgrades: number;
-    generation: number;
-    alive: boolean;
-  };
-  functions: {
-    runtimeNoop: number;
-    viewStatusDetail: number;
-    viewRenderRef: number;
-    hostRenderRef: number;
-    viewSpacerCreate: number;
-    viewTextLayoutPatchRoot: number;
-    viewCommonPatchRoot: number;
-    viewAxisCreateBuffer: number;
-    viewRowCreate0: number;
-    viewRowCreate1: number;
-    viewRowCreate2: number;
-    viewRowCreate3: number;
-    viewRowCreate4: number;
-    viewColumnCreate0: number;
-    viewColumnCreate1: number;
-    viewColumnCreate2: number;
-    viewColumnCreate3: number;
-    viewColumnCreate4: number;
-    axisBuilderBegin: number;
-    axisBuilderPush: number;
-    axisBuilderFinish: number;
-    axisBuilderAbort: number;
-    viewAxisSetChild: number;
-    viewAxisSpliceBuffer: number;
-    viewGridSetCell: number;
-    viewGridCreateBuffer: number;
-    viewDiffCreateBuffer: number;
-    viewHangingCreate: number;
-    viewContainerCreate: number;
-    viewClampCreate: number;
-    viewComponentCreate: number;
-    viewDecoratedCreateBuffer: number;
-    viewAxisSetChildPath: number;
-    viewGridSetCellPath: number;
-    viewReleaseMany: number;
-    viewRefForNodeId: number;
-    pathRoot: number;
-    pathChild: number;
-    viewTextLayoutPatchPath: number;
-    viewTextLayoutPatchPathD1: number;
-    viewTextLayoutPatchPathD2: number;
-    viewTextLayoutPatchPathD3: number;
-    viewTextLayoutPatchPathD4: number;
-    editTxnBegin: number;
-    editTxnAddTextLayout: number;
-    editTxnCommitRender: number;
-    editTxnAbort: number;
-    styleAtomCreateCstring: number;
-    styleCreateBits: number;
-    viewTextCreateCstring: number;
-    viewTextCreateUtf8: number;
-    viewTextCreateUtf82: number;
-    viewTextCreateUtf83: number;
-    viewTextCreateUtf84: number;
-    viewTextCreateCstring2: number;
-    viewTextCreateCstring3: number;
-    viewTextCreateCstring4: number;
-  };
-}
+import type { NativeViewAbiHandle } from "./generated/view_abi.ts";
+export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {
   readonly output?: unknown;
@@ -180,7 +94,6 @@ export interface NativeTuiHostContract {
   route(output: NativeTuiOutputContract, routeId: string): void;
   interceptPaste(input: object, routeId: string): void;
   render(view: object): void;
-  tuiViewAbiHostPointer?(): number;
   dispatchKey(key: string, modifiers?: readonly string[]): void;
   dispatchPaste(text: string): void;
   forwardPaste(text: string): void;
@@ -243,27 +156,8 @@ export interface NativeTuiAddon {
     generation: number;
     alive: boolean;
   };
-  tuiViewAbiBootstrap?: (pruneExpired?: boolean) => NativeViewAbiBootstrap;
+  tuiViewAbiSession?: () => NativeViewAbiHandle;
   tuiViewAbiDecodeRef?: (view: object) => number;
-  tuiPerfAbiProbe?(): {
-    noop_ptr: number;
-    u32_8_ptr: number;
-    i32_4_ptr: number;
-    buffer_ptr: number;
-    cstring_ptr: number;
-  };
-  tuiPerfAbiConformanceProbe?(): {
-    u8_8: number;
-    u16_8: number;
-    u32_8: number;
-    u32_16: number;
-    i32_4: number;
-    f32_4: number;
-    f64_4: number;
-    pointer: number;
-    buffer: number;
-    cstring: number;
-  };
   tuiViewBridgeEnvironmentCount(): number;
   NativeHistory?: new () => NativeHistoryContract;
   NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;

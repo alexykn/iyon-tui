@@ -1,0 +1,10 @@
+{
+  "name": "@iyon/tui-consumer-fixture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PERF-12 T13.1 \u00a713.3 external-consumer fixture: a third-party-shaped iyon-tui consumer that imports ONLY the documented public API surface and contains ZERO composition/compiler/plugin/feature-flag setup. Step 1 skeleton: drives the untransformed baseline behavior; later T13.1 steps assert automatic retained-composition activation on these exact sources without any fixture changes.",
+  "dependencies": {
+    "@iyon/tui": "workspace:*"
+  }
+}

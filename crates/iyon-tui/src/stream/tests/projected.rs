@@ -223,7 +223,7 @@ fn projected_slices_and_suffix_preserve_run_facts_and_provenance() {
         crate::stream::projected::slice_projected_text_to(&projected, StreamOffset::new(3))
             .expect("legal prefix slice");
     let suffix = crate::stream::projected::slice_projected_text(&projected, StreamOffset::new(3));
-    let StreamNode::Text(suffix_text) =
+    let (StreamNode::Text(suffix_text) | StreamNode::ContinuousText(suffix_text)) =
         &StreamView::new(vec![StreamNode::projected_text(projected)])
             .suffix_from(StreamOffset::new(3))
             .nodes[0]
@@ -504,7 +504,9 @@ fn hanging_initial_and_suffix_nodes_validate_and_compile() {
 
     let suffix = StreamView::new(vec![StreamNode::projected_text(initial)])
         .suffix_from(StreamOffset::new(2));
-    let StreamNode::Text(suffix_text) = &suffix.nodes[0] else {
+    let (StreamNode::Text(suffix_text) | StreamNode::ContinuousText(suffix_text)) =
+        &suffix.nodes[0]
+    else {
         panic!("expected projected suffix");
     };
     let ProjectedTextLayout::Hanging {

@@ -138,10 +138,14 @@ fn span_fact_overrides_parent_fact_resolved_physical_style_without_leaking() {
 
 #[test]
 fn ancestor_and_child_text_styles_cascade_to_physical_text() {
-    let mut child = View::text("x").into_view();
-    child.decoration.text_style = StyleSpec::new().foreground(ColorSpec::Ansi(2)).into();
-    let mut view = box_view(child, Decoration::default());
-    view.decoration.text_style = StyleSpec::new().foreground(ColorSpec::Ansi(1)).into();
+    let child = View::text("x").foreground(ColorSpec::Ansi(2)).into_view();
+    let view = box_view(
+        child,
+        Decoration {
+            text_style: StyleSpec::new().foreground(ColorSpec::Ansi(1)).into(),
+            ..Decoration::default()
+        },
+    );
 
     let surface = layout_view(&view, 1, PhysicalStyle::default());
     assert_eq!(
@@ -152,16 +156,19 @@ fn ancestor_and_child_text_styles_cascade_to_physical_text() {
 
 #[test]
 fn span_style_overrides_node_and_explicit_false_cascades() {
-    let mut child = View::styled_text(vec![
+    let child = View::styled_text(vec![
         TextSpan::plain("a"),
         TextSpan::styled("b", StyleSpec::new().bold()),
     ])
+    .text_attribute(TextAttribute::Bold, false)
     .into_view();
-    child.decoration.text_style = StyleSpec::new()
-        .attribute(TextAttribute::Bold, false)
-        .into();
-    let mut view = box_view(child, Decoration::default());
-    view.decoration.text_style = StyleSpec::new().bold().into();
+    let view = box_view(
+        child,
+        Decoration {
+            text_style: StyleSpec::new().bold().into(),
+            ..Decoration::default()
+        },
+    );
 
     let surface = layout_view(&view, 2, PhysicalStyle::default());
     assert!(!surface.get(0, 0).style.bold);
@@ -170,8 +177,10 @@ fn span_style_overrides_node_and_explicit_false_cascades() {
 
 #[test]
 fn surface_background_paints_text_backing_and_transparent_tail() {
-    let mut view = View::text("x").fill_width().into_view();
-    view.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let view = View::text("x")
+        .fill_width()
+        .background(ColorSpec::Ansi(1))
+        .into_view();
     let surface = layout_view(&view, 4, PhysicalStyle::default());
 
     assert_eq!(
@@ -400,11 +409,11 @@ fn explicit_style_properties_merge_without_losing_fields() {
         .into_view();
 
     assert_eq!(
-        view.decoration.text_style.foreground,
+        view.decoration().text_style.foreground,
         Some(ColorSpec::ansi(1))
     );
-    assert_eq!(view.decoration.text_style.attributes.bold, Some(true));
-    assert_eq!(view.decoration.text_style.attributes.italic, Some(true));
+    assert_eq!(view.decoration().text_style.attributes.bold, Some(true));
+    assert_eq!(view.decoration().text_style.attributes.italic, Some(true));
 }
 
 #[test]
@@ -519,8 +528,10 @@ fn border_painting_preserves_tiny_width_geometry() {
 
 #[test]
 fn text_background_only_paints_text_cells() {
-    let mut view = View::text("x").fill_width().into_view();
-    view.decoration.text_style = StyleSpec::new().background(ColorSpec::Ansi(2)).into();
+    let view = View::text("x")
+        .fill_width()
+        .style(StyleSpec::new().background(ColorSpec::Ansi(2)))
+        .into_view();
     let surface = layout_view(&view, 4, PhysicalStyle::default());
 
     assert_eq!(
@@ -532,9 +543,11 @@ fn text_background_only_paints_text_cells() {
 
 #[test]
 fn explicit_text_background_wins_over_surface_background() {
-    let mut view = View::text("x").fill_width().into_view();
-    view.decoration.surface_background = Some(ColorSpec::Ansi(1));
-    view.decoration.text_style = StyleSpec::new().background(ColorSpec::Ansi(2)).into();
+    let view = View::text("x")
+        .fill_width()
+        .background(ColorSpec::Ansi(1))
+        .style(StyleSpec::new().background(ColorSpec::Ansi(2)))
+        .into_view();
     let surface = layout_view(&view, 4, PhysicalStyle::default());
 
     assert_eq!(
@@ -584,11 +597,10 @@ fn transparent_padding_shows_ancestor_surface_background() {
 
 #[test]
 fn surface_background_does_not_enter_text_style_cascade() {
-    let mut view = View::text("x").into_view();
-    view.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let view = View::text("x").background(ColorSpec::Ansi(1)).into_view();
     let resolved = ViewCompiler::default().theme.resolve_text_style(
         PhysicalStyle::default(),
-        &view.decoration.text_style,
+        &view.decoration().text_style,
         &crate::presentation::paint::StyleContext::default(),
     );
     assert_eq!(resolved.background, None);
@@ -671,7 +683,7 @@ fn decoration_preserves_physical_incompleteness() {
 #[test]
 fn box_background_covers_padding_and_row_gap() {
     let view = box_view(
-        tool_view("body"),
+        decorated_row_view("body"),
         background_with_padding(ColorSpec::Theme(ThemeKey::from("panel")), Insets::all(1)),
     );
     let rows = compile_view(&view, 12).rows;

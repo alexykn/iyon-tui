@@ -146,25 +146,25 @@ impl Vertical {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::{cell::Cell, sync::Arc};
 
     use super::*;
     use crate::presentation::api::style::StyleSpec;
     use crate::presentation::api::text::TextSpan;
     use crate::presentation::ir::{
-        ColumnView, HeightRule, RowView, TrackSize, ViewKind, WidthRule,
+        ColumnView, HeightRule, RowView, TrackSize, ViewKind, ViewNodeParts, WidthRule,
     };
     use crate::presentation::{IntoView, View};
 
     fn row(view: &View) -> &RowView {
-        let ViewKind::Row(row) = &view.kind else {
+        let ViewKind::Row(row) = view.kind() else {
             panic!("expected row view");
         };
         row
     }
 
     fn column(view: &View) -> &ColumnView {
-        let ViewKind::Column(column) = &view.kind else {
+        let ViewKind::Column(column) = view.kind() else {
             panic!("expected column view");
         };
         column
@@ -187,10 +187,10 @@ mod tests {
     }
 
     fn text<T: TextViewRef>(view: &T) -> &str {
-        let ViewKind::Text(text) = &view.as_view().kind else {
+        let ViewKind::Text(text) = view.as_view().kind() else {
             panic!("expected text view");
         };
-        &text.spans[0].text
+        text.spans[0].text()
     }
 
     #[test]
@@ -204,8 +204,8 @@ mod tests {
             View::spacer(1),
         ];
 
-        assert!(views.iter().all(|view| view.width == WidthRule::Fit));
-        assert!(views.iter().all(|view| view.height == HeightRule::Fit));
+        assert!(views.iter().all(|view| view.width() == WidthRule::Fit));
+        assert!(views.iter().all(|view| view.height() == HeightRule::Fit));
     }
 
     #[test]
@@ -213,8 +213,11 @@ mod tests {
         let view = View::horizontal(|_| {});
         let horizontal = row(&view);
 
-        assert_eq!(view.width, WidthRule::Fit);
-        assert_eq!(view.decoration, Default::default());
+        assert_eq!(view.width(), WidthRule::Fit);
+        assert_eq!(
+            view.decoration(),
+            &crate::presentation::ir::Decoration::default()
+        );
         assert!(horizontal.children.is_empty());
         assert_eq!(horizontal.gap, 0);
         assert_eq!(horizontal.vertical_align, VerticalAlign::Top);
@@ -225,8 +228,11 @@ mod tests {
         let view = View::vertical(|_| {});
         let vertical = column(&view);
 
-        assert_eq!(view.width, WidthRule::Fit);
-        assert_eq!(view.decoration, Default::default());
+        assert_eq!(view.width(), WidthRule::Fit);
+        assert_eq!(
+            view.decoration(),
+            &crate::presentation::ir::Decoration::default()
+        );
         assert!(vertical.children.is_empty());
         assert_eq!(vertical.gap, 0);
     }
@@ -269,8 +275,8 @@ mod tests {
         });
         let children = &row(&view).children;
 
-        assert_eq!(children[0].view.width, WidthRule::Fit);
-        assert_eq!(children[1].view.width, WidthRule::Fill);
+        assert_eq!(children[0].view.width(), WidthRule::Fit);
+        assert_eq!(children[1].view.width(), WidthRule::Fill);
     }
 
     #[test]
@@ -321,7 +327,7 @@ mod tests {
         assert_eq!(text(&children[3]), "view");
         assert_eq!(text(&children[4]), "custom");
         assert_eq!(
-            children[4].view.decoration.text_style.attributes.bold,
+            children[4].view.decoration().text_style.attributes.bold,
             Some(true)
         );
     }
@@ -437,24 +443,23 @@ mod tests {
 
     #[test]
     fn legacy_and_new_composition_compile_identically() {
-        let old_row = View {
-            component: None,
+        let old_row = View::from_node(ViewNodeParts {
             width: WidthRule::Fit,
             height: HeightRule::Fit,
             decoration: Default::default(),
             style_states: Default::default(),
             style_facts: Default::default(),
-            component_scope: None,
-            kind: ViewKind::Row(RowView {
+            kind: ViewKind::Row(Arc::new(RowView {
                 children: vec![
                     RowChild::content(View::text("a").into_view()),
                     RowChild::fixed(4, View::text("b").into_view()),
                     RowChild::flex(View::text("c").into_view()),
-                ],
+                ]
+                .into(),
                 gap: 1,
                 vertical_align: VerticalAlign::Bottom,
-            }),
-        };
+            })),
+        });
         let new_row = View::horizontal(|row| {
             row.child("a");
             row.fixed(4, "b");

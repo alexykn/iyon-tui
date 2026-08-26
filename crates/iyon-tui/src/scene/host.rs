@@ -4,14 +4,16 @@
 //! and native History pressure. Application code supplies only semantic Scene
 //! state and consumes routed outputs.
 
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use anyhow::Result;
 
 use crate::{
     Theme,
     backend::NativeHistorySink,
-    component::{ComponentRegistry, MountGraph, MountedComponents, TickOutcome, TickScheduler},
+    component::{
+        ComponentId, ComponentRegistry, MountGraph, MountedComponents, TickOutcome, TickScheduler,
+    },
     geometry::Size,
     interaction::{
         FocusState, InteractionResult, KeyStroke, MountedCapabilities, route_key_local,
@@ -19,12 +21,16 @@ use crate::{
     },
     output::{OutputQueue, OutputRouter},
     physical::Surface,
-    presentation::{layout::ViewCompiler, paint::ViewPainter},
+    presentation::{
+        layout::{LayoutCache, ViewCompiler},
+        paint::{PaintCache, ViewPainter},
+    },
 };
 
 use super::{
     LayoutSynchronizer, ResolveError, ResolvedRootScene, ResolvedSceneLayout, Scene,
-    layout_resolved_scene, resolve_root_scene_with_anchor,
+    layout_resolved_scene_with_cache, resolve_component_subtree,
+    resolve_root_scene_with_anchor_and_cache,
 };
 use crate::history::HistoryViewportAnchor;
 
@@ -140,9 +146,11 @@ impl PreparedSceneFrame {
 }
 
 /// Generic runtime host for one semantic Scene.
+#[derive(Clone)]
 struct StableScene {
     root: ResolvedRootScene,
     layout: ResolvedSceneLayout,
+    history_revision: u64,
 }
 
 pub(crate) struct SceneHost {
@@ -153,10 +161,35 @@ pub(crate) struct SceneHost {
     outputs: OutputQueue,
     graph: MountGraph,
     capabilities: MountedCapabilities,
+    layout_cache: LayoutCache,
+    paint_cache: PaintCache,
+    /// The last successfully painted semantic/layout frame. Local component
+    /// invalidations update this retained frame instead of rebuilding the
+    /// component forest from the scene root.
+    retained: Option<StableScene>,
+    last_surface: Option<Surface>,
+    invalidated_components: HashSet<ComponentId>,
+    incremental_sync_components: Vec<ComponentId>,
+    incremental_topology_changed: bool,
+    incremental_requires_full_sync: bool,
+    incremental_paint_components: Vec<ComponentId>,
     /// Counts calls to `resolve_stable_at_with_anchor` for structural test
     /// assertions. Not compiled into production builds.
     #[cfg(test)]
     pub(crate) resolve_count: usize,
+    #[cfg(test)]
+    pub(crate) full_resolves: usize,
+    #[cfg(test)]
+    pub(crate) incremental_resolves: usize,
+}
+
+impl SceneHost {
+    /// PERF-12 T13.1 R8: whether the last SUCCESSFULLY reconciled mount graph
+    /// still contains this component. Deferred component retirement consults
+    /// this before physically reclaiming a registry entry.
+    pub(crate) fn is_mounted(&self, id: crate::component::ComponentId) -> bool {
+        self.graph.contains(id)
+    }
 }
 
 impl Default for SceneHost {
@@ -169,13 +202,55 @@ impl Default for SceneHost {
             outputs: OutputQueue::new(),
             graph: MountGraph::default(),
             capabilities: MountedCapabilities::default(),
+            layout_cache: LayoutCache::default(),
+            paint_cache: PaintCache::default(),
+            retained: None,
+            last_surface: None,
+            invalidated_components: HashSet::new(),
+            incremental_sync_components: Vec::new(),
+            incremental_topology_changed: false,
+            incremental_requires_full_sync: false,
+            incremental_paint_components: Vec::new(),
             #[cfg(test)]
             resolve_count: 0,
+            #[cfg(test)]
+            full_resolves: 0,
+            #[cfg(test)]
+            incremental_resolves: 0,
         }
     }
 }
 
 impl SceneHost {
+    pub(crate) fn clear_retained_views(&mut self) {
+        self.layout_cache = LayoutCache::default();
+        self.retained = None;
+        self.last_surface = None;
+        self.invalidated_components.clear();
+        self.incremental_sync_components.clear();
+        self.incremental_topology_changed = false;
+        self.incremental_requires_full_sync = false;
+        self.incremental_paint_components.clear();
+    }
+
+    /// Marks one native component as changed. The next frame can resolve only
+    /// this component's owned subtree; the committed frame remains authoritative
+    /// until that frame successfully prepares and paints.
+    pub(crate) fn invalidate_component(&mut self, id: ComponentId) {
+        self.invalidated_components.insert(id);
+    }
+
+    /// Invalidates the retained scene root for body/history/theme changes.
+    pub(crate) fn invalidate_root(&mut self) {
+        self.retained = None;
+        self.last_surface = None;
+        self.invalidated_components.clear();
+        self.incremental_sync_components.clear();
+        self.incremental_topology_changed = false;
+        self.incremental_requires_full_sync = false;
+        self.incremental_paint_components.clear();
+    }
+
     pub(crate) fn next_tick_deadline(&self) -> Option<Instant> {
         self.ticker.next_deadline()
     }
@@ -187,7 +262,7 @@ impl SceneHost {
 
     #[cfg(test)]
     pub(crate) fn mount_count_for_test(&self) -> usize {
-        self.graph.nodes.len()
+        self.graph.len()
     }
 
     #[cfg(test)]
@@ -375,54 +450,419 @@ impl SceneHost {
         now: Instant,
         anchor: HistoryViewportAnchor,
     ) -> Result<StableScene, SceneHostError<E>> {
+        let mut force_full = false;
+        let mut layout_epoch_started = false;
         for _ in 0..MAX_LAYOUT_PASSES {
-            let resolved = resolve_root_scene_with_anchor(scene, registry, size, anchor)
-                .map_err(SceneHostError::Resolve)?;
-            let layout = layout_resolved_scene(&resolved.scene, size);
-            let sync = self.synchronizer.synchronize(
-                &resolved.scene.mounts,
-                &resolved.scene.capabilities,
-                &layout.components,
-                registry,
-            );
+            let resolved = if !force_full {
+                match self.try_incremental_stable(scene, registry, size, anchor) {
+                    Ok(Some(resolved)) => resolved,
+                    Ok(None) => {
+                        if !layout_epoch_started {
+                            self.layout_cache.begin_epoch();
+                            layout_epoch_started = true;
+                        }
+                        self.resolve_full_stable(scene, registry, size, anchor)?
+                    }
+                    Err(error) => return Err(SceneHostError::Resolve(error)),
+                }
+            } else {
+                if !layout_epoch_started {
+                    self.layout_cache.begin_epoch();
+                    layout_epoch_started = true;
+                }
+                self.resolve_full_stable(scene, registry, size, anchor)?
+            };
+            let incremental_host = !self.incremental_sync_components.is_empty()
+                && !self.incremental_topology_changed
+                && !self.incremental_requires_full_sync;
+            let sync = if incremental_host {
+                let mut dirty = false;
+                for component in self.incremental_sync_components.iter().copied() {
+                    dirty |= self.synchronizer.synchronize_component(
+                        component,
+                        &resolved.root.scene.capabilities,
+                        &resolved.layout.components,
+                        registry,
+                    ) == crate::scene::LayoutSync::Dirty;
+                }
+                if dirty {
+                    crate::scene::LayoutSync::Dirty
+                } else {
+                    crate::scene::LayoutSync::Stable
+                }
+            } else {
+                self.synchronizer.synchronize(
+                    &resolved.root.scene.mounts,
+                    &resolved.root.scene.capabilities,
+                    &resolved.layout.components,
+                    registry,
+                )
+            };
             if matches!(sync, crate::scene::LayoutSync::Dirty) {
+                // Layout callbacks mutate component revisions. Do not apply a
+                // second incremental patch against the half-synchronized
+                // candidate; the next pass is authoritative and full.
+                force_full = true;
+                self.retained = None;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
                 continue;
             }
 
-            self.graph = resolved.scene.mounts.clone();
-            self.capabilities = resolved.scene.capabilities.clone();
-            let transitions = self.mounted.reconcile(self.graph.clone());
-            self.ticker
-                .sync_capabilities(&self.graph, &self.capabilities, &transitions, now);
-            let focus_changed = self.focus.reconcile_with_geometry(
-                &self.graph,
-                &self.capabilities,
-                Some(&layout.components),
-                registry,
-            );
+            self.graph = resolved.root.scene.mounts.clone();
+            self.capabilities = resolved.root.scene.capabilities.clone();
+            let focus_changed = if incremental_host {
+                self.focus.reconcile_incremental(
+                    &self.incremental_sync_components,
+                    &self.graph,
+                    &self.capabilities,
+                    Some(&resolved.layout.components),
+                    registry,
+                )
+            } else {
+                let transitions = self.mounted.reconcile(self.graph.clone());
+                self.ticker
+                    .sync_capabilities(&self.graph, &self.capabilities, &transitions, now);
+                self.focus.reconcile_with_geometry(
+                    &self.graph,
+                    &self.capabilities,
+                    Some(&resolved.layout.components),
+                    registry,
+                )
+            };
+            if incremental_host {
+                for component in self.incremental_sync_components.iter().copied() {
+                    self.ticker
+                        .sync_component_capability(component, &self.capabilities, now);
+                }
+            }
             if focus_changed {
+                force_full = true;
+                self.retained = None;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
                 continue;
             }
+            self.invalidated_components.clear();
+            self.incremental_sync_components.clear();
+            self.incremental_topology_changed = false;
+            self.incremental_requires_full_sync = false;
             #[cfg(test)]
             {
                 self.resolve_count += 1;
             }
-            return Ok(StableScene {
-                root: resolved,
-                layout,
-            });
+            return Ok(resolved);
         }
         Err(SceneHostError::DidNotConverge)
     }
 
-    fn paint(&self, resolved: StableScene, theme: &Theme) -> PreparedSceneFrame {
+    fn resolve_full_stable<E>(
+        &mut self,
+        scene: &Scene,
+        registry: &mut ComponentRegistry,
+        size: Size,
+        anchor: HistoryViewportAnchor,
+    ) -> Result<StableScene, SceneHostError<E>> {
+        let resolved = resolve_root_scene_with_anchor_and_cache(
+            scene,
+            registry,
+            size,
+            anchor,
+            &mut self.layout_cache,
+        )
+        .map_err(SceneHostError::Resolve)?;
+        let layout =
+            layout_resolved_scene_with_cache(&resolved.scene, size, &mut self.layout_cache);
+        self.incremental_sync_components.clear();
+        self.incremental_topology_changed = false;
+        self.incremental_requires_full_sync = false;
+        self.incremental_paint_components.clear();
+        #[cfg(test)]
+        {
+            self.full_resolves += 1;
+        }
+        Ok(StableScene {
+            root: resolved,
+            layout,
+            history_revision: scene.history().map_or(0, crate::History::revision),
+        })
+    }
+
+    fn try_incremental_stable(
+        &mut self,
+        scene: &Scene,
+        registry: &mut ComponentRegistry,
+        size: Size,
+        anchor: HistoryViewportAnchor,
+    ) -> Result<Option<StableScene>, ResolveError> {
+        let history_revision = scene.history().map_or(0, crate::History::revision);
+        if self.invalidated_components.is_empty()
+            || self.retained.as_ref().is_none_or(|retained| {
+                retained.layout.tree.size != size
+                    || retained.history_revision != history_revision
+                    || !crate::presentation::View::ptr_eq(
+                        &retained.root.body_view,
+                        scene.layout_body(),
+                    )
+            })
+        {
+            return Ok(None);
+        }
+        if !matches!(anchor, HistoryViewportAnchor::FollowEnd) {
+            return Ok(None);
+        }
+
+        let Some(mut retained) = self.retained.take() else {
+            return Ok(None);
+        };
+        let invalidated = self
+            .invalidated_components
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let roots = invalidated
+            .iter()
+            .copied()
+            .filter(|candidate| retained.root.scene.mounts.contains(*candidate))
+            .filter(|candidate| {
+                !invalidated.iter().any(|ancestor| {
+                    ancestor != candidate
+                        && retained
+                            .root
+                            .scene
+                            .mounts
+                            .is_descendant_or_self(*candidate, *ancestor)
+                })
+            })
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            self.retained = Some(retained);
+            return Ok(None);
+        }
+        self.incremental_sync_components = roots.clone();
+
+        let mut updates = Vec::with_capacity(roots.len());
+        for id in &roots {
+            match prepare_component_subtree_update(&retained, registry, *id) {
+                Ok(update) => updates.push(update),
+                Err(error) => {
+                    self.retained = Some(retained);
+                    self.incremental_sync_components.clear();
+                    self.incremental_topology_changed = false;
+                    self.incremental_requires_full_sync = false;
+                    self.incremental_paint_components.clear();
+                    return Err(error);
+                }
+            }
+        }
+        let topology_changed = updates.iter().any(|update| update.topology_changed);
+        for update in updates {
+            apply_component_subtree_update(&mut retained, update);
+        }
+        self.incremental_topology_changed = topology_changed;
+        let mut incremental_cache = LayoutCache::default();
+        // Same-shape/same-geometry content is patched into the retained layout
+        // tree. Geometry or topology changes fall back to the complete layout
+        // pass, whose two-generation cache still reuses unchanged siblings.
+        let mut patched = true;
+        for id in &roots {
+            let Some(view) = retained
+                .root
+                .scene
+                .overlay
+                .components
+                .get(id)
+                .map(|snapshot| &snapshot.view)
+            else {
+                patched = false;
+                break;
+            };
+            if !retained.layout.patch_component_with_cache(
+                *id,
+                view,
+                &retained.root.scene.overlay,
+                &mut incremental_cache,
+            ) {
+                patched = false;
+                break;
+            }
+        }
+        if !patched || topology_changed {
+            self.layout_cache.begin_epoch();
+            retained.layout = layout_resolved_scene_with_cache(
+                &retained.root.scene,
+                size,
+                &mut self.layout_cache,
+            );
+            self.incremental_requires_full_sync = true;
+            self.incremental_paint_components.clear();
+        } else {
+            self.incremental_requires_full_sync = false;
+            self.incremental_sync_components = roots
+                .iter()
+                .flat_map(|root| retained.root.scene.mounts.subtree_ids(*root))
+                .collect();
+            self.incremental_paint_components = roots;
+        }
+        #[cfg(test)]
+        {
+            self.incremental_resolves += 1;
+        }
+        Ok(Some(retained))
+    }
+
+    fn paint(&mut self, resolved: StableScene, theme: &Theme) -> PreparedSceneFrame {
+        self.retained = Some(resolved);
+        let retained = self.retained.as_ref().expect("retained frame installed");
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
-        let surface = ViewPainter.paint_tree(&compiler, &resolved.layout.tree);
+        if !self.incremental_paint_components.is_empty() {
+            if let Some(mut surface) = self.last_surface.take() {
+                let mut incremental = true;
+                let mut incremental_cache = PaintCache::default();
+                for component in self.incremental_paint_components.iter().copied() {
+                    if !ViewPainter.paint_component_into(
+                        &compiler,
+                        &retained.layout.tree,
+                        component,
+                        &mut surface,
+                        &mut incremental_cache,
+                    ) {
+                        incremental = false;
+                        break;
+                    }
+                }
+                self.incremental_paint_components.clear();
+                if incremental {
+                    let output = surface.clone();
+                    self.last_surface = Some(surface);
+                    return PreparedSceneFrame {
+                        surface: output,
+                        history_overlay: retained.root.history_overlay.clone(),
+                    };
+                }
+            }
+            self.incremental_paint_components.clear();
+        }
+        self.paint_cache.begin_epoch(theme);
+        let surface = ViewPainter.paint_tree_with_cache(
+            &compiler,
+            &retained.layout.tree,
+            &mut self.paint_cache,
+        );
+        let output = surface.clone();
+        self.last_surface = Some(surface);
         PreparedSceneFrame {
-            surface,
-            history_overlay: resolved.root.history_overlay,
+            surface: output,
+            history_overlay: retained.root.history_overlay.clone(),
         }
     }
+}
+
+struct PreparedComponentSubtree {
+    id: ComponentId,
+    snapshot: crate::component::ComponentSnapshot,
+    subtree: super::ResolvedScene,
+    old_ids: Vec<ComponentId>,
+    topology_changed: bool,
+}
+
+fn prepare_component_subtree_update(
+    retained: &StableScene,
+    registry: &ComponentRegistry,
+    id: ComponentId,
+) -> Result<PreparedComponentSubtree, ResolveError> {
+    let snapshot = registry
+        .resolution(id)
+        .ok_or(ResolveError::MissingComponent { id })?;
+    let subtree = resolve_component_subtree(&snapshot.view, registry, id)?;
+    let graph = &retained.root.scene.mounts;
+    let old_ids = graph.subtree_ids(id);
+    if old_ids.is_empty() {
+        return Err(ResolveError::MissingComponent { id });
+    }
+    let old_children = old_ids
+        .iter()
+        .skip(1)
+        .map(|child| {
+            let node = graph
+                .node(*child)
+                .expect("mount graph subtree id must resolve to a node");
+            (node.id, node.parent)
+        })
+        .collect::<Vec<_>>();
+    let new_children = subtree
+        .mounts
+        .iter()
+        .map(|node| (node.id, node.parent))
+        .collect::<Vec<_>>();
+    let topology_changed = old_children != new_children;
+
+    for node in subtree.mounts.iter() {
+        if graph.contains(node.id) && !old_ids.contains(&node.id) {
+            return Err(ResolveError::DuplicateComponent { id: node.id });
+        }
+    }
+
+    Ok(PreparedComponentSubtree {
+        id,
+        snapshot,
+        subtree,
+        old_ids,
+        topology_changed,
+    })
+}
+
+fn apply_component_subtree_update(retained: &mut StableScene, update: PreparedComponentSubtree) {
+    let PreparedComponentSubtree {
+        id,
+        snapshot,
+        subtree,
+        old_ids,
+        topology_changed,
+    } = update;
+    let graph = &mut retained.root.scene.mounts;
+    if topology_changed {
+        assert!(
+            graph.replace_subtree(id, subtree.mounts.clone()),
+            "prepared component subtree must still have a mounted owner"
+        );
+    }
+    graph.update_revision(id, snapshot.revision);
+    for node in subtree.mounts.iter() {
+        graph.update_revision(node.id, node.revision);
+    }
+
+    for old_id in old_ids {
+        retained.root.scene.overlay.components.remove(&old_id);
+        retained.root.scene.capabilities.entries.remove(&old_id);
+    }
+    retained
+        .root
+        .scene
+        .overlay
+        .components
+        .insert(id, snapshot.clone());
+    retained
+        .root
+        .scene
+        .capabilities
+        .insert(id, snapshot.capabilities);
+    retained
+        .root
+        .scene
+        .overlay
+        .components
+        .extend(subtree.overlay.components);
+    retained
+        .root
+        .scene
+        .capabilities
+        .entries
+        .extend(subtree.capabilities.entries);
 }
 
 #[derive(Debug)]
@@ -445,8 +885,8 @@ impl<E: std::fmt::Debug + 'static> std::error::Error for SceneHostError<E> {}
 mod tests {
     use super::*;
     use crate::{
-        BorderSpec, ColorSpec, Component, ComponentCx, InteractionResult, IntoView, Key, KeyStroke,
-        Scene, ScrollPane, StyleSelector, TextSpan, ThemeColor, View,
+        BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult,
+        IntoView, Key, KeyStroke, Scene, ScrollPane, StyleSelector, TextSpan, ThemeColor, View,
         backend::NativeHistorySink,
         component::ComponentRegistry,
         geometry::Size,
@@ -517,6 +957,33 @@ mod tests {
         rows: Vec<PhysicalRow>,
     }
 
+    #[derive(Debug)]
+    struct R6bLeaf {
+        text: String,
+    }
+
+    impl Component for R6bLeaf {
+        fn view(&self) -> View {
+            View::text(self.text.clone()).into_view()
+        }
+    }
+
+    #[derive(Debug)]
+    struct TopologyRoot {
+        child: ComponentHandle<R6bLeaf>,
+        show_child: bool,
+    }
+
+    impl Component for TopologyRoot {
+        fn view(&self) -> View {
+            if self.show_child {
+                View::component(self.child).into_view()
+            } else {
+                View::text("root").into_view()
+            }
+        }
+    }
+
     impl NativeHistorySink for TestSink {
         type Error = ();
 
@@ -524,6 +991,263 @@ mod tests {
             self.rows.extend(rows.iter().cloned());
             Ok(rows.len())
         }
+    }
+
+    #[test]
+    fn retained_host_updates_one_of_one_thousand_components_incrementally() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        let mut registry = ComponentRegistry::new();
+        let handles = (0..1_000)
+            .map(|_| {
+                registry.register(R6bLeaf {
+                    text: "x".to_owned(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let scene = Scene::new(View::vertical(|column| {
+            for handle in &handles {
+                column.child(View::component(*handle));
+            }
+        }));
+        let size = Size::new(8, 1_000);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+        host.full_resolves = 0;
+        host.incremental_resolves = 0;
+        host.resolve_count = 0;
+
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        registry
+            .with_mut(handles[0], |leaf| leaf.text = "y".to_owned())
+            .unwrap();
+        host.invalidate_component(handles[0].id());
+        let same_geometry = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let same_geometry_frame = host.paint(same_geometry, &Theme::default());
+
+        assert_eq!(host.full_resolves, 0);
+        assert_eq!(host.incremental_resolves, 1);
+        assert_eq!(host.resolve_count, 1);
+        assert_eq!(same_geometry_frame.screen_lines()[0], "y       ");
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert!(counters.value(crate::perf::Counter::ResolverNodesVisited) <= 4);
+            assert!(counters.value(crate::perf::Counter::MeasureNodeCalls) <= 16);
+            // Incremental painting patches the retained surface directly; it does
+            // not walk clean siblings through the full-tree paint cache.
+            assert!(counters.value(crate::perf::Counter::PaintNodesVisited) <= 2);
+            assert_eq!(counters.value(crate::perf::Counter::PaintCacheHits), 0);
+            assert!(counters.value(crate::perf::Counter::PaintCacheMisses) <= 1);
+            assert!(counters.value(crate::perf::Counter::SurfaceCellsComposited) <= 8);
+        }
+        let mut same_cold_host = SceneHost::default();
+        let same_cold = same_cold_host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let same_cold_frame = same_cold_host.paint(same_cold, &Theme::default());
+        assert_eq!(
+            same_geometry_frame.screen_lines(),
+            same_cold_frame.screen_lines()
+        );
+
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        registry
+            .with_mut(handles[0], |leaf| leaf.text = "y\nrow".to_owned())
+            .unwrap();
+        host.invalidate_component(handles[0].id());
+        let geometry_change = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let geometry_frame = host.paint(geometry_change, &Theme::default());
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert!(counters.value(crate::perf::Counter::ResolverNodesVisited) <= 4);
+            assert!(counters.value(crate::perf::Counter::ComponentViewCalls) <= 1);
+        }
+
+        assert_eq!(host.full_resolves, 0);
+        assert_eq!(host.incremental_resolves, 2);
+        let mut cold_host = SceneHost::default();
+        let cold = cold_host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let cold_frame = cold_host.paint(cold, &Theme::default());
+        assert_eq!(geometry_frame.screen_lines(), cold_frame.screen_lines());
+    }
+
+    #[test]
+    fn retained_topology_replacement_preserves_owner_and_updates_mounts() {
+        let mut registry = ComponentRegistry::new();
+        let child = registry.register(R6bLeaf {
+            text: "child".to_owned(),
+        });
+        let parent = registry.register(TopologyRoot {
+            child,
+            show_child: false,
+        });
+        let scene = Scene::new(View::component(parent));
+        let size = Size::new(12, 3);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let initial_frame = host.paint(initial, &Theme::default());
+        assert_eq!(initial_frame.screen_lines()[0], "root        ");
+        assert_eq!(host.graph.ids().collect::<Vec<_>>(), vec![parent.id()]);
+
+        registry
+            .with_mut(parent, |root| root.show_child = true)
+            .unwrap();
+        host.invalidate_component(parent.id());
+        let mounted = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let mounted_frame = host.paint(mounted, &Theme::default());
+        assert_eq!(mounted_frame.screen_lines()[0], "child       ");
+        assert_eq!(
+            host.graph.ids().collect::<Vec<_>>(),
+            vec![parent.id(), child.id()]
+        );
+        assert_eq!(host.graph.parent(parent.id()), None);
+        assert_eq!(host.graph.parent(child.id()), Some(parent.id()));
+
+        registry
+            .with_mut(parent, |root| root.show_child = false)
+            .unwrap();
+        host.invalidate_component(parent.id());
+        let removed = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let removed_frame = host.paint(removed, &Theme::default());
+        assert_eq!(removed_frame.screen_lines()[0], "root        ");
+        assert_eq!(host.graph.ids().collect::<Vec<_>>(), vec![parent.id()]);
+    }
+
+    #[test]
+    fn incremental_prepare_error_preserves_the_committed_frame() {
+        let mut registry = ComponentRegistry::new();
+        let first = registry.register(R6bLeaf {
+            text: "first".to_owned(),
+        });
+        let second = registry.register(R6bLeaf {
+            text: "second".to_owned(),
+        });
+        let scene = Scene::new(View::vertical(|column| {
+            column.child(View::component(first));
+            column.child(View::component(second));
+        }));
+        let size = Size::new(12, 3);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let initial_frame = host.paint(initial, &Theme::default());
+        let initial_ids = host.graph.ids().collect::<Vec<_>>();
+
+        registry
+            .with_mut(first, |leaf| leaf.text = "updated".to_owned())
+            .unwrap();
+        registry.remove(second).unwrap();
+        host.invalidate_component(first.id());
+        host.invalidate_component(second.id());
+        let error = host.resolve_stable::<()>(&scene, &mut registry, size);
+        assert!(matches!(
+            error,
+            Err(SceneHostError::Resolve(ResolveError::MissingComponent { id })) if id == second.id()
+        ));
+        assert_eq!(host.graph.ids().collect::<Vec<_>>(), initial_ids);
+        assert_eq!(
+            host.retained
+                .as_ref()
+                .unwrap()
+                .root
+                .scene
+                .overlay
+                .component(first.id())
+                .unwrap()
+                .view,
+            View::text("first").into_view()
+        );
+        assert_eq!(host.last_surface.as_ref().unwrap(), &initial_frame.surface);
+    }
+
+    #[test]
+    fn retained_component_paint_preserves_ancestor_surface_background() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(R6bLeaf {
+            text: "x".to_owned(),
+        });
+        let scene = Scene::new(
+            View::vertical(|column| {
+                column.child(View::component(handle));
+            })
+            .fill_width()
+            .fill_height()
+            .background(ColorSpec::Ansi(34)),
+        );
+        let size = Size::new(8, 2);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+
+        registry
+            .with_mut(handle, |leaf| leaf.text = "y".to_owned())
+            .unwrap();
+        host.invalidate_component(handle.id());
+        let retained = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let retained_frame = host.paint(retained, &Theme::default());
+
+        let mut cold_host = SceneHost::default();
+        let cold = cold_host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let cold_frame = cold_host.paint(cold, &Theme::default());
+        assert_eq!(retained_frame.surface, cold_frame.surface);
+    }
+
+    #[test]
+    fn component_incremental_update_falls_back_when_history_changes_too() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(R6bLeaf {
+            text: "body-old".to_owned(),
+        });
+        let mut history = crate::History::new();
+        history.push("history-old").unwrap();
+        let mut scene = Scene::with_history(history, View::component(handle));
+        let size = Size::new(12, 4);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+        host.full_resolves = 0;
+
+        registry
+            .with_mut(handle, |leaf| leaf.text = "body-new".to_owned())
+            .unwrap();
+        scene.history_mut().unwrap().push("history-new").unwrap();
+        host.invalidate_component(handle.id());
+        let resolved = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        assert_eq!(host.full_resolves, 1);
+        let frame = host.paint(resolved, &Theme::default());
+        let lines = frame.screen_lines();
+        assert!(lines.iter().any(|line| line.starts_with("history-new")));
+        assert!(lines.iter().any(|line| line.starts_with("body-new")));
     }
 
     #[test]
@@ -727,6 +1451,21 @@ mod tests {
                 crate::physical::AnsiColor::Cyan,
             ))
         );
+
+        #[cfg(feature = "perf-counters")]
+        {
+            let _lock = crate::perf::test_lock();
+            crate::perf::reset();
+            let _ = host
+                .resolve_stable::<()>(&scene, &mut registry, Size::new(20, 4))
+                .unwrap();
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::TextFlowMeasureCalls),
+                0
+            );
+            assert!(counters.value(crate::perf::Counter::PrepareNodeCalls) <= 1);
+        }
     }
 
     #[test]

@@ -6,9 +6,9 @@ mod text;
 use crate::physical::PhysicalRow;
 
 use super::{
-    coord::StreamOffset,
+    coord::{StreamOffset, StreamRange},
     node::{StreamNode, StreamView},
-    projected::checkpoint_after_row,
+    projected::{ProjectedText, projected_atoms},
 };
 
 use crate::Theme;
@@ -48,11 +48,19 @@ pub(crate) fn compile_stream_with_theme(
     let mut zero_row_prefix = None;
     let mut next_atomic_id = 0usize;
 
-    for node in &view.nodes {
+    let nodes = coalesce_adjacent_text_nodes(&view.nodes);
+    for node in &nodes {
+        crate::perf::inc(crate::perf::Counter::StreamSourceNodesExamined);
         match node {
-            StreamNode::Text(text) => {
+            StreamNode::Text(text) | StreamNode::ContinuousText(text) => {
                 let (_w, compiled_rows) =
                     compiler.compile_projected_text_with_metadata(text, width);
+                let newline_checkpoints = projected_atoms(text)
+                    .into_iter()
+                    .filter(|atom| atom.display == "\n")
+                    .map(|atom| (atom.owned.start, atom.owned.end))
+                    .collect::<Vec<_>>();
+                let mut next_newline = 0;
                 let final_offset = text.owned_range().end;
                 let row_count = compiled_rows.len();
                 if row_count == 0 {
@@ -83,7 +91,13 @@ pub(crate) fn compile_stream_with_theme(
                         };
                         anchors.push(StreamRowAnchor::Checkpoint(checkpoint));
                         rows.push(row.row);
-                        let boundary = checkpoint_after_row(text, offset);
+                        let boundary = match newline_checkpoints.get(next_newline) {
+                            Some((start, end)) if *start == offset => {
+                                next_newline += 1;
+                                *end
+                            }
+                            _ => offset,
+                        };
                         checkpoint = boundary;
                         if !blocked && boundary <= stable_through {
                             transfer.push(StreamRowTransfer::Checkpoint(boundary));
@@ -151,4 +165,52 @@ pub(crate) fn compile_stream_with_theme(
         transferable_prefix_rows,
         zero_row_prefix,
     }
+}
+
+/// Stable-prefix capture may split one plain text source at an arbitrary
+/// checkpoint. Compile adjacent compatible text nodes as one visual run so
+/// that the retained semantic partition cannot introduce a physical blank row
+/// or change wrapping at the node boundary.
+fn coalesce_adjacent_text_nodes(nodes: &[StreamNode]) -> Vec<StreamNode> {
+    let mut coalesced = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let Some(StreamNode::ContinuousText(previous)) = coalesced.last_mut() else {
+            coalesced.push(node.clone());
+            continue;
+        };
+        let StreamNode::ContinuousText(current) = node else {
+            coalesced.push(node.clone());
+            continue;
+        };
+        if let Some(merged) = merge_compatible_text(previous, current) {
+            *previous = merged;
+        } else {
+            coalesced.push(node.clone());
+        }
+    }
+    coalesced
+}
+
+fn merge_compatible_text(left: &ProjectedText, right: &ProjectedText) -> Option<ProjectedText> {
+    if left.terminator != super::projected::ExactTerminator::None
+        || right.terminator != super::projected::ExactTerminator::None
+        || left.content_range.end != right.content_range.start
+        || left.width != right.width
+        || left.wrap != right.wrap
+        || left.align != right.align
+        || left.layout != right.layout
+    {
+        return None;
+    }
+    let mut runs = left.runs.clone();
+    runs.extend(right.runs.iter().cloned());
+    Some(ProjectedText {
+        content_range: StreamRange::new(left.content_range.start, right.content_range.end),
+        terminator: right.terminator,
+        width: left.width,
+        wrap: left.wrap,
+        align: left.align,
+        layout: left.layout.clone(),
+        runs,
+    })
 }

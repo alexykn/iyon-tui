@@ -7,6 +7,7 @@ mod compile;
 mod coord;
 mod model;
 mod projected;
+mod reindex;
 
 mod snapshot;
 #[cfg(test)]
@@ -180,8 +181,9 @@ fn atomic_wide_grapheme_at_width_two_is_committable() {
 
 #[test]
 fn atomic_view_uses_the_ordinary_view_style_compiler() {
-    let mut view = View::text("atomic").into_view();
-    view.decoration.text_style = StyleSpec::new().bold().into();
+    let view = View::text("atomic")
+        .style(StyleSpec::new().bold())
+        .into_view();
     let stream = StreamView::atomic(
         StreamRange::new(StreamOffset::ZERO, StreamOffset::new(6)),
         view.clone(),
@@ -381,8 +383,8 @@ fn exact_text_zwj_split_across_spans() {
 }
 
 #[test]
-fn thinking_style_transition_preserves_muted_and_italic() {
-    let span_thinking = TextSpan::styled(
+fn annotated_style_transition_preserves_muted_and_italic() {
+    let span_annotated = TextSpan::styled(
         "reasoning\n",
         StyleSpec::new()
             .foreground(ColorSpec::Theme(ThemeKey::from("muted")))
@@ -393,13 +395,13 @@ fn thinking_style_transition_preserves_muted_and_italic() {
 
     let view = StreamView::exact_text(
         StreamRange::new(StreamOffset::ZERO, StreamOffset::new(16)),
-        vec![span_thinking, span_text],
+        vec![span_annotated, span_text],
     );
 
     let compiled = compile_stream(&view, 20, StreamOffset::new(16));
     assert_eq!(compiled.rows.len(), 2);
 
-    // Row 0 has thinking styling (italic & dim)
+    // Row 0 has annotated styling (italic & dim)
     assert!(
         compiled.rows[0]
             .cell(0)
@@ -457,7 +459,7 @@ fn compile_stream_exact_text_matches_view_compiler_identically() {
             let text_view = View::styled_text(spans.clone()).into_view();
             let layout_block = compiler.compile(&text_view, width);
 
-            let total_len = spans.iter().map(|s| s.text.len() as u64).sum();
+            let total_len = spans.iter().map(|s| s.text().len() as u64).sum();
             let stream_view = StreamView::exact_text(
                 StreamRange::new(StreamOffset::ZERO, StreamOffset::new(total_len)),
                 spans.clone(),

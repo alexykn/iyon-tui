@@ -1,0 +1,71 @@
+18ccf298ce95960af759811bac18f89dff465c7e	2026-08-21T20:23:37+02:00	feat: add perf12 doc
+9fb480e06aa27f4604b0cf479cd4b18fb21ecad2	2026-08-22T11:21:01+02:00	docs(perf): add PERF-12 tranche registry, benchmark profiles, and scope guards
+ae60ed1a4df9ec915f5f4be758dabe4b65ea32ca	2026-08-22T17:06:37+02:00	bench(tui): freeze PERF-12 baselines and attribute native view memory
+5611aff230cff926e69cd990776111f7c02d5f50	2026-08-22T17:07:44+02:00	docs(perf): record PERF-12 tranche 1 implementation
+2da38138a0f0af249e890bfe588438f70229e279	2026-08-22T17:55:37+02:00	perf(tui): unify semantic publication and adopt paged NativeRef table
+51341adf67bb2af88a2b1a6db82d641d7fbc5ba5	2026-08-22T17:57:20+02:00	docs(perf): record PERF-12 tranche 2 implementation
+c43f8307e441cfa126997ab25461dfe16cd4b3c0	2026-08-22T19:47:02+02:00	perf(tui): bound native semantic cache and ref metadata lifetime
+8ab805aa8227c9b23df6d31981febecef5f6b3c8	2026-08-22T19:48:23+02:00	docs(perf): record PERF-12 tranche 3 implementation
+b3c348a6805d0d80f56afa601a939702bc941f19	2026-08-22T20:01:06+02:00	docs(perf): record PERF-12 T1-T3 review errata
+741ac6ab7484a434521abc45c68ffba6c5183b78	2026-08-22T20:21:49+02:00	bench(tui): challenge faithful 7v2 vs production View construction
+b224cc3fd0942062317d1c2d6dccd27322bd8525	2026-08-22T21:09:30+02:00	refactor(tui): restore eager immutable semantic View DAG
+2e9d0543a920517c9bb495cc4b595f6ef4e4c8c3	2026-08-22T21:10:44+02:00	docs(perf): record PERF-12 tranche 4 implementation
+1c872f61b284f8b1d6cfb82a51d113829c305a91	2026-08-22T21:41:19+02:00	docs(perf): record PERF-12 tranche 5 implementation
+fc04e5ab7d02bec7dbda6180605a81f63f6720fd	2026-08-22T21:58:24+02:00	docs(perf): record PERF-12 T4/T5 review errata
+4c91589a37f864fe247833dcbc3cfe8ffeeac66a	2026-08-22T22:20:51+02:00	feat(tui): add retained-DAG identity fast paths and root lease protocol
+098c37bbdbd96c73df602dcfe8d01a62da94f86c	2026-08-22T22:22:43+02:00	docs(perf): record PERF-12 tranche 6 implementation
+36a1856c6077d071342c3ef40fb1bdec796cfb6e	2026-08-22T23:01:47+02:00	feat(tui): materialize common nodes through monomorphic generated FFI
+4514336c5edd68ee8809ba7dd311984db420758d	2026-08-22T23:03:32+02:00	docs(perf): record PERF-12 tranche 7 implementation
+0c898504715af1fe98ca76dc942e79c7ee24603b	2026-08-22T23:33:42+02:00	docs(perf): record PERF-12 tranche 8 implementation
+f6e16355c64a3ad79c69d2771a3efdd8503b6acf	2026-08-22T23:48:36+02:00	fix(tui): bound retained axis scratch lifetime; prove buffer bounds validation
+ecbe2215adf9468c3dd76a4321bda339eaa74515	2026-08-23T03:54:02+02:00	feat(tui): preserve semantic derivations and retained scalar clones
+6e4787f5e4f05012d5a3f3a66870ed565f521f19	2026-08-23T03:55:28+02:00	docs(perf): record PERF-12 tranche 9 implementation
+b63a64c3be04701273ef4e79beb852aff56b0846	2026-08-23T08:45:30+02:00	perf(tui): preserve logarithmic wide edits in retained DAG FFI
+0a3002980a896641b582c1c9f221bee1add410e8	2026-08-23T08:47:08+02:00	docs(perf): record PERF-12 tranche 10 implementation
+50081011de864a3498e5046e23cb584564ed81cc	2026-08-23T09:14:58+02:00	docs(perf): record T10 retained edit review corrections
+b1ef53029924fced6327fcfd7be31963fea1862c	2026-08-23T09:43:01+02:00	docs(perf): record T12 transaction integrity evidence
+be08315d20a46b4b9555002248b054250856a3f0	2026-08-23T09:44:09+02:00	docs(perf): record T12 ABI count erratum
+49d58b2ef9c0d36c1e80ca1220b38aa26019dfec	2026-08-23T09:46:10+02:00	docs(perf): refresh T12 smoke schema evidence
+a670a77a52274fa8e4face8365b48c521699a297	2026-08-23T09:47:10+02:00	docs(perf): record T12 branch deduplication erratum
+facc713dfb1b5b3571738bdfe8d34707a71f3418	2026-08-23T10:12:27+02:00	fix(tui): avoid stale ABI status detail reuse
+3942b8ddb7d7d69313a2f53fc38c5585cb4d47dc	2026-08-23T10:13:49+02:00	docs(perf): refresh T12 addon provenance
+912da7b9ded375b3dfdadddd998c3f59a92a1205	2026-08-23T10:15:30+02:00	docs(perf): record T12 host exception cleanup
+9c9f5d946e6edec4073b48aba88564200e1f0455	2026-08-23T10:16:16+02:00	docs(perf): record T12 verification count erratum
+d935ff130b1cd88e56c40fb70a68ab3c3b50a7f8	2026-08-23T10:17:28+02:00	docs(perf): record T12 shared-branch benchmark
+3f242259e56f13a713b440f9f605e5f99499a092	2026-08-23T11:59:34+02:00	feat(tui): materialize retained text, style, and diff payload families
+8c3b57201a2244f1d9fbbd20daa5058552c270fb	2026-08-23T12:02:20+02:00	docs(perf): record T11 payload-family tranche and fixture errata
+e77590db709d3ef318d41cbe9a5d767d29493437	2026-08-23T12:20:49+02:00	fix(tui): correct T11/T12 review findings from joint re-review
+ff9370e00c45ea3da4b762832a0f8d362f7b58ff	2026-08-23T12:51:18+02:00	docs(perf): trace production View-bearing boundaries for T13
+8d34ad1a54ac9f085cd02c177b4ce64b5b56835e	2026-08-23T13:56:14+02:00	perf(tui): route all View boundaries through retained identity
+d4654565e120c382919e7f0cbd6bc6f1a048ff4d	2026-08-23T13:56:50+02:00	docs(perf): record T13 boundary routing tranche
+f665c9ef913a7a8eda552a385b072f25f853b359	2026-08-23T14:07:48+02:00	docs(perf): scope T16 cleanup to dead recipe machinery only
+379e1cf40537d2a4639154bed88c44f5f98049ea	2026-08-23T15:11:21+02:00	bench(tui): freeze T13.1 Step 1 composition baseline and consumer fixture
+4f4e57604f284b19981cc24f03dc842b39538478	2026-08-23T18:50:48+02:00	feat: add PERF-12-T13.1-AMENDMENT-C
+acc947f0d3c3ccb7dc18f84533bf8fe7e836211c	2026-08-23T19:00:08+02:00	refactor(tui): retire T13.1 lexical composition machinery (R0)
+cbfc7f700ccee260b0860836dc64fd46aa3c4a78	2026-08-23T19:00:48+02:00	docs(perf): record T13.1 R0 tranche implementation
+9f1cf91fdb60d8b19fe8de00b440624da3b83c35	2026-08-23T19:09:47+02:00	docs(perf): split T13.1 R6 into R6a/R6b and gate R6b on PERF-12v2 transport decision
+2ee5c88d6a7db2a5700edb899828d4f7a21e6131	2026-08-23T19:34:43+02:00	feat(tui): add T13.1 retained execution scope substrate (R1)
+4d9cb0be8c4b2a8893ad9a3315acaade1eae033c	2026-08-23T19:35:55+02:00	docs(perf): record T13.1 R1 tranche implementation
+e46b005fbb3910e37d433c8fc3ed4ad37bd6e694	2026-08-23T19:51:39+02:00	feat(tui): add T13.1 public defineView component API (R2)
+19dbbc123b0d8b4526e2c1ef92225749401d58b0	2026-08-23T19:52:20+02:00	docs(perf): record T13.1 R2 tranche implementation
+77351e2eeeccfc2f1bb98915f03705a1c3cc7879	2026-08-23T20:06:59+02:00	feat(tui): add T13.1 retained scope projections (R3)
+d32eb45beebb31f9dcb5a0948b743b5deb336f0b	2026-08-23T20:07:39+02:00	docs(perf): record T13.1 R3 tranche implementation
+3eae810309011554012bca2cbb5ecab8474f9119	2026-08-23T20:23:19+02:00	feat(tui): add T13.1 tracked State invalidation (R4)
+f6cd71ca1086678d5c6f5d123d4b8dfc4930ec94	2026-08-23T20:23:55+02:00	docs(perf): record T13.1 R4 tranche implementation
+21d8383c203ded908805f4214b68314859aa74ca	2026-08-23T20:33:12+02:00	feat(tui): harden T13.1 dirty scheduler & batching (R5)
+b92be10704bceecb946cce3a0df6a9552804520e	2026-08-23T20:33:45+02:00	docs(perf): record T13.1 R5 tranche implementation
+0cbf3ad8ede61988bd5a34619be74a2d52c63216	2026-08-23T20:55:37+02:00	feat(tui): wire T13.1 scope projections through the production host (R6a)
+f6d4273949ded375c9eba81df98b237d3cbfdff4	2026-08-23T20:56:31+02:00	docs(perf): record T13.1 R6a tranche implementation
+6a47b68ee419e098e17e4ee58e32f3da09e03693	2026-08-23T21:27:35+02:00	feat(tui): add T13.1 transactional retained-root publication (R7)
+a566a1b4e882ba6219fadeb4c97f919d1b20a9c5	2026-08-23T21:28:30+02:00	docs(perf): record T13.1 R7 tranche implementation
+116cf5b6a05af2cc0084e202fa450585d28c8c48	2026-08-23T21:49:01+02:00	docs(perf): add grounded R8 design addendum (builder boundaries, key groups, retained-content isolation)
+81966489762fd77e3e63fa31790a59080773870a	2026-08-23T22:10:20+02:00	docs(perf): correct R8 addendum after Rust History audit and design review
+b382d755d2594caddfaf767c931faca57646838f	2026-08-23T23:25:58+02:00	wip(tui): R8 core \u2014 ChildOwnerState/keyed namespaces, PublicationTarget split, protocol guard, Rust deferred component retirement
+33bb5c7d4c19d298e9da2cbb8e801fac3c9160c1	2026-08-24T06:23:33+02:00	feat(tui): add T13.1 canonical boundaries, keyed groups & isolation gates (R8)
+283847568331faa9f9fefa1e3df5bf732d78ec9a	2026-08-24T06:24:14+02:00	docs(perf): record T13.1 R8 tranche implementation
+90782740433d72b34a771633e1f44d9447215293	2026-08-24T08:03:03+02:00	docs(perf): record T13.1 R9 tranche implementation
+4e3276139c0f949efa5546cb75d0e435c8709d80	2026-08-24T19:14:00+02:00	fix(tui): post-R9 review — level-triggered dirty obligations, ownership takeover, double-reach commit
+becd990479853ba093b8a66cd3408b3ee90c8b5d	2026-08-24T19:14:48+02:00	bench(tui): refresh T13.1 gate evidence at post-R9 fix revision (clean tree)
+dd6ae3de09eaa8ae9560bde5e7049e940d43f5a2	2026-08-24T19:24:06+02:00	fix(bench): single-encode provenance line in R10 composition artifact
+5492290f0b0f638a70d0dfdc7f5440f5716d4e35	2026-08-24T19:31:57+02:00	docs(perf): publish T13.1 R10 authoritative report + memory soak
+1c443bf6a02e16afe06836b51e76acd49c54ff64	2026-08-24T19:42:38+02:00	docs(perf): R10 record review — honest plugin battery numbers, committed soak evidence, tranche record

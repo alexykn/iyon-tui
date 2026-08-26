@@ -102,6 +102,18 @@ impl StreamSnapshotBuilder {
         self
     }
 
+    pub(crate) fn continuous_exact_text(
+        mut self,
+        range: StreamRange,
+        spans: impl IntoIterator<Item = TextSpan>,
+    ) -> Self {
+        self.nodes.push(StreamNode::continuous_exact_text(
+            range,
+            spans.into_iter().collect(),
+        ));
+        self
+    }
+
     pub fn exact_line(
         mut self,
         range: StreamRange,

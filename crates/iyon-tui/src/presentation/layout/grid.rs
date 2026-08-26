@@ -3,7 +3,7 @@
 //! This solver is independent of Views. Row/Column continue to use
 //! [`allocate_tracks`](super::tracks::allocate_tracks).
 
-use crate::presentation::ir::TrackSize;
+use crate::presentation::ir::{PersistentSeq, TrackSize};
 
 use super::tracks::TrackAllocation;
 
@@ -26,10 +26,55 @@ enum GrowClass {
     Flex,
 }
 
-pub(super) fn allocate_grid_tracks(
+pub(super) trait TrackList {
+    fn len(&self) -> usize;
+    fn get(&self, index: usize) -> Option<TrackSize>;
+}
+
+impl TrackList for [TrackSize] {
+    fn len(&self) -> usize {
+        <[TrackSize]>::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<TrackSize> {
+        <[TrackSize]>::get(self, index).copied()
+    }
+}
+
+impl TrackList for Vec<TrackSize> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<TrackSize> {
+        self.as_slice().get(index).copied()
+    }
+}
+
+impl<const N: usize> TrackList for [TrackSize; N] {
+    fn len(&self) -> usize {
+        N
+    }
+
+    fn get(&self, index: usize) -> Option<TrackSize> {
+        self.as_slice().get(index).copied()
+    }
+}
+
+impl TrackList for PersistentSeq<TrackSize> {
+    fn len(&self) -> usize {
+        PersistentSeq::len(self)
+    }
+
+    fn get(&self, index: usize) -> Option<TrackSize> {
+        PersistentSeq::get(self, index).copied()
+    }
+}
+
+pub(super) fn allocate_grid_tracks<T: TrackList + ?Sized>(
     available: u16,
     requested_gap: u16,
-    tracks: &[TrackSize],
+    tracks: &T,
     requirements: &[SpanRequirement],
     flex_mode: FlexMode,
 ) -> TrackAllocation {
@@ -48,7 +93,8 @@ pub(super) fn allocate_grid_tracks(
     let mut allocation = vec![0u16; count];
     let mut used = 0usize;
 
-    for (index, track) in tracks.iter().copied().enumerate() {
+    for index in 0..tracks.len() {
+        let track = tracks.get(index).expect("track index is in range");
         if let TrackSize::Fixed(requested) = track {
             let amount = usize::from(requested).min(capacity.saturating_sub(used));
             allocation[index] = amount as u16;
@@ -56,7 +102,8 @@ pub(super) fn allocate_grid_tracks(
         }
     }
 
-    for (index, track) in tracks.iter().copied().enumerate() {
+    for index in 0..tracks.len() {
+        let track = tracks.get(index).expect("track index is in range");
         let minimum = match track {
             TrackSize::Flex { min } => usize::from(min),
             TrackSize::FlexMax { min, max } => usize::from(min).min(usize::from(max)),
@@ -140,9 +187,9 @@ fn span_sum(tracks: &[u16], start: usize, span: usize) -> usize {
         .sum()
 }
 
-fn grow_class(
+fn grow_class<T: TrackList + ?Sized>(
     allocation: &mut [u16],
-    tracks: &[TrackSize],
+    tracks: &T,
     start: usize,
     span: usize,
     deficit: usize,
@@ -151,7 +198,12 @@ fn grow_class(
     let mut remaining = deficit;
     let mut active: Vec<usize> = (start..start.saturating_add(span))
         .filter(|&index| {
-            index < tracks.len() && grow_room(tracks[index], allocation[index], class) > 0
+            index < tracks.len()
+                && grow_room(
+                    tracks.get(index).expect("track index is in range"),
+                    allocation[index],
+                    class,
+                ) > 0
         })
         .collect();
     let mut granted_total = 0usize;
@@ -162,11 +214,20 @@ fn grow_class(
         let mut round = 0usize;
         for (order, index) in active.iter().copied().enumerate() {
             let requested = each.saturating_add(usize::from(order < extra));
-            let room = grow_room(tracks[index], allocation[index], class);
+            let room = grow_room(
+                tracks.get(index).expect("track index is in range"),
+                allocation[index],
+                class,
+            );
             let granted = requested.min(room).min(remaining.saturating_sub(round));
             allocation[index] = allocation[index].saturating_add(granted as u16);
             round += granted;
-            if grow_room(tracks[index], allocation[index], class) > 0 {
+            if grow_room(
+                tracks.get(index).expect("track index is in range"),
+                allocation[index],
+                class,
+            ) > 0
+            {
                 next_active.push(index);
             }
         }
@@ -180,7 +241,11 @@ fn grow_class(
     granted_total
 }
 
-fn grow_flex_fill(allocation: &mut [u16], tracks: &[TrackSize], remaining: usize) -> usize {
+fn grow_flex_fill<T: TrackList + ?Sized>(
+    allocation: &mut [u16],
+    tracks: &T,
+    remaining: usize,
+) -> usize {
     grow_class(
         allocation,
         tracks,

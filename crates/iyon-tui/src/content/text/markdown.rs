@@ -191,7 +191,14 @@ impl Projector<TextContent> for MarkdownProjector {
             }
             let domain = RawDomain::from_spans(&input.spans()[start..index])?;
             let domain_closed = input.is_sealed() || index < input.spans().len();
-            let parsed = self.parse_domain(&domain, domain_closed)?;
+            let mut parsed = self.parse_domain(&domain, domain_closed)?;
+            if !input.is_sealed() && has_open_reference_definition_prefix(domain.text()) {
+                parsed.unstable_from = Some(
+                    parsed
+                        .unstable_from
+                        .map_or(domain.source_base(), |from| from.min(domain.source_base())),
+                );
+            }
             for span in parsed.projection.spans() {
                 output = output.emit_many(span.source(), span.values().iter().cloned());
             }
@@ -1195,7 +1202,7 @@ impl<'a> Builder<'a> {
             return true;
         }
         // Generic GFM follows pulldown. A pipe-less line can still be a short
-        // body row (spec Example 202). Iyon's live LLM stabilizer is a separate
+        // body row (spec Example 202). The live table stabilizer is a separate
         // product heuristic, enabled only via MarkdownOptions.
         if !self.stabilize_live_tables {
             return true;
@@ -1284,6 +1291,14 @@ impl<'a> Builder<'a> {
     }
 }
 
+fn has_open_reference_definition_prefix(text: &str) -> bool {
+    if text.ends_with('\n') {
+        return false;
+    }
+    let line = text.rsplit('\n').next().unwrap_or(text).trim_start();
+    line.starts_with('[')
+}
+
 // A GFM table is still open while the following line could be another row.
 // Caching it as stable splits the next row into a paragraph; a later one-shot
 // re-parse of the suffix merges them and breaks compaction identity.
@@ -1347,10 +1362,10 @@ fn empty_gfm_table_cell() -> TableCell {
     TableCell::plain([Block::paragraph(InlineContent::new(Vec::new()))])
 }
 
-/// Iyon live-table closer, not GFM.
+/// Live-table closer, not GFM.
 ///
 /// GFM keeps a table open across a pipe-less body line. This heuristic closes
-/// once the next line is blank or does not start with `|`, so streaming LLM
+/// once the next line is blank or does not start with `|`, so streaming text
 /// tables stay raw until they can align once.
 fn following_line_closes_table(table_source: &str, after: &str) -> bool {
     let next_line = if table_source.ends_with('\n') {

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+use crate::perf::{self, Counter};
 use crate::physical::{PhysicalStyle, grapheme_cell_width};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
@@ -236,16 +237,17 @@ pub(crate) struct TextFlowMetrics {
 }
 
 pub(crate) fn text_flow_metrics(text: &TextView, width: u16) -> TextFlowMetrics {
+    perf::inc(Counter::TextFlowMeasureCalls);
     let mut source_offset = 0usize;
     let hard_lines = styled_hard_lines(text.spans.iter().map(|span| {
         let base = Some(source_offset);
-        source_offset += span.text.len();
-        (span.text.as_str(), PhysicalStyle::default(), base)
+        source_offset += span.text().len();
+        (span.text(), PhysicalStyle::default(), base)
     }));
     let source = text
         .spans
         .iter()
-        .map(|span| span.text.as_str())
+        .map(|span| span.text())
         .collect::<String>();
     let flow = text_flow(
         text,

@@ -1,0 +1,81 @@
+{
+  "branches": [
+    {
+      "name": "bun-refactor",
+      "protected": false,
+      "sha": "88c66f9073c425c049a1ac31c7fbb4b0e771a4d1"
+    },
+    {
+      "name": "main",
+      "protected": false,
+      "sha": "223bf4840a03c90d713f12419bba25a501ae217f"
+    },
+    {
+      "name": "perf-refactor",
+      "protected": false,
+      "sha": "bd503b0382e34d74a38c562b9662d08c8c96f58a"
+    }
+  ],
+  "capturedAt": "2026-08-24T19:01:40Z",
+  "hostingDecision": {
+    "activeIssueDisposition": "none to migrate at capture",
+    "activePullRequestDisposition": "none to migrate at capture",
+    "applicationRepositoryAction": "create filtered application repository with SOURCE-SHA-MAP.jsonl",
+    "currentRepositoryAction": "rename alexykn/iyon to alexykn/iyon-tui without history rewrite",
+    "releaseDisposition": "no releases existed at capture",
+    "tagDisposition": "no tags existed before the S0 pre-separation tag"
+  },
+  "issues": [],
+  "localBranch": "perf-refactor",
+  "pullRequests": [],
+  "releases": [],
+  "remotes": [
+    "origin\tgit@github.com:alexykn/iyon.git (fetch)",
+    "origin\tgit@github.com:alexykn/iyon.git (push)"
+  ],
+  "repository": {
+    "createdAt": "2026-08-07T08:28:50Z",
+    "defaultBranchRef": {
+      "name": "main"
+    },
+    "description": "A coding harness",
+    "homepageUrl": "",
+    "isArchived": false,
+    "isPrivate": false,
+    "latestRelease": null,
+    "licenseInfo": null,
+    "name": "iyon",
+    "nameWithOwner": "alexykn/iyon",
+    "pushedAt": "2026-08-24T18:53:37Z",
+    "url": "https://github.com/alexykn/iyon"
+  },
+  "schemaVersion": 1,
+  "sourceRevision": "bd503b0382e34d74a38c562b9662d08c8c96f58a",
+  "tags": [],
+  "workflows": [
+    {
+      "id": 335491807,
+      "name": "Rust API surface parity",
+      "path": ".github/workflows/api-surface.yml",
+      "state": "active"
+    },
+    {
+      "id": 335576897,
+      "name": "Iyon checks",
+      "path": ".github/workflows/ci.yml",
+      "state": "active"
+    },
+    {
+      "id": 335448283,
+      "name": "T1 Bun and N-API viability",
+      "path": ".github/workflows/t1-bun.yml",
+      "state": "active"
+    },
+    {
+      "id": 335644711,
+      "name": "T9 bundled TypeScript agent",
+      "path": ".github/workflows/ts-agent.yml",
+      "state": "active"
+    }
+  ]
+}

@@ -1539,7 +1539,7 @@ fn native_history_does_not_transfer_a_range_that_can_still_change_shape() {
 }
 
 #[test]
-fn stable_no_wrap_code_does_not_pin_following_assistant_text() {
+fn stable_no_wrap_code_does_not_pin_following_stream_text() {
     let long_code = "this_is_a_ridiculously_long_function_call_that_must_not_wrap();";
     let code_len = long_code.len() as u64;
     let after = "AFTER";

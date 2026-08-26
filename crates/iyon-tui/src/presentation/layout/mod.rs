@@ -14,6 +14,7 @@
 //! needs geometry, and LayoutTree must not retain recursive clones of semantic
 //! View subtrees.
 
+mod cache;
 mod engine;
 mod grid;
 mod measure;
@@ -33,7 +34,13 @@ use crate::{
     presentation::View,
 };
 
-pub(crate) use engine::{layout_view, measure_view};
+pub(crate) use cache::LayoutCache;
+#[cfg(test)]
+pub(crate) use engine::layout_view_with_overlay;
+pub(crate) use engine::{
+    layout_view, layout_view_with_overlay_and_cache, layout_view_with_overlay_and_cache_in_scope,
+    measure_view, measure_view_with_overlay, measure_view_with_overlay_and_cache,
+};
 pub(crate) use tree::{ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree};
 
 #[cfg(test)]
@@ -92,13 +99,13 @@ pub(crate) struct LayoutBlock {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ViewCompiler {
+pub(crate) struct ViewCompiler<'a> {
     pub(crate) theme: ThemeResolver,
     pub(crate) focused: Option<ComponentId>,
-    pub(crate) graph: Option<MountGraph>,
+    pub(crate) graph: Option<&'a MountGraph>,
 }
 
-impl ViewCompiler {
+impl<'a> ViewCompiler<'a> {
     pub(crate) fn new(theme: &Theme) -> Self {
         Self {
             theme: ThemeResolver::new(theme),
@@ -110,12 +117,12 @@ impl ViewCompiler {
     pub(crate) fn with_interaction(
         theme: &Theme,
         focused: Option<ComponentId>,
-        graph: &MountGraph,
+        graph: &'a MountGraph,
     ) -> Self {
         Self {
             theme: ThemeResolver::new(theme),
             focused,
-            graph: Some(graph.clone()),
+            graph: Some(graph),
         }
     }
 
@@ -128,7 +135,7 @@ impl ViewCompiler {
     }
 
     pub(crate) fn style_context(&self, scope: Option<ComponentId>) -> StyleContext {
-        StyleContext::for_scope(scope, self.focused, self.graph.as_ref())
+        StyleContext::for_scope(scope, self.focused, self.graph)
     }
 
     pub(crate) fn compile(&self, view: &View, max_width: u16) -> LayoutBlock {
@@ -152,14 +159,40 @@ pub(crate) fn compile_view(view: &View, width: u16) -> LayoutBlock {
     compile_view_with_theme(view, width, &Theme::default())
 }
 
+#[cfg(test)]
+pub(crate) fn compile_view_with_overlay(
+    view: &View,
+    width: u16,
+    overlay: &crate::scene::ResolutionOverlay,
+) -> LayoutBlock {
+    let compiler = ViewCompiler::default();
+    let tree = layout_view_with_overlay(view, LayoutConstraints::width_only(width), overlay);
+    let surface = ViewPainter.paint_tree(&compiler, &tree);
+    let physically_complete = surface.physically_complete;
+    LayoutBlock {
+        width: surface.width(),
+        rows: lower_surface(surface),
+        physically_complete,
+    }
+}
+
 pub(crate) fn compile_view_with_theme(view: &View, width: u16, theme: &Theme) -> LayoutBlock {
     ViewCompiler::new(theme).compile(view, width)
 }
 
 #[cfg(test)]
 pub(crate) fn compile_bounded_view(view: &View, size: Size) -> LayoutBlock {
+    compile_bounded_view_with_overlay(view, size, &crate::scene::ResolutionOverlay::default())
+}
+
+#[cfg(test)]
+pub(crate) fn compile_bounded_view_with_overlay(
+    view: &View,
+    size: Size,
+    overlay: &crate::scene::ResolutionOverlay,
+) -> LayoutBlock {
     let compiler = ViewCompiler::default();
-    let tree = compiler.layout_tree(view, LayoutConstraints::bounded(size));
+    let tree = layout_view_with_overlay(view, LayoutConstraints::bounded(size), overlay);
     let surface = ViewPainter.paint_tree(&compiler, &tree);
     let height = surface.height().min(size.height);
     let cropped = surface.crop_to(surface.width().min(size.width), height);

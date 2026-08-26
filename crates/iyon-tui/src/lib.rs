@@ -102,8 +102,7 @@
 //!
 //! [`Smooth`] is optional temporal publication control: `Projection<T> ->
 //! Smooth<T> -> next projector`. Its pacing granularity is determined by the
-//! upstream spans and values. It currently serves Iyon's assistant pacing
-//! atoms; it is not required by Markdown.
+//! upstream spans and values; it is not required by Markdown.
 //!
 //! Advanced compiler and protocol machinery is organized under [`text`],
 //! [`projection`], and [`stream`]. Root coordinates are source coordinates,
@@ -153,6 +152,14 @@ mod history;
 mod id;
 mod interaction;
 mod output;
+#[cfg(feature = "perf-counters")]
+#[doc(hidden)]
+pub mod perf;
+#[cfg(not(feature = "perf-counters"))]
+mod perf;
+#[cfg(feature = "perf-counters")]
+#[doc(hidden)]
+pub mod perf_bench;
 mod physical;
 mod presentation;
 /// Root-coordinate projection algebra and diagnostics.
@@ -175,9 +182,8 @@ pub use application::{
 
 #[cfg(feature = "native-host")]
 pub use application::{
-    HostActivityConfig, HostCellStyle, HostHistory, HostScrollPane, HostStreamSegmentKind,
-    HostTextInput, HostTextStream, HostViewSlot, HostWorking, RoutedAction, TextStreamPresentation,
-    TuiHost,
+    HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
+    RoutedOutput, TextStreamAnnotation, TextStreamPresentation, TuiHost,
 };
 
 pub use component::{Component, ComponentCx, ComponentHandle};
@@ -210,6 +216,12 @@ pub use presentation::api::{
     TextAttribute, TextAttributeSpec, TextSpan, ThemeColor, ThemeKey, Vertical, VerticalAlign,
     View, WrapMode,
 };
+#[cfg(feature = "native-host")]
+#[doc(hidden)]
+pub use presentation::ir::RetainedPathStep;
+
+#[cfg(feature = "native-host")]
+pub use presentation::ir::WeakView;
 pub use stream::{StreamPane, TextStream};
 
 // Internal modules and unit tests may use the short names without making

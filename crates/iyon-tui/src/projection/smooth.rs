@@ -55,8 +55,13 @@ impl std::fmt::Display for SmoothConfigError {
 impl std::error::Error for SmoothConfigError {}
 
 impl SmoothConfig {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            tick_interval: DEFAULT_TICK_INTERVAL,
+            spring: DEFAULT_SPRING,
+            min_units_per_second: DEFAULT_MIN_UNITS_PER_SECOND,
+            max_units_per_second: DEFAULT_MAX_UNITS_PER_SECOND,
+        }
     }
 
     pub fn try_from_parts(
@@ -287,7 +292,7 @@ impl Smooth {
             self.queued_through = input.source_base().max(self.published_end);
         }
         let mut added_units: usize = 0;
-        for span in input.spans() {
+        for span in input.spans_from(self.queued_through) {
             if span.source().start() < self.queued_through
                 || span.source().end() <= self.published_end
                 || span.source().end() > input.stable_through()
@@ -313,31 +318,36 @@ impl Smooth {
     }
 
     fn output<T: Clone>(&self, input: &Projection<T>) -> Projection<T> {
+        self.output_from(input, input.source_base())
+    }
+
+    fn output_from<T: Clone>(&self, input: &Projection<T>, from: StreamOffset) -> Projection<T> {
         let end = self.published_end.min(input.source_end());
+        if from < input.source_base() || from > end {
+            return self.output(input);
+        }
+        let spans = input.spans_from(from);
+        if spans
+            .first()
+            .is_some_and(|span| span.source().start() < from)
+        {
+            return self.output(input);
+        }
         let mut builder = ProjectionBuilder::new(
-            input.source_base(),
+            from,
             end,
             end,
             input.is_sealed() && end == input.source_end(),
         );
-        for span in input
-            .spans()
-            .iter()
-            .take_while(|span| span.source.end() <= end)
-        {
+        for span in spans.iter().take_while(|span| span.source.end() <= end) {
             builder = builder.emit_many(span.source, span.values.iter().cloned());
         }
         builder
             .finish()
             .expect("Smooth output must preserve input coverage")
     }
-}
 
-impl<T: Clone> Projector<T> for Smooth {
-    type Output = T;
-    type Error = std::convert::Infallible;
-
-    fn project(&mut self, input: &Projection<T>) -> Result<Projection<T>, Self::Error> {
+    fn update<T: Clone>(&mut self, input: &Projection<T>) {
         let was_caught_up = !self.episode_active;
         self.input_sealed = input.is_sealed();
         if self.published_end < input.source_base() {
@@ -371,6 +381,27 @@ impl<T: Clone> Projector<T> for Smooth {
         } else {
             self.episode_active = true;
         }
+    }
+
+    /// Advances smoothing state and returns only newly published source spans.
+    /// The caller owns the retained published prefix and can append this delta
+    /// without reconstructing the complete historic projection.
+    pub(crate) fn project_incremental<T: Clone>(
+        &mut self,
+        input: &Projection<T>,
+        from: StreamOffset,
+    ) -> Projection<T> {
+        self.update(input);
+        self.output_from(input, from)
+    }
+}
+
+impl<T: Clone> Projector<T> for Smooth {
+    type Output = T;
+    type Error = std::convert::Infallible;
+
+    fn project(&mut self, input: &Projection<T>) -> Result<Projection<T>, Self::Error> {
+        self.update(input);
         Ok(self.output(input))
     }
 

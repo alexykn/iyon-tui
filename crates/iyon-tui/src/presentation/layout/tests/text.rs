@@ -62,10 +62,10 @@ fn typed_text_wrap_and_no_wrap_preserve_existing_behavior() {
     let grapheme = View::text("abcd efgh").wrap(WrapMode::Grapheme).into_view();
     let no_wrap = View::text("abcdef").no_wrap().into_view();
 
-    let ViewKind::Text(wrapped_text) = wrapped.kind else {
+    let ViewKind::Text(wrapped_text) = wrapped.kind() else {
         panic!("expected text view");
     };
-    let ViewKind::Text(grapheme_text) = grapheme.kind else {
+    let ViewKind::Text(grapheme_text) = grapheme.kind() else {
         panic!("expected text view");
     };
     assert_eq!(wrapped_text.wrap, WrapMode::WordThenGrapheme);

@@ -1,13 +1,13 @@
 //! Canonical terminal-cell geometry.
 //!
 //! Unicode grapheme identity (UAX #29) and terminal cell occupancy are different
-//! concepts. Iyon segments source into extended grapheme clusters first, then
+//! concepts. The framework segments source into extended grapheme clusters first, then
 //! asks for a width **once**. Every later layer — wrap, Grid measurement, paint,
 //! clipping, cursor, stream compile — must consume that stored width rather than
 //! re-querying a different crate.
 //!
 //! The baseline is termwiz's grapheme-oriented `grapheme_column_width`, because
-//! Iyon lowers through termwiz. A hand-maintained emoji range table cannot track
+//! The framework lowers through termwiz. A hand-maintained emoji range table cannot track
 //! variation selectors, ZWJ sequences, regional indicators, or Unicode version.
 //! Residual disagreement with a particular TTY (iTerm Unicode 9+ widths, etc.)
 //! is a terminal-policy mismatch, diagnosed by the opt-in width probe — not
@@ -48,7 +48,7 @@ pub(crate) fn text_cell_width(text: &str) -> usize {
 mod tests {
     use super::{grapheme_cell_width, text_cell_width};
 
-    /// Corpus used to lock Iyon's metric to termwiz, including the sequences
+    /// Corpus used to lock the framework metric to termwiz, including the sequences
     /// that `unicode-width` under-counts (keycaps, VS-16, ZWJ, flags).
     const CORPUS: &[&str] = &[
         "a",
@@ -84,7 +84,7 @@ mod tests {
             assert_eq!(
                 grapheme_cell_width(sample),
                 termwiz::cell::grapheme_column_width(sample, None),
-                "Iyon and termwiz must agree on {sample:?}"
+                "The framework and termwiz must agree on {sample:?}"
             );
         }
     }

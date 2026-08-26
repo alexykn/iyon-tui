@@ -1,7 +1,0 @@
-{
-  "name": "fixture-async-activation",
-  "version": "1.0.0",
-  "type": "module",
-  "keywords": ["iyon-package"],
-  "iyon": { "extensions": "./src/index.ts" }
-}

@@ -83,19 +83,19 @@ fn aligned(text: &str, alignment: Alignment) -> TableCell {
 
 fn walk_views(view: &View, visit: &mut impl FnMut(&View)) {
     visit(view);
-    match &view.kind {
+    match view.kind() {
         ViewKind::Column(column) => {
-            for child in &column.children {
+            for child in column.children.iter() {
                 walk_views(&child.view, visit);
             }
         }
         ViewKind::Row(row) => {
-            for child in &row.children {
+            for child in row.children.iter() {
                 walk_views(&child.view, visit);
             }
         }
         ViewKind::Grid(grid) => {
-            for cell in &grid.cells {
+            for cell in grid.cells.iter() {
                 walk_views(&cell.view, visit);
             }
         }
@@ -116,10 +116,10 @@ fn find_grid_view(view: &View) -> &View {
 }
 
 fn find_grid_view_opt(view: &View) -> Option<&View> {
-    if matches!(view.kind, ViewKind::Grid(_)) {
+    if matches!(view.kind(), ViewKind::Grid(_)) {
         return Some(view);
     }
-    match &view.kind {
+    match view.kind() {
         ViewKind::Column(column) => column
             .children
             .iter()
@@ -140,10 +140,10 @@ fn find_grid_view_opt(view: &View) -> Option<&View> {
 }
 
 fn grid_ir(view: &View) -> &GridView {
-    let ViewKind::Grid(grid) = &find_grid_view(view).kind else {
+    let ViewKind::Grid(grid) = find_grid_view(view).kind() else {
         unreachable!("find_grid_view returns a Grid");
     };
-    grid
+    grid.as_ref()
 }
 
 fn child_rects(view: &View, width: u16) -> Vec<Rect> {
@@ -199,7 +199,7 @@ fn table_primary_structure_is_grid() {
     let view = render(&Block::table(two_by_two()));
     let mut grids = 0usize;
     let mut row_geometry = 0usize;
-    walk_views(&view, &mut |candidate| match &candidate.kind {
+    walk_views(&view, &mut |candidate| match candidate.kind() {
         ViewKind::Grid(_) => grids += 1,
         ViewKind::Row(_) => row_geometry += 1,
         _ => {}
@@ -232,7 +232,7 @@ fn table_and_grid_placement_agree_for_spans() {
     let view = render(&Block::table(table));
     let grid = grid_ir(&view);
     let mut actual = vec![Vec::new(); expected.len()];
-    for cell in &grid.cells {
+    for cell in grid.cells.iter() {
         actual[cell.row].push(cell.column);
     }
     assert_eq!(actual, expected);
@@ -430,8 +430,8 @@ fn table_caption_renders_above_grid() {
         (y, x)
     };
     assert!(caption_y < cell_y);
-    assert!(matches!(view.kind, ViewKind::Column(_)));
-    assert!(matches!(find_grid_view(&view).kind, ViewKind::Grid(_)));
+    assert!(matches!(view.kind(), ViewKind::Column(_)));
+    assert!(matches!(find_grid_view(&view).kind(), ViewKind::Grid(_)));
 }
 
 #[test]
@@ -592,7 +592,7 @@ fn nested_lists_keep_hanging_and_marker_identity() {
     let view = render(&nested);
     let mut hanging = 0usize;
     walk_views(&view, &mut |candidate| {
-        if matches!(candidate.kind, ViewKind::Hanging(_)) {
+        if matches!(candidate.kind(), ViewKind::Hanging(_)) {
             hanging += 1;
         }
     });
@@ -900,7 +900,7 @@ fn gfm_end_to_end_render_fixture() {
                 .find(|block| matches!(block.kind(), BlockKind::Table(_)))
                 .unwrap()
         ))
-        .kind,
+        .kind(),
         ViewKind::Grid(_)
     ));
 }

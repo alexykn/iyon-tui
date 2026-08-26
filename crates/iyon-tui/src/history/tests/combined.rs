@@ -23,7 +23,7 @@ use crate::{
 const WIDTH: u16 = 40;
 const HEIGHT: u16 = 12;
 
-const INTRO: &str = "hello assistant\n";
+const INTRO: &str = "hello stream\n";
 const CODE: &str = "this_is_a_ridiculously_long_function_call();";
 const EMOJI: &str = "\n🐕‍🦺 AFTER\n";
 const RAW_TABLE: &str = "| A | B |\n| 1 | 2 |\n";
@@ -222,7 +222,7 @@ impl StreamingSource for StagedStream {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum AssistantStage {
+enum StreamStage {
     Intro,
     Code,
     Emoji,
@@ -231,16 +231,16 @@ enum AssistantStage {
     Paragraphs,
 }
 
-fn assistant_snapshot(revision: u64, stage: AssistantStage) -> StreamSnapshot {
+fn stream_snapshot(revision: u64, stage: StreamStage) -> StreamSnapshot {
     let source_end = match stage {
-        AssistantStage::Intro => intro_end(),
-        AssistantStage::Code => code_end(),
-        AssistantStage::Emoji => emoji_end(),
-        AssistantStage::OpenTable | AssistantStage::ClosedTable => table_end(),
-        AssistantStage::Paragraphs => paras_end(),
+        StreamStage::Intro => intro_end(),
+        StreamStage::Code => code_end(),
+        StreamStage::Emoji => emoji_end(),
+        StreamStage::OpenTable | StreamStage::ClosedTable => table_end(),
+        StreamStage::Paragraphs => paras_end(),
     };
     let stable_through = match stage {
-        AssistantStage::OpenTable => emoji_end(),
+        StreamStage::OpenTable => emoji_end(),
         _ => source_end,
     };
     let mut builder = StreamSnapshotBuilder::new(
@@ -253,7 +253,7 @@ fn assistant_snapshot(revision: u64, stage: AssistantStage) -> StreamSnapshot {
         StreamRange::new(StreamOffset::ZERO, StreamOffset::new(intro_end())),
         [TextSpan::plain(INTRO)],
     );
-    if stage >= AssistantStage::Code {
+    if stage >= StreamStage::Code {
         builder = builder
             .atomic(
                 StreamRange::new(
@@ -264,7 +264,7 @@ fn assistant_snapshot(revision: u64, stage: AssistantStage) -> StreamSnapshot {
             )
             .unwrap();
     }
-    if stage >= AssistantStage::Emoji {
+    if stage >= StreamStage::Emoji {
         builder = builder.exact_text(
             StreamRange::new(
                 StreamOffset::new(code_end()),
@@ -273,8 +273,8 @@ fn assistant_snapshot(revision: u64, stage: AssistantStage) -> StreamSnapshot {
             [TextSpan::plain(EMOJI)],
         );
     }
-    if stage >= AssistantStage::OpenTable {
-        let table = if stage >= AssistantStage::ClosedTable {
+    if stage >= StreamStage::OpenTable {
+        let table = if stage >= StreamStage::ClosedTable {
             View::text(GRID_TABLE).into_view()
         } else {
             View::text(RAW_TABLE).into_view()
@@ -289,7 +289,7 @@ fn assistant_snapshot(revision: u64, stage: AssistantStage) -> StreamSnapshot {
             )
             .unwrap();
     }
-    if stage >= AssistantStage::Paragraphs {
+    if stage >= StreamStage::Paragraphs {
         builder = builder.exact_text(
             StreamRange::new(
                 StreamOffset::new(table_end()),
@@ -331,13 +331,13 @@ fn advance_stream(
     scene: &mut Scene,
     handle: HistoryStreamHandle<StagedStream>,
     revision: u64,
-    stage: AssistantStage,
+    stage: StreamStage,
 ) {
     scene
         .history_mut()
         .unwrap()
         .update_stream(handle, |source| {
-            source.replace(assistant_snapshot(revision, stage));
+            source.replace(stream_snapshot(revision, stage));
         })
         .unwrap();
 }
@@ -373,18 +373,18 @@ fn history_presenter_shadow_tape_remains_contiguous() {
     scene.set_body(body(2));
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
-    let source = StagedStream::from_snapshot(assistant_snapshot(0, AssistantStage::Intro));
+    let source = StagedStream::from_snapshot(stream_snapshot(0, StreamStage::Intro));
     let handle = scene.history_mut().unwrap().push_stream(source).unwrap();
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
-    advance_stream(&mut scene, handle, 1, AssistantStage::Code);
+    advance_stream(&mut scene, handle, 1, StreamStage::Code);
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
-    advance_stream(&mut scene, handle, 2, AssistantStage::Emoji);
+    advance_stream(&mut scene, handle, 2, StreamStage::Emoji);
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
     let before_table = stream_committed_through(scene.history().unwrap());
-    advance_stream(&mut scene, handle, 3, AssistantStage::OpenTable);
+    advance_stream(&mut scene, handle, 3, StreamStage::OpenTable);
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
     assert!(
         stream_committed_through(scene.history().unwrap()) <= emoji_end(),
@@ -401,10 +401,10 @@ fn history_presenter_shadow_tape_remains_contiguous() {
         "Grid shape must not appear while the table is still open"
     );
 
-    advance_stream(&mut scene, handle, 4, AssistantStage::ClosedTable);
+    advance_stream(&mut scene, handle, 4, StreamStage::ClosedTable);
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
-    advance_stream(&mut scene, handle, 5, AssistantStage::Paragraphs);
+    advance_stream(&mut scene, handle, 5, StreamStage::Paragraphs);
     render_step(&mut host, &mut scene, &mut registry, &mut diff);
 
     scene.history_mut().unwrap().seal_stream(handle).unwrap();

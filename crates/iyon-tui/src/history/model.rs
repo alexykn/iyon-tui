@@ -1,12 +1,21 @@
 //! Ordered semantic History model.
 
-use std::{collections::VecDeque, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    time::Instant,
+};
 
-use crate::{presentation::IntoView, stream::StreamingSource};
+use crate::{
+    perf::{self, Counter},
+    presentation::IntoView,
+    stream::StreamingSource,
+};
 
 use super::{
     ErasedHistoryStream, FlowBoundary, HistoryError, HistoryLayout, HistoryStreamHandle,
     HistoryUnit, HistoryUnitContent, HistoryUnitId,
+    unit::{HistoryUnitLayout, HistoryUnitLayoutKey},
 };
 
 /// An ordered root-level historical, live, or streaming semantic flow.
@@ -28,6 +37,9 @@ use super::{
 pub struct History {
     pub(super) units: VecDeque<HistoryUnit>,
     layout: HistoryLayout,
+    cached_total_height: Cell<Option<usize>>,
+    stale_cached_heights: Cell<usize>,
+    revision: Cell<u64>,
     pub(super) native: super::native::NativeFrontier,
 }
 
@@ -42,6 +54,9 @@ impl History {
         Self {
             units: VecDeque::new(),
             layout: HistoryLayout::default(),
+            cached_total_height: Cell::new(None),
+            stale_cached_heights: Cell::new(0),
+            revision: Cell::new(0),
             native: super::native::NativeFrontier::default(),
         }
     }
@@ -63,11 +78,15 @@ impl History {
             HistoryUnitContent::Static(view)
         };
         let id = HistoryUnitId::allocate();
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
         self.units.push_back(HistoryUnit {
             id,
             boundary,
             content,
+            layout: RefCell::new(HistoryUnitLayout::default()),
         });
+        self.bump_revision();
         Ok(id)
     }
 
@@ -87,6 +106,8 @@ impl History {
         }
         let stream = ErasedHistoryStream::new(source).map_err(HistoryError::Stream)?;
         self.units[index].content = HistoryUnitContent::Stream(stream);
+        self.invalidate_unit_layout(index);
+        self.bump_revision();
         Ok(HistoryStreamHandle::new(unit))
     }
 
@@ -101,6 +122,9 @@ impl History {
             return Err(HistoryError::UnitNotLive { unit });
         }
         self.units.remove(index);
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
+        self.bump_revision();
         Ok(())
     }
 
@@ -118,6 +142,8 @@ impl History {
             return Err(HistoryError::FinalViewContainsComponent { unit });
         }
         self.units[index].content = HistoryUnitContent::Static(final_view);
+        self.invalidate_unit_layout(index);
+        self.bump_revision();
         Ok(())
     }
 
@@ -144,11 +170,15 @@ impl History {
         self.ensure_append_allowed()?;
         let stream = ErasedHistoryStream::new(source).map_err(HistoryError::Stream)?;
         let id = HistoryUnitId::allocate();
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
         self.units.push_back(HistoryUnit {
             id,
             boundary,
             content: HistoryUnitContent::Stream(stream),
+            layout: RefCell::new(HistoryUnitLayout::default()),
         });
+        self.bump_revision();
         Ok(HistoryStreamHandle::new(id))
     }
 
@@ -164,7 +194,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.update(handle.unit(), update)
+        let result = stream.update(handle.unit(), update);
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     #[allow(dead_code)]
@@ -179,7 +213,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.refresh::<S>(handle.unit())
+        let result = stream.refresh::<S>(handle.unit());
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     pub(crate) fn next_stream_wakeup(&self) -> Option<Instant> {
@@ -199,6 +237,9 @@ impl History {
                 changed |= stream.advance(now)?;
             }
         }
+        if changed {
+            self.bump_revision();
+        }
         Ok(changed)
     }
 
@@ -213,7 +254,11 @@ impl History {
                 unit: handle.unit(),
             });
         };
-        stream.seal::<S>(handle.unit())
+        let result = stream.seal::<S>(handle.unit());
+        if result.is_ok() {
+            self.bump_revision();
+        }
+        result
     }
 
     pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
@@ -224,17 +269,126 @@ impl History {
         self.layout
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+
+    fn bump_revision(&self) {
+        self.revision.set(self.revision.get().wrapping_add(1));
+    }
+
     pub(crate) fn physical_rows_inserted(&self) -> u64 {
         self.native.physical_rows_inserted
     }
 
     pub fn set_layout(&mut self, layout: HistoryLayout) {
+        if self.layout == layout {
+            return;
+        }
         self.layout = layout;
+        self.invalidate_all_layout();
+        self.bump_revision();
     }
 
     pub fn with_layout(mut self, layout: HistoryLayout) -> Self {
-        self.layout = layout;
+        self.set_layout(layout);
         self
+    }
+
+    pub(super) fn prepare_unit_layout(
+        &self,
+        index: usize,
+        width: u16,
+        key: HistoryUnitLayoutKey,
+    ) -> Option<usize> {
+        let mut cached = self.units[index].layout.borrow_mut();
+        if cached.width == Some(width) && cached.key.as_ref() == Some(&key) {
+            if let Some(height) = cached.height {
+                perf::inc(Counter::HistoryCachedHeightHits);
+                return Some(height);
+            }
+            return None;
+        }
+        if cached.height.is_some() && self.cached_total_height.get().is_some() {
+            let total = self
+                .cached_total_height
+                .get()
+                .expect("checked cached total")
+                .saturating_sub(cached.height.expect("checked cached height"));
+            self.cached_total_height.set(Some(total));
+            self.stale_cached_heights
+                .set(self.stale_cached_heights.get().saturating_add(1));
+        }
+        cached.width = Some(width);
+        cached.key = Some(key);
+        cached.height = None;
+        None
+    }
+
+    pub(super) fn record_unit_height(&self, index: usize, height: usize) {
+        if let Some(cached) = self.units.get(index) {
+            let mut layout = cached.layout.borrow_mut();
+            if layout.height.is_none() {
+                if let Some(total) = self.cached_total_height.get() {
+                    if self.stale_cached_heights.get() == 0 {
+                        self.cached_total_height.set(None);
+                    } else {
+                        self.cached_total_height
+                            .set(Some(total.saturating_add(height)));
+                        self.stale_cached_heights
+                            .set(self.stale_cached_heights.get().saturating_sub(1));
+                    }
+                }
+            }
+            layout.height = Some(height);
+        }
+    }
+
+    pub(super) fn unit_height(&self, index: usize) -> Option<usize> {
+        self.units
+            .get(index)
+            .and_then(|unit| unit.layout.borrow().height)
+    }
+
+    pub(super) fn cached_total_flow_height(&self) -> Option<usize> {
+        if self.stale_cached_heights.get() == 0 {
+            if let Some(total) = self.cached_total_height.get() {
+                return Some(total);
+            }
+        }
+        let mut total = 0usize;
+        for unit in &self.units {
+            let height = unit.layout.borrow().height?;
+            total = total.saturating_add(height);
+        }
+        self.cached_total_height.set(Some(total));
+        self.stale_cached_heights.set(0);
+        Some(total)
+    }
+
+    pub(super) fn invalidate_unit_layout(&self, index: usize) {
+        if let Some(unit) = self.units.get(index) {
+            let mut layout = unit.layout.borrow_mut();
+            if layout.height.is_some() && self.cached_total_height.get().is_some() {
+                let total = self
+                    .cached_total_height
+                    .get()
+                    .expect("checked cached total")
+                    .saturating_sub(layout.height.expect("checked cached height"));
+                self.cached_total_height.set(Some(total));
+                self.stale_cached_heights
+                    .set(self.stale_cached_heights.get().saturating_add(1));
+            }
+            *layout = HistoryUnitLayout::default();
+        }
+    }
+
+    pub(super) fn invalidate_all_layout(&self) {
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
+        for unit in &self.units {
+            *unit.layout.borrow_mut() = HistoryUnitLayout::default();
+        }
     }
 
     fn ensure_append_allowed(&self) -> Result<(), HistoryError> {

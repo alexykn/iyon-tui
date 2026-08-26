@@ -1,7 +1,0 @@
-{
-  "name": "fixture-override-builtin",
-  "version": "1.0.0",
-  "type": "module",
-  "keywords": ["iyon-package"],
-  "iyon": { "extensions": "./src/index.ts", "catalog": { "allowOverride": false } }
-}

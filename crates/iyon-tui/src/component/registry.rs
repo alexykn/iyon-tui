@@ -1,7 +1,8 @@
-use std::{any::Any, collections::HashMap, fmt};
+use std::{any::Any, cell::RefCell, collections::HashMap, fmt};
 
 use super::{Component, ComponentHandle, ComponentId, ComponentRevision};
 use crate::interaction::{ComponentCapabilities, ComponentCx};
+use crate::perf::{self, Counter};
 use crate::presentation::View;
 
 trait ErasedComponent {
@@ -17,10 +18,12 @@ where
     C: Component,
 {
     fn view(&self) -> View {
+        perf::inc(Counter::ComponentViewCalls);
         Component::view(self)
     }
 
     fn capabilities(&self) -> ComponentCapabilities {
+        perf::inc(Counter::ComponentCapabilityCalls);
         let mut capabilities = ComponentCapabilities::default();
         let mut cx = ComponentCx::new(&mut capabilities);
         Component::capabilities(self, &mut cx);
@@ -40,7 +43,8 @@ where
     }
 }
 
-pub(crate) struct ComponentResolution {
+#[derive(Clone, Debug)]
+pub(crate) struct ComponentSnapshot {
     pub(crate) view: View,
     pub(crate) revision: ComponentRevision,
     pub(crate) capabilities: ComponentCapabilities,
@@ -49,6 +53,7 @@ pub(crate) struct ComponentResolution {
 struct ComponentEntry {
     component: Box<dyn ErasedComponent>,
     revision: ComponentRevision,
+    snapshot: RefCell<Option<ComponentSnapshot>>,
 }
 
 impl fmt::Debug for ComponentEntry {
@@ -86,6 +91,7 @@ impl ComponentRegistry {
             ComponentEntry {
                 component: Box::new(component),
                 revision: ComponentRevision::default(),
+                snapshot: RefCell::new(None),
             },
         );
         ComponentHandle::new(id)
@@ -127,6 +133,7 @@ impl ComponentRegistry {
         let entry = self.slots.get_mut(&id)?;
         let result = f(entry.component.as_any_mut());
         entry.revision = entry.revision.increment();
+        entry.snapshot.get_mut().take();
         Some(result)
     }
 
@@ -137,13 +144,35 @@ impl ComponentRegistry {
             .map(|entry| entry.component.capabilities())
     }
 
-    pub(crate) fn resolution(&self, id: ComponentId) -> Option<ComponentResolution> {
+    #[cfg(feature = "native-host")]
+    pub(crate) fn invalidate(&mut self, id: ComponentId) -> bool {
+        let Some(entry) = self.slots.get_mut(&id) else {
+            return false;
+        };
+        entry.revision = entry.revision.increment();
+        entry.snapshot.get_mut().take();
+        true
+    }
+
+    pub(crate) fn resolution(&self, id: ComponentId) -> Option<ComponentSnapshot> {
         let entry = self.slots.get(&id)?;
-        Some(ComponentResolution {
+        {
+            let snapshot = entry.snapshot.borrow();
+            if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.revision == entry.revision)
+            {
+                return snapshot.clone();
+            }
+        }
+
+        let snapshot = ComponentSnapshot {
             view: entry.component.view(),
             revision: entry.revision,
             capabilities: entry.component.capabilities(),
-        })
+        };
+        *entry.snapshot.borrow_mut() = Some(snapshot.clone());
+        Some(snapshot)
     }
 
     pub(crate) fn with_mut<C, R>(
@@ -158,7 +187,15 @@ impl ComponentRegistry {
         let component = entry.component.as_any_mut().downcast_mut::<C>()?;
         let result = f(component);
         entry.revision = entry.revision.increment();
+        entry.snapshot.get_mut().take();
         Some(result)
+    }
+
+    /// PERF-12 T13.1 R8: type-erased removal for deferred component
+    /// retirement (the native host bridge knows only ComponentIds by the
+    /// time a retired component may physically be reclaimed).
+    pub(crate) fn remove_id(&mut self, id: ComponentId) -> bool {
+        self.slots.remove(&id).is_some()
     }
 
     pub(crate) fn remove<C>(&mut self, handle: ComponentHandle<C>) -> Option<C>

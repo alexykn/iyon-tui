@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
+    perf::{self, Counter},
     physical::{PhysicalCell, PhysicalRow, PhysicalStyle, Surface, grapheme_cell_width},
     presentation::{HorizontalAlign, WidthRule, ir::TextView},
 };
@@ -28,7 +29,7 @@ pub(crate) struct CompiledTextRow {
     pub(crate) width: usize,
 }
 
-impl ViewCompiler {
+impl ViewCompiler<'_> {
     pub(crate) fn paint_text(
         &self,
         text: &TextView,
@@ -40,7 +41,12 @@ impl ViewCompiler {
         let (width, rows) =
             self.compile_text_with_metadata(text, max_width, width_rule, inherited, true, context);
         let all_fit = rows.iter().all(|row| row.fits);
-        let mut surface = Surface::new(width, rows.len().max(1) as u16);
+        let height = rows.len().max(1) as u16;
+        perf::add(
+            Counter::PaintCellsAllocated,
+            u64::from(width) * u64::from(height),
+        );
+        let mut surface = Surface::new(width, height);
         surface.physically_complete = all_fit;
         for (y, row) in rows.into_iter().enumerate() {
             let line_width = row.width;
@@ -99,13 +105,13 @@ impl ViewCompiler {
         let spans = text.spans.iter().map(|span| {
             let base = if track_source {
                 let current = relative_source;
-                relative_source += span.text.len();
+                relative_source += span.text().len();
                 Some(current)
             } else {
                 None
             };
             (
-                span.text.as_str(),
+                span.text(),
                 self.theme.resolve_text_style(
                     inherited,
                     &span.style,
@@ -119,7 +125,7 @@ impl ViewCompiler {
             let source = text
                 .spans
                 .iter()
-                .map(|span| span.text.as_str())
+                .map(|span| span.text())
                 .collect::<String>();
             validate_cursor_anchor(&source, anchor);
             source

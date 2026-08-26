@@ -1,0 +1,11 @@
+{{ banner }}# PERF-11 generated ABI reference
+
+> This file is generated. Do not edit it directly.
+
+- Schema BLAKE3: `{{ schema_hash }}`
+- Generator BLAKE3: `{{ generator_hash }}`
+- ABI: `{{ abi_name }}` v{{ abi_version }}
+- Semantic schema: v{{ semantic_schema }}
+- Minimum Bun: `{{ minimum_bun }}`
+- Qualified Bun: `{{ qualified_bun }}`
+

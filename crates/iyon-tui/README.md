@@ -2,7 +2,7 @@
 
 A streaming-first terminal UI framework for Rust.
 
-`iyon-tui` is purpose-built for applications that consume incrementally-produced, semantically-structured text — LLM agents, log tailers, build watchers, and live data pipelines. It is not a general-purpose widget library.
+`iyon-tui` is purpose-built for applications that consume incrementally-produced, semantically-structured text — log tailers, build watchers, and live data pipelines. It is not a general-purpose widget library.
 
 - **Streaming-first.** Append text, compile incrementally, render without re-parsing the full buffer.
 - **Semantic text IR.** Headings, lists, tables, strikethrough, code blocks — not just styled strings.
@@ -248,7 +248,7 @@ let id: HistoryUnitId = history.push(View::text("hello").fill_width())?;
 // Push a live stream
 let stream = TextStream::new();
 let handle: HistoryStreamHandle<TextStream> = history.push_stream(stream)?;
-history.update_stream(handle, |s| s.push("token "))?;
+history.update_stream(handle, |s| s.push("first "))?;
 history.update_stream(handle, |s| s.push("streaming "))?;
 history.update_stream(handle, |s| s.push("here"))?;
 history.seal_stream(handle)?;
@@ -364,7 +364,7 @@ MarkdownOptions::gfm()
     .with_tables(true)
     .with_strikethrough(true)
     .with_task_lists(true)
-    .with_live_table_stabilization(true);  // streaming LLM heuristic
+    .with_live_table_stabilization(true);  // streaming table stabilization
 ```
 
 `PlainTextProjector` treats all input as paragraphs.
@@ -671,7 +671,7 @@ impl<T> Projector<T> for MyProjector {
 
 ### Smooth (temporal pacing)
 
-Controls how fast tokens progress through the pipeline, independent of arrival rate. Useful for LLM output where tokens arrive in bursts but should appear at a human-readable pace.
+Controls how fast streamed units progress through the pipeline, independent of arrival rate. Useful when input arrives in bursts but should appear at a human-readable pace.
 
 ```rust
 use iyon_tui::{Smooth, SmoothConfig};
@@ -804,4 +804,4 @@ use iyon_tui::prelude::*;
 
 ## Status
 
-Pre-release. The public API is under active development through the [iyon](https://github.com/alxknt/iyon) agent harness dogfood loop. Breaking changes expected until 1.0.
+Pre-release. The public API is under active development. Breaking changes expected until 1.0.

@@ -1,0 +1,626 @@
+{
+  "nativeAddon": {
+    "artifact": "packages/iyon-runtime/native/iyon-native.node",
+    "artifactSha256": "0820e73f68b98dfbab3d0a3ed1bd3590f08a290157433df98e2d1cc1cae493dd",
+    "declaredNativeAddonMembers": [
+      {
+        "name": "nativeVersion",
+        "optional": false
+      },
+      {
+        "name": "echoJson",
+        "optional": false
+      },
+      {
+        "name": "echoString",
+        "optional": false
+      },
+      {
+        "name": "echoBuffer",
+        "optional": false
+      },
+      {
+        "name": "tuiSmoke",
+        "optional": false
+      },
+      {
+        "name": "tuiViewAbiMaintain",
+        "optional": true
+      },
+      {
+        "name": "tuiViewRuntimeMemorySnapshot",
+        "optional": true
+      },
+      {
+        "name": "tuiViewAbiBootstrap",
+        "optional": true
+      },
+      {
+        "name": "tuiViewAbiDecodeRef",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfAbiProbe",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfAbiConformanceProbe",
+        "optional": true
+      },
+      {
+        "name": "tuiViewBridgeEnvironmentCount",
+        "optional": false
+      },
+      {
+        "name": "asyncSleep",
+        "optional": false
+      },
+      {
+        "name": "CancellationProbe",
+        "optional": false
+      },
+      {
+        "name": "NativeCounter",
+        "optional": false
+      },
+      {
+        "name": "EventQueueProbe",
+        "optional": false
+      },
+      {
+        "name": "KernelSession",
+        "optional": false
+      },
+      {
+        "name": "nativeCounterStats",
+        "optional": false
+      },
+      {
+        "name": "resetNativeCounterStats",
+        "optional": false
+      },
+      {
+        "name": "credentialGet",
+        "optional": false
+      },
+      {
+        "name": "credentialSet",
+        "optional": false
+      },
+      {
+        "name": "credentialDelete",
+        "optional": false
+      },
+      {
+        "name": "credentialHas",
+        "optional": false
+      },
+      {
+        "name": "NativeHistory",
+        "optional": true
+      },
+      {
+        "name": "NativeTextInput",
+        "optional": true
+      },
+      {
+        "name": "NativeTuiHost",
+        "optional": true
+      },
+      {
+        "name": "NativeTuiOutput",
+        "optional": true
+      },
+      {
+        "name": "NativeTextStream",
+        "optional": true
+      },
+      {
+        "name": "NativeMarkdownProjector",
+        "optional": true
+      },
+      {
+        "name": "NativePlainProjector",
+        "optional": true
+      },
+      {
+        "name": "NativeViewSlot",
+        "optional": true
+      },
+      {
+        "name": "NativeScrollPane",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV3ResetViewBridgeCache",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV3ViewBridgeCacheSize",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV3PackedSlotPages",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV3ViewBridgeGeneration",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV4ResetViewBridgeCache",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV4ViewBridgeCacheSize",
+        "optional": true
+      },
+      {
+        "name": "tuiPerfV4ViewBridgeGeneration",
+        "optional": true
+      }
+    ],
+    "runtimeSurface": [
+      {
+        "kind": "function",
+        "name": "CancellationProbe",
+        "prototype": [
+          "cancel",
+          "run"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "EventQueueProbe",
+        "prototype": [
+          "close",
+          "nextEvent",
+          "send"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "KernelSession",
+        "prototype": [
+          "abort",
+          "appendEntry",
+          "appendMessage",
+          "beginModelTurn",
+          "close",
+          "deliverUserMessage",
+          "dequeue",
+          "enqueue",
+          "nextEvent",
+          "nextEvents",
+          "prepareToolExecution",
+          "queueSnapshot",
+          "snapshot"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "ModelTurn",
+        "prototype": [
+          "cancel",
+          "fail",
+          "finish",
+          "push",
+          "pushMany"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeCounter",
+        "prototype": [
+          "increment",
+          "value"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeHistory",
+        "prototype": [
+          "discardLive",
+          "dispose",
+          "freeze",
+          "freezeRef",
+          "isDetached",
+          "layout",
+          "push",
+          "pushRef",
+          "pushStream",
+          "sealStream",
+          "setLayout"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeMarkdownProjector",
+        "prototype": [
+          "dispose",
+          "project"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativePlainProjector",
+        "prototype": [
+          "dispose",
+          "project"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeScrollPane",
+        "prototype": [
+          "componentId",
+          "dispose",
+          "followEnd",
+          "setContent",
+          "setContentRef"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeTextInput",
+        "prototype": [
+          "clear",
+          "componentId",
+          "cursorBytes",
+          "dispose",
+          "isMultiline",
+          "setMultiline",
+          "setText",
+          "submitted",
+          "text"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeTextStream",
+        "prototype": [
+          "append",
+          "dispose",
+          "seal",
+          "snapshot",
+          "update"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeTuiHost",
+        "prototype": [
+          "advanceTime",
+          "bindKey",
+          "cellXOfText",
+          "createViewSlot",
+          "createViewSlotRef",
+          "dispatchKey",
+          "dispatchPaste",
+          "dispose",
+          "exit",
+          "exited",
+          "forwardPaste",
+          "history",
+          "interceptPaste",
+          "nativeHistoryRows",
+          "nextAction",
+          "nextOutput",
+          "nextWakeMs",
+          "pollTerminal",
+          "render",
+          "resize",
+          "route",
+          "screenRows",
+          "scrollPane",
+          "scrollPaneRef",
+          "setHistory",
+          "setTheme",
+          "styleAt",
+          "textInput",
+          "tuiViewAbiHostPointer",
+          "waitForAction",
+          "waitForOutput"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "NativeTuiOutput",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "NativeViewSlot",
+        "prototype": [
+          "componentId",
+          "dispose",
+          "revision",
+          "setAnimation",
+          "setAnimationAtCycleBoundary",
+          "setAnimationRef1",
+          "setAnimationRef1AtCycleBoundary",
+          "setAnimationRef2",
+          "setAnimationRef2AtCycleBoundary",
+          "setAnimationRef3",
+          "setAnimationRef3AtCycleBoundary",
+          "setAnimationRef4",
+          "setAnimationRef4AtCycleBoundary",
+          "setAnimationRefs",
+          "setAnimationRefsAtCycleBoundary",
+          "setView",
+          "setViewRef",
+          "stopAnimation",
+          "stopAnimationRef"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "ToolExecution",
+        "prototype": [
+          "approve",
+          "cancel",
+          "events",
+          "fail",
+          "finish",
+          "prepared",
+          "reject",
+          "requestApproval",
+          "sendUpdate",
+          "start",
+          "state"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "asyncSleep",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "credentialDelete",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "credentialGet",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "credentialHas",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "credentialSet",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "echoBuffer",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "echoJson",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "echoString",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "nativeCounterStats",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "nativeVersion",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "resetNativeCounterStats",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiPerfAbiConformanceProbe",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiPerfAbiProbe",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiSmoke",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiViewAbiBootstrap",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiViewAbiDecodeRef",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiViewAbiMaintain",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiViewBridgeEnvironmentCount",
+        "prototype": []
+      },
+      {
+        "kind": "function",
+        "name": "tuiViewRuntimeMemorySnapshot",
+        "prototype": []
+      }
+    ],
+    "source": "packages/iyon-runtime/src/native.ts",
+    "sourceSha256": "a3bc5d1d19b718595220d7128b821121eff197ed2728ff5810a91ae83239f849"
+  },
+  "rustPublicSurface": {
+    "apiSurfaceMappings": [
+      {
+        "path": "tools/api-surface/mappings/iyon-api.toml",
+        "records": 136,
+        "sha256": "b4e586fa4c8c69e05a756073df894c5f9a4c62c578181529a6c87b5b4d721d66",
+        "statuses": {
+          "deferred": 0,
+          "implemented": 14,
+          "stub": 122,
+          "unsupported": 0
+        }
+      },
+      {
+        "path": "tools/api-surface/mappings/iyon-core.toml",
+        "records": 573,
+        "sha256": "ddec0f4e51f749caf13f92faf82914d8b6996f2d49eb292da96251b8df9e752b",
+        "statuses": {
+          "deferred": 0,
+          "implemented": 4,
+          "stub": 569,
+          "unsupported": 0
+        }
+      },
+      {
+        "path": "tools/api-surface/mappings/iyon-tui.toml",
+        "records": 1532,
+        "sha256": "0c5123e12cd506011745bf5b1227f6e468fb7d53c5eebf69b89d8adbfc77e11a",
+        "statuses": {
+          "deferred": 0,
+          "implemented": 0,
+          "stub": 1532,
+          "unsupported": 0
+        }
+      },
+      {
+        "path": "tools/api-surface/mappings/iyon.toml",
+        "records": 90,
+        "sha256": "621db344a98a183d955a7a26b2c3561e419509a1869fa19063baa27ec399a8a2",
+        "statuses": {
+          "deferred": 0,
+          "implemented": 0,
+          "stub": 90,
+          "unsupported": 0
+        }
+      }
+    ],
+    "inventory": {
+      "lines": 1764,
+      "path": "iyon-tui.md",
+      "sha256": "b03c001b0c89aece9687e6b8373e7775f0237c53a27c8ef0601925e3aac21d12"
+    }
+  },
+  "schemaVersion": 1,
+  "sourceRevision": "bd503b0382e34d74a38c562b9662d08c8c96f58a",
+  "typescriptTui": {
+    "currentPackage": "@iyon/runtime",
+    "currentSubpath": "./tui",
+    "source": "packages/iyon-runtime/src/tui/index.ts",
+    "sourceSha256": "3e62ff88e6abb1513b44e583f13b6fd37a3f9cd5f31b776968c989286be5853c",
+    "typeExports": [
+      "ComponentAdapter",
+      "ComponentCapabilities",
+      "ComponentContext",
+      "HistoryLayout",
+      "KeyEvent",
+      "NativeHandle",
+      "NativeHandleId",
+      "Output",
+      "OutputEvent",
+      "OutputHandle",
+      "PasteEvent",
+      "Projector",
+      "RenderContext",
+      "Renderer",
+      "ResizeEvent",
+      "ScrollPane",
+      "State",
+      "StreamAnnotation",
+      "StreamSnapshot",
+      "StreamingSource",
+      "TerminateEvent",
+      "TextRewriter",
+      "TextStreamOptions",
+      "TextStreamPacing",
+      "TextStreamPresentation",
+      "TextVisitor",
+      "ThemeSelector",
+      "TuiEvent",
+      "TuiFailure",
+      "TuiOpenOptions",
+      "TuiOperation",
+      "TuiRuntime",
+      "ViewComponent",
+      "ViewSlot"
+    ],
+    "valueExports": [
+      "Annotations",
+      "AppHarness",
+      "ChildrenBuilder",
+      "Component",
+      "ComponentAdapterBridge",
+      "DiffHunk",
+      "DiffLine",
+      "DiffRange",
+      "DiffRenderer",
+      "FocusController",
+      "History",
+      "Insets",
+      "InteractionRouter",
+      "MarkdownProjector",
+      "NativeOutputHandle",
+      "NativeScrollPane",
+      "NativeViewSlot",
+      "OutputRouter",
+      "PlainTextProjector",
+      "Projection",
+      "ProjectionBuilder",
+      "ProjectorAdapter",
+      "RawText",
+      "RendererAdapter",
+      "RouteConflict",
+      "Scene",
+      "Smooth",
+      "StreamPane",
+      "StreamingSourceAdapter",
+      "Style",
+      "StyleSpec",
+      "TextContent",
+      "TextInput",
+      "TextRewriterAdapter",
+      "TextSelector",
+      "TextSpan",
+      "TextStream",
+      "TextVisitorAdapter",
+      "Theme",
+      "ThemeKey",
+      "Tui",
+      "TuiError",
+      "View",
+      "asTuiError",
+      "createAppHarness",
+      "defineView",
+      "isTuiCancelledError",
+      "isTuiError",
+      "keyEvent",
+      "pasteEvent",
+      "resizeEvent",
+      "state",
+      "terminateEvent",
+      "tuiError",
+      "tuiSmoke"
+    ]
+  }
+}

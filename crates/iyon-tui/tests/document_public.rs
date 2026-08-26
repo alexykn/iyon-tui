@@ -79,7 +79,7 @@ impl Projector<RawText> for OuterProbe {
             LiteralText::new([TextRun::exact(json, range(json_start, json_end))
                 .unwrap()
                 .with_annotations(
-                    Annotations::new().with_tag(SemanticTag::new("app", "thinking").unwrap()),
+                    Annotations::new().with_tag(SemanticTag::new("example", "annotated").unwrap()),
                 )]),
         ));
         let after_block = Block::paragraph(InlineContent::new([
@@ -354,7 +354,7 @@ fn public_ir_supports_generic_composition_and_nested_portals() {
             .annotations()
             .tags()
             .iter()
-            .any(|tag| tag.namespace() == "app" && tag.name() == "thinking")
+            .any(|tag| tag.namespace() == "example" && tag.name() == "annotated")
     );
 
     let mermaid = output.spans()[3].values()[0].clone();
@@ -511,7 +511,7 @@ fn annotations_marks_and_persistent_rewriting_are_canonical() {
         Err(TextIrError::DuplicateLinkMark)
     );
 
-    let tag = SemanticTag::new("app", "thinking").unwrap();
+    let tag = SemanticTag::new("example", "annotated").unwrap();
     let key = SemanticKey::new("json", "indent").unwrap();
     let annotations = Annotations::new()
         .with_tag(tag.clone())

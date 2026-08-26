@@ -84,12 +84,33 @@ impl StreamingSource for TextStream {
     fn snapshot(&self) -> StreamSnapshot {
         let end = self.source_end();
         let stable = append_only_text_stable_frontier(&self.text, self.source_base, self.sealed);
-        let range = StreamRange::new(self.source_base, end);
+        let stable_len = usize::try_from(stable.as_u64() - self.source_base.as_u64())
+            .expect("TextStream coordinate fits usize");
         let builder = StreamSnapshotBuilder::new(self.revision, self.source_base, stable, end);
         let builder = if self.text.is_empty() {
-            builder.exact_text(range, [])
+            builder.continuous_exact_text(StreamRange::new(self.source_base, end), [])
+        } else if stable_len == 0 {
+            builder.continuous_exact_text(
+                StreamRange::new(stable, end),
+                [TextSpan::plain(self.text.clone())],
+            )
+        } else if stable_len == self.text.len() {
+            builder.continuous_exact_text(
+                StreamRange::new(self.source_base, stable),
+                [TextSpan::plain(self.text.clone())],
+            )
         } else {
-            builder.exact_text(range, [TextSpan::plain(self.text.clone())])
+            let stable_range = StreamRange::new(self.source_base, stable);
+            let tail_range = StreamRange::new(stable, end);
+            builder
+                .continuous_exact_text(
+                    stable_range,
+                    [TextSpan::plain(self.text[..stable_len].to_owned())],
+                )
+                .continuous_exact_text(
+                    tail_range,
+                    [TextSpan::plain(self.text[stable_len..].to_owned())],
+                )
         };
         builder.finish().expect("TextStream snapshot must be valid")
     }

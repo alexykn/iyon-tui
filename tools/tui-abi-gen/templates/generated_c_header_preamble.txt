@@ -1,0 +1,16 @@
+{{ banner }}#ifndef IYON_VIEW_ABI_H
+#define IYON_VIEW_ABI_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define IYON_VIEW_ABI_NAME "{{ abi_name }}"
+#define IYON_VIEW_ABI_VERSION {{ abi_version }}
+#define IYON_VIEW_SEMANTIC_SCHEMA_VERSION {{ semantic_schema }}
+#define IYON_VIEW_MINIMUM_BUN "{{ minimum_bun }}"
+#define IYON_VIEW_QUALIFIED_BUN "{{ qualified_bun }}"
+#define IYON_VIEW_RESULT_ERROR_BIT UINT32_C(0x80000000)
+
+typedef struct NativeViewRuntime NativeViewRuntime;
+typedef struct NativeHost NativeHost;
+

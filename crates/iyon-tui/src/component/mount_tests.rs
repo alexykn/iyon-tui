@@ -58,7 +58,7 @@ fn reordering_and_reparenting_do_not_remount_existing_ids() {
         node(a, None),
     ]));
     assert!(reordered.is_empty());
-    assert_eq!(mounted.current().nodes[1].parent, Some(b));
+    assert_eq!(mounted.current().iter().nth(1).unwrap().parent, Some(b));
 }
 
 #[test]

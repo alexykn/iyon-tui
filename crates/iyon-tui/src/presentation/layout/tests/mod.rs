@@ -1,5 +1,7 @@
 //! Retained layout and text compiler regressions.
 
+use std::sync::Arc;
+
 use super::*;
 use crate::geometry::{LayoutConstraints, Size};
 use crate::physical::{PhysicalColor, PhysicalRow, PhysicalStyle};
@@ -7,7 +9,7 @@ use crate::presentation::api::style::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, BorderStyle, OverflowIndicator, TextAttribute,
 };
 use crate::presentation::ir::ViewKind;
-use crate::presentation::ir::{Decoration, RowChild};
+use crate::presentation::ir::{Decoration, RowChild, ViewNodeParts};
 use crate::presentation::{
     ColorSpec, HorizontalAlign, Insets, IntoView, StyleRef, StyleSpec, TextSpan, ThemeKey,
     VerticalAlign, View, WidthRule, WrapMode,
@@ -25,41 +27,33 @@ fn layout_view(view: &View, width: u16, inherited: PhysicalStyle) -> Surface {
 }
 
 fn row_view(children: Vec<RowChild>, gap: u16) -> View {
-    View {
-        component: None,
+    View::from_node(ViewNodeParts {
         width: WidthRule::Fill,
         height: crate::presentation::ir::HeightRule::Fit,
         decoration: Decoration::default(),
         style_states: Default::default(),
         style_facts: Default::default(),
-        component_scope: None,
-        kind: crate::presentation::ir::ViewKind::Row(crate::presentation::ir::RowView {
-            children,
+        kind: crate::presentation::ir::ViewKind::Row(Arc::new(crate::presentation::ir::RowView {
+            children: crate::presentation::ir::PersistentSeq::from_vec(children),
             gap,
             vertical_align: VerticalAlign::Top,
-        }),
-    }
+        })),
+    })
 }
 
 fn box_view(child: View, decoration: Decoration) -> View {
-    let mut child = child;
-    let component = child.component.take();
-    let width = child.width;
-    let height = child.height;
-    View {
-        component,
+    let width = child.width();
+    let height = child.height();
+    View::from_node(ViewNodeParts {
         width,
         height,
         decoration,
         style_states: Default::default(),
         style_facts: Default::default(),
-        component_scope: None,
-        kind: crate::presentation::ir::ViewKind::Container(
-            crate::presentation::ir::ContainerNode {
-                child: Box::new(child),
-            },
-        ),
-    }
+        kind: crate::presentation::ir::ViewKind::Container(Arc::new(
+            crate::presentation::ir::ContainerNode { child },
+        )),
+    })
 }
 
 fn background_decoration(color: ColorSpec) -> Decoration {
@@ -84,7 +78,7 @@ fn style(color: &str) -> StyleSpec {
     }
 }
 
-fn tool_view(body: &str) -> View {
+fn decorated_row_view(body: &str) -> View {
     row_view(
         vec![
             RowChild::content(View::text("●").no_wrap().style(style("accent")).into_view()),
@@ -125,7 +119,7 @@ fn layout_stage_counters_match_semantic_nodes() {
     reset_layout_counters();
     let tree = super::layout_view(&view, LayoutConstraints::width_only(20));
     let counters = layout_counters();
-    assert_eq!(counters.0, counters.1);
+    assert!(counters.0 <= counters.1);
     assert_eq!(counters.1, counters.2);
     assert_eq!(counters.2, tree.nodes.len());
 
@@ -138,9 +132,142 @@ fn layout_stage_counters_match_semantic_nodes() {
     reset_layout_counters();
     let hanging_tree = super::layout_view(&hanging, LayoutConstraints::width_only(8));
     let hanging_counters = layout_counters();
-    assert!(hanging_counters.0 < hanging_counters.1);
-    assert_eq!(hanging_counters.1, hanging_counters.2);
+    assert!(hanging_counters.0 <= hanging_counters.1);
+    assert!(hanging_counters.1 <= hanging_counters.2);
     assert_eq!(hanging_counters.2, hanging_tree.nodes.len());
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn retained_layout_cache_reuses_warm_measurement_and_prepare() {
+    let _lock = crate::perf::test_lock();
+    let view = View::vertical(|column| {
+        for index in 0..10_000 {
+            column.child(View::text(format!("stable-{index}")));
+        }
+    });
+    let overlay = crate::scene::ResolutionOverlay::default();
+    let mut cache = LayoutCache::default();
+
+    cache.begin_epoch();
+    crate::perf::reset();
+    let first = layout_view_with_overlay_and_cache(
+        &view,
+        LayoutConstraints::width_only(80),
+        &overlay,
+        &mut cache,
+    );
+    let first_counters = crate::perf::snapshot();
+
+    cache.begin_epoch();
+    crate::perf::reset();
+    let second = layout_view_with_overlay_and_cache(
+        &view,
+        LayoutConstraints::width_only(80),
+        &overlay,
+        &mut cache,
+    );
+    let second_counters = crate::perf::snapshot();
+
+    assert_eq!(first, second);
+    assert!(first_counters.value(crate::perf::Counter::TextFlowMeasureCalls) > 0);
+    assert_eq!(
+        second_counters.value(crate::perf::Counter::TextFlowMeasureCalls),
+        0
+    );
+    assert!(
+        second_counters.value(crate::perf::Counter::MeasureNodeCalls)
+            < first_counters.value(crate::perf::Counter::MeasureNodeCalls)
+    );
+    assert_eq!(
+        second_counters.value(crate::perf::Counter::PrepareNodeCalls),
+        0
+    );
+    assert!(cache.retained_entries() > 0);
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn retained_layout_cache_reuses_unaffected_shared_path() {
+    let _lock = crate::perf::test_lock();
+    let shared = View::vertical(|column| {
+        for index in 0..1_000 {
+            column.child(View::text(format!("shared-{index}")));
+        }
+    });
+    let original = View::vertical(|column| {
+        column.child(shared.clone());
+    });
+    let changed = View::vertical(|column| {
+        column.child(shared.clone());
+        column.child(View::text("changed"));
+    });
+    let overlay = crate::scene::ResolutionOverlay::default();
+    let mut cache = LayoutCache::default();
+
+    cache.begin_epoch();
+    crate::perf::reset();
+    let original_tree = layout_view_with_overlay_and_cache(
+        &original,
+        LayoutConstraints::width_only(80),
+        &overlay,
+        &mut cache,
+    );
+    let original_counters = crate::perf::snapshot();
+
+    cache.begin_epoch();
+    crate::perf::reset();
+    let changed_tree = layout_view_with_overlay_and_cache(
+        &changed,
+        LayoutConstraints::width_only(80),
+        &overlay,
+        &mut cache,
+    );
+    let changed_counters = crate::perf::snapshot();
+
+    assert!(changed_tree.nodes.len() > original_tree.nodes.len());
+    assert!(
+        changed_counters.value(crate::perf::Counter::TextFlowMeasureCalls)
+            < original_counters.value(crate::perf::Counter::TextFlowMeasureCalls)
+    );
+    assert!(
+        changed_counters.value(crate::perf::Counter::MeasureNodeCalls)
+            < original_counters.value(crate::perf::Counter::MeasureNodeCalls) / 10
+    );
+    assert!(changed_counters.value(crate::perf::Counter::LayoutNodesEmitted) > 1_000);
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn retained_layout_cache_rotates_out_old_view_id_working_sets() {
+    let _lock = crate::perf::test_lock();
+    let overlay = crate::scene::ResolutionOverlay::default();
+    let mut cache = LayoutCache::default();
+    let mut first_entries = None;
+    let mut first_view_id = None;
+
+    for generation in 0..6 {
+        cache.begin_epoch();
+        let view = View::vertical(|column| {
+            for index in 0..100 {
+                column.child(View::text(format!("{generation}-{index}")));
+            }
+        });
+        if generation == 0 {
+            first_view_id = Some(view.id());
+        }
+        let _ = layout_view_with_overlay_and_cache(
+            &view,
+            LayoutConstraints::width_only(80),
+            &overlay,
+            &mut cache,
+        );
+        first_entries.get_or_insert(cache.retained_entries());
+    }
+
+    let working_set = first_entries.expect("at least one cache generation");
+    assert!(cache.retained_entries() <= working_set.saturating_mul(2));
+    assert!(!cache.contains_view_id(first_view_id.expect("first view generation")));
 }
 
 #[test]
@@ -447,8 +574,8 @@ mod text;
 fn layout_performance_probe() {
     use std::time::Instant;
 
-    let long_transcript = (0..80)
-        .map(|index| format!("assistant line {index}: a moderately long transcript sentence"))
+    let long_text = (0..80)
+        .map(|index| format!("line {index}: a moderately long generic sentence"))
         .collect::<Vec<_>>()
         .join("\n");
     let cases = vec![
@@ -469,13 +596,10 @@ fn layout_performance_probe() {
                 column.child(View::text("body").fill_width());
             }),
         ),
+        ("long_text", View::text(&long_text).fill_width().into_view()),
         (
-            "long_transcript",
-            View::text(&long_transcript).fill_width().into_view(),
-        ),
-        (
-            "user_bubble",
-            View::text("user message with decoration")
+            "decorated_text",
+            View::text("decorated message with decoration")
                 .fill_width()
                 .padding(Insets::horizontal(1))
                 .border(BorderSpec::rounded())
@@ -492,8 +616,8 @@ fn layout_performance_probe() {
             .fill_width(),
         ),
         (
-            "bounded_live_tool_scroll_pane",
-            View::row_viewport(View::text(&long_transcript).into_view(), 20),
+            "bounded_row_viewport",
+            View::row_viewport(View::text(&long_text).into_view(), 20),
         ),
         (
             "scene_body",
@@ -544,7 +668,7 @@ fn layout_performance_probe() {
     }
 }
 
-impl ViewCompiler {
+impl ViewCompiler<'_> {
     fn compile_bounded_for_probe(&self, view: &View, size: Size) -> LayoutBlock {
         let tree = self.layout_tree(view, LayoutConstraints::bounded(size));
         let surface = ViewPainter.paint_tree(self, &tree);

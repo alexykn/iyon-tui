@@ -1,0 +1,2 @@
+{{ banner }}import type { NativeTuiHostContract } from "../native.ts";
+

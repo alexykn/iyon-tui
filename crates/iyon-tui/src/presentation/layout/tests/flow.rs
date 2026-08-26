@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn row_uses_track_width_for_continuations() {
-    let rows = compile_view(&tool_view("abcdefghijklmnop"), 10).rows;
+    let rows = compile_view(&decorated_row_view("abcdefghijklmnop"), 10).rows;
     assert_eq!(text(&rows[0]), "● abcdefgh");
     assert_eq!(text(&rows[1]), "  ijklmnop");
 }
@@ -107,10 +107,14 @@ fn hanging_preserves_body_width_policy_within_bounded_column() {
 #[test]
 fn nested_fill_does_not_change_fit_child_allocation() {
     let compiler = ViewCompiler::default();
-    let mut fit_child = View::text("x").fit_width().into_view();
-    fit_child.decoration.surface_background = Some(ColorSpec::Ansi(1));
-    let mut fill_child = View::text("x").fill_width().into_view();
-    fill_child.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let fit_child = View::text("x")
+        .fit_width()
+        .background(ColorSpec::Ansi(1))
+        .into_view();
+    let fill_child = View::text("x")
+        .fill_width()
+        .background(ColorSpec::Ansi(1))
+        .into_view();
 
     let fit_parent = View::vertical(|column| {
         column.child(fit_child);
@@ -240,8 +244,7 @@ fn gaps_are_counted_between_all_semantic_children() {
 
 #[test]
 fn empty_background_does_not_create_geometry() {
-    let mut view = empty_vertical();
-    view.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let view = empty_vertical().background(ColorSpec::Ansi(1));
     let surface = layout_view(&view, 10, PhysicalStyle::default());
 
     assert_eq!((surface.width(), surface.height()), (0, 0));
@@ -250,9 +253,9 @@ fn empty_background_does_not_create_geometry() {
 
 #[test]
 fn empty_padding_creates_geometry_and_background_paints_it() {
-    let mut view = empty_vertical();
-    view.decoration.padding = Insets::all(1);
-    view.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let view = empty_vertical()
+        .padding(Insets::all(1))
+        .background(ColorSpec::Ansi(1));
     let surface = layout_view(&view, 10, PhysicalStyle::default());
 
     assert_eq!((surface.width(), surface.height()), (2, 2));
@@ -268,8 +271,7 @@ fn empty_padding_creates_geometry_and_background_paints_it() {
 #[test]
 fn empty_border_geometry_is_safe_at_tiny_widths() {
     let compiler = ViewCompiler::default();
-    let mut view = empty_vertical();
-    view.decoration.border = Some(BorderSpec {
+    let view = empty_vertical().border(BorderSpec {
         style: BorderStyle::Plain,
         color: None,
         edges: BorderEdges::ALL,
@@ -287,9 +289,7 @@ fn empty_border_geometry_is_safe_at_tiny_widths() {
 
 #[test]
 fn empty_padding_and_border_add_their_outer_geometry() {
-    let mut view = empty_vertical();
-    view.decoration.padding = Insets::all(1);
-    view.decoration.border = Some(BorderSpec {
+    let view = empty_vertical().padding(Insets::all(1)).border(BorderSpec {
         style: BorderStyle::Plain,
         color: None,
         edges: BorderEdges::ALL,
@@ -303,15 +303,15 @@ fn empty_padding_and_border_add_their_outer_geometry() {
 
 #[test]
 fn empty_border_and_background_compose_without_changing_geometry() {
-    let mut view = empty_vertical();
-    view.decoration = background_decoration(ColorSpec::Ansi(1));
-    view.decoration.border = Some(BorderSpec {
-        style: BorderStyle::Plain,
-        color: None,
-        edges: BorderEdges::ALL,
-        glyphs: BorderGlyphs::plain(),
-        top_label: None,
-    });
+    let view = empty_vertical()
+        .background(ColorSpec::Ansi(1))
+        .border(BorderSpec {
+            style: BorderStyle::Plain,
+            color: None,
+            edges: BorderEdges::ALL,
+            glyphs: BorderGlyphs::plain(),
+            top_label: None,
+        });
     let surface = layout_view(&view, 10, PhysicalStyle::default());
 
     assert_eq!((surface.width(), surface.height()), (2, 2));
@@ -326,10 +326,14 @@ fn empty_border_and_background_compose_without_changing_geometry() {
 #[test]
 fn fixed_track_preserves_parent_width_and_child_sizing_intent() {
     let compiler = ViewCompiler::default();
-    let mut fit_child = View::text("x").fit_width().into_view();
-    fit_child.decoration.surface_background = Some(ColorSpec::Ansi(1));
-    let mut fill_child = View::text("x").fill_width().into_view();
-    fill_child.decoration.surface_background = Some(ColorSpec::Ansi(1));
+    let fit_child = View::text("x")
+        .fit_width()
+        .background(ColorSpec::Ansi(1))
+        .into_view();
+    let fill_child = View::text("x")
+        .fill_width()
+        .background(ColorSpec::Ansi(1))
+        .into_view();
     let fit = View::horizontal(|row| {
         row.fixed(5, fit_child);
     });

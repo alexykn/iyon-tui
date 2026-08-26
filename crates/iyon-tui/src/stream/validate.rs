@@ -72,7 +72,7 @@ impl StreamSnapshot {
                 return Err(StreamValidationError::NodeBeyondSourceEnd);
             }
             match node {
-                StreamNode::Text(text) => {
+                StreamNode::Text(text) | StreamNode::ContinuousText(text) => {
                     validate_projected_text(text).map_err(StreamValidationError::Projected)?
                 }
                 StreamNode::Atomic { view, .. } if view.contains_component_identity() => {

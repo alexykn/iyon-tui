@@ -10,8 +10,8 @@ mod tests;
 
 use crate::{Component, ComponentCx, View, geometry::Size};
 
-use super::viewport::build_index;
-use super::{StreamError, StreamModel, StreamRowIndex, StreamingSource};
+use super::viewport::{build_index, reindex_in_place};
+use super::{StreamError, StreamModel, StreamOffset, StreamRowIndex, StreamingSource};
 use anchor::{StreamPaneMode, StreamViewportAnchor, anchor_matches, anchor_to_viewport};
 use index::{nearest_anchor, top_index};
 
@@ -24,6 +24,7 @@ pub struct StreamPane<S: StreamingSource> {
     mode: StreamPaneMode,
     layout_size: Option<Size>,
     row_index: Option<StreamRowIndex>,
+    pending_semantic_changed_from: Option<StreamOffset>,
 }
 
 impl<S: StreamingSource> StreamPane<S> {
@@ -33,24 +34,28 @@ impl<S: StreamingSource> StreamPane<S> {
             mode: StreamPaneMode::FollowEnd,
             layout_size: None,
             row_index: None,
+            pending_semantic_changed_from: None,
         })
     }
 
     pub fn update_source<R>(&mut self, update: impl FnOnce(&mut S) -> R) -> Result<R, StreamError> {
         let result = update(self.model.source_mut());
         self.model.refresh()?;
+        self.pending_semantic_changed_from = Some(self.model.semantic_changed_from());
         self.invalidate_and_repair();
         Ok(result)
     }
 
     pub fn refresh(&mut self) -> Result<(), StreamError> {
         self.model.refresh()?;
+        self.pending_semantic_changed_from = Some(self.model.semantic_changed_from());
         self.invalidate_and_repair();
         Ok(())
     }
 
     pub fn seal(&mut self) -> Result<(), StreamError> {
         self.model.seal()?;
+        self.pending_semantic_changed_from = Some(self.model.semantic_changed_from());
         self.invalidate_and_repair();
         Ok(())
     }
@@ -141,18 +146,32 @@ impl<S: StreamingSource> StreamPane<S> {
             return None;
         }
         let revision = self.model.snapshot().revision;
+        let semantic_changed_from = self.pending_semantic_changed_from.take();
         let valid = self
             .row_index
             .as_ref()
             .is_some_and(|index| index.revision == revision && index.width == width);
         if !valid {
-            self.row_index = Some(build_index(&self.model, width));
+            let previous = self.row_index.take();
+            self.row_index = Some(match (previous, semantic_changed_from) {
+                (Some(mut previous), Some(changed_from)) if previous.width == width => {
+                    let indexed_from = previous.indexed_from;
+                    reindex_in_place(
+                        &self.model,
+                        &mut previous,
+                        indexed_from,
+                        changed_from,
+                        width,
+                    );
+                    previous
+                }
+                _ => build_index(&self.model, width),
+            });
         }
         self.row_index.as_ref()
     }
 
     fn invalidate_and_repair(&mut self) {
-        self.row_index = None;
         let anchor = match &self.mode {
             StreamPaneMode::Detached(anchor) => Some(anchor.clone()),
             StreamPaneMode::FollowEnd => None,

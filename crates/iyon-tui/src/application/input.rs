@@ -58,6 +58,12 @@ impl<Action> PasteInterceptors<Action> {
         self.interceptors.remove(&component.id()).is_some()
     }
 
+    /// PERF-12 T13.1 R8: ID-based counterpart of `remove` for host-side
+    /// deferred component retirement.
+    pub(crate) fn remove_id(&mut self, component: ComponentId) -> bool {
+        self.interceptors.remove(&component).is_some()
+    }
+
     pub(crate) fn action(&self, component: ComponentId, text: &str) -> Option<Action> {
         self.interceptors
             .get(&component)

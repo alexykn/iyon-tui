@@ -385,7 +385,7 @@ fn live_table_stabilization_keeps_unsealed_tables_raw() {
         blocks(&live)
             .iter()
             .all(|block| !matches!(block.kind(), BlockKind::Table(_))),
-        "Iyon live policy keeps an unclosed table as raw pipes: {:?}",
+        "Live table policy keeps an unclosed table as raw pipes: {:?}",
         kinds(&live)
     );
     let strict = project_gfm(source, false);

@@ -32,6 +32,24 @@ impl ResidentPrefix {
         self.nodes.iter()
     }
 
+    /// Returns the first resident node that may overlap `offset`.
+    ///
+    /// Resident nodes are contiguous and ordered, so a binary search avoids
+    /// walking the retained prefix merely to find the damaged suffix.
+    pub(crate) fn nodes_from(&self, offset: StreamOffset) -> impl Iterator<Item = &StreamNode> {
+        let mut low = 0;
+        let mut high = self.nodes.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.nodes[middle].owned_range().end <= offset {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        self.nodes.range(low..)
+    }
+
     pub(crate) fn view(&self) -> StreamView {
         StreamView::new(self.nodes.iter().cloned().collect())
     }

@@ -1,7 +1,0 @@
-{
-  "name": "fixture-multiple-contributions",
-  "version": "1.0.0",
-  "type": "module",
-  "keywords": ["iyon-package"],
-  "iyon": { "extensions": { "main": "./src/index.ts" } }
-}

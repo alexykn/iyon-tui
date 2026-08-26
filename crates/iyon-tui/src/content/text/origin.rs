@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn origin_coexists_with_arbitrary_annotation_properties() {
-        let tag = SemanticTag::new("app", "thinking").unwrap();
+        let tag = SemanticTag::new("example", "annotated").unwrap();
         let extra = SemanticKey::new("app", "foo").unwrap();
         let annotations = Annotations::new()
             .with_tag(tag.clone())

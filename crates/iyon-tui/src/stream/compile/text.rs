@@ -13,7 +13,7 @@ use crate::{
     stream::{ProjectedText, ProjectedTextLayout, projected_atoms},
 };
 
-impl ViewCompiler {
+impl ViewCompiler<'_> {
     pub(crate) fn compile_projected_text_with_metadata(
         &self,
         text: &ProjectedText,

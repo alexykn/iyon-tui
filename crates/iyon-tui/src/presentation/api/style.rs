@@ -365,6 +365,10 @@ impl StyleFacts {
     pub(crate) fn get(&self, key: &StyleStateKey) -> Option<&StyleStateValue> {
         self.assignments.get(key)
     }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&StyleStateKey, &StyleStateValue)> {
+        self.assignments.iter()
+    }
 }
 
 impl From<&str> for StyleStateValue {

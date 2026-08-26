@@ -1,6 +1,9 @@
 //! Mutable backend-neutral physical composition surface.
 
-use crate::geometry::Size;
+use crate::{
+    geometry::Size,
+    perf::{self, Counter},
+};
 
 use super::glyph::{clear_glyph_covering, glyphs, place_glyphs, validate_cells, write_glyph_span};
 use super::{PhysicalColor, PhysicalStyle};
@@ -133,6 +136,7 @@ impl Surface {
                     break;
                 }
                 let dest_row = self.row_cells_mut(target_y);
+                perf::add(Counter::SurfaceCellsComposited, glyph.width as u64);
                 write_glyph_span(dest_row, dest_start, child_row, glyph.start, glyph.width);
             }
             debug_assert!(validate_cells(self.row_cells(target_y)).is_ok());
@@ -151,6 +155,41 @@ impl Surface {
             }
         }
         cropped
+    }
+
+    /// Clears a rectangular region before an incremental subtree composite.
+    pub(crate) fn clear_rect(&mut self, rect: crate::geometry::Rect) {
+        self.clear_rect_with_background(rect, None);
+    }
+
+    /// Clears a region while restoring the nearest retained ancestor surface
+    /// background. Incremental component painting must not erase a parent
+    /// background merely because the changed child has transparent cells.
+    pub(crate) fn clear_rect_with_background(
+        &mut self,
+        rect: crate::geometry::Rect,
+        background: Option<PhysicalColor>,
+    ) {
+        let right = rect.right().min(self.width());
+        let bottom = rect.bottom().min(self.height());
+        for y in rect.y.min(self.height())..bottom {
+            for x in rect.x.min(self.width())..right {
+                let cell = if let Some(color) = background {
+                    PhysicalCell {
+                        grapheme: None,
+                        style: PhysicalStyle {
+                            background: Some(color),
+                            ..PhysicalStyle::default()
+                        },
+                        painted: true,
+                        continuation: false,
+                    }
+                } else {
+                    PhysicalCell::transparent()
+                };
+                *self.get_mut(x, y) = cell;
+            }
+        }
     }
 
     /// Clear the whole glyph covering `(x, y)` so a later 1-cell write cannot

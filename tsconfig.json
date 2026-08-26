@@ -5,23 +5,16 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noEmit": true,
-    "declaration": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "types": ["bun-types"],
     "paths": {
-      "iyon:api": ["./packages/iyon-runtime/src/virtual-modules.d.ts"],
-      "iyon:core": ["./packages/iyon-runtime/src/virtual-modules.d.ts"],
-      "iyon:tui": ["./packages/iyon-runtime/src/virtual-modules.d.ts"],
-      "iyon:plugins": ["./packages/iyon-runtime/src/virtual-modules.d.ts"],
-      "@iyon/plugins": ["./packages/iyon-plugins/src/index.ts"],
-      "*.node": ["./packages/iyon-runtime/src/virtual-modules.d.ts"]
+      "@iyon/tui": ["./packages/iyon-tui/src/index.ts"]
     }
   },
   "include": [
-    "packages/**/*.ts",
-    "packages/**/*.d.ts",
-    "plugins/tools/**/*.ts"
+    "packages/iyon-tui/**/*.ts",
+    "packages/tui-consumer-fixture/**/*.ts"
   ]
 }

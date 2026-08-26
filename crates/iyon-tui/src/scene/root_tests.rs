@@ -132,7 +132,7 @@ fn body_only_root_has_no_history_overlay() {
     assert!(resolved.history_overlay.is_none());
     assert_eq!(resolved.history_height, 0);
     assert_eq!(resolved.body_height, 1);
-    assert!(resolved.scene.mounts.nodes.is_empty());
+    assert!(resolved.scene.mounts.is_empty());
 }
 
 #[test]
@@ -185,12 +185,15 @@ fn history_follow_end_stays_above_body() {
         Size::new(10, 6),
     )
     .unwrap();
-    let rows =
-        crate::presentation::layout::compile_bounded_view(&resolved.scene.view, Size::new(10, 6))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>();
+    let rows = crate::presentation::layout::compile_bounded_view_with_overlay(
+        &resolved.scene.view,
+        Size::new(10, 6),
+        &resolved.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect::<Vec<_>>();
     assert_eq!(rows, ["H3", "H4", "H5", "H6", "B1", "B2"]);
 }
 
@@ -280,12 +283,15 @@ fn multi_live_stream_capacity_keeps_one_root_mount_order() {
         resolved.scene.mounts.ids().collect::<Vec<_>>(),
         [a.id(), b.id(), c.id()]
     );
-    let rows =
-        crate::presentation::layout::compile_bounded_view(&resolved.scene.view, Size::new(10, 10))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>();
+    let rows = crate::presentation::layout::compile_bounded_view_with_overlay(
+        &resolved.scene.view,
+        Size::new(10, 10),
+        &resolved.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect::<Vec<_>>();
     assert_eq!(
         rows,
         [
@@ -300,12 +306,15 @@ fn multi_live_stream_capacity_keeps_one_root_mount_order() {
         .update_stream(stream, |source| source.set_count(21))
         .unwrap();
     resolved = resolve_root_scene(&updated, &registry, Size::new(10, 10)).unwrap();
-    let rows =
-        crate::presentation::layout::compile_bounded_view(&resolved.scene.view, Size::new(10, 10))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>();
+    let rows = crate::presentation::layout::compile_bounded_view_with_overlay(
+        &resolved.scene.view,
+        Size::new(10, 10),
+        &resolved.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect::<Vec<_>>();
     assert_eq!(
         rows,
         [

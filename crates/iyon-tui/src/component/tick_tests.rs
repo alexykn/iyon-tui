@@ -43,7 +43,7 @@ fn make_graph(ids: &[(ComponentId, Option<ComponentId>)]) -> MountGraph {
 
 fn make_capabilities(registry: &ComponentRegistry, graph: &MountGraph) -> MountedCapabilities {
     let mut capabilities = MountedCapabilities::default();
-    for node in &graph.nodes {
+    for node in graph.iter() {
         capabilities.insert(
             node.id,
             registry
@@ -129,6 +129,44 @@ fn multiple_due_components_tick_in_mount_order() {
     assert_eq!(registry.with(second, |blinker| blinker.frame), Some(1));
     assert_eq!(registry.revision(first).unwrap().value(), 1);
     assert_eq!(registry.revision(second).unwrap().value(), 1);
+}
+
+#[test]
+fn local_capability_sync_updates_a_mounted_tick_without_graph_rescan() {
+    let mut registry = ComponentRegistry::new();
+    let handle = registry.register(Blinker {
+        frame: 0,
+        interval: Duration::from_millis(80),
+    });
+    let mut scheduler = TickScheduler::new();
+    let now = Instant::now();
+    let graph = make_graph(&[(handle.id(), None)]);
+    let mut mounted = MountedComponents::default();
+    let transitions = mounted.reconcile(graph.clone());
+    let capabilities = make_capabilities(&registry, &graph);
+    scheduler.sync_capabilities(&graph, &capabilities, &transitions, now);
+
+    registry
+        .with_mut(handle, |blinker| {
+            blinker.interval = Duration::from_millis(10)
+        })
+        .unwrap();
+    let capabilities = make_capabilities(&registry, &graph);
+    scheduler.sync_component_capability(handle.id(), &capabilities, now);
+    assert_eq!(
+        scheduler.next_timeout(now, Duration::from_secs(1)),
+        Duration::from_millis(10)
+    );
+    assert!(
+        scheduler
+            .tick_due_with_events(
+                now + Duration::from_millis(10),
+                &mut registry,
+                &mut OutputQueue::new(),
+            )
+            .dirty
+    );
+    assert_eq!(registry.with(handle, |blinker| blinker.frame), Some(1));
 }
 
 #[test]

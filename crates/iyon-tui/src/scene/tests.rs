@@ -1,9 +1,11 @@
+use std::cell::Cell;
+
 use super::*;
 use crate::{
     component::{Component, ComponentRegistry, MountedComponents},
     geometry::Size,
     interaction::FocusState,
-    presentation::{IntoView, View, layout::compile_view},
+    presentation::{IntoView, View, layout::compile_view_with_overlay},
 };
 
 use super::{LayoutSynchronizer, layout_resolved_scene};
@@ -16,6 +18,23 @@ struct Label {
 impl Component for Label {
     fn view(&self) -> View {
         View::text(self.text.clone()).into_view()
+    }
+}
+
+#[derive(Debug)]
+struct CountingComponent {
+    view_calls: Cell<usize>,
+    capability_calls: Cell<usize>,
+}
+
+impl Component for CountingComponent {
+    fn view(&self) -> View {
+        self.view_calls.set(self.view_calls.get() + 1);
+        View::text("counted").into_view()
+    }
+
+    fn capabilities(&self, _cx: &mut crate::ComponentCx<'_, Self>) {
+        self.capability_calls.set(self.capability_calls.get() + 1);
     }
 }
 
@@ -128,20 +147,73 @@ struct CycleNode {
 impl Component for CycleNode {
     fn view(&self) -> View {
         self.target
-            .map(|id| View {
-                component: None,
-                width: crate::presentation::WidthRule::Fit,
-                height: crate::presentation::ir::HeightRule::Fit,
-                decoration: Default::default(),
-                style_states: Default::default(),
-                style_facts: Default::default(),
-                component_scope: None,
-                kind: crate::presentation::ir::ViewKind::ComponentSlot(
-                    crate::presentation::ir::ComponentSlotNode { id },
-                ),
-            })
+            .map(|id| View::native_component(id.value()))
             .unwrap_or_else(|| View::text("cycle").into_view())
     }
+}
+
+#[test]
+fn component_snapshots_are_cached_by_revision_and_isolated_by_component() {
+    let mut registry = ComponentRegistry::new();
+    let first = registry.register(CountingComponent {
+        view_calls: Cell::new(0),
+        capability_calls: Cell::new(0),
+    });
+    let second = registry.register(CountingComponent {
+        view_calls: Cell::new(0),
+        capability_calls: Cell::new(0),
+    });
+
+    let _ = resolve_scene(&View::component(first), &registry).unwrap();
+    assert_eq!(
+        registry.with(first, |component| {
+            (component.view_calls.get(), component.capability_calls.get())
+        }),
+        Some((1, 1))
+    );
+
+    let _ = resolve_scene(&View::component(first), &registry).unwrap();
+    assert_eq!(
+        registry.with(first, |component| {
+            (component.view_calls.get(), component.capability_calls.get())
+        }),
+        Some((1, 1))
+    );
+
+    registry.with_mut(second, |_| {}).unwrap();
+    let _ = resolve_scene(&View::component(first), &registry).unwrap();
+    assert_eq!(
+        registry.with(first, |component| {
+            (component.view_calls.get(), component.capability_calls.get())
+        }),
+        Some((1, 1))
+    );
+
+    registry.with_mut(first, |_| {}).unwrap();
+    let _ = resolve_scene(&View::component(first), &registry).unwrap();
+    assert_eq!(
+        registry.with(first, |component| {
+            (component.view_calls.get(), component.capability_calls.get())
+        }),
+        Some((2, 2))
+    );
+}
+
+#[test]
+fn component_free_resolution_stops_at_the_flagged_root() {
+    let registry = ComponentRegistry::new();
+    let view = View::vertical(|column| {
+        for _ in 0..100 {
+            column.child(View::vertical(|nested| {
+                for _ in 0..10 {
+                    nested.child(View::text("ordinary"));
+                }
+            }));
+        }
+    });
+    let mut session = ResolveSession::new(&registry);
+    session.resolve_root(&view).unwrap();
+    assert_eq!(session.nodes_visited(), 1);
 }
 
 #[test]
@@ -154,7 +226,7 @@ fn static_scene_resolves_identically_with_no_mounts() {
 
     let resolved = resolve_scene(&original, &registry).unwrap();
     assert_eq!(resolved.view, original);
-    assert!(resolved.mounts.nodes.is_empty());
+    assert!(resolved.mounts.is_empty());
 }
 
 #[test]
@@ -171,12 +243,11 @@ fn hanging_body_component_is_mounted_once_and_owns_one_body_geometry() {
     )
     .fill_width();
     let resolved = resolve_scene(&view, &registry).unwrap();
-    let rows = compile_view(&resolved.view, 10).rows;
+    let rows = compile_view_with_overlay(&resolved.view, 10, &resolved.overlay).rows;
 
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
@@ -210,7 +281,7 @@ fn hanging_body_component_reflows_without_mount_duplication() {
     let mut synchronizer = LayoutSynchronizer::default();
 
     let wide = layout_resolved_scene(&resolved, Size::new(20, 10));
-    let wide_rows = compile_view(&resolved.view, 20).rows;
+    let wide_rows = compile_view_with_overlay(&resolved.view, 20, &resolved.overlay).rows;
     assert_eq!(wide_rows.len(), 2);
     assert_eq!(
         synchronizer.synchronize(
@@ -224,7 +295,7 @@ fn hanging_body_component_reflows_without_mount_duplication() {
     let wide_size = wide.components.entries[&handle.id()].content.size();
 
     let narrow = layout_resolved_scene(&resolved, Size::new(8, 10));
-    let narrow_rows = compile_view(&resolved.view, 8).rows;
+    let narrow_rows = compile_view_with_overlay(&resolved.view, 8, &resolved.overlay).rows;
     assert_eq!(narrow_rows.len(), 5);
     assert_eq!(
         synchronizer.synchronize(
@@ -240,7 +311,6 @@ fn hanging_body_component_reflows_without_mount_duplication() {
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
@@ -274,14 +344,18 @@ fn hanging_prefix_component_is_mounted_once_when_body_wraps() {
     assert_eq!(
         resolved
             .mounts
-            .nodes
             .iter()
             .filter(|node| node.id == handle.id())
             .count(),
         1
     );
     assert_eq!(layout.components.entries.len(), 1);
-    assert!(compile_view(&resolved.view, 8).rows.len() > 1);
+    assert!(
+        compile_view_with_overlay(&resolved.view, 8, &resolved.overlay)
+            .rows
+            .len()
+            > 1
+    );
 }
 
 #[test]
@@ -302,13 +376,19 @@ fn one_slot_becomes_an_owned_component_root() {
     let handle = registry.register(Label {
         text: "hello".into(),
     });
-    let resolved = resolve_scene(&View::component(handle), &registry).unwrap();
+    let source = View::component(handle);
+    let resolved = resolve_scene(&source, &registry).unwrap();
 
-    assert_eq!(resolved.mounts.nodes.len(), 1);
-    assert_eq!(resolved.mounts.nodes[0].id, handle.id());
-    assert_eq!(resolved.mounts.nodes[0].parent, None);
-    assert_eq!(resolved.view.component, Some(handle.id()));
-    assert_eq!(count_slots(&resolved.view), 0);
+    assert!(crate::presentation::ir::View::ptr_eq(
+        &source,
+        &resolved.view
+    ));
+    let nodes = resolved.mounts.iter().collect::<Vec<_>>();
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].id, handle.id());
+    assert_eq!(nodes[0].parent, None);
+    assert_eq!(resolved.view, View::component(handle));
+    assert_eq!(count_slots(&resolved.view), 1);
 }
 
 #[test]
@@ -319,21 +399,29 @@ fn nested_child_is_reread_from_registry_on_each_resolution() {
 
     let first = resolve_scene(&View::component(parent), &registry).unwrap();
     assert_eq!(
-        first
-            .mounts
-            .nodes
-            .iter()
-            .map(|node| node.id)
-            .collect::<Vec<_>>(),
+        first.mounts.ids().collect::<Vec<_>>(),
         vec![parent.id(), child.id()]
     );
-    assert_eq!(first.mounts.nodes[1].parent, Some(parent.id()));
-    assert!(first.view.view_plain_text().contains("old"));
+    assert_eq!(
+        first.mounts.iter().nth(1).unwrap().parent,
+        Some(parent.id())
+    );
+    assert!(
+        compile_view_with_overlay(&first.view, 20, &first.overlay)
+            .rows
+            .iter()
+            .any(|row| row.plain_text().contains("old"))
+    );
 
     registry.with_mut(child, |label| label.text = "new".into());
     let second = resolve_scene(&View::component(parent), &registry).unwrap();
-    assert!(second.view.view_plain_text().contains("new"));
-    assert_eq!(second.mounts.nodes[1].revision.value(), 1);
+    assert!(
+        compile_view_with_overlay(&second.view, 20, &second.overlay)
+            .rows
+            .iter()
+            .any(|row| row.plain_text().contains("new"))
+    );
+    assert_eq!(second.mounts.iter().nth(1).unwrap().revision.value(), 1);
 }
 
 #[test]
@@ -343,16 +431,19 @@ fn slot_properties_become_the_component_ownership_shell() {
         text: "hello".into(),
     });
     let slot = View::component(handle).padding(1).fill_width();
-    let resolved = resolve_scene(&slot, &registry).unwrap().view;
+    let resolved = resolve_scene(&slot, &registry).unwrap();
 
-    assert_eq!(resolved.component, Some(handle.id()));
-    assert_eq!(resolved.width, crate::presentation::WidthRule::Fill);
+    assert_eq!(resolved.view, slot);
+    assert_eq!(resolved.view.width(), crate::presentation::WidthRule::Fill);
     assert_eq!(
-        resolved.decoration.padding,
+        resolved.view.decoration().padding,
         crate::presentation::Insets::all(1)
     );
-    assert_eq!(count_slots(&resolved), 0);
-    assert_eq!(compile_view(&resolved, 20).rows[1].plain_text(), " hello");
+    assert_eq!(count_slots(&resolved.view), 1);
+    assert_eq!(
+        compile_view_with_overlay(&resolved.view, 20, &resolved.overlay).rows[1].plain_text(),
+        " hello"
+    );
 }
 
 #[test]
@@ -361,15 +452,16 @@ fn explicit_outer_structure_stays_outside_component_ownership() {
     let handle = registry.register(Label {
         text: "hello".into(),
     });
-    let resolved = resolve_scene(&View::component(handle).container().padding(1), &registry)
-        .unwrap()
-        .view;
+    let resolved =
+        resolve_scene(&View::component(handle).container().padding(1), &registry).unwrap();
 
-    assert_eq!(resolved.component, None);
-    let crate::presentation::ir::ViewKind::Container(container) = &resolved.kind else {
+    let crate::presentation::ir::ViewKind::Container(container) = resolved.view.kind() else {
         panic!("expected outer container")
     };
-    assert_eq!(container.child.component, Some(handle.id()));
+    assert!(matches!(
+        container.child.kind(),
+        crate::presentation::ir::ViewKind::ComponentSlot(_)
+    ));
 }
 
 #[test]
@@ -470,7 +562,7 @@ fn snapshot_metadata_does_not_create_a_live_mount() {
     let resolved = resolve_scene(&snapshot, &registry).unwrap();
 
     assert_eq!(resolved.view, snapshot);
-    assert!(resolved.mounts.nodes.is_empty());
+    assert!(resolved.mounts.is_empty());
 }
 
 #[test]
@@ -534,7 +626,7 @@ fn component_geometry_distinguishes_mounting_from_visibility() {
     let layout = layout_resolved_scene(&resolved, Size::new(20, 4));
     let geometry = layout.components.entries.get(&handle.id()).unwrap();
     assert_eq!(geometry.visible, None);
-    assert_eq!(resolved.mounts.nodes.len(), 1);
+    assert_eq!(resolved.mounts.len(), 1);
 }
 
 #[test]
@@ -671,12 +763,16 @@ fn clipped_component_remains_semantically_mounted() {
     let view = View::component(handle).clamp_rows(0, crate::presentation::OverflowIndicator::None);
     let resolved = resolve_scene(&view, &registry).unwrap();
 
-    assert_eq!(resolved.mounts.nodes[0].id, handle.id());
-    assert!(compile_view(&resolved.view, 20).rows.is_empty());
+    assert_eq!(resolved.mounts.iter().next().unwrap().id, handle.id());
+    assert!(
+        compile_view_with_overlay(&resolved.view, 20, &resolved.overlay)
+            .rows
+            .is_empty()
+    );
 }
 
 fn count_slots(view: &View) -> usize {
-    match &view.kind {
+    match view.kind() {
         crate::presentation::ir::ViewKind::ComponentSlot(_) => 1,
         crate::presentation::ir::ViewKind::Column(column) => column
             .children
@@ -716,9 +812,9 @@ impl PlainText for crate::presentation::ir::ColumnChild {
 
 impl PlainText for View {
     fn view_plain_text(&self) -> String {
-        match &self.kind {
+        match self.kind() {
             crate::presentation::ir::ViewKind::Text(text) => {
-                text.spans.iter().map(|span| span.text.as_str()).collect()
+                text.spans.iter().map(|span| span.text()).collect()
             }
             crate::presentation::ir::ViewKind::Column(column) => column
                 .children

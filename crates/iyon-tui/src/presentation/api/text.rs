@@ -1,26 +1,121 @@
 //! Typed semantic text construction backed by the canonical View IR.
 
+use std::{fmt, str, sync::Arc};
+
 use super::style::{
     BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleStateKey,
     StyleStateValue, TextAttribute,
 };
 use crate::presentation::ir::{TextView, View, ViewKind};
 
+const INLINE_TEXT_CAPACITY: usize = 12;
+
+/// Immutable native-owned UTF-8 storage shared by retained text clones.
+#[derive(Debug)]
+pub(crate) struct NativeUtf8Page {
+    text: Box<str>,
+}
+
+pub(crate) enum TextStorage {
+    Inline {
+        bytes: [u8; INLINE_TEXT_CAPACITY],
+        len: u8,
+    },
+    PageSlice {
+        page: Arc<NativeUtf8Page>,
+        offset: u32,
+        len: u32,
+    },
+    Owned(String),
+}
+
+impl Clone for TextStorage {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Inline { bytes, len } => Self::Inline {
+                bytes: *bytes,
+                len: *len,
+            },
+            Self::PageSlice { page, offset, len } => Self::PageSlice {
+                page: Arc::clone(page),
+                offset: *offset,
+                len: *len,
+            },
+            Self::Owned(text) => Self::Owned(text.clone()),
+        }
+    }
+}
+
+impl fmt::Debug for TextStorage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("TextStorage")
+            .field(&self.as_str())
+            .finish()
+    }
+}
+
+impl PartialEq for TextStorage {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl TextStorage {
+    fn from_string(text: String) -> Self {
+        let bytes = text.as_bytes();
+        if bytes.len() <= INLINE_TEXT_CAPACITY {
+            let mut inline = [0; INLINE_TEXT_CAPACITY];
+            inline[..bytes.len()].copy_from_slice(bytes);
+            return Self::Inline {
+                bytes: inline,
+                len: bytes.len() as u8,
+            };
+        }
+        let len = text.len() as u32;
+        Self::PageSlice {
+            page: Arc::new(NativeUtf8Page {
+                text: text.into_boxed_str(),
+            }),
+            offset: 0,
+            len,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Inline { bytes, len } => unsafe {
+                str::from_utf8_unchecked(&bytes[..*len as usize])
+            },
+            Self::PageSlice { page, offset, len } => {
+                &page.text[*offset as usize..(*offset + *len) as usize]
+            }
+            Self::Owned(text) => text,
+        }
+    }
+}
+
 /// A semantic text span with optional text-cell styling.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextSpan {
-    pub(crate) text: String,
+    pub(crate) text: TextStorage,
     pub(crate) style: StyleRef,
     pub(crate) style_facts: StyleFacts,
 }
 
 impl TextSpan {
     pub fn text(&self) -> &str {
-        &self.text
+        self.text.as_str()
     }
 
     pub fn text_mut(&mut self) -> &mut String {
-        &mut self.text
+        if !matches!(&self.text, TextStorage::Owned(_)) {
+            self.text = TextStorage::Owned(self.text.as_str().to_owned());
+        }
+        match &mut self.text {
+            TextStorage::Owned(text) => text,
+            _ => unreachable!("text storage is materialized before mutable access"),
+        }
     }
 
     pub fn style(&self) -> &StyleRef {
@@ -33,7 +128,7 @@ impl TextSpan {
 
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
-            text: text.into(),
+            text: TextStorage::from_string(text.into()),
             style: StyleRef::default(),
             style_facts: StyleFacts::default(),
         }
@@ -41,7 +136,7 @@ impl TextSpan {
 
     pub fn styled(text: impl Into<String>, style: impl Into<StyleRef>) -> Self {
         Self {
-            text: text.into(),
+            text: TextStorage::from_string(text.into()),
             style: style.into(),
             style_facts: StyleFacts::default(),
         }
@@ -96,7 +191,7 @@ impl Text {
 
     pub(super) fn styled(spans: impl IntoIterator<Item = TextSpan>) -> Self {
         Self::from_text_view(TextView {
-            spans: spans.into_iter().collect(),
+            spans: spans.into_iter().collect::<Vec<_>>().into(),
             wrap: WrapMode::WordThenGrapheme,
             align: HorizontalAlign::Start,
             cursor: None,
@@ -105,7 +200,7 @@ impl Text {
 
     fn from_text_view(text: TextView) -> Self {
         Self {
-            view: View::new_kind(ViewKind::Text(text)),
+            view: View::new_kind(ViewKind::Text(Arc::new(text))),
         }
     }
 
@@ -113,41 +208,27 @@ impl Text {
         self.view
     }
 
-    fn text_mut(&mut self) -> &mut TextView {
-        match &mut self.view.kind {
-            ViewKind::Text(text) => text,
-            ViewKind::Column(_)
-            | ViewKind::Row(_)
-            | ViewKind::Grid(_)
-            | ViewKind::Hanging(_)
-            | ViewKind::Container(_)
-            | ViewKind::Spacer { .. }
-            | ViewKind::ClampRows(_)
-            | ViewKind::RowViewport(_)
-            | ViewKind::ComponentSlot(_) => {
-                unreachable!("Text wrapper must always contain ViewKind::Text")
-            }
-        }
-    }
-
-    pub fn wrap(mut self, wrap: WrapMode) -> Self {
-        self.text_mut().wrap = wrap;
+    fn map_text(mut self, update: impl FnOnce(&mut TextView)) -> Self {
+        self.view = self.view.map_text(update);
         self
     }
 
-    pub(crate) fn cursor_at(mut self, byte_offset: usize) -> Self {
-        self.text_mut().cursor = Some(crate::presentation::ir::TextCursorAnchor { byte_offset });
-        self
+    pub fn wrap(self, wrap: WrapMode) -> Self {
+        self.map_text(|text| text.wrap = wrap)
     }
 
-    pub fn no_wrap(mut self) -> Self {
-        self.text_mut().wrap = WrapMode::NoWrap;
-        self
+    pub(crate) fn cursor_at(self, byte_offset: usize) -> Self {
+        self.map_text(|text| {
+            text.cursor = Some(crate::presentation::ir::TextCursorAnchor { byte_offset });
+        })
     }
 
-    pub fn text_align(mut self, align: HorizontalAlign) -> Self {
-        self.text_mut().align = align;
-        self
+    pub fn no_wrap(self) -> Self {
+        self.map_text(|text| text.wrap = WrapMode::NoWrap)
+    }
+
+    pub fn text_align(self, align: HorizontalAlign) -> Self {
+        self.map_text(|text| text.align = align)
     }
 
     fn map_view(mut self, map: impl FnOnce(View) -> View) -> Self {
@@ -272,7 +353,7 @@ mod tests {
 
     #[test]
     fn text_style_merges_node_intent_without_rewriting_spans() {
-        let mut text = View::styled_text([
+        let text = View::styled_text([
             TextSpan::plain("plain"),
             TextSpan::styled("bold", StyleSpec::new().bold()),
         ])
@@ -280,21 +361,21 @@ mod tests {
         .style(StyleSpec::new().italic());
 
         assert_eq!(
-            text.view.decoration.text_style.foreground,
+            text.view.decoration().text_style.foreground,
             Some(ColorSpec::Ansi(1))
         );
         assert_eq!(
-            text.view.decoration.text_style.attributes.italic,
+            text.view.decoration().text_style.attributes.italic,
             Some(true)
         );
-        let ViewKind::Text(text_view) = &mut text.view.kind else {
+        let ViewKind::Text(text_view) = text.view.kind() else {
             panic!("expected text view");
         };
         assert_eq!(text_view.spans[0].style, StyleSpec::default());
         assert_eq!(text_view.spans[1].style.attributes.bold, Some(true));
 
         let converted = text.into_view();
-        assert!(matches!(converted.kind, ViewKind::Text(_)));
+        assert!(matches!(converted.kind(), ViewKind::Text(_)));
     }
 
     #[test]
@@ -305,12 +386,12 @@ mod tests {
             .style(StyleSpec::new().foreground(ColorSpec::Ansi(3)))
             .fill_width();
 
-        assert_eq!(text.view.width, WidthRule::Fill);
+        assert_eq!(text.view.width(), WidthRule::Fill);
         assert_eq!(
-            text.view.decoration.text_style.foreground,
+            text.view.decoration().text_style.foreground,
             Some(ColorSpec::Ansi(3))
         );
-        let ViewKind::Text(text_view) = &text.view.kind else {
+        let ViewKind::Text(text_view) = text.view.kind() else {
             panic!("expected text view");
         };
         assert_eq!(text_view.wrap, WrapMode::Grapheme);
@@ -326,9 +407,9 @@ mod tests {
             .text_align(HorizontalAlign::End)
             .fit_width();
 
-        assert_eq!(text.view.width, WidthRule::Fit);
-        assert!(matches!(text.view.kind, ViewKind::Text(_)));
-        assert_eq!(text.view.decoration, Decoration::default());
+        assert_eq!(text.view.width(), WidthRule::Fit);
+        assert!(matches!(text.view.kind(), ViewKind::Text(_)));
+        assert_eq!(text.view.decoration(), &Decoration::default());
     }
 
     #[test]
@@ -341,12 +422,15 @@ mod tests {
             .bold();
 
         assert_eq!(
-            text.view.decoration.text_style.foreground,
+            text.view.decoration().text_style.foreground,
             Some(ColorSpec::ansi(1))
         );
-        assert_eq!(text.view.decoration.text_style.attributes.bold, Some(true));
         assert_eq!(
-            text.view.decoration.text_style.attributes.italic,
+            text.view.decoration().text_style.attributes.bold,
+            Some(true)
+        );
+        assert_eq!(
+            text.view.decoration().text_style.attributes.italic,
             Some(true)
         );
     }
@@ -356,7 +440,7 @@ mod tests {
         let container = View::text("x").container();
         let clamp = View::text("x").clamp_rows(1, OverflowIndicator::None);
 
-        assert!(matches!(container.kind, ViewKind::Container(_)));
-        assert!(matches!(clamp.kind, ViewKind::ClampRows(_)));
+        assert!(matches!(container.kind(), ViewKind::Container(_)));
+        assert!(matches!(clamp.kind(), ViewKind::ClampRows(_)));
     }
 }

@@ -1,18 +1,28 @@
 //! Backend-neutral semantic measurement used by the layout pipeline.
 
+use std::sync::Arc;
+
 use crate::{
+    component::ComponentId,
     geometry::Size,
+    perf::{self, Counter},
     presentation::{
         ir::{
-            ColumnView, ContainerNode, GridView, HangingView, RowView, RowViewportView, TrackSize,
-            View, ViewKind, WidthRule,
+            ColumnView, GridView, HangingView, PersistentSeq, RowView, RowViewportView, TextView,
+            TrackSize, View, ViewKind, WidthRule,
         },
         wrap::{TextFlowMetrics, text_flow_metrics},
     },
+    scene::ResolutionOverlay,
 };
 
-use super::grid::{FlexMode, SpanRequirement, allocate_grid_tracks, span_extent};
-use super::tracks::{TrackAllocation, allocate_tracks};
+use super::{
+    cache::{LayoutCache, MeasureKey},
+    grid::{FlexMode, SpanRequirement, allocate_grid_tracks, span_extent},
+    tracks::{TrackAllocation, allocate_tracks},
+};
+
+pub(super) use super::cache::WidthIntent;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct DecorationMetrics {
@@ -31,7 +41,7 @@ pub(super) struct DecorationMetrics {
 
 pub(super) fn decoration_metrics(view: &View, width: u16) -> DecorationMetrics {
     let (left_border, right_border, top_border, bottom_border) = view
-        .decoration
+        .decoration()
         .border
         .as_ref()
         .map_or((0, 0, 0, 0), |border| {
@@ -45,20 +55,20 @@ pub(super) fn decoration_metrics(view: &View, width: u16) -> DecorationMetrics {
     let border_width = left_border.saturating_add(right_border);
     let padding_capacity = width.saturating_sub(border_width);
     let left_padding = view
-        .decoration
+        .decoration()
         .padding
         .left
         .min(padding_capacity.saturating_sub(1));
     let right_padding = view
-        .decoration
+        .decoration()
         .padding
         .right
         .min(padding_capacity.saturating_sub(left_padding.saturating_add(1)));
     let horizontal = border_width
         .saturating_add(left_padding)
         .saturating_add(right_padding);
-    let top_padding = view.decoration.padding.top;
-    let bottom_padding = view.decoration.padding.bottom;
+    let top_padding = view.decoration().padding.top;
+    let bottom_padding = view.decoration().padding.bottom;
     let vertical = top_border
         .saturating_add(bottom_border)
         .saturating_add(top_padding)
@@ -78,58 +88,56 @@ pub(super) fn decoration_metrics(view: &View, width: u16) -> DecorationMetrics {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WidthIntent {
-    Semantic,
-    ForceFit,
-}
-
 #[derive(Debug)]
-pub(super) struct MeasuredNode<'a> {
-    pub(super) view: &'a View,
+pub(super) struct MeasuredNode {
+    pub(super) view: View,
+    pub(super) key: MeasureKey,
+    pub(super) cacheable: bool,
+    pub(super) component: Option<ComponentId>,
+    pub(super) component_scope: Option<ComponentId>,
     pub(super) width_capacity: u16,
     pub(super) decoration: DecorationMetrics,
     pub(super) size: Size,
     pub(super) core_size: Size,
-    pub(super) kind: MeasuredKind<'a>,
+    pub(super) kind: MeasuredKind,
 }
 
 #[derive(Debug)]
-pub(super) enum MeasuredKind<'a> {
+pub(super) enum MeasuredKind {
     Text {
-        text: &'a crate::presentation::ir::TextView,
+        text: Arc<TextView>,
         metrics: TextFlowMetrics,
     },
     Spacer {
         rows: u16,
     },
     Container {
-        child: Box<MeasuredNode<'a>>,
+        child: Arc<MeasuredNode>,
     },
     Column {
-        children: Vec<MeasuredColumnChild<'a>>,
+        children: Vec<MeasuredColumnChild>,
         gap: u16,
     },
     Row {
         allocation: TrackAllocation,
-        children: Vec<MeasuredRowChild<'a>>,
+        children: Vec<MeasuredRowChild>,
         gap: u16,
         vertical_align: crate::presentation::VerticalAlign,
     },
     Hanging {
         prefix_width: u16,
-        prefix: Box<MeasuredNode<'a>>,
-        continuation_prefix: Box<MeasuredNode<'a>>,
-        body: Box<MeasuredNode<'a>>,
+        prefix: Arc<MeasuredNode>,
+        continuation_prefix: Arc<MeasuredNode>,
+        body: Arc<MeasuredNode>,
     },
     ClampRows {
-        child: Box<MeasuredNode<'a>>,
+        child: Arc<MeasuredNode>,
         max_rows: u16,
-        overflow: &'a crate::presentation::OverflowIndicator,
+        overflow: crate::presentation::OverflowIndicator,
     },
     RowViewport {
         width: u16,
-        child: Box<MeasuredNode<'a>>,
+        child: Arc<MeasuredNode>,
         skip_rows: u16,
         visible_height: Option<u16>,
         layout_height: Option<u16>,
@@ -137,49 +145,105 @@ pub(super) enum MeasuredKind<'a> {
     },
     Grid {
         columns: TrackAllocation,
-        row_tracks: Vec<TrackSize>,
+        row_tracks: PersistentSeq<TrackSize>,
         intrinsic_rows: TrackAllocation,
-        cells: Vec<MeasuredGridCell<'a>>,
+        cells: Vec<MeasuredGridCell>,
         row_gap: u16,
     },
 }
 
 #[derive(Debug)]
-pub(super) struct MeasuredColumnChild<'a> {
+pub(super) struct MeasuredColumnChild {
     pub(super) track: TrackSize,
-    pub(super) node: MeasuredNode<'a>,
+    pub(super) node: Arc<MeasuredNode>,
 }
 
 #[derive(Debug)]
-pub(super) struct MeasuredRowChild<'a> {
+pub(super) struct MeasuredRowChild {
     pub(super) track_width: u16,
-    pub(super) node: MeasuredNode<'a>,
+    pub(super) node: Arc<MeasuredNode>,
 }
 
 #[derive(Debug)]
-pub(super) struct MeasuredGridCell<'a> {
+pub(super) struct MeasuredGridCell {
     pub(super) row: usize,
     pub(super) column: usize,
     pub(super) row_span: usize,
     pub(super) column_span: usize,
     pub(super) horizontal_align: crate::presentation::HorizontalAlign,
     pub(super) vertical_align: crate::presentation::VerticalAlign,
-    pub(super) node: MeasuredNode<'a>,
+    pub(super) node: Arc<MeasuredNode>,
 }
 
-pub(super) fn measure_node<'a>(
-    view: &'a View,
+pub(super) fn measure_node(
+    view: &View,
     width: u16,
     intent: WidthIntent,
-) -> MeasuredNode<'a> {
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> Arc<MeasuredNode> {
+    let (key, cacheable) = match view.kind() {
+        ViewKind::ComponentSlot(slot) => {
+            let snapshot = overlay.component(slot.id);
+            (
+                snapshot
+                    .map(|snapshot| {
+                        MeasureKey::with_component(view, snapshot.view.id(), width, intent)
+                    })
+                    .unwrap_or_else(|| MeasureKey::ordinary(view, width, intent)),
+                snapshot.is_some_and(|snapshot| !snapshot.view.contains_component_identity()),
+            )
+        }
+        _ => (
+            MeasureKey::ordinary(view, width, intent),
+            !view.contains_component_identity(),
+        ),
+    };
+    if cacheable && let Some(measured) = cache.measured(key) {
+        return measured;
+    }
+
+    let measured = Arc::new(measure_node_uncached(
+        view,
+        width,
+        intent,
+        overlay,
+        component_scope,
+        key,
+        cacheable,
+        cache,
+    ));
+    if cacheable {
+        cache.store_measured(key, Arc::clone(&measured));
+    }
+    measured
+}
+
+#[allow(clippy::too_many_arguments)]
+fn measure_node_uncached(
+    view: &View,
+    width: u16,
+    intent: WidthIntent,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    key: MeasureKey,
+    cacheable: bool,
+    cache: &mut LayoutCache,
+) -> MeasuredNode {
+    perf::inc(Counter::MeasureNodeCalls);
     #[cfg(test)]
     super::record_measure_node();
-    let bounds = view.decoration.bounds;
+    let bounds = view.decoration().bounds;
     let width_capacity = width.min(bounds.width.normalized_max());
     let decoration = decoration_metrics(view, width_capacity);
-    let kind = measure_kind(view, decoration.inner_width);
+    let (component, child_scope) = match view.kind() {
+        ViewKind::ComponentSlot(slot) => (Some(slot.id), Some(slot.id)),
+        _ => (None, component_scope),
+    };
+    let kind = measure_kind(view, decoration.inner_width, overlay, child_scope, cache);
     let core_size = kind.intrinsic_size();
-    let core_width = match (intent, view.width) {
+    let core_width = match (intent, view.width()) {
         (WidthIntent::ForceFit, _) | (_, WidthRule::Fit) => core_size.width,
         (_, WidthRule::Fill) => decoration.inner_width,
     };
@@ -195,7 +259,11 @@ pub(super) fn measure_node<'a>(
             .min(bounds.height.normalized_max()),
     );
     MeasuredNode {
-        view,
+        view: view.clone(),
+        key,
+        cacheable,
+        component,
+        component_scope: child_scope,
         width_capacity,
         decoration,
         size,
@@ -204,51 +272,107 @@ pub(super) fn measure_node<'a>(
     }
 }
 
-fn measure_kind<'a>(view: &'a View, width: u16) -> MeasuredKind<'a> {
-    match &view.kind {
+fn measure_kind(
+    view: &View,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
+    match view.kind() {
         ViewKind::Text(text) => {
             let metrics = text_flow_metrics(text, width);
-            MeasuredKind::Text { text, metrics }
+            MeasuredKind::Text {
+                text: Arc::clone(text),
+                metrics,
+            }
         }
         ViewKind::Spacer { rows } => MeasuredKind::Spacer { rows: *rows },
-        ViewKind::Container(ContainerNode { child }) => MeasuredKind::Container {
-            child: Box::new(measure_node(child, width, WidthIntent::Semantic)),
+        ViewKind::Container(container) => MeasuredKind::Container {
+            child: measure_node(
+                &container.child,
+                width,
+                WidthIntent::Semantic,
+                overlay,
+                component_scope,
+                cache,
+            ),
         },
-        ViewKind::Hanging(hanging) => measure_hanging(hanging, width),
+        ViewKind::Hanging(hanging) => {
+            measure_hanging(hanging, width, overlay, component_scope, cache)
+        }
         ViewKind::ClampRows(clamp) => {
-            let child = Box::new(measure_node(&clamp.child, width, WidthIntent::Semantic));
+            let child = measure_node(
+                &clamp.child,
+                width,
+                WidthIntent::Semantic,
+                overlay,
+                component_scope,
+                cache,
+            );
             MeasuredKind::ClampRows {
                 child,
                 max_rows: clamp.max_rows,
-                overflow: &clamp.overflow,
+                overflow: clamp.overflow.clone(),
             }
         }
-        ViewKind::RowViewport(viewport) => measure_viewport(viewport, width),
-        ViewKind::Column(column) => measure_column(column, width),
-        ViewKind::Row(row) => measure_row(row, width),
-        ViewKind::Grid(grid) => measure_grid(grid, width),
-        ViewKind::ComponentSlot(_) => unreachable!("component slot reached measurement"),
+        ViewKind::RowViewport(viewport) => {
+            measure_viewport(viewport, width, overlay, component_scope, cache)
+        }
+        ViewKind::Column(column) => measure_column(column, width, overlay, component_scope, cache),
+        ViewKind::Row(row) => measure_row(row, width, overlay, component_scope, cache),
+        ViewKind::Grid(grid) => measure_grid(grid, width, overlay, component_scope, cache),
+        ViewKind::ComponentSlot(slot) => {
+            let snapshot = overlay
+                .component(slot.id)
+                .unwrap_or_else(|| panic!("component overlay missing {:?}", slot.id));
+            MeasuredKind::Container {
+                child: measure_node(
+                    &snapshot.view,
+                    width,
+                    WidthIntent::Semantic,
+                    overlay,
+                    Some(slot.id),
+                    cache,
+                ),
+            }
+        }
     }
 }
 
-fn measure_hanging<'a>(hanging: &'a HangingView, width: u16) -> MeasuredKind<'a> {
-    let prefix = Box::new(measure_node(
+fn measure_hanging(
+    hanging: &HangingView,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
+    let prefix = measure_node(
         &hanging.prefix,
         u16::MAX,
         WidthIntent::ForceFit,
-    ));
+        overlay,
+        component_scope,
+        cache,
+    );
     let prefix_width = prefix.size.width;
     let body_width = width.saturating_sub(prefix_width).max(1);
-    let body = Box::new(measure_node(
+    let body = measure_node(
         &hanging.body,
         body_width,
         WidthIntent::Semantic,
-    ));
-    let continuation_prefix = Box::new(measure_node(
+        overlay,
+        component_scope,
+        cache,
+    );
+    let continuation_prefix = measure_node(
         &hanging.continuation_prefix,
         prefix_width,
         WidthIntent::Semantic,
-    ));
+        overlay,
+        component_scope,
+        cache,
+    );
     MeasuredKind::Hanging {
         prefix_width,
         prefix,
@@ -257,13 +381,26 @@ fn measure_hanging<'a>(hanging: &'a HangingView, width: u16) -> MeasuredKind<'a>
     }
 }
 
-fn measure_column<'a>(column: &'a ColumnView, width: u16) -> MeasuredKind<'a> {
+fn measure_column(
+    column: &ColumnView,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
     let children = column
         .children
         .iter()
         .map(|child| MeasuredColumnChild {
             track: child.track,
-            node: measure_node(&child.view, width, WidthIntent::Semantic),
+            node: measure_node(
+                &child.view,
+                width,
+                WidthIntent::Semantic,
+                overlay,
+                component_scope,
+                cache,
+            ),
         })
         .collect::<Vec<_>>();
     MeasuredKind::Column {
@@ -272,16 +409,29 @@ fn measure_column<'a>(column: &'a ColumnView, width: u16) -> MeasuredKind<'a> {
     }
 }
 
-fn measure_row<'a>(row: &'a RowView, width: u16) -> MeasuredKind<'a> {
+fn measure_row(
+    row: &RowView,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
     let tracks = row
         .children
         .iter()
         .map(|child| child.track)
         .collect::<Vec<_>>();
     let allocation = allocate_tracks(width, row.gap, &tracks, |index, remaining| {
-        measure_node(&row.children[index].view, remaining, WidthIntent::ForceFit)
-            .size
-            .width
+        measure_node(
+            &row.children[index].view,
+            remaining,
+            WidthIntent::ForceFit,
+            overlay,
+            component_scope,
+            cache,
+        )
+        .size
+        .width
     });
     let children = row
         .children
@@ -291,7 +441,14 @@ fn measure_row<'a>(row: &'a RowView, width: u16) -> MeasuredKind<'a> {
             let track_width = allocation.tracks[index];
             MeasuredRowChild {
                 track_width,
-                node: measure_node(&child.view, track_width, WidthIntent::Semantic),
+                node: measure_node(
+                    &child.view,
+                    track_width,
+                    WidthIntent::Semantic,
+                    overlay,
+                    component_scope,
+                    cache,
+                ),
             }
         })
         .collect::<Vec<_>>();
@@ -303,16 +460,29 @@ fn measure_row<'a>(row: &'a RowView, width: u16) -> MeasuredKind<'a> {
     }
 }
 
-fn measure_grid<'a>(grid: &'a GridView, width: u16) -> MeasuredKind<'a> {
+fn measure_grid(
+    grid: &GridView,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
     let column_requirements = grid
         .cells
         .iter()
         .map(|cell| SpanRequirement {
             start: cell.column,
             span: usize::from(cell.column_span),
-            preferred: measure_node(&cell.view, width, WidthIntent::ForceFit)
-                .size
-                .width,
+            preferred: measure_node(
+                &cell.view,
+                width,
+                WidthIntent::ForceFit,
+                overlay,
+                component_scope,
+                cache,
+            )
+            .size
+            .width,
         })
         .collect::<Vec<_>>();
     let columns = allocate_grid_tracks(
@@ -334,7 +504,14 @@ fn measure_grid<'a>(grid: &'a GridView, width: u16) -> MeasuredKind<'a> {
                 column_span: usize::from(cell.column_span),
                 horizontal_align: cell.horizontal_align,
                 vertical_align: cell.vertical_align,
-                node: measure_node(&cell.view, cell_width, WidthIntent::Semantic),
+                node: measure_node(
+                    &cell.view,
+                    cell_width,
+                    WidthIntent::Semantic,
+                    overlay,
+                    component_scope,
+                    cache,
+                ),
             }
         })
         .collect::<Vec<_>>();
@@ -362,8 +539,21 @@ fn measure_grid<'a>(grid: &'a GridView, width: u16) -> MeasuredKind<'a> {
     }
 }
 
-fn measure_viewport<'a>(viewport: &'a RowViewportView, width: u16) -> MeasuredKind<'a> {
-    let child = Box::new(measure_node(&viewport.child, width, WidthIntent::Semantic));
+fn measure_viewport(
+    viewport: &RowViewportView,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<ComponentId>,
+    cache: &mut LayoutCache,
+) -> MeasuredKind {
+    let child = measure_node(
+        &viewport.child,
+        width,
+        WidthIntent::Semantic,
+        overlay,
+        component_scope,
+        cache,
+    );
     MeasuredKind::RowViewport {
         width,
         child,
@@ -374,7 +564,7 @@ fn measure_viewport<'a>(viewport: &'a RowViewportView, width: u16) -> MeasuredKi
     }
 }
 
-impl MeasuredKind<'_> {
+impl MeasuredKind {
     pub(super) fn intrinsic_size(&self) -> Size {
         match self {
             Self::Text { metrics, .. } => Size::new(metrics.width, metrics.row_count),

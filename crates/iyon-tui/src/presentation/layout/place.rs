@@ -5,14 +5,18 @@ use super::{
     prepare::{PreparedChild, PreparedKind, PreparedNode},
     tree::{LayoutContent, LayoutNode, LayoutNodeId, LayoutStyle},
 };
-use crate::geometry::{Point, Rect};
+use crate::{
+    geometry::{Point, Rect},
+    perf::{self, Counter},
+};
 
 pub(super) fn emit_prepared(
-    prepared: &PreparedNode<'_, '_>,
+    prepared: &PreparedNode,
     origin: Point,
     inherited_clip: Rect,
     nodes: &mut Vec<LayoutNode>,
 ) -> LayoutNodeId {
+    perf::inc(Counter::LayoutNodesEmitted);
     #[cfg(test)]
     super::record_emitted_node();
     let rect = Rect::new(
@@ -48,16 +52,22 @@ pub(super) fn emit_prepared(
     };
     let id = LayoutNodeId(nodes.len());
     nodes.push(LayoutNode {
+        view_id: prepared
+            .measured
+            .key
+            .component_view
+            .unwrap_or_else(|| prepared.measured.view.id()),
+        paint_cacheable: prepared.measured.cacheable,
         rect,
         content_rect,
         clip_rect: node_clip,
-        component: prepared.measured.view.component,
+        component: prepared.measured.component,
         children: Vec::new(),
         style: LayoutStyle {
-            component_scope: prepared.measured.view.component_scope,
-            style_states: prepared.measured.view.style_states.clone(),
-            style_facts: prepared.measured.view.style_facts.clone(),
-            decoration: prepared.measured.view.decoration.clone(),
+            component_scope: prepared.measured.component_scope,
+            style_states: prepared.measured.view.view_style_states().clone(),
+            style_facts: prepared.measured.view.view_style_facts().clone(),
+            decoration: prepared.measured.view.decoration().clone(),
         },
         content,
     });
@@ -76,7 +86,7 @@ pub(super) fn emit_prepared(
 }
 
 fn emit_children(
-    children: &[PreparedChild<'_, '_>],
+    children: &[PreparedChild],
     origin: Point,
     clip: Rect,
     nodes: &mut Vec<LayoutNode>,
@@ -98,7 +108,7 @@ fn emit_children(
 }
 
 fn emit_child(
-    child: &PreparedChild<'_, '_>,
+    child: &PreparedChild,
     origin: Point,
     clip: Rect,
     nodes: &mut Vec<LayoutNode>,
@@ -114,11 +124,11 @@ fn emit_child(
     )]
 }
 
-fn layout_content(prepared: &PreparedNode<'_, '_>) -> LayoutContent {
+fn layout_content(prepared: &PreparedNode) -> LayoutContent {
     match (&prepared.measured.kind, &prepared.kind) {
         (MeasuredKind::Text { text, .. }, _) => LayoutContent::Text {
-            text: (*text).clone(),
-            width_rule: prepared.measured.view.width,
+            text: (**text).clone(),
+            width_rule: prepared.measured.view.width(),
         },
         (MeasuredKind::Spacer { rows }, _) => LayoutContent::Spacer { rows: *rows },
         (MeasuredKind::ClampRows { overflow, .. }, PreparedKind::Clamp { .. }) => {

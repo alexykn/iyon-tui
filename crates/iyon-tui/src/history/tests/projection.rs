@@ -82,11 +82,15 @@ impl Component for LabelComponent {
 
 fn rows(history: &History, registry: &ComponentRegistry, size: Size) -> Vec<String> {
     let scene = project(history, registry, size).unwrap();
-    crate::presentation::layout::compile_bounded_view(&scene.scene.view, size)
-        .rows
-        .into_iter()
-        .map(|row| row.plain_text())
-        .collect()
+    crate::presentation::layout::compile_bounded_view_with_overlay(
+        &scene.scene.view,
+        size,
+        &scene.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect()
 }
 
 #[test]
@@ -374,11 +378,15 @@ fn partial_live_viewport_translates_component_geometry_with_painted_rows() {
     assert_eq!(child_geometry.visible.map(|rect| rect.y), Some(0));
     assert_eq!(child_geometry.visible.map(|rect| rect.height), Some(1));
     assert_eq!(
-        crate::presentation::layout::compile_bounded_view(&scene.scene.view, Size::new(12, 3))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>(),
+        crate::presentation::layout::compile_bounded_view_with_overlay(
+            &scene.scene.view,
+            Size::new(12, 3),
+            &scene.scene.overlay,
+        )
+        .rows
+        .into_iter()
+        .map(|row| row.plain_text())
+        .collect::<Vec<_>>(),
         ["three", "child-tail", "bottom"]
     );
 }
@@ -568,6 +576,98 @@ impl Component for MutableLabel {
     fn view(&self) -> View {
         View::text(self.label.clone()).into_view()
     }
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn retained_history_tail_updates_do_not_remeasure_the_static_prefix() {
+    let _lock = crate::perf::test_lock();
+    let mut registry = ComponentRegistry::new();
+    let handle = registry.register(MutableLabel {
+        label: "tail-0".to_owned(),
+    });
+    let mut history = History::new();
+    for index in 0..1_000 {
+        history.push(format!("static-{index}")).unwrap();
+    }
+    history.push(View::component(handle)).unwrap();
+    let size = Size::new(32, 8);
+
+    rows(&history, &registry, size);
+    registry
+        .with_mut(handle, |component| component.label = "tail-1".to_owned())
+        .unwrap();
+    rows(&history, &registry, size);
+    crate::perf::reset();
+
+    registry
+        .with_mut(handle, |component| component.label = "tail-2".to_owned())
+        .unwrap();
+    rows(&history, &registry, size);
+    let counters = crate::perf::snapshot();
+
+    assert_eq!(
+        counters.value(crate::perf::Counter::HistoryUnitsMeasured),
+        1,
+        "only the mutated live tail may be remeasured"
+    );
+    assert!(
+        counters.value(crate::perf::Counter::HistoryCachedHeightHits) >= 999,
+        "the static prefix must be served from the retained height cache"
+    );
+    assert!(
+        counters.value(crate::perf::Counter::HistoryUnitsExamined) <= 10,
+        "tail selection should inspect only a viewport-sized suffix"
+    );
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn stream_height_cache_reuses_history_geometry_and_rebuilds_only_stream_suffix() {
+    let _lock = crate::perf::test_lock();
+    let registry = ComponentRegistry::new();
+    let mut history = History::new();
+    for index in 0..1_000 {
+        history.push(format!("static-{index}")).unwrap();
+    }
+    let stream = history.push_stream(crate::TextStream::new()).unwrap();
+    let size = Size::new(32, 8);
+
+    history
+        .update_stream(stream, |source| source.push("first line\npending"))
+        .unwrap();
+    rows(&history, &registry, size);
+    crate::perf::reset();
+
+    rows(&history, &registry, size);
+    let warm = crate::perf::snapshot();
+    assert_eq!(
+        warm.value(crate::perf::Counter::HistoryUnitsMeasured),
+        0,
+        "a stable stream revision must reuse its retained History height"
+    );
+    assert!(
+        warm.value(crate::perf::Counter::HistoryCachedHeightHits) >= 1_001,
+        "static units and the stream must all hit retained height metadata"
+    );
+
+    history
+        .update_stream(stream, |source| source.push(" second line\n"))
+        .unwrap();
+    rows(&history, &registry, size);
+    let updated = crate::perf::snapshot();
+    assert!(
+        updated.value(crate::perf::Counter::HistoryUnitsMeasured) <= 10,
+        "stream updates may prepare only a bounded tail, not the static prefix"
+    );
+    assert!(
+        updated.value(crate::perf::Counter::HistoryCachedHeightHits) >= 1_000,
+        "the static prefix must remain cached when the stream advances"
+    );
+    assert!(
+        updated.value(crate::perf::Counter::StreamStableRowsReused) > 0,
+        "stream row work must reuse the stable prefix"
+    );
 }
 
 #[test]
@@ -763,12 +863,15 @@ fn frozen_overlay_underflow_is_not_shifted_by_bottom_slack() {
     assert_eq!(overlay.rows[0].plain_text(), "A3");
     assert_eq!(overlay.rows[1].plain_text(), "A4");
 
-    let rendered =
-        crate::presentation::layout::compile_bounded_view(&projection.scene.view, Size::new(10, 6))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>();
+    let rendered = crate::presentation::layout::compile_bounded_view_with_overlay(
+        &projection.scene.view,
+        Size::new(10, 6),
+        &projection.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect::<Vec<_>>();
     assert_eq!(rendered, ["", "", "B", "", "", ""]);
 }
 
@@ -793,11 +896,14 @@ fn native_frontier_anchor_pins_front_items() {
         HistoryViewportAnchor::NativeFrontier,
     )
     .unwrap();
-    let rendered =
-        crate::presentation::layout::compile_bounded_view(&pinned.scene.view, Size::new(10, 3))
-            .rows
-            .into_iter()
-            .map(|row| row.plain_text())
-            .collect::<Vec<_>>();
+    let rendered = crate::presentation::layout::compile_bounded_view_with_overlay(
+        &pinned.scene.view,
+        Size::new(10, 3),
+        &pinned.scene.overlay,
+    )
+    .rows
+    .into_iter()
+    .map(|row| row.plain_text())
+    .collect::<Vec<_>>();
     assert_eq!(rendered, ["A1", "A2", "A3"]);
 }

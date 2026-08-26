@@ -1,16 +1,18 @@
 //! A language-binding host for the retained native application runtime.
 //!
-//! `TuiHost` deliberately exposes semantic actions and native snapshots, not
+//! `TuiHost` deliberately exposes caller-defined outputs and native snapshots, not
 //! terminal events. Components remain mounted in the same `SceneHost` used by
 //! the Rust application driver.
 
 use std::{
     collections::VecDeque,
+    ops::Range,
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
 
 use anyhow::Result;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::controls::text_input::command::TextInputCommand;
 use crate::text::RewriteProjectionError;
@@ -21,13 +23,13 @@ use crate::text::{
     walk_rewrite_inline,
 };
 use crate::{
-    App as TuiApp, AppCx, BorderEdges, BorderSpec, CodeBlockLabelPolicy, Component, ComponentCx,
+    App as TuiApp, AppCx, BorderSpec, CodeBlockLabelPolicy, Component, ComponentCx,
     ComponentHandle, History, HistoryLayout, HistoryStreamHandle, HistoryUnitId, InteractionResult,
     IntoView, KeyStroke, MarkdownOptions, MarkdownProjector, Output, Projection, ProjectionBuilder,
-    Projector, Renderer, ScrollPane, Smooth, SoftBreakPolicy, StreamOffset, StreamRange,
-    StreamRevision, StreamSnapshot, StreamSnapshotBuilder, StreamingSource, StyleRef,
+    Projector, Renderer, ScrollPane, Smooth, SmoothConfig, SoftBreakPolicy, StreamOffset,
+    StreamRange, StreamRevision, StreamSnapshot, StreamSnapshotBuilder, StreamingSource,
     TableColumnSizing, TaskListMarkerPolicy, TextContent, TextInput, TextRenderPolicy,
-    TextRenderer, Theme, View, WrapMode,
+    TextRenderer, TextStream as GenericTextStream, Theme, View, WrapMode,
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
@@ -35,10 +37,10 @@ use crate::{
     terminal::{PresentReceipt, TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };
 
-/// One application-level action produced by native interaction routing.
+/// One caller-defined routed output produced by native interaction routing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoutedAction {
-    pub action_id: String,
+pub struct RoutedOutput {
+    pub route_id: String,
     pub payload: Option<String>,
 }
 
@@ -55,29 +57,29 @@ pub struct HostCellStyle {
 }
 
 #[derive(Debug)]
-enum HostAction {
-    Routed(RoutedAction),
+enum HostOutput {
+    Routed(RoutedOutput),
 }
 
 struct HostState {
     body: View,
-    actions: VecDeque<RoutedAction>,
+    outputs: VecDeque<RoutedOutput>,
 }
 
-fn host_init(_cx: &mut AppCx<'_, HostAction>) -> Result<HostState> {
+fn host_init(_cx: &mut AppCx<'_, HostOutput>) -> Result<HostState> {
     Ok(HostState {
         body: View::spacer(0),
-        actions: VecDeque::new(),
+        outputs: VecDeque::new(),
     })
 }
 
 fn host_update(
     state: &mut HostState,
-    action: HostAction,
-    _cx: &mut AppCx<'_, HostAction>,
+    action: HostOutput,
+    _cx: &mut AppCx<'_, HostOutput>,
 ) -> Result<()> {
     match action {
-        HostAction::Routed(action) => state.actions.push_back(action),
+        HostOutput::Routed(output) => state.outputs.push_back(output),
     }
     Ok(())
 }
@@ -88,9 +90,9 @@ fn host_view(state: &HostState) -> View {
 
 type HostRunning = crate::application::kernel::RunningApp<
     HostState,
-    HostAction,
+    HostOutput,
     anyhow::Error,
-    fn(&mut HostState, HostAction, &mut AppCx<'_, HostAction>) -> Result<()>,
+    fn(&mut HostState, HostOutput, &mut AppCx<'_, HostOutput>) -> Result<()>,
     fn(&HostState) -> View,
 >;
 
@@ -134,54 +136,13 @@ pub struct HostTextInput {
 }
 
 #[derive(Clone)]
-pub struct HostActivityConfig {
-    pub frames: Vec<String>,
-    pub active_label: String,
-    pub pending_label: String,
-    pub queue_prefix: String,
-    pub tick_ms: u64,
-    pub muted_style: StyleRef,
-    pub padding: u16,
-}
-
-impl Default for HostActivityConfig {
-    fn default() -> Self {
-        Self {
-            frames: vec!["•".to_owned()],
-            active_label: "active".to_owned(),
-            pending_label: "pending".to_owned(),
-            queue_prefix: "queue: ".to_owned(),
-            tick_ms: 80,
-            muted_style: StyleRef::default(),
-            padding: 0,
-        }
-    }
-}
-
-#[derive(Default)]
-struct WorkingState {
-    active: bool,
-    frame: usize,
-    pending: Vec<String>,
-}
-
-/// A native ticking working/status component configured by the application.
-#[derive(Clone)]
-pub struct HostWorking {
-    state: Arc<Mutex<WorkingState>>,
-    component_id: Arc<Mutex<Option<u64>>>,
-    config: HostActivityConfig,
-    host: Arc<Mutex<Option<Weak<Mutex<HostInner>>>>>,
-}
-
-#[derive(Clone)]
 pub struct HostViewSlot {
     state: Arc<Mutex<ViewSlotState>>,
     component_id: Arc<Mutex<Option<u64>>>,
     host: Arc<Mutex<Option<Weak<Mutex<HostInner>>>>>,
 }
 
-/// A shared native scrolling viewport for live tool output.
+/// A shared native scrolling viewport for live output.
 #[derive(Clone)]
 pub struct HostScrollPane {
     state: Arc<Mutex<ScrollPane>>,
@@ -193,6 +154,7 @@ struct ViewSlotState {
     view: View,
     revision: u64,
     frames: Vec<View>,
+    pending_frames: Option<Vec<View>>,
     frame_index: usize,
     interval: Duration,
     last_tick: Option<Instant>,
@@ -205,6 +167,7 @@ impl HostViewSlot {
                 view,
                 revision: 0,
                 frames: Vec::new(),
+                pending_frames: None,
                 frame_index: 0,
                 interval: Duration::from_millis(480),
                 last_tick: None,
@@ -222,6 +185,7 @@ impl HostViewSlot {
                 .map_err(|_| anyhow::anyhow!("view slot lock is poisoned"))?;
             state.view = view;
             state.frames.clear();
+            state.pending_frames = None;
             state.frame_index = 0;
             state.last_tick = None;
             state.revision = state.revision.saturating_add(1);
@@ -233,16 +197,95 @@ impl HostViewSlot {
         self.component_id.lock().ok().and_then(|id| *id)
     }
 
+    /// PERF-12 T13.1 R8: request deferred retirement of this slot's registry
+    /// entry. Idempotent; a never-host-mounted slot (no component id) is a
+    /// no-op. Physical reclamation happens in
+    /// `RunningApp::reap_retired_components` after reconciliation proves the
+    /// component unmounted.
+    pub fn retire(&self) {
+        let Some(raw_id) = self.component_id() else {
+            return;
+        };
+        if let Ok(guard) = self.host.lock() {
+            if let Some(weak) = guard.as_ref() {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut inner) = inner.lock() {
+                        inner.running.host_retire_component(raw_id);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn revision(&self) -> u64 {
         self.state.lock().map(|state| state.revision).unwrap_or(0)
     }
 
     pub fn set_animation(&self, frames: Vec<View>, interval: Duration) -> Result<()> {
+        self.replace_animation(frames, interval)
+    }
+
+    /// Replace animation frames on the next cycle boundary while preserving
+    /// the current frame until the native scheduler reaches frame zero.
+    ///
+    /// This is useful when a caller changes animation semantics without
+    /// wanting a mid-cycle visual inversion. Rust retains the pending frames
+    /// and applies them from the native tick path; callers do not schedule
+    /// individual ticks through the binding.
+    pub fn set_animation_at_cycle_boundary(
+        &self,
+        frames: Vec<View>,
+        interval: Duration,
+    ) -> Result<()> {
         if frames.is_empty() {
             return Err(anyhow::anyhow!(
                 "view slot animation requires at least one frame"
             ));
         }
+        let host_now = self.host_time();
+        let mut invalidate = false;
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("view slot lock is poisoned"))?;
+            if state.frames.len() < 2 || state.interval != interval {
+                let preserve_phase = !state.frames.is_empty() && state.interval == interval;
+                state.frame_index = if preserve_phase {
+                    state.frame_index % frames.len()
+                } else {
+                    0
+                };
+                state.view = frames[state.frame_index].clone();
+                state.frames = frames;
+                state.pending_frames = None;
+                state.interval = interval;
+                if !preserve_phase {
+                    state.last_tick = Some(host_now.unwrap_or_else(Instant::now));
+                }
+                state.revision = state.revision.saturating_add(1);
+                invalidate = true;
+            } else {
+                state.pending_frames = Some(frames);
+            }
+        }
+        if invalidate {
+            self.invalidate_host()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn replace_animation(&self, frames: Vec<View>, interval: Duration) -> Result<()> {
+        if frames.is_empty() {
+            return Err(anyhow::anyhow!(
+                "view slot animation requires at least one frame"
+            ));
+        }
+        // Read host time before taking the slot lock. Rendering holds the host
+        // lock while resolving mounted components, which takes the slot lock;
+        // acquiring them in the opposite order here can deadlock the runtime.
+        let host_now = self.host_time();
         {
             let mut state = self
                 .state
@@ -256,9 +299,13 @@ impl HostViewSlot {
             };
             state.view = frames[state.frame_index].clone();
             state.frames = frames;
+            state.pending_frames = None;
             state.interval = interval;
             if !preserve_phase {
-                state.last_tick = None;
+                // Anchor the animation to the host clock. This keeps the
+                // first scheduled tick from either catching up immediately
+                // or delaying the first frame by one scheduler interval.
+                state.last_tick = Some(host_now.unwrap_or_else(Instant::now));
             }
             state.revision = state.revision.saturating_add(1);
         }
@@ -269,16 +316,31 @@ impl HostViewSlot {
         self.set_view(view)
     }
 
+    fn host_time(&self) -> Option<Instant> {
+        self.host
+            .lock()
+            .ok()
+            .and_then(|host| host.as_ref().and_then(Weak::upgrade))
+            .and_then(|host| host.lock().ok().map(|inner| inner.now))
+    }
+
     fn tick(&self, now: Instant) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
         if state.frames.len() < 2 {
+            // Reset the clock so a future set_animation starts fresh
+            // rather than inheriting a stale last_tick.
+            state.last_tick = None;
             return false;
         }
         let Some(last) = state.last_tick else {
+            // First tick with frames: start the clock now so the interval
+            // is measured from the first scheduled tick, not from the
+            // earlier set_animation call. This avoids catching up for the
+            // scheduling delay.
             state.last_tick = Some(now);
-            return false;
+            return true;
         };
         let due = now.duration_since(last) >= state.interval;
         if !due {
@@ -286,6 +348,11 @@ impl HostViewSlot {
         }
         state.last_tick = Some(now);
         state.frame_index = (state.frame_index + 1) % state.frames.len();
+        if state.frame_index == 0 {
+            if let Some(frames) = state.pending_frames.take() {
+                state.frames = frames;
+            }
+        }
         state.view = state.frames[state.frame_index].clone();
         state.revision = state.revision.saturating_add(1);
         true
@@ -315,12 +382,23 @@ impl HostViewSlot {
             .map_err(|_| anyhow::anyhow!("view slot host lock is poisoned"))?
             .clone()
             .and_then(|host| host.upgrade());
-        if let Some(host) = host {
-            let mut inner = host
-                .lock()
-                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        let Some(host) = host else {
+            return Ok(());
+        };
+        let component_id = self
+            .component_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("view slot component lock is poisoned"))?
+            .to_owned();
+        let mut inner = host
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        if let Some(component_id) = component_id {
+            inner.running.host_invalidate_component(component_id);
+        } else {
             inner.running.invalidate_frame();
         }
+        inner.advance_and_render()?;
         Ok(())
     }
 }
@@ -354,6 +432,22 @@ impl HostScrollPane {
         self.component_id.lock().ok().and_then(|id| *id)
     }
 
+    /// PERF-12 T13.1 R8: see `HostViewSlot::retire`.
+    pub fn retire(&self) {
+        let Some(raw_id) = self.component_id() else {
+            return;
+        };
+        if let Ok(guard) = self.host.lock() {
+            if let Some(weak) = guard.as_ref() {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut inner) = inner.lock() {
+                        inner.running.host_retire_component(raw_id);
+                    }
+                }
+            }
+        }
+    }
+
     fn attach_host(&self, host: &Arc<Mutex<HostInner>>) -> Result<()> {
         *self
             .host
@@ -378,12 +472,23 @@ impl HostScrollPane {
             .map_err(|_| anyhow::anyhow!("scroll pane host lock is poisoned"))?
             .clone()
             .and_then(|host| host.upgrade());
-        if let Some(host) = host {
-            let mut inner = host
-                .lock()
-                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        let Some(host) = host else {
+            return Ok(());
+        };
+        let component_id = self
+            .component_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("scroll pane component lock is poisoned"))?
+            .to_owned();
+        let mut inner = host
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        if let Some(component_id) = component_id {
+            inner.running.host_invalidate_component(component_id);
+        } else {
             inner.running.invalidate_frame();
         }
+        inner.advance_and_render()?;
         Ok(())
     }
 }
@@ -446,7 +551,7 @@ impl Component for MountedViewSlot {
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
-        cx.tick(Duration::from_millis(480), Self::tick);
+        cx.tick(Duration::from_millis(16), Self::tick);
     }
 }
 
@@ -456,180 +561,80 @@ impl MountedViewSlot {
     }
 }
 
-impl HostWorking {
-    pub fn new(config: HostActivityConfig) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(WorkingState::default())),
-            component_id: Arc::new(Mutex::new(None)),
-            config,
-            host: Arc::new(Mutex::new(None)),
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextStreamAnnotation {
+    pub namespace: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+struct HostSourceChunk {
+    range: StreamRange,
+    annotations: Vec<SemanticTag>,
+    text: Arc<str>,
+}
+
+impl HostSourceChunk {
+    fn pacing_atoms(&self) -> impl Iterator<Item = (StreamRange, HostPacingAtom)> + '_ {
+        self.text.grapheme_indices(true).map(|(start, grapheme)| {
+            let end = start + grapheme.len();
+            (
+                StreamRange::new(
+                    self.range.start().saturating_add(start as u64),
+                    self.range.start().saturating_add(end as u64),
+                ),
+                HostPacingAtom {
+                    annotations: self.annotations.clone(),
+                    source: Arc::clone(&self.text),
+                    local: start..end,
+                },
+            )
+        })
+    }
+
+    fn suffix_from(&self, offset: StreamOffset) -> Option<Self> {
+        if self.range.end() <= offset {
+            return None;
         }
-    }
-
-    pub fn set_active(&self, active: bool) -> Result<()> {
-        self.state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("working component lock is poisoned"))?
-            .active = active;
-        self.invalidate_host()
-    }
-
-    pub fn set_pending(&self, pending: Vec<String>) -> Result<()> {
-        self.state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("working component lock is poisoned"))?
-            .pending = pending;
-        self.invalidate_host()
-    }
-
-    pub fn component_id(&self) -> Option<u64> {
-        self.component_id.lock().ok().and_then(|id| *id)
-    }
-
-    fn set_component_id(&self, id: u64) -> Result<()> {
-        *self
-            .component_id
-            .lock()
-            .map_err(|_| anyhow::anyhow!("working component id lock is poisoned"))? = Some(id);
-        Ok(())
-    }
-
-    fn attach_host(&self, host: &Arc<Mutex<HostInner>>) -> Result<()> {
-        *self
-            .host
-            .lock()
-            .map_err(|_| anyhow::anyhow!("working host lock is poisoned"))? =
-            Some(Arc::downgrade(host));
-        Ok(())
-    }
-
-    fn invalidate_host(&self) -> Result<()> {
-        let host = self
-            .host
-            .lock()
-            .map_err(|_| anyhow::anyhow!("working host lock is poisoned"))?
-            .clone()
-            .and_then(|host| host.upgrade());
-        let Some(host) = host else {
-            return Ok(());
-        };
-        let mut inner = host
-            .lock()
-            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
-        inner.running.invalidate_frame();
-        Ok(())
-    }
-}
-
-struct MountedWorking(HostWorking);
-
-impl Component for MountedWorking {
-    fn view(&self) -> View {
-        let Ok(state) = self.0.state.lock() else {
-            return View::spacer(0);
-        };
-        if !state.active {
-            return View::spacer(0);
+        if offset <= self.range.start() {
+            return Some(self.clone());
         }
-        let index = state.frame % self.0.config.frames.len();
-        let frame = if state.pending.is_empty() {
-            self.0
-                .config
-                .frames
-                .get(
-                    self.0
-                        .config
-                        .frames
-                        .len()
-                        .saturating_sub(1)
-                        .saturating_sub(index),
-                )
-                .map(String::as_str)
-                .unwrap_or("")
-        } else {
-            self.0
-                .config
-                .frames
-                .get(index)
-                .map(String::as_str)
-                .unwrap_or("")
-        };
-        let label = if state.pending.is_empty() {
-            &self.0.config.active_label
-        } else {
-            &self.0.config.pending_label
-        };
-        let status = View::text(format!("{frame} {label}")).no_wrap();
-        let row = if let Some(first) = state.pending.first() {
-            let preview = first.split_whitespace().collect::<Vec<_>>().join(" ");
-            let extra = state.pending.len().saturating_sub(1);
-            View::horizontal(|row| {
-                row.gap(4);
-                row.child(status);
-                row.flex(
-                    View::text(format!("{}{preview}", self.0.config.queue_prefix))
-                        .no_wrap()
-                        .style(self.0.config.muted_style.clone()),
-                );
-                if extra > 0 {
-                    row.child(
-                        View::text(format!(" + {extra} more"))
-                            .no_wrap()
-                            .style(self.0.config.muted_style.clone()),
-                    );
-                }
-            })
-        } else {
-            status.into_view()
-        };
-        row.fill_width()
-            .padding(crate::Insets::horizontal(self.0.config.padding))
+        let local = usize::try_from(offset.as_u64().saturating_sub(self.range.start().as_u64()))
+            .expect("host source chunk offset fits usize");
+        assert!(
+            self.text.is_char_boundary(local),
+            "host source compaction must use a UTF-8 boundary"
+        );
+        Some(Self {
+            range: StreamRange::new(offset, self.range.end()),
+            annotations: self.annotations.clone(),
+            text: Arc::from(&self.text[local..]),
+        })
     }
-
-    fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
-        cx.tick(Duration::from_millis(self.0.config.tick_ms), Self::tick);
-    }
-}
-
-impl MountedWorking {
-    fn tick(component: &mut Self, _now: Instant, _cx: &mut crate::EventCx<'_>) -> bool {
-        let Ok(mut state) = component.0.state.lock() else {
-            return false;
-        };
-        if !state.active {
-            return false;
-        }
-        state.frame = state.frame.wrapping_add(1);
-        true
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HostStreamSegmentKind {
-    Text,
-    Thinking,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HostAssistantSegmentKind {
-    Text,
-    Thinking,
 }
 
 #[derive(Clone, Debug)]
 struct HostPacingAtom {
-    kind: HostAssistantSegmentKind,
-    text: String,
+    annotations: Vec<SemanticTag>,
+    source: Arc<str>,
+    local: Range<usize>,
 }
 
-struct HostAssistantPipeline {
+impl HostPacingAtom {
+    fn text(&self) -> &str {
+        &self.source[self.local.clone()]
+    }
+}
+
+struct HostTextPipeline {
     smoother: Smooth,
     markdown: MarkdownProjector,
     renderer: TextRenderer,
+    paced: Projection<HostPacingAtom>,
 }
 
-impl HostAssistantPipeline {
-    fn new() -> Self {
+impl HostTextPipeline {
+    fn new(pacing: SmoothConfig) -> Self {
         let policy = TextRenderPolicy::new()
             .with_block_gap(1)
             .with_soft_break(SoftBreakPolicy::LineBreak)
@@ -640,21 +645,52 @@ impl HostAssistantPipeline {
             .with_code_block_label(CodeBlockLabelPolicy::Language)
             .with_code_block_gap(0)
             .with_code_wrap(WrapMode::NoWrap);
+        let paced = ProjectionBuilder::new(
+            StreamOffset::ZERO,
+            StreamOffset::ZERO,
+            StreamOffset::ZERO,
+            false,
+        )
+        .finish()
+        .expect("empty host paced projection is valid");
         Self {
-            smoother: Smooth::default(),
+            smoother: Smooth::new(pacing),
             markdown: MarkdownProjector::new(
                 MarkdownOptions::gfm().with_live_table_stabilization(true),
             ),
             renderer: TextRenderer::with_policy(policy),
+            paced,
         }
     }
 
+    fn reset(&mut self) {
+        let pacing = self.smoother.config();
+        *self = Self::new(pacing);
+    }
+
     fn project(&mut self, input: &Projection<HostPacingAtom>) -> Result<Projection<TextContent>> {
-        let paced = self
-            .smoother
-            .project(input)
-            .expect("host stream smoothing is infallible");
-        let raw = paced.map_ref(|atom| TextContent::raw(atom.text.clone()));
+        let previous_end = self.paced.source_end();
+        let reset =
+            self.paced.source_base() != input.source_base() || previous_end > input.source_end();
+        let from = if reset {
+            input.source_base()
+        } else {
+            previous_end
+        };
+        let delta = self.smoother.project_incremental(input, from);
+        if reset {
+            self.paced = delta;
+        } else {
+            for span in delta.spans() {
+                self.paced
+                    .append_span_many(span.source(), span.values().iter().cloned())
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            }
+            self.paced
+                .set_envelope(delta.stable_through(), delta.is_sealed());
+        }
+        let paced = &self.paced;
+        let raw = paced.map_ref(|atom| TextContent::raw(atom.text()));
         let markdown = self
             .markdown
             .project(&raw)
@@ -663,7 +699,7 @@ impl HostAssistantPipeline {
         let markdown = pipe_tables
             .project(&markdown)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        ThinkingRewriter::new(&paced)
+        AnnotationRewriter::new(paced)
             .into_projector()
             .project(&markdown)
             .map_err(|error| anyhow::anyhow!(error.to_string()))
@@ -682,70 +718,62 @@ impl HostAssistantPipeline {
     }
 }
 
-struct ThinkingMap(Vec<(StreamRange, HostAssistantSegmentKind)>);
+struct AnnotationMap(Vec<(StreamRange, Vec<SemanticTag>)>);
 
-impl ThinkingMap {
+impl AnnotationMap {
     fn new(projection: &Projection<HostPacingAtom>) -> Self {
-        let mut ranges: Vec<(StreamRange, HostAssistantSegmentKind)> = Vec::new();
+        let mut ranges: Vec<(StreamRange, Vec<SemanticTag>)> = Vec::new();
         for span in projection.spans() {
             let Some(atom) = span.values().first() else {
                 continue;
             };
-            if let Some((last, kind)) = ranges.last_mut()
-                && *kind == atom.kind
+            if let Some((last, annotations)) = ranges.last_mut()
+                && *annotations == atom.annotations
                 && last.end() == span.source().start()
             {
                 *last = StreamRange::new(last.start(), span.source().end());
             } else {
-                ranges.push((span.source(), atom.kind));
+                ranges.push((span.source(), atom.annotations.clone()));
             }
         }
         Self(ranges)
     }
-
-    fn kind_for(&self, range: StreamRange) -> Option<HostAssistantSegmentKind> {
-        self.0.iter().find_map(|(candidate, kind)| {
-            (candidate.start() <= range.start() && range.end() <= candidate.end()).then_some(*kind)
-        })
-    }
 }
 
-struct ThinkingRewriter {
-    map: ThinkingMap,
-    tag: SemanticTag,
+struct AnnotationRewriter {
+    map: AnnotationMap,
 }
 
-impl ThinkingRewriter {
+impl AnnotationRewriter {
     fn new(paced: &Projection<HostPacingAtom>) -> Self {
         Self {
-            map: ThinkingMap::new(paced),
-            tag: SemanticTag::new("app", "thinking").expect("static thinking tag is valid"),
+            map: AnnotationMap::new(paced),
         }
     }
 
+    fn apply_annotations(run: TextRun, annotations: &[SemanticTag]) -> TextRun {
+        run.map_annotations(|current| {
+            annotations
+                .iter()
+                .cloned()
+                .fold(current, |current, tag| current.with_tag(tag))
+        })
+    }
+
     fn annotate_run(&self, run: TextRun) -> Result<Vec<TextRun>, TextIrError> {
-        let TextProvenance::Exact(range) = run.provenance().clone() else {
-            let range = match run.provenance() {
-                TextProvenance::Derived(range) => *range,
-                TextProvenance::Synthetic => return Ok(vec![run]),
-                TextProvenance::Exact(_) => unreachable!(),
-            };
-            return Ok(
-                if self.map.kind_for(range) == Some(HostAssistantSegmentKind::Thinking) {
-                    vec![run.map_annotations(|annotations| annotations.with_tag(self.tag.clone()))]
-                } else {
-                    vec![run]
-                },
-            );
+        let range = match run.provenance() {
+            TextProvenance::Exact(range) | TextProvenance::Derived(range) => *range,
+            TextProvenance::Synthetic => return Ok(vec![run]),
         };
         if range.is_empty() {
             return Ok(vec![run]);
         }
         let mut result = Vec::new();
+        let derived = matches!(run.provenance(), TextProvenance::Derived(_));
         let mut remaining = run;
         let mut cursor = range.start();
         while !remaining.text().is_empty() {
-            let Some((map_range, kind)) = self
+            let Some((map_range, annotations)) = self
                 .map
                 .0
                 .iter()
@@ -754,20 +782,37 @@ impl ThinkingRewriter {
                 return Ok(vec![remaining]);
             };
             let end = map_range.end().min(range.end());
-            let length = usize::try_from(end.as_u64().saturating_sub(cursor.as_u64()))
-                .expect("stream range fits usize");
+            let source_delta = end.as_u64().saturating_sub(cursor.as_u64());
+            let source_span = range.len().max(1);
+            let mut length = if !derived {
+                usize::try_from(source_delta).expect("stream range fits usize")
+            } else {
+                usize::try_from(
+                    source_delta
+                        .saturating_mul(range.len())
+                        .checked_div(source_span)
+                        .unwrap_or_default(),
+                )
+                .expect("derived stream range fits usize")
+            };
+            length = length.min(remaining.text().len());
+            while length > 0 && !remaining.text().is_char_boundary(length) {
+                length -= 1;
+            }
+            if length == 0 && end < range.end() {
+                // A transformed run may begin with a multi-byte grapheme whose
+                // source range is smaller than the display text. Keep it whole
+                // rather than asking TextRun to split at an invalid boundary.
+                result.push(Self::apply_annotations(remaining, annotations));
+                break;
+            }
             let (piece, rest) = if length == remaining.text().len() {
                 (remaining, None)
             } else {
                 let (left, right) = remaining.split_at(length)?;
                 (left, Some(right))
             };
-            let piece = if *kind == HostAssistantSegmentKind::Thinking {
-                piece.map_annotations(|annotations| annotations.with_tag(self.tag.clone()))
-            } else {
-                piece
-            };
-            result.push(piece);
+            result.push(Self::apply_annotations(piece, annotations));
             cursor = end;
             let Some(next) = rest else { break };
             remaining = next;
@@ -776,7 +821,7 @@ impl ThinkingRewriter {
     }
 }
 
-impl TextRewriter for ThinkingRewriter {
+impl TextRewriter for AnnotationRewriter {
     type Error = TextIrError;
 
     fn rewrite_inline(&mut self, inline: Inline) -> Result<Inline, Self::Error> {
@@ -1062,27 +1107,42 @@ fn pipe_cell_run(text: String, range: Option<StreamRange>) -> TextRun {
 }
 
 struct HostStreamState {
-    pacing_atoms: Vec<(StreamRange, HostPacingAtom)>,
+    /// Plain streams use the generic PERF-5 source directly. This keeps the
+    /// append path out of the host's Markdown/annotation adapter and lets
+    /// StreamModel own stable-prefix promotion and source compaction.
+    plain: Option<GenericTextStream>,
+    source_chunks: Vec<HostSourceChunk>,
     source_base: StreamOffset,
     received_end: StreamOffset,
-    last_received_kind: Option<HostAssistantSegmentKind>,
-    last_received_ends_with_newline: bool,
     revision: StreamRevision,
     sealed: bool,
-    pipeline: Option<HostAssistantPipeline>,
+    pipeline: Option<HostTextPipeline>,
     pacing_input: Projection<HostPacingAtom>,
     semantic: Option<Projection<TextContent>>,
     presentation: TextStreamPresentation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextStreamPresentation {
     pub insets: crate::Insets,
+    pacing: SmoothConfig,
 }
 
 impl TextStreamPresentation {
     pub const fn new(insets: crate::Insets) -> Self {
-        Self { insets }
+        Self {
+            insets,
+            pacing: SmoothConfig::new(),
+        }
+    }
+
+    pub fn with_pacing(mut self, pacing: SmoothConfig) -> Self {
+        self.pacing = pacing;
+        self
+    }
+
+    pub const fn pacing(self) -> SmoothConfig {
+        self.pacing
     }
 }
 
@@ -1097,11 +1157,10 @@ impl Default for HostStreamState {
         .finish()
         .expect("empty host pacing projection is valid");
         Self {
-            pacing_atoms: Vec::new(),
+            plain: Some(GenericTextStream::new()),
+            source_chunks: Vec::new(),
             source_base: StreamOffset::ZERO,
             received_end: StreamOffset::ZERO,
-            last_received_kind: None,
-            last_received_ends_with_newline: false,
             revision: StreamRevision::ZERO,
             sealed: false,
             pipeline: None,
@@ -1137,7 +1196,8 @@ impl HostTextStream {
         let stream = Self::new();
         if let Ok(mut state) = stream.state.lock() {
             state.presentation = presentation;
-            state.pipeline = Some(HostAssistantPipeline::new());
+            state.plain = None;
+            state.pipeline = Some(HostTextPipeline::new(presentation.pacing()));
             state
                 .refresh_semantic()
                 .expect("empty host semantic stream is valid");
@@ -1145,11 +1205,22 @@ impl HostTextStream {
         stream
     }
 
-    pub fn append_segment(&self, kind: HostStreamSegmentKind, text: impl AsRef<str>) -> Result<()> {
+    pub fn append(
+        &self,
+        text: impl AsRef<str>,
+        annotations: &[TextStreamAnnotation],
+    ) -> Result<()> {
         let text = text.as_ref();
         if text.is_empty() {
             return Ok(());
         }
+        let annotations = annotations
+            .iter()
+            .map(|annotation| {
+                SemanticTag::new(annotation.namespace.clone(), annotation.name.clone())
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
         {
             let mut state = self
                 .state
@@ -1158,39 +1229,37 @@ impl HostTextStream {
             if state.sealed {
                 return Err(anyhow::anyhow!("stream is already sealed"));
             }
-            let kind = match kind {
-                HostStreamSegmentKind::Text => HostAssistantSegmentKind::Text,
-                HostStreamSegmentKind::Thinking => HostAssistantSegmentKind::Thinking,
-            };
-            let normalized = kind == HostAssistantSegmentKind::Text
-                && state.last_received_kind == Some(HostAssistantSegmentKind::Thinking)
-                && !state.last_received_ends_with_newline
-                && !text.starts_with('\n');
-            let text = if normalized {
-                let mut value = String::with_capacity(text.len() + 2);
-                value.push_str("\n\n");
-                value.push_str(text);
-                value
+            if state.pipeline.is_none() && annotations.is_empty() && state.plain.is_some() {
+                state
+                    .plain
+                    .as_mut()
+                    .expect("plain stream is present when the host has no adapter")
+                    .push(text);
+                state.sync_plain_metadata();
             } else {
-                text.to_owned()
-            };
-            state.last_received_kind = Some(kind);
-            state.last_received_ends_with_newline = text.ends_with('\n');
-            let mut cursor = state.received_end;
-            for character in text.chars() {
-                let next = cursor.saturating_add(character.len_utf8() as u64);
-                state.pacing_atoms.push((
-                    StreamRange::new(cursor, next),
-                    HostPacingAtom {
-                        kind,
-                        text: character.to_string(),
-                    },
-                ));
-                cursor = next;
+                if state.pipeline.is_none() && state.plain.is_some() {
+                    state.switch_plain_to_annotated_source()?;
+                }
+                let range = StreamRange::new(
+                    state.received_end,
+                    state.received_end.saturating_add(text.len() as u64),
+                );
+                let chunk = HostSourceChunk {
+                    range,
+                    annotations,
+                    text: Arc::from(text),
+                };
+                for (atom_range, atom) in chunk.pacing_atoms() {
+                    state
+                        .pacing_input
+                        .append_span(atom_range, atom)
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                }
+                state.source_chunks.push(chunk);
+                state.received_end = range.end();
+                state.revision = state.revision.next();
+                state.refresh_semantic()?;
             }
-            state.received_end = cursor;
-            state.revision = state.revision.next();
-            state.refresh_semantic()?;
         }
         self.render_host()
     }
@@ -1205,25 +1274,30 @@ impl HostTextStream {
                 return Err(anyhow::anyhow!("stream is already sealed"));
             }
             let text = text.into();
-            state.pacing_atoms.clear();
-            state.source_base = StreamOffset::ZERO;
-            state.received_end = StreamOffset::new(text.len() as u64);
-            state.last_received_kind = (!text.is_empty()).then_some(HostAssistantSegmentKind::Text);
-            state.last_received_ends_with_newline = text.ends_with('\n');
-            let mut cursor = StreamOffset::ZERO;
-            for character in text.chars() {
-                let next = cursor.saturating_add(character.len_utf8() as u64);
-                state.pacing_atoms.push((
-                    StreamRange::new(cursor, next),
-                    HostPacingAtom {
-                        kind: HostAssistantSegmentKind::Text,
-                        text: character.to_string(),
-                    },
-                ));
-                cursor = next;
+            if state.pipeline.is_none() {
+                state.plain = Some(GenericTextStream::from_text(text));
+                state.sync_plain_metadata();
+                state.source_chunks.clear();
+            } else {
+                if let Some(pipeline) = &mut state.pipeline {
+                    pipeline.reset();
+                }
+                state.plain = None;
+                state.source_chunks.clear();
+                state.source_base = StreamOffset::ZERO;
+                state.received_end = StreamOffset::new(text.len() as u64);
+                if !text.is_empty() {
+                    let chunk = HostSourceChunk {
+                        range: StreamRange::new(StreamOffset::ZERO, state.received_end),
+                        annotations: Vec::new(),
+                        text: Arc::from(text.as_str()),
+                    };
+                    state.source_chunks.push(chunk.clone());
+                }
+                state.rebuild_pacing_input()?;
+                state.revision = state.revision.next();
+                state.refresh_semantic()?;
             }
-            state.revision = state.revision.next();
-            state.refresh_semantic()?;
         }
         self.render_host()
     }
@@ -1238,13 +1312,26 @@ impl HostTextStream {
                 return Err(anyhow::anyhow!("stream is already sealed"));
             }
             state.sealed = true;
-            state.revision = state.revision.next();
-            state.refresh_semantic()?;
+            if state.plain.is_some() {
+                state
+                    .plain
+                    .as_mut()
+                    .expect("plain stream is present when sealing")
+                    .seal();
+                state.sync_plain_metadata();
+            } else {
+                let source_end = state.received_end;
+                state.pacing_input.set_envelope(source_end, true);
+                state.revision = state.revision.next();
+                state.refresh_semantic()?;
+            }
         }
         self.render_host()
     }
 
-    pub fn snapshot_json(&self) -> Result<(String, u64, bool, Vec<(String, String)>)> {
+    pub fn snapshot_json(
+        &self,
+    ) -> Result<(String, u64, bool, Vec<(Vec<TextStreamAnnotation>, String)>)> {
         let state = self
             .state
             .lock()
@@ -1319,32 +1406,72 @@ impl HostTextStream {
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
             inner.running.invalidate_frame();
+            inner.advance_and_render()?;
         }
         Ok(())
     }
 }
 
 impl HostStreamState {
+    fn sync_plain_metadata(&mut self) {
+        let Some(plain) = self.plain.as_ref() else {
+            return;
+        };
+        self.source_base = plain.source_base();
+        self.received_end = plain.source_end();
+        self.revision = plain.revision();
+    }
+
+    fn switch_plain_to_annotated_source(&mut self) -> Result<()> {
+        let Some(plain) = self.plain.take() else {
+            return Ok(());
+        };
+        self.source_base = plain.source_base();
+        self.received_end = plain.source_end();
+        self.revision = plain.revision();
+        self.source_chunks.clear();
+        let text = plain.retained_text();
+        if !text.is_empty() {
+            self.source_chunks.push(HostSourceChunk {
+                range: StreamRange::new(self.source_base, self.received_end),
+                annotations: Vec::new(),
+                text: Arc::from(text),
+            });
+        }
+        self.rebuild_pacing_input()
+    }
+
     fn source_text(&self) -> String {
-        self.pacing_atoms
+        if let Some(plain) = &self.plain {
+            return plain.retained_text().to_owned();
+        }
+        self.source_chunks
             .iter()
-            .map(|(_, atom)| atom.text.as_str())
+            .map(|chunk| chunk.text.as_ref())
             .collect()
     }
 
-    fn segments_json(&self) -> Vec<(String, String)> {
-        let mut segments: Vec<(String, String)> = Vec::new();
-        for (_, atom) in &self.pacing_atoms {
-            let kind = match atom.kind {
-                HostAssistantSegmentKind::Text => "text",
-                HostAssistantSegmentKind::Thinking => "thinking",
-            };
+    fn segments_json(&self) -> Vec<(Vec<TextStreamAnnotation>, String)> {
+        if self.plain.is_some() {
+            return Vec::new();
+        }
+        let mut segments: Vec<(Vec<TextStreamAnnotation>, String)> = Vec::new();
+        for chunk in &self.source_chunks {
+            let atom = chunk;
+            let annotations = atom
+                .annotations
+                .iter()
+                .map(|tag| TextStreamAnnotation {
+                    namespace: tag.namespace().to_owned(),
+                    name: tag.name().to_owned(),
+                })
+                .collect::<Vec<_>>();
             if let Some((previous, text)) = segments.last_mut()
-                && previous == kind
+                && *previous == annotations
             {
                 text.push_str(&atom.text);
             } else {
-                segments.push((kind.to_owned(), atom.text.clone()));
+                segments.push((annotations, atom.text.to_string()));
             }
         }
         segments
@@ -1357,8 +1484,10 @@ impl HostStreamState {
             self.received_end,
             self.sealed,
         );
-        for (range, atom) in &self.pacing_atoms {
-            builder = builder.emit(*range, atom.clone());
+        for chunk in &self.source_chunks {
+            for (range, atom) in chunk.pacing_atoms() {
+                builder = builder.emit(range, atom);
+            }
         }
         self.pacing_input = builder
             .finish()
@@ -1367,7 +1496,6 @@ impl HostStreamState {
     }
 
     fn refresh_semantic(&mut self) -> Result<()> {
-        self.rebuild_pacing_input()?;
         if let Some(pipeline) = &mut self.pipeline {
             self.semantic = Some(pipeline.project(&self.pacing_input)?);
         }
@@ -1388,10 +1516,13 @@ impl HostStreamState {
     fn next_wakeup(&self) -> Option<Instant> {
         self.pipeline
             .as_ref()
-            .and_then(HostAssistantPipeline::next_wakeup)
+            .and_then(HostTextPipeline::next_wakeup)
     }
 
     fn snapshot(&self) -> StreamSnapshot {
+        if let Some(plain) = &self.plain {
+            return plain.snapshot();
+        }
         let source_end = self.received_end;
         let Some(semantic) = &self.semantic else {
             let range = StreamRange::new(self.source_base, source_end);
@@ -1561,6 +1692,15 @@ impl StreamingSource for HostStreamSource {
 
     fn compact_before(&mut self, offset: StreamOffset) {
         let mut state = self.state.lock().expect("host stream lock is poisoned");
+        if state.plain.is_some() {
+            state
+                .plain
+                .as_mut()
+                .expect("plain stream is present while compacting")
+                .compact_before(offset);
+            state.sync_plain_metadata();
+            return;
+        }
         let target = offset.min(state.received_end);
         if target <= state.source_base {
             return;
@@ -1570,10 +1710,19 @@ impl StreamingSource for HostStreamSource {
             .as_ref()
             .map_or(target, |pipeline| pipeline.restart_from(target))
             .max(state.source_base);
-        state
-            .pacing_atoms
-            .retain(|(range, _)| range.end() > restart);
+        state.source_chunks = state
+            .source_chunks
+            .iter()
+            .filter_map(|chunk| chunk.suffix_from(restart))
+            .collect();
         state.source_base = restart;
+        // Keep the pipeline's published suffix across compaction. Its next
+        // incremental project sees the new source base and reconstructs the
+        // retained paced suffix; resetting the smoother here would publish
+        // only its first grapheme and regress the semantic source end.
+        state
+            .rebuild_pacing_input()
+            .expect("host stream compaction must rebuild a valid source projection");
         state.revision = state.revision.next();
         state
             .refresh_semantic()
@@ -1584,10 +1733,21 @@ impl StreamingSource for HostStreamSource {
         if let Ok(mut state) = self.state.lock() {
             if !state.sealed {
                 state.sealed = true;
-                state.revision = state.revision.next();
-                state
-                    .refresh_semantic()
-                    .expect("host stream sealing must preserve projection coverage");
+                if state.plain.is_some() {
+                    state
+                        .plain
+                        .as_mut()
+                        .expect("plain stream is present while sealing")
+                        .seal();
+                    state.sync_plain_metadata();
+                } else {
+                    let source_end = state.received_end;
+                    state.pacing_input.set_envelope(source_end, true);
+                    state.revision = state.revision.next();
+                    state
+                        .refresh_semantic()
+                        .expect("host stream sealing must preserve projection coverage");
+                }
             }
         }
     }
@@ -1688,10 +1848,20 @@ impl HostTextInput {
         let Some(host) = host else {
             return Ok(());
         };
+        let component_id = self
+            .component_id
+            .lock()
+            .map_err(|_| anyhow::anyhow!("text input component lock is poisoned"))?
+            .to_owned();
         let mut inner = host
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
-        inner.running.invalidate_frame();
+        if let Some(component_id) = component_id {
+            inner.running.host_invalidate_component(component_id);
+        } else {
+            inner.running.invalidate_frame();
+        }
+        inner.advance_and_render()?;
         Ok(())
     }
 
@@ -1802,6 +1972,7 @@ impl HostHistory {
             .push(view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         inner.running.invalidate_frame();
+        inner.advance_and_render()?;
         Ok(unit)
     }
 
@@ -1816,6 +1987,7 @@ impl HostHistory {
             .freeze(unit, view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         inner.running.invalidate_frame();
+        inner.advance_and_render()?;
         Ok(())
     }
 
@@ -1830,6 +2002,7 @@ impl HostHistory {
             .discard_live(unit)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         inner.running.invalidate_frame();
+        inner.advance_and_render()?;
         Ok(())
     }
 
@@ -1843,6 +2016,7 @@ impl HostHistory {
                 .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?,
         )?;
         inner.running.invalidate_frame();
+        inner.advance_and_render()?;
         Ok(())
     }
 
@@ -1854,6 +2028,7 @@ impl HostHistory {
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
         stream.seal_history(history)?;
         inner.running.invalidate_frame();
+        inner.advance_and_render()?;
         Ok(())
     }
 
@@ -1895,15 +2070,12 @@ impl TuiHost {
             HostBackend::Real(TermwizBackend::enter()?)
         };
         let app = TuiApp::new(
-            host_init as fn(&mut AppCx<'_, HostAction>) -> Result<HostState>,
-            host_update as fn(&mut HostState, HostAction, &mut AppCx<'_, HostAction>) -> Result<()>,
+            host_init as fn(&mut AppCx<'_, HostOutput>) -> Result<HostState>,
+            host_update as fn(&mut HostState, HostOutput, &mut AppCx<'_, HostOutput>) -> Result<()>,
             host_view as fn(&HostState) -> View,
         )
         .with_theme(Theme::new())
-        .with_history(
-            History::new()
-                .with_layout(HistoryLayout::from_parts(crate::Insets::new(0, 0, 1, 0), 1)),
-        );
+        .with_history(History::new());
         let now = Instant::now();
         let mut running = app
             .start(now)
@@ -1932,23 +2104,11 @@ impl TuiHost {
 
     pub fn create_text_input(&self, multiline: bool) -> Result<HostTextInput> {
         let input = HostTextInput::new(multiline);
-        input
-            .lock()?
-            .set_border(BorderSpec::plain().edges(BorderEdges::TOP_BOTTOM));
         input.attach_host(&self.inner)?;
         let mut inner = self.lock_mut()?;
         let handle = inner.running.host_register(MountedTextInput(input.clone()));
         input.set_component_id(handle.raw_id())?;
         Ok(input)
-    }
-
-    pub fn create_working(&self, config: HostActivityConfig) -> Result<HostWorking> {
-        let working = HostWorking::new(config);
-        working.attach_host(&self.inner)?;
-        let mut inner = self.lock_mut()?;
-        let handle = inner.running.host_register(MountedWorking(working.clone()));
-        working.set_component_id(handle.raw_id())?;
-        Ok(working)
     }
 
     pub fn create_view_slot(&self, view: View) -> Result<HostViewSlot> {
@@ -1969,11 +2129,11 @@ impl TuiHost {
         Ok(pane)
     }
 
-    pub fn bind_key(&self, key: KeyStroke, action_id: impl Into<String>) -> Result<()> {
-        let action_id = action_id.into();
+    pub fn bind_key(&self, key: KeyStroke, route_id: impl Into<String>) -> Result<()> {
+        let route_id = route_id.into();
         self.lock_mut()?.running.host_bind_key(key, move || {
-            HostAction::Routed(RoutedAction {
-                action_id: action_id.clone(),
+            HostOutput::Routed(RoutedOutput {
+                route_id: route_id.clone(),
                 payload: None,
             })
         });
@@ -2039,15 +2199,15 @@ impl TuiHost {
     pub fn route_text_input(
         &self,
         input: &HostTextInput,
-        action_id: impl Into<String>,
+        route_id: impl Into<String>,
     ) -> Result<()> {
         let output = input.submitted()?;
-        let action_id = action_id.into();
+        let route_id = route_id.into();
         self.lock_mut()?
             .running
             .host_route(output, move |text| {
-                HostAction::Routed(RoutedAction {
-                    action_id: action_id.clone(),
+                HostOutput::Routed(RoutedOutput {
+                    route_id: route_id.clone(),
                     payload: Some(text),
                 })
             })
@@ -2058,14 +2218,14 @@ impl TuiHost {
     pub fn route_text_input_output(
         &self,
         output: Output<String>,
-        action_id: impl Into<String>,
+        route_id: impl Into<String>,
     ) -> Result<()> {
-        let action_id = action_id.into();
+        let route_id = route_id.into();
         self.lock_mut()?
             .running
             .host_route(output, move |text| {
-                HostAction::Routed(RoutedAction {
-                    action_id: action_id.clone(),
+                HostOutput::Routed(RoutedOutput {
+                    route_id: route_id.clone(),
                     payload: Some(text),
                 })
             })
@@ -2076,18 +2236,18 @@ impl TuiHost {
     pub fn intercept_paste(
         &self,
         input: &HostTextInput,
-        action_id: impl Into<String>,
+        route_id: impl Into<String>,
     ) -> Result<()> {
         let id = input
             .component_id()
             .ok_or_else(|| anyhow::anyhow!("text input is not mounted"))?;
         let handle = ComponentHandle::<MountedTextInput>::from_raw_id(id);
-        let action_id = action_id.into();
+        let route_id = route_id.into();
         self.lock_mut()?
             .running
             .host_intercept_paste(handle, move |text| {
-                HostAction::Routed(RoutedAction {
-                    action_id: action_id.clone(),
+                HostOutput::Routed(RoutedOutput {
+                    route_id: route_id.clone(),
                     payload: Some(text),
                 })
             });
@@ -2098,7 +2258,7 @@ impl TuiHost {
         let mut inner = self.lock_mut()?;
         inner.running.state.body = body.clone();
         inner.running.host_set_body(body);
-        Ok(())
+        inner.advance_and_render()
     }
 
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
@@ -2160,8 +2320,13 @@ impl TuiHost {
         inner.advance_and_render()
     }
 
-    pub fn next_action(&self) -> Option<RoutedAction> {
-        self.lock_mut().ok()?.running.state.actions.pop_front()
+    pub fn next_output(&self) -> Option<RoutedOutput> {
+        self.lock_mut().ok()?.running.state.outputs.pop_front()
+    }
+
+    /// Compatibility alias for bindings that used the pre-generic name.
+    pub fn next_action(&self) -> Option<RoutedOutput> {
+        self.next_output()
     }
 
     pub fn style_at(&self, row: u16, column: u16) -> Option<HostCellStyle> {
@@ -2248,24 +2413,37 @@ impl TuiHost {
         }
     }
 
-    /// Run the native interaction driver until a semantic application action
-    /// or exit is available. Terminal input, component ticks, stream
-    /// wakeups, and rendering all stay on the Rust side of the boundary.
-    pub async fn wait_for_action(&self) -> Result<Option<RoutedAction>> {
+    /// Run the native interaction driver until a caller-defined routed output
+    /// or exit is available. Terminal input, component ticks, stream wakeups,
+    /// and rendering stay on the Rust side of the boundary.
+    pub async fn wait_for_output(&self) -> Result<Option<RoutedOutput>> {
         loop {
             if self.exited() {
                 return Ok(None);
             }
 
+            // A headless host is deterministic for explicit `advance_time`, but
+            // an asynchronous event wait is a real-time driver just like the
+            // terminal backend. Refresh its clock before polling timers.
+            if let Ok(mut inner) = self.lock_mut()
+                && inner.headless
+            {
+                inner.now = Instant::now();
+            }
             self.poll_terminal()?;
-            if let Some(action) = self.next_action() {
-                return Ok(Some(action));
+            if let Some(output) = self.next_output() {
+                return Ok(Some(output));
             }
 
             let wait_ms = self.next_wake_ms().min(16).max(1);
             super::run::wait_for_deadline(Some(Instant::now() + Duration::from_millis(wait_ms)))
                 .await;
         }
+    }
+
+    /// Compatibility alias for bindings that used the pre-generic name.
+    pub async fn wait_for_action(&self) -> Result<Option<RoutedOutput>> {
+        self.wait_for_output().await
     }
 
     pub fn screen_rows(&self) -> Vec<String> {
@@ -2292,6 +2470,12 @@ impl TuiHost {
             return Ok(());
         }
         super::run::wait_for_present_blocking(&mut inner.presentation)?;
+        // Closing a host is also the ownership boundary for its retained
+        // semantic root. Drop both the host state's body and the scene root so
+        // environment-scoped weak caches can observe expiry after disposal.
+        inner.running.state.body = View::spacer(0);
+        inner.running.host_set_body(View::spacer(0));
+        inner.running.host_clear_retained_views();
         inner.closed = true;
         if let HostBackend::Real(backend) = &mut inner.backend {
             ignore_terminal_shutdown_error(backend.restore())?;
@@ -2404,5 +2588,36 @@ fn prepare_frame(
                 .map_err(|error| anyhow::anyhow!("terminal render failed: {error:?}"))?;
             Ok(frame)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HostTextStream, TuiHost};
+
+    #[test]
+    fn host_stream_keeps_append_chunks_as_source_spans() {
+        let stream = HostTextStream::with_markdown();
+        stream.append("hello", &[]).unwrap();
+        stream.append(" world\n", &[]).unwrap();
+
+        let state = stream.state.lock().unwrap();
+        assert_eq!(state.source_chunks.len(), 2);
+        assert_eq!(state.pacing_input.spans().len(), 12);
+        assert_eq!(state.source_text(), "hello world\n");
+    }
+
+    #[test]
+    fn host_runtime_character_markdown_compaction_preserves_resident_coordinates() {
+        let host = TuiHost::open(80, 24, true).unwrap();
+        let stream = HostTextStream::with_markdown();
+        host.history().push_stream(&stream).unwrap();
+        let document = "# heading\n\nThis is **markdown**.\n\n- first\n- second\n\n```rust\nfn main() {}\n```\n";
+        for character in document.chars() {
+            stream
+                .append(character.to_string(), &[])
+                .unwrap_or_else(|error| panic!("append {character:?} failed: {error}"));
+        }
+        host.close().unwrap();
     }
 }

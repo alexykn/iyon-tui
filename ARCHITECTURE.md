@@ -1,0 +1,63 @@
+# ARCHITECTURE — generic terminal UI framework
+
+This repository is a generic terminal UI framework.
+It MUST NOT contain agent, model, provider, prompt, tool-call, approval,
+conversation, transcript, or Iyon application policy.
+If a feature requires those concepts, it belongs in the Iyon application
+repository (`alexykn/iyon`), which consumes this framework as an external
+consumer after the repository separation completes.
+
+## Layers
+
+```text
+TypeScript public facade        packages/iyon-tui/src/**   (`@iyon/tui`)
+        |  private native contract seam (src/native.ts)
+generated safe N-API addon       crates/iyon-tui-native
+        | direct-FFI symbols remain feature-gated for qualification/oracle/rollback
+        |
+Rust framework                  crates/iyon-tui
+```
+
+## Ownership rules
+
+- `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import
+  `iyon-core` or `iyon-api`. Enforced by `bun run check:ownership`.
+- Framework TypeScript may import only framework modules plus the single
+  native-contract seam (`packages/iyon-tui/src/native.ts`). The default
+  transport is generated safe N-API over opaque native session/host objects;
+  the generated semantic DAG, leases, NativeRef hints, PersistentSeq edits,
+  payload lanes, and stream specialization are transport-independent. The
+  direct-FFI symbols remain feature-gated for qualification, oracle
+  comparison, and rollback through later PERF/S tranches; they are not part of
+  the default addon or public package contract.
+- Application code in `alexykn/iyon` consumes the framework only through public
+  surfaces: the `@iyon/tui` package or its application-owned `iyon:tui` alias.
+  Deep imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI
+  internals, NodeId/NativeRef sidecars, or native addon implementation modules
+  are forbidden. The application repository owns the corresponding consumer
+  gate; this repository checks the public package and standalone fixture.
+- Themes, renderers, defaults, labels, and spinner/footer/composer policy are
+  caller-owned. No product policy enters this framework behind generic names.
+
+## Public API discipline
+
+The TypeScript facade surface and the mapped Rust public surface are frozen in
+snapshots checked by `bun run check:ownership`
+(`tools/ownership/snapshots/iyon-tui-rust-surface.txt`,
+`docs/repository-separation/s0/api-surface.json`). Adding or removing a public
+export requires deliberately regenerating those snapshots in the same change;
+application-specific names (`Agent`, `Provider`, `ToolExecution`, `Approval`,
+`Transcript`, `KernelSession`, ...) are rejected outright. Public API parity
+between Rust, native, and TypeScript layers is mandatory.
+
+## Machine checks
+
+Run before completing any change:
+
+```sh
+bun run check:ownership
+```
+
+The gates cover: Rust dependency direction, TUI-native module purity,
+framework Rust/TypeScript purity, the standalone consumer's public dependency,
+and both public-surface snapshots.

@@ -252,13 +252,13 @@ fn block_annotation_does_not_become_a_child_span_fact() {
 
 #[test]
 fn run_annotation_styles_the_exact_span() {
-    let thinking = SemanticTag::new("app", "thinking").unwrap();
+    let annotation = SemanticTag::new("example", "annotated").unwrap();
     let theme = Theme::new().with_text_style(
-        TextSelector::annotation(&thinking),
+        TextSelector::annotation(&annotation),
         StyleSpec::new().dim().italic(),
     );
     let tagged = crate::TextRun::from("think")
-        .map_annotations(|annotations| annotations.with_tag(thinking.clone()));
+        .map_annotations(|annotations| annotations.with_tag(annotation.clone()));
     let paragraph = Block::paragraph(InlineContent::new([
         Inline::text(tagged),
         Inline::text(" plain"),
@@ -272,13 +272,13 @@ fn run_annotation_styles_the_exact_span() {
 
 #[test]
 fn annotation_and_strong_conjunction_uses_span_local_facts() {
-    let thinking = SemanticTag::new("app", "thinking").unwrap();
+    let annotation = SemanticTag::new("example", "annotated").unwrap();
     let theme = Theme::new().with_text_style(
-        TextSelector::strong().and_annotation(&thinking),
+        TextSelector::strong().and_annotation(&annotation),
         StyleSpec::new().reversed(),
     );
     let run = crate::TextRun::from("both")
-        .map_annotations(|annotations| annotations.with_tag(thinking.clone()));
+        .map_annotations(|annotations| annotations.with_tag(annotation.clone()));
     let both = Inline::text(run).strong();
     let strong_only = strong("only");
     assert!(

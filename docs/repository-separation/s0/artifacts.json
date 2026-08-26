@@ -1,0 +1,77 @@
+{
+  "artifacts": [
+    {
+      "bytes": 6649072,
+      "path": "packages/iyon-runtime/native/iyon-native.node",
+      "sha256": "0820e73f68b98dfbab3d0a3ed1bd3590f08a290157433df98e2d1cc1cae493dd",
+      "tracked": false
+    },
+    {
+      "bytes": 6649072,
+      "path": "target/release/libiyon_native.dylib",
+      "sha256": "0820e73f68b98dfbab3d0a3ed1bd3590f08a290157433df98e2d1cc1cae493dd",
+      "tracked": false
+    },
+    {
+      "bytes": 29831144,
+      "path": "target/debug/libiyon_native.dylib",
+      "sha256": "33c61575173df721e871b4449ae041566dce39643743c27b28c67451f971a6ae",
+      "tracked": false
+    },
+    {
+      "bytes": 91376,
+      "path": "Cargo.lock",
+      "sha256": "f1ba4176d403120f535dd4fe093bfc06300913a4a706e78a4c3886a5fbf016c5",
+      "tracked": true
+    },
+    {
+      "bytes": 5933,
+      "path": "bun.lock",
+      "sha256": "c3ee948c8c9b375f04398416c6d7cd3e6c0597c2a63c0cf26387c6de1117c38c",
+      "tracked": true
+    },
+    {
+      "bytes": 67237,
+      "path": "tools/tui-abi/view_abi.toml",
+      "sha256": "ac2c3980c8fac37c221e6150b4dfa0f093cb9a27c3316936aaa28eb9647babe2",
+      "tracked": true
+    },
+    {
+      "bytes": 4035,
+      "path": "packages/iyon-runtime/src/tui/bridge-schema.json",
+      "sha256": "8586ba5c3fbe19c71df0d9aea5680769c2d5aaa5920114513f939cc30d3178fe",
+      "tracked": true
+    },
+    {
+      "bytes": 14824,
+      "path": "crates/iyon-native/include/iyon_view_abi.h",
+      "sha256": "feaaf07204fcc13f8dc6551ae317be6f224e9464f2337f4a104059a9dae3d28f",
+      "tracked": true
+    }
+  ],
+  "native": {
+    "nativeVersion": "iyon-native/t1",
+    "tuiSmoke": "iyon-tui/t1",
+    "viewAbi": {
+      "abiName": "iyon_tui_view",
+      "abiVersion": 1,
+      "fastViewAbi": true,
+      "functionCount": 57,
+      "generatorBlake3": "0fb2fdc89a11de0e5d62d9a0d5e5129e12f59a8e6f97c28d78fe95271bfa95a2",
+      "schemaBlake3": "8a6fdc06e24d71ad37c62392eb0cd8e96598118564598408fb8555b5ae4816e0",
+      "semanticVersion": 1
+    }
+  },
+  "postStageObservation": {
+    "note": "Source-built artifact staged by bun run native:stage; byte-identical to target/release/libiyon_native.dylib.",
+    "sha256": "0820e73f68b98dfbab3d0a3ed1bd3590f08a290157433df98e2d1cc1cae493dd"
+  },
+  "preStageObservation": {
+    "note": "Ignored staged artifact found before S0 rebuilt the release addon from the source revision.",
+    "path": "packages/iyon-runtime/native/iyon-native.node",
+    "sha256": "df5c0ac05aa1a4900e6ff6d99fe17032ea8ee2a509b213ba4406a5cf0651117d"
+  },
+  "schemaVersion": 1,
+  "sourceRevision": "bd503b0382e34d74a38c562b9662d08c8c96f58a",
+  "target": "aarch64-apple-darwin"
+}

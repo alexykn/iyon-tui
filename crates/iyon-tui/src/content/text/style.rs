@@ -676,14 +676,14 @@ mod tests {
 
     #[test]
     fn annotation_selectors_compose_with_roles() {
-        let thinking = SemanticTag::new("app", "thinking").unwrap();
+        let annotation = SemanticTag::new("example", "annotated").unwrap();
         let theme = Theme::new().with_text_style(
-            TextSelector::strong().and_annotation(&thinking),
+            TextSelector::strong().and_annotation(&annotation),
             StyleSpec::new().dim(),
         );
         let matching = TextFacts::new()
             .role(TextRole::Strong)
-            .annotation(&thinking)
+            .annotation(&annotation)
             .finish();
         assert!(resolve(&theme, matching).dim);
         assert!(!resolve(&theme, TextFacts::new().role(TextRole::Strong).finish()).dim);

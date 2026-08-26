@@ -1,6 +1,6 @@
 //! Public semantic terminal-root composition.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use crate::presentation::{StyleFacts, StyleStates};
 use crate::{History, IntoView, View};
@@ -21,29 +21,49 @@ use crate::{History, IntoView, View};
 pub struct Scene {
     history: Option<History>,
     body: View,
+    layout_body: View,
+    layout_root: View,
 }
 
 impl Scene {
     /// Creates a body-only semantic root.
     pub fn new(body: impl IntoView) -> Self {
+        let body = body.into_view();
+        let layout_body = body.clone().fill_width().fill_height();
+        let layout_root = root_view(None, layout_body.clone());
         Self {
             history: None,
-            body: body.into_view(),
+            layout_body,
+            layout_root,
+            body,
         }
     }
 
     /// Creates a semantic root with one root-level History and an ordinary
     /// body below it.
     pub fn with_history(history: History, body: impl IntoView) -> Self {
+        let body = body.into_view();
+        let layout_body = body.clone().fill_width().fill_height();
+        let layout_root = root_view(None, layout_body.clone());
         Self {
             history: Some(history),
-            body: body.into_view(),
+            layout_body,
+            layout_root,
+            body,
         }
     }
 
     /// Returns the optional root-level History.
     pub fn history(&self) -> Option<&History> {
         self.history.as_ref()
+    }
+
+    pub(crate) fn layout_body(&self) -> &View {
+        &self.layout_body
+    }
+
+    pub(crate) fn layout_root(&self) -> &View {
+        &self.layout_root
     }
 
     /// Returns mutable access to the optional root-level History.
@@ -58,7 +78,10 @@ impl Scene {
 
     /// Replaces the ordinary body View.
     pub fn set_body(&mut self, body: impl IntoView) {
-        self.body = body.into_view();
+        let body = body.into_view();
+        self.layout_body = body.clone().fill_width().fill_height();
+        self.layout_root = root_view(None, self.layout_body.clone());
+        self.body = body;
     }
 
     pub(crate) fn set_history(&mut self, history: History) {
@@ -84,17 +107,23 @@ use crate::{
     geometry::Size,
     history::{HistoryPhysicalOverlay, HistoryViewportAnchor, project_into_session_for_host},
     presentation::{
-        ir::{ColumnChild, ColumnView, HeightRule, TrackSize, ViewKind, WidthRule},
-        layout::measure_view,
+        ir::{
+            ColumnChild, ColumnView, HeightRule, PersistentSeq, TrackSize, ViewKind, ViewNodeParts,
+            WidthRule,
+        },
+        layout::{LayoutCache, measure_view_with_overlay_and_cache},
     },
 };
 
 use super::{ResolveError, ResolveSession, ResolvedScene};
 
 /// Private resolved root state used by the host/layout pipeline.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedRootScene {
     pub(crate) scene: ResolvedScene,
+    /// The independently resolved body root used to decide whether a local
+    /// component update can avoid rebuilding the history/root wrapper.
+    pub(crate) body_view: View,
     pub(crate) history_overlay: Option<HistoryPhysicalOverlay>,
     pub(crate) history_overflow_rows: usize,
     pub(crate) history_height: u16,
@@ -118,15 +147,32 @@ pub(crate) fn resolve_root_scene_with_anchor(
     size: Size,
     anchor: HistoryViewportAnchor,
 ) -> Result<ResolvedRootScene, ResolveError> {
-    let body_scene = resolve_branch(root.body(), registry)?;
-    let body_height = measure_view(&body_scene.view, size.width)
-        .height
-        .min(size.height);
+    let mut cache = LayoutCache::default();
+    resolve_root_scene_with_anchor_and_cache(root, registry, size, anchor, &mut cache)
+}
+
+pub(crate) fn resolve_root_scene_with_anchor_and_cache(
+    root: &Scene,
+    registry: &ComponentRegistry,
+    size: Size,
+    anchor: HistoryViewportAnchor,
+    cache: &mut LayoutCache,
+) -> Result<ResolvedRootScene, ResolveError> {
+    let body_scene = resolve_branch(root.layout_body(), registry)?;
+    let body_height = measure_view_with_overlay_and_cache(
+        &body_scene.view,
+        size.width,
+        &body_scene.overlay,
+        cache,
+    )
+    .height
+    .min(size.height);
     let history_height = root
         .history
         .as_ref()
         .map_or(0, |_| size.height.saturating_sub(body_height));
 
+    let body_view = body_scene.view.clone();
     let (history_scene, history_overlay, history_overflow_rows) = match root.history.as_ref() {
         Some(history) => {
             let mut session = ResolveSession::new(registry);
@@ -144,10 +190,11 @@ pub(crate) fn resolve_root_scene_with_anchor(
         }
         None => (None, None, 0),
     };
-    let scene = merge_root_scene(history_scene, body_scene)?;
+    let scene = merge_root_scene(history_scene, body_scene, root.layout_root())?;
 
     Ok(ResolvedRootScene {
         scene,
+        body_view,
         history_overlay,
         history_overflow_rows,
         history_height,
@@ -164,31 +211,48 @@ fn resolve_branch(
     Ok(session.finish(view))
 }
 
+/// Resolves only the content owned by one changed component. The component
+/// itself remains in the retained graph; direct children are re-parented to
+/// it so the caller can splice this local result into the existing MountGraph.
+pub(crate) fn resolve_component_subtree(
+    view: &View,
+    registry: &ComponentRegistry,
+    parent: ComponentId,
+) -> Result<ResolvedScene, ResolveError> {
+    let mut resolved = resolve_branch(view, registry)?;
+    resolved.mounts.reparent_roots(parent);
+    Ok(resolved)
+}
+
 fn merge_root_scene(
     history: Option<ResolvedScene>,
     body: ResolvedScene,
+    layout_root: &View,
 ) -> Result<ResolvedScene, ResolveError> {
     let Some(history) = history else {
-        let body_view = body.view.fill_width().fill_height();
         return Ok(ResolvedScene {
-            view: root_view(None, body_view),
+            view: layout_root.clone(),
             mounts: body.mounts,
             capabilities: body.capabilities,
+            overlay: body.overlay,
         });
     };
 
     ensure_disjoint_mounts(&history, &body)?;
     let history_view = history.view;
-    let body_view = body.view.fill_width().fill_height();
-    let mut mounts = history.mounts.nodes;
-    mounts.extend(body.mounts.nodes);
+    let body_view = body.view;
+    let mut mounts = history.mounts.to_nodes();
+    mounts.extend(body.mounts.to_nodes());
     let mut capabilities = history.capabilities;
     capabilities.entries.extend(body.capabilities.entries);
+    let mut overlay = history.overlay;
+    overlay.components.extend(body.overlay.components);
 
     Ok(ResolvedScene {
         view: root_view(Some(history_view), body_view),
         mounts: crate::component::MountGraph::new(mounts),
         capabilities,
+        overlay,
     })
 }
 
@@ -217,14 +281,15 @@ fn root_view(history: Option<View>, body: View) -> View {
         track: TrackSize::Content { max: None },
         view: body,
     });
-    View {
-        component: None,
+    View::from_node(ViewNodeParts {
         width: WidthRule::Fill,
         height: HeightRule::Fill,
         decoration: Default::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        component_scope: None,
-        kind: ViewKind::Column(ColumnView { children, gap: 0 }),
-    }
+        kind: ViewKind::Column(Arc::new(ColumnView {
+            children: PersistentSeq::from_vec(children),
+            gap: 0,
+        })),
+    })
 }

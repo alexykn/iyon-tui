@@ -283,22 +283,22 @@ impl ProjectedText {
         let mut cursor = content_range.start;
         let mut runs: Vec<ProjectedTextRun> = Vec::new();
         for span in spans {
-            if span.text.is_empty() {
+            if span.text().is_empty() {
                 continue;
             }
             let start = cursor;
-            cursor = cursor.saturating_add(span.text.len() as u64);
+            cursor = cursor.saturating_add(span.text().len() as u64);
             if let Some(previous) = runs.last_mut()
                 && previous.style == span.style
                 && previous.style_facts == span.style_facts
                 && previous.owned.end == start
             {
-                previous.display.push_str(&span.text);
+                previous.display.push_str(span.text());
                 previous.owned.end = cursor;
                 previous.exact_visible = Some(StreamRange::new(previous.owned.start, cursor));
             } else {
                 runs.push(ProjectedTextRun {
-                    display: span.text,
+                    display: span.text().to_owned(),
                     style: span.style,
                     style_facts: span.style_facts,
                     owned: StreamRange::new(start, cursor),
@@ -464,19 +464,20 @@ pub(crate) fn projected_atoms(text: &ProjectedText) -> Vec<ProjectedAtom> {
     )>| {
         for (relative, grapheme) in display.grapheme_indices(true) {
             let relative_end = relative + grapheme.len();
-            let contributors = fragments
-                .iter()
-                .enumerate()
-                .filter(|(_, (start, end, _, _, _, _, _))| relative < *end && relative_end > *start)
-                .collect::<Vec<_>>();
-            let first = contributors
-                .first()
-                .map(|(_, fragment)| fragment)
-                .expect("projected EGC must overlap an exact fragment");
-            let last = contributors
-                .last()
-                .map(|(_, fragment)| fragment)
-                .expect("projected EGC must overlap an exact fragment");
+            let mut first_index = None;
+            let mut last_index = None;
+            for (index, (start, end, ..)) in fragments.iter().enumerate() {
+                if relative < *end && relative_end > *start {
+                    first_index.get_or_insert(index);
+                    last_index = Some(index);
+                }
+            }
+            let first = fragments
+                .get(first_index.expect("projected EGC must overlap an exact fragment"))
+                .expect("first exact fragment index must remain valid");
+            let last = fragments
+                .get(last_index.expect("projected EGC must overlap an exact fragment"))
+                .expect("last exact fragment index must remain valid");
             let first_offset = relative - first.0;
             let source_start = if first_offset == 0 {
                 first.2.start
@@ -531,13 +532,6 @@ pub(crate) fn projected_atoms(text: &ProjectedText) -> Vec<ProjectedAtom> {
     }
     flush_exact(&mut atoms, &mut exact_display, &mut fragments);
     atoms
-}
-
-pub(crate) fn checkpoint_after_row(text: &ProjectedText, offset: StreamOffset) -> StreamOffset {
-    projected_atoms(text)
-        .into_iter()
-        .find(|atom| atom.owned.start == offset && atom.display == "\n")
-        .map_or(offset, |atom| atom.owned.end)
 }
 
 pub(crate) fn projected_checkpoint_is_legal(text: &ProjectedText, offset: StreamOffset) -> bool {

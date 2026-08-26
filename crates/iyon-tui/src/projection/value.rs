@@ -87,6 +87,48 @@ impl<T> ProjectionBuilder<T> {
 }
 
 impl<T> Projection<T> {
+    /// Appends one contiguous source span without replaying the existing
+    /// projection through a builder. This is used by append-only producers
+    /// whose source envelope advances monotonically.
+    pub(crate) fn append_span(
+        &mut self,
+        source: StreamRange,
+        value: T,
+    ) -> Result<(), super::ProjectionValidationError> {
+        self.append_span_many(source, [value])
+    }
+
+    pub(crate) fn append_span_many(
+        &mut self,
+        source: StreamRange,
+        values: impl IntoIterator<Item = T>,
+    ) -> Result<(), super::ProjectionValidationError> {
+        assert_eq!(
+            source.start(),
+            self.source_end,
+            "appended projection spans must be contiguous"
+        );
+        assert!(
+            source.end() >= source.start(),
+            "appended projection span must not reverse the source"
+        );
+        self.spans.push(ProjectionSpan {
+            source,
+            values: values.into_iter().collect(),
+        });
+        self.source_end = source.end();
+        self.stable_through = self.source_end;
+        validate_projection(self)
+    }
+
+    /// Updates only the append-only stability envelope. The source spans are
+    /// unchanged, so this avoids rebuilding them when a stream is sealed.
+    pub(crate) fn set_envelope(&mut self, stable_through: StreamOffset, sealed: bool) {
+        assert!(stable_through >= self.source_base && stable_through <= self.source_end);
+        self.stable_through = stable_through;
+        self.sealed = sealed;
+    }
+
     /// Starts a builder preserving this projection's source envelope.
     pub fn rebuild<U>(&self) -> ProjectionBuilder<U> {
         ProjectionBuilder::new(
@@ -115,6 +157,16 @@ impl<T> Projection<T> {
 
     pub fn spans(&self) -> &[ProjectionSpan<T>] {
         &self.spans
+    }
+
+    /// Returns spans that may extend past a source coordinate. Projection
+    /// spans are ordered and contiguous, so the prefix can be skipped with a
+    /// binary search instead of rescanning it on every append.
+    pub(crate) fn spans_from(&self, offset: StreamOffset) -> &[ProjectionSpan<T>] {
+        let first = self
+            .spans
+            .partition_point(|span| span.source.end() <= offset);
+        &self.spans[first..]
     }
 
     /// Maps borrowed values without changing ownership or stability metadata.

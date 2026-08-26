@@ -133,7 +133,7 @@ fn first_unit_boundary_is_preserved() {
 fn live_tail_can_be_replaced_by_stream_in_place() {
     let mut history = History::new();
     let live = history
-        .push_with_boundary(live_view("working"), FlowBoundary::AttachToPrevious)
+        .push_with_boundary(live_view("live"), FlowBoundary::AttachToPrevious)
         .unwrap();
 
     let stream = history
@@ -149,7 +149,7 @@ fn live_tail_can_be_replaced_by_stream_in_place() {
 #[test]
 fn live_to_stream_rejects_non_tail_static_and_missing_units() {
     let mut history = History::new();
-    let live = history.push(live_view("working")).unwrap();
+    let live = history.push(live_view("live")).unwrap();
     let tail = history.push(live_view("tail")).unwrap();
     let missing = HistoryUnitId::allocate();
 
@@ -172,7 +172,7 @@ fn live_to_stream_rejects_non_tail_static_and_missing_units() {
 fn discard_live_removes_only_the_transient_tail() {
     let mut history = History::new();
     let static_id = history.push("static").unwrap();
-    let live = history.push(live_view("working")).unwrap();
+    let live = history.push(live_view("live")).unwrap();
     history.discard_live(live).unwrap();
     assert_eq!(unit_ids(&history), vec![static_id]);
 }

@@ -1,0 +1,41 @@
+name: TUI TypeScript surface
+
+on:
+  push:
+    branches: [bun-refactor, main]
+    paths:
+      - "packages/iyon-tui/**"
+      - "packages/tui-consumer-fixture/**"
+      - "crates/iyon-tui/**"
+      - "crates/iyon-tui-native/**"
+      - "tools/tui-abi/**"
+      - "tools/tui-abi-gen/**"
+      - "tools/ownership/**"
+      - ".github/workflows/tui-typescript.yml"
+  pull_request:
+    paths:
+      - "packages/iyon-tui/**"
+      - "packages/tui-consumer-fixture/**"
+      - "crates/iyon-tui/**"
+      - "crates/iyon-tui-native/**"
+      - "tools/tui-abi/**"
+      - "tools/tui-abi-gen/**"
+      - "tools/ownership/**"
+      - ".github/workflows/tui-typescript.yml"
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - run: bun install --frozen-lockfile
+      - run: bun run check:tui-abi
+      - run: bun run typecheck
+      - run: bun run check:ownership
+      - run: bun run native:stage
+      - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
+      - run: git diff --check

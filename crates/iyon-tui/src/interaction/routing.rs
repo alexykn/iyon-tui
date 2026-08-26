@@ -100,12 +100,7 @@ fn routing_chain(focus: &FocusState, graph: &MountGraph) -> Vec<ComponentId> {
         if modal == Some(current) {
             break;
         }
-        let Some(parent) = graph
-            .nodes
-            .iter()
-            .find(|node| node.id == current)
-            .and_then(|node| node.parent)
-        else {
+        let Some(parent) = graph.parent(current) else {
             break;
         };
         current = parent;

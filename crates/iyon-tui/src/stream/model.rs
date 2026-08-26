@@ -1,7 +1,7 @@
 //! Generic semantic stream model and resident/source coordination.
 
 use super::{
-    StreamOffset, StreamRange, StreamSnapshot, StreamView, StreamingSource,
+    StreamOffset, StreamRange, StreamRowAnchor, StreamSnapshot, StreamView, StreamingSource,
     compile::{CompiledStream, compile_stream_with_theme},
     node::{StreamSliceError, semantic_slice_nodes},
     resident::ResidentPrefix,
@@ -36,6 +36,7 @@ pub(crate) struct StreamModel<S: StreamingSource> {
     source: S,
     resident: ResidentPrefix,
     current: StreamSnapshot,
+    semantic_changed_from: StreamOffset,
 }
 
 impl<S: StreamingSource> StreamModel<S> {
@@ -45,6 +46,7 @@ impl<S: StreamingSource> StreamModel<S> {
         Ok(Self {
             resident: ResidentPrefix::new(current.source_base),
             source,
+            semantic_changed_from: current.source_base,
             current,
         })
     }
@@ -70,6 +72,10 @@ impl<S: StreamingSource> StreamModel<S> {
         self.resident.base()
     }
 
+    pub(crate) fn semantic_changed_from(&self) -> StreamOffset {
+        self.semantic_changed_from
+    }
+
     pub(crate) fn refresh(&mut self) -> Result<(), StreamModelError> {
         let observed = self.source.snapshot();
         Self::validate_transition(&self.current, &observed)?;
@@ -77,10 +83,23 @@ impl<S: StreamingSource> StreamModel<S> {
             return Err(StreamModelError::SourceBeforeResident);
         }
 
+        // Append-only sources may expose a newly stable partition of the same
+        // semantic prefix. A source-end increase therefore damages only the
+        // prior unstable frontier. If the prior snapshot was fully stable,
+        // same-length replacement is treated conservatively as damage from the
+        // source base; this keeps generic sources correct as well.
+        let semantic_changed_from = if observed.source_end > self.current.source_end
+            || self.current.stable_through < self.current.source_end
+        {
+            self.current.stable_through.max(self.current.source_base)
+        } else {
+            self.current.source_base
+        };
         let resident_end = self.resident.end();
         let mut staged_nodes = Vec::new();
         let mut captured_end = resident_end;
         for node in observed.view.suffix_from(resident_end).nodes {
+            crate::perf::inc(crate::perf::Counter::StreamSourceNodesExamined);
             if node.owned_range().end > observed.stable_through {
                 break;
             }
@@ -116,6 +135,7 @@ impl<S: StreamingSource> StreamModel<S> {
             self.resident.push(node);
         }
         self.current = next;
+        self.semantic_changed_from = semantic_changed_from;
         Ok(())
     }
 
@@ -145,7 +165,98 @@ impl<S: StreamingSource> StreamModel<S> {
     }
 
     pub(crate) fn semantic_view_from(&self, offset: StreamOffset) -> StreamView {
-        self.combined_view().suffix_from(offset)
+        let frontier = self.resident.end();
+        let source_end = self.current.source_end;
+        let mut nodes = Vec::new();
+
+        if offset < frontier {
+            let end = frontier.min(source_end);
+            if offset < end {
+                nodes.extend(
+                    semantic_slice_nodes(
+                        self.resident.nodes_from(offset),
+                        StreamRange::new(offset, end),
+                    )
+                    .expect("resident stream suffix must be sliceable")
+                    .nodes,
+                );
+            }
+        }
+
+        let current_start = offset.max(frontier);
+        if current_start < source_end {
+            nodes.extend(
+                semantic_slice_nodes(
+                    self.current.view.nodes.iter(),
+                    StreamRange::new(current_start, source_end),
+                )
+                .expect("current stream suffix must be sliceable")
+                .nodes,
+            );
+        }
+        StreamView::new(nodes)
+    }
+
+    /// Hard-line starts for a sequence of row anchors, sharing one break scan.
+    pub(crate) fn hard_line_starts_for(
+        &self,
+        anchors: &[StreamRowAnchor],
+        indexed_from: StreamOffset,
+    ) -> Vec<StreamOffset> {
+        self.hard_line_starts_for_from(anchors, indexed_from, indexed_from)
+    }
+
+    pub(crate) fn hard_line_starts_for_from(
+        &self,
+        anchors: &[StreamRowAnchor],
+        indexed_from: StreamOffset,
+        scan_from: StreamOffset,
+    ) -> Vec<StreamOffset> {
+        let breaks = self.hard_line_breaks(scan_from);
+        anchors
+            .iter()
+            .map(|anchor| {
+                let offset = match anchor {
+                    StreamRowAnchor::Checkpoint(offset) => *offset,
+                    StreamRowAnchor::Atomic { range, .. } => range.start,
+                };
+                breaks
+                    .iter()
+                    .copied()
+                    .take_while(|start| *start <= offset)
+                    .last()
+                    .unwrap_or(indexed_from)
+            })
+            .collect()
+    }
+
+    /// Monotonic ascending hard-line start offsets (including the indexed
+    /// source coordinate). Newline atoms and hard-newline terminators advance
+    /// the break; atomic node starts are breaks to avoid reflowing them.
+    fn hard_line_breaks(&self, indexed_from: StreamOffset) -> Vec<StreamOffset> {
+        let mut breaks = vec![indexed_from];
+        for node in self.semantic_view_from(indexed_from).nodes {
+            match node {
+                super::StreamNode::Text(text) | super::StreamNode::ContinuousText(text) => {
+                    for atom in super::projected::projected_atoms(&text) {
+                        if atom.display == "\n" && atom.owned.end >= indexed_from {
+                            breaks.push(atom.owned.end);
+                        }
+                    }
+                    let owned_end = text.owned_range().end;
+                    if owned_end > text.content_range.end && owned_end >= indexed_from {
+                        breaks.push(owned_end);
+                    }
+                }
+                super::StreamNode::Atomic { range, .. } if range.start >= indexed_from => {
+                    breaks.push(range.start)
+                }
+                super::StreamNode::Atomic { .. } => {}
+            }
+        }
+        breaks.sort_unstable();
+        breaks.dedup();
+        breaks
     }
 
     pub(crate) fn semantic_slice(
@@ -160,7 +271,7 @@ impl<S: StreamingSource> StreamModel<S> {
             if range.start() < end {
                 nodes.extend(
                     semantic_slice_nodes(
-                        self.resident.nodes(),
+                        self.resident.nodes_from(range.start()),
                         StreamRange::new(range.start(), end),
                     )?
                     .nodes,
@@ -184,7 +295,6 @@ impl<S: StreamingSource> StreamModel<S> {
         Ok(StreamView::new(nodes))
     }
 
-    #[cfg(test)]
     #[cfg(test)]
     pub(crate) fn compile(&self, width: u16) -> CompiledStream {
         compile_stream_with_theme(

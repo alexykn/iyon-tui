@@ -1,72 +1,49 @@
-name: Rust API surface parity
+name: TUI API and ABI parity
 
 on:
   push:
-    branches: [bun-refactor]
+    branches: [bun-refactor, main]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/**"
+      - "packages/iyon-tui/**"
+      - "packages/tui-consumer-fixture/**"
       - "tools/api-surface/**"
-      - "packages/iyon-sdk/**"
+      - "tools/ownership/**"
+      - "tools/tui-abi/**"
+      - "tools/tui-abi-gen/**"
       - ".github/workflows/api-surface.yml"
   pull_request:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/**"
+      - "packages/iyon-tui/**"
+      - "packages/tui-consumer-fixture/**"
       - "tools/api-surface/**"
-      - "packages/iyon-sdk/**"
+      - "tools/ownership/**"
+      - "tools/tui-abi/**"
+      - "tools/tui-abi-gen/**"
       - ".github/workflows/api-surface.yml"
 
 jobs:
   parity:
-    name: Stable API surface parity
+    name: Stable API and ABI parity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up stable Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: rustfmt
-
-      - name: Set up Bun 1.3.11
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Test scanner
-        run: cargo test -p api-surface
-
-      - name: Check stable baseline
-        run: cargo run -p api-surface -- check --config tools/api-surface/surface.toml --require-implemented
-
-      - name: Regenerate stable baseline
-        run: cargo run -p api-surface -- scan --config tools/api-surface/surface.toml
-
-      - name: Install Bun workspace
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck SDK and workspace
-        run: bun run typecheck
-
-      - name: Build Rust workspace
-        run: cargo build --workspace
-
-      - name: Reject generated drift
-        run: git diff --exit-code -- tools/api-surface/mappings packages/iyon-sdk/generated packages/iyon-sdk/src/virtual-modules.d.ts
-
-  declared-profile-matrix:
-    name: Declared profile matrix
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Verify the repository baseline profile
-        run: cargo run -p api-surface -- check --config tools/api-surface/surface.toml --require-implemented
+          bun-version: 1.4.0
+      - run: cargo fmt --all -- --check
+      - run: cargo check --workspace --all-features
+      - run: cargo test -p tui-abi-gen
+      - run: bun install --frozen-lockfile
+      - run: bun run check:tui-abi
+      - run: bun run typecheck
+      - run: bun run check:ownership
+      - run: git diff --check

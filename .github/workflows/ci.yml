@@ -42,8 +42,8 @@ jobs:
             packages/iyon-tui/bench/generated \
             docs/history/perf/PERF-11-generated-abi-reference.md
       - run: bun run typecheck
-      - run: bun run check:ownership
       - run: bun run native:stage
+      - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
       - run: |
           T15_TRANSPORT=generated_safe_napi \

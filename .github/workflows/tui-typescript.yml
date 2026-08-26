@@ -37,7 +37,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck
-      - run: bun run check:ownership
       - run: bun run native:stage
+      - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
       - run: git diff --check

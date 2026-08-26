@@ -57,19 +57,14 @@ import {
   type LayoutChild,
   type OverflowIndicator,
 } from "./values/view.ts";
+import { componentIdOf } from "./handles.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { insets } from "./values/geometry.ts";
 import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
 import type { DiffHunk } from "./values/diff.ts";
 import type { StyleRef, StyleSpec } from "./values/style.ts";
-import type { BorderSpec, ColorSpec, NativeHandleId } from "./types.ts";
-
-/** Component-handle contract mirror of View.component's parameter. */
-interface ComponentHandleLike {
-  readonly id: NativeHandleId;
-  nativeComponentId?: () => number | undefined;
-}
+import type { BorderSpec, ColorSpec, ComponentHandle, HandleId } from "./types.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -414,8 +409,8 @@ export function composeSpacer(rows: number): View {
 }
 
 /** Lowers View.component(handle). */
-export function composeComponent(handle: ComponentHandleLike): View {
-  const componentId = (handle.nativeComponentId?.() ?? handle.id) as NativeHandleId;
+export function composeComponent(handle: ComponentHandle): View {
+  const componentId = componentIdOf(handle) as HandleId;
   const scope = executionContext.top;
   if (scope === undefined) return View.component(handle);
   const slot = scope.nextSemanticSlot();

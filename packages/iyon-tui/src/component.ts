@@ -1,4 +1,4 @@
-import { HandleBase, requireNativeClass } from "./handles.ts";
+import { HandleBase, nativeComponentIdOf, requireNativeClass } from "./handles.ts";
 import { native } from "./native.ts";
 import type { Component as ComponentContract, ComponentCapabilities, ViewSlot as ViewSlotContract } from "./types.ts";
 import {
@@ -108,7 +108,7 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
 
   view(): View {
     this.ensureOpen();
-    return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
   revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
@@ -373,10 +373,6 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
     }
     super.dispose();
   }
-  nativeComponentId(): number | undefined {
-    const id = this.nativeAs<NativeViewSlotHandle>().componentId();
-    return id === null ? undefined : id;
-  }
 }
 
 export class Component extends HandleBase<"component"> implements ComponentContract {
@@ -386,12 +382,8 @@ export class Component extends HandleBase<"component"> implements ComponentContr
   }
   view(): View {
     this.ensureOpen();
-    return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
   revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
-  nativeComponentId(): number | undefined {
-    const id = this.nativeAs<NativeViewSlotHandle>().componentId();
-    return id === null ? undefined : id;
-  }
 }

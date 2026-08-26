@@ -21,8 +21,9 @@ import type {
   GridSpec as PublicGridSpec,
   GridTrack as PublicGridTrack,
   HorizontalAlign,
+  ComponentHandle,
+  HandleId,
   LayoutChild,
-  NativeHandleId,
   VerticalAlign,
   WrapMode,
 } from "../types.ts";
@@ -70,6 +71,7 @@ import {
 } from "../ir.ts";
 import { PersistentSeq } from "../persistent_seq.ts";
 import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../style-internals.ts";
+import { componentIdOf } from "../handles.ts";
 import { nodeForBridge, setViewNode } from "../view-internals.ts";
 import { StyleSpec } from "./style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "./style.ts";
@@ -563,10 +565,9 @@ export class View {
     return derived;
   }
 
-  static component(handle: { readonly id: NativeHandleId; nativeComponentId?: () => number | undefined }): View {
+  static component(handle: ComponentHandle): View {
     if (isRetainedConstruction()) return composeComponent(handle);
-    const nativeId = handle.nativeComponentId?.();
-    return new View({ kind: BRIDGE_VIEW_KIND.component, handle: (nativeId ?? handle.id) as NativeHandleId });
+    return new View({ kind: BRIDGE_VIEW_KIND.component, handle: componentIdOf(handle) as HandleId });
   }
 
   /**

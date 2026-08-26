@@ -500,6 +500,13 @@ It must not redesign their execution path.
 
 These apply to H1A–H1L.
 
+## 5.0 Commit each completed tranche
+
+Once a tranche is implemented and its required validation gates are green, commit
+that tranche before starting the next one. Do not carry uncommitted tranche work
+across the H1A–H1L boundaries. The commit should identify the completed tranche
+so the API cleanup remains independently reviewable and bisectable.
+
 ## 5.1 Prefer deletion over compatibility aliases
 
 If a name is demonstrably false or obsolete:

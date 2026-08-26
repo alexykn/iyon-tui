@@ -3,7 +3,7 @@ import { nodeForBridge } from "./view-internals.ts";
 import { borderNodeFor, materializeTheme } from "./style-internals.ts";
 import { View } from "./values/view.ts";
 import { asTuiError, tuiError } from "./errors.ts";
-import { requireNativeClass } from "./handles.ts";
+import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { Scene } from "./scene.ts";
 import { History } from "./history.ts";
 import { TextInput } from "./text-input.ts";
@@ -34,7 +34,7 @@ import type {
   TuiRuntime,
 } from "./types.ts";
 import type { Theme } from "./values/theme.ts";
-import type { NativeTuiHostContract } from "./native.ts";
+import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "./native.ts";
 
 export class Tui implements TuiRuntime {
   private closed = false;
@@ -133,9 +133,9 @@ export class Tui implements TuiRuntime {
         // born attached to their fabricating host (take_for_host would
         // reject re-attach); only detached handles transfer here.
         if (historyToBind !== undefined && historyToBind !== previousHistory) {
-          const nativeObj = (historyToBind as unknown as { nativeObject(): object }).nativeObject() as { isDetached?: () => boolean };
+          const nativeObj = nativeResourceOf<NativeHistoryContract>(historyToBind);
           if (nativeObj.isDetached?.() !== false) {
-            this.host.setHistory((historyToBind as unknown as { nativeObject(): object }).nativeObject() as never);
+            this.host.setHistory(nativeObj);
           }
           this.boundHistory = historyToBind;
         }
@@ -327,8 +327,8 @@ export class Tui implements TuiRuntime {
       if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
         throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
       }
-      const history = (normalized.history as unknown as { nativeObject(): object }).nativeObject() as { isDetached?: () => boolean };
-      if (history.isDetached?.() === true) this.host.setHistory(history as object);
+      const history = nativeResourceOf<NativeHistoryContract>(normalized.history);
+      if (history.isDetached?.() === true) this.host.setHistory(history);
       this.boundHistory = normalized.history;
     }
     const previousBody = this.currentScene?.body;
@@ -401,11 +401,11 @@ export class Tui implements TuiRuntime {
   }
 
   route(output: OutputHandle<string>, routeId: string): void {
-    this.host.route((output as unknown as { nativeObject: object }).nativeObject as never, routeId);
+    this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
   }
 
   interceptPaste(input: TextInput, routeId: string): void {
-    this.host.interceptPaste((input as unknown as { nativeHandle: object }).nativeHandle, routeId);
+    this.host.interceptPaste(nativeResourceOf<object>(input), routeId);
   }
 
   forwardPaste(text: string): void { this.host.forwardPaste(text); }

@@ -1,7 +1,7 @@
 import { nodeForBridge } from "./view-internals.ts";
 import type { View } from "./values/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
-import { HandleBase } from "./handles.ts";
+import { HandleBase, nativeResourceOf } from "./handles.ts";
 import { nativeTui } from "./native-handles.ts";
 import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
@@ -63,17 +63,15 @@ export class History extends HandleBase<"history"> implements HistoryContract {
   }
 
   pushStream(stream: TextStream): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().pushStream((stream as unknown as { nativeObject(): object }).nativeObject()));
+    this.call(() => this.nativeAs<NativeHistoryContract>().pushStream(nativeResourceOf<object>(stream)));
   }
 
   sealStream(stream: TextStream): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().sealStream((stream as unknown as { nativeObject(): object }).nativeObject()));
+    this.call(() => this.nativeAs<NativeHistoryContract>().sealStream(nativeResourceOf<object>(stream)));
   }
 
   setLayout(layout: HistoryLayout): void {
     this.call(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
   }
 
-  /** Internal bridge access; not exported from the public module. */
-  nativeObject(): object { this.ensureOpen(); return this.nativeAs<NativeHistoryContract>(); }
 }

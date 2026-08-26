@@ -16,6 +16,7 @@ const publicTypeNames = [
   "BorderStyle",
   "ColorSpec",
   "Component",
+  "ComponentHandle",
   "ComponentAdapter",
   "ComponentCapabilities",
   "ComponentContext",
@@ -28,6 +29,7 @@ const publicTypeNames = [
   "GridRowBuilder",
   "GridSpec",
   "GridTrack",
+  "HandleId",
   "History",
   "HistoryLayout",
   "HorizontalAlign",
@@ -35,9 +37,6 @@ const publicTypeNames = [
   "InsetsValue",
   "InteractionResult",
   "LayoutChild",
-  "NativeHandle",
-  "NativeHandleId",
-  "NativeOutputHandle",
   "NativeScrollPane",
   "NativeViewSlot",
   "Output",
@@ -199,7 +198,7 @@ try {
 
   const probe = join(output, "public-surface-probe.ts");
   const probeReferences = publicTypeNames.map((name) =>
-    ["NativeOutputHandle", "OutputHandle", "State", "TuiOperation"].includes(name)
+    ["OutputHandle", "State", "TuiOperation"].includes(name)
       ? `${name}<unknown>`
       : name,
   );

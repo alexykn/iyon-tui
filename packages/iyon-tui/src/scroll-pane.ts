@@ -1,4 +1,4 @@
-import { HandleBase } from "./handles.ts";
+import { HandleBase, nativeComponentIdOf } from "./handles.ts";
 import { native } from "./native.ts";
 import type { ComponentCapabilities, ScrollPane as ScrollPaneContract } from "./types.ts";
 import {
@@ -77,7 +77,7 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
 
   view(): View {
     this.ensureOpen();
-    return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
   }
 
   capabilities(): ComponentCapabilities { return this.call(() => ({ focusable: true, keys: ["up", "down", "pageup", "pagedown", "home", "end"] })); }
@@ -190,8 +190,4 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
     super.dispose();
   }
 
-  nativeComponentId(): number | undefined {
-    const id = this.nativeAs<NativeScrollPaneHandle>().componentId();
-    return id === null ? undefined : id;
-  }
 }

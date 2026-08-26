@@ -5,14 +5,21 @@ import type { StyleRef } from "./values/style.ts";
 import type { Theme as SemanticTheme } from "./values/theme.ts";
 import type { ThemeKey } from "./values/theme-key.ts";
 
-declare const handleBrand: unique symbol;
-export type NativeHandleId = number & { readonly [handleBrand]: "NativeHandleId" };
+declare const handleIdBrand: unique symbol;
+/** JavaScript-local framework handle identity; this is not a native identifier. */
+export type HandleId = number & { readonly [handleIdBrand]: "HandleId" };
 
-export interface NativeHandle {
-  readonly kind: string;
-  readonly id: NativeHandleId;
-  readonly disposed: boolean;
-  dispose(): void;
+/**
+ * Nominal base for framework-owned handles. The private field prevents an
+ * arbitrary structural object from satisfying a handle contract.
+ */
+export abstract class FrameworkHandle {
+  #frameworkHandleBrand!: void;
+  abstract readonly kind: string;
+  abstract readonly id: HandleId;
+  abstract readonly disposed: boolean;
+  abstract dispose(): void;
+  protected constructor() {}
 }
 
 export type TuiOperation<T> = T;
@@ -184,7 +191,7 @@ export interface ThemeDefinition {
 
 export type TextContent = SemanticTextContent;
 
-export interface History extends NativeHandle {
+export interface History extends FrameworkHandle {
   readonly kind: "history";
   layout(): TuiOperation<HistoryLayout>;
   push(view: View): TuiOperation<number>;
@@ -200,7 +207,7 @@ export interface HistoryLayout {
   readonly gap: number;
 }
 
-export interface TextInput extends NativeHandle {
+export interface TextInput extends ComponentHandle {
   readonly kind: "text-input";
   text(): TuiOperation<string>;
   cursorBytes(): TuiOperation<number>;
@@ -229,7 +236,7 @@ export interface TextStreamPacing {
   readonly maxUnitsPerSecond?: number;
 }
 
-export interface TextStream extends NativeHandle {
+export interface TextStream extends FrameworkHandle {
   readonly kind: "text-stream";
   update(text: string): TuiOperation<void>;
   append(text: string, annotations?: readonly StreamAnnotation[]): TuiOperation<void>;
@@ -256,9 +263,14 @@ export interface StreamSegmentSnapshot {
   readonly text: string;
 }
 
-export interface Component extends NativeHandle {
-  readonly kind: "component";
+/** Opaque framework-owned identity that may occupy a View component node. */
+export interface ComponentHandle extends FrameworkHandle {
+  readonly kind: "component" | "text-input";
   view(): TuiOperation<View>;
+}
+
+export interface Component extends ComponentHandle {
+  readonly kind: "component";
   capabilities(): TuiOperation<ComponentCapabilities>;
 }
 
@@ -315,7 +327,7 @@ export interface ComponentAdapter {
 }
 
 export interface ComponentContext {
-  readonly componentId: NativeHandleId;
+  readonly componentId: HandleId;
   emit(output: Output): void;
 }
 
@@ -326,9 +338,12 @@ export type InteractionResult =
 
 export type Output = Readonly<Record<string, unknown>>;
 
-export interface OutputHandle<T> {
-  readonly kind: "output";
-  readonly payload: T;
+/** Opaque routed output-channel identity; the payload is delivered separately. */
+export abstract class OutputHandle<T> {
+  #outputHandleBrand!: void;
+  readonly kind = "output" as const;
+  readonly payload!: T;
+  protected constructor() {}
 }
 
 export interface KeyEvent {

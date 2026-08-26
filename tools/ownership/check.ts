@@ -253,6 +253,41 @@ async function themeStyleSemanticGate(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 6: H1C opaque framework-handle guard
+// ---------------------------------------------------------------------------
+
+function opaqueHandleGate(): void {
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const handles = readFileSync(join(FRAMEWORK_SRC, "handles.ts"), "utf8");
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const offenders: string[] = [];
+
+  if (!/export\s+abstract\s+class\s+FrameworkHandle[\s\S]*#frameworkHandleBrand/u.test(types)) {
+    offenders.push("types.ts: missing nominal FrameworkHandle brand");
+  }
+  if (!/new\s+WeakMap<object,\s*object>\(\)/u.test(handles) || !/function\s+nativeResourceOf/u.test(handles)) {
+    offenders.push("handles.ts: missing private native-resource registry");
+  }
+  if (/\bNativeHandle(?:Id)?\b/u.test(index)) {
+    offenders.push("index.ts: NativeHandle/NativeHandleId remains a consumer export");
+  }
+  const sourceOffenders = walk(FRAMEWORK_SRC)
+    .filter((file) => /\b(?:nativeObject|nativeHandle)\s*\(/u.test(readFileSync(file, "utf8")))
+    .map((file) => relative(ROOT, file));
+  if (sourceOffenders.length > 0) offenders.push(`public native unwrap methods: ${sourceOffenders.join(", ")}`);
+  const castOffenders = walk(FRAMEWORK_SRC)
+    .filter((file) => /as\s+unknown\s+as\s*\{[^}]*\bnative(?:Handle|Object)\b/u.test(readFileSync(file, "utf8")))
+    .map((file) => relative(ROOT, file));
+  if (castOffenders.length > 0) offenders.push(`untyped native unwrap casts: ${castOffenders.join(", ")}`);
+
+  if (offenders.length > 0) {
+    fail("h1c-opaque-handles", offenders.join("; "));
+  } else {
+    pass("h1c-opaque-handles", "framework handles are nominal and native resources unwrap through the private registry");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -336,6 +371,7 @@ tsImportGate();
 napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();
+opaqueHandleGate();
 await publicSurfaceGate();
 
 if (failed) {

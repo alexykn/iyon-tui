@@ -21,6 +21,7 @@ export type {
   ComponentAdapter,
   ComponentCapabilities,
   ComponentContext,
+  ComponentHandle,
   GridCell,
   GridRow,
   GridSpec,
@@ -30,9 +31,8 @@ export type {
   InteractionResult,
   LayoutChild,
   HistoryLayout,
+  HandleId,
   KeyEvent,
-  NativeHandle,
-  NativeHandleId,
   OutputEvent,
   Output,
   OutputHandle,
@@ -88,7 +88,7 @@ export {
 } from "./values/style.ts";
 export { TextSelector, TextSpan } from "./values/text.ts";
 export { History } from "./history.ts";
-export { TextInput, NativeOutputHandle } from "./text-input.ts";
+export { TextInput } from "./text-input.ts";
 export { TextStream, StreamPane } from "./stream.ts";
 export { Component, ViewSlot as NativeViewSlot } from "./component.ts";
 export { NativeScrollPane } from "./scroll-pane.ts";

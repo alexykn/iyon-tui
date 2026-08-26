@@ -32,6 +32,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck

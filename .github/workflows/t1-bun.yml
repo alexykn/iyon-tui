@@ -28,6 +28,8 @@ jobs:
 
       - name: Set up Rust 1.97.1
         uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
 
       - name: Report toolchains
         run: |

@@ -27,6 +27,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: cargo test -p tui-abi-gen
@@ -61,6 +63,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
       - run: bun install --frozen-lockfile
       - run: ION_NATIVE_FEATURES=direct-ffi bun run packages/iyon-tui/scripts/stage-native.ts
       - run: |

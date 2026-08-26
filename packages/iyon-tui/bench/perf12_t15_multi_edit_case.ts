@@ -1,5 +1,6 @@
 import { View } from "../src/index.ts";
-import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, nodeForBridge, viewNodeId, type View as ViewValue } from "../src/values/view.ts";
+import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, viewNodeId, type View as ViewValue } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";

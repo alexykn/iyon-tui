@@ -1,18 +1,24 @@
-import { native } from "./native.ts";
 import { asTuiError, tuiError } from "./errors.ts";
-import type { NativeHandle, NativeHandleId, TextStreamOptions } from "./types.ts";
+import type { NativeHandle, NativeHandleId } from "./types.ts";
 
-export interface NativeHandleObject {
+interface HandleResource {
   dispose(): void;
 }
 
 let nextHandleId = 1;
 
-export abstract class HandleBase<T extends NativeHandleObject, K extends string = string> implements NativeHandle {
+export abstract class HandleBase<K extends string = string> implements NativeHandle {
   readonly id = nextHandleId++ as NativeHandleId;
   private isDisposed = false;
+  #nativeHandle: HandleResource;
 
-  protected constructor(readonly kind: K, protected readonly nativeHandle: T) {}
+  protected constructor(readonly kind: K, nativeHandle: never) {
+    this.#nativeHandle = nativeHandle as unknown as HandleResource;
+  }
+
+  protected nativeAs<T>(): T {
+    return this.#nativeHandle as T;
+  }
 
   get disposed(): boolean { return this.isDisposed; }
 
@@ -20,7 +26,7 @@ export abstract class HandleBase<T extends NativeHandleObject, K extends string 
     if (this.isDisposed) return;
     this.isDisposed = true;
     try {
-      this.nativeHandle.dispose();
+      this.#nativeHandle.dispose();
     } catch (error) {
       throw asTuiError(error);
     }
@@ -44,11 +50,3 @@ export function requireNativeClass<T>(factory: T | undefined, name: string): T {
   if (factory === undefined) throw tuiError("runtime", `${name} is unavailable in the native addon`);
   return factory;
 }
-
-export const nativeTui = {
-  history: () => new (requireNativeClass(native.NativeHistory, "NativeHistory"))(),
-  textInput: (multiline?: boolean) => new (requireNativeClass(native.NativeTextInput, "NativeTextInput"))(multiline),
-  textStream: (options?: TextStreamOptions) => new (requireNativeClass(native.NativeTextStream, "NativeTextStream"))(options),
-  markdownProjector: () => new (requireNativeClass(native.NativeMarkdownProjector, "NativeMarkdownProjector"))(),
-  plainProjector: () => new (requireNativeClass(native.NativePlainProjector, "NativePlainProjector"))(),
-};

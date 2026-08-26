@@ -32,7 +32,8 @@ import {
 } from "./generated/view_materialize.ts";
 import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
 import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
-import { nodeForBridge, viewNodeIdHighWater, type View } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
+import { viewNodeIdHighWater, type View } from "./values/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
   MAX_DIRECT_AXIS_REFS,

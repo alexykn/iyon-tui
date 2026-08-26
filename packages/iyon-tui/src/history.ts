@@ -1,13 +1,19 @@
-import { nodeForBridge, type View } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
+import type { View } from "./values/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
-import { HandleBase, nativeTui } from "./handles.ts";
+import { HandleBase } from "./handles.ts";
+import { nativeTui } from "./native-handles.ts";
+import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
 
-export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "history"> implements HistoryContract {
-  constructor(nativeHandle = nativeTui.history()) { super("history", nativeHandle); }
+export class History extends HandleBase<"history"> implements HistoryContract {
+  constructor();
+  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
+  constructor(nativeHandle: never);
+  constructor(nativeHandle?: NativeHistoryContract) { super("history", (nativeHandle ?? nativeTui.history()) as never); }
 
   layout(): HistoryLayout {
-    return this.call(() => this.nativeHandle.layout() as HistoryLayout);
+    return this.call(() => this.nativeAs<NativeHistoryContract>().layout() as HistoryLayout);
   }
 
   /**
@@ -22,12 +28,13 @@ export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "h
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
-          if (this.nativeHandle.pushRef !== undefined) return this.nativeHandle.pushRef(ref);
+          const nativeHandle = this.nativeAs<NativeHistoryContract>();
+          if (nativeHandle.pushRef !== undefined) return nativeHandle.pushRef(ref);
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      return this.nativeHandle.push(nodeForBridge(view));
+      return this.nativeAs<NativeHistoryContract>().push(nodeForBridge(view));
     });
   }
 
@@ -38,34 +45,35 @@ export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "h
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
-          if (this.nativeHandle.freezeRef !== undefined) {
-            this.nativeHandle.freezeRef(unit, ref);
+          const nativeHandle = this.nativeAs<NativeHistoryContract>();
+          if (nativeHandle.freezeRef !== undefined) {
+            nativeHandle.freezeRef(unit, ref);
             return;
           }
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeHandle.freeze(unit, nodeForBridge(view));
+      this.nativeAs<NativeHistoryContract>().freeze(unit, nodeForBridge(view));
     });
   }
 
   discardLive(unit: number): void {
-    this.call(() => this.nativeHandle.discardLive(unit));
+    this.call(() => this.nativeAs<NativeHistoryContract>().discardLive(unit));
   }
 
   pushStream(stream: TextStream): void {
-    this.call(() => this.nativeHandle.pushStream((stream as unknown as { nativeObject(): object }).nativeObject()));
+    this.call(() => this.nativeAs<NativeHistoryContract>().pushStream((stream as unknown as { nativeObject(): object }).nativeObject()));
   }
 
   sealStream(stream: TextStream): void {
-    this.call(() => this.nativeHandle.sealStream((stream as unknown as { nativeObject(): object }).nativeObject()));
+    this.call(() => this.nativeAs<NativeHistoryContract>().sealStream((stream as unknown as { nativeObject(): object }).nativeObject()));
   }
 
   setLayout(layout: HistoryLayout): void {
-    this.call(() => this.nativeHandle.setLayout(layout));
+    this.call(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
   }
 
   /** Internal bridge access; not exported from the public module. */
-  nativeObject(): object { this.ensureOpen(); return this.nativeHandle; }
+  nativeObject(): object { this.ensureOpen(); return this.nativeAs<NativeHistoryContract>(); }
 }

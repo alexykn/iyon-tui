@@ -5,7 +5,7 @@ import { Scene, Tui, View } from "../src/index.ts";
 describe("native interaction host", () => {
   test("local editing stays native and submit crosses as an action", async () => {
     const tui = await Tui.open({ width: 20, height: 4, headless: true });
-    const input = tui.createTextInput({ multiline: true, border: { style: "plain", edges: "topBottom", color: "white" } });
+    const input = tui.createTextInput({ multiline: true, border: { style: "plain", edges: "topBottom", color: { type: "named", value: "white" } } });
     await tui.render(new Scene(View.component(input)));
 
     tui.enqueue({ type: "key", key: "a" });

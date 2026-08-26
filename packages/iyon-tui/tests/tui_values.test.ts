@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DiffHunk, DiffLine, DiffRange, DiffRenderer, View } from "../src/index.ts";
-import { nodeForBridge } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 import { native } from "../src/native.ts";
 
 describe("retained TUI semantic values", () => {
@@ -84,7 +84,7 @@ describe("retained TUI semantic values", () => {
   test("node identity survives module re-evaluation", async () => {
     const first = nodeForBridge(View.text("first")).id;
     const reloaded = await import(`../src/values/view.ts?reload=${Date.now()}`);
-    const second = reloaded.nodeForBridge(reloaded.View.text("second")).id;
+    const second = nodeForBridge(reloaded.View.text("second")).id;
     expect(second).toBeGreaterThan(first);
   });
 

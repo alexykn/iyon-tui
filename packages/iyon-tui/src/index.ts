@@ -6,9 +6,29 @@ export {
   tuiError,
 } from "./errors.ts";
 export type {
+  AnsiColor,
+  BorderEdges,
+  BorderGlyphs,
+  BorderSpec,
+  BorderStyle,
+  ColorSpec,
+  RgbColor,
+  ThemeColor,
+  ThemeColorDefault,
+  ThemeColorIndexed,
+  ThemeColorNamed,
+  ThemeColorReference,
   ComponentAdapter,
   ComponentCapabilities,
   ComponentContext,
+  GridCell,
+  GridRow,
+  GridSpec,
+  GridTrack,
+  HorizontalAlign,
+  InsetsValue,
+  InteractionResult,
+  LayoutChild,
   HistoryLayout,
   KeyEvent,
   NativeHandle,
@@ -21,8 +41,15 @@ export type {
   RenderContext,
   Renderer,
   ResizeEvent,
+  SceneProducer,
   StreamAnnotation,
+  StreamSegmentSnapshot,
   StreamSnapshot,
+  TextInputOptions,
+  TextSelectorValue,
+  TextSpanValue,
+  StyleSelectorValue,
+  StyleSpecValue,
   TextStreamOptions,
   TextStreamPacing,
   TextStreamPresentation,
@@ -30,21 +57,35 @@ export type {
   TerminateEvent,
   TextRewriter,
   TextVisitor,
+  TerminalMetadata,
   TuiEvent,
+  ThemeColorEntry,
+  ThemeDefinition,
+  ThemeStyleEntry,
   TuiOpenOptions,
   TuiOperation,
   TuiRuntime,
+  VerticalAlign,
+  WrapMode,
   TuiFailure,
   ViewSlot,
   ScrollPane,
 } from "./types.ts";
-export { View, ChildrenBuilder } from "./values/view.ts";
+export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./values/view.ts";
+export type { OverflowIndicator, ViewChildren } from "./values/view.ts";
 export { defineView } from "./define-view.ts";
 export type { ViewComponent } from "./execution.ts";
 export { state } from "./tracked-state.ts";
 export type { State } from "./tracked-state.ts";
 export { Insets } from "./values/geometry.ts";
-export { Style, StyleSpec } from "./values/style.ts";
+export {
+  Style,
+  StyleRef,
+  StyleSelector,
+  StyleSpec,
+  StyleStateKey,
+  StyleStateValue,
+} from "./values/style.ts";
 export { TextSelector, TextSpan } from "./values/text.ts";
 export { History } from "./history.ts";
 export { TextInput, NativeOutputHandle } from "./text-input.ts";
@@ -56,7 +97,10 @@ export { Annotations } from "./values/annotations.ts";
 export { Projection, ProjectionBuilder, Smooth } from "./values/projection.ts";
 export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./values/diff.ts";
 export { Theme, ThemeKey } from "./values/theme.ts";
-export type { ThemeSelector } from "./values/theme.ts";
+export type { DiffLineKind, DiffLineTermination } from "./values/diff.ts";
+export type { ProjectionSpan } from "./values/projection.ts";
+export type { SemanticTag, SemanticValue } from "./values/annotations.ts";
+export type { TextFormat, TextOrigin } from "./values/text-content.ts";
 export { PlainTextProjector, MarkdownProjector } from "./projectors.ts";
 export { RendererAdapter } from "./traits/renderer.ts";
 export { ProjectorAdapter } from "./traits/projector.ts";

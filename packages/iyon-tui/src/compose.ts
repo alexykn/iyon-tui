@@ -28,6 +28,7 @@
 
 import { executionContext, executionCounters } from "./execution.ts";
 import { withoutRetainedComposition } from "./execution-context.ts";
+import { borderNodeFor, colorNodeFor, styleNodeFor } from "./style-internals.ts";
 import {
   BRIDGE_GRID_TRACK_KIND,
   BRIDGE_HORIZONTAL_ALIGN,
@@ -46,22 +47,23 @@ import {
   type BridgeViewNode,
   type ColorNode,
   type DecorationNode,
-  type DiffHunkNode,
   type StyleNode,
 } from "./ir.ts";
 import {
   ChildrenBuilder,
   GridBuilder,
   View,
-  nodeForBridge,
   type GridSpec,
+  type LayoutChild,
   type OverflowIndicator,
 } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
 import { insets } from "./values/geometry.ts";
 import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
-import type { StyleSpec } from "./values/style.ts";
-import type { NativeHandleId } from "./types.ts";
+import type { DiffHunk } from "./values/diff.ts";
+import type { StyleRef, StyleSpec } from "./values/style.ts";
+import type { BorderSpec, ColorSpec, NativeHandleId } from "./types.ts";
 
 /** Component-handle contract mirror of View.component's parameter. */
 interface ComponentHandleLike {
@@ -231,11 +233,11 @@ function decorationDeltaMatches(
     case MOD_MIN_HEIGHT: return dec.minHeight === a;
     case MOD_MAX_HEIGHT: return dec.maxHeight === a;
     case MOD_PADDING: return insetsEqual(dec.padding, insets(a as number | Insets));
-    case MOD_FOREGROUND: return colorEqual(dec.foreground, a as ColorNode);
-    case MOD_BACKGROUND: return colorEqual(dec.background, a as ColorNode);
-    case MOD_BORDER: return borderEqual(dec.border, a as BorderNode);
+    case MOD_FOREGROUND: return colorEqual(dec.foreground, colorNodeFor(a as ColorSpec));
+    case MOD_BACKGROUND: return colorEqual(dec.background, colorNodeFor(a as ColorSpec));
+    case MOD_BORDER: return borderEqual(dec.border, borderNodeFor(a as BorderSpec));
     case MOD_STYLE_SPEC: {
-      const expected = mergeStyles(inherited.style, mergeStyles(emptyStyle(), (a as StyleSpec).value));
+      const expected = mergeStyles(inherited.style, mergeStyles(emptyStyle(), styleNodeFor(a as StyleRef | StyleSpec)));
       return styleNodesEqual(dec.style, expected);
     }
     case MOD_TEXT_ATTRIBUTE: {
@@ -320,12 +322,12 @@ function applyDecorationDirect(base: View, tag: number, a: unknown, b: unknown):
       case MOD_MIN_HEIGHT: return base.minHeight(a as number);
       case MOD_MAX_HEIGHT: return base.maxHeight(a as number);
       case MOD_PADDING: return base.padding(a as number | Insets);
-      case MOD_FOREGROUND: return base.foreground(a as ColorNode);
-      case MOD_BACKGROUND: return base.background(a as ColorNode);
-      case MOD_STYLE_SPEC: return base.style(a as StyleSpec);
+      case MOD_FOREGROUND: return base.foreground(a as ColorSpec);
+      case MOD_BACKGROUND: return base.background(a as ColorSpec);
+      case MOD_STYLE_SPEC: return base.style(a as StyleRef | StyleSpec);
       case MOD_TEXT_ATTRIBUTE: return base.textAttribute(a as string, (b as boolean | undefined) ?? true);
       case MOD_STYLE_STATE: return base.styleState(a as string, b as string);
-      case MOD_BORDER: return base.border(a as BorderNode);
+      case MOD_BORDER: return base.border(a as BorderSpec);
       default:
         throw new RangeError(`unknown decoration modifier ${tag}`);
     }
@@ -387,7 +389,8 @@ function styledSpansMatch(
     const span = spans[index]!.value;
     const bridged = bridgeSpans[index]!;
     if (bridged.text !== span.text) return false;
-    if (!styleNodesEqual(bridged.style, span.style)) return false;
+    const style = span.style === undefined ? undefined : styleNodeFor(span.style);
+    if (!styleNodesEqual(bridged.style, style)) return false;
   }
   return true;
 }
@@ -487,7 +490,7 @@ export function composeHorizontal(build: (children: import("./values/view.ts").C
   return composeAxisImpl(true, build);
 }
 
-function axisMatches(previous: View, row: boolean, entries: readonly BridgeLayoutChild[], gap: number): boolean {
+function axisMatches(previous: View, row: boolean, entries: readonly LayoutChild[], gap: number): boolean {
   const node = nodeForBridge(previous);
   const expectedKind = row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column;
   if (node.kind !== expectedKind) return false;
@@ -500,20 +503,18 @@ function axisMatches(previous: View, row: boolean, entries: readonly BridgeLayou
   for (let index = 0; index < entries.length; index += 1) {
     const past = previousEntries[index]!;
     const next = entries[index]!;
-    if (past.kind !== next.kind) return false;
-    if (past.child !== next.child) return false;
+    if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND[next.kind]) return false;
+    if (past.child !== nodeForBridge(next.child)) return false;
     switch (next.kind) {
-      case BRIDGE_LAYOUT_CHILD_KIND.fixed: {
-        const previousFixed = past as typeof next;
-        if (previousFixed.size !== next.size) return false;
+      case "fixed":
+        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.fixed || past.size !== next.size) return false;
         break;
-      }
-      case BRIDGE_LAYOUT_CHILD_KIND.flexMax:
-      case BRIDGE_LAYOUT_CHILD_KIND.contentMax: {
-        const previousCapped = past as typeof next;
-        if (previousCapped.maxRows !== next.maxRows) return false;
+      case "flexMax":
+        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.flexMax || past.maxRows !== next.maxRows) return false;
         break;
-      }
+      case "contentMax":
+        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.contentMax || past.maxRows !== next.maxRows) return false;
+        break;
     }
   }
   return true;
@@ -589,11 +590,11 @@ function overflowIndicatorMatches(bridged: BridgeOverflowIndicatorNode, overflow
   if (overflow.kind === "none") return bridged.kind === BRIDGE_OVERFLOW_KIND.none;
   if (overflow.kind === "ellipsis") {
     return bridged.kind === BRIDGE_OVERFLOW_KIND.ellipsis
-      && styleNodesEqual(bridged.style, overflow.style.value as unknown as StyleNode);
+      && styleNodesEqual(bridged.style, styleNodeFor(overflow.style));
   }
   return bridged.kind === BRIDGE_OVERFLOW_KIND.footer
     && bridged.prefix === overflow.prefix
-    && styleNodesEqual(bridged.style, overflow.style.value as unknown as StyleNode);
+    && styleNodesEqual(bridged.style, styleNodeFor(overflow.style));
 }
 
 /** Lowers View.grid(specification) with immediate child/track equality. */
@@ -657,7 +658,7 @@ function gridTrackMatches(a: BridgeGridTrackNode, b: BridgeGridTrackNode): boole
  * equality, so composition stages a fresh immutable View every evaluation —
  * but ALWAYS consumes a slot to keep the scope cursor aligned across renders.
  */
-export function composeDiff(hunks: readonly DiffHunkNode[]): View {
+export function composeDiff(hunks: readonly DiffHunk[]): View {
   const scope = executionContext.top;
   const view = scope === undefined ? View.diff(hunks) : withoutRetainedComposition(() => View.diff(hunks));
   if (scope !== undefined) {
@@ -715,17 +716,17 @@ export function composePadding(base: View, value: number | Insets): View {
 }
 
 /** Lowers base.foreground(color). */
-export function composeForeground(base: View, color: ColorNode): View {
+export function composeForeground(base: View, color: ColorSpec): View {
   return applyDecoration(base, MOD_FOREGROUND, color);
 }
 
 /** Lowers base.background(color). */
-export function composeBackground(base: View, color: ColorNode): View {
+export function composeBackground(base: View, color: ColorSpec): View {
   return applyDecoration(base, MOD_BACKGROUND, color);
 }
 
 /** Lowers base.style(spec). */
-export function composeStyle(base: View, spec: StyleSpec): View {
+export function composeStyle(base: View, spec: StyleRef | StyleSpec): View {
   return applyDecoration(base, MOD_STYLE_SPEC, spec);
 }
 
@@ -740,7 +741,7 @@ export function composeTextAttribute(base: View, name: string, enabled = true): 
 }
 
 /** Lowers base.border(spec). */
-export function composeBorder(base: View, border: BorderNode): View {
+export function composeBorder(base: View, border: BorderSpec): View {
   return applyDecoration(base, MOD_BORDER, border);
 }
 

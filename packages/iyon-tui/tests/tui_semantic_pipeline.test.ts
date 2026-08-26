@@ -31,6 +31,6 @@ describe("T5 semantic text pipeline", () => {
 
   test("theme selection remains a semantic style lookup", () => {
     const theme = Theme.new().withStyle("emphasis", new StyleSpec().bold());
-    expect(theme.style("emphasis").value.attributes.bold).toBe(true);
+    expect(theme.style("emphasis")?.value.attributes.bold).toBe(true);
   });
 });

@@ -13,7 +13,8 @@ import {
   type RetainedExecutionRuntime,
 } from "./execution.ts";
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
-import { nodeForBridge, View } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
+import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 
 /**
@@ -59,7 +60,7 @@ type NativeViewSlotHandle = {
   stopAnimationRef(viewRef: number): void;
 };
 
-export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> implements ViewSlotContract {
+export class ViewSlot extends HandleBase<"component"> implements ViewSlotContract {
   private currentView?: View;
   /** R7: mutable cell so transaction closures can promote currentView on commit. */
   private currentViewSet = (view: View): void => {
@@ -74,23 +75,25 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
   private boundary?: RetainedRootBoundary;
 
   /** R8: shared Tui execution runtime (undefined for raw internal construction — builder mode unsupported there). */
-  private readonly retainedRuntime?: RetainedExecutionRuntime;
+  #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
+  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
+  constructor(host: never, initialView?: View, retainedRuntime?: never);
   constructor(
     host: NativeTuiHostContract,
     initialView?: View,
     retainedRuntime?: RetainedExecutionRuntime,
   ) {
-    super("component", buildSlotHandle(host, initialView) as NativeViewSlotHandle);
+    super("component", buildSlotHandle(host, initialView) as never);
     this.currentView = initialView;
-    this.retainedRuntime = retainedRuntime;
+    this.#retainedRuntime = retainedRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
-        if (this.disposed || this.nativeHandle.setViewRef === undefined) return false;
+        if (this.disposed || this.nativeAs<NativeViewSlotHandle>().setViewRef === undefined) return false;
         try {
-          this.nativeHandle.setViewRef(ref);
+          this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
           return true;
         } catch {
           return false;
@@ -101,14 +104,14 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
     }
   }
 
-  tuiViewAbiInstallRef(viewRef: number): void { this.nativeHandle.setViewRef(viewRef); }
+  tuiViewAbiInstallRef(viewRef: number): void { this.nativeAs<NativeViewSlotHandle>().setViewRef(viewRef); }
 
   view(): View {
     this.ensureOpen();
     return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
-  revision(): number { return this.call(() => this.nativeHandle.revision()); }
+  revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
   /**
    * PERF-12 T13.1 R8 (handoff §32.2.4): direct and builder forms are
    * OWNERSHIP MODES.
@@ -136,7 +139,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
 
   private assertBuilderAllowed(): void {
     this.assertUserMutationAllowed("slot builder mutation");
-    if (this.retainedRuntime === undefined) {
+    if (this.#retainedRuntime === undefined) {
       throw new Error(
         "TUI_EXECUTION_BUILDER_UNSUPPORTED: builder mode requires a Tui-created slot (shared execution runtime)",
       );
@@ -149,7 +152,7 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       preparePublication: (o: import("./values/view.ts").View) => this.prepareSetView(o),
     };
     if (this.ownedBuilderRoot === undefined) {
-      const runtime = this.retainedRuntime!;
+      const runtime = this.#retainedRuntime!;
       this.ownedBuilderRoot = OwnedBuilderRoot.start(runtime, build, target);
     } else {
       this.ownedBuilderRoot.replaceProducer(build);
@@ -173,14 +176,14 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       const ref = tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
-          this.nativeHandle.setViewRef(ref);
+          this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
           this.currentView = view;
           return;
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeHandle.setView(nodeForBridge(view));
+      this.nativeAs<NativeViewSlotHandle>().setView(nodeForBridge(view));
       this.currentView = view;
     });
     // Transactional ownership transition (direct wins only after successful
@@ -260,8 +263,8 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
           scratch = this.animationScratch(scalarRefs!.length);
           scratch.set(scalarRefs!);
         }
-        if (atCycleBoundary) this.nativeHandle.setAnimationRefsAtCycleBoundary(scratch, acquiredCount, intervalMs);
-        else this.nativeHandle.setAnimationRefs(scratch, acquiredCount, intervalMs);
+        if (atCycleBoundary) this.nativeAs<NativeViewSlotHandle>().setAnimationRefsAtCycleBoundary(scratch, acquiredCount, intervalMs);
+        else this.nativeAs<NativeViewSlotHandle>().setAnimationRefs(scratch, acquiredCount, intervalMs);
       } finally {
         if (scratch !== undefined) {
           for (let index = 0; index < acquiredCount; index += 1) releaseNativeViewRef(nativeViewAbiSession(), scratch[index]!);
@@ -277,56 +280,56 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
   }
 
   private animationScratch(requiredLength: number): Uint32Array {
-    let scratch = ANIMATION_REF_SCRATCH.get(this.nativeHandle as object);
+    let scratch = ANIMATION_REF_SCRATCH.get(this.nativeAs<NativeViewSlotHandle>() as object);
     if (scratch === undefined || scratch.length < requiredLength) {
       scratch = new Uint32Array(Math.max(requiredLength, 4));
-      ANIMATION_REF_SCRATCH.set(this.nativeHandle as object, scratch);
+      ANIMATION_REF_SCRATCH.set(this.nativeAs<NativeViewSlotHandle>() as object, scratch);
     }
     return scratch;
   }
   private setAnimationBridge(frames: readonly View[], intervalMs: number, atCycleBoundary: boolean): void {
-    if (atCycleBoundary) this.nativeHandle.setAnimationAtCycleBoundary(frames.map(nodeForBridge), intervalMs);
-    else this.nativeHandle.setAnimation(frames.map(nodeForBridge), intervalMs);
+    if (atCycleBoundary) this.nativeAs<NativeViewSlotHandle>().setAnimationAtCycleBoundary(frames.map(nodeForBridge), intervalMs);
+    else this.nativeAs<NativeViewSlotHandle>().setAnimation(frames.map(nodeForBridge), intervalMs);
   }
 
   private setFixedAnimationRefs(refs: readonly number[], intervalMs: number, atCycleBoundary: boolean): boolean {
     if (atCycleBoundary) {
       switch (refs.length) {
         case 1:
-          if (this.nativeHandle.setAnimationRef1AtCycleBoundary === undefined) return false;
-          this.nativeHandle.setAnimationRef1AtCycleBoundary(refs[0]!, intervalMs);
+          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef1AtCycleBoundary === undefined) return false;
+          this.nativeAs<NativeViewSlotHandle>().setAnimationRef1AtCycleBoundary!(refs[0]!, intervalMs);
           return true;
         case 2:
-          if (this.nativeHandle.setAnimationRef2AtCycleBoundary === undefined) return false;
-          this.nativeHandle.setAnimationRef2AtCycleBoundary(refs[0]!, refs[1]!, intervalMs);
+          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef2AtCycleBoundary === undefined) return false;
+          this.nativeAs<NativeViewSlotHandle>().setAnimationRef2AtCycleBoundary!(refs[0]!, refs[1]!, intervalMs);
           return true;
         case 3:
-          if (this.nativeHandle.setAnimationRef3AtCycleBoundary === undefined) return false;
-          this.nativeHandle.setAnimationRef3AtCycleBoundary(refs[0]!, refs[1]!, refs[2]!, intervalMs);
+          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef3AtCycleBoundary === undefined) return false;
+          this.nativeAs<NativeViewSlotHandle>().setAnimationRef3AtCycleBoundary!(refs[0]!, refs[1]!, refs[2]!, intervalMs);
           return true;
         case 4:
-          if (this.nativeHandle.setAnimationRef4AtCycleBoundary === undefined) return false;
-          this.nativeHandle.setAnimationRef4AtCycleBoundary(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
+          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef4AtCycleBoundary === undefined) return false;
+          this.nativeAs<NativeViewSlotHandle>().setAnimationRef4AtCycleBoundary!(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
           return true;
       }
       return false;
     }
     switch (refs.length) {
       case 1:
-        if (this.nativeHandle.setAnimationRef1 === undefined) return false;
-        this.nativeHandle.setAnimationRef1(refs[0]!, intervalMs);
+        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef1 === undefined) return false;
+        this.nativeAs<NativeViewSlotHandle>().setAnimationRef1!(refs[0]!, intervalMs);
         return true;
       case 2:
-        if (this.nativeHandle.setAnimationRef2 === undefined) return false;
-        this.nativeHandle.setAnimationRef2(refs[0]!, refs[1]!, intervalMs);
+        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef2 === undefined) return false;
+        this.nativeAs<NativeViewSlotHandle>().setAnimationRef2!(refs[0]!, refs[1]!, intervalMs);
         return true;
       case 3:
-        if (this.nativeHandle.setAnimationRef3 === undefined) return false;
-        this.nativeHandle.setAnimationRef3(refs[0]!, refs[1]!, refs[2]!, intervalMs);
+        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef3 === undefined) return false;
+        this.nativeAs<NativeViewSlotHandle>().setAnimationRef3!(refs[0]!, refs[1]!, refs[2]!, intervalMs);
         return true;
       case 4:
-        if (this.nativeHandle.setAnimationRef4 === undefined) return false;
-        this.nativeHandle.setAnimationRef4(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
+        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef4 === undefined) return false;
+        this.nativeAs<NativeViewSlotHandle>().setAnimationRef4!(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
         return true;
       default:
         return false;
@@ -339,13 +342,13 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
-          this.nativeHandle.stopAnimationRef(ref);
+          this.nativeAs<NativeViewSlotHandle>().stopAnimationRef(ref);
           return;
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeHandle.stopAnimation(nodeForBridge(view));
+      this.nativeAs<NativeViewSlotHandle>().stopAnimation(nodeForBridge(view));
     });
     this.disposeOwnedBuilder();
   }
@@ -371,24 +374,24 @@ export class ViewSlot extends HandleBase<NativeViewSlotHandle, "component"> impl
     super.dispose();
   }
   nativeComponentId(): number | undefined {
-    const id = this.nativeHandle.componentId();
+    const id = this.nativeAs<NativeViewSlotHandle>().componentId();
     return id === null ? undefined : id;
   }
 }
 
-export class Component extends HandleBase<NativeViewSlotHandle, "component"> implements ComponentContract {
+export class Component extends HandleBase<"component"> implements ComponentContract {
   constructor() {
     const NativeViewSlot = requireNativeClass(native.NativeViewSlot, "NativeViewSlot");
-    super("component", new NativeViewSlot(nodeForBridge(View.spacer(0))));
+    super("component", new NativeViewSlot(nodeForBridge(View.spacer(0))) as never);
   }
   view(): View {
     this.ensureOpen();
     return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
-  revision(): number { return this.call(() => this.nativeHandle.revision()); }
+  revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
   nativeComponentId(): number | undefined {
-    const id = this.nativeHandle.componentId();
+    const id = this.nativeAs<NativeViewSlotHandle>().componentId();
     return id === null ? undefined : id;
   }
 }

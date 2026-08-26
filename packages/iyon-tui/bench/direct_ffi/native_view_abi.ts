@@ -31,8 +31,8 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "./view_calls.ts";
+import { nodeForBridge } from "../../src/view-internals.ts";
 import {
-  nodeForBridge,
   nodeIdPair,
   viewNodeId,
   type NativePathLineage,

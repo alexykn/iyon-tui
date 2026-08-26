@@ -5,9 +5,9 @@ import { Tui, View } from "../src/index.ts";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
-  nodeForBridge,
   textLayoutAtNativePathForTransport,
 } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 
 type OracleHost = {
   render(view: object): void;

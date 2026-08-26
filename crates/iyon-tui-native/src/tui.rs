@@ -3207,6 +3207,14 @@ fn lower_selector(value: &Value) -> Result<iyon_tui::StyleSelector> {
 }
 
 fn lower_theme_color(value: &Value) -> Result<iyon_tui::ThemeColor> {
+    if value
+        .as_object()
+        .and_then(|object| object.get("type"))
+        .and_then(Value::as_str)
+        == Some("default")
+    {
+        return Ok(iyon_tui::ThemeColor::Default);
+    }
     match color_spec(value)? {
         iyon_tui::ColorSpec::Theme(_) => Err(crate::NativeError::invalid_input(
             "theme colors cannot reference another theme color",

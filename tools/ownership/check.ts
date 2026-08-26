@@ -7,7 +7,7 @@
  */
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, relative, resolve, dirname } from "node:path";
+import { basename, join, relative, resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
 let failed = false;
@@ -211,6 +211,48 @@ function consumerFixtureGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 5: H1B theme/style semantic guard
+// ---------------------------------------------------------------------------
+
+async function themeStyleSemanticGate(): Promise<void> {
+  const privateFiles = new Set([
+    "ir.ts",
+    "native.ts",
+    "native_view_abi.ts",
+    "retained_dag.ts",
+    "style-internals.ts",
+    "view-internals.ts",
+  ]);
+  const offenders: string[] = [];
+  for (const file of walk(FRAMEWORK_SRC)) {
+    if (privateFiles.has(basename(file))) continue;
+    const source = readFileSync(file, "utf8");
+    if (/["'`]theme:/u.test(source)) offenders.push(relative(ROOT, file));
+  }
+  const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
+  for (const file of walk(fixtureRoot)) {
+    if (/["'`]theme:/u.test(readFileSync(file, "utf8"))) offenders.push(relative(ROOT, file));
+  }
+
+  const mod = await import(join(FRAMEWORK_SRC, "index.ts"));
+  const styleSpec = mod.StyleSpec as { readonly prototype: object } | undefined;
+  const styleSpecTheme = styleSpec !== undefined
+    && typeof (styleSpec.prototype as { readonly theme?: unknown }).theme === "function";
+  if (styleSpecTheme) offenders.push("packages/iyon-tui/src/values/style.ts: StyleSpec.theme");
+
+  const styleTypes = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  if (/interface StyleSpecValue\s*\{[^}]*\btheme\??\s*:/u.test(styleTypes)) {
+    offenders.push("packages/iyon-tui/src/types.ts: StyleSpecValue.theme");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1b-theme-style-semantics", `public theme/style convention remains: ${offenders.join(", ")}`);
+  } else {
+    pass("h1b-theme-style-semantics", "public styles use ColorSpec/StyleRef semantics; theme: lowering remains private");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -293,6 +335,7 @@ rustDependencyGate();
 tsImportGate();
 napiTransportGate();
 consumerFixtureGate();
+await themeStyleSemanticGate();
 await publicSurfaceGate();
 
 if (failed) {

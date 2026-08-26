@@ -4,6 +4,8 @@ on:
   push:
     branches: [bun-refactor, main]
     paths:
+      - "package.json"
+      - "bun.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/**"
@@ -16,6 +18,8 @@ on:
       - ".github/workflows/api-surface.yml"
   pull_request:
     paths:
+      - "package.json"
+      - "bun.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "crates/**"
@@ -45,6 +49,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck
+      - run: bun run check:tui-declarations
       - run: bun run native:stage
       - run: bun run check:ownership
       - run: git diff --check

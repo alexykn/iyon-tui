@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,

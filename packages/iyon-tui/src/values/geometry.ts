@@ -1,9 +1,9 @@
-import type { InsetsNode } from "../ir.ts";
+import type { InsetsValue } from "../types.ts";
 
 export class Insets {
   readonly kind = "insets" as const;
 
-  private constructor(readonly value: InsetsNode) {}
+  private constructor(readonly value: InsetsValue) {}
 
   static all(value: number): Insets {
     return Insets.of(value, value, value, value);
@@ -27,7 +27,7 @@ export class Insets {
   }
 }
 
-export function insets(value: number | Insets | InsetsNode): InsetsNode {
+export function insets(value: number | Insets | InsetsValue): InsetsValue {
   if (typeof value === "number") {
     return Insets.all(value).value;
   }

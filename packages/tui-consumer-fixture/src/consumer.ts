@@ -22,8 +22,8 @@ export interface ConsumerState {
   readonly showHint: boolean;
 }
 
-const TITLE_STYLE = Style.new().foreground("theme:text.heading");
-const MUTED_STYLE = Style.new().foreground("theme:text.muted");
+const TITLE_STYLE = Style.new().foreground({ type: "theme", key: "text.heading" });
+const MUTED_STYLE = Style.new().foreground({ type: "theme", key: "text.muted" });
 
 export function consumerFooterText(state: ConsumerState): string {
   return `${state.title} \u00b7 ${state.status}`;

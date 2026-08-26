@@ -1,5 +1,4 @@
 import { View } from "./view.ts";
-import type { DiffHunkNode } from "../ir.ts";
 
 export type DiffLineKind = "context" | "addition" | "deletion";
 export type DiffLineTermination = "lf" | "crlf" | "none";
@@ -84,7 +83,7 @@ export class DiffHunk {
 export class DiffRenderer {
   render(hunks: DiffHunk | readonly DiffHunk[]): View {
     const values = Array.isArray(hunks) ? hunks : [hunks];
-    return View.diff(values.map(toNode));
+    return View.diff(values);
   }
 
   renderHunk(hunk: DiffHunk): View {
@@ -94,27 +93,4 @@ export class DiffRenderer {
 
 function validateLineNumber(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive safe integer`);
-}
-
-function toNode(hunk: DiffHunk): DiffHunkNode {
-  let oldLine = hunk.oldRange.start + 1;
-  let newLine = hunk.newRange.start + 1;
-  const lines = hunk.lines.map((line) => {
-    const node = {
-      kind: line.lineKind,
-      text: line.text,
-      termination: line.termination === "none" ? "unterminated" : "terminated",
-      ...(line.lineKind === "context" ? { oldLine: line.oldLine ?? oldLine, newLine: line.newLine ?? newLine } : {}),
-      ...(line.lineKind === "addition" ? { newLine: line.newLine ?? newLine } : {}),
-      ...(line.lineKind === "deletion" ? { oldLine: line.oldLine ?? oldLine } : {}),
-    } as const;
-    if (line.lineKind !== "addition") oldLine += 1;
-    if (line.lineKind !== "deletion") newLine += 1;
-    return node;
-  });
-  return {
-    oldRange: { start: hunk.oldRange.start, count: hunk.oldRange.lineCount },
-    newRange: { start: hunk.newRange.start, count: hunk.newRange.lineCount },
-    lines,
-  };
 }

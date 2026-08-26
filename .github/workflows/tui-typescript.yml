@@ -4,6 +4,8 @@ on:
   push:
     branches: [bun-refactor, main]
     paths:
+      - "package.json"
+      - "bun.lock"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
       - "crates/iyon-tui/**"
@@ -11,9 +13,12 @@ on:
       - "tools/tui-abi/**"
       - "tools/tui-abi-gen/**"
       - "tools/ownership/**"
+      - "tools/api-surface/check-declaration-closure.ts"
       - ".github/workflows/tui-typescript.yml"
   pull_request:
     paths:
+      - "package.json"
+      - "bun.lock"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
       - "crates/iyon-tui/**"
@@ -21,6 +26,7 @@ on:
       - "tools/tui-abi/**"
       - "tools/tui-abi-gen/**"
       - "tools/ownership/**"
+      - "tools/api-surface/check-declaration-closure.ts"
       - ".github/workflows/tui-typescript.yml"
 
 jobs:
@@ -37,6 +43,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck
+      - run: bun run check:tui-declarations
       - run: bun run native:stage
       - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests

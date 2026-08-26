@@ -20,6 +20,7 @@
     "generate:tui-abi": "cargo run -q -p tui-abi-gen -- generate",
     "check:tui-abi": "cargo run -q -p tui-abi-gen -- check",
     "typecheck": "bunx tsc --noEmit",
+    "check:tui-declarations": "bun run tools/api-surface/check-declaration-closure.ts",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:clippy": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "rust:test": "cargo test --workspace",

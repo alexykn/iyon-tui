@@ -13,7 +13,8 @@ import {
   type RetainedExecutionRuntime,
 } from "./execution.ts";
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
-import { nodeForBridge, View } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
+import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 
 type NativeScrollPaneHandle = {
@@ -38,29 +39,31 @@ function buildPaneHandle(host: NativeTuiHostContract, initialView?: View): objec
   return host.scrollPane(nodeForBridge(seed));
 }
 
-export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "component"> implements ScrollPaneContract {
+export class NativeScrollPane extends HandleBase<"component"> implements ScrollPaneContract {
   private currentView?: View;
   /** T13 (§18/§80): the pane owns one root lease on its current content. */
   private boundary?: RetainedRootBoundary;
 
   /** R8: shared Tui execution runtime (undefined for raw internal construction). */
-  private readonly retainedRuntime?: RetainedExecutionRuntime;
+  #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
+  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
+  constructor(host: never, initialView?: View, retainedRuntime?: never);
   constructor(
     host: NativeTuiHostContract,
     initialView?: View,
     retainedRuntime?: RetainedExecutionRuntime,
   ) {
-    super("component", buildPaneHandle(host, initialView) as NativeScrollPaneHandle);
+    super("component", buildPaneHandle(host, initialView) as never);
     this.currentView = initialView;
-    this.retainedRuntime = retainedRuntime;
+    this.#retainedRuntime = retainedRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
         if (this.disposed) return false;
         try {
-          this.nativeHandle.setContentRef(ref);
+          this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
           return true;
         } catch {
           return false;
@@ -70,7 +73,7 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
     }
   }
 
-  tuiViewAbiInstallRef(viewRef: number): void { this.nativeHandle.setContentRef(viewRef); }
+  tuiViewAbiInstallRef(viewRef: number): void { this.nativeAs<NativeScrollPaneHandle>().setContentRef(viewRef); }
 
   view(): View {
     this.ensureOpen();
@@ -90,14 +93,14 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
       if (protocolState.mutating || activeExecutionScope() !== undefined) {
         throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane builder mutation during a retained protocol pass");
       }
-      if (this.retainedRuntime === undefined) {
+      if (this.#retainedRuntime === undefined) {
         throw new Error("TUI_EXECUTION_BUILDER_UNSUPPORTED: builder mode requires a Tui-created pane");
       }
       const target = {
         preparePublication: (o: View) => this.prepareSetContent(o),
       };
       if (this.ownedBuilderRoot === undefined) {
-        this.ownedBuilderRoot = OwnedBuilderRoot.start(this.retainedRuntime!, viewOrBuilder, target);
+        this.ownedBuilderRoot = OwnedBuilderRoot.start(this.#retainedRuntime!, viewOrBuilder, target);
       } else {
         this.ownedBuilderRoot.replaceProducer(viewOrBuilder);
       }
@@ -142,14 +145,14 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
       const ref = tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
-          this.nativeHandle.setContentRef(ref);
+          this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
           this.currentView = view;
           return;
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeHandle.setContent(nodeForBridge(view));
+      this.nativeAs<NativeScrollPaneHandle>().setContent(nodeForBridge(view));
       this.currentView = view;
     });
     // Transactional ownership transition (direct wins after successful
@@ -165,7 +168,7 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
     if (protocolState.mutating || activeExecutionScope() !== undefined) {
       throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane mutation during a retained protocol pass");
     }
-    this.call(() => this.nativeHandle.followEnd());
+    this.call(() => this.nativeAs<NativeScrollPaneHandle>().followEnd());
   }
 
   /** Releases the boundary's root lease exactly once before native teardown. */
@@ -188,7 +191,7 @@ export class NativeScrollPane extends HandleBase<NativeScrollPaneHandle, "compon
   }
 
   nativeComponentId(): number | undefined {
-    const id = this.nativeHandle.componentId();
+    const id = this.nativeAs<NativeScrollPaneHandle>().componentId();
     return id === null ? undefined : id;
   }
 }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
 import { AppHarness, StyleSpec, Tui, View, TextSpan } from "../src/index.ts";
-import { nodeForBridge } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
 
 type HostContract = {
@@ -20,7 +20,7 @@ describe("PERF-11.9 native strings and style atoms", () => {
     const tui = await Tui.open({ width: 24, height: 4, headless: true });
     const oracle = new Host(24, 4, true);
     const values = [
-      View.text("héllo 🌍").bold().foreground("red").noWrap(),
+      View.text("héllo 🌍").bold().foreground({ type: "named", value: "red" }).noWrap(),
       View.styledText([
         TextSpan.plain("one"),
         TextSpan.styled(" ✓", new StyleSpec().italic()),
@@ -53,7 +53,7 @@ describe("PERF-11.9 native strings and style atoms", () => {
     if (nativeViewAbiSession() === undefined) return;
     const harness = await AppHarness.open({ width: 16, height: 2 });
     try {
-      await harness.render({ body: View.text("a🌍b").bold().foreground("cyan").noWrap() });
+      await harness.render({ body: View.text("a🌍b").bold().foreground({ type: "named", value: "cyan" }).noWrap() });
       expect(harness.cellXOfText(1, "🌍")).toBe(1);
       expect(harness.cellXOfText(1, "b")).toBe(3);
       expect(harness.styleAt(1, 0).bold).toBe(true);

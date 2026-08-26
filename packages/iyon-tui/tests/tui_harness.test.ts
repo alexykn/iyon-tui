@@ -5,7 +5,7 @@ import { AppHarness, TextStream, View } from "../src/index.ts";
 describe("native headless harness", () => {
   test("uses native snapshots and dispatches input through the mounted host", async () => {
     const harness = await AppHarness.open({ width: 20, height: 4 });
-    const input = harness.createTextInput({ multiline: true, border: { style: "plain", edges: "topBottom", color: "white" } });
+    const input = harness.createTextInput({ multiline: true, border: { style: "plain", edges: "topBottom", color: { type: "named", value: "white" } } });
     const history = harness.createHistory();
     await history.push(View.text("native history"));
     await harness.render({ body: View.vertical([View.component(input), View.text("footer")]), history });

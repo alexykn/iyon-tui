@@ -1,20 +1,8 @@
-import type { StyleSpec } from "./style.ts";
-import type { StyleNode, TextSpanNode } from "../ir.ts";
-
-export interface TextSelectorNode {
-  readonly focused?: boolean;
-  readonly focusWithin?: boolean;
-  readonly states?: Readonly<Record<string, string>>;
-  readonly roles?: readonly string[];
-  readonly parts?: readonly string[];
-  readonly annotations?: readonly { readonly namespace: string; readonly name: string }[];
-  readonly language?: string;
-  readonly origin?: string;
-  readonly format?: string;
-}
+import { StyleRef, StyleSpec } from "./style.ts";
+import type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
 
 export class TextSelector {
-  private constructor(readonly value: TextSelectorNode = {}) {}
+  private constructor(readonly value: TextSelectorValue = {}) {}
 
   static any(): TextSelector { return new TextSelector(); }
   static role(role: string): TextSelector { return TextSelector.any().role(role); }
@@ -38,28 +26,27 @@ export class TextSelector {
     return this.with({ states: { ...(this.value.states ?? {}), [key]: value } });
   }
 
-  private with(update: Partial<TextSelectorNode>): TextSelector {
+  private with(update: Partial<TextSelectorValue>): TextSelector {
     return new TextSelector({ ...this.value, ...update });
   }
 }
 
-export type WrapMode = "wordThenGrapheme" | "grapheme" | "noWrap";
-export type HorizontalAlign = "start" | "center" | "end";
+export type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
 
 export class TextSpan {
   readonly kind = "text-span" as const;
 
-  constructor(readonly value: TextSpanNode) {}
+  constructor(readonly value: TextSpanValue) {}
 
   static plain(text: string): TextSpan {
     return new TextSpan({ text });
   }
 
-  static styled(text: string, style: StyleSpec): TextSpan {
-    return new TextSpan({ text, style: style.value });
+  static styled(text: string, style: StyleRef | StyleSpec): TextSpan {
+    return new TextSpan({ text, style: StyleRef.from(style) });
   }
 }
 
-export function textStyle(value: StyleSpec | undefined): StyleNode | undefined {
-  return value?.value;
+export function textStyle(value: StyleRef | StyleSpec | undefined): StyleRef | undefined {
+  return value === undefined ? undefined : StyleRef.from(value);
 }

@@ -1,5 +1,7 @@
 import { native } from "./native.ts";
-import { nodeForBridge, View } from "./values/view.ts";
+import { nodeForBridge } from "./view-internals.ts";
+import { borderNodeFor, materializeTheme } from "./style-internals.ts";
+import { View } from "./values/view.ts";
 import { asTuiError, tuiError } from "./errors.ts";
 import { requireNativeClass } from "./handles.ts";
 import { Scene } from "./scene.ts";
@@ -26,10 +28,12 @@ import type {
   Scene as SceneContract,
   History as HistoryContract,
   TerminalMetadata,
+  TextInputOptions,
   TuiEvent,
   TuiOpenOptions,
   TuiRuntime,
 } from "./types.ts";
+import type { Theme } from "./values/theme.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 
 export class Tui implements TuiRuntime {
@@ -76,7 +80,7 @@ export class Tui implements TuiRuntime {
         // Component scopes project as native view slots (R6a machinery).
         // The seed is framework plumbing, not a user semantic construction;
         // do not consume a parent scope's semantic slot for it.
-        const slot = new ViewSlot(hostRef, withoutRetainedComposition(() => View.spacer(0)));
+        const slot = new ViewSlot(hostRef as never, withoutRetainedComposition(() => View.spacer(0)), undefined);
         const view = slot.view();
         return {
           view,
@@ -379,16 +383,17 @@ export class Tui implements TuiRuntime {
 
   createHistory(): History { return new History(this.host.history() as never); }
 
-  createTextInput(options: { multiline?: boolean; border?: import("./ir.ts").BorderNode } = {}): TextInput {
-    return new TextInput(options, this.host.textInput(options.multiline, options.border) as never);
+  createTextInput(options: TextInputOptions = {}): TextInput {
+    const border = options.border === undefined ? undefined : borderNodeFor(options.border);
+    return new TextInput(options, this.host.textInput(options.multiline, border) as never);
   }
 
-  createViewSlot(initialView: import("./values/view.ts").View): ViewSlot {
-    return new ViewSlot(this.host, initialView, this.retainedRuntime);
+  createViewSlot(initialView: View): ViewSlot {
+    return new ViewSlot(this.host as never, initialView, this.retainedRuntime as never);
   }
 
-  createScrollPane(initialView: import("./values/view.ts").View): ScrollPane {
-    return new NativeScrollPane(this.host, initialView, this.retainedRuntime);
+  createScrollPane(initialView: View): ScrollPane {
+    return new NativeScrollPane(this.host as never, initialView, this.retainedRuntime as never);
   }
 
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {
@@ -453,12 +458,12 @@ export class Tui implements TuiRuntime {
     }
   }
 
-  setTheme(theme: import("./values/theme.ts").Theme): void {
+  setTheme(theme: Theme): void {
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
     // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
     // retained materializations re-resolve against the new host theme.
     resetStyleRefCacheForThemeChange();
-    this.host.setTheme(theme.materialize());
+    this.host.setTheme(materializeTheme(theme.materialize()));
   }
 
   enqueue(event: { readonly type: "key"; readonly key: string; readonly modifiers?: readonly string[] } | { readonly type: "paste"; readonly text: string } | { readonly type: "resize"; readonly width: number; readonly height: number }): void {

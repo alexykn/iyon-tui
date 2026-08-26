@@ -6,10 +6,13 @@ import type {
   History,
   OutputHandle,
   TextInput,
+  TextInputOptions,
   ScrollPane,
   TuiEvent,
   TuiOpenOptions,
+  View,
 } from "./types.ts";
+import type { Theme } from "./values/theme.ts";
 
 export class AppHarness implements AppHarnessContract {
   private readonly tui: Tui;
@@ -37,12 +40,12 @@ export class AppHarness implements AppHarnessContract {
   }
 
   createHistory(): History { return this.tui.createHistory(); }
-  createTextInput(options: { multiline?: boolean; border?: import("./ir.ts").BorderNode } = {}): TextInput { return this.tui.createTextInput(options); }
-  createViewSlot(initial: import("./values/view.ts").View) {
+  createTextInput(options: TextInputOptions = {}): TextInput { return this.tui.createTextInput(options); }
+  createViewSlot(initial: View) {
     if (this.tui.createViewSlot === undefined) throw tuiError("runtime", "native view slots are unavailable");
     return this.tui.createViewSlot(initial);
   }
-  createScrollPane(initial: import("./values/view.ts").View): ScrollPane {
+  createScrollPane(initial: View): ScrollPane {
     if (this.tui.createScrollPane === undefined) throw tuiError("runtime", "native scroll panes are unavailable");
     return this.tui.createScrollPane(initial);
   }
@@ -50,7 +53,7 @@ export class AppHarness implements AppHarnessContract {
   route(output: OutputHandle<string>, actionId: string): void { this.tui.route(output, actionId); }
   interceptPaste(input: TextInput, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
   forwardPaste(text: string): void { this.tui.forwardPaste(text); }
-  setTheme(theme: import("./values/theme.ts").Theme): void { this.tui.setTheme(theme); }
+  setTheme(theme: Theme): void { this.tui.setTheme(theme); }
 
   resize(width: number, height: number): void {
     this.options.width = width;

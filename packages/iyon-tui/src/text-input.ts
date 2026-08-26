@@ -1,28 +1,33 @@
-import { HandleBase, nativeTui } from "./handles.ts";
-import type { TextInput as TextInputContract, OutputHandle } from "./types.ts";
+import { HandleBase } from "./handles.ts";
+import { nativeTui } from "./native-handles.ts";
+import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
+import type { OutputHandle, TextInput as TextInputContract, TextInputOptions } from "./types.ts";
 import { View } from "./values/view.ts";
-import type { BorderNode } from "./ir.ts";
-import type { NativeTuiOutputContract } from "./native.ts";
 
-export class TextInput extends HandleBase<ReturnType<typeof nativeTui.textInput>, "text-input"> implements TextInputContract {
-  constructor(options?: { multiline?: boolean; border?: BorderNode }, nativeHandle = nativeTui.textInput(options?.multiline)) { super("text-input", nativeHandle); }
-
-  text(): string { return this.call(() => this.nativeHandle.text()); }
-  cursorBytes(): number { return this.call(() => this.nativeHandle.cursorBytes()); }
-  setText(value: string): void { this.call(() => this.nativeHandle.setText(value)); }
-  clear(): void { this.call(() => this.nativeHandle.clear()); }
-  submitted(): OutputHandle<string> {
-    return this.call(() => new NativeOutputHandle(this.nativeHandle.submitted() as NativeTuiOutputContract));
+export class TextInput extends HandleBase<"text-input"> implements TextInputContract {
+  constructor(options?: TextInputOptions);
+  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
+  constructor(options: TextInputOptions | undefined, nativeHandle: never);
+  constructor(options: TextInputOptions = {}, nativeHandle?: NativeTextInputContract) {
+    super("text-input", (nativeHandle ?? nativeTui.textInput(options.multiline)) as never);
   }
-  setMultiline(enabled: boolean): void { this.call(() => this.nativeHandle.setMultiline(enabled)); }
-  isMultiline(): boolean { return this.call(() => this.nativeHandle.isMultiline()); }
+
+  text(): string { return this.call(() => this.nativeAs<NativeTextInputContract>().text()); }
+  cursorBytes(): number { return this.call(() => this.nativeAs<NativeTextInputContract>().cursorBytes()); }
+  setText(value: string): void { this.call(() => this.nativeAs<NativeTextInputContract>().setText(value)); }
+  clear(): void { this.call(() => this.nativeAs<NativeTextInputContract>().clear()); }
+  submitted(): OutputHandle<string> {
+    return this.call(() => new NativeOutputHandle(this.nativeAs<NativeTextInputContract>().submitted() as never));
+  }
+  setMultiline(enabled: boolean): void { this.call(() => this.nativeAs<NativeTextInputContract>().setMultiline(enabled)); }
+  isMultiline(): boolean { return this.call(() => this.nativeAs<NativeTextInputContract>().isMultiline()); }
   view(): View {
     this.ensureOpen();
     return this.nativeComponentId() === undefined ? View.spacer(0) : View.component(this);
   }
 
   nativeComponentId(): number | undefined {
-    const id = this.nativeHandle.componentId?.();
+    const id = this.nativeAs<NativeTextInputContract>().componentId?.();
     return id === null || id === undefined ? undefined : id;
   }
 }
@@ -30,5 +35,8 @@ export class TextInput extends HandleBase<ReturnType<typeof nativeTui.textInput>
 export class NativeOutputHandle<T> implements OutputHandle<T> {
   readonly kind = "output" as const;
   readonly payload!: T;
-  constructor(readonly nativeObject: NativeTuiOutputContract) {}
+  private readonly nativeObject: object;
+  /** @internal Native channel construction overload. */
+  constructor(nativeObject: never);
+  constructor(nativeObject: NativeTuiOutputContract) { this.nativeObject = nativeObject; }
 }

@@ -11,10 +11,10 @@ import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
   nativePathChildLineage,
-  nodeForBridge,
   viewNodeId,
   View,
 } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
 
 type HostContract = {
   render(view: object): void;

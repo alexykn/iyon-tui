@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/native.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
 import { viewRenderRef } from "../src/generated/view_calls.ts";
-import { nodeForBridge, View } from "../src/values/view.ts";
+import { nodeForBridge } from "../src/view-internals.ts";
+import { View } from "../src/values/view.ts";
 
 const Host = native.NativeTuiHost as unknown as
   (new (width: number, height: number, headless: boolean) => {

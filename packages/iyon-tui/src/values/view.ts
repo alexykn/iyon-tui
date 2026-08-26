@@ -13,7 +13,19 @@
  *
  */
 
-import type { NativeHandleId } from "../types.ts";
+import type {
+  BorderSpec,
+  ColorSpec,
+  GridCell as PublicGridCell,
+  GridRow as PublicGridRow,
+  GridSpec as PublicGridSpec,
+  GridTrack as PublicGridTrack,
+  HorizontalAlign,
+  LayoutChild,
+  NativeHandleId,
+  VerticalAlign,
+  WrapMode,
+} from "../types.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
   BRIDGE_DIFF_LINE_TERMINATION,
@@ -29,7 +41,6 @@ import {
   emptyDecoration,
   emptyStyle,
   mergeStyles,
-  type BorderNode,
   type BridgeDiffHunkNode,
   type BridgeGridCellNode,
   type BridgeGridRowNode,
@@ -42,7 +53,6 @@ import {
   type DecorationNode,
   type DiffHunkNode,
   type DiffLineNode,
-  type GridTrackNode,
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
@@ -59,8 +69,12 @@ import {
   type BridgeDerivation,
 } from "../ir.ts";
 import { PersistentSeq } from "../persistent_seq.ts";
+import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../style-internals.ts";
+import { nodeForBridge, setViewNode } from "../view-internals.ts";
 import { StyleSpec } from "./style.ts";
-import { TextSpan, type HorizontalAlign, type WrapMode } from "./text.ts";
+import type { StyleRef, StyleStateKey, StyleStateValue } from "./style.ts";
+import { TextSpan } from "./text.ts";
+import type { DiffHunk } from "./diff.ts";
 import {
   activeChildOwnerOrThrow,
   executionContext,
@@ -99,7 +113,7 @@ import {
   composeWrap,
 } from "../compose.ts";
 
-type ChildBuilder = readonly View[] | ((builder: ChildrenBuilder) => void);
+export type ViewChildren = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
 const NODE_ID_COUNTER = Symbol.for("iyon:tui:private-view-node-counter");
 const globalRoot = globalThis as typeof globalThis & { [NODE_ID_COUNTER]?: CounterBox };
@@ -162,30 +176,14 @@ export const NATIVE_PATH_STEP = Object.freeze({
 
 export type OverflowIndicator =
   | { readonly kind: "none" }
-  | { readonly kind: "ellipsis"; readonly style: StyleSpec }
-  | { readonly kind: "footer"; readonly prefix: string; readonly style: StyleSpec };
+  | { readonly kind: "ellipsis"; readonly style: StyleRef | StyleSpec }
+  | { readonly kind: "footer"; readonly prefix: string; readonly style: StyleRef | StyleSpec };
 
-export type GridTrack = GridTrackNode;
-
-export interface GridCell {
-  readonly view: View;
-  readonly columnSpan?: number;
-  readonly rowSpan?: number;
-  readonly horizontalAlign?: "start" | "center" | "end";
-  readonly verticalAlign?: "top" | "center" | "bottom";
-}
-
-export interface GridRow {
-  readonly track?: GridTrack;
-  readonly cells: readonly GridCell[];
-}
-
-export interface GridSpec {
-  readonly columns?: readonly GridTrack[];
-  readonly rows: readonly GridRow[];
-  readonly columnGap?: number;
-  readonly rowGap?: number;
-}
+export type { LayoutChild } from "../types.ts";
+export type GridTrack = PublicGridTrack;
+export type GridCell = PublicGridCell;
+export type GridRow = PublicGridRow;
+export type GridSpec = PublicGridSpec;
 
 export class GridRowBuilder {
   readonly cells: GridCell[] = [];
@@ -218,25 +216,25 @@ export class GridBuilder {
 }
 
 export class ChildrenBuilder {
-  private readonly entries: BridgeLayoutChild[] = [];
+  private readonly entries: LayoutChild[] = [];
   private layoutGap = 0;
-  get children(): BridgeLayoutChild[] { return this.entries; }
-  child(view: View): this { this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(view) }); return this; }
+  get children(): LayoutChild[] { return this.entries; }
+  child(view: View): this { this.entries.push({ kind: "normal", child: view }); return this; }
   childrenOf(views: readonly View[]): this { for (const view of views) this.child(view); return this; }
   gap(value: number): this { this.layoutGap = validateU16(value, "gap"); return this; }
   fixed(size: number, view: View): this {
-    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: validateU16(size, "size"), child: nodeForBridge(view) });
+    this.entries.push({ kind: "fixed", size: validateU16(size, "size"), child: view });
     return this;
   }
-  flex(view: View): this { this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child: nodeForBridge(view) }); return this; }
+  flex(view: View): this { this.entries.push({ kind: "flex", child: view }); return this; }
   flexMax(maxRows: number, view: View): this {
     validateU16(maxRows, "maxRows");
-    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows, child: nodeForBridge(view) });
+    this.entries.push({ kind: "flexMax", maxRows, child: view });
     return this;
   }
   contentMax(maxRows: number, view: View): this {
     validateU16(maxRows, "maxRows");
-    this.entries.push({ kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows, child: nodeForBridge(view) });
+    this.entries.push({ kind: "contentMax", maxRows, child: view });
     return this;
   }
   gapValue(): number { return this.layoutGap; }
@@ -354,8 +352,8 @@ export class View {
 
   readonly kind = "view" as const;
 
-  private constructor(node: BridgeViewNode | BridgeViewNodeDraft) {
-    nodes.set(this, withPrivateIdentity(node));
+  private constructor(node: object) {
+    setViewNode(this, withPrivateIdentity(node as BridgeViewNode | BridgeViewNodeDraft));
     Object.freeze(this);
   }
 
@@ -365,7 +363,7 @@ export class View {
     return new View({ kind: BRIDGE_VIEW_KIND.contentMax, child: nodeForBridge(child), maxRows });
   }
 
-  static diff(hunks: readonly DiffHunkNode[]): View {
+  static diff(hunks: readonly DiffHunk[]): View {
     if (isRetainedConstruction()) return composeDiff(hunks);
     return new View({ kind: BRIDGE_VIEW_KIND.diff, hunks: hunks.map(toBridgeHunk) });
   }
@@ -378,10 +376,7 @@ export class View {
 
   static styledText(spans: readonly TextSpan[]): View {
     if (isRetainedConstruction()) return composeStyledText(spans);
-    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: spans.map((span) => ({
-      ...span.value,
-      style: span.value.style === undefined ? undefined : cloneStyle(span.value.style),
-    })), wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
+    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: spans.map(textSpanNodeFor), wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
   }
 
   static spacer(rows: number): View {
@@ -390,25 +385,27 @@ export class View {
     return new View({ kind: BRIDGE_VIEW_KIND.spacer, rows });
   }
 
-  static horizontal(children: ChildBuilder): View {
+  static horizontal(children: ViewChildren): View {
     if (isRetainedConstruction()) {
       const build = typeof children === "function" ? children : (builder: ChildrenBuilder) => builder.childrenOf(children);
       return composeHorizontal(build);
     }
     const builder = buildChildren(children);
-    const view = new View({ kind: BRIDGE_VIEW_KIND.row, children: builder.children, gap: builder.gapValue() });
-    seedWideAxisSequence(view, builder.children);
+    const entries = bridgeLayoutChildren(builder.children);
+    const view = new View({ kind: BRIDGE_VIEW_KIND.row, children: entries, gap: builder.gapValue() });
+    seedWideAxisSequence(view, entries);
     return view;
   }
 
-  static vertical(children: ChildBuilder): View {
+  static vertical(children: ViewChildren): View {
     if (isRetainedConstruction()) {
       const build = typeof children === "function" ? children : (builder: ChildrenBuilder) => builder.childrenOf(children);
       return composeVertical(build);
     }
     const builder = buildChildren(children);
-    const view = new View({ kind: BRIDGE_VIEW_KIND.column, children: builder.children, gap: builder.gapValue() });
-    seedWideAxisSequence(view, builder.children);
+    const entries = bridgeLayoutChildren(builder.children);
+    const view = new View({ kind: BRIDGE_VIEW_KIND.column, children: entries, gap: builder.gapValue() });
+    seedWideAxisSequence(view, entries);
     return view;
   }
 
@@ -579,16 +576,17 @@ export class View {
    * (§19). Equivalent to View.vertical/horizontal over a builder callback,
    * including the wide-sequence seed. Reinstituted in R1 for the scoped arm.
    */
-  static __composedAxis(row: boolean, entries: BridgeLayoutChild[], gap: number): View {
-    const view = new View({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: entries, gap });
-    seedWideAxisSequence(view, entries);
+  static __composedAxis(row: boolean, entries: readonly LayoutChild[], gap: number): View {
+    const loweredEntries = bridgeLayoutChildren(entries);
+    const view = new View({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: loweredEntries, gap });
+    seedWideAxisSequence(view, loweredEntries);
     return view;
   }
 
   /** Internal retained-path constructor; not part of the public semantic API. */
   static textLayoutAtNativePathForTransport(
     view: View,
-    steps: readonly NativePathStep[],
+    steps: readonly { readonly kind: number; readonly expectedViewKind: number; readonly selector: number }[],
     wrap: WrapMode,
     align: HorizontalAlign,
   ): View {
@@ -609,7 +607,7 @@ export class View {
   static textLayoutTransactionForTransport(
     view: View,
     edits: readonly {
-      readonly steps: readonly NativePathStep[];
+      readonly steps: readonly { readonly kind: number; readonly expectedViewKind: number; readonly selector: number }[];
       readonly wrap: WrapMode;
       readonly align: HorizontalAlign;
     }[],
@@ -641,18 +639,32 @@ export class View {
     return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } });
   }
   padding(value: number | Insets): View { return isRetainedConstruction() ? composePadding(this, value) : this.decorate({ padding: insets(value) }); }
-  background(color: ColorNode): View { return isRetainedConstruction() ? composeBackground(this, color) : this.decorate({ background: color }); }
-  foreground(color: ColorNode): View { return isRetainedConstruction() ? composeForeground(this, color) : this.decorate({ foreground: color }); }
-  border(border: BorderNode): View { return isRetainedConstruction() ? composeBorder(this, border) : this.decorate({ border }); }
-  style(style: StyleSpec): View { return isRetainedConstruction() ? composeStyle(this, style) : this.decorate({ style: mergeStyles(emptyStyle(), style.value) }); }
+  background(color: ColorSpec): View {
+    if (isRetainedConstruction()) return composeBackground(this, color);
+    return this.decorate({ background: colorNodeFor(color) });
+  }
+  foreground(color: ColorSpec): View {
+    if (isRetainedConstruction()) return composeForeground(this, color);
+    return this.decorate({ foreground: colorNodeFor(color) });
+  }
+  border(border: BorderSpec): View {
+    if (isRetainedConstruction()) return composeBorder(this, border);
+    return this.decorate({ border: borderNodeFor(border) });
+  }
+  style(style: StyleRef | StyleSpec): View {
+    const lowered = styleNodeFor(style);
+    return isRetainedConstruction() ? composeStyle(this, style) : this.decorate({ style: mergeStyles(emptyStyle(), lowered) });
+  }
 
-  styleState(key: string, value: string): View {
-    if (key.length === 0 || value.length === 0) throw new RangeError("style state key and value cannot be empty");
-    if (isRetainedConstruction()) return composeStyleState(this, key, value);
+  styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {
+    const stateKey = typeof key === "string" ? key : key.value;
+    const stateValue = typeof value === "string" ? value : value.value;
+    if (stateKey.length === 0 || stateValue.length === 0) throw new RangeError("style state key and value cannot be empty");
+    if (isRetainedConstruction()) return composeStyleState(this, stateKey, stateValue);
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
     const child = decorated?.child ?? nodeForBridge(this);
-    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [key]: value } } });
+    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [stateKey]: stateValue } } });
   }
 
   container(): View { return isRetainedConstruction() ? composeContainer(this) : new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
@@ -979,11 +991,10 @@ function wrapFrozenBridgeNode(node: BridgeViewNode): View {
     value: "view",
     writable: true,
   });
-  nodes.set(view, node);
+  setViewNode(view, node);
   return Object.freeze(view) as View;
 }
 
-const nodes = new WeakMap<View, BridgeViewNode>();
 const nativePathLineages = new WeakMap<View, NativePathLineage>();
 const nativeTextLayoutTransactions = new WeakMap<View, readonly NativeTextLayoutTransactionEdit[]>();
 
@@ -1040,13 +1051,6 @@ export function nodeIdPair(view: View): readonly [number, number] {
  */
 export function viewNodeIdHighWater(): number {
   return nodeIdCounter.next - 1;
-}
-
-/** Private bridge access; the retained DAG is never part of the public API. */
-export function nodeForBridge(view: View): BridgeViewNode {
-  const node = nodes.get(view);
-  if (node === undefined) throw new TypeError("view is not a runtime semantic value");
-  return node;
 }
 
 /**
@@ -1244,32 +1248,36 @@ function rows(node: BridgeViewNode): string[] {
   }
 }
 
-function toBridgeHunk(hunk: DiffHunkNode): BridgeDiffHunkNode {
+function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
   let oldLine = hunk.oldRange.start + 1;
   let newLine = hunk.newRange.start + 1;
-  const lines = hunk.lines.map((line: DiffLineNode) => {
+  const lines = hunk.lines.map((line) => {
     const node = {
-      kind: BRIDGE_DIFF_LINE_KIND[line.kind],
+      kind: BRIDGE_DIFF_LINE_KIND[line.lineKind],
       text: line.text,
-      termination: line.termination === "unterminated" ? BRIDGE_DIFF_LINE_TERMINATION.unterminated : BRIDGE_DIFF_LINE_TERMINATION.terminated,
-      ...(line.kind === "context" ? { oldLine, newLine } : {}),
-      ...(line.kind === "addition" ? { newLine } : {}),
-      ...(line.kind === "deletion" ? { oldLine } : {}),
+      termination: line.termination === "none" ? BRIDGE_DIFF_LINE_TERMINATION.unterminated : BRIDGE_DIFF_LINE_TERMINATION.terminated,
+      ...(line.lineKind === "context" ? { oldLine, newLine } : {}),
+      ...(line.lineKind === "addition" ? { newLine } : {}),
+      ...(line.lineKind === "deletion" ? { oldLine } : {}),
     } as const;
-    if (line.kind !== "addition") oldLine += 1;
-    if (line.kind !== "deletion") newLine += 1;
+    if (line.lineKind !== "addition") oldLine += 1;
+    if (line.lineKind !== "deletion") newLine += 1;
     return node;
   });
-  return { oldRange: { ...hunk.oldRange }, newRange: { ...hunk.newRange }, lines };
+  return {
+    oldRange: { start: hunk.oldRange.start, count: hunk.oldRange.lineCount },
+    newRange: { start: hunk.newRange.start, count: hunk.newRange.lineCount },
+    lines,
+  };
 }
 
 function bridgeOverflow(overflow: OverflowIndicator): BridgeOverflowIndicatorNode {
   if (overflow.kind === "none") return { kind: BRIDGE_OVERFLOW_KIND.none };
-  if (overflow.kind === "ellipsis") return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: cloneStyle(overflow.style.value) };
-  return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: cloneStyle(overflow.style.value) };
+  if (overflow.kind === "ellipsis") return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: cloneStyle(styleNodeFor(overflow.style)) };
+  return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: cloneStyle(styleNodeFor(overflow.style)) };
 }
 
-function bridgeGridTrack(track: GridTrackNode): BridgeGridTrackNode {
+function bridgeGridTrack(track: GridTrack): BridgeGridTrackNode {
   switch (track.kind) {
     case "content": return { kind: BRIDGE_GRID_TRACK_KIND.content };
     case "contentMax": return { kind: BRIDGE_GRID_TRACK_KIND.contentMax, max: track.max };
@@ -1279,7 +1287,19 @@ function bridgeGridTrack(track: GridTrackNode): BridgeGridTrackNode {
   }
 }
 
-function buildChildren(children: ChildBuilder): ChildrenBuilder {
+function bridgeLayoutChildren(children: readonly LayoutChild[]): BridgeLayoutChild[] {
+  return children.map((entry) => {
+    switch (entry.kind) {
+      case "normal": return { kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(entry.child) };
+      case "fixed": return { kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: entry.size, child: nodeForBridge(entry.child) };
+      case "flex": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child: nodeForBridge(entry.child) };
+      case "flexMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: entry.maxRows, child: nodeForBridge(entry.child) };
+      case "contentMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: entry.maxRows, child: nodeForBridge(entry.child) };
+    }
+  });
+}
+
+function buildChildren(children: ViewChildren): ChildrenBuilder {
   const builder = new ChildrenBuilder();
   if (typeof children === "function") children(builder);
   else builder.childrenOf(children);

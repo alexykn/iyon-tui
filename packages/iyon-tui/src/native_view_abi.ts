@@ -99,16 +99,13 @@ export function recordNativeViewRoute(route: NativeViewRoute): void {
 }
 
 /**
- * One typed transaction edit. `views` is ordered from changed leaf toward the
- * new root, matching the fixed NodeId lanes in the generated ABI. It contains
- * semantic identities only; no bridge nodes or transport arrays are retained.
+ * One typed transaction edit. NodeIds are ordered from changed leaf toward the
+ * new root, matching the fixed lanes in the generated ABI.
  */
 export interface NativeTextLayoutTransactionEdit {
   readonly lineage: NativePathLineage;
   /** Construction-time scalar NodeIds, ordered leaf toward root. */
-  readonly nodeIds?: readonly number[];
-  /** Legacy/test helper input; production metadata uses `nodeIds`. */
-  readonly views?: readonly View[];
+  readonly nodeIds: readonly number[];
   readonly wrap: number;
   readonly align: number;
 }
@@ -462,7 +459,7 @@ export function tryNativeGridSetCellRender(
 /**
  * Stages multiple typed text-layout edits and atomically installs their shared
  * changed-path-trie result. Construction-time transaction metadata supplies
- * scalar NodeIds; the legacy View-array form remains for differential tests.
+ * scalar NodeIds.
  */
 export function tryNativeEditTransactionRender(
   host: NativeViewRenderHost,
@@ -602,8 +599,8 @@ function transactionNodeIdPairs(
   depth: number,
 ): readonly (readonly [number, number])[] | undefined {
   if (depth < 0 || depth > 4) return undefined;
-  const ids = edit.nodeIds ?? edit.views?.map(viewNodeId);
-  if (ids === undefined || ids.length !== depth + 1) return undefined;
+  const ids = edit.nodeIds;
+  if (ids.length !== depth + 1) return undefined;
   const pairs = ids.map(splitNodeIdSafely);
   return pairs.every((pair): pair is readonly [number, number] => pair !== undefined)
     ? pairs
@@ -651,9 +648,4 @@ function isValidNativeRef(value: number): boolean {
 
 function isExpectedNativeStatus(error: unknown): boolean {
   return error instanceof Error && /^native ABI status 0x[0-9a-f]+$/u.test(error.message);
-}
-
-/** Test-only reset; production sessions are environment-owned and stable. */
-export function resetNativeViewAbiSessionForTests(): void {
-  cachedSession = undefined;
 }

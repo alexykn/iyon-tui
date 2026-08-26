@@ -7,9 +7,7 @@ edition.workspace = true
 [features]
 test-util = []
 native-host = []
-native-shared-memory = []
 perf-counters = []
-perf-timing = []
 
 [[bin]]
 name = "tui_perf"

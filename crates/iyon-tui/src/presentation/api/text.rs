@@ -8,16 +8,6 @@ use super::style::{
 };
 use crate::presentation::ir::{TextView, View, ViewKind};
 
-/// Immutable UTF-8 storage owned by a native retained page.
-///
-/// Implementations must return the same valid UTF-8 contents for their entire
-/// lifetime. The trait is intentionally small so a native page can be held by
-/// a semantic `TextSpan` without copying its bytes into a `String`.
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-pub trait SharedUtf8Source: Send + Sync {
-    fn as_str(&self) -> &str;
-}
-
 const INLINE_TEXT_CAPACITY: usize = 12;
 
 /// Immutable native-owned UTF-8 storage shared by retained text clones.
@@ -37,8 +27,6 @@ pub(crate) enum TextStorage {
         len: u32,
     },
     Owned(String),
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    Shared(Arc<dyn SharedUtf8Source>),
 }
 
 impl Clone for TextStorage {
@@ -54,8 +42,6 @@ impl Clone for TextStorage {
                 len: *len,
             },
             Self::Owned(text) => Self::Owned(text.clone()),
-            #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-            Self::Shared(source) => Self::Shared(Arc::clone(source)),
         }
     }
 }
@@ -105,8 +91,6 @@ impl TextStorage {
                 &page.text[*offset as usize..(*offset + *len) as usize]
             }
             Self::Owned(text) => text,
-            #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-            Self::Shared(source) => source.as_str(),
         }
     }
 }
@@ -153,17 +137,6 @@ impl TextSpan {
     pub fn styled(text: impl Into<String>, style: impl Into<StyleRef>) -> Self {
         Self {
             text: TextStorage::from_string(text.into()),
-            style: style.into(),
-            style_facts: StyleFacts::default(),
-        }
-    }
-
-    /// Constructs a span backed by immutable native-owned UTF-8 storage.
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn from_shared_utf8(source: Arc<dyn SharedUtf8Source>, style: impl Into<StyleRef>) -> Self {
-        Self {
-            text: TextStorage::Shared(source),
             style: style.into(),
             style_facts: StyleFacts::default(),
         }

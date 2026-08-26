@@ -414,7 +414,7 @@ function recoverStaleNode(node: BridgeViewNode, tx: MaterializeTx): number | und
   if (tx.staleRefRetries >= 1) return undefined;
   tx.staleRefRetries += 1;
   counters.stale_ref_retries += 1;
-  deleteBridgeNativeHintForTests(node);
+  deleteBridgeNativeHint(node);
   tx.refs.delete(node);
   try {
     return ensureNative(node, tx);
@@ -958,18 +958,7 @@ function installHint(node: BridgeViewNode, generation: number, nativeRef: number
   BRIDGE_NATIVE.set(node, { generation, nativeRef });
 }
 
-/** Test/diagnostic peek at a node's current hint. */
-export function peekBridgeNativeHint(node: BridgeViewNode): BridgeNativeHint | undefined {
-  return BRIDGE_NATIVE.get(node);
-}
-
-/** Test-only hint injection (stale-generation and stale-ref scenarios). */
-export function forceBridgeNativeHintForTests(node: BridgeViewNode, hint: BridgeNativeHint): void {
-  BRIDGE_NATIVE.set(node, hint);
-}
-
-/** Test-only hint removal (stale-child recovery scenarios, §47). */
-export function deleteBridgeNativeHintForTests(node: BridgeViewNode): void {
+function deleteBridgeNativeHint(node: BridgeViewNode): void {
   BRIDGE_NATIVE.delete(node);
 }
 

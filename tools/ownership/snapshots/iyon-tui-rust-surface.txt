@@ -1159,7 +1159,6 @@ iyon-tui::presentation::api::text::Text::text_attribute
 iyon-tui::presentation::api::text::Text::underline
 iyon-tui::presentation::api::text::Text::wrap
 iyon-tui::presentation::api::text::TextSpan
-iyon-tui::presentation::api::text::TextSpan::from_shared_utf8
 iyon-tui::presentation::api::text::TextSpan::plain
 iyon-tui::presentation::api::text::TextSpan::style
 iyon-tui::presentation::api::text::TextSpan::style_mut
@@ -1191,12 +1190,6 @@ iyon-tui::presentation::ir::View::fill_width
 iyon-tui::presentation::ir::View::fit_height
 iyon-tui::presentation::ir::View::fit_width
 iyon-tui::presentation::ir::View::foreground
-iyon-tui::presentation::ir::View::from_retained_clamp
-iyon-tui::presentation::ir::View::from_retained_component
-iyon-tui::presentation::ir::View::from_retained_container
-iyon-tui::presentation::ir::View::from_retained_decoration
-iyon-tui::presentation::ir::View::from_retained_hanging
-iyon-tui::presentation::ir::View::from_retained_text
 iyon-tui::presentation::ir::View::grid
 iyon-tui::presentation::ir::View::hanging
 iyon-tui::presentation::ir::View::horizontal
@@ -1208,12 +1201,6 @@ iyon-tui::presentation::ir::View::min_height
 iyon-tui::presentation::ir::View::min_width
 iyon-tui::presentation::ir::View::native_component
 iyon-tui::presentation::ir::View::padding
-iyon-tui::presentation::ir::View::patch_retained_axis
-iyon-tui::presentation::ir::View::patch_retained_grid
-iyon-tui::presentation::ir::View::retain_transport_payload
-iyon-tui::presentation::ir::View::retained_axis_gap
-iyon-tui::presentation::ir::View::retained_axis_horizontal
-iyon-tui::presentation::ir::View::retained_text_layout
 iyon-tui::presentation::ir::View::reversed
 iyon-tui::presentation::ir::View::spacer
 iyon-tui::presentation::ir::View::strikethrough

@@ -13959,18 +13959,6 @@ note = "baseline externally reachable API"
 
 [[records]]
 
-item_id = "iyon-tui::presentation::api::text::TextSpan::from_shared_utf8"
-path = "iyon-tui::presentation::api::text::TextSpan::from_shared_utf8"
-strategy = "NativeSync"
-rust_path = "iyon-tui::presentation::api::text::TextSpan::from_shared_utf8"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__api__text__TextSpan__from_shared_utf8"
-implementation_owner = "T5"
-status = "stub"
-note = "native retained UTF-8 benchmark boundary"
-
-[[records]]
-
 item_id = "iyon-tui::presentation::api::text::TextSpan::styled"
 path = "iyon-tui::presentation::api::text::TextSpan::styled"
 strategy = "NativeAsync"
@@ -18211,72 +18199,6 @@ status = "stub"
 note = "bridge-gated opaque weak View handle"
 
 [[records]]
-item_id = "iyon-tui::presentation::ir::View::patch_retained_grid"
-path = "iyon-tui::presentation::ir::View::patch_retained_grid"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::patch_retained_grid"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__patch_retained_grid"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained grid patch constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::patch_retained_axis"
-path = "iyon-tui::presentation::ir::View::patch_retained_axis"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::patch_retained_axis"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__patch_retained_axis"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained axis patch constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::retained_text_layout"
-path = "iyon-tui::presentation::ir::View::retained_text_layout"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::retained_text_layout"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__retained_text_layout"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained text metadata helper"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::retain_transport_payload"
-path = "iyon-tui::presentation::ir::View::retain_transport_payload"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::retain_transport_payload"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__retain_transport_payload"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained transport lifetime anchor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::retained_axis_gap"
-path = "iyon-tui::presentation::ir::View::retained_axis_gap"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::retained_axis_gap"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__retained_axis_gap"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained axis helper"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::retained_axis_horizontal"
-path = "iyon-tui::presentation::ir::View::retained_axis_horizontal"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::retained_axis_horizontal"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__retained_axis_horizontal"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained axis helper"
-
-[[records]]
 item_id = "iyon-tui::presentation::ir::View::with_text_layout"
 path = "iyon-tui::presentation::ir::View::with_text_layout"
 strategy = "NativeHandle"
@@ -18285,7 +18207,7 @@ typescript_module = "iyon:tui"
 typescript_export = "presentation__ir__View__with_text_layout"
 implementation_owner = "T5"
 status = "stub"
-note = "benchmark-only retained text helper"
+note = "canonical retained text-layout helper"
 
 [[records]]
 item_id = "iyon-tui::presentation::ir::View::with_text_layout_patch"
@@ -18296,70 +18218,4 @@ typescript_module = "iyon:tui"
 typescript_export = "presentation__ir__View__with_text_layout_patch"
 implementation_owner = "T5"
 status = "stub"
-note = "benchmark-only retained text helper"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_text"
-path = "iyon-tui::presentation::ir::View::from_retained_text"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_text"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_text"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_decoration"
-path = "iyon-tui::presentation::ir::View::from_retained_decoration"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_decoration"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_decoration"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_hanging"
-path = "iyon-tui::presentation::ir::View::from_retained_hanging"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_hanging"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_hanging"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_container"
-path = "iyon-tui::presentation::ir::View::from_retained_container"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_container"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_container"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_clamp"
-path = "iyon-tui::presentation::ir::View::from_retained_clamp"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_clamp"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_clamp"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
-
-[[records]]
-item_id = "iyon-tui::presentation::ir::View::from_retained_component"
-path = "iyon-tui::presentation::ir::View::from_retained_component"
-strategy = "NativeHandle"
-rust_path = "iyon-tui::presentation::ir::View::from_retained_component"
-typescript_module = "iyon:tui"
-typescript_export = "presentation__ir__View__from_retained_component"
-implementation_owner = "T5"
-status = "stub"
-note = "benchmark-only retained canonical constructor"
+note = "canonical retained text-layout helper"

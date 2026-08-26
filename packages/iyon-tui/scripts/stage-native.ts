@@ -61,7 +61,7 @@ const addon = require(stagedAddon.pathname) as Record<string, unknown> & {
 if (addon.nativeVersion?.() !== "iyon-tui-native/s6" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
   throw new Error(`staged addon failed the Bun load probe: ${stagedAddon.pathname}`);
 }
-const legacyExports = [
+const directQualificationExports = [
   "tuiViewAbiBootstrap",
   "tuiPerfAbiProbe",
   "tuiPerfAbiConformanceProbe",
@@ -85,10 +85,10 @@ if (process.platform !== "win32") {
   }
 }
 if (directFeature) {
-  const missing = legacyExports.filter((name) => typeof addon[name] !== "function");
+  const missing = directQualificationExports.filter((name) => typeof addon[name] !== "function");
   if (missing.length > 0) throw new Error(`direct-ffi staged addon is missing qualification exports: ${missing.join(", ")}`);
 } else {
-  const leaked = legacyExports.filter((name) => typeof addon[name] === "function");
+  const leaked = directQualificationExports.filter((name) => typeof addon[name] === "function");
   if (leaked.length > 0 || typeof addon.tuiViewAbiSession !== "function") {
     throw new Error(`default staged addon has an invalid transport surface: leaked=[${leaked.join(", ")}]`);
   }

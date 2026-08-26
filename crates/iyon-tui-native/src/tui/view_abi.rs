@@ -1521,8 +1521,6 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
         "edit_transactions": diagnostics.5,
         "style_atoms": diagnostics.6,
         "styles": diagnostics.7,
-        "fast_slot_tables": 0,
-        "fast_slots": 0,
         "stale_removals": runtime_state.stale_removals,
         "release_batches": runtime_state.release_batches,
         "released_refs": runtime_state.released_refs,

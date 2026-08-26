@@ -16,8 +16,6 @@ use crate::{
     perf::{self, Counter},
 };
 
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-use super::api::GridTrack;
 use super::api::{
     style::{
         BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleStates,
@@ -601,184 +599,6 @@ impl<T: SequenceAggregate + Clone> SeqNode<T> {
     }
 }
 
-/// Common-field inputs for the native retained constructor.
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-#[derive(Clone)]
-pub enum RetainedSizeRule {
-    Fit,
-    Fill,
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-#[derive(Clone)]
-pub struct RetainedDecoration {
-    pub padding: Option<Insets>,
-    pub background: Option<ColorSpec>,
-    pub foreground: Option<ColorSpec>,
-    pub border: Option<BorderSpec>,
-    pub style: StyleRef,
-    pub style_states: Vec<(String, String)>,
-    pub width: Option<RetainedSizeRule>,
-    pub height: Option<RetainedSizeRule>,
-    pub min_width: Option<u16>,
-    pub max_width: Option<u16>,
-    pub min_height: Option<u16>,
-    pub max_height: Option<u16>,
-}
-
-/// Opaque retained axis sequence accepted by the native retained ABI.
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-#[derive(Clone)]
-pub struct RetainedAxis {
-    kind: RetainedAxisKind,
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[derive(Clone)]
-enum RetainedAxisKind {
-    Row(PersistentSeq<RowChild>),
-    Column(PersistentSeq<ColumnChild>),
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-#[derive(Clone)]
-pub enum RetainedAxisTrack {
-    Content,
-    Fixed(u16),
-    Flex,
-    FlexMax(u16),
-    ContentMax(u16),
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-pub struct RetainedAxisChild {
-    pub track: RetainedAxisTrack,
-    pub view: View,
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-impl RetainedAxis {
-    pub fn leaf(horizontal: bool, items: Vec<RetainedAxisChild>) -> Self {
-        if horizontal {
-            Self {
-                kind: RetainedAxisKind::Row(PersistentSeq::from_vec(
-                    items
-                        .into_iter()
-                        .map(|item| RowChild {
-                            track: retained_track(item.track),
-                            view: item.view,
-                        })
-                        .collect(),
-                )),
-            }
-        } else {
-            Self {
-                kind: RetainedAxisKind::Column(PersistentSeq::from_vec(
-                    items
-                        .into_iter()
-                        .map(|item| ColumnChild {
-                            track: retained_track(item.track),
-                            view: item.view,
-                        })
-                        .collect(),
-                )),
-            }
-        }
-    }
-
-    pub fn branch(horizontal: bool, children: Vec<Self>) -> Result<Self, String> {
-        if children.is_empty() {
-            return Err("retained axis branch requires children".to_owned());
-        }
-        if horizontal {
-            let mut roots = Vec::with_capacity(children.len());
-            let mut height = None;
-            for child in children {
-                match child {
-                    RetainedAxis {
-                        kind: RetainedAxisKind::Row(sequence),
-                    } => {
-                        if height.get_or_insert(sequence.height()) != &sequence.height() {
-                            return Err("retained row sequence heights differ".to_owned());
-                        }
-                        roots.push(sequence.root);
-                    }
-                    RetainedAxis {
-                        kind: RetainedAxisKind::Column(_),
-                    } => {
-                        return Err("row sequence contains a column child".to_owned());
-                    }
-                }
-            }
-            Ok(Self {
-                kind: RetainedAxisKind::Row(PersistentSeq::from_roots(roots)),
-            })
-        } else {
-            let mut roots = Vec::with_capacity(children.len());
-            let mut height = None;
-            for child in children {
-                match child {
-                    RetainedAxis {
-                        kind: RetainedAxisKind::Column(sequence),
-                    } => {
-                        if height.get_or_insert(sequence.height()) != &sequence.height() {
-                            return Err("retained column sequence heights differ".to_owned());
-                        }
-                        roots.push(sequence.root);
-                    }
-                    RetainedAxis {
-                        kind: RetainedAxisKind::Row(_),
-                    } => return Err("column sequence contains a row child".to_owned()),
-                }
-            }
-            Ok(Self {
-                kind: RetainedAxisKind::Column(PersistentSeq::from_roots(roots)),
-            })
-        }
-    }
-
-    pub fn aggregate_flags(&self) -> u8 {
-        match &self.kind {
-            RetainedAxisKind::Row(sequence) => sequence.aggregate_flags(),
-            RetainedAxisKind::Column(sequence) => sequence.aggregate_flags(),
-        }
-    }
-
-    fn into_kind(self, gap: u16) -> ViewKind {
-        match self.kind {
-            RetainedAxisKind::Row(sequence) => ViewKind::Row(Arc::new(RowView {
-                children: sequence,
-                gap,
-                vertical_align: VerticalAlign::Top,
-            })),
-            RetainedAxisKind::Column(sequence) => ViewKind::Column(Arc::new(ColumnView {
-                children: sequence,
-                gap,
-            })),
-        }
-    }
-
-    pub fn into_view(self, gap: u16) -> View {
-        View::new_kind(self.into_kind(gap))
-    }
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-fn retained_track(track: RetainedAxisTrack) -> TrackSize {
-    match track {
-        RetainedAxisTrack::Content => TrackSize::Content { max: None },
-        RetainedAxisTrack::Fixed(size) => TrackSize::Fixed(size),
-        RetainedAxisTrack::Flex => TrackSize::Flex { min: 1 },
-        RetainedAxisTrack::FlexMax(max) => TrackSize::FlexMax { min: 1, max },
-        RetainedAxisTrack::ContentMax(max) => TrackSize::Content { max: Some(max) },
-    }
-}
-
 #[cfg(feature = "native-host")]
 fn decode_native_track_word(value: u32) -> Result<TrackSize, String> {
     if value == 0 {
@@ -802,122 +622,6 @@ fn decode_native_track_word(value: u32) -> Result<TrackSize, String> {
             max: amount,
         }),
         _ => Err("native axis track kind is invalid".to_owned()),
-    }
-}
-
-/// Opaque retained grid-cell sequence accepted by the native retained ABI.
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-#[derive(Clone)]
-pub struct RetainedGridCells {
-    cells: PersistentSeq<GridCellView>,
-    max_row: usize,
-    max_column: usize,
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-#[doc(hidden)]
-pub struct RetainedGridCell {
-    pub row: usize,
-    pub column: usize,
-    pub row_span: u16,
-    pub column_span: u16,
-    pub horizontal_align: HorizontalAlign,
-    pub vertical_align: VerticalAlign,
-    pub view: View,
-}
-
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-impl RetainedGridCells {
-    pub fn leaf(items: Vec<RetainedGridCell>) -> Self {
-        let max_row = items
-            .iter()
-            .map(|item| item.row.saturating_add(usize::from(item.row_span)))
-            .max()
-            .unwrap_or(0);
-        let max_column = items
-            .iter()
-            .map(|item| item.column.saturating_add(usize::from(item.column_span)))
-            .max()
-            .unwrap_or(0);
-        Self {
-            cells: PersistentSeq::from_vec(
-                items
-                    .into_iter()
-                    .map(|item| GridCellView {
-                        row: item.row,
-                        column: item.column,
-                        row_span: item.row_span,
-                        column_span: item.column_span,
-                        horizontal_align: item.horizontal_align,
-                        vertical_align: item.vertical_align,
-                        view: item.view,
-                    })
-                    .collect(),
-            ),
-            max_row,
-            max_column,
-        }
-    }
-
-    pub fn branch(children: Vec<Self>) -> Result<Self, String> {
-        if children.is_empty() {
-            return Err("retained grid branch requires children".to_owned());
-        }
-        let mut height = None;
-        let mut max_row = 0;
-        let mut max_column = 0;
-        let mut roots = Vec::with_capacity(children.len());
-        for child in children {
-            let child_height = child.cells.height();
-            max_row = max_row.max(child.max_row);
-            max_column = max_column.max(child.max_column);
-            if height.get_or_insert(child_height) != &child_height {
-                return Err("retained grid sequence heights differ".to_owned());
-            }
-            roots.push(child.cells.root);
-        }
-        Ok(Self {
-            cells: PersistentSeq::from_roots(roots),
-            max_row,
-            max_column,
-        })
-    }
-
-    pub fn aggregate_flags(&self) -> u8 {
-        self.cells.aggregate_flags()
-    }
-
-    pub fn into_view(
-        self,
-        mut columns: Vec<GridTrack>,
-        mut rows: Vec<GridTrack>,
-        column_gap: u16,
-        row_gap: u16,
-    ) -> View {
-        while columns.len() < self.max_column {
-            columns.push(GridTrack::content());
-        }
-        while rows.len() < self.max_row {
-            rows.push(GridTrack::content());
-        }
-        let cell_indices = Arc::new(
-            self.cells
-                .iter()
-                .enumerate()
-                .map(|(index, cell)| ((cell.row, cell.column), index))
-                .collect::<HashMap<_, _>>(),
-        );
-        View::new_kind(ViewKind::Grid(Arc::new(GridView {
-            columns: PersistentSeq::from_vec(
-                columns.into_iter().map(|track| track.track).collect(),
-            ),
-            rows: PersistentSeq::from_vec(rows.into_iter().map(|track| track.track).collect()),
-            column_gap,
-            row_gap,
-            cells: self.cells,
-            cell_indices,
-        })))
     }
 }
 
@@ -954,23 +658,6 @@ impl<'a, T: SequenceAggregate + Clone> Iterator for PersistentSeqIter<'a, T> {
     }
 }
 
-#[derive(Clone, Default)]
-struct TransportPayload(Option<Arc<dyn std::any::Any + Send + Sync>>);
-
-impl std::fmt::Debug for TransportPayload {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("<retained transport payload>")
-    }
-}
-
-impl PartialEq for TransportPayload {
-    fn eq(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
-impl Eq for TransportPayload {}
-
 /// An owned backend-neutral semantic view.
 ///
 /// Views are persistent values. Cloning one only clones this outer `Arc`; a
@@ -979,9 +666,6 @@ impl Eq for TransportPayload {}
 #[derive(Debug, PartialEq)]
 pub struct View {
     inner: Arc<ViewNode>,
-    /// Private lifetime anchor for retained transport payloads. It is not
-    /// semantic state and is intentionally ignored by equality.
-    transport_payload: TransportPayload,
 }
 
 impl std::panic::RefUnwindSafe for View {}
@@ -1004,7 +688,6 @@ impl Clone for View {
         perf::inc(Counter::ViewCloneCalls);
         Self {
             inner: Arc::clone(&self.inner),
-            transport_payload: self.transport_payload.clone(),
         }
     }
 }
@@ -1032,7 +715,6 @@ impl View {
                 style_facts: parts.style_facts,
                 kind: parts.kind,
             }),
-            transport_payload: TransportPayload::default(),
         }
     }
 
@@ -1074,25 +756,12 @@ impl View {
 
     /// Creates a new semantic root while retaining all unchanged payloads.
     pub(crate) fn map_node(self, update: impl FnOnce(&mut ViewNode)) -> Self {
-        let payload = self.transport_payload.clone();
         let mut next = self.inner.shallow_clone();
         update(&mut next);
         next.flags = ViewNode::compute_flags(&next.kind);
         next.id = next_view_id();
         Self {
             inner: Arc::new(next),
-            transport_payload: payload,
-        }
-    }
-
-    /// Retains a private transport object for exactly as long as this
-    /// immutable semantic View remains reachable.
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn retain_transport_payload(self, payload: Arc<dyn std::any::Any + Send + Sync>) -> Self {
-        Self {
-            inner: self.inner,
-            transport_payload: TransportPayload(Some(payload)),
         }
     }
 
@@ -1108,38 +777,6 @@ impl View {
 
     pub(crate) fn contains_component_identity(&self) -> bool {
         self.flags().contains_component_slot()
-    }
-
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn retained_axis_horizontal(&self) -> Option<bool> {
-        match self.kind() {
-            ViewKind::Row(_) => Some(true),
-            ViewKind::Column(_) => Some(false),
-            _ => None,
-        }
-    }
-
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn retained_axis_gap(&self) -> Option<u16> {
-        match self.kind() {
-            ViewKind::Row(row) => Some(row.gap),
-            ViewKind::Column(column) => Some(column.gap),
-            _ => None,
-        }
-    }
-
-    /// Applies a retained axis patch while preserving the base node's common
-    /// fields. The sequence is already validated and structurally shared by
-    /// the native ABI; only the immutable root node is replaced.
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn patch_retained_axis(self, sequence: RetainedAxis, gap: u16) -> Self {
-        let kind = sequence.into_kind(gap);
-        self.map_node(|node| {
-            node.kind = kind;
-        })
     }
 
     /// Constructs an axis from scalar track words and already-materialized
@@ -1363,42 +1000,10 @@ impl View {
         Ok((rebuilt, views))
     }
 
-    /// Applies a retained grid-cell patch while preserving the grid's
-    /// persistent track vectors and all common node fields.
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn patch_retained_grid(self, cells: RetainedGridCells) -> Result<Self, String> {
-        let sequence = cells.cells;
-        if !matches!(self.kind(), ViewKind::Grid(_)) {
-            return Err("retained grid patch base is not a grid".to_owned());
-        }
-        Ok(self.map_node(|node| {
-            let ViewKind::Grid(grid) = &node.kind else {
-                unreachable!("grid patch base was validated")
-            };
-            let mut patched = grid.as_ref().clone();
-            patched.cells = sequence;
-            node.kind = ViewKind::Grid(Arc::new(patched));
-        }))
-    }
-
-    /// Returns text layout metadata without inspecting the retained span
-    /// payload. The retained patch path uses this to validate metadata-only
-    /// patches in O(1) with respect to text size.
-    #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-    #[doc(hidden)]
-    pub fn retained_text_layout(&self) -> Option<(WrapMode, HorizontalAlign)> {
-        match self.kind() {
-            ViewKind::Text(text) => Some((text.wrap, text.align)),
-            _ => None,
-        }
-    }
-
     #[cfg(feature = "native-host")]
     pub fn downgrade(&self) -> WeakView {
         WeakView {
             inner: Arc::downgrade(&self.inner),
-            transport_payload: self.transport_payload.0.as_ref().map(Arc::downgrade),
         }
     }
 }
@@ -1959,20 +1564,12 @@ impl ViewNode {
 #[derive(Clone)]
 pub struct WeakView {
     inner: std::sync::Weak<ViewNode>,
-    transport_payload: Option<std::sync::Weak<dyn std::any::Any + Send + Sync>>,
 }
 
 #[cfg(feature = "native-host")]
 impl WeakView {
     pub fn upgrade(&self) -> Option<View> {
-        self.inner.upgrade().map(|inner| View {
-            inner,
-            transport_payload: TransportPayload(
-                self.transport_payload
-                    .as_ref()
-                    .and_then(std::sync::Weak::upgrade),
-            ),
-        })
+        self.inner.upgrade().map(|inner| View { inner })
     }
 }
 

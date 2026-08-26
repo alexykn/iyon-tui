@@ -5,7 +5,9 @@
 
 #![allow(dead_code)]
 
-#[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+#[cfg(all(test, feature = "perf-counters"))]
+use std::cell::Cell;
+#[cfg(feature = "perf-counters")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[repr(usize)]
@@ -88,15 +90,34 @@ const NAMES: [&str; Counter::COUNT] = [
     "persistent_seq_items_iterated_during_patch",
 ];
 
-#[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+#[cfg(feature = "perf-counters")]
 static VALUES: [AtomicU64; Counter::COUNT] = [const { AtomicU64::new(0) }; Counter::COUNT];
 
 #[cfg(all(test, feature = "perf-counters"))]
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(all(test, feature = "perf-counters"))]
-pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-    TEST_LOCK.lock().expect("performance test lock poisoned")
+thread_local! {
+    static TEST_COUNTERS_ENABLED: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(all(test, feature = "perf-counters"))]
+pub(crate) struct TestLockGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(all(test, feature = "perf-counters"))]
+impl Drop for TestLockGuard {
+    fn drop(&mut self) {
+        TEST_COUNTERS_ENABLED.with(|enabled| enabled.set(false));
+    }
+}
+
+#[cfg(all(test, feature = "perf-counters"))]
+pub(crate) fn test_lock() -> TestLockGuard {
+    let lock = TEST_LOCK.lock().expect("performance test lock poisoned");
+    TEST_COUNTERS_ENABLED.with(|enabled| enabled.set(true));
+    TestLockGuard { _lock: lock }
 }
 
 /// A point-in-time copy of every performance counter.
@@ -128,7 +149,7 @@ impl PerfSnapshot {
 /// Clears all counters.
 #[inline]
 pub fn reset() {
-    #[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+    #[cfg(feature = "perf-counters")]
     for value in &VALUES {
         value.store(0, Ordering::Relaxed);
     }
@@ -143,25 +164,33 @@ pub fn inc(counter: Counter) {
 /// Adds a measured amount of work to one counter.
 #[inline(always)]
 pub fn add(counter: Counter, amount: u64) {
-    #[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+    #[cfg(all(test, feature = "perf-counters"))]
+    if !TEST_COUNTERS_ENABLED.with(Cell::get) {
+        return;
+    }
+    #[cfg(feature = "perf-counters")]
     VALUES[counter.index()].fetch_add(amount, Ordering::Relaxed);
-    #[cfg(any(not(feature = "perf-counters"), feature = "perf-timing"))]
+    #[cfg(not(feature = "perf-counters"))]
     let _ = (counter, amount);
 }
 
 /// Sets a counter used as a current restart/offset gauge.
 #[inline(always)]
 pub fn set(counter: Counter, value: u64) {
-    #[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+    #[cfg(all(test, feature = "perf-counters"))]
+    if !TEST_COUNTERS_ENABLED.with(Cell::get) {
+        return;
+    }
+    #[cfg(feature = "perf-counters")]
     VALUES[counter.index()].store(value, Ordering::Relaxed);
-    #[cfg(any(not(feature = "perf-counters"), feature = "perf-timing"))]
+    #[cfg(not(feature = "perf-counters"))]
     let _ = (counter, value);
 }
 
 /// Reads all counters atomically.
 #[inline]
 pub fn snapshot() -> PerfSnapshot {
-    #[cfg(all(feature = "perf-counters", not(feature = "perf-timing")))]
+    #[cfg(feature = "perf-counters")]
     {
         let mut values = [0; Counter::COUNT];
         for (index, value) in VALUES.iter().enumerate() {
@@ -170,7 +199,7 @@ pub fn snapshot() -> PerfSnapshot {
         PerfSnapshot { values }
     }
 
-    #[cfg(any(not(feature = "perf-counters"), feature = "perf-timing"))]
+    #[cfg(not(feature = "perf-counters"))]
     {
         PerfSnapshot::default()
     }

@@ -12,6 +12,7 @@ import {
   NATIVE_PATH_VIEW_KIND,
   nativePathChildLineage,
   nodeForBridge,
+  viewNodeId,
   View,
 } from "../src/values/view.ts";
 
@@ -56,8 +57,8 @@ describe("PERF-11.6 native edit transactions", () => {
         selector: 1,
       });
       const result = tryNativeEditTransactionRender(host, base, baseRef, [
-        { lineage: leftLineage, views: [changedLeft, changed], wrap: 3, align: 1 },
-        { lineage: rightLineage, views: [changedRight, changed], wrap: 2, align: 2 },
+        { lineage: leftLineage, nodeIds: [viewNodeId(changedLeft), viewNodeId(changed)], wrap: 3, align: 1 },
+        { lineage: rightLineage, nodeIds: [viewNodeId(changedRight), viewNodeId(changed)], wrap: 2, align: 2 },
       ]);
       expect(result).toBeGreaterThan(0);
       oracle.render(nodeForBridge(changed));

@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, nodeForBridge, type View as ViewValue } from "../src/values/view.ts";
+import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, nodeForBridge, viewNodeId, type View as ViewValue } from "../src/values/view.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -81,7 +81,7 @@ function makeChanged(seed: number): { root: View; edits: readonly unknown[] } {
       expectedViewKind: NATIVE_PATH_VIEW_KIND.column,
       selector: index,
     }),
-    views: [child, root],
+    nodeIds: [viewNodeId(child), viewNodeId(root)],
     wrap: (seed + index) % 2 === 0 ? 3 : 2,
     align: (seed + index) % 2 === 0 ? 1 : 2,
   }));

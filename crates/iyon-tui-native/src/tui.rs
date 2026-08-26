@@ -163,20 +163,6 @@ pub fn tui_view_bridge_environment_count() -> i64 {
     view_abi::runtime_environment_count()
 }
 
-#[napi(js_name = "tuiPerfResetViewBridgeCache")]
-pub fn tui_perf_reset_view_bridge_cache(env: Env) -> Result<()> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    with_view_runtime(&cache, |runtime| runtime.nodes.clear())?;
-    Ok(())
-}
-
-#[napi(js_name = "tuiPerfViewBridgeCacheSize")]
-pub fn tui_perf_view_bridge_cache_size(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    let size = with_view_runtime(&cache, |runtime| runtime.nodes.len())?;
-    i64::try_from(size).map_err(|_| crate::NativeError::internal("view bridge cache size overflow"))
-}
-
 mod tui_bridge_schema {
     include!(concat!(env!("OUT_DIR"), "/tui_bridge_schema.rs"));
 }
@@ -185,10 +171,6 @@ use tui_bridge_schema::*;
 
 fn view_bridge_cache(value: &Object<'_>) -> Result<ViewRuntimeHandle> {
     view_abi::runtime_handle_for_env(&Env::from_raw(value.value().env))
-}
-
-fn view_bridge_cache_for_env(env: &Env) -> Result<ViewRuntimeHandle> {
-    view_abi::runtime_handle_for_env(env)
 }
 
 fn runtime_from_handle(runtime: &ViewRuntimeHandle) -> Result<&'static mut ViewBridgeCache> {

@@ -18,7 +18,5 @@ pub use style::{
     TextAttribute, TextAttributeSpec, ThemeColor, ThemeKey, VerticalAlign,
 };
 pub(crate) use style::{StyleFacts, StyleStates};
-#[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
-pub use text::SharedUtf8Source;
 pub use text::{HorizontalAlign, Text, TextSpan, WrapMode};
 pub use view::IntoView;

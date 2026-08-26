@@ -27,6 +27,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: cargo test -p tui-abi-gen
@@ -40,8 +42,8 @@ jobs:
             packages/iyon-tui/bench/generated \
             docs/history/perf/PERF-11-generated-abi-reference.md
       - run: bun run typecheck
-      - run: bun run check:ownership
       - run: bun run native:stage
+      - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
       - run: |
           T15_TRANSPORT=generated_safe_napi \
@@ -61,6 +63,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
       - run: bun install --frozen-lockfile
       - run: ION_NATIVE_FEATURES=direct-ffi bun run packages/iyon-tui/scripts/stage-native.ts
       - run: |

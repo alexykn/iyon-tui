@@ -1,49 +1,41 @@
-name: TUI API and ABI parity
+name: TUI TypeScript surface
 
 on:
   push:
     branches: [bun-refactor, main]
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
-      - "tools/api-surface/**"
-      - "tools/ownership/**"
+      - "crates/iyon-tui/**"
+      - "crates/iyon-tui-native/**"
       - "tools/tui-abi/**"
       - "tools/tui-abi-gen/**"
-      - ".github/workflows/api-surface.yml"
+      - "tools/ownership/**"
+      - ".github/workflows/tui-typescript.yml"
   pull_request:
     paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/**"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
-      - "tools/api-surface/**"
-      - "tools/ownership/**"
+      - "crates/iyon-tui/**"
+      - "crates/iyon-tui-native/**"
       - "tools/tui-abi/**"
       - "tools/tui-abi-gen/**"
-      - ".github/workflows/api-surface.yml"
+      - "tools/ownership/**"
+      - ".github/workflows/tui-typescript.yml"
 
 jobs:
-  parity:
-    name: Stable API and ABI parity
+  typescript:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: rustfmt
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
-      - run: cargo fmt --all -- --check
-      - run: cargo check --workspace --all-features
-      - run: cargo test -p tui-abi-gen
+      - uses: dtolnay/rust-toolchain@1.97.1
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck
       - run: bun run check:ownership
+      - run: bun run native:stage
+      - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
       - run: git diff --check

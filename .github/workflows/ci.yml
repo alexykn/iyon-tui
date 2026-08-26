@@ -1,8 +1,8 @@
-name: Iyon checks
+name: Iyon TUI checks
 
 on:
   push:
-    branches: [bun-refactor]
+    branches: [bun-refactor, main]
   pull_request:
 
 jobs:
@@ -16,29 +16,58 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
 
   bun:
-    name: Bun plugins
+    name: Bun and N-API
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - uses: dtolnay/rust-toolchain@1.97.1
       - run: bun install --frozen-lockfile
-      - run: bun run check:bun-version
       - run: bun run check:tui-abi
       - run: cargo test -p tui-abi-gen
-      - run: git diff --exit-code -- crates/iyon-native/src/generated crates/iyon-native/include crates/iyon-native/tests/generated_view_abi.rs packages/iyon-runtime/src/tui/generated packages/iyon-runtime/tests/generated packages/iyon-runtime/bench/generated docs/history/perf/PERF-11-generated-abi-reference.md
-      - run: bun run typecheck:plugins
+      - run: |
+          git diff --exit-code -- \
+            crates/iyon-tui-native/src/generated \
+            crates/iyon-tui-native/include \
+            crates/iyon-tui-native/tests/generated_view_abi.rs \
+            packages/iyon-tui/src/generated \
+            packages/iyon-tui/tests/generated \
+            packages/iyon-tui/bench/generated \
+            docs/history/perf/PERF-11-generated-abi-reference.md
       - run: bun run typecheck
-      - run: bun test plugins/providers packages/iyon-runtime/test/providers
-      - run: bun test packages/iyon-plugins/tests
-      - run: bun test plugins/app/iyon/test packages/iyon-cli/test/args.test.ts packages/iyon-cli/test/bootstrap.test.ts packages/iyon-cli/test/auth.test.ts packages/iyon-cli/test/runner.test.ts
-      - run: bunx tsc --noEmit
-      - run: cargo test -p iyon --test public_app
-      - run: bun run build:iyon
-      - run: dist/iyon --help
-      - run: IYON_PROVIDER=mock dist/iyon auth status
-      - run: test -f tranche_6_bun_refactor.md
+      - run: bun run check:ownership
+      - run: bun run native:stage
+      - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
+      - run: |
+          T15_TRANSPORT=generated_safe_napi \
+          T15_WORKLOAD=plain_text \
+          T15_MODE=shared_path \
+          T15_SIZE=20 \
+          T15_WARMUP=2 \
+          T15_MEASURED=20 \
+          bun run packages/iyon-tui/bench/perf12_t15_authoritative_case.ts
+
+  direct-ffi:
+    name: Feature-gated direct FFI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - run: bun install --frozen-lockfile
+      - run: ION_NATIVE_FEATURES=direct-ffi bun run packages/iyon-tui/scripts/stage-native.ts
+      - run: |
+          T15_TRANSPORT=feature_gated_direct_ffi \
+          T15_WORKLOAD=plain_text \
+          T15_MODE=shared_path \
+          T15_SIZE=20 \
+          T15_WARMUP=2 \
+          T15_MEASURED=20 \
+          bun run packages/iyon-tui/bench/perf12_t15_direct_case.ts

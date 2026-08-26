@@ -4,12 +4,8 @@ import { ensureNative, MaterializeTx, RetainedCycleError, RetainedFastFallbackEr
 import { linkViewAbi, type NativeAbiPointers } from "./view_abi.ts";
 import {
   hostRenderRef,
-  viewRenderRef,
   pathChild,
   pathRoot,
-  viewCommonPatchRoot,
-  viewSpacerCreate,
-  viewAxisCreateBuffer,
   viewRowCreate0,
   viewRowCreate1,
   viewRowCreate2,
@@ -27,45 +23,15 @@ import {
   viewAxisSetChild,
   viewAxisSpliceBuffer,
   viewGridSetCell,
-  viewAxisSetChildPath,
-  viewGridSetCellPath,
   viewRefForNodeId,
   viewReleaseMany,
-  viewTextLayoutPatchPathD1,
-  viewTextLayoutPatchPathD2,
-  viewTextLayoutPatchPathD3,
-  viewTextLayoutPatchPathD4,
-  viewTextLayoutPatchRoot,
   editTxnBegin,
   editTxnAddTextLayout,
   editTxnCommitRender,
   editTxnAbort,
-  styleAtomCreateCstring,
-  styleCreateBits,
-  viewTextCreateCstring,
-  viewTextCreateUtf8,
-  viewTextCreateUtf82,
-  viewTextCreateUtf83,
-  viewTextCreateUtf84,
-  viewTextCreateCstring2,
-  viewTextCreateCstring3,
-  viewTextCreateCstring4,
   type ViewAbiSymbols,
 } from "./view_calls.ts";
 import {
-  BRIDGE_VIEW_KIND,
-  type BridgeViewNode,
-  type StyleNode,
-  type ColorNode,
-} from "../../src/ir.ts";
-import {
-  nativePathLineage,
-  nativeScalarPatch,
-  nativeAxisRecipe,
-  nativeSpacerRecipe,
-  nativeTextRecipe,
-  nativeStructuralEdit,
-  nativeTextLayoutTransaction,
   nodeForBridge,
   nodeIdPair,
   viewNodeId,
@@ -75,10 +41,7 @@ import {
 import manifest from "../../src/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
-  NATIVE_COLD_MAX_DEPTH,
-  NATIVE_COLD_MAX_NODES,
   NATIVE_SMALL_AXIS_ARITY_MAX,
-  NATIVE_TEXT_MAX_BYTES,
 } from "../../src/native_view_policy.ts";
 
 export interface NativeViewAbiSession {
@@ -97,14 +60,7 @@ export type NativeViewRoute =
   | "no_op"
   | "render_ref"
   | "retained"
-  | "scalar"
-  | "shallow_depth"
-  | "path_ref"
-  | "structural"
-  | "edit_transaction"
-  | "native_builder"
-  | "fallback"
-  | "recovery";
+  | "fallback";
 
 export type NativeViewRouteSnapshot = Readonly<Record<NativeViewRoute, number>>;
 
@@ -112,14 +68,7 @@ const ROUTE_NAMES: readonly NativeViewRoute[] = [
   "no_op",
   "render_ref",
   "retained",
-  "scalar",
-  "shallow_depth",
-  "path_ref",
-  "structural",
-  "edit_transaction",
-  "native_builder",
   "fallback",
-  "recovery",
 ];
 const routeCounts: Record<NativeViewRoute, number> = Object.fromEntries(
   ROUTE_NAMES.map((name) => [name, 0]),
@@ -170,10 +119,6 @@ let cachedSession: NativeViewAbiSession | undefined;
 const PATH_REFS = new WeakMap<NativeViewAbiSession, WeakMap<object, number>>();
 const PATH_SHAPE_REFS = new WeakMap<NativeViewAbiSession, Map<string, number>>();
 const SINGLE_REF_RELEASE = new Uint32Array(1);
-const TEXT_ENCODER = new TextEncoder();
-const STYLE_REFS = new WeakMap<NativeViewAbiSession, WeakMap<object, number>>();
-const STYLE_ATOM_REFS = new WeakMap<NativeViewAbiSession, Map<string, number>>();
-const TEXT_SCRATCH = new WeakMap<NativeViewAbiSession, Uint8Array>();
 const ABI_FUNCTION_NAMES = [
   "runtimeNoop",
   "viewStatusDetail",
@@ -352,47 +297,6 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
   return viewRefForNodeId(session.symbols, session.runtime, nodeIdLow, nodeIdHigh);
 }
 
-/** Installs an already-retained root without rebuilding or reacquiring it. */
-export function tryNativeRenderRef(
-  target: NativeViewRenderHost,
-  viewRef: number,
-): number | undefined {
-  if (!isValidNativeRef(viewRef) || !canInstallNativeRef(target)) return undefined;
-  const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
-  try {
-    const retainedRef = viewRenderRef(session.symbols, session.runtime, viewRef);
-    if (installNativeRef(target, session, retainedRef) !== 0) return undefined;
-    return retainedRef;
-  } catch (error) {
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  }
-}
-
-/** Materializes one pending text span through the direct cstring/buffer ABI. */
-export function tryNativeTextCreateRender(
-  host: NativeViewRenderHost,
-  next: View,
-): number | undefined {
-  const session = nativeViewAbiSession();
-  if (session === undefined || !canInstallNativeRef(host)) return undefined;
-  let nextRef: number | undefined;
-  try {
-    nextRef = nativeTextCreateRef(session, next);
-    if (nextRef === undefined) return undefined;
-    if (installNativeRef(host, session, nextRef) !== 0) {
-      releaseNativeViewRef(session, nextRef);
-      return undefined;
-    }
-    return nextRef;
-  } catch (error) {
-    if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  }
-}
-
 /**
  * PERF-12 T13 (§78/§80): retained materialization for boundaries that keep a
  * View only transiently (History unit import, animation frames) or that run
@@ -421,195 +325,19 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
   }
 }
 
-/** Creates a supported pending View and returns its caller-owned NativeRef lease. */
+/** Returns an existing native ref for a View, if one is already published. */
 export function tryNativeMaterialize(next: View): number | undefined {
-  if (!nativeColdGraphWithinLimit(next)) return undefined;
-  const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   try {
-    return nativeColdRefForView(session, next);
+    return nativeViewRefForNodeId(next);
   } catch (error) {
     if (isExpectedNativeStatus(error)) return undefined;
     throw error;
   }
-}
-
-/** Creates and installs a new supported View at any native boundary. */
-export function tryNativeViewBoundaryCreate(
-  target: NativeViewRenderHost,
-  next: View,
-): number | undefined {
-  const session = nativeViewAbiSession();
-  if (session === undefined || !canInstallNativeRef(target)) return undefined;
-  let nextRef: number | undefined;
-  try {
-    nextRef = tryNativeMaterialize(next);
-    if (nextRef === undefined) return undefined;
-    if (installNativeRef(target, session, nextRef) !== 0) {
-      releaseNativeViewRef(session, nextRef);
-      return undefined;
-    }
-    return nextRef;
-  } catch (error) {
-    if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  }
-}
-
-/** Routes one retained View mutation to any native View-bearing target. */
-export function tryNativeViewBoundaryRender(
-  target: NativeViewRenderHost,
-  previous: View,
-  next: View,
-  previousRef?: number,
-): number | undefined {
-  const session = nativeViewAbiSession();
-  if (session === undefined || !canInstallNativeRef(target)) return undefined;
-  const baseRef = previousRef;
-  try {
-    if (baseRef === undefined) return undefined;
-    const scalar = tryNativeScalarRender(target, previous, baseRef, next);
-    if (scalar !== undefined) return scalar;
-    const path = tryNativePathScalarRender(target, previous, baseRef, next);
-    if (path !== undefined) return path;
-    const structural = tryNativeStructuralRender(target, previous, baseRef, next);
-    if (structural !== undefined) return structural;
-    return tryNativeTextCreateRender(target, next) ?? tryNativeColdRender(target, next);
-  } catch (error) {
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  }
-}
-
-export function tryNativeStructuralRender(
-  target: NativeViewRenderHost,
-  previous: View,
-  previousRef: number,
-  next: View,
-): number | undefined {
-  const edit = nativeStructuralEdit(next);
-  if (edit === undefined || edit.base !== previous) return undefined;
-  switch (edit.kind) {
-    case "axisSet":
-      return tryNativeAxisSetChildRender(target, previous, previousRef, next, edit.child, edit.index, edit.trackWord);
-    case "axisSplice":
-      return tryNativeAxisSpliceRender(target, previous, previousRef, next, edit.index, edit.removeCount, edit.children);
-    case "gridCell":
-      return tryNativeGridSetCellRender(target, previous, previousRef, next, edit.row, edit.column, edit.child);
-  }
-}
-
-function nativeTextCreateRef(session: NativeViewAbiSession, next: View): number | undefined {
-  const recipe = nativeTextRecipe(next);
-  if (recipe === undefined || recipe.spans.length === 0 || recipe.spans.length > 4) return undefined;
-  const styleRefs: number[] = [];
-  for (const span of recipe.spans) {
-    const styleRef = nativeStyleRef(session, span.style);
-    if (styleRef === undefined) return undefined;
-    styleRefs.push(styleRef);
-  }
-  const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
-  const hasEmbeddedNul = recipe.spans.some((span) => span.text.indexOf("\0") !== -1);
-  if (!hasEmbeddedNul) {
-    const spans = recipe.spans;
-    switch (spans.length) {
-      case 1: return viewTextCreateCstring(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, spans[0]!.text, styleRefs[0]!, recipe.wrap, recipe.align);
-      case 2: return viewTextCreateCstring2(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, recipe.wrap, recipe.align);
-      case 3: return viewTextCreateCstring3(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, recipe.wrap, recipe.align);
-      case 4: return viewTextCreateCstring4(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, spans[3]!.text, styleRefs[3]!, recipe.wrap, recipe.align);
-      default: return undefined;
-    }
-  }
-  const encoded = recipe.spans.map((span) => TEXT_ENCODER.encode(span.text));
-  const totalBytes = encoded.reduce((total, bytes) => total + bytes.length, 0);
-  if (totalBytes > NATIVE_TEXT_MAX_BYTES) return undefined;
-  let scratch = TEXT_SCRATCH.get(session);
-  if (scratch === undefined || scratch.length < totalBytes) {
-    scratch = new Uint8Array(Math.max(totalBytes, 64));
-    TEXT_SCRATCH.set(session, scratch);
-  }
-  const spanBytes: number[] = [];
-  let offset = 0;
-  for (const bytes of encoded) {
-    scratch.set(bytes, offset);
-    spanBytes.push(bytes.length);
-    offset += bytes.length;
-  }
-  switch (recipe.spans.length) {
-    case 1: return viewTextCreateUtf8(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, scratch, totalBytes, styleRefs[0]!, recipe.wrap, recipe.align);
-    case 2: return viewTextCreateUtf82(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, scratch, totalBytes, spanBytes[0]!, styleRefs[0]!, spanBytes[1]!, styleRefs[1]!, recipe.wrap, recipe.align);
-    case 3: return viewTextCreateUtf83(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, scratch, totalBytes, spanBytes[0]!, styleRefs[0]!, spanBytes[1]!, styleRefs[1]!, spanBytes[2]!, styleRefs[2]!, recipe.wrap, recipe.align);
-    case 4: return viewTextCreateUtf84(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, scratch, totalBytes, spanBytes[0]!, styleRefs[0]!, spanBytes[1]!, styleRefs[1]!, spanBytes[2]!, styleRefs[2]!, spanBytes[3]!, styleRefs[3]!, recipe.wrap, recipe.align);
-    default: return undefined;
-  }
-}
-
-function nativeStyleRef(session: NativeViewAbiSession, style: StyleNode | undefined): number | undefined {
-  if (style === undefined) return 0;
-  let refs = STYLE_REFS.get(session);
-  if (refs === undefined) {
-    refs = new WeakMap<object, number>();
-    STYLE_REFS.set(session, refs);
-  }
-  const cached = refs.get(style);
-  if (cached !== undefined) return cached;
-  const present = { value: 0 };
-  const truth = { value: 0 };
-  const attributes: Record<string, number> = {
-    bold: 1,
-    dim: 2,
-    italic: 4,
-    underline: 8,
-    reversed: 16,
-    strikethrough: 32,
-  };
-  for (const [name, enabled] of Object.entries(style.attributes)) {
-    const bit = attributes[name];
-    if (bit === undefined) return undefined;
-    present.value |= bit;
-    if (enabled) truth.value |= bit;
-  }
-  const foreground = style.foreground === undefined ? 0 : nativeStyleAtom(session, styleColorAtom(style.foreground));
-  const background = style.background === undefined ? 0 : nativeStyleAtom(session, styleColorAtom(style.background));
-  const theme = style.theme === undefined ? 0 : nativeStyleAtom(session, `theme:${style.theme}`);
-  if (foreground === undefined || background === undefined || theme === undefined) return undefined;
-  const reference = styleCreateBits(
-    session.symbols,
-    session.runtime,
-    0,
-    present.value,
-    truth.value,
-    foreground,
-    background,
-    theme,
-  );
-  refs.set(style, reference);
-  return reference;
-}
-
-function nativeStyleAtom(session: NativeViewAbiSession, value: string): number | undefined {
-  if (value.indexOf("\0") !== -1) return undefined;
-  let refs = STYLE_ATOM_REFS.get(session);
-  if (refs === undefined) {
-    refs = new Map<string, number>();
-    STYLE_ATOM_REFS.set(session, refs);
-  }
-  const cached = refs.get(value);
-  if (cached !== undefined) return cached;
-  const reference = styleAtomCreateCstring(session.symbols, session.runtime, value);
-  refs.set(value, reference);
-  return reference;
-}
-
-function styleColorAtom(color: ColorNode): string {
-  return typeof color === "string" ? color : `ansi:${color.value}`;
 }
 
 /**
  * Materializes a small/new axis without a JS child packet. The children must
- * already have NativeRefs (a cold graph that cannot satisfy that condition is
- * deliberately left to the V4 fallback until its leaf constructors exist).
+ * already have NativeRefs.
  */
 export function tryNativeAxisCreate(
   next: View,
@@ -622,7 +350,6 @@ export function tryNativeAxisCreate(
     || gap < 0
     || gap > 65_535
     || children.length > NATIVE_BUILDER_MAX_CHILDREN
-    || !nativeColdGraphWithinLimit(next)
   ) return undefined;
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
@@ -670,101 +397,6 @@ export function tryNativeAxisCreateRender(
     releaseNativeViewRef(session, nextRef);
     if (isExpectedNativeStatus(error)) return undefined;
     throw error;
-  }
-}
-
-/**
- * Cold-route a compact axis recipe. Supported leaves are materialized through
- * generated constructors; text and other unsupported leaves return undefined
- * so the caller can use the authoritative V4/direct fallback unchanged.
- */
-export function tryNativeColdRender(host: NativeViewRenderHost, next: View): number | undefined {
-  if (!canInstallNativeRef(host)) return undefined;
-  const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
-  const recipe = nativeAxisRecipe(next);
-  if (
-    recipe === undefined
-    || recipe.children.length > NATIVE_BUILDER_MAX_CHILDREN
-    || !nativeColdGraphWithinLimit(next)
-  ) return undefined;
-  const refs: number[] = [];
-  let nextRef: number | undefined;
-  try {
-    for (const child of recipe.children) {
-      const reference = nativeColdRefForView(session, child.view);
-      if (reference === undefined) return undefined;
-      refs.push(reference);
-    }
-    const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
-    nextRef = recipe.children.length <= NATIVE_SMALL_AXIS_ARITY_MAX
-      ? createSmallAxis(session, recipe.horizontal, nodeIdLow, nodeIdHigh, recipe.gap, recipe.children, refs)
-      : createAxisWithBuilder(session, recipe.horizontal ? 1 : 2, nodeIdLow, nodeIdHigh, recipe.gap, recipe.children, refs);
-    if (nextRef === undefined) return undefined;
-    const status = installNativeRef(host, session, nextRef);
-    if (status !== 0) {
-      releaseNativeViewRef(session, nextRef);
-      nextRef = undefined;
-      return undefined;
-    }
-    return nextRef;
-  } catch (error) {
-    if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  } finally {
-    for (const reference of refs) releaseNativeViewRef(session, reference);
-  }
-}
-
-function nativeColdGraphWithinLimit(view: View): boolean {
-  return nativeColdGraphNodeCount(view, NATIVE_COLD_MAX_NODES, 0) !== undefined;
-}
-
-function nativeColdGraphNodeCount(view: View, remaining: number, depth: number): number | undefined {
-  if (depth > NATIVE_COLD_MAX_DEPTH || remaining <= 0) return undefined;
-  const recipe = nativeAxisRecipe(view);
-  if (recipe === undefined) return 1;
-  let count = 1;
-  if (count > remaining) return undefined;
-  for (const child of recipe.children) {
-    const childCount = nativeColdGraphNodeCount(child.view, remaining - count, depth + 1);
-    if (childCount === undefined) return undefined;
-    count += childCount;
-    if (count > remaining) return undefined;
-  }
-  return count;
-}
-
-function nativeColdRefForView(session: NativeViewAbiSession, view: View): number | undefined {
-  try {
-    const existing = nativeViewRefForNodeId(view);
-    if (existing !== undefined) return existing;
-  } catch (error) {
-    if (!isExpectedNativeStatus(error)) throw error;
-  }
-  const rows = nativeSpacerRecipe(view);
-  if (rows !== undefined) {
-    const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
-    return viewSpacerCreate(session.symbols, session.runtime, nodeIdLow, nodeIdHigh, rows);
-  }
-  const text = nativeTextCreateRef(session, view);
-  if (text !== undefined) return text;
-  const recipe = nativeAxisRecipe(view);
-  if (recipe === undefined || recipe.children.length > NATIVE_BUILDER_MAX_CHILDREN) return undefined;
-  const refs: number[] = [];
-  try {
-    for (const child of recipe.children) {
-      const reference = nativeColdRefForView(session, child.view);
-      if (reference === undefined) return undefined;
-      refs.push(reference);
-    }
-    const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
-    return recipe.children.length <= NATIVE_SMALL_AXIS_ARITY_MAX
-      ? createSmallAxis(session, recipe.horizontal, nodeIdLow, nodeIdHigh, recipe.gap, recipe.children, refs)
-      : createAxisWithBuilder(session, recipe.horizontal ? 1 : 2, nodeIdLow, nodeIdHigh, recipe.gap, recipe.children, refs);
-  } finally {
-    for (const reference of refs) releaseNativeViewRef(session, reference);
   }
 }
 
@@ -823,58 +455,6 @@ function createAxisWithBuilder(
     return result;
   } catch (error) {
     if (builderRef !== undefined) axisBuilderAbort(session.symbols, session.runtime, builderRef);
-    throw error;
-  }
-}
-
-/**
- * Attempts the Tranche 7 compact scalar route. Pending text/common patches
- * expose only fixed scalar fields here; this function deliberately does not
- * materialize either View's BridgeViewNode.
- */
-export function tryNativeScalarRender(
-  host: NativeViewRenderHost,
-  previous: View,
-  previousRef: number,
-  next: View,
-): number | undefined {
-  const patch = nativeScalarPatch(next);
-  if (patch === undefined || patch.base !== previous) return undefined;
-  if (!canInstallNativeRef(host) || !isValidNativeRef(previousRef)) return undefined;
-  const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
-
-  let nextRef: number | undefined;
-  try {
-    const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
-    nextRef = patch.kind === "textLayout"
-      ? viewTextLayoutPatchRoot(session.symbols, session.runtime, previousRef, nodeIdLow, nodeIdHigh, patch.wrap, patch.align)
-      : viewCommonPatchRoot(
-        session.symbols,
-        session.runtime,
-        previousRef,
-        nodeIdLow,
-        nodeIdHigh,
-        patch.mask,
-        patch.paddingTopRight,
-        patch.paddingBottomLeft,
-        patch.widthRule,
-        patch.heightRule,
-        patch.minWidth,
-        patch.maxWidth,
-        patch.minHeight,
-        patch.maxHeight,
-        previousRef,
-      );
-    const status = installNativeRef(host, session, nextRef);
-    if (status !== 0) {
-      releaseNativeViewRef(session, nextRef);
-      return undefined;
-    }
-    return nextRef;
-  } catch (error) {
-    if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
-    if (isExpectedNativeStatus(error)) return undefined;
     throw error;
   }
 }
@@ -1121,50 +701,6 @@ export function nativePathRefForLineage(
   return reference;
 }
 
-/** Routes a shallow retained text edit through a cached native PathRef. */
-export function tryNativePathScalarRender(
-  host: NativeViewRenderHost,
-  previous: View,
-  previousRef: number,
-  next: View,
-): number | undefined {
-  const lineage = nativePathLineage(next);
-  if (lineage === undefined || lineage.baseNodeId !== viewNodeId(previous) || lineage.depth < 1 || lineage.depth > 4) return undefined;
-  if (!canInstallNativeRef(host) || !isValidNativeRef(previousRef)) return undefined;
-  const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
-  const steps = pathLineageSteps(lineage);
-  const nodes = pathNodes(nodeForBridge(next), steps);
-  if (nodes === undefined || nodes.length !== lineage.depth + 1) return undefined;
-  const target = splitNodeId(nodes[nodes.length - 1]!.id);
-  const ancestors = nodes.slice(0, -1).reverse().map((node) => splitNodeId(node.id));
-  const targetNode = nodes[nodes.length - 1]!;
-  if (targetNode.kind !== BRIDGE_VIEW_KIND.text) return undefined;
-  const wrap = targetNode.wrap;
-  const align = targetNode.align;
-  let nextRef: number | undefined;
-  try {
-    const pathRef = nativePathRefForLineage(session, lineage);
-    nextRef = lineage.depth === 1
-      ? viewTextLayoutPatchPathD1(session.symbols, session.runtime, previousRef, pathRef, target[0], target[1], ancestors[0]![0], ancestors[0]![1], wrap, align)
-      : lineage.depth === 2
-        ? viewTextLayoutPatchPathD2(session.symbols, session.runtime, previousRef, pathRef, target[0], target[1], ancestors[0]![0], ancestors[0]![1], ancestors[1]![0], ancestors[1]![1], wrap, align)
-        : lineage.depth === 3
-          ? viewTextLayoutPatchPathD3(session.symbols, session.runtime, previousRef, pathRef, target[0], target[1], ancestors[0]![0], ancestors[0]![1], ancestors[1]![0], ancestors[1]![1], ancestors[2]![0], ancestors[2]![1], wrap, align)
-          : viewTextLayoutPatchPathD4(session.symbols, session.runtime, previousRef, pathRef, target[0], target[1], ancestors[0]![0], ancestors[0]![1], ancestors[1]![0], ancestors[1]![1], ancestors[2]![0], ancestors[2]![1], ancestors[3]![0], ancestors[3]![1], wrap, align);
-    const status = installNativeRef(host, session, nextRef);
-    if (status !== 0) {
-      releaseNativeViewRef(session, nextRef);
-      return undefined;
-    }
-    return nextRef;
-  } catch (error) {
-    if (nextRef !== undefined) releaseNativeViewRef(session, nextRef);
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
-  }
-}
-
 function pathShape(lineage: NativePathLineage): string {
   const steps = pathLineageSteps(lineage);
   return steps.length === 0 ? "root" : steps.map((step) => `${step?.kind}:${step?.expectedViewKind}:${step?.selector}`).join("/");
@@ -1179,65 +715,6 @@ function pathLineageSteps(lineage: NativePathLineage): NativePathLineage["step"]
   }
   steps.reverse();
   return steps;
-}
-
-function pathNodes(root: BridgeViewNode, steps: readonly NativePathLineage["step"][]): BridgeViewNode[] | undefined {
-  const nodes = [root];
-  let current = root;
-  for (const step of steps) {
-    if (step === undefined) return undefined;
-    switch (step.kind) {
-      case 1:
-      case 2: {
-        if (step.selector !== 0 || (current.kind !== BRIDGE_VIEW_KIND.container && current.kind !== BRIDGE_VIEW_KIND.clamp && current.kind !== BRIDGE_VIEW_KIND.contentMax)) return undefined;
-        current = current.child;
-        break;
-      }
-      case 4: {
-        if (current.kind !== BRIDGE_VIEW_KIND.column) return undefined;
-        const child = current.children[step.selector];
-        if (child === undefined) return undefined;
-        current = child.child;
-        break;
-      }
-      case 5: {
-        if (current.kind !== BRIDGE_VIEW_KIND.row) return undefined;
-        const child = current.children[step.selector];
-        if (child === undefined) return undefined;
-        current = child.child;
-        break;
-      }
-      case 6: {
-        if (current.kind !== BRIDGE_VIEW_KIND.grid || step.selector < 0) return undefined;
-        let remaining = step.selector;
-        let found: BridgeViewNode | undefined;
-        for (const row of current.rows) {
-          for (const cell of row.cells) {
-            if (remaining === 0) found = cell.view;
-            remaining -= 1;
-          }
-        }
-        if (found === undefined || remaining >= 0) return undefined;
-        current = found;
-        break;
-      }
-      case 7:
-      case 8:
-      case 9: {
-        if (current.kind !== BRIDGE_VIEW_KIND.hanging || step.selector !== 0) return undefined;
-        current = step.kind === 7 ? current.prefix : step.kind === 8 ? current.continuation : current.body;
-        break;
-      }
-      default: return undefined;
-    }
-    nodes.push(current);
-  }
-  return nodes;
-}
-
-function splitNodeId(id: number): readonly [number, number] {
-  if (!Number.isSafeInteger(id) || id <= 0 || id > Number.MAX_SAFE_INTEGER) throw new RangeError("native path NodeId is invalid");
-  return [id >>> 0, Math.floor(id / 0x1_0000_0000)];
 }
 
 function splitNodeIdSafely(id: number): readonly [number, number] | undefined {

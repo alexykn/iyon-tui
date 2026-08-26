@@ -11,21 +11,6 @@
  * semantics win; a cheaper form can return as a PERF-12 §27 derivation hint
  * in the T9 tranche if it ever measures as a net win.
  *
- * The pending create/patch backings and the packed-transport metadata
- * coupling (registerPackedMeta at construction, *ForPackedTransport statics,
- * sequence overrides) have been removed: every transport candidate except
- * direct_7v2 and the retained-DAG semantic transport are the active
- * candidates; ruled-out packed transports are no longer kept alive. The native
- * packed decoders remain in iyon-tui-native untouched (T4 is a no-native-change
- * tranche); they are simply unreachable from this module.
- *
- * The recipe reader functions (nativeAxisRecipe, nativeTextRecipe,
- * nativeSpacerRecipe, nativeScalarPatch, viewBackingState) are retained as
- * always-undefined stubs so the generated-route code in native_view_abi.ts
- * keeps compiling; under the eager DAG those routes never fire and every
- * render lands on the Direct decode path (measured faster on realistic
- * traces by PERF-11v4). Their removal happens with the route code in the
- * PERF-12 cleanup tranche.
  */
 
 import type { NativeHandleId } from "../types.ts";
@@ -53,7 +38,6 @@ import {
   type BridgeOverflowIndicatorNode,
   type BridgeViewNode,
   type BridgeViewNodeDraft,
-  type TextSpanNode,
   type ColorNode,
   type DecorationNode,
   type DiffHunkNode,
@@ -131,34 +115,6 @@ function nextNodeId(): number {
   if (nodeIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI View node identity exhausted");
   return nodeIdCounter.next++;
 }
-
-export interface NativeTextLayoutPatch {
-  readonly kind: "textLayout";
-  readonly base: View;
-  readonly wrap: number;
-  readonly align: number;
-}
-
-export interface NativeCommonPatch {
-  readonly kind: "common";
-  readonly base: View;
-  readonly mask: number;
-  readonly paddingTopRight: number;
-  readonly paddingBottomLeft: number;
-  readonly widthRule: number;
-  readonly heightRule: number;
-  readonly minWidth: number;
-  readonly maxWidth: number;
-  readonly minHeight: number;
-  readonly maxHeight: number;
-}
-
-export type NativeScalarPatch = NativeTextLayoutPatch | NativeCommonPatch;
-
-export type NativeStructuralEdit =
-  | { readonly kind: "axisSet"; readonly base: View; readonly child: View; readonly index: number; readonly trackWord: number }
-  | { readonly kind: "axisSplice"; readonly base: View; readonly children: readonly { readonly view: View; readonly trackWord: number }[]; readonly index: number; readonly removeCount: number }
-  | { readonly kind: "gridCell"; readonly base: View; readonly child: View; readonly row: number; readonly column: number };
 
 /** Native retained-path metadata; it stores selectors, never a View graph. */
 export interface NativePathStep {
@@ -1063,44 +1019,6 @@ export function attachNativePathLineage(view: View, lineage: NativePathLineage):
 /** Returns the full semantic NodeId of the View's frozen semantic node. */
 export function viewNodeId(view: View): number {
   return nodeForBridge(view).id;
-}
-
-/** Diagnostic placeholder: the eager DAG has no backing states; always 0. */
-export function viewBackingState(_view: View): 0 | 1 | 2 {
-  return 0;
-}
-
-/** Always undefined under the eager DAG; retained until the cleanup tranche removes the dead native-builder routes. */
-export function nativeAxisRecipe(_view: View): {
-  readonly horizontal: boolean;
-  readonly gap: number;
-  readonly children: readonly { readonly view: View; readonly trackWord: number }[];
-} | undefined {
-  return undefined;
-}
-
-/** Always undefined under the eager DAG; see nativeAxisRecipe. */
-export function nativeTextRecipe(_view: View): {
-  readonly spans: readonly TextSpanNode[];
-  readonly wrap: number;
-  readonly align: number;
-} | undefined {
-  return undefined;
-}
-
-/** Always undefined under the eager DAG; see nativeAxisRecipe. */
-export function nativeSpacerRecipe(_view: View): number | undefined {
-  return undefined;
-}
-
-/** Always undefined under the eager DAG; see nativeAxisRecipe. */
-export function nativeScalarPatch(_view: View): NativeScalarPatch | undefined {
-  return undefined;
-}
-
-/** Always undefined under the eager DAG; see nativeAxisRecipe. */
-export function nativeStructuralEdit(_view: View): NativeStructuralEdit | undefined {
-  return undefined;
 }
 
 /** Returns construction-time typed transaction metadata without rebuilding it. */

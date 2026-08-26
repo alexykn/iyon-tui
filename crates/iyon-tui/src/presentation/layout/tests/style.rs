@@ -683,7 +683,7 @@ fn decoration_preserves_physical_incompleteness() {
 #[test]
 fn box_background_covers_padding_and_row_gap() {
     let view = box_view(
-        tool_view("body"),
+        decorated_row_view("body"),
         background_with_padding(ColorSpec::Theme(ThemeKey::from("panel")), Insets::all(1)),
     );
     let rows = compile_view(&view, 12).rows;

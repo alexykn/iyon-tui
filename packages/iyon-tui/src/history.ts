@@ -12,7 +12,7 @@ export class History extends HandleBase<ReturnType<typeof nativeTui.history>, "h
 
   /**
    * PERF-12 T13 (§78): unit import is identity-first. Retained hints reuse
-   * any subtree already materialized through any boundary (tool cards, chrome,
+   * any subtree already materialized through any boundary (content blocks, chrome,
    * earlier units) with zero payload re-reads; a refused retained path falls
    * back to the cold graph and finally the N-API bridge. The temporary lease
    * drains after the push because History retains its own strong state.

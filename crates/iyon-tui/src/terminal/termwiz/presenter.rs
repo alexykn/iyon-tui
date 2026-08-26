@@ -825,9 +825,9 @@ mod tests {
         };
         let presented = physical_surface(
             vec![
-                painted_row("USER", width, bubble_style),
-                painted_row("USER", width, bubble_style),
-                painted_row("model", width, PhysicalStyle::default()),
+                painted_row("header", width, bubble_style),
+                painted_row("header", width, bubble_style),
+                painted_row("content", width, PhysicalStyle::default()),
                 vec![PhysicalCell::transparent(); width],
                 painted_row("--------", width, PhysicalStyle::default()),
                 painted_row("input", width, PhysicalStyle::default()),

@@ -5762,7 +5762,7 @@ mod tests {
         // mask = PADDING | FOREGROUND | WIDTH | MIN_WIDTH; one style state.
         // Words: mask, padTR, padBL, widthHeight, minMaxW, minMaxH, fg, bg,
         //        borderStyleEdges, borderColor, stateCount, 4 state words.
-        let key = b"iyon.agent.effort";
+        let key = b"framework.test.effort";
         let value = b"high";
         let mut words = [
             1u32 | 4 | 16 | 64,

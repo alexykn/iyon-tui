@@ -4,7 +4,7 @@
  *
  * The component wrapper IS the retained execution boundary. Compose needed
  * compiler-generated restart groups because an `@Composable` call is
- * syntactically an ordinary function call; Iyon's explicit wrapper makes the
+ * syntactically an ordinary function call; the explicit wrapper makes the
  * boundary an ordinary runtime abstraction — no source transform, no
  * SiteIds, no build machinery (AMENDMENT-C §11).
  *

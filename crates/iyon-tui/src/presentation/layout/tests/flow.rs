@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn row_uses_track_width_for_continuations() {
-    let rows = compile_view(&tool_view("abcdefghijklmnop"), 10).rows;
+    let rows = compile_view(&decorated_row_view("abcdefghijklmnop"), 10).rows;
     assert_eq!(text(&rows[0]), "● abcdefgh");
     assert_eq!(text(&rows[1]), "  ijklmnop");
 }

@@ -31,8 +31,8 @@ describe("native headless harness", () => {
     const stream = new TextStream();
     await harness.render({ body: View.text("footer"), history });
     await history.pushStream(stream);
-    await stream.update("assistant");
-    expect(harness.screenRows().some((row) => row.includes("assistant"))).toBe(true);
+    await stream.update("streamed text");
+    expect(harness.screenRows().some((row) => row.includes("streamed text"))).toBe(true);
     stream.seal();
     expect(() => stream.update("late")).toThrow();
     harness.close();

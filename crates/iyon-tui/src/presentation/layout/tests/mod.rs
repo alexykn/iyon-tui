@@ -78,7 +78,7 @@ fn style(color: &str) -> StyleSpec {
     }
 }
 
-fn tool_view(body: &str) -> View {
+fn decorated_row_view(body: &str) -> View {
     row_view(
         vec![
             RowChild::content(View::text("●").no_wrap().style(style("accent")).into_view()),
@@ -574,8 +574,8 @@ mod text;
 fn layout_performance_probe() {
     use std::time::Instant;
 
-    let long_transcript = (0..80)
-        .map(|index| format!("transcript line {index}: a moderately long generic sentence"))
+    let long_text = (0..80)
+        .map(|index| format!("line {index}: a moderately long generic sentence"))
         .collect::<Vec<_>>()
         .join("\n");
     let cases = vec![
@@ -596,13 +596,10 @@ fn layout_performance_probe() {
                 column.child(View::text("body").fill_width());
             }),
         ),
+        ("long_text", View::text(&long_text).fill_width().into_view()),
         (
-            "long_transcript",
-            View::text(&long_transcript).fill_width().into_view(),
-        ),
-        (
-            "user_bubble",
-            View::text("user message with decoration")
+            "decorated_text",
+            View::text("decorated message with decoration")
                 .fill_width()
                 .padding(Insets::horizontal(1))
                 .border(BorderSpec::rounded())
@@ -619,8 +616,8 @@ fn layout_performance_probe() {
             .fill_width(),
         ),
         (
-            "bounded_live_tool_scroll_pane",
-            View::row_viewport(View::text(&long_transcript).into_view(), 20),
+            "bounded_row_viewport",
+            View::row_viewport(View::text(&long_text).into_view(), 20),
         ),
         (
             "scene_body",

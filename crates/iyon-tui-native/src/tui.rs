@@ -163,7 +163,6 @@ pub fn tui_view_bridge_environment_count() -> i64 {
     view_abi::runtime_environment_count()
 }
 
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
 #[napi(js_name = "tuiPerfResetViewBridgeCache")]
 pub fn tui_perf_reset_view_bridge_cache(env: Env) -> Result<()> {
     let cache = view_bridge_cache_for_env(&env)?;
@@ -171,7 +170,6 @@ pub fn tui_perf_reset_view_bridge_cache(env: Env) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
 #[napi(js_name = "tuiPerfViewBridgeCacheSize")]
 pub fn tui_perf_view_bridge_cache_size(env: Env) -> Result<i64> {
     let cache = view_bridge_cache_for_env(&env)?;
@@ -179,81 +177,11 @@ pub fn tui_perf_view_bridge_cache_size(env: Env) -> Result<i64> {
     i64::try_from(size).map_err(|_| crate::NativeError::internal("view bridge cache size overflow"))
 }
 
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV3ResetViewBridgeCache")]
-pub fn tui_perf_v3_reset_view_bridge_cache(env: Env) -> Result<()> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    with_view_runtime(&cache, |runtime| runtime.packed_v3.reset_slots())?;
-    Ok(())
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV3ViewBridgeCacheSize")]
-pub fn tui_perf_v3_view_bridge_cache_size(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    let size = with_view_runtime(&cache, |runtime| runtime.packed_v3.slot_count())?;
-    i64::try_from(size).map_err(|_| crate::NativeError::internal("packed V3 slot count overflow"))
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV3PackedSlotPages")]
-pub fn tui_perf_v3_packed_slot_pages(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    let pages = with_view_runtime(&cache, |runtime| runtime.packed_v3.page_count())?;
-    i64::try_from(pages).map_err(|_| crate::NativeError::internal("packed V3 page count overflow"))
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV4ResetViewBridgeCache")]
-pub fn tui_perf_v4_reset_view_bridge_cache(env: Env) -> Result<()> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    with_view_runtime(&cache, |runtime| {
-        runtime.nodes.clear();
-        runtime.packed_v4.reset_slots();
-    })?;
-    Ok(())
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV4ViewBridgeCacheSize")]
-pub fn tui_perf_v4_view_bridge_cache_size(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    let size = with_view_runtime(&cache, |runtime| runtime.packed_v4.slot_count())?;
-    i64::try_from(size).map_err(|_| crate::NativeError::internal("packed V4 slot count overflow"))
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV4ViewBridgeGeneration")]
-pub fn tui_perf_v4_view_bridge_generation(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    Ok(i64::from(with_view_runtime(&cache, |runtime| {
-        runtime.packed_v4.generation
-    })?))
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi(js_name = "tuiPerfV3ViewBridgeGeneration")]
-pub fn tui_perf_v3_view_bridge_generation(env: Env) -> Result<i64> {
-    let cache = view_bridge_cache_for_env(&env)?;
-    Ok(i64::from(with_view_runtime(&cache, |runtime| {
-        runtime.packed_v3.generation
-    })?))
-}
-
 mod tui_bridge_schema {
     include!(concat!(env!("OUT_DIR"), "/tui_bridge_schema.rs"));
 }
 
 use tui_bridge_schema::*;
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-mod fast_shared;
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-mod packed;
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-mod packed_v3;
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-mod packed_v4;
 
 fn view_bridge_cache(value: &Object<'_>) -> Result<ViewRuntimeHandle> {
     view_abi::runtime_handle_for_env(&Env::from_raw(value.value().env))
@@ -653,8 +581,6 @@ pub struct NativeTuiHost {
     host: Box<TuiHost>,
     alive: AtomicBool,
     view_runtime: usize,
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    fast_shared: Box<fast_shared::FastSession>,
 }
 
 #[napi]
@@ -672,25 +598,15 @@ impl NativeTuiHost {
             .map_err(|_| crate::NativeError::invalid_input("width must fit in u16"))?;
         let height = u16::try_from(height)
             .map_err(|_| crate::NativeError::invalid_input("height must fit in u16"))?;
-        let mut host = Box::new(
+        let host = Box::new(
             TuiHost::open(width, height, headless.unwrap_or(false))
                 .map_err(|error| crate::NativeError::internal(error.to_string()))?,
         );
         let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
-        #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-        let runtime = view_runtime as *mut view_abi::NativeViewRuntime;
-        #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-        let mut fast_shared = Box::new(fast_shared::FastSession::new(&mut host, runtime));
-        #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-        fast_shared.register().map_err(|_| {
-            crate::NativeError::internal("FastShared runtime host registry is full")
-        })?;
         Ok(Self {
             host,
             alive: AtomicBool::new(true),
             view_runtime,
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            fast_shared,
         })
     }
 
@@ -698,11 +614,6 @@ impl NativeTuiHost {
     pub fn dispose(&self) -> Result<()> {
         if self.alive.swap(false, Ordering::AcqRel) {
             view_abi::abort_all_edit_txns(self.view_runtime as *mut view_abi::NativeViewRuntime);
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            {
-                self.fast_shared.close();
-                self.fast_shared.unregister();
-            }
             self.host
                 .close()
                 .map_err(|error| crate::NativeError::internal(error.to_string()))?;
@@ -999,114 +910,6 @@ impl NativeTuiHost {
             return 0;
         }
         self as *const Self as usize as i64
-    }
-}
-
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-#[napi]
-impl NativeTuiHost {
-    #[napi(js_name = "tuiPerfFastSharedAbi")]
-    pub fn fast_shared_abi(&self) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        Ok(self.fast_shared.descriptor())
-    }
-
-    /// Benchmark-only packed transport. The environment is injected by N-API
-    /// so this path shares the direct decoder's environment-local weak cache.
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfPackedRender")]
-    pub fn render_packed(
-        &self,
-        env: Env,
-        words: napi::bindgen_prelude::Uint32Array,
-        strings: Vec<String>,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed::decode_one(words.as_ref(), &strings, cache)?;
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfV3PackedRender")]
-    pub fn render_packed_v3(
-        &self,
-        env: Env,
-        words: napi::bindgen_prelude::Uint32Array,
-        bytes: napi::bindgen_prelude::Uint8Array,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed_v3::decode_render(words.as_ref(), bytes.as_ref(), cache)?;
-        #[cfg(feature = "perf-counters")]
-        iyon_tui::perf::inc(iyon_tui::perf::Counter::NapiV3HostMutations);
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfV3PackedRenderStrings")]
-    pub fn render_packed_v3_strings(
-        &self,
-        env: Env,
-        words: napi::bindgen_prelude::Uint32Array,
-        strings: Vec<String>,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed_v3::decode_render_strings(words.as_ref(), strings, cache)?;
-        #[cfg(feature = "perf-counters")]
-        iyon_tui::perf::inc(iyon_tui::perf::Counter::NapiV3HostMutations);
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfV4PackedRender")]
-    pub fn render_packed_v4(
-        &self,
-        env: Env,
-        words: napi::bindgen_prelude::Uint32Array,
-        bytes: napi::bindgen_prelude::Uint8Array,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed_v4::decode_render(words.as_ref(), bytes.as_ref(), cache)?;
-        #[cfg(feature = "perf-counters")]
-        iyon_tui::perf::inc(iyon_tui::perf::Counter::NapiV4HostMutations);
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfV4PackedRenderRef")]
-    pub fn render_packed_v4_ref(&self, env: Env, generation: i64, packed_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed_v4::resolve_ref(generation, packed_ref, cache)?;
-        #[cfg(feature = "perf-counters")]
-        iyon_tui::perf::inc(iyon_tui::perf::Counter::NapiV4HostMutations);
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    #[napi(js_name = "tuiPerfV3PackedRenderRef")]
-    pub fn render_packed_v3_ref(&self, env: Env, generation: i64, packed_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let cache = view_bridge_cache_for_env(&env)?;
-        let view = packed_v3::resolve_ref(generation, packed_ref, cache)?;
-        #[cfg(feature = "perf-counters")]
-        iyon_tui::perf::inc(iyon_tui::perf::Counter::NapiV3HostMutations);
-        self.host
-            .render(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 }
 

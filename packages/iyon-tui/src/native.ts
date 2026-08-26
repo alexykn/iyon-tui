@@ -113,11 +113,6 @@ export interface NativeTuiHostContract {
   scrollPaneRef(viewRef: number): object;
   styleAt(row: number, column: number): object | null;
   cellXOfText(row: number, text: string): number | null;
-  tuiPerfV3PackedRender?(words: Uint32Array, bytes: Uint8Array): void;
-  tuiPerfV3PackedRenderStrings?(words: Uint32Array, strings: readonly string[]): void;
-  tuiPerfV3PackedRenderRef?(generation: number, packedRef: number): void;
-  tuiPerfV4PackedRender?(words: Uint32Array, bytes: Uint8Array): void;
-  tuiPerfV4PackedRenderRef?(generation: number, packedRef: number): void;
 }
 
 export interface NativeTuiAddon {
@@ -168,13 +163,6 @@ export interface NativeTuiAddon {
   NativePlainProjector?: new () => NativeProjectorContract;
   NativeViewSlot?: new (initial: object) => NativeViewSlotContract;
   NativeScrollPane?: new (initial: object) => NativeScrollPaneContract;
-  tuiPerfV3ResetViewBridgeCache?: () => void;
-  tuiPerfV3ViewBridgeCacheSize?: () => number;
-  tuiPerfV3PackedSlotPages?: () => number;
-  tuiPerfV3ViewBridgeGeneration?: () => number;
-  tuiPerfV4ResetViewBridgeCache?: () => void;
-  tuiPerfV4ViewBridgeCacheSize?: () => number;
-  tuiPerfV4ViewBridgeGeneration?: () => number;
 }
 
 // The package owns this loader and its staged `iyon-tui-native.node` artifact.

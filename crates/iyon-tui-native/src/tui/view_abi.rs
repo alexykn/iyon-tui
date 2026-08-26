@@ -17,11 +17,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::ThreadId;
 
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-use super::fast_shared;
-#[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-use super::{packed_v3, packed_v4};
-
 #[path = "../generated/view_abi_types.rs"]
 mod generated_types;
 pub use generated_types::AxisChildInputV1;
@@ -390,14 +385,6 @@ pub(super) struct NativeViewRuntime {
     scavenge_processed: u64,
     nodes_inserted_since_full_sweep: u64,
     pub(super) generation: u32,
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    pub(super) packed_v3: packed_v3::PackedState,
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    pub(super) packed_v4: packed_v4::PackedState,
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    pub(super) fast_slots: HashMap<usize, fast_shared::FastSlotTable>,
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    pub(super) fast_sessions: HashMap<usize, usize>,
 }
 
 impl NativeViewRuntime {
@@ -442,22 +429,7 @@ impl NativeViewRuntime {
             scavenge_processed: 0,
             nodes_inserted_since_full_sweep: 0,
             generation: 1,
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            packed_v3: packed_v3::PackedState::new(),
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            packed_v4: packed_v4::PackedState::new(),
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            fast_slots: HashMap::new(),
-            #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-            fast_sessions: HashMap::new(),
         }
-    }
-
-    #[cfg(any(feature = "perf-packed-benchmark", feature = "perf-packed-timing"))]
-    pub(super) fn fast_slots_for(&mut self, host_addr: usize) -> &mut fast_shared::FastSlotTable {
-        self.fast_slots
-            .entry(host_addr)
-            .or_insert_with(fast_shared::FastSlotTable::new)
     }
 
     pub(super) fn valid_on_owner_thread(&self) -> bool {

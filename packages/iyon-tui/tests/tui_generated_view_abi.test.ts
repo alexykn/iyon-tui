@@ -88,7 +88,7 @@ describe("PERF-11 generated vertical slice", () => {
       const baseRef = viewSpacerCreate(session.symbols, session.runtime, baseLow, baseHigh, 1);
       const changed = base.padding(1);
       const [changedLow, changedHigh] = nodeIdPair(changed);
-      const packedPadding = (1 << 16) | 1;
+      const paddingWord = (1 << 16) | 1;
       const changedRef = viewCommonPatchRoot(
         session.symbols,
         session.runtime,
@@ -96,8 +96,8 @@ describe("PERF-11 generated vertical slice", () => {
         changedLow,
         changedHigh,
         4,
-        packedPadding,
-        packedPadding,
+        paddingWord,
+        paddingWord,
         1,
         1,
         0,

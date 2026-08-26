@@ -4,7 +4,7 @@ import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/na
 const warmup = 50;
 const samples = 200;
 const sizes = [20, 200] as const;
-const candidate = process.env.PERF12_CANDIDATE ?? "napi";
+const candidate = "napi_default";
 const gitSha = process.env.PERF12_GIT_SHA ?? "unknown";
 const nativeArtifactSha256 = process.env.PERF12_NATIVE_SHA256 ?? "unknown";
 const rustcVersion = process.env.PERF12_RUSTC_VERSION ?? "unknown";
@@ -74,7 +74,7 @@ async function measure(workload: Workload, size: number): Promise<Record<string,
     benchmark_version: "PERF-12-S6",
     profile: "smoke",
     candidate,
-    transport: candidate === "napi" ? "generated_safe_napi" : "legacy_direct_ffi",
+    transport: "generated_safe_napi",
     workload,
     size,
     git_sha: gitSha,

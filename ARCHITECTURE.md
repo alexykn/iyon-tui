@@ -27,7 +27,7 @@ Rust framework                  crates/iyon-tui
   transport is generated safe N-API over opaque native session/host objects;
   the generated semantic DAG, leases, NativeRef hints, PersistentSeq edits,
   payload lanes, and stream specialization are transport-independent. The
-  legacy direct-FFI symbols remain feature-gated for qualification, oracle
+  direct-FFI symbols remain feature-gated for qualification, oracle
   comparison, and rollback through later PERF/S tranches; they are not part of
   the default addon or public package contract.
 - Application code in `alexykn/iyon` consumes the framework only through public

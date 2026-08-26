@@ -903,7 +903,7 @@ impl NativeTuiHost {
 #[cfg(feature = "direct-ffi")]
 #[napi]
 impl NativeTuiHost {
-    /// Qualification-only raw host address for the legacy direct FFI backend.
+    /// Qualification-only raw host address for the feature-gated direct FFI backend.
     #[napi(js_name = "tuiViewAbiHostPointer")]
     pub fn view_abi_host_pointer(&self) -> i64 {
         if !self.alive.load(Ordering::Acquire) {

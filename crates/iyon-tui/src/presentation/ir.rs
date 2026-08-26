@@ -601,7 +601,7 @@ impl<T: SequenceAggregate + Clone> SeqNode<T> {
     }
 }
 
-/// Common-field inputs for the benchmark/native retained constructor.
+/// Common-field inputs for the native retained constructor.
 #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
 #[doc(hidden)]
 #[derive(Clone)]
@@ -628,7 +628,7 @@ pub struct RetainedDecoration {
     pub max_height: Option<u16>,
 }
 
-/// Opaque retained axis sequence accepted by the benchmark/native transport.
+/// Opaque retained axis sequence accepted by the native retained ABI.
 #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
 #[doc(hidden)]
 #[derive(Clone)]
@@ -805,7 +805,7 @@ fn decode_native_track_word(value: u32) -> Result<TrackSize, String> {
     }
 }
 
-/// Opaque retained grid-cell sequence accepted by the benchmark/native transport.
+/// Opaque retained grid-cell sequence accepted by the native retained ABI.
 #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
 #[doc(hidden)]
 #[derive(Clone)]
@@ -1132,7 +1132,7 @@ impl View {
 
     /// Applies a retained axis patch while preserving the base node's common
     /// fields. The sequence is already validated and structurally shared by
-    /// the V3 decoder; only the immutable root node is replaced.
+    /// the native ABI; only the immutable root node is replaced.
     #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
     #[doc(hidden)]
     pub fn patch_retained_axis(self, sequence: RetainedAxis, gap: u16) -> Self {
@@ -1383,7 +1383,7 @@ impl View {
     }
 
     /// Returns text layout metadata without inspecting the retained span
-    /// payload. The V3 patch decoder uses this to validate metadata-only
+    /// payload. The retained patch path uses this to validate metadata-only
     /// patches in O(1) with respect to text size.
     #[cfg(all(feature = "native-host", feature = "native-shared-memory"))]
     #[doc(hidden)]

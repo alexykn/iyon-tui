@@ -354,8 +354,8 @@ pub(super) struct NativeViewRuntime {
     pub(super) status: FastStatusCell,
     owner_thread: ThreadId,
     // The semantic cache is deliberately owned by the environment runtime,
-    // not by a transport or host. All direct, packed, FastShared, and
-    // generated paths publish through this map.
+    // not by a transport or host. All native View construction paths publish
+    // through this map.
     pub(super) nodes: HashMap<u64, iyon_tui::WeakView>,
     slots: NativeRefTable,
     node_refs: HashMap<u64, u32>,
@@ -1123,9 +1123,9 @@ impl NativeViewRuntime {
         self.publish_semantic_view(node_id, view, PublicationLease::Leased)
     }
 
-    // Bulk V2/V3/V4 and FastShared definitions do not represent a live JS
-    // backing, so they receive a weak-only lease. The generated path can
-    // reacquire the same NativeRef later through the semantic NodeId cache.
+    // Intermediate path definitions do not represent a live JS backing, so
+    // they receive a weak-only lease. The generated path can reacquire the
+    // same NativeRef later through the semantic NodeId cache.
     pub(super) fn publish_bulk(&mut self, node_id: u64, view: View) -> Result<u32, u32> {
         self.publish_semantic_view(node_id, view, PublicationLease::Weak)
     }
@@ -1178,12 +1178,11 @@ impl NativeViewRuntime {
         self.nodes.remove(&node_id);
     }
 
-    /// Shared insertion rules for decode-style transports (Direct N-API
-    /// decoder, packed decoder): same identity rules as publication without
-    /// minting a NativeRef. An identical live View deduplicates, a conflicting
-    /// live View is rejected as an impossible semantic identity, and expired
-    /// entries are replaced. Applies the shared size-based retain cleanup so
-    /// every transport benefits from one metadata-bounding rule.
+    /// Shared insertion rules for decoded semantic Views: same identity rules
+    /// as publication without minting a NativeRef. An identical live View
+    /// deduplicates, a conflicting live View is rejected as an impossible
+    /// semantic identity, and expired entries are replaced. Applies the shared
+    /// size-based retain cleanup so the cache stays bounded.
     pub(super) fn record_decoded_semantic_view(
         &mut self,
         node_id: u64,
@@ -2364,7 +2363,7 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
     if mask == 0 || mask & !PATCH_MASK != 0 {
         return FAST_INVALID;
     }
-    // PERF-12 T9: decoration_ref is part of the legacy patch surface but is
+    // PERF-12 T9: decoration_ref is part of the ABI patch surface but is
     // not consumed by any mask branch; 0 means absent and must not fail.
     if decoration_ref != 0 && runtime.resolve_ref(decoration_ref).is_err() {
         return FAST_CACHE_MISS;
@@ -5218,7 +5217,7 @@ mod tests {
         };
         assert_eq!(truncated, FAST_INVALID);
         // Amount-bearing bits on a marker-only track are malformed, not
-        // silently discarded by the packed parser.
+        // silently discarded by the buffer parser.
         let malformed_track = [1, GRID_TRACK_CONTENT_WORD | (1 << 8), 0];
         let malformed = unsafe {
             generated_exports::invoke_iyon_view_grid_create_buffer_v1(

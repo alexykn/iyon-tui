@@ -717,7 +717,7 @@ export class RetainedExecutionRuntime {
       const publication = prepare.call(target, pendingOutput);
       if (publication === undefined) {
         // A projection may lack a native boundary (for example a detached
-        // compatibility host). Its legacy install path remains the complete
+        // compatibility host). Its fallback install path remains the complete
         // fallback. Explicit publication targets, such as the scene root,
         // have no legacy target and must still abort atomically on refusal.
         if (scope.projection !== undefined && scope.publicationTarget === undefined) return;

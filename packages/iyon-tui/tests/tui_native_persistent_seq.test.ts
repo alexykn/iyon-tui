@@ -32,8 +32,8 @@ function seed(host: StructuralHost, base: View, ...children: View[]): number {
 
 /**
  * PERF-12 T4 note: the edited "next" views are constructed eagerly through
- * the public semantic API. The ruled-out packed-transport helpers are gone;
- * what is under test here are the native retained wide-edit primitives
+ * the public semantic API. What is under test here are the native retained
+ * wide-edit primitives
  * (view_axis_set_child / view_axis_splice_buffer / view_grid_set_cell),
  * which PERF-12 T10 builds upon.
  */

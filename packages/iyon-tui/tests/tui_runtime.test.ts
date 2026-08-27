@@ -15,14 +15,14 @@ describe("native interaction host", () => {
     expect("payload" in submitted).toBe(false);
     tui.route(submitted, "submit");
     tui.enqueue({ type: "key", key: "Enter" });
-    await expect(tui.nextAction()).resolves.toEqual({ actionId: "submit", payload: "a" });
+    await expect(tui.nextEvent()).resolves.toEqual({ type: "output", routeId: "submit", payload: "a" });
     await tui.close();
   });
 
   test("cancellation rejects pending native action wait and close is idempotent", async () => {
     const tui = await Tui.open({ headless: true });
     const controller = new AbortController();
-    const waiting = tui.nextAction(controller.signal);
+    const waiting = tui.nextEvent(controller.signal);
     controller.abort();
     await expect(waiting).rejects.toMatchObject({ category: "cancelled" });
     await tui.close();

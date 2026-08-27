@@ -18,12 +18,12 @@ describe("real-time native TUI driving", () => {
       await slot.setAnimation([View.text("frame one"), View.text("frame two")], 80);
       await tui.render(new Scene(slot.view().fillWidth()));
       const before = tui.screenRows();
-      const nextAction = tui.nextAction();
+      const nextEvent = tui.nextEvent();
       const closer = closeAfter(tui, 160);
       await sleep(120);
       const after = tui.screenRows();
       await closer;
-      await nextAction;
+      await nextEvent;
 
       expect(after).not.toEqual(before);
     } finally {
@@ -39,14 +39,14 @@ describe("real-time native TUI driving", () => {
       await tui.render(new Scene(View.spacer(0), history));
       await history.pushStream(stream);
       const text = "abcdefghijklmnopqrstuvwxyz";
-      const nextAction = tui.nextAction();
+      const nextEvent = tui.nextEvent();
       await stream.append(text);
       const first = tui.screenRows().join("\n");
       await sleep(120);
       const second = tui.screenRows().join("\n");
       const closer = closeAfter(tui, 40);
       await closer;
-      await nextAction;
+      await nextEvent;
 
       expect(first).not.toContain(text);
       expect(second).not.toBe(first);

@@ -101,8 +101,6 @@ export interface NativeTuiHostContract {
   nextWakeMs(): number;
   nextOutput(): { route_id: string; payload?: string | null } | null;
   waitForOutput(): Promise<{ route_id: string; payload?: string | null } | null>;
-  nextAction(): { action_id: string; payload?: string | null } | null;
-  waitForAction(): Promise<{ action_id: string; payload?: string | null } | null>;
   screenRows(): string[];
   nativeHistoryRows(): string[];
   resize(width: number, height: number): void;
@@ -167,4 +165,3 @@ export interface NativeTuiAddon {
 
 // The package owns this loader and its staged `iyon-tui-native.node` artifact.
 export const native = require("../native/iyon-tui-native.node") as NativeTuiAddon;
-export const { nativeVersion, tuiSmoke: nativeTuiSmoke } = native;

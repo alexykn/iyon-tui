@@ -810,14 +810,6 @@ impl NativeTuiHost {
         ))
     }
 
-    #[napi(js_name = "nextAction")]
-    pub fn next_action(&self) -> Result<Option<Value>> {
-        ensure_alive(&self.alive)?;
-        Ok(self.host.next_action().map(
-            |action| serde_json::json!({"action_id": action.route_id, "payload": action.payload}),
-        ))
-    }
-
     /// Wait until native generic key routing produces a routed output.
     #[napi(js_name = "waitForOutput")]
     pub async fn wait_for_output(&self) -> Result<Option<Value>> {
@@ -829,21 +821,6 @@ impl NativeTuiHost {
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
         Ok(output.map(
             |output| serde_json::json!({"route_id": output.route_id, "payload": output.payload}),
-        ))
-    }
-
-    /// Wait in the native TUI driver until Rust has routed a semantic action
-    /// or the host exits. Raw terminal events never cross this boundary.
-    #[napi(js_name = "waitForAction")]
-    pub async fn wait_for_action(&self) -> Result<Option<Value>> {
-        ensure_alive(&self.alive)?;
-        let host = self.host.clone();
-        let action = host
-            .wait_for_action()
-            .await
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(action.map(
-            |action| serde_json::json!({"action_id": action.route_id, "payload": action.payload}),
         ))
     }
 

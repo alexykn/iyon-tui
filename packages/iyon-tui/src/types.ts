@@ -1,4 +1,3 @@
-import type { TuiError } from "./errors.ts";
 import type { View as SemanticView } from "./values/view.ts";
 import type { TextContent as SemanticTextContent } from "./values/text-content.ts";
 import type { StyleRef } from "./values/style.ts";
@@ -21,8 +20,6 @@ export abstract class FrameworkHandle {
   abstract dispose(): void;
   protected constructor() {}
 }
-
-export type TuiOperation<T> = T;
 
 export type View = SemanticView;
 
@@ -193,13 +190,13 @@ export type TextContent = SemanticTextContent;
 
 export interface History extends FrameworkHandle {
   readonly kind: "history";
-  layout(): TuiOperation<HistoryLayout>;
-  push(view: View): TuiOperation<number>;
-  freeze(unit: number, view: View): TuiOperation<void>;
-  discardLive(unit: number): TuiOperation<void>;
-  pushStream(stream: TextStream): TuiOperation<void>;
-  sealStream(stream: TextStream): TuiOperation<void>;
-  setLayout(layout: HistoryLayout): TuiOperation<void>;
+  layout(): HistoryLayout;
+  push(view: View): number;
+  freeze(unit: number, view: View): void;
+  discardLive(unit: number): void;
+  pushStream(stream: TextStream): void;
+  sealStream(stream: TextStream): void;
+  setLayout(layout: HistoryLayout): void;
 }
 
 export interface HistoryLayout {
@@ -209,14 +206,14 @@ export interface HistoryLayout {
 
 export interface TextInput extends ComponentHandle {
   readonly kind: "text-input";
-  text(): TuiOperation<string>;
-  cursorBytes(): TuiOperation<number>;
-  setText(value: string): TuiOperation<void>;
-  clear(): TuiOperation<void>;
-  submitted(): TuiOperation<Output<string>>;
-  setMultiline(enabled: boolean): TuiOperation<void>;
-  isMultiline(): TuiOperation<boolean>;
-  view(): TuiOperation<View>;
+  text(): string;
+  cursorBytes(): number;
+  setText(value: string): void;
+  clear(): void;
+  submitted(): Output<string>;
+  setMultiline(enabled: boolean): void;
+  isMultiline(): boolean;
+  view(): View;
 }
 
 export interface TextStreamOptions {
@@ -238,13 +235,11 @@ export interface TextStreamPacing {
 
 export interface TextStream extends FrameworkHandle {
   readonly kind: "text-stream";
-  update(text: string): TuiOperation<void>;
-  append(text: string, annotations?: readonly StreamAnnotation[]): TuiOperation<void>;
-  seal(): TuiOperation<void>;
-  snapshot(): TuiOperation<StreamSnapshot>;
+  update(text: string): void;
+  append(text: string, annotations?: readonly StreamAnnotation[]): void;
+  seal(): void;
+  snapshot(): StreamSnapshot;
 }
-
-export type StreamPane = TextStream;
 
 export interface StreamAnnotation {
   readonly namespace: string;
@@ -270,24 +265,24 @@ export interface StreamSegmentSnapshot {
  */
 export interface ComponentHandle extends FrameworkHandle {
   readonly kind: "component" | "text-input";
-  view(): TuiOperation<View>;
+  view(): View;
 }
 
 export interface ViewSlot extends ComponentHandle {
   readonly kind: "component";
-  capabilities(): TuiOperation<ComponentCapabilities>;
-  setView(view: View | (() => View)): TuiOperation<void>;
-  setAnimation(frames: readonly View[], intervalMs: number): TuiOperation<void>;
-  setAnimationAtCycleBoundary(frames: readonly View[], intervalMs: number): TuiOperation<void>;
-  stopAnimation(view: View): TuiOperation<void>;
-  revision(): TuiOperation<number>;
+  capabilities(): ComponentCapabilities;
+  setView(view: View | (() => View)): void;
+  setAnimation(frames: readonly View[], intervalMs: number): void;
+  setAnimationAtCycleBoundary(frames: readonly View[], intervalMs: number): void;
+  stopAnimation(view: View): void;
+  revision(): number;
 }
 
 export interface ScrollPane extends ComponentHandle {
   readonly kind: "component";
-  capabilities(): TuiOperation<ComponentCapabilities>;
-  setContent(view: View | (() => View)): TuiOperation<void>;
-  followEnd(): TuiOperation<void>;
+  capabilities(): ComponentCapabilities;
+  setContent(view: View | (() => View)): void;
+  followEnd(): void;
 }
 
 export interface ComponentCapabilities {
@@ -401,12 +396,12 @@ export interface TerminalMetadata {
 }
 
 export interface TuiRuntime {
-  readonly size: TuiOperation<TerminalMetadata>;
+  readonly size: TerminalMetadata;
   nextEvent(signal?: AbortSignal): Promise<TuiEvent>;
-  render(scene: SceneProducer, signal?: AbortSignal): TuiOperation<void>;
-  resize(width: number, height: number): TuiOperation<void>;
-  close(): TuiOperation<void>;
-  exit(): TuiOperation<void>;
+  render(scene: SceneProducer, signal?: AbortSignal): void;
+  resize(width: number, height: number): void;
+  close(): void;
+  exit(): void;
   createHistory?(): History;
   createTextInput?(options?: TextInputOptions): TextInput;
   createViewSlot?(initial: View): ViewSlot;
@@ -415,11 +410,10 @@ export interface TuiRuntime {
   route(output: Output<string>, routeId: string): void;
   interceptPaste?(input: TextInput, routeId: string): void;
   forwardPaste?(text: string): void;
-  setTheme?(theme: SemanticTheme): TuiOperation<void>;
+  setTheme?(theme: SemanticTheme): void;
 }
 
 export interface AppHarness extends TuiRuntime {
-  nextAction(signal?: AbortSignal): Promise<{ actionId: string; payload?: string } | null>;
   createViewSlot(initial: View): ViewSlot;
   createScrollPane(initial: View): ScrollPane;
   pressKey(key: string, modifiers?: readonly string[]): void;
@@ -431,5 +425,3 @@ export interface AppHarness extends TuiRuntime {
   cellXOfText(row: number, text: string): number | null;
   exited(): boolean;
 }
-
-export type TuiFailure = TuiError;

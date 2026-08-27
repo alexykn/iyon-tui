@@ -226,14 +226,6 @@ export class Tui implements TuiRuntime {
     return null;
   }
 
-  /** Compatibility adapter for the pre-generic application harness. */
-  async nextAction(signal?: AbortSignal): Promise<{ actionId: string; payload?: string } | null> {
-    const event = await this.nextEvent(signal);
-    if (event.type === "terminate") return null;
-    if (event.type !== "output") return this.nextAction(signal);
-    return { actionId: event.routeId, ...(event.payload === undefined ? {} : { payload: event.payload }) };
-  }
-
   /**
    * PERF-12 T13 (§49/§77-B1): production scene router.
    *

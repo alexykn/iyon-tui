@@ -19,5 +19,3 @@ export class TextStream extends HandleBase<"text-stream"> implements TextStreamC
   seal(): void { this.call(() => this.nativeAs<NativeTextStreamContract>().seal()); }
   snapshot(): StreamSnapshot { return this.call(() => this.nativeAs<NativeTextStreamContract>().snapshot() as StreamSnapshot); }
 }
-
-export { TextStream as StreamPane };

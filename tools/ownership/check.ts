@@ -394,7 +394,7 @@ function typedOutputEventGate(): void {
   if (/export\s+type\s+Output\s*=/u.test(types) || /\bpayload\b/u.test(outputClass)) {
     offenders.push("types.ts: Output is still a record or exposes a fake payload");
   }
-  if (!/submitted\(\):\s*Output<string>/u.test(textInput) || !/submitted\(\):\s*TuiOperation<Output<string>>/u.test(types)) {
+  if (!/submitted\(\):\s*Output<string>/u.test(textInput) || !/submitted\(\):\s*Output<string>/u.test(types)) {
     offenders.push("TextInput.submitted() does not expose Output<string>");
   }
   if (!/route\(output:\s*Output<string>,/u.test(runtime) || !/route\(output:\s*Output<string>,/u.test(testing)) {
@@ -418,6 +418,43 @@ function typedOutputEventGate(): void {
     fail("h1f-typed-output-events", offenders.join("; "));
   } else {
     pass("h1f-typed-output-events", "Output<T> is opaque, payloads are separate, and test-input constructors are not runtime exports");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 10: H1G false-alias and compatibility removal guard
+// ---------------------------------------------------------------------------
+
+function falseAliasGate(): void {
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const stream = readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const native = readFileSync(join(FRAMEWORK_SRC, "native.ts"), "utf8");
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const tests = join(ROOT, "packages/iyon-tui/tests");
+  const stage = readFileSync(join(ROOT, "packages/iyon-tui/scripts/stage-native.ts"), "utf8");
+  const publicSources = types + stream + runtime + testing + index;
+  const offenders: string[] = [];
+
+  if (/\bStreamPane\b/u.test(publicSources)) offenders.push("StreamPane remains a TypeScript TextStream alias");
+  if (/\b(?:TuiOperation|TuiFailure)\b/u.test(publicSources)) offenders.push("no-op TuiOperation/TuiFailure aliases remain public");
+  if (/\bnextAction\b/u.test(types + runtime + testing)) offenders.push("nextAction remains in the public runtime or harness facade");
+  if (walk(tests).some((file) => /\bnextAction\b/u.test(readFileSync(file, "utf8")))) offenders.push("framework tests still use nextAction");
+  if (/\b(?:nextAction|waitForAction)\s*\(/u.test(native)) offenders.push("native host contract still declares compatibility action aliases");
+  if (/\b(?:next_action|wait_for_action)\s*\(/u.test(readFileSync(join(ROOT, "crates/iyon-tui/src/application/host.rs"), "utf8"))) {
+    offenders.push("Rust host still exposes compatibility action aliases");
+  }
+  if (/\b(?:next_action|wait_for_action)\s*\(/u.test(readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8"))) {
+    offenders.push("native binding still exposes compatibility action aliases");
+  }
+  if (/\b(?:export\s+const\s+tuiSmoke|export\s*\{[^}]*\btuiSmoke\b)/u.test(index)) offenders.push("application-facing tuiSmoke remains a root export");
+  if (!/addon\.tuiSmoke\?\.\(\)/u.test(stage)) offenders.push("native staging smoke probe was removed with the root marker");
+
+  if (offenders.length > 0) {
+    fail("h1g-false-aliases", offenders.join("; "));
+  } else {
+    pass("h1g-false-aliases", "false aliases and compatibility action/smoke exports are removed while native staging remains probed");
   }
 }
 
@@ -509,6 +546,7 @@ opaqueHandleGate();
 controlLifecycleGate();
 componentFacadeGate();
 typedOutputEventGate();
+falseAliasGate();
 await publicSurfaceGate();
 
 if (failed) {

@@ -17,7 +17,7 @@ describe("native headless harness", () => {
     expect(await input.text()).toBe("a");
     harness.route(await input.submitted(), "submit");
     harness.pressKey("Enter");
-    await expect(harness.nextAction()).resolves.toEqual({ actionId: "submit", payload: "a" });
+    await expect(harness.nextEvent()).resolves.toEqual({ type: "output", routeId: "submit", payload: "a" });
 
     harness.advance(25);
     expect(harness.now()).toBe(25);

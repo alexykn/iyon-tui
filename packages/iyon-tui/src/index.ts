@@ -61,11 +61,9 @@ export type {
   ThemeDefinition,
   ThemeStyleEntry,
   TuiOpenOptions,
-  TuiOperation,
   TuiRuntime,
   VerticalAlign,
   WrapMode,
-  TuiFailure,
   ViewSlot,
   ScrollPane,
 } from "./types.ts";
@@ -87,7 +85,7 @@ export {
 export { TextSelector, TextSpan } from "./values/text.ts";
 export { History } from "./history.ts";
 export { TextInput } from "./text-input.ts";
-export { TextStream, StreamPane } from "./stream.ts";
+export { TextStream } from "./stream.ts";
 export { ViewSlot as NativeViewSlot } from "./component.ts";
 export { NativeScrollPane } from "./scroll-pane.ts";
 export { TextContent, RawText } from "./values/text-content.ts";
@@ -110,5 +108,3 @@ export { FocusController, InteractionRouter } from "./interaction.ts";
 export { Scene } from "./scene.ts";
 export { Tui } from "./runtime.ts";
 export { AppHarness, createAppHarness } from "./testing.ts";
-
-export const tuiSmoke = "iyon:tui/t1" as const;

@@ -304,7 +304,6 @@
           "history",
           "interceptPaste",
           "nativeHistoryRows",
-          "nextAction",
           "nextOutput",
           "nextWakeMs",
           "pollTerminal",
@@ -319,7 +318,6 @@
           "styleAt",
           "textInput",
           "tuiViewAbiHostPointer",
-          "waitForAction",
           "waitForOutput"
         ]
       },
@@ -594,9 +592,7 @@
       "ThemeDefinition",
       "ThemeStyleEntry",
       "TuiEvent",
-      "TuiFailure",
       "TuiOpenOptions",
-      "TuiOperation",
       "TuiRuntime",
       "VerticalAlign",
       "ViewChildren",
@@ -630,7 +626,6 @@
       "RendererAdapter",
       "Scene",
       "Smooth",
-      "StreamPane",
       "StreamingSourceAdapter",
       "Style",
       "StyleRef",
@@ -656,8 +651,7 @@
       "isTuiCancelledError",
       "isTuiError",
       "state",
-      "tuiError",
-      "tuiSmoke"
+      "tuiError"
     ]
   }
 }

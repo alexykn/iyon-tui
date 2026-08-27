@@ -2324,11 +2324,6 @@ impl TuiHost {
         self.lock_mut().ok()?.running.state.outputs.pop_front()
     }
 
-    /// Compatibility alias for bindings that used the pre-generic name.
-    pub fn next_action(&self) -> Option<RoutedOutput> {
-        self.next_output()
-    }
-
     pub fn style_at(&self, row: u16, column: u16) -> Option<HostCellStyle> {
         let inner = self.lock().ok()?;
         if row >= inner.frame.surface.height() || column >= inner.frame.surface.width() {
@@ -2439,11 +2434,6 @@ impl TuiHost {
             super::run::wait_for_deadline(Some(Instant::now() + Duration::from_millis(wait_ms)))
                 .await;
         }
-    }
-
-    /// Compatibility alias for bindings that used the pre-generic name.
-    pub async fn wait_for_action(&self) -> Result<Option<RoutedOutput>> {
-        self.wait_for_output().await
     }
 
     pub fn screen_rows(&self) -> Vec<String> {

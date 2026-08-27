@@ -85,9 +85,7 @@ const publicTypeNames = [
   "ThemeStyleEntry",
   "Tui",
   "TuiEvent",
-  "TuiFailure",
   "TuiOpenOptions",
-  "TuiOperation",
   "TuiRuntime",
   "VerticalAlign",
   "View",
@@ -196,7 +194,7 @@ try {
 
   const probe = join(output, "public-surface-probe.ts");
   const probeReferences = publicTypeNames.map((name) =>
-    ["Output", "State", "TuiOperation"].includes(name)
+    ["Output", "State"].includes(name)
       ? `${name}<unknown>`
       : name,
   );

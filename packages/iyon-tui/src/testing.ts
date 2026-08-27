@@ -32,7 +32,6 @@ export class AppHarness implements AppHarnessContract {
 
   get size(): { width: number; height: number } { return this.options; }
   nextEvent(signal?: AbortSignal): Promise<TuiEvent> { return this.tui.nextEvent(signal); }
-  nextAction(signal?: AbortSignal): Promise<{ actionId: string; payload?: string } | null> { return this.tui.nextAction(signal); }
 
   render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);

@@ -1821,6 +1821,24 @@ impl HostTextInput {
         self.component_id.lock().ok().and_then(|id| *id)
     }
 
+    /// Requests deferred retirement of the host-registered input component.
+    /// The registry keeps it alive until a successful scene reconciliation
+    /// proves that the component is no longer mounted.
+    pub fn retire(&self) {
+        let Some(raw_id) = self.component_id() else {
+            return;
+        };
+        if let Ok(guard) = self.host.lock() {
+            if let Some(weak) = guard.as_ref() {
+                if let Some(inner) = weak.upgrade() {
+                    if let Ok(mut inner) = inner.lock() {
+                        inner.running.host_retire_component(raw_id);
+                    }
+                }
+            }
+        }
+    }
+
     fn set_component_id(&self, id: u64) -> Result<()> {
         *self
             .component_id
@@ -2264,7 +2282,7 @@ impl TuiHost {
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         let mut inner = self.lock_mut()?;
         inner.running.host_set_theme(theme);
-        Ok(())
+        inner.advance_and_render()
     }
 
     pub fn set_history(&self, history: History) -> Result<()> {

@@ -1,10 +1,28 @@
 import { nodeForBridge } from "./view-internals.ts";
+import { tuiError } from "./errors.ts";
 import type { View } from "./values/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
 import { HandleBase, nativeResourceOf } from "./handles.ts";
 import { nativeTui } from "./native-handles.ts";
 import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
+
+const streamOwners = new WeakMap<object, WeakRef<HistoryContract>>();
+
+function streamOwnerOf(stream: object): HistoryContract | undefined {
+  const owner = streamOwners.get(stream)?.deref();
+  if (owner === undefined || owner.disposed) {
+    streamOwners.delete(stream);
+    return undefined;
+  }
+  return owner;
+}
+
+function assertStreamCanAttach(stream: object): void {
+  if (streamOwnerOf(stream) !== undefined) {
+    throw tuiError("stream", "TUI_STREAM_ALREADY_ATTACHED: a TextStream instance already has a History attachment");
+  }
+}
 
 /**
  * Ordered scrollback handle with an explicit detached mode.
@@ -24,8 +42,6 @@ import type { History as HistoryContract, HistoryLayout, TextStream } from "./ty
  */
 export class History extends HandleBase<"history"> implements HistoryContract {
   constructor();
-  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
-  constructor(nativeHandle: never);
   constructor(nativeHandle?: NativeHistoryContract) { super("history", (nativeHandle ?? nativeTui.history()) as never); }
 
   layout(): HistoryLayout {
@@ -79,15 +95,31 @@ export class History extends HandleBase<"history"> implements HistoryContract {
   }
 
   pushStream(stream: TextStream): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().pushStream(nativeResourceOf<object>(stream)));
+    this.call(() => {
+      const streamResource = nativeResourceOf<object>(stream);
+      assertStreamCanAttach(stream);
+      this.nativeAs<NativeHistoryContract>().pushStream(streamResource);
+      streamOwners.set(stream, new WeakRef(this));
+    });
   }
 
   sealStream(stream: TextStream): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().sealStream(nativeResourceOf<object>(stream)));
+    this.call(() => {
+      if (streamOwnerOf(stream) !== this) {
+        throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
+      }
+      this.nativeAs<NativeHistoryContract>().sealStream(nativeResourceOf<object>(stream));
+    });
   }
 
   setLayout(layout: HistoryLayout): void {
     this.call(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
   }
 
+}
+
+/** @internal Wraps a host-created History without exposing its native constructor. */
+export function createHistoryHandle(nativeHandle: never): History {
+  const Constructor = History as unknown as new (nativeHandle: never) => History;
+  return new Constructor(nativeHandle);
 }

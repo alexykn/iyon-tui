@@ -2,7 +2,6 @@ import { tuiError } from "./errors.ts";
 import { Tui } from "./runtime.ts";
 import { tuiTestingAccess } from "./testing-access.ts";
 import type { History as HistoryHandle } from "./history.ts";
-import type { TextInput as RuntimeTextInput } from "./text-input.ts";
 import type { TextInput as TextInputHandle } from "./text-input.ts";
 import type {
   AppHarness as AppHarnessContract,
@@ -45,7 +44,7 @@ export class AppHarness implements AppHarnessContract {
   createScrollPane(initial: View): ScrollPane { return this.tui.createScrollPane(initial); }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
   route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
-  interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
+  interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input, actionId); }
   forwardPaste(text: string): void { this.tui.forwardPaste(text); }
   setTheme(theme: Theme): void { this.tui.setTheme(theme); }
 

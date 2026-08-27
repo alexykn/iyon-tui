@@ -217,7 +217,7 @@ function decorationDeltaMatches(
   if (tag !== MOD_MAX_WIDTH && (dec.maxWidth ?? -1) !== (inherited.maxWidth ?? -1)) return false;
   if (tag !== MOD_MIN_HEIGHT && (dec.minHeight ?? -1) !== (inherited.minHeight ?? -1)) return false;
   if (tag !== MOD_MAX_HEIGHT && (dec.maxHeight ?? -1) !== (inherited.maxHeight ?? -1)) return false;
-  if (tag !== MOD_STYLE_SPEC && tag !== MOD_TEXT_ATTRIBUTE
+  if (tag !== MOD_STYLE_SPEC && tag !== MOD_TEXT_ATTRIBUTE && tag !== MOD_FOREGROUND
     && !styleNodesEqual(dec.style, inherited.style)) return false;
   if (tag !== MOD_STYLE_STATE && !styleStatesEqual(dec.styleStates, inherited.styleStates)) return false;
 
@@ -231,11 +231,18 @@ function decorationDeltaMatches(
     case MOD_MIN_HEIGHT: return dec.minHeight === a;
     case MOD_MAX_HEIGHT: return dec.maxHeight === a;
     case MOD_PADDING: return insetsEqual(dec.padding, insets(a as number | Insets));
-    case MOD_FOREGROUND: return colorEqual(dec.foreground, colorNodeFor(a as ColorSpec));
+    case MOD_FOREGROUND: {
+      const expected = mergeStyles(inherited.style, { ...emptyStyle(), foreground: colorNodeFor(a as ColorSpec) });
+      return styleNodesEqual(dec.style, expected);
+    }
     case MOD_BACKGROUND: return colorEqual(dec.background, colorNodeFor(a as ColorSpec));
     case MOD_BORDER: return borderEqual(dec.border, borderNodeFor(a as BorderSpec));
     case MOD_STYLE_SPEC: {
-      const expected = mergeStyles(inherited.style, mergeStyles(emptyStyle(), styleNodeFor(a as StyleRef | StyleSpec)));
+      const style = a as StyleRef | StyleSpec;
+      const lowered = mergeStyles(emptyStyle(), styleNodeFor(style));
+      const expected = style.kind === "style-ref"
+        ? lowered
+        : mergeStyles(inherited.style, lowered);
       return styleNodesEqual(dec.style, expected);
     }
     case MOD_TEXT_ATTRIBUTE: {
@@ -766,8 +773,8 @@ function composeLayoutPatch(base: View, wrapMode: WrapMode | undefined, alignMod
   }
   // Comparators work on canonical numeric codes; the build path passes the
   // original string modes to the public methods unchanged.
-  const wrap = wrapMode === undefined ? undefined : BRIDGE_WRAP_MODE[wrapMode];
-  const align = alignMode === undefined ? undefined : BRIDGE_HORIZONTAL_ALIGN[alignMode];
+  const wrap = wrapMode === undefined ? undefined : wrapCode(wrapMode);
+  const align = alignMode === undefined ? undefined : horizontalAlignCode(alignMode);
   const slot = scope.nextSemanticSlot();
   const baseNode = nodeForBridge(base);
   const previous = slot.current;
@@ -814,4 +821,22 @@ function layoutPatchMatches(
   }
   // Non-text bases pass through unchanged: the composed result IS the base.
   return nodeForBridge(previous) === baseNode;
+}
+
+function wrapCode(mode: WrapMode): number {
+  switch (mode) {
+    case "wordThenGrapheme": return BRIDGE_WRAP_MODE.wordThenGrapheme;
+    case "grapheme": return BRIDGE_WRAP_MODE.grapheme;
+    case "noWrap": return BRIDGE_WRAP_MODE.noWrap;
+    default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
+  }
+}
+
+function horizontalAlignCode(align: HorizontalAlign): number {
+  switch (align) {
+    case "start": return BRIDGE_HORIZONTAL_ALIGN.start;
+    case "center": return BRIDGE_HORIZONTAL_ALIGN.center;
+    case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
+    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
+  }
 }

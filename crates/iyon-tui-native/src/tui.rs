@@ -429,7 +429,11 @@ impl NativeTextInput {
 
     #[napi]
     pub fn dispose(&self) {
-        self.alive.store(false, Ordering::Release);
+        if self.alive.swap(false, Ordering::AcqRel) {
+            if let Some(host) = &self.host {
+                host.retire();
+            }
+        }
     }
 
     #[napi]
@@ -1046,10 +1050,10 @@ fn parse_stream_options(
                 crate::NativeError::invalid_input("stream insets must be an object")
             })?;
             Ok(iyon_tui::Insets::new(
-                u16_value(insets, "top")?,
-                u16_value(insets, "right")?,
-                u16_value(insets, "bottom")?,
-                u16_value(insets, "left")?,
+                optional_u16_value(insets, "top")?,
+                optional_u16_value(insets, "right")?,
+                optional_u16_value(insets, "bottom")?,
+                optional_u16_value(insets, "left")?,
             ))
         })
         .transpose()?
@@ -2919,6 +2923,12 @@ fn u16_value(object: &Map<String, Value>, field: &str) -> Result<u16> {
         .ok_or_else(|| crate::NativeError::invalid_input(format!("{field} must be an integer")))?;
     u16::try_from(value)
         .map_err(|_| crate::NativeError::invalid_input(format!("{field} must fit in u16")))
+}
+
+fn optional_u16_value(object: &Map<String, Value>, field: &str) -> Result<u16> {
+    object
+        .get(field)
+        .map_or(Ok(0), |_| u16_value(object, field))
 }
 
 fn cell_style_value(style: HostCellStyle) -> Value {

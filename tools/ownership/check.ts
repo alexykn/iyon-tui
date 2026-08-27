@@ -557,6 +557,7 @@ function contractParityGate(): void {
     ["text.ts", readFileSync(join(FRAMEWORK_SRC, "values/text.ts"), "utf8")],
     ["style-internals.ts", readFileSync(join(FRAMEWORK_SRC, "style-internals.ts"), "utf8")],
   ]);
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
   const rustOutput = readFileSync(join(ROOT, "crates/iyon-tui/src/output/handle.rs"), "utf8");
   const rustComponent = readFileSync(join(ROOT, "crates/iyon-tui/src/component/mod.rs"), "utf8");
@@ -585,6 +586,12 @@ function contractParityGate(): void {
   if (!/interface\s+ScrollPane[\s\S]*setContent\(view:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(types)) {
     offenders.push("ScrollPane contract does not include retained builder content");
   }
+  if (/\b(?:ThemeDefinition|ThemeStyleEntry|ThemeColorEntry)\b/u.test(index)) {
+    offenders.push("index.ts: native-bound ThemeDefinition records remain root-exported");
+  }
+  if (!/interface\s+AppHarness[\s\S]*now\(\):\s*number/u.test(types)) {
+    offenders.push("AppHarness contract omits its public deterministic clock accessor");
+  }
   if (!/setContent\(viewOrBuilder:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(sources.get("scroll-pane.ts")!)) {
     offenders.push("ScrollPane implementation does not include retained builder content");
   }
@@ -610,6 +617,15 @@ function contractParityGate(): void {
   if (!/function\s+styleAttributesFor[\s\S]*validateTextAttribute\(name\)/u.test(styleInternals)) {
     offenders.push("style lowering does not validate the closed native text-attribute vocabulary");
   }
+  if (!/optional_u16_value\(insets, "top"\)/u.test(native)
+    || !/optional_u16_value\(insets, "right"\)/u.test(native)
+    || !/optional_u16_value\(insets, "bottom"\)/u.test(native)
+    || !/optional_u16_value\(insets, "left"\)/u.test(native)) {
+    offenders.push("NativeTextStream does not honor optional stream inset fields");
+  }
+  if (!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(native)) {
+    offenders.push("NativeTextInput disposal does not request deferred component retirement");
+  }
 
   const textRoles = ["paragraph", "heading", "blockQuote", "list", "listItem", "codeBlock", "table", "tableRow", "tableCell", "thematicBreak", "rawBlock", "container", "strong", "emphasis", "strikethrough", "underline", "superscript", "subscript", "smallCaps", "inlineCode", "link", "image", "rawInline"];
   const textParts = ["listMarker", "taskMarker", "quoteMarker", "codeLabel", "tableRule", "thematicRule", "imageFallback"];
@@ -626,6 +642,12 @@ function contractParityGate(): void {
   }
   if (!/role\(role:\s*TextRole\)/u.test(text) || !/part\(part:\s*TextPart\)/u.test(text)) {
     offenders.push("TextSelector methods do not use the closed semantic vocabularies");
+  }
+  if (!/validateTextName\(namespace, "annotation namespace"\)/u.test(text)
+    || !/validateTextName\(language, "language"\)/u.test(text)
+    || !/validateTextName\(origin, "text origin"\)/u.test(text)
+    || !/validateTextName\(format, "text format"\)/u.test(text)) {
+    offenders.push("TextSelector does not validate native semantic-name dimensions");
   }
 
   if (!/export\s+interface\s+BorderGlyphs\s*\{[\s\S]*topLeft:\s*string[\s\S]*bottomRight:\s*string/u.test(types)) {

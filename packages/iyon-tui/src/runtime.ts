@@ -6,8 +6,10 @@ import { asTuiError, tuiError } from "./errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
-import { History } from "./history.ts";
-import { createTextInput, TextInput } from "./text-input.ts";
+import { createHistoryHandle } from "./history.ts";
+import type { History } from "./history.ts";
+import { createTextInput } from "./text-input.ts";
+import type { TextInput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
 import { createScrollPane } from "./scroll-pane.ts";
 import {
@@ -29,6 +31,7 @@ import type {
   Scene as SceneContract,
   History as HistoryContract,
   TerminalMetadata,
+  TextInput as TextInputContract,
   TextInputOptions,
   TuiEvent,
   TuiOpenOptions,
@@ -418,7 +421,7 @@ export class Tui implements TuiRuntime {
 
   /** Creates a Tui-owned History already attached to this host. */
   createHistory(): History {
-    const history = new History(this.host.history() as never);
+    const history = createHistoryHandle(this.host.history() as never);
     claimHistoryOwner(history, this);
     return this.ownHandle(history);
   }
@@ -447,7 +450,7 @@ export class Tui implements TuiRuntime {
     this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
   }
 
-  interceptPaste(input: TextInput, routeId: string): void {
+  interceptPaste(input: TextInputContract, routeId: string): void {
     this.host.interceptPaste(nativeResourceOf<object>(input), routeId);
   }
 
@@ -526,10 +529,19 @@ export class Tui implements TuiRuntime {
 
   setTheme(theme: Theme): void {
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
-    // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
-    // retained materializations re-resolve against the new host theme.
-    resetStyleRefCacheForThemeChange();
-    this.host.setTheme(materializeTheme(themeDefinitionFor(theme)));
+    this.drainExecution();
+    this.assertNotMutating("tui.setTheme");
+    const definition = themeDefinitionFor(theme);
+    const lowered = materializeTheme(definition);
+    try {
+      this.host.setTheme(lowered);
+    } finally {
+      // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
+      // retained materializations re-resolve against the new host theme. The
+      // native host may have applied the theme before a presentation failure,
+      // so this cleanup also belongs on the exceptional path.
+      resetStyleRefCacheForThemeChange();
+    }
   }
 
 }

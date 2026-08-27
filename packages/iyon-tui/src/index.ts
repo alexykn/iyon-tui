@@ -5,6 +5,7 @@ export {
   isTuiError,
   tuiError,
 } from "./errors.ts";
+export type { TuiErrorCategory } from "./errors.ts";
 export type {
   AnsiColor,
   BorderEdges,
@@ -60,9 +61,6 @@ export type {
   TextVisitor,
   TerminalMetadata,
   TuiEvent,
-  ThemeColorEntry,
-  ThemeDefinition,
-  ThemeStyleEntry,
   TuiOpenOptions,
   TuiRuntime,
   VerticalAlign,

@@ -53,7 +53,8 @@ export interface ViewComponentType<P = unknown> {
 }
 
 /** The PUBLIC callable component value returned by `defineView`. */
-export interface ViewComponent<P = unknown> extends ViewComponentType<P> {
+export interface ViewComponent<P = unknown> {
+  readonly render: (props: P) => View;
   (props: P): View;
 }
 

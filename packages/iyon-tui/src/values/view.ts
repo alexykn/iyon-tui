@@ -437,15 +437,23 @@ export class View {
   }
   foreground(color: ColorSpec): View {
     if (isRetainedConstruction()) return composeForeground(this, color);
-    return this.decorate({ foreground: colorNodeFor(color) });
+    // Foreground is an inherited text-style patch in the Rust semantic API,
+    // not a separate decoration field. Keeping it in the style record also
+    // preserves fluent ordering with StyleRef named-style replacement.
+    return this.decorate({ style: { ...emptyStyle(), foreground: colorNodeFor(color) } });
   }
   border(border: BorderSpec): View {
     if (isRetainedConstruction()) return composeBorder(this, border);
     return this.decorate({ border: borderNodeFor(border) });
   }
   style(style: StyleRef | StyleSpec): View {
+    if (isRetainedConstruction()) return composeStyle(this, style);
     const lowered = styleNodeFor(style);
-    return isRetainedConstruction() ? composeStyle(this, style) : this.decorate({ style: mergeStyles(emptyStyle(), lowered) });
+    // A named StyleRef replaces the current text-style identity; a direct
+    // StyleSpec remains a sparse overlay. This mirrors Rust's View::style
+    // distinction and keeps named-style selection from inheriting stale local
+    // fields from an earlier style call.
+    return this.decorate({ style: mergeStyles(emptyStyle(), lowered) }, style.kind === "style-ref");
   }
 
   styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {
@@ -481,11 +489,17 @@ export class View {
     return node.kind === BRIDGE_VIEW_KIND.decorated ? node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }> : undefined;
   }
 
-  private decorate(decoration: Partial<DecorationNode>): View {
+  private decorate(decoration: Partial<DecorationNode>, replaceStyle = false): View {
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
     const child = decorated?.child ?? nodeForBridge(this);
-    const next: DecorationNode = { ...current, ...decoration, style: decoration.style === undefined ? current.style : mergeStyles(current.style, decoration.style) };
+    const next: DecorationNode = {
+      ...current,
+      ...decoration,
+      style: decoration.style === undefined
+        ? current.style
+        : replaceStyle ? cloneStyle(decoration.style) : mergeStyles(current.style, decoration.style),
+    };
     const derived = new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) });
     // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
     // `base + masked modifiers`, which the retained common patch expresses
@@ -1242,18 +1256,22 @@ function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
 }
 
 function bridgeOverflow(overflow: OverflowIndicator): BridgeOverflowIndicatorNode {
-  if (overflow.kind === "none") return { kind: BRIDGE_OVERFLOW_KIND.none };
-  if (overflow.kind === "ellipsis") return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: cloneStyle(styleNodeFor(overflow.style)) };
-  return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: cloneStyle(styleNodeFor(overflow.style)) };
+  switch (overflow.kind) {
+    case "none": return { kind: BRIDGE_OVERFLOW_KIND.none };
+    case "ellipsis": return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: cloneStyle(styleNodeFor(overflow.style)) };
+    case "footer": return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: cloneStyle(styleNodeFor(overflow.style)) };
+    default: throw new TypeError("unknown overflow indicator kind");
+  }
 }
 
 function bridgeGridTrack(track: GridTrack): BridgeGridTrackNode {
   switch (track.kind) {
     case "content": return { kind: BRIDGE_GRID_TRACK_KIND.content };
-    case "contentMax": return { kind: BRIDGE_GRID_TRACK_KIND.contentMax, max: track.max };
-    case "fixed": return { kind: BRIDGE_GRID_TRACK_KIND.fixed, size: track.size };
+    case "contentMax": return { kind: BRIDGE_GRID_TRACK_KIND.contentMax, max: validateU16(track.max, "grid track max") };
+    case "fixed": return { kind: BRIDGE_GRID_TRACK_KIND.fixed, size: validateU16(track.size, "grid track size") };
     case "flex": return { kind: BRIDGE_GRID_TRACK_KIND.flex };
-    case "flexMax": return { kind: BRIDGE_GRID_TRACK_KIND.flexMax, max: track.max };
+    case "flexMax": return { kind: BRIDGE_GRID_TRACK_KIND.flexMax, max: validateU16(track.max, "grid track max") };
+    default: throw new TypeError("unknown grid track kind");
   }
 }
 
@@ -1261,10 +1279,11 @@ function bridgeLayoutChildren(children: readonly LayoutChild[]): BridgeLayoutChi
   return children.map((entry) => {
     switch (entry.kind) {
       case "normal": return { kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(entry.child) };
-      case "fixed": return { kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: entry.size, child: nodeForBridge(entry.child) };
+      case "fixed": return { kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: validateU16(entry.size, "size"), child: nodeForBridge(entry.child) };
       case "flex": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child: nodeForBridge(entry.child) };
-      case "flexMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: entry.maxRows, child: nodeForBridge(entry.child) };
-      case "contentMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: entry.maxRows, child: nodeForBridge(entry.child) };
+      case "flexMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: validateU16(entry.maxRows, "maxRows"), child: nodeForBridge(entry.child) };
+      case "contentMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: validateU16(entry.maxRows, "maxRows"), child: nodeForBridge(entry.child) };
+      default: throw new TypeError("unknown layout child kind");
     }
   });
 }
@@ -1283,21 +1302,30 @@ function displayDiffRange(range: { readonly start: number; readonly count: numbe
 }
 
 function wrapCode(mode: WrapMode): number {
-  if (mode === "wordThenGrapheme") return BRIDGE_WRAP_MODE.wordThenGrapheme;
-  if (mode === "grapheme") return BRIDGE_WRAP_MODE.grapheme;
-  return BRIDGE_WRAP_MODE.noWrap;
+  switch (mode) {
+    case "wordThenGrapheme": return BRIDGE_WRAP_MODE.wordThenGrapheme;
+    case "grapheme": return BRIDGE_WRAP_MODE.grapheme;
+    case "noWrap": return BRIDGE_WRAP_MODE.noWrap;
+    default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
+  }
 }
 
 function horizontalAlignCode(align: HorizontalAlign): number {
-  if (align === "start") return BRIDGE_HORIZONTAL_ALIGN.start;
-  if (align === "center") return BRIDGE_HORIZONTAL_ALIGN.center;
-  return BRIDGE_HORIZONTAL_ALIGN.end;
+  switch (align) {
+    case "start": return BRIDGE_HORIZONTAL_ALIGN.start;
+    case "center": return BRIDGE_HORIZONTAL_ALIGN.center;
+    case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
+    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
+  }
 }
 
 function verticalAlignCode(align: "top" | "center" | "bottom"): number {
-  if (align === "top") return BRIDGE_VERTICAL_ALIGN.top;
-  if (align === "center") return BRIDGE_VERTICAL_ALIGN.center;
-  return BRIDGE_VERTICAL_ALIGN.bottom;
+  switch (align) {
+    case "top": return BRIDGE_VERTICAL_ALIGN.top;
+    case "center": return BRIDGE_VERTICAL_ALIGN.center;
+    case "bottom": return BRIDGE_VERTICAL_ALIGN.bottom;
+    default: throw new RangeError(`unknown vertical alignment ${JSON.stringify(align)}`);
+  }
 }
 
 function validateU16(value: number, name: string): number {

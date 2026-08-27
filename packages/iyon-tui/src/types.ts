@@ -489,4 +489,6 @@ export interface AppHarness extends TuiRuntime {
   styleAt(row: number, column: number): Readonly<Record<string, unknown>>;
   cellXOfText(row: number, text: string): number | null;
   exited(): boolean;
+  /** Current deterministic harness clock in milliseconds. */
+  now(): number;
 }

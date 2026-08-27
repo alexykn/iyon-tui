@@ -6,7 +6,7 @@ import { asTuiError, tuiError } from "./errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
-import { createHistoryHandle } from "./history.ts";
+import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
 import type { History } from "./history.ts";
 import { createTextInput } from "./text-input.ts";
 import type { TextInput } from "./text-input.ts";
@@ -84,6 +84,8 @@ export class Tui implements TuiRuntime {
   private boundHistory?: HistoryContract;
   /** Handles created by this Tui are closed with the owning host. */
   private readonly ownedHandles = new Set<OwnedHandle>();
+  /** Shared liveness token for caller-owned histories attached to this Tui. */
+  private readonly historyLifetime = { closed: false };
 
   private constructor(host: NativeTuiHostContract, width: number, height: number) {
     this.host = host;
@@ -148,9 +150,26 @@ export class Tui implements TuiRuntime {
    * validated here and swapped at commit.
    */
   private prepareRootPublication(
-    session: NonNullable<ReturnType<typeof nativeViewAbiSession>>,
+    session: NonNullable<ReturnType<typeof nativeViewAbiSession>> | undefined,
     output: View,
   ): RootPublication | undefined {
+    const historyToBind = this.stagedHistory;
+    const previousHistory = this.boundHistory;
+    if (session === undefined) {
+      // The generated ABI is present in every supported artifact, but keep
+      // the contract truthful if an older addon is loaded: builder roots can
+      // still publish through the ordinary host renderer without pretending
+      // that a retained ref exists.
+      return {
+        rootRef: 0,
+        commit: (): void => {
+          this.commitHistoryBinding(historyToBind, previousHistory);
+          this.host.render(nodeForBridge(output));
+          this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+        },
+        abort(): void {},
+      };
+    }
     this.ensureBoundary(session);
     let prepared: RootPublication | undefined = this.boundary!.prepareInstall(output);
     if (prepared === undefined) {
@@ -163,24 +182,10 @@ export class Tui implements TuiRuntime {
     if (prepared === undefined) return undefined;
     // History sideband validation happens at prepare time via stageHistory;
     // commit swaps the binding before the body publishes.
-    const historyToBind = this.stagedHistory;
-    const previousHistory = this.boundHistory;
     return {
       rootRef: prepared!.rootRef,
       commit: (): void => {
-        // History swap BEFORE body publish mirrors the direct path's ordering
-        // (set_history then install/paint). Host-fabricated histories are
-        // born attached to their fabricating host (take_for_host would
-        // reject re-attach); only detached handles transfer here.
-        if (historyToBind !== undefined && historyToBind !== previousHistory) {
-          assertHistoryOwner(historyToBind, this);
-          const nativeObj = nativeResourceOf<NativeHistoryContract>(historyToBind);
-          if (nativeObj.isDetached?.() !== false) {
-            this.host.setHistory(nativeObj);
-          }
-          claimHistoryOwner(historyToBind, this);
-          this.boundHistory = historyToBind;
-        }
+        this.commitHistoryBinding(historyToBind, previousHistory);
         prepared!.commit();
         this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
       },
@@ -190,8 +195,30 @@ export class Tui implements TuiRuntime {
     };
   }
 
+  private commitHistoryBinding(
+    historyToBind: HistoryContract | undefined,
+    previousHistory: HistoryContract | undefined,
+  ): void {
+    // History swap BEFORE body publish mirrors the direct path's ordering
+    // (set_history then install/paint). Host-fabricated histories are born
+    // attached to their fabricating host; only detached handles transfer here.
+    if (historyToBind === undefined || historyToBind === previousHistory) return;
+    assertHistoryOwner(historyToBind, this);
+    const nativeObj = nativeResourceOf<NativeHistoryContract>(historyToBind);
+    if (nativeObj.isDetached?.() !== false) this.host.setHistory(nativeObj);
+    claimHistoryOwner(historyToBind, this);
+    bindHistoryLifetime(historyToBind, this.historyLifetime);
+    this.boundHistory = historyToBind;
+  }
+
   private stageHistoryBinding(history?: HistoryContract): void {
-    if (history !== undefined) assertHistoryOwner(history, this);
+    if (history !== undefined) {
+      assertHistoryOwner(history, this);
+      // Validate the handle on every producer pass, including when the
+      // sideband identity is unchanged; disposal must not silently turn the
+      // retained scene into a stale native reference.
+      nativeResourceOf<object>(history);
+    }
     if (
       history !== undefined &&
       this.boundHistory !== undefined &&
@@ -212,12 +239,22 @@ export class Tui implements TuiRuntime {
     const height = options.height ?? 24;
     validateSize(width, height);
     const Host = requireNativeClass(native.NativeTuiHost, "NativeTuiHost");
+    let host: NativeTuiHostContract | undefined;
+    let tui: Tui | undefined;
     try {
-      const tui = new Tui(new Host(width, height, options.headless ?? false), width, height);
-      if (options.theme !== undefined) await tui.setTheme(options.theme);
+      host = new Host(width, height, options.headless ?? false);
+      tui = new Tui(host, width, height);
+      if (options.theme !== undefined) tui.setTheme(options.theme);
       return tui;
     } catch (error) {
-      throw asTuiError(error);
+      const primary = asTuiError(error);
+      try {
+        if (tui !== undefined) tui.close();
+        else host?.dispose();
+      } catch (cleanupError) {
+        throw new AggregateError([primary, asTuiError(cleanupError)], "TUI open cleanup failed");
+      }
+      throw primary;
     }
   }
 
@@ -290,6 +327,16 @@ export class Tui implements TuiRuntime {
     if (!this.closed) this.retainedRuntime.flush();
   }
 
+  private ensureOpen(): void {
+    if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
+  }
+
+  private prepareMutation(operation: string): void {
+    this.ensureOpen();
+    this.drainExecution();
+    this.assertNotMutating(operation);
+  }
+
   private assertNotMutating(operation: string): void {
     if ((protocolState.mutating && !protocolState.internalPublication) || activeExecutionScope() !== undefined) {
       throw tuiError("terminal", `${operation} during a retained protocol pass is forbidden`);
@@ -311,7 +358,7 @@ export class Tui implements TuiRuntime {
     if (!this.rootScopeCreated) {
       const rootTarget = {
         preparePublication: (output: View): RootPublication | undefined =>
-          this.prepareRootPublication(nativeViewAbiSession()!, output),
+          this.prepareRootPublication(nativeViewAbiSession(), output),
         needsPublication: (_output: View): boolean => this.stagedHistory !== this.boundHistory,
       };
       // Do not mark the boundary live until the initial body/materialization
@@ -343,10 +390,28 @@ export class Tui implements TuiRuntime {
     this.drainExecution();
     this.assertNotMutating("tui.render(scene)");
     const normalized = Scene.from(scene);
+    // Validate the structural body before transferring an attach-once History;
+    // malformed runtime input must not partially mutate the scene sideband.
+    const normalizedNode = nodeForBridge(normalized.body);
+    let requestedHistory: NativeHistoryContract | undefined;
+    if (normalized.history !== undefined) {
+      // Validate the handle before the identity no-op below. A disposed
+      // History must never be accepted merely because the same object was
+      // present in the last scene.
+      assertHistoryOwner(normalized.history, this);
+      if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
+        throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
+      }
+      requestedHistory = nativeResourceOf<NativeHistoryContract>(normalized.history);
+    }
+    // An omitted history means "keep the existing sideband" for both direct
+    // and retained scene ownership modes. Compare and record that effective
+    // value rather than allowing currentScene to forget a bound History.
+    const effectiveHistory = normalized.history ?? this.boundHistory;
     if (
       this.currentScene !== undefined
       && this.currentScene.body === normalized.body
-      && this.currentScene.history === normalized.history
+      && this.currentScene.history === effectiveHistory
     ) {
       recordNativeViewRoute("no_op");
       // Direct takeover is SEMANTIC even when no pixel can change: the direct
@@ -360,13 +425,9 @@ export class Tui implements TuiRuntime {
       return;
     }
     if (normalized.history !== undefined) {
-      assertHistoryOwner(normalized.history, this);
-      if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
-        throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
-      }
-      const history = nativeResourceOf<NativeHistoryContract>(normalized.history);
-      if (history.isDetached?.() === true) this.host.setHistory(history);
+      if (requestedHistory!.isDetached?.() === true) this.host.setHistory(requestedHistory!);
       claimHistoryOwner(normalized.history, this);
+      bindHistoryLifetime(normalized.history, this.historyLifetime);
       this.boundHistory = normalized.history;
     }
     const previousBody = this.currentScene?.body;
@@ -381,7 +442,7 @@ export class Tui implements TuiRuntime {
       const exact = this.boundary!.renderExact(normalized.body);
       if (exact.status === "ok") {
         recordNativeViewRoute("render_ref");
-        this.currentScene = normalized;
+        this.currentScene = new Scene(normalized.body, effectiveHistory);
         this.disposeRootBuilder();
         return;
       }
@@ -404,11 +465,11 @@ export class Tui implements TuiRuntime {
       // that this decode consults NodeId-first, so wasted prefix work is not
       // repeated — it shortens the fallback.
       recordNativeViewRoute("fallback");
-      this.host.render(nodeForBridge(normalized.body));
+      this.host.render(normalizedNode);
       // Adopt so future renders hit the exact-root fast path.
       if (session !== undefined) this.boundary!.adopt(normalized.body);
     }
-    this.currentScene = normalized;
+    this.currentScene = new Scene(normalized.body, effectiveHistory);
     this.disposeRootBuilder();
   }
 
@@ -421,48 +482,99 @@ export class Tui implements TuiRuntime {
 
   /** Creates a Tui-owned History already attached to this host. */
   createHistory(): History {
-    const history = createHistoryHandle(this.host.history() as never);
-    claimHistoryOwner(history, this);
-    return this.ownHandle(history);
+    this.prepareMutation("tui.createHistory");
+    try {
+      const history = createHistoryHandle(this.host.history() as never);
+      claimHistoryOwner(history, this);
+      bindHistoryLifetime(history, this.historyLifetime);
+      return this.ownHandle(history);
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   /** Creates a Tui-owned, host-bound TextInput with all options applied. */
   createTextInput(options: TextInputOptions = {}): TextInput {
+    this.prepareMutation("tui.createTextInput");
     const border = options.border === undefined ? undefined : borderNodeFor(options.border);
-    return this.ownHandle(createTextInput(this.host.textInput(options.multiline, border) as never));
+    try {
+      return this.ownHandle(createTextInput(this.host.textInput(options.multiline, border) as never));
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   /** Creates a Tui-owned slot using the shared retained execution runtime. */
   createViewSlot(initialView: View): ViewSlotContract {
-    return this.ownHandle(createViewSlot(this.host as never, initialView, this.retainedRuntime as never));
+    this.prepareMutation("tui.createViewSlot");
+    try {
+      return this.ownHandle(createViewSlot(this.host as never, initialView, this.retainedRuntime as never));
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   /** Creates a Tui-owned pane using the shared retained execution runtime. */
   createScrollPane(initialView: View): ScrollPane {
-    return this.ownHandle(createScrollPane(this.host as never, initialView, this.retainedRuntime as never));
+    this.prepareMutation("tui.createScrollPane");
+    try {
+      return this.ownHandle(createScrollPane(this.host as never, initialView, this.retainedRuntime as never));
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {
-    this.host.bindKey(key, modifiers, routeId);
+    this.prepareMutation("tui.bindKey");
+    try {
+      this.host.bindKey(key, modifiers, routeId);
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   route(output: Output<string>, routeId: string): void {
-    this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
+    this.prepareMutation("tui.route");
+    try {
+      this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   interceptPaste(input: TextInputContract, routeId: string): void {
-    this.host.interceptPaste(nativeResourceOf<object>(input), routeId);
+    this.prepareMutation("tui.interceptPaste");
+    if (!this.ownedHandles.has(input)) {
+      throw tuiError("invalid-handle", "text input is not owned by this Tui");
+    }
+    try {
+      this.host.interceptPaste(nativeResourceOf<object>(input), routeId);
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
-  forwardPaste(text: string): void { this.host.forwardPaste(text); }
+  forwardPaste(text: string): void {
+    this.prepareMutation("tui.forwardPaste");
+    try {
+      this.host.forwardPaste(text);
+    } catch (error) {
+      throw asTuiError(error);
+    }
+  }
 
   /** Resize the host, publishing the new size only after it succeeds. */
   resize(width: number, height: number): void {
-    if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
+    this.ensureOpen();
     validateSize(width, height);
-    this.host.resize(width, height);
-    this.width = width;
-    this.height = height;
+    this.prepareMutation("tui.resize");
+    try {
+      this.host.resize(width, height);
+      this.width = width;
+      this.height = height;
+    } catch (error) {
+      throw asTuiError(error);
+    }
   }
 
   private disposeRootBuilder(): void {
@@ -503,7 +615,9 @@ export class Tui implements TuiRuntime {
    */
   close(): void {
     if (this.closed) return;
+    this.assertNotMutating("tui.close");
     this.closed = true;
+    this.historyLifetime.closed = true;
     try {
       this.disposeRetainedExecution();
       this.boundary?.close();
@@ -517,24 +631,34 @@ export class Tui implements TuiRuntime {
   /** Same ownership/lifecycle semantics as close(), using terminal exit. */
   exit(): void {
     if (this.closed) return;
+    this.assertNotMutating("tui.exit");
+    this.historyLifetime.closed = true;
     try {
       this.disposeRetainedExecution();
       this.boundary?.close();
     } finally {
       this.boundary = undefined;
-      this.host.exit();
-      this.closed = true;
+      try {
+        this.host.exit();
+      } catch (error) {
+        throw asTuiError(error);
+      } finally {
+        // Exit is terminal even when terminal restoration reports an error;
+        // retained roots and caller-owned History liveness must not remain
+        // usable after the cleanup path has run.
+        this.closed = true;
+      }
     }
   }
 
   setTheme(theme: Theme): void {
-    if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
-    this.drainExecution();
-    this.assertNotMutating("tui.setTheme");
+    this.prepareMutation("tui.setTheme");
     const definition = themeDefinitionFor(theme);
     const lowered = materializeTheme(definition);
     try {
       this.host.setTheme(lowered);
+    } catch (error) {
+      throw asTuiError(error);
     } finally {
       // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
       // retained materializations re-resolve against the new host theme. The
@@ -565,5 +689,8 @@ function ensureSignal(signal: AbortSignal | undefined): void {
 }
 
 function validateSize(width: number, height: number): void {
-  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw asTuiError(new RangeError("terminal size must be positive integers"));
+  if (!Number.isInteger(width) || !Number.isInteger(height)
+    || width <= 0 || height <= 0 || width > 65535 || height > 65535) {
+    throw asTuiError(new RangeError("terminal size must be an integer from 1 to 65535"));
+  }
 }

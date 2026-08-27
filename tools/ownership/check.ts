@@ -304,7 +304,9 @@ function controlLifecycleGate(): void {
   if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(types)) {
     offenders.push("types.ts: ScrollPane.setContent does not expose builder support");
   }
-  if (!/private\s+constructor\(nativeHandle: never\)/u.test(textInput) || /new\s+TextInput\s*\(/u.test(textInput)) {
+  if (!/private\s+constructor\(nativeHandle:\s*never(?:,|\))/u.test(textInput)
+    || !/TEXT_INPUT_NATIVE_TOKEN/u.test(textInput)
+    || /new\s+TextInput\s*\(/u.test(textInput)) {
     offenders.push("text-input.ts: TextInput has a direct consumer constructor");
   }
   if (!/private\s+constructor\(host: never/u.test(component) || /new\s+ViewSlot\s*\(/u.test(runtime)) {
@@ -556,6 +558,7 @@ function contractParityGate(): void {
     ["theme.ts", readFileSync(join(FRAMEWORK_SRC, "values/theme.ts"), "utf8")],
     ["text.ts", readFileSync(join(FRAMEWORK_SRC, "values/text.ts"), "utf8")],
     ["style-internals.ts", readFileSync(join(FRAMEWORK_SRC, "style-internals.ts"), "utf8")],
+    ["native_view_abi.ts", readFileSync(join(FRAMEWORK_SRC, "native_view_abi.ts"), "utf8")],
   ]);
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
@@ -568,6 +571,8 @@ function contractParityGate(): void {
   const style = sources.get("style.ts")!;
   const text = sources.get("text.ts")!;
   const styleInternals = sources.get("style-internals.ts")!;
+  const nativeViewAbi = sources.get("native_view_abi.ts")!;
+  const kernel = readFileSync(join(ROOT, "crates/iyon-tui/src/application/kernel.rs"), "utf8");
   const offenders: string[] = [];
 
   const implementations: readonly [string, RegExp][] = [
@@ -625,6 +630,12 @@ function contractParityGate(): void {
   }
   if (!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(native)) {
     offenders.push("NativeTextInput disposal does not request deferred component retirement");
+  }
+  if (!/export\s+function\s+tryNativeMaterialize[\s\S]*?tuiViewAbiDecodeRef/u.test(nativeViewAbi)) {
+    offenders.push("cold materialization does not have a paint-free native direct-decoder fallback");
+  }
+  if (!kernel.includes("self.reap_retired_components();")) {
+    offenders.push("successful frame preparation does not reap deferred component retirements");
   }
 
   const textRoles = ["paragraph", "heading", "blockQuote", "list", "listItem", "codeBlock", "table", "tableRow", "tableCell", "thematicBreak", "rawBlock", "container", "strong", "emphasis", "strikethrough", "underline", "superscript", "subscript", "smallCaps", "inlineCode", "link", "image", "rawInline"];

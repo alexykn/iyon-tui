@@ -1,5 +1,4 @@
 import { HandleBase, nativeComponentIdOf } from "./handles.ts";
-import { native } from "./native.ts";
 import type { ComponentCapabilities, ScrollPane as ScrollPaneContract } from "./types.ts";
 import {
   nativeViewAbiSession,
@@ -17,6 +16,8 @@ import { componentViewFor } from "./component-facade.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
+
+const SCROLL_PANE_NATIVE_TOKEN = Symbol("scroll-pane-native-construction");
 
 type NativeScrollPaneHandle = {
   dispose(): void;
@@ -61,7 +62,8 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
-  private constructor(host: never, initialView?: View, retainedRuntime?: never) {
+  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof SCROLL_PANE_NATIVE_TOKEN) {
+    if (token !== SCROLL_PANE_NATIVE_TOKEN) throw new TypeError("ScrollPane native construction is private");
     const nativeHost = host as unknown as NativeTuiHostContract;
     const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
     super("component", buildPaneHandle(nativeHost, initialView) as never);
@@ -99,6 +101,7 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
    */
   setContent(viewOrBuilder: View | (() => View)): void {
     if (typeof viewOrBuilder === "function") {
+      this.ensureOpen();
       if (protocolState.mutating || activeExecutionScope() !== undefined) {
         throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane builder mutation during a retained protocol pass");
       }
@@ -119,7 +122,18 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
   }
 
   private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
-    if (this.disposed || this.boundary === undefined) return undefined;
+    if (this.disposed) return undefined;
+    if (this.boundary === undefined) {
+      // Older addons may not expose the retained ABI. Keep builder ownership
+      // valid through a transactional native semantic publication.
+      return {
+        commit: (): void => {
+          this.nativeAs<NativeScrollPaneHandle>().setContent(nodeForBridge(output));
+          this.currentView = output;
+        },
+        abort(): void {},
+      };
+    }
     // Retained preparation may refuse on a bounded/unsupported path; use the
     // complete cold materializer transactionally before giving up.
     const publication = this.boundary.prepareInstall(output) ?? this.boundary.prepareColdInstall(output);
@@ -206,6 +220,6 @@ export function createScrollPane(
   initialView: View,
   retainedRuntime?: never,
 ): NativeScrollPane {
-  const Constructor = NativeScrollPane as unknown as new (host: never, initialView: View, retainedRuntime?: never) => NativeScrollPane;
-  return new Constructor(host, initialView, retainedRuntime);
+  const Constructor = NativeScrollPane as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof SCROLL_PANE_NATIVE_TOKEN) => NativeScrollPane;
+  return new Constructor(host, initialView, retainedRuntime, SCROLL_PANE_NATIVE_TOKEN);
 }

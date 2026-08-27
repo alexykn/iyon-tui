@@ -872,7 +872,6 @@ function materializeDecoratedNode(node: BridgeViewNode, tx: MaterializeTx): numb
   const borderColorAtom = decoration.border?.color === undefined || decoration.border === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.border.color), tx);
   const padding = decoration.padding;
   if (padding !== undefined) mask |= DECORATION_PADDING;
-  if (padding !== undefined) mask |= DECORATION_PADDING;
   if (decoration.background !== undefined) mask |= DECORATION_BACKGROUND;
   if (decoration.foreground !== undefined) mask |= DECORATION_FOREGROUND;
   if (decoration.border !== undefined) mask |= DECORATION_BORDER;
@@ -1245,6 +1244,10 @@ export function renderExactRoot(
         BRIDGE_NATIVE.delete(node);
         return { status: "no_root_ref" };
       }
+      // A NodeId promotion or direct recovery returns one lease. Keep it on a
+      // successful retry so the owning boundary can transfer it to its root
+      // lease; only failed retries release it here.
+      let releaseRecoveredLease = true;
       installHint(node, generation, recoveredRef);
       try {
         const retryStart = phaseNow();
@@ -1255,15 +1258,16 @@ export function renderExactRoot(
           if (retryStart !== undefined && retryEnd !== undefined) {
             recordPhaseSample({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: retryEnd - retryStart });
           }
+          releaseRecoveredLease = false;
           return { status: "ok", rootRef: recoveredRef, recovered: true };
         }
         BRIDGE_NATIVE.delete(node);
         return { status: "no_root_ref" };
       } finally {
-        // viewRefForNodeId/§73 recovery returns one temporary lease. The
-        // boundary's existing root lease remains the durable owner.
-        const batch = Uint32Array.of(recoveredRef);
-        viewReleaseMany(session.symbols, session.runtime, batch, 1);
+        if (releaseRecoveredLease) {
+          const batch = Uint32Array.of(recoveredRef);
+          viewReleaseMany(session.symbols, session.runtime, batch, 1);
+        }
       }
     }
     throw new Error(`hostRenderRef failed with status ${status}`);
@@ -1541,6 +1545,7 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const materialize = COLD_ROOT_MATERIALIZER;
     if (materialize === undefined) return undefined;
+    const node = nodeForBridge(view);
     const materializeStart = phaseNow();
     const rootRef = materialize(view);
     const materializeEnd = phaseNow();
@@ -1583,6 +1588,9 @@ export class RetainedRootBoundary {
             });
           }
           counters.host_mutations += 1;
+          // The boundary now owns the recovered lease, so its JS-side hint is
+          // safe to use for the next exact-root render.
+          installHint(node, this.session.abi.generation, rootRef);
           // Transfer our lease on the new root into the boundary; the previous
           // root's lease is released here exactly like transferRoot does.
           this.transferRoot(rootRef);
@@ -1684,7 +1692,18 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const host = this.host();
     if (host === undefined) return { status: "no_root_ref" };
-    return renderExactRoot(this.session, host, view);
+    const result = renderExactRoot(this.session, host, view);
+    if (result.status === "ok" && result.recovered) {
+      const previous = this.previousRef;
+      this.transferRoot(result.rootRef);
+      // A defensive native implementation could return the same ref after a
+      // stale-status retry. In that case transferRoot must keep the existing
+      // root lease and release only the extra promotion lease.
+      if (previous === result.rootRef) {
+        viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(result.rootRef), 1);
+      }
+    }
+    return result;
   }
 
   /** Releases the boundary's root lease exactly once (§18 close protocol). */

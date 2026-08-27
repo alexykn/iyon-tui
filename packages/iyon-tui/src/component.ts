@@ -38,6 +38,8 @@ function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): objec
 
 const ANIMATION_REF_SCRATCH = new WeakMap<object, Uint32Array>();
 
+const VIEW_SLOT_NATIVE_TOKEN = Symbol("view-slot-native-construction");
+
 type NativeViewSlotHandle = {
   dispose(): void;
   revision(): number;
@@ -93,7 +95,8 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
-  private constructor(host: never, initialView?: View, retainedRuntime?: never) {
+  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) {
+    if (token !== VIEW_SLOT_NATIVE_TOKEN) throw new TypeError("ViewSlot native construction is private");
     const nativeHost = host as unknown as NativeTuiHostContract;
     const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
     super("component", buildSlotHandle(nativeHost, initialView) as never);
@@ -121,7 +124,7 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
     this.ensureOpen();
     return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
   }
-  capabilities(): ComponentCapabilities { return this.call(() => ({})); }
+  capabilities(): ComponentCapabilities { return this.call(() => ({ ticks: true })); }
   revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
   /**
    * PERF-12 T13.1 R8 (handoff §32.2.4): direct and builder forms are
@@ -149,6 +152,7 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
   }
 
   private assertBuilderAllowed(): void {
+    this.ensureOpen();
     this.assertUserMutationAllowed("slot builder mutation");
     if (this.#retainedRuntime === undefined) {
       throw new Error(
@@ -212,13 +216,26 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
   /**
    * PERF-12 T13.1 R7: transactional variant of {@link setView}. Delegates to
    * the slot's own RetainedRootBoundary — ownership stays inside the boundary
-   * (no split-brain). Returns `undefined` when no boundary is available
-   * (caller falls back to {@link setView}); otherwise returns a publication
+   * (no split-brain). On an addon without the retained ABI it returns a
+   * transactional native semantic publication; otherwise it returns a
+   * retained publication
    * whose commit publishes the prepared root and whose abort leaves the old
    * content installed and leased.
    */
   prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
-    if (this.disposed || this.boundary === undefined) return undefined;
+    if (this.disposed) return undefined;
+    if (this.boundary === undefined) {
+      // Older addons may not expose the retained ABI. Preserve builder
+      // ownership through a transactional native semantic publication rather
+      // than reporting a false builder-unsupported error.
+      return {
+        commit: (): void => {
+          this.nativeAs<NativeViewSlotHandle>().setView(nodeForBridge(view));
+          this.currentViewSet(view);
+        },
+        abort(): void {},
+      };
+    }
     // A retained preparation can refuse for a budget/unsupported-kind
     // reason. Complete cold materialization is still a valid transactional
     // fallback, and must happen before publication rather than turning a
@@ -392,6 +409,6 @@ export function createViewSlot(
   initialView: View,
   retainedRuntime?: never,
 ): ViewSlot {
-  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never) => ViewSlot;
-  return new Constructor(host, initialView, retainedRuntime);
+  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) => ViewSlot;
+  return new Constructor(host, initialView, retainedRuntime, VIEW_SLOT_NATIVE_TOKEN);
 }

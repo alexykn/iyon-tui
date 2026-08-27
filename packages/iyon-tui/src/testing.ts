@@ -1,4 +1,4 @@
-import { tuiError } from "./errors.ts";
+import { asTuiError, tuiError } from "./errors.ts";
 import { Tui } from "./runtime.ts";
 import { tuiTestingAccess } from "./testing-access.ts";
 import type { History as HistoryHandle } from "./history.ts";
@@ -35,7 +35,7 @@ export class AppHarness implements AppHarnessContract {
 
   render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);
-    tuiTestingAccess(this.tui).advance(0);
+    this.callTesting(() => tuiTestingAccess(this.tui).advance(0));
   }
 
   createHistory(): HistoryHandle { return this.tui.createHistory(); }
@@ -58,21 +58,43 @@ export class AppHarness implements AppHarnessContract {
     this.tui.exit();
   }
 
-  pressKey(key: string, modifiers?: readonly string[]): void { tuiTestingAccess(this.tui).enqueue({ type: "key", key, modifiers }); }
-  paste(text: string): void { tuiTestingAccess(this.tui).enqueue({ type: "paste", text }); }
+  pressKey(key: string, modifiers?: readonly string[]): void {
+    this.callTesting(() => tuiTestingAccess(this.tui).enqueue({ type: "key", key, modifiers }));
+  }
+  paste(text: string): void {
+    this.callTesting(() => tuiTestingAccess(this.tui).enqueue({ type: "paste", text }));
+  }
   advance(ms: number): void {
-    if (!Number.isFinite(ms) || ms < 0) throw tuiError("validation", "clock advancement must be non-negative");
+    if (!Number.isSafeInteger(ms) || ms < 0 || ms > Number.MAX_SAFE_INTEGER - this.clock) {
+      throw tuiError("validation", "clock advancement must keep the deterministic clock within safe integer range");
+    }
+    // Keep the public deterministic clock transactional: a failed native
+    // advancement must not make now() report time that was never applied.
+    this.callTesting(() => tuiTestingAccess(this.tui).advance(ms));
     this.clock += ms;
-    tuiTestingAccess(this.tui).advance(ms);
   }
-  screenRows(): readonly string[] { return tuiTestingAccess(this.tui).screenRows(); }
-  nativeHistoryRows(): readonly string[] { return tuiTestingAccess(this.tui).nativeHistoryRows(); }
-  styleAt(row: number, column: number): Readonly<Record<string, unknown>> { return tuiTestingAccess(this.tui).styleAt(row, column); }
+  screenRows(): readonly string[] {
+    return this.callTesting(() => tuiTestingAccess(this.tui).screenRows());
+  }
+  nativeHistoryRows(): readonly string[] {
+    return this.callTesting(() => tuiTestingAccess(this.tui).nativeHistoryRows());
+  }
+  styleAt(row: number, column: number): Readonly<Record<string, unknown>> {
+    return this.callTesting(() => tuiTestingAccess(this.tui).styleAt(row, column));
+  }
   cellXOfText(row: number, text: string): number | null {
-    return tuiTestingAccess(this.tui).cellXOfText(row, text);
+    return this.callTesting(() => tuiTestingAccess(this.tui).cellXOfText(row, text));
   }
-  exited(): boolean { return tuiTestingAccess(this.tui).exited(); }
+  exited(): boolean { return this.callTesting(() => tuiTestingAccess(this.tui).exited()); }
   now(): number { return this.clock; }
+
+  private callTesting<R>(operation: () => R): R {
+    try {
+      return operation();
+    } catch (error) {
+      throw asTuiError(error);
+    }
+  }
 }
 
 export const createAppHarness = AppHarness.open;

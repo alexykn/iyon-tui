@@ -322,14 +322,27 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
   }
 }
 
-/** Returns an existing native ref for a View, if one is already published. */
+/**
+ * Obtains one leased native root without painting. Existing NodeId entries are
+ * promoted first; a missing entry uses the native direct decoder, matching
+ * the safe N-API retained fallback semantics.
+ */
 export function tryNativeMaterialize(next: View): number | undefined {
+  const session = nativeViewAbiSession();
+  if (session === undefined) return undefined;
+  const node = nodeForBridge(next);
   try {
-    return nativeViewRefForNodeId(next);
+    const [low, high] = nodeIdPair(next);
+    return viewRefForNodeId(session.symbols, session.runtime, low, high);
   } catch (error) {
-    if (isExpectedNativeStatus(error)) return undefined;
-    throw error;
+    if (!isExpectedNativeStatus(error)) throw error;
   }
+  const decodeRef = native.tuiViewAbiDecodeRef;
+  if (decodeRef === undefined) return undefined;
+  const reference = decodeRef(node as unknown as object);
+  return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
+    ? reference
+    : undefined;
 }
 
 /**

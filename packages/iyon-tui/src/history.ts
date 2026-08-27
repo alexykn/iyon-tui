@@ -8,6 +8,10 @@ import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
 
 const streamOwners = new WeakMap<object, WeakRef<HistoryContract>>();
+const historyStreams = new WeakMap<object, Set<WeakRef<object>>>();
+const streamLifetimes = new WeakMap<object, { readonly closed: boolean }>();
+const historyLifetimes = new WeakMap<object, { readonly closed: boolean }>();
+const HISTORY_NATIVE_TOKEN = Symbol("history-native-construction");
 
 function streamOwnerOf(stream: object): HistoryContract | undefined {
   const owner = streamOwners.get(stream)?.deref();
@@ -42,10 +46,20 @@ function assertStreamCanAttach(stream: object): void {
  */
 export class History extends HandleBase<"history"> implements HistoryContract {
   constructor();
-  constructor(nativeHandle?: NativeHistoryContract) { super("history", (nativeHandle ?? nativeTui.history()) as never); }
+  constructor(nativeHandle?: NativeHistoryContract, token?: typeof HISTORY_NATIVE_TOKEN) {
+    let resource: NativeHistoryContract;
+    if (nativeHandle === undefined) {
+      if (token !== undefined) throw new TypeError("invalid History construction token");
+      resource = nativeTui.history();
+    } else {
+      if (token !== HISTORY_NATIVE_TOKEN) throw new TypeError("History native construction is private");
+      resource = nativeHandle;
+    }
+    super("history", resource as never);
+  }
 
   layout(): HistoryLayout {
-    return this.call(() => this.nativeAs<NativeHistoryContract>().layout() as HistoryLayout);
+    return this.callHost(() => this.nativeAs<NativeHistoryContract>().layout() as HistoryLayout);
   }
 
   /**
@@ -56,7 +70,7 @@ export class History extends HandleBase<"history"> implements HistoryContract {
    * drains after the push because History retains its own strong state.
    */
   push(view: View): number {
-    return this.call(() => {
+    return this.callHost(() => {
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
@@ -71,7 +85,8 @@ export class History extends HandleBase<"history"> implements HistoryContract {
   }
 
   freeze(unit: number, view: View): void {
-    this.call(() => {
+    this.callHost(() => {
+      validateHistoryUnit(unit);
       // T13 (§78): same retained-first rule as push — freezing a live card
       // reuses its already-materialized nodes through their hints.
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
@@ -91,20 +106,32 @@ export class History extends HandleBase<"history"> implements HistoryContract {
   }
 
   discardLive(unit: number): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().discardLive(unit));
+    this.callHost(() => {
+      validateHistoryUnit(unit);
+      this.nativeAs<NativeHistoryContract>().discardLive(unit);
+    });
   }
 
   pushStream(stream: TextStream): void {
-    this.call(() => {
+    this.callHost(() => {
       const streamResource = nativeResourceOf<object>(stream);
       assertStreamCanAttach(stream);
       this.nativeAs<NativeHistoryContract>().pushStream(streamResource);
       streamOwners.set(stream, new WeakRef(this));
+      let streams = historyStreams.get(this);
+      if (streams === undefined) {
+        streams = new Set();
+        historyStreams.set(this, streams);
+      }
+      streams.add(new WeakRef(stream));
+      const lifetime = historyLifetimes.get(this);
+      if (lifetime === undefined) streamLifetimes.delete(stream);
+      else streamLifetimes.set(stream, lifetime);
     });
   }
 
   sealStream(stream: TextStream): void {
-    this.call(() => {
+    this.callHost(() => {
       if (streamOwnerOf(stream) !== this) {
         throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
       }
@@ -113,13 +140,47 @@ export class History extends HandleBase<"history"> implements HistoryContract {
   }
 
   setLayout(layout: HistoryLayout): void {
-    this.call(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
+    this.callHost(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
+  }
+
+  private callHost<R>(operation: () => R): R {
+    return this.call(() => {
+      if (historyLifetimes.get(this)?.closed === true) {
+        throw tuiError("terminal", "History is bound to a closed Tui runtime");
+      }
+      return operation();
+    });
   }
 
 }
 
 /** @internal Wraps a host-created History without exposing its native constructor. */
 export function createHistoryHandle(nativeHandle: never): History {
-  const Constructor = History as unknown as new (nativeHandle: never) => History;
-  return new Constructor(nativeHandle);
+  const Constructor = History as unknown as new (nativeHandle: never, token: typeof HISTORY_NATIVE_TOKEN) => History;
+  return new Constructor(nativeHandle, HISTORY_NATIVE_TOKEN);
+}
+
+/** @internal Marks a caller-owned History as unavailable after its host closes. */
+export function bindHistoryLifetime(history: HistoryContract, lifetime: { readonly closed: boolean }): void {
+  historyLifetimes.set(history, lifetime);
+  const streams = historyStreams.get(history);
+  if (streams === undefined) return;
+  for (const reference of streams) {
+    const stream = reference.deref();
+    if (stream === undefined) streams.delete(reference);
+    else streamLifetimes.set(stream, lifetime);
+  }
+}
+
+/** @internal Rejects mutations through a stream whose host runtime has closed. */
+export function assertTextStreamUsable(stream: object): void {
+  if (streamLifetimes.get(stream)?.closed === true) {
+    throw tuiError("terminal", "TextStream is attached to a closed Tui runtime");
+  }
+}
+
+function validateHistoryUnit(unit: number): void {
+  if (!Number.isSafeInteger(unit) || unit < 1) {
+    throw new RangeError("history unit must be a positive safe integer");
+  }
 }

@@ -42,6 +42,12 @@ export class TextSelector {
   andState(key: string | StyleStateKey, value: string | StyleStateValue): TextSelector {
     const stateKey = typeof key === "string" ? key : key.value;
     const stateValue = typeof value === "string" ? value : value.value;
+    if (typeof stateKey !== "string" || stateKey.length === 0) {
+      throw new RangeError("text selector state key cannot be empty");
+    }
+    if (typeof stateValue !== "string" || stateValue.length === 0) {
+      throw new RangeError("text selector state value cannot be empty");
+    }
     return this.with({ states: { ...(this.value.states ?? {}), [stateKey]: stateValue } });
   }
 
@@ -61,7 +67,7 @@ function validateTextPart(part: string): TextPart {
 }
 
 function validateTextName(value: string, label: string): void {
-  if (value.length === 0 || /\s/u.test(value)) {
+  if (typeof value !== "string" || value.length === 0 || /\s/u.test(value)) {
     throw new RangeError(`${label} must be non-empty and contain no whitespace`);
   }
 }

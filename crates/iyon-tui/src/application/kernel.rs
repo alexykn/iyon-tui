@@ -413,6 +413,10 @@ where
             sink,
             &mut viewport,
         )?;
+        // Retirement is deferred until this successful reconciliation has
+        // replaced the committed mount graph. A retired component that was
+        // still mounted during the prior frame is now safe to reclaim.
+        self.reap_retired_components();
         self.dirty = false;
         Ok(frame)
     }

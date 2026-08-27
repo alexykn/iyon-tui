@@ -25,6 +25,9 @@ export class DiffLine {
     readonly termination: DiffLineTermination = "lf",
     readonly coordinates: { readonly oldLine?: number; readonly newLine?: number } = {},
   ) {
+    if (!DIFF_LINE_KINDS.has(lineKind)) throw new RangeError(`unknown diff line kind ${JSON.stringify(lineKind)}`);
+    if (!DIFF_LINE_TERMINATIONS.has(termination)) throw new RangeError(`unknown diff line termination ${JSON.stringify(termination)}`);
+    if (typeof text !== "string") throw new TypeError("diff line text must be a string");
     if (coordinates.oldLine !== undefined) validateLineNumber(coordinates.oldLine, "oldLine");
     if (coordinates.newLine !== undefined) validateLineNumber(coordinates.newLine, "newLine");
   }
@@ -94,3 +97,6 @@ export class DiffRenderer {
 function validateLineNumber(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive safe integer`);
 }
+
+const DIFF_LINE_KINDS = new Set<DiffLineKind>(["context", "addition", "deletion"]);
+const DIFF_LINE_TERMINATIONS = new Set<DiffLineTermination>(["lf", "crlf", "none"]);

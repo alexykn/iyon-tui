@@ -76,7 +76,7 @@ export class StyleStateKey {
   readonly kind = "style-state-key" as const;
 
   constructor(readonly value: string) {
-    if (value.length === 0) throw new RangeError("style state key cannot be empty");
+    if (typeof value !== "string" || value.length === 0) throw new RangeError("style state key cannot be empty");
   }
 
   static from(value: string): StyleStateKey { return new StyleStateKey(value); }
@@ -87,7 +87,7 @@ export class StyleStateValue {
   readonly kind = "style-state-value" as const;
 
   constructor(readonly value: string) {
-    if (value.length === 0) throw new RangeError("style state value cannot be empty");
+    if (typeof value !== "string" || value.length === 0) throw new RangeError("style state value cannot be empty");
   }
 
   static from(value: string): StyleStateValue { return new StyleStateValue(value); }
@@ -128,15 +128,23 @@ export function styleSelectorValue(selector: StyleSelector): StyleSelectorValue 
 }
 
 function toThemeKey(key: string | ThemeKey): ThemeKey {
-  return typeof key === "string" ? new ThemeKey(key) : key;
+  if (typeof key === "string") return new ThemeKey(key);
+  if (typeof key.value !== "string" || key.value.length === 0) {
+    throw new RangeError("theme key cannot be empty");
+  }
+  return key;
 }
 
 function stateKeyValue(key: string | StyleStateKey): string {
-  return typeof key === "string" ? new StyleStateKey(key).value : key.value;
+  const value = typeof key === "string" ? new StyleStateKey(key).value : key.value;
+  if (typeof value !== "string" || value.length === 0) throw new RangeError("style state key cannot be empty");
+  return value;
 }
 
 function stateValueValue(value: string | StyleStateValue): string {
-  return typeof value === "string" ? new StyleStateValue(value).value : value.value;
+  const result = typeof value === "string" ? new StyleStateValue(value).value : value.value;
+  if (typeof result !== "string" || result.length === 0) throw new RangeError("style state value cannot be empty");
+  return result;
 }
 
 function mergeStyleValues(base: StyleSpecValue, patch: StyleSpecValue): StyleSpecValue {

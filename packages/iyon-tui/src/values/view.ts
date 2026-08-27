@@ -459,7 +459,10 @@ export class View {
   styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {
     const stateKey = typeof key === "string" ? key : key.value;
     const stateValue = typeof value === "string" ? value : value.value;
-    if (stateKey.length === 0 || stateValue.length === 0) throw new RangeError("style state key and value cannot be empty");
+    if (typeof stateKey !== "string" || stateKey.length === 0
+      || typeof stateValue !== "string" || stateValue.length === 0) {
+      throw new RangeError("style state key and value cannot be empty");
+    }
     if (isRetainedConstruction()) return composeStyleState(this, stateKey, stateValue);
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
@@ -528,7 +531,14 @@ export class View {
     if (node.kind === BRIDGE_VIEW_KIND.decorated && node.child.kind === BRIDGE_VIEW_KIND.text) {
       const decorated = node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }>;
       const baseText = decorated.child as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.text }>;
-      const child = { ...baseText, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) };
+      // The patched text child is a semantic mutation in its own right. Give
+      // it a fresh NodeId before placing it under the preserved decoration;
+      // reusing baseText.id would let NodeId promotion return the old layout.
+      const child = withPrivateIdentity({
+        ...baseText,
+        ...(wrap === undefined ? {} : { wrap }),
+        ...(align === undefined ? {} : { align }),
+      });
       const derived = new View({ ...decorated, child });
       const derivedNode = nodeForBridge(derived);
       if (derivedNode.kind === BRIDGE_VIEW_KIND.decorated) {
@@ -1237,9 +1247,9 @@ function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
   let newLine = hunk.newRange.start + 1;
   const lines = hunk.lines.map((line) => {
     const node = {
-      kind: BRIDGE_DIFF_LINE_KIND[line.lineKind],
+      kind: diffLineKindCode(line.lineKind),
       text: line.text,
-      termination: line.termination === "none" ? BRIDGE_DIFF_LINE_TERMINATION.unterminated : BRIDGE_DIFF_LINE_TERMINATION.terminated,
+      termination: diffLineTerminationCode(line.termination),
       ...(line.lineKind === "context" ? { oldLine, newLine } : {}),
       ...(line.lineKind === "addition" ? { newLine } : {}),
       ...(line.lineKind === "deletion" ? { oldLine } : {}),
@@ -1253,6 +1263,28 @@ function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
     newRange: { start: hunk.newRange.start, count: hunk.newRange.lineCount },
     lines,
   };
+}
+
+function diffLineKindCode(
+  kind: DiffHunk["lines"][number]["lineKind"],
+): (typeof BRIDGE_DIFF_LINE_KIND)[keyof typeof BRIDGE_DIFF_LINE_KIND] {
+  switch (kind) {
+    case "context": return BRIDGE_DIFF_LINE_KIND.context;
+    case "addition": return BRIDGE_DIFF_LINE_KIND.addition;
+    case "deletion": return BRIDGE_DIFF_LINE_KIND.deletion;
+    default: throw new TypeError("unknown diff line kind");
+  }
+}
+
+function diffLineTerminationCode(
+  termination: DiffHunk["lines"][number]["termination"],
+): (typeof BRIDGE_DIFF_LINE_TERMINATION)[keyof typeof BRIDGE_DIFF_LINE_TERMINATION] {
+  switch (termination) {
+    case "lf":
+    case "crlf": return BRIDGE_DIFF_LINE_TERMINATION.terminated;
+    case "none": return BRIDGE_DIFF_LINE_TERMINATION.unterminated;
+    default: throw new TypeError("unknown diff line termination");
+  }
 }
 
 function bridgeOverflow(overflow: OverflowIndicator): BridgeOverflowIndicatorNode {

@@ -39,6 +39,7 @@ import {
   emptyDecoration,
   emptyStyle,
   mergeStyles,
+  peekBridgeGridSequenceOverride,
   peekBridgeSequenceOverride,
   type BorderNode,
   type BridgeGridTrackNode,
@@ -623,6 +624,10 @@ function gridMatches(previous: View, next: View): boolean {
   const past = nodeForBridge(previous);
   const current = nodeForBridge(next);
   if (past.kind !== BRIDGE_VIEW_KIND.grid || current.kind !== BRIDGE_VIEW_KIND.grid) return false;
+  // Do not force a wide grid's lazy row view to flatten merely to prove a
+  // composition hit. Wide grids are intentionally rebuilt through their
+  // PersistentSeq sidecar rather than scanned on the retained hot path.
+  if (peekBridgeGridSequenceOverride(past) !== undefined) return false;
   if (past.columnGap !== current.columnGap || past.rowGap !== current.rowGap) return false;
   if (past.columns.length !== current.columns.length || past.rows.length !== current.rows.length) return false;
   for (let index = 0; index < current.columns.length; index += 1) {
@@ -812,7 +817,10 @@ function layoutPatchMatches(
   if (baseNode.kind === BRIDGE_VIEW_KIND.decorated && baseNode.child.kind === BRIDGE_VIEW_KIND.text) {
     const previousNode = nodeForBridge(previous);
     if (previousNode.kind !== BRIDGE_VIEW_KIND.decorated) return false;
-    if (previousNode.child === baseNode.child) return wrap === undefined || baseNode.child.wrap === wrap;
+    if (previousNode.child === baseNode.child) {
+      return (wrap === undefined || baseNode.child.wrap === wrap)
+        && (align === undefined || baseNode.child.align === align);
+    }
     if (previousNode.child.kind !== BRIDGE_VIEW_KIND.text) return false;
     return previousNode.child.spans === baseNode.child.spans
       && previousNode.child.align === baseNode.child.align

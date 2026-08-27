@@ -5,6 +5,8 @@ import type { TextInput as TextInputContract } from "./types.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { View } from "./values/view.ts";
 
+const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
+
 /**
  * Host-bound text input. Construct it with `Tui.createTextInput()` so its
  * border, component mount, paste routing, and retained runtime all come from
@@ -17,7 +19,10 @@ import { View } from "./values/view.ts";
  * mounted component identity; duplicate View component nodes are rejected.
  */
 export class TextInput extends HandleBase<"text-input"> implements TextInputContract {
-  private constructor(nativeHandle: never) {
+  private submittedOutput?: Output<string>;
+
+  private constructor(nativeHandle: never, token?: typeof TEXT_INPUT_NATIVE_TOKEN) {
+    if (token !== TEXT_INPUT_NATIVE_TOKEN) throw new TypeError("TextInput native construction is private");
     super("text-input", nativeHandle as never);
   }
 
@@ -26,7 +31,14 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
   setText(value: string): void { this.call(() => this.nativeAs<NativeTextInputContract>().setText(value)); }
   clear(): void { this.call(() => this.nativeAs<NativeTextInputContract>().clear()); }
   submitted(): Output<string> {
-    return this.call(() => new NativeOutput(this.nativeAs<NativeTextInputContract>().submitted() as never));
+    return this.call(() => {
+      // Rust exposes one stable channel per input. Cache the facade so
+      // repeated calls preserve that channel identity on the JS side too.
+      if (this.submittedOutput === undefined) {
+        this.submittedOutput = new NativeOutput(this.nativeAs<NativeTextInputContract>().submitted() as never);
+      }
+      return this.submittedOutput;
+    });
   }
   setMultiline(enabled: boolean): void { this.call(() => this.nativeAs<NativeTextInputContract>().setMultiline(enabled)); }
   isMultiline(): boolean { return this.call(() => this.nativeAs<NativeTextInputContract>().isMultiline()); }
@@ -39,8 +51,8 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
 
 /** @internal Creates the only supported TextInput construction path. */
 export function createTextInput(nativeHandle: never): TextInput {
-  const Constructor = TextInput as unknown as new (nativeHandle: never) => TextInput;
-  return new Constructor(nativeHandle);
+  const Constructor = TextInput as unknown as new (nativeHandle: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInput;
+  return new Constructor(nativeHandle, TEXT_INPUT_NATIVE_TOKEN);
 }
 
 class NativeOutput<T> extends Output<T> {

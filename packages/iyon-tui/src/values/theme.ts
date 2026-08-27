@@ -3,8 +3,6 @@ import type {
   StyleSpecValue,
   TextSelectorValue,
   ThemeColor,
-  ThemeDefinition,
-  ThemeStyleEntry,
 } from "../types.ts";
 import {
   StyleSelector,
@@ -22,6 +20,22 @@ interface ThemeEntry<T> {
 interface TextThemeEntry {
   readonly selector: TextSelectorValue;
   readonly value: StyleSpecValue;
+}
+
+interface ThemeStyleEntry {
+  readonly base?: StyleSpecValue;
+  readonly variants: readonly { readonly selector: StyleSelectorValue; readonly value: StyleSpecValue }[];
+}
+
+interface ThemeColorEntry {
+  readonly base?: ThemeColor;
+  readonly variants: readonly { readonly selector: StyleSelectorValue; readonly value: ThemeColor }[];
+}
+
+interface ThemeDefinition {
+  readonly styles: Readonly<Record<string, ThemeStyleEntry>>;
+  readonly colors: Readonly<Record<string, ThemeColorEntry>>;
+  readonly textStyles: readonly TextThemeEntry[];
 }
 
 export { ThemeKey } from "./theme-key.ts";
@@ -148,11 +162,11 @@ export function themeDefinitionFor(theme: Theme): ThemeDefinition {
 }
 
 function themeKey(key: string | ThemeKey): string {
-  return typeof key === "string" ? validateThemeKey(key) : key.value;
+  return typeof key === "string" ? validateThemeKey(key) : validateThemeKey(key.value);
 }
 
 function validateThemeKey(key: string): string {
-  if (key.length === 0) throw new RangeError("theme key cannot be empty");
+  if (typeof key !== "string" || key.length === 0) throw new RangeError("theme key cannot be empty");
   return key;
 }
 

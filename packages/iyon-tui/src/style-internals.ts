@@ -2,9 +2,10 @@ import type {
   BorderSpec,
   ColorSpec,
   RgbColor,
+  StyleSelectorValue,
   StyleSpecValue,
+  TextSelectorValue,
   ThemeColor,
-  ThemeDefinition,
 } from "./types.ts";
 import type {
   BorderNode,
@@ -15,6 +16,17 @@ import type {
 import { StyleRef, StyleSpec, validateTextAttribute } from "./values/style.ts";
 import type { TextSpan } from "./values/text.ts";
 import type { ThemeKey } from "./values/theme-key.ts";
+
+interface ThemeEntry<T> {
+  readonly base?: T;
+  readonly variants: readonly { readonly selector: StyleSelectorValue; readonly value: T }[];
+}
+
+interface ThemeDefinition {
+  readonly styles: Readonly<Record<string, ThemeEntry<StyleSpecValue>>>;
+  readonly colors: Readonly<Record<string, ThemeEntry<ThemeColor>>>;
+  readonly textStyles: readonly { readonly selector: TextSelectorValue; readonly value: StyleSpecValue }[];
+}
 
 /** Lowers a public color value to the existing retained bridge atom. */
 export function colorNodeFor(color: ColorSpec): ColorNode {
@@ -68,6 +80,7 @@ export function styleNodeFor(style: StyleRef | StyleSpec | StyleSpecValue): Styl
 
 /** Lowers a public border description without changing the View ABI. */
 export function borderNodeFor(border: BorderSpec): BorderNode {
+  validateBorder(border);
   return {
     ...(border.glyphs === undefined ? {} : { glyphs: { ...border.glyphs } }),
     ...(border.style === undefined ? {} : { style: border.style }),
@@ -75,6 +88,36 @@ export function borderNodeFor(border: BorderSpec): BorderNode {
     ...(border.color === undefined ? {} : { color: colorNodeFor(border.color) }),
   };
 }
+
+function validateBorder(border: BorderSpec): void {
+  if (typeof border !== "object" || border === null) {
+    throw new TypeError("border must be an object");
+  }
+  if (border.style !== undefined && border.style !== "plain" && border.style !== "rounded" && border.style !== "double") {
+    throw new RangeError(`unknown border style ${JSON.stringify(border.style)}`);
+  }
+  if (border.edges !== undefined && border.edges !== "all" && border.edges !== "topBottom") {
+    throw new RangeError(`unknown border edges ${JSON.stringify(border.edges)}`);
+  }
+  if (border.glyphs === undefined) return;
+  const glyphs = border.glyphs as unknown as Record<string, unknown>;
+  for (const field of BORDER_GLYPH_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(glyphs, field) || typeof glyphs[field] !== "string") {
+      throw new TypeError(`border glyph ${JSON.stringify(field)} must be a string`);
+    }
+  }
+}
+
+const BORDER_GLYPH_FIELDS = [
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "topLeft",
+  "topRight",
+  "bottomLeft",
+  "bottomRight",
+] as const;
 
 /** Lowers a public styled span to the existing text-span bridge record. */
 export function textSpanNodeFor(span: TextSpan): TextSpanNode {
@@ -137,7 +180,7 @@ function isStyleSpec(style: StyleRef | StyleSpec | StyleSpecValue): style is Sty
 
 function themeKeyValue(key: string | ThemeKey): string {
   const value = typeof key === "string" ? key : key.value;
-  if (value.length === 0) throw new RangeError("theme key cannot be empty");
+  if (typeof value !== "string" || value.length === 0) throw new RangeError("theme key cannot be empty");
   return value;
 }
 

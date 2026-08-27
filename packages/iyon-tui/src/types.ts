@@ -221,23 +221,6 @@ export interface TextInputOptions {
   readonly border?: BorderSpec;
 }
 
-export interface ThemeStyleEntry {
-  readonly base?: StyleSpecValue;
-  readonly variants: readonly { readonly selector: StyleSelectorValue; readonly value: StyleSpecValue }[];
-}
-
-export interface ThemeColorEntry {
-  readonly base?: ThemeColor;
-  readonly variants: readonly { readonly selector: StyleSelectorValue; readonly value: ThemeColor }[];
-}
-
-/** Semantic theme definition used by the host boundary and its private lowering. */
-export interface ThemeDefinition {
-  readonly styles: Readonly<Record<string, ThemeStyleEntry>>;
-  readonly colors: Readonly<Record<string, ThemeColorEntry>>;
-  readonly textStyles: readonly { readonly selector: TextSelectorValue; readonly value: StyleSpecValue }[];
-}
-
 export type TextContent = SemanticTextContent;
 
 export interface History extends FrameworkHandle {

@@ -3,6 +3,6 @@ export class ThemeKey {
   readonly kind = "theme-key" as const;
 
   constructor(readonly value: string) {
-    if (value.length === 0) throw new RangeError("theme key cannot be empty");
+    if (typeof value !== "string" || value.length === 0) throw new RangeError("theme key cannot be empty");
   }
 }

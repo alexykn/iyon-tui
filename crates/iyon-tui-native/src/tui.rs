@@ -679,14 +679,18 @@ impl NativeTuiHost {
         border: Option<Value>,
     ) -> Result<NativeTextInput> {
         ensure_alive(&self.alive)?;
+        // Validate and lower the border before registering the component so a
+        // malformed option cannot leave an unreachable host component behind.
+        let border = border.map(|value| lower_border(&value)).transpose()?;
         let input = self
             .host
             .create_text_input(multiline.unwrap_or(false))
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
         if let Some(border) = border {
-            input
-                .set_border(lower_border(&border)?)
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+            if let Err(error) = input.set_border(border) {
+                input.retire();
+                return Err(crate::NativeError::internal(error.to_string()));
+            }
         }
         Ok(NativeTextInput::from_host(input))
     }
@@ -1270,8 +1274,9 @@ impl NativeScrollPane {
         // registered component (idempotent); physical reclamation happens in
         // RunningApp::reap_retired_components after reconciliation proves the
         // component unmounted. The N-API surface is the durable public path.
-        self.pane.retire();
-        self.alive.store(false, Ordering::Release);
+        if self.alive.swap(false, Ordering::AcqRel) {
+            self.pane.retire();
+        }
     }
 
     #[napi(js_name = "componentId")]
@@ -1332,8 +1337,9 @@ impl NativeViewSlot {
         // registered component (idempotent). Physical reclamation happens in
         // RunningApp::reap_retired_components after reconciliation proves the
         // component unmounted — committed roots may still reference it.
-        self.slot.retire();
-        self.alive.store(false, Ordering::Release);
+        if self.alive.swap(false, Ordering::AcqRel) {
+            self.slot.retire();
+        }
     }
 
     #[napi]
@@ -2347,7 +2353,15 @@ fn decode_border(value: &Object<'_>) -> Result<BorderSpec> {
             )));
         }
     };
-    let top_bottom = value.get::<String>("edges")?.as_deref() == Some("topBottom");
+    let top_bottom = match value.get::<String>("edges")?.as_deref() {
+        None | Some("all") => false,
+        Some("topBottom") => true,
+        Some(other) => {
+            return Err(crate::NativeError::invalid_input(format!(
+                "unknown border edges `{other}`"
+            )));
+        }
+    };
     let color = value
         .get::<Unknown>("color")?
         .map(|value| decode_color(&value))
@@ -3230,7 +3244,16 @@ fn lower_border(value: &Value) -> Result<BorderSpec> {
             )));
         }
     };
-    if border.get("edges").and_then(Value::as_str) == Some("topBottom") {
+    let top_bottom = match border.get("edges").and_then(Value::as_str) {
+        None | Some("all") => false,
+        Some("topBottom") => true,
+        Some(other) => {
+            return Err(crate::NativeError::invalid_input(format!(
+                "unknown border edges `{other}`"
+            )));
+        }
+    };
+    if top_bottom {
         spec = spec.edges(BorderEdges::TOP_BOTTOM);
     }
     if let Some(color) = border.get("color") {

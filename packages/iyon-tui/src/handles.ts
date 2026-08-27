@@ -50,6 +50,7 @@ export abstract class HandleBase<K extends string = string> extends FrameworkHan
 
   protected constructor(readonly kind: K, nativeHandle: never) {
     super();
+    if (nextHandleId > Number.MAX_SAFE_INTEGER) throw new Error("TUI framework handle identity exhausted");
     this.id = nextHandleId++ as HandleId;
     handleIds.set(this, this.id);
     registerNativeResource(this, nativeHandle as unknown as object);

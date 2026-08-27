@@ -60,6 +60,21 @@ type NativeViewSlotHandle = {
   stopAnimationRef(viewRef: number): void;
 };
 
+/**
+ * Tui-owned retained component slot.
+ *
+ * Construct with `Tui.createViewSlot()` only. The owning Tui disposes factory
+ * slots during `close()`/`exit()`; callers may dispose them earlier. Their
+ * builder root, View identity, animation state, and root lease remain owned by
+ * the slot until disposal or an ownership transition. A slot may be mounted at
+ * one location in the retained View graph; duplicate component nodes are
+ * rejected, and reusing the handle does not create independent instances.
+ * Builder mode is
+ * available only through the Tui-created shared execution runtime. Direct
+ * `setView(View)` takes ownership after successful publication; animation also
+ * relinquishes any builder root only after installation succeeds. The handle
+ * must not be used after its owning Tui closes.
+ */
 export class ViewSlot extends HandleBase<"component"> implements ViewSlotContract {
   private currentView?: View;
   /** R7: mutable cell so transaction closures can promote currentView on commit. */
@@ -78,16 +93,12 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
-  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
-  constructor(host: never, initialView?: View, retainedRuntime?: never);
-  constructor(
-    host: NativeTuiHostContract,
-    initialView?: View,
-    retainedRuntime?: RetainedExecutionRuntime,
-  ) {
-    super("component", buildSlotHandle(host, initialView) as never);
+  private constructor(host: never, initialView?: View, retainedRuntime?: never) {
+    const nativeHost = host as unknown as NativeTuiHostContract;
+    const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
+    super("component", buildSlotHandle(nativeHost, initialView) as never);
     this.currentView = initialView;
-    this.#retainedRuntime = retainedRuntime;
+    this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
@@ -375,6 +386,22 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
   }
 }
 
+/** @internal Constructs a slot for the owning Tui and retained runtime. */
+export function createViewSlot(
+  host: never,
+  initialView: View,
+  retainedRuntime?: never,
+): ViewSlot {
+  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never) => ViewSlot;
+  return new Constructor(host, initialView, retainedRuntime);
+}
+
+/**
+ * Standalone generic component handle retained for the component facade audit.
+ * It is caller-owned and has no Tui-shared builder runtime; dispose it
+ * explicitly. Normal controls should use their semantic host factory and
+ * `.view()` projection instead.
+ */
 export class Component extends HandleBase<"component"> implements ComponentContract {
   constructor() {
     const NativeViewSlot = requireNativeClass(native.NativeViewSlot, "NativeViewSlot");

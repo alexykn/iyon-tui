@@ -6,6 +6,22 @@ import { nativeTui } from "./native-handles.ts";
 import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
 
+/**
+ * Ordered scrollback handle with an explicit detached mode.
+ *
+ * Lifecycle:
+ * - `new History()` creates caller-owned detached storage that can be used for
+ *   layout, pushes, and stream attachment without a Tui.
+ * - `Tui.createHistory()` creates a Tui-owned history already attached to that
+ *   Tui; the Tui closes factory-created histories during `close()`/`exit()`.
+ *   A detached history transfers to one Tui when rendered and remains
+ *   caller-owned.
+ * - Callers may dispose any history early. Host-bound histories must not be
+ *   used after their Tui closes; detached histories may outlive a Tui.
+ * - Attachment is one-way and single-host. A history cannot transfer again or
+ *   be rebound to a different Tui after attachment.
+ * - `freeze` and `discardLive` require an attached history.
+ */
 export class History extends HandleBase<"history"> implements HistoryContract {
   constructor();
   /** @internal Native host construction overload; consumers cannot provide a `never` value. */

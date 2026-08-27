@@ -6,9 +6,9 @@ import { asTuiError, tuiError } from "./errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { Scene } from "./scene.ts";
 import { History } from "./history.ts";
-import { TextInput } from "./text-input.ts";
-import { ViewSlot } from "./component.ts";
-import { NativeScrollPane } from "./scroll-pane.ts";
+import { createTextInput, TextInput } from "./text-input.ts";
+import { createViewSlot, ViewSlot } from "./component.ts";
+import { createScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
@@ -36,6 +36,21 @@ import type {
 import type { Theme } from "./values/theme.ts";
 import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "./native.ts";
 
+type OwnedHandle = { dispose(): void };
+const historyOwners = new WeakMap<object, Tui>();
+
+function assertHistoryOwner(history: HistoryContract, owner: Tui): void {
+  const currentOwner = historyOwners.get(history);
+  if (currentOwner !== undefined && currentOwner !== owner) {
+    throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a History instance is already attached to a different Tui");
+  }
+}
+
+function claimHistoryOwner(history: HistoryContract, owner: Tui): void {
+  assertHistoryOwner(history, owner);
+  historyOwners.set(history, owner);
+}
+
 export class Tui implements TuiRuntime {
   private closed = false;
   private readonly host: NativeTuiHostContract;
@@ -61,6 +76,8 @@ export class Tui implements TuiRuntime {
   /** History sideband: attach-once ownership per the Rust audit (SS32.2.4). */
   private stagedHistory?: HistoryContract;
   private boundHistory?: HistoryContract;
+  /** Handles created by this Tui are closed with the owning host. */
+  private readonly ownedHandles = new Set<OwnedHandle>();
 
   private constructor(host: NativeTuiHostContract, width: number, height: number) {
     this.host = host;
@@ -80,7 +97,7 @@ export class Tui implements TuiRuntime {
         // Component scopes project as native view slots (R6a machinery).
         // The seed is framework plumbing, not a user semantic construction;
         // do not consume a parent scope's semantic slot for it.
-        const slot = new ViewSlot(hostRef as never, withoutRetainedComposition(() => View.spacer(0)), undefined);
+        const slot = createViewSlot(hostRef as never, withoutRetainedComposition(() => View.spacer(0)), undefined);
         const view = slot.view();
         return {
           view,
@@ -133,10 +150,12 @@ export class Tui implements TuiRuntime {
         // born attached to their fabricating host (take_for_host would
         // reject re-attach); only detached handles transfer here.
         if (historyToBind !== undefined && historyToBind !== previousHistory) {
+          assertHistoryOwner(historyToBind, this);
           const nativeObj = nativeResourceOf<NativeHistoryContract>(historyToBind);
           if (nativeObj.isDetached?.() !== false) {
             this.host.setHistory(nativeObj);
           }
+          claimHistoryOwner(historyToBind, this);
           this.boundHistory = historyToBind;
         }
         prepared!.commit();
@@ -149,6 +168,7 @@ export class Tui implements TuiRuntime {
   }
 
   private stageHistoryBinding(history?: HistoryContract): void {
+    if (history !== undefined) assertHistoryOwner(history, this);
     if (
       history !== undefined &&
       this.boundHistory !== undefined &&
@@ -324,11 +344,13 @@ export class Tui implements TuiRuntime {
       return;
     }
     if (normalized.history !== undefined) {
+      assertHistoryOwner(normalized.history, this);
       if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
         throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
       }
       const history = nativeResourceOf<NativeHistoryContract>(normalized.history);
       if (history.isDetached?.() === true) this.host.setHistory(history);
+      claimHistoryOwner(normalized.history, this);
       this.boundHistory = normalized.history;
     }
     const previousBody = this.currentScene?.body;
@@ -381,19 +403,27 @@ export class Tui implements TuiRuntime {
     return this.boundary;
   }
 
-  createHistory(): History { return new History(this.host.history() as never); }
+  /** Creates a Tui-owned History already attached to this host. */
+  createHistory(): History {
+    const history = new History(this.host.history() as never);
+    claimHistoryOwner(history, this);
+    return this.ownHandle(history);
+  }
 
+  /** Creates a Tui-owned, host-bound TextInput with all options applied. */
   createTextInput(options: TextInputOptions = {}): TextInput {
     const border = options.border === undefined ? undefined : borderNodeFor(options.border);
-    return new TextInput(options, this.host.textInput(options.multiline, border) as never);
+    return this.ownHandle(createTextInput(this.host.textInput(options.multiline, border) as never));
   }
 
+  /** Creates a Tui-owned slot using the shared retained execution runtime. */
   createViewSlot(initialView: View): ViewSlot {
-    return new ViewSlot(this.host as never, initialView, this.retainedRuntime as never);
+    return this.ownHandle(createViewSlot(this.host as never, initialView, this.retainedRuntime as never));
   }
 
+  /** Creates a Tui-owned pane using the shared retained execution runtime. */
   createScrollPane(initialView: View): ScrollPane {
-    return new NativeScrollPane(this.host as never, initialView, this.retainedRuntime as never);
+    return this.ownHandle(createScrollPane(this.host as never, initialView, this.retainedRuntime as never));
   }
 
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {
@@ -423,16 +453,35 @@ export class Tui implements TuiRuntime {
     root?.dispose();
   }
 
+  private ownHandle<T extends OwnedHandle>(handle: T): T {
+    this.ownedHandles.add(handle);
+    return handle;
+  }
+
+  private disposeOwnedHandles(): void {
+    const handles = [...this.ownedHandles];
+    this.ownedHandles.clear();
+    for (const handle of handles) handle.dispose();
+  }
+
   private disposeRetainedExecution(): void {
     // Scope projections and builder roots own native leases/handles. They must
     // be retired while the host is still alive; otherwise State subscribers
     // and scheduled microtasks can outlive the Tui and target disposed slots.
+    // Factory-created controls are disposed first while their native host and
+    // the shared retained runtime are still available.
+    this.disposeOwnedHandles();
     this.disposeRootBuilder();
     this.retainedRuntime.dispose();
     this.stagedHistory = undefined;
     this.boundHistory = undefined;
   }
 
+  /**
+   * Closes the host and disposes every handle created through this Tui's
+   * factories. Detached History and direct TextStream values remain caller
+   * owned; host-bound values must not be used after this call.
+   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -446,6 +495,7 @@ export class Tui implements TuiRuntime {
     }
   }
 
+  /** Same ownership/lifecycle semantics as close(), using terminal exit. */
   exit(): void {
     if (this.closed) return;
     try {

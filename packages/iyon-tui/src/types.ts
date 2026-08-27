@@ -199,7 +199,7 @@ export interface History extends FrameworkHandle {
   discardLive(unit: number): TuiOperation<void>;
   pushStream(stream: TextStream): TuiOperation<void>;
   sealStream(stream: TextStream): TuiOperation<void>;
-  setLayout?(layout: HistoryLayout): TuiOperation<void>;
+  setLayout(layout: HistoryLayout): TuiOperation<void>;
 }
 
 export interface HistoryLayout {
@@ -283,7 +283,7 @@ export interface ViewSlot extends Component {
 }
 
 export interface ScrollPane extends Component {
-  setContent(view: View): TuiOperation<void>;
+  setContent(view: View | (() => View)): TuiOperation<void>;
   followEnd(): TuiOperation<void>;
 }
 

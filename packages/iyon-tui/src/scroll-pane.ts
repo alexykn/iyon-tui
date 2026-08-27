@@ -39,6 +39,18 @@ function buildPaneHandle(host: NativeTuiHostContract, initialView?: View): objec
   return host.scrollPane(nodeForBridge(seed));
 }
 
+/**
+ * Tui-owned retained scrolling component.
+ *
+ * Construct with `Tui.createScrollPane()` only. The owning Tui disposes
+ * factory panes during `close()`/`exit()`; callers may dispose them earlier.
+ * Their content root and scroll state remain with that handle. Builder content
+ * uses the Tui-owned shared retained execution runtime, while direct content
+ * and `followEnd()` are explicit ownership-preserving mutations. A pane may
+ * be mounted at one location in the retained View graph; duplicate component
+ * nodes are rejected and do not create independent panes. The handle must not
+ * be used after its Tui closes.
+ */
 export class NativeScrollPane extends HandleBase<"component"> implements ScrollPaneContract {
   private currentView?: View;
   /** T13 (§18/§80): the pane owns one root lease on its current content. */
@@ -48,16 +60,12 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
 
-  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
-  constructor(host: never, initialView?: View, retainedRuntime?: never);
-  constructor(
-    host: NativeTuiHostContract,
-    initialView?: View,
-    retainedRuntime?: RetainedExecutionRuntime,
-  ) {
-    super("component", buildPaneHandle(host, initialView) as never);
+  private constructor(host: never, initialView?: View, retainedRuntime?: never) {
+    const nativeHost = host as unknown as NativeTuiHostContract;
+    const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
+    super("component", buildPaneHandle(nativeHost, initialView) as never);
     this.currentView = initialView;
-    this.#retainedRuntime = retainedRuntime;
+    this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
@@ -189,5 +197,14 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
     }
     super.dispose();
   }
+}
 
+/** @internal Constructs a pane for the owning Tui and retained runtime. */
+export function createScrollPane(
+  host: never,
+  initialView: View,
+  retainedRuntime?: never,
+): NativeScrollPane {
+  const Constructor = NativeScrollPane as unknown as new (host: never, initialView: View, retainedRuntime?: never) => NativeScrollPane;
+  return new Constructor(host, initialView, retainedRuntime);
 }

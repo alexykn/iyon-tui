@@ -1,16 +1,23 @@
 import { HandleBase, nativeComponentIdOf, registerNativeResource } from "./handles.ts";
-import { nativeTui } from "./native-handles.ts";
 import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
 import { OutputHandle } from "./types.ts";
-import type { TextInput as TextInputContract, TextInputOptions } from "./types.ts";
+import type { TextInput as TextInputContract } from "./types.ts";
 import { View } from "./values/view.ts";
 
+/**
+ * Host-bound text input. Construct it with `Tui.createTextInput()` so its
+ * border, component mount, paste routing, and retained runtime all come from
+ * the same host-owned path.
+ *
+ * The caller may dispose the handle early; the owning Tui also disposes
+ * factory-created inputs during `close()`/`exit()`. Detached construction is
+ * intentionally not supported because a detached input cannot faithfully
+ * provide the host-bound border/component semantics. Each input has one
+ * mounted component identity; duplicate View component nodes are rejected.
+ */
 export class TextInput extends HandleBase<"text-input"> implements TextInputContract {
-  constructor(options?: TextInputOptions);
-  /** @internal Native host construction overload; consumers cannot provide a `never` value. */
-  constructor(options: TextInputOptions | undefined, nativeHandle: never);
-  constructor(options: TextInputOptions = {}, nativeHandle?: NativeTextInputContract) {
-    super("text-input", (nativeHandle ?? nativeTui.textInput(options.multiline)) as never);
+  private constructor(nativeHandle: never) {
+    super("text-input", nativeHandle as never);
   }
 
   text(): string { return this.call(() => this.nativeAs<NativeTextInputContract>().text()); }
@@ -27,6 +34,12 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
     return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
   }
 
+}
+
+/** @internal Creates the only supported TextInput construction path. */
+export function createTextInput(nativeHandle: never): TextInput {
+  const Constructor = TextInput as unknown as new (nativeHandle: never) => TextInput;
+  return new Constructor(nativeHandle);
 }
 
 class NativeOutputHandle<T> extends OutputHandle<T> {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { Component, History, TextInput, TextStream, View } from "../src/index.ts";
+import { Component, History, TextStream, Tui, View } from "../src/index.ts";
 
 describe("T5 native TUI handles", () => {
   test("synchronous native mutations do not allocate Promise wrappers", () => {
@@ -14,8 +14,9 @@ describe("T5 native TUI handles", () => {
     history.dispose();
   });
 
-  test("keeps TextInput state in one native object", async () => {
-    const input = new TextInput();
+  test("keeps Tui-created TextInput state in one native object", async () => {
+    const tui = await Tui.open({ headless: true });
+    const input = tui.createTextInput();
     await input.setText("hello 🌍");
     expect(await input.text()).toBe("hello 🌍");
     expect(await input.cursorBytes()).toBe(Buffer.byteLength("hello 🌍"));
@@ -26,6 +27,7 @@ describe("T5 native TUI handles", () => {
     input.dispose();
     try { input.text(); throw new Error("expected disposed handle error"); }
     catch (error) { expect(error).toMatchObject({ category: "disposed-handle" }); }
+    await tui.close();
   });
 
   test("preserves stream revision and sealed-state errors", async () => {

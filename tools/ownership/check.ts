@@ -288,6 +288,42 @@ function opaqueHandleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 7: H1D control-construction/lifecycle guard
+// ---------------------------------------------------------------------------
+
+function controlLifecycleGate(): void {
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
+  const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
+  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8");
+  const nativeHandles = readFileSync(join(FRAMEWORK_SRC, "native-handles.ts"), "utf8");
+  const offenders: string[] = [];
+
+  if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(types)) {
+    offenders.push("types.ts: ScrollPane.setContent does not expose builder support");
+  }
+  if (!/private\s+constructor\(nativeHandle: never\)/u.test(textInput) || /new\s+TextInput\s*\(/u.test(textInput)) {
+    offenders.push("text-input.ts: TextInput has a direct consumer constructor");
+  }
+  if (!/private\s+constructor\(host: never/u.test(component) || /new\s+ViewSlot\s*\(/u.test(runtime)) {
+    offenders.push("component.ts/runtime.ts: ViewSlot is not Tui-factory-only");
+  }
+  if (!/private\s+constructor\(host: never/u.test(scrollPane) || /new\s+NativeScrollPane\s*\(/u.test(runtime)) {
+    offenders.push("scroll-pane.ts/runtime.ts: ScrollPane is not Tui-factory-only");
+  }
+  if (/nativeTui\.textInput/u.test(nativeHandles) || !/disposeOwnedHandles\(\)/u.test(runtime)) {
+    offenders.push("runtime/native-handles.ts: Tui-owned control lifecycle is not centralized");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1d-control-lifecycle", offenders.join("; "));
+  } else {
+    pass("h1d-control-lifecycle", "controls use canonical Tui factories, builder contracts, and deterministic owner disposal");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -372,6 +408,7 @@ napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();
 opaqueHandleGate();
+controlLifecycleGate();
 await publicSurfaceGate();
 
 if (failed) {

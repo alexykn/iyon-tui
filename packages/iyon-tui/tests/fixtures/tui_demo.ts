@@ -3,7 +3,6 @@ import {
   Component,
   History,
   Scene,
-  TextInput,
   TextStream,
   View,
 } from "../../src/index.ts";
@@ -17,7 +16,7 @@ export async function runTuiDemo(): Promise<{
 }> {
   const harness = await AppHarness.open({ width: 16, height: 3 });
   const history = new History();
-  const input = new TextInput();
+  const input = harness.createTextInput();
   const stream = new TextStream();
   const component = new Component();
 

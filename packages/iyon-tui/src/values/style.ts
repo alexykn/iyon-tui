@@ -55,11 +55,8 @@ export class StyleRef {
     return new StyleRef(undefined, style);
   }
 
-  static theme(key: string | ThemeKey): StyleRef {
-    return new StyleRef(toThemeKey(key), new StyleSpec());
-  }
-
-  static themed(key: string | ThemeKey, overrides: StyleSpec = new StyleSpec()): StyleRef {
+  /** Selects a named theme style, optionally layering a sparse override. */
+  static theme(key: string | ThemeKey, overrides: StyleSpec = new StyleSpec()): StyleRef {
     return new StyleRef(toThemeKey(key), overrides);
   }
 

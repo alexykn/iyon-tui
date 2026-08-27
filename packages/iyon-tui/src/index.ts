@@ -93,7 +93,7 @@ export { TextContent, RawText } from "./values/text-content.ts";
 export { Annotations } from "./values/annotations.ts";
 export { Projection, ProjectionBuilder, Smooth } from "./values/projection.ts";
 export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./values/diff.ts";
-export { Theme, ThemeKey } from "./values/theme.ts";
+export { Theme, ThemeKey, themeColor } from "./values/theme.ts";
 export type { DiffLineKind, DiffLineTermination } from "./values/diff.ts";
 export type { ProjectionSpan } from "./values/projection.ts";
 export type { SemanticTag, SemanticValue } from "./values/annotations.ts";

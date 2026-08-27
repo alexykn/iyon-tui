@@ -3,6 +3,7 @@ import type {
   StyleSpecValue,
   TextSelectorValue,
   ThemeColor,
+  ThemeColorReference,
 } from "../types.ts";
 import {
   StyleSelector,
@@ -39,6 +40,11 @@ interface ThemeDefinition {
 }
 
 export { ThemeKey } from "./theme-key.ts";
+
+/** Creates an explicit semantic reference to a named theme color. */
+export function themeColor(key: string | ThemeKey): ThemeColorReference {
+  return { type: "theme", key: themeKey(key) };
+}
 
 interface ThemeData {
   readonly styles: ReadonlyMap<string, ThemeEntry<StyleSpecValue>>;

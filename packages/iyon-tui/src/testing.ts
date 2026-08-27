@@ -74,19 +74,30 @@ export class AppHarness implements AppHarnessContract {
     this.clock += ms;
   }
   screenRows(): readonly string[] {
-    return this.callTesting(() => tuiTestingAccess(this.tui).screenRows());
+    return this.inspect((access) => access.screenRows());
   }
   nativeHistoryRows(): readonly string[] {
-    return this.callTesting(() => tuiTestingAccess(this.tui).nativeHistoryRows());
+    return this.inspect((access) => access.nativeHistoryRows());
   }
   styleAt(row: number, column: number): Readonly<Record<string, unknown>> {
-    return this.callTesting(() => tuiTestingAccess(this.tui).styleAt(row, column));
+    return this.inspect((access) => access.styleAt(row, column));
   }
   cellXOfText(row: number, text: string): number | null {
-    return this.callTesting(() => tuiTestingAccess(this.tui).cellXOfText(row, text));
+    return this.inspect((access) => access.cellXOfText(row, text));
   }
   exited(): boolean { return this.callTesting(() => tuiTestingAccess(this.tui).exited()); }
   now(): number { return this.clock; }
+
+  private inspect<R>(operation: (access: ReturnType<typeof tuiTestingAccess>) => R): R {
+    return this.callTesting(() => {
+      const access = tuiTestingAccess(this.tui);
+      // Flush retained/native zero-time work before a deterministic snapshot.
+      // This keeps headless inspection coherent without exposing testing-only
+      // clock control to application code.
+      access.advance(0);
+      return operation(access);
+    });
+  }
 
   private callTesting<R>(operation: () => R): R {
     try {

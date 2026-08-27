@@ -13,6 +13,7 @@ import {
   type RetainedExecutionRuntime,
 } from "./execution.ts";
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
+import { componentViewFor } from "./component-facade.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
@@ -85,7 +86,7 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
 
   view(): View {
     this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
   }
 
   capabilities(): ComponentCapabilities { return this.call(() => ({ focusable: true, keys: ["up", "down", "pageup", "pagedown", "home", "end"] })); }

@@ -610,7 +610,6 @@
       "Annotations",
       "AppHarness",
       "ChildrenBuilder",
-      "Component",
       "ComponentAdapterBridge",
       "DiffHunk",
       "DiffLine",

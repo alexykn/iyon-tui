@@ -2,6 +2,7 @@ import { HandleBase, nativeComponentIdOf, registerNativeResource } from "./handl
 import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
 import { OutputHandle } from "./types.ts";
 import type { TextInput as TextInputContract } from "./types.ts";
+import { componentViewFor } from "./component-facade.ts";
 import { View } from "./values/view.ts";
 
 /**
@@ -31,7 +32,7 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
   isMultiline(): boolean { return this.call(() => this.nativeAs<NativeTextInputContract>().isMultiline()); }
   view(): View {
     this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
   }
 
 }

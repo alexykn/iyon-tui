@@ -15,7 +15,6 @@ const publicTypeNames = [
   "BorderSpec",
   "BorderStyle",
   "ColorSpec",
-  "Component",
   "ComponentHandle",
   "ComponentAdapter",
   "ComponentCapabilities",

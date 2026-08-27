@@ -39,9 +39,9 @@ export function buildConsumerBody(
     if (state.showHint) {
       column.child(View.text("type a message; ctrl+c exits").style(MUTED_STYLE).fillWidth());
     }
-    column.child(View.component(handles.listSlot).fillWidth());
-    column.contentMax(5, View.component(handles.composer).fillWidth());
-    column.flexMax(4, View.component(handles.pane).fillWidth());
+    column.child(handles.listSlot.view().fillWidth());
+    column.contentMax(5, handles.composer.view().fillWidth());
+    column.flexMax(4, handles.pane.view().fillWidth());
     column.child(View.text(consumerFooterText(state)).style(MUTED_STYLE).fillWidth());
   })
     .fillWidth()

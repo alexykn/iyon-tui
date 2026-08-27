@@ -8,7 +8,7 @@ describe("native headless harness", () => {
     const input = harness.createTextInput({ multiline: true, border: { style: "plain", edges: "topBottom", color: { type: "named", value: "white" } } });
     const history = harness.createHistory();
     await history.push(View.text("native history"));
-    await harness.render({ body: View.vertical([View.component(input), View.text("footer")]), history });
+    await harness.render({ body: View.vertical([input.view(), View.text("footer")]), history });
     expect(harness.screenRows().at(-1)?.startsWith("footer")).toBe(true);
     expect(harness.nativeHistoryRows().some((row) => row.includes("native history"))).toBe(true);
 
@@ -42,7 +42,7 @@ describe("native headless harness", () => {
     const harness = await AppHarness.open({ width: 80, height: 6 });
     const slot = harness.createViewSlot(View.text("frame one"));
     await slot.setAnimation([View.text("frame one"), View.text("frame two")], 80);
-    await harness.render({ body: View.component(slot) });
+    await harness.render({ body: slot.view() });
     expect(harness.screenRows().some((row) => row.includes("frame one"))).toBe(true);
     harness.advance(80);
     expect(harness.screenRows().some((row) => row.includes("frame two"))).toBe(true);

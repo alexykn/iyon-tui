@@ -263,18 +263,19 @@ export interface StreamSegmentSnapshot {
   readonly text: string;
 }
 
-/** Opaque framework-owned identity that may occupy a View component node. */
+/**
+ * Opaque framework-owned identity that may occupy one View component node.
+ * This is a mounted handle, not the user-implementable ComponentAdapter
+ * behavior contract; use a control's `view()` projection for composition.
+ */
 export interface ComponentHandle extends FrameworkHandle {
   readonly kind: "component" | "text-input";
   view(): TuiOperation<View>;
 }
 
-export interface Component extends ComponentHandle {
+export interface ViewSlot extends ComponentHandle {
   readonly kind: "component";
   capabilities(): TuiOperation<ComponentCapabilities>;
-}
-
-export interface ViewSlot extends Component {
   setView(view: View | (() => View)): TuiOperation<void>;
   setAnimation(frames: readonly View[], intervalMs: number): TuiOperation<void>;
   setAnimationAtCycleBoundary(frames: readonly View[], intervalMs: number): TuiOperation<void>;
@@ -282,7 +283,9 @@ export interface ViewSlot extends Component {
   revision(): TuiOperation<number>;
 }
 
-export interface ScrollPane extends Component {
+export interface ScrollPane extends ComponentHandle {
+  readonly kind: "component";
+  capabilities(): TuiOperation<ComponentCapabilities>;
   setContent(view: View | (() => View)): TuiOperation<void>;
   followEnd(): TuiOperation<void>;
 }

@@ -16,7 +16,7 @@ describe("real-time native TUI driving", () => {
     try {
       const slot = tui.createViewSlot(View.text("frame one"));
       await slot.setAnimation([View.text("frame one"), View.text("frame two")], 80);
-      await tui.render(new Scene(View.component(slot).fillWidth()));
+      await tui.render(new Scene(slot.view().fillWidth()));
       const before = tui.screenRows();
       const nextAction = tui.nextAction();
       const closer = closeAfter(tui, 160);

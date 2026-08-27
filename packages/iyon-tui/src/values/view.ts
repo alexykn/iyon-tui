@@ -21,8 +21,6 @@ import type {
   GridSpec as PublicGridSpec,
   GridTrack as PublicGridTrack,
   HorizontalAlign,
-  ComponentHandle,
-  HandleId,
   LayoutChild,
   VerticalAlign,
   WrapMode,
@@ -71,7 +69,6 @@ import {
 } from "../ir.ts";
 import { PersistentSeq } from "../persistent_seq.ts";
 import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../style-internals.ts";
-import { componentIdOf } from "../handles.ts";
 import { nodeForBridge, setViewNode } from "../view-internals.ts";
 import { StyleSpec } from "./style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "./style.ts";
@@ -563,11 +560,6 @@ export class View {
       child: childNode,
     });
     return derived;
-  }
-
-  static component(handle: ComponentHandle): View {
-    if (isRetainedConstruction()) return composeComponent(handle);
-    return new View({ kind: BRIDGE_VIEW_KIND.component, handle: componentIdOf(handle) as HandleId });
   }
 
   /**

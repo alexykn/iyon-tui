@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { Component, History, TextStream, Tui, View } from "../src/index.ts";
+import { History, TextStream, Tui, View } from "../src/index.ts";
 
 describe("T5 native TUI handles", () => {
   test("synchronous native mutations do not allocate Promise wrappers", () => {
@@ -40,14 +40,16 @@ describe("T5 native TUI handles", () => {
   });
 
   test("history accepts a retained view and component handles are shared", async () => {
+    const tui = await Tui.open({ headless: true });
     const history = new History();
     await history.push(View.text("history"));
-    const component = new Component();
-    const first = await component.view();
-    const second = await component.view();
+    const slot = tui.createViewSlot(View.spacer(0));
+    const first = await slot.view();
+    const second = await slot.view();
     expect(first).not.toBe(second);
-    expect(await component.revision()).toBe(0);
-    component.dispose();
+    expect(await slot.revision()).toBe(0);
+    slot.dispose();
     history.dispose();
+    await tui.close();
   });
 });

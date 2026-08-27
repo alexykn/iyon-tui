@@ -90,7 +90,7 @@ export { TextSelector, TextSpan } from "./values/text.ts";
 export { History } from "./history.ts";
 export { TextInput } from "./text-input.ts";
 export { TextStream, StreamPane } from "./stream.ts";
-export { Component, ViewSlot as NativeViewSlot } from "./component.ts";
+export { ViewSlot as NativeViewSlot } from "./component.ts";
 export { NativeScrollPane } from "./scroll-pane.ts";
 export { TextContent, RawText } from "./values/text-content.ts";
 export { Annotations } from "./values/annotations.ts";

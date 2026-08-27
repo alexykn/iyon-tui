@@ -324,6 +324,55 @@ function controlLifecycleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 8: H1E component-composition facade guard
+// ---------------------------------------------------------------------------
+
+function componentFacadeGate(): void {
+  const view = readFileSync(join(FRAMEWORK_SRC, "values/view.ts"), "utf8");
+  const facade = readFileSync(join(FRAMEWORK_SRC, "component-facade.ts"), "utf8");
+  const compose = readFileSync(join(FRAMEWORK_SRC, "compose.ts"), "utf8");
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
+  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
+  const stripComments = (source: string): string => source
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .replace(/\/\/.*$/gmu, "");
+  const activeSources = [view, facade, compose, component, scrollPane, textInput];
+  const offenders: string[] = [];
+
+  if (/\bstatic\s+component\s*\(/u.test(stripComments(view))) {
+    offenders.push("values/view.ts: View.component remains public");
+  }
+  if (activeSources.some((source) => /\bView\.component\s*\(/u.test(stripComments(source)))) {
+    offenders.push("framework controls/composition still construct View.component directly");
+  }
+  if (!/export\s+function\s+componentViewFor\s*\(/u.test(facade)) {
+    offenders.push("component-facade.ts: missing private component placement lowering");
+  }
+  for (const [name, source] of [["component.ts", component], ["scroll-pane.ts", scrollPane], ["text-input.ts", textInput]] as const) {
+    if (!/componentViewFor\(this\)/u.test(source)) offenders.push(`${name}: control.view() bypasses the semantic projection helper`);
+  }
+  if (/\bexport\s+(?:class|interface|type)\s+Component\b/u.test(types) || /\bexport\s+class\s+Component\b/u.test(component)) {
+    offenders.push("Component is still exposed as a concrete or structural root abstraction");
+  }
+  if (/\bexport\s*\{[^}]*\bComponent\b/u.test(index)) {
+    offenders.push("index.ts: concrete Component remains a root export");
+  }
+  if (walk(fixtureRoot).some((file) => /\bView\.component\s*\(/u.test(stripComments(readFileSync(file, "utf8"))))) {
+    offenders.push("standalone fixture still uses View.component instead of control.view()");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1e-component-facade", offenders.join("; "));
+  } else {
+    pass("h1e-component-facade", "controls compose through view() and placement lowering remains private");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -409,6 +458,7 @@ consumerFixtureGate();
 await themeStyleSemanticGate();
 opaqueHandleGate();
 controlLifecycleGate();
+componentFacadeGate();
 await publicSurfaceGate();
 
 if (failed) {

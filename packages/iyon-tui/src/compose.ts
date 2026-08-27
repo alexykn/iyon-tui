@@ -58,6 +58,7 @@ import {
   type OverflowIndicator,
 } from "./values/view.ts";
 import { componentIdOf } from "./handles.ts";
+import { componentViewFor } from "./component-facade.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { insets } from "./values/geometry.ts";
 import type { Insets } from "./values/geometry.ts";
@@ -408,11 +409,11 @@ export function composeSpacer(rows: number): View {
   return view;
 }
 
-/** Lowers View.component(handle). */
+/** Lowers a mounted component handle through the private placement facade. */
 export function composeComponent(handle: ComponentHandle): View {
   const componentId = componentIdOf(handle) as HandleId;
   const scope = executionContext.top;
-  if (scope === undefined) return View.component(handle);
+  if (scope === undefined) return componentViewFor(handle);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
@@ -422,7 +423,7 @@ export function composeComponent(handle: ComponentHandle): View {
       return previous;
     }
   }
-  const view = withoutRetainedComposition(() => View.component(handle));
+  const view = withoutRetainedComposition(() => componentViewFor(handle));
   stageFresh(slot, view);
   return view;
 }

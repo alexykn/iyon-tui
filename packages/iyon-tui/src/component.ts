@@ -1,6 +1,5 @@
-import { HandleBase, nativeComponentIdOf, requireNativeClass } from "./handles.ts";
-import { native } from "./native.ts";
-import type { Component as ComponentContract, ComponentCapabilities, ViewSlot as ViewSlotContract } from "./types.ts";
+import { HandleBase, nativeComponentIdOf } from "./handles.ts";
+import type { ComponentCapabilities, ViewSlot as ViewSlotContract } from "./types.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
@@ -13,6 +12,7 @@ import {
   type RetainedExecutionRuntime,
 } from "./execution.ts";
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
+import { componentViewFor } from "./component-facade.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
@@ -119,7 +119,7 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
 
   view(): View {
     this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
+    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
   }
   capabilities(): ComponentCapabilities { return this.call(() => ({})); }
   revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
@@ -394,23 +394,4 @@ export function createViewSlot(
 ): ViewSlot {
   const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never) => ViewSlot;
   return new Constructor(host, initialView, retainedRuntime);
-}
-
-/**
- * Standalone generic component handle retained for the component facade audit.
- * It is caller-owned and has no Tui-shared builder runtime; dispose it
- * explicitly. Normal controls should use their semantic host factory and
- * `.view()` projection instead.
- */
-export class Component extends HandleBase<"component"> implements ComponentContract {
-  constructor() {
-    const NativeViewSlot = requireNativeClass(native.NativeViewSlot, "NativeViewSlot");
-    super("component", new NativeViewSlot(nodeForBridge(View.spacer(0))) as never);
-  }
-  view(): View {
-    this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : View.component(this);
-  }
-  capabilities(): ComponentCapabilities { return this.call(() => ({})); }
-  revision(): number { return this.call(() => this.nativeAs<NativeViewSlotHandle>().revision()); }
 }

@@ -1,6 +1,5 @@
 import {
   AppHarness,
-  Component,
   History,
   Scene,
   TextStream,
@@ -18,7 +17,7 @@ export async function runTuiDemo(): Promise<{
   const history = new History();
   const input = harness.createTextInput();
   const stream = new TextStream();
-  const component = new Component();
+  const slot = harness.createViewSlot(View.spacer(0));
 
   await input.setText("compose");
   await history.push(View.text("completed history"));
@@ -28,7 +27,7 @@ export async function runTuiDemo(): Promise<{
     View.text("composer").bold(),
     await input.view(),
     View.text((await stream.snapshot()).text),
-    await component.view(),
+    await slot.view(),
   ]);
   await harness.render(new Scene(body, history));
   harness.pressKey("Enter");
@@ -36,7 +35,7 @@ export async function runTuiDemo(): Promise<{
   const screenRows = harness.screenRows();
   const nativeHistoryRows = harness.nativeHistoryRows();
   await stream.seal();
-  await component.dispose();
+  await slot.dispose();
   await input.dispose();
   await history.dispose();
   await stream.dispose();

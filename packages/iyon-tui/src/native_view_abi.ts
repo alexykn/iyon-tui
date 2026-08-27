@@ -1,5 +1,12 @@
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
-import { ensureNative, MaterializeTx, RetainedCycleError, RetainedFastFallbackError } from "./retained_dag.ts";
+import {
+  clearNativeHint,
+  ensureNative,
+  MaterializeTx,
+  refreshNativeHint,
+  RetainedCycleError,
+  RetainedFastFallbackError,
+} from "./retained_dag.ts";
 import {
   hostRenderRef,
   pathChild,
@@ -177,16 +184,37 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
  * unit imports pay no extra per-node round trips, while anything previously
  * materialized through any boundary rides its hint.
  *
- * Returns the root ref carrying exactly ONE live lease (every other temporary
- * lease drains in one batch), or undefined when the retained path refused
- * (cap/shape/fallback); the caller then routes its complete fallback.
+ * Returns the root ref carrying exactly ONE lease owned by the caller. A
+ * generation-valid hint is only a borrowed acceleration result, so it is
+ * promoted through the native NodeId cache before returning; otherwise a
+ * transient boundary could release another boundary's lease. Every other
+ * temporary lease drains in one batch. Returns undefined when the retained
+ * path refused or a borrowed hint has gone stale; callers then route their
+ * complete fallback.
  */
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
+  const node = nodeForBridge(next);
   const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
   try {
-    const reference = ensureNative(nodeForBridge(next), tx);
+    let reference = ensureNative(node, tx);
+    // ensureNative deliberately treats hints as borrowed. Transient users of
+    // this helper must own one lease before they can release it, even when the
+    // root was already materialized by a different boundary.
+    if (!tx.temporaryLeases.includes(reference)) {
+      const [low, high] = nodeIdPair(next);
+      try {
+        reference = viewRefForNodeId(session.symbols, session.runtime, low, high);
+      } catch (error) {
+        if (!isExpectedNativeStatus(error)) throw error;
+        clearNativeHint(next);
+        tx.releaseAll();
+        return undefined;
+      }
+      refreshNativeHint(next, session.abi.generation, reference);
+      tx.temporaryLeases.push(reference);
+    }
     tx.releaseAllExcept(reference);
     return reference;
   } catch (error) {

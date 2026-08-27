@@ -60,7 +60,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   layout(): HistoryLayout {
-    return this.callHost(() => this.nativeAs<NativeHistoryContract>().layout() as HistoryLayout);
+    return History.callHost(this, () => this.nativeAs<NativeHistoryContract>().layout() as HistoryLayout);
   }
 
   /**
@@ -71,7 +71,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
    * drains after the push because History retains its own strong state.
    */
   push(view: View): number {
-    return this.callHost(() => {
+    return History.callHost(this, () => {
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
@@ -86,7 +86,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   freeze(unit: number, view: View): void {
-    this.callHost(() => {
+    History.callHost(this, () => {
       validateHistoryUnit(unit);
       // T13 (§78): same retained-first rule as push — freezing a live card
       // reuses its already-materialized nodes through their hints.
@@ -107,14 +107,14 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   discardLive(unit: number): void {
-    this.callHost(() => {
+    History.callHost(this, () => {
       validateHistoryUnit(unit);
       this.nativeAs<NativeHistoryContract>().discardLive(unit);
     });
   }
 
   pushStream(stream: TextStream): void {
-    this.callHost(() => {
+    History.callHost(this, () => {
       const streamResource = nativeResourceOf<object>(stream);
       assertStreamCanAttach(stream);
       this.nativeAs<NativeHistoryContract>().pushStream(streamResource);
@@ -132,7 +132,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   sealStream(stream: TextStream): void {
-    this.callHost(() => {
+    History.callHost(this, () => {
       if (streamOwnerOf(stream) !== this) {
         throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
       }
@@ -141,12 +141,12 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   setLayout(layout: HistoryLayout): void {
-    this.callHost(() => this.nativeAs<NativeHistoryContract>().setLayout(layout));
+    History.callHost(this, () => this.nativeAs<NativeHistoryContract>().setLayout(layout));
   }
 
-  private callHost<R>(operation: () => R): R {
-    return this.call(() => {
-      if (historyLifetimes.get(this)?.closed === true) {
+  private static callHost<R>(history: History, operation: () => R): R {
+    return history.call(() => {
+      if (historyLifetimes.get(history)?.closed === true) {
         throw tuiError("terminal", "History is bound to a closed Tui runtime");
       }
       return operation();

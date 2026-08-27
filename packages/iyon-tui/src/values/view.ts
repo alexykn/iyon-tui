@@ -427,6 +427,7 @@ export class View {
   strikethrough(): View { return this.textAttribute("strikethrough"); }
   textAttribute(name: TextAttribute, enabled = true): View {
     validateTextAttribute(name);
+    if (typeof enabled !== "boolean") throw new TypeError("text attribute value must be boolean");
     if (isRetainedConstruction()) return composeTextAttribute(this, name, enabled);
     return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } });
   }
@@ -453,7 +454,10 @@ export class View {
     // StyleSpec remains a sparse overlay. This mirrors Rust's View::style
     // distinction and keeps named-style selection from inheriting stale local
     // fields from an earlier style call.
-    return this.decorate({ style: mergeStyles(emptyStyle(), lowered) }, style.kind === "style-ref");
+    // Only a named StyleRef replaces the current semantic style. A direct
+    // StyleRef has no ThemeKey and is the same sparse overlay as a StyleSpec.
+    const replacesStyle = style.kind === "style-ref" && style.themeKey !== undefined;
+    return this.decorate({ style: mergeStyles(emptyStyle(), lowered) }, replacesStyle);
   }
 
   styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {

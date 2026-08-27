@@ -241,7 +241,8 @@ function decorationDeltaMatches(
     case MOD_STYLE_SPEC: {
       const style = a as StyleRef | StyleSpec;
       const lowered = mergeStyles(emptyStyle(), styleNodeFor(style));
-      const expected = style.kind === "style-ref"
+      const replacesStyle = style.kind === "style-ref" && style.themeKey !== undefined;
+      const expected = replacesStyle
         ? lowered
         : mergeStyles(inherited.style, lowered);
       return styleNodesEqual(dec.style, expected);

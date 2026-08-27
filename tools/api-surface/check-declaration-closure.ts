@@ -16,7 +16,7 @@ const PRIVATE_MODULES = new Set([
   "style-internals",
   "view-internals",
 ]);
-const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native(?:Tui|View|History|Text|Scroll|Projector|Output)(?:Contract|Abi[A-Z]\w*))\b/u;
+const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native[A-Z]\w*(?:Contract|Abi[A-Z]\w*))\b/u;
 
 const publicTypeNames = [
   "AnsiColor",
@@ -215,7 +215,7 @@ try {
   );
   writeFileSync(
     probe,
-    `import type {\n${publicTypeNames.map((name) => `  ${name},`).join("\n")}\n} from "./index.d.ts";\n\nexport type PublicSurfaceProbe = [${probeReferences.join(", ")}];\n`,
+    `import type {\n${publicTypeNames.map((name) => `  ${name},`).join("\n")}\n} from "./index.d.ts";\n\nexport type PublicSurfaceProbe = [${probeReferences.join(", ")}];\n\ndeclare const runtime: TuiRuntime;\ndeclare const scene: Scene;\nconst historyFromRuntime: History = runtime.createHistory();\nconst inputFromRuntime: TextInput = runtime.createTextInput();\nconst outputFromInput: Output<string> = inputFromRuntime.submitted();\nconst historyFromScene: History | undefined = scene.history;\nruntime.route(outputFromInput, "surface-probe");\nvoid historyFromRuntime;\nvoid historyFromScene;`,
   );
   if (!runTsc([
     "--ignoreConfig",
@@ -239,7 +239,7 @@ try {
   const testingProbe = join(output, "testing-surface-probe.ts");
   writeFileSync(
     testingProbe,
-    `import type { AppHarness, createAppHarness } from "./testing.d.ts";\n\nexport type PublicTestingFactory = typeof createAppHarness;\nexport type PublicTestingSurface = AppHarness;\n`,
+    `import type { AppHarness, createAppHarness } from "./testing.d.ts";\nimport type { History, Output, TextInput } from "./index.d.ts";\n\nexport type PublicTestingFactory = typeof createAppHarness;\nexport type PublicTestingSurface = AppHarness;\ndeclare const harness: AppHarness;\nconst historyFromHarness: History = harness.createHistory();\nconst inputFromHarness: TextInput = harness.createTextInput();\nconst outputFromHarness: Output<string> = inputFromHarness.submitted();\nvoid historyFromHarness;\nvoid outputFromHarness;\n`,
   );
   if (!runTsc([
     "--ignoreConfig",

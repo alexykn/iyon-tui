@@ -105,13 +105,12 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
-        if (this.disposed || this.nativeAs<NativeViewSlotHandle>().setViewRef === undefined) return false;
-        try {
-          this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
-          return true;
-        } catch {
-          return false;
-        }
+        if (this.disposed) return false;
+        // A native exception is not an ordinary retained-path refusal. Let it
+        // cross the boundary so the transaction reports the real failure
+        // instead of silently converting a broken handle into a fallback.
+        this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
+        return true;
       });
       // Adopt the initial content so the boundary owns its root lease.
       this.boundary.adopt(initialView);

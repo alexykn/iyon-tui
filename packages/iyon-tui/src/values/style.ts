@@ -22,6 +22,7 @@ export class StyleSpec {
 
   attribute(name: TextAttribute, enabled = true): StyleSpec {
     validateTextAttribute(name);
+    if (typeof enabled !== "boolean") throw new TypeError("text attribute value must be boolean");
     return new StyleSpec({ ...this.value, attributes: { ...this.value.attributes, [name]: enabled } });
   }
 

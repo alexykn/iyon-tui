@@ -1,14 +1,14 @@
 import { asTuiError, tuiError } from "./errors.ts";
 import { Tui } from "./runtime.ts";
 import { tuiTestingAccess } from "./testing-access.ts";
-import type { History as HistoryHandle } from "./history.ts";
-import type { TextInput as TextInputHandle } from "./text-input.ts";
 import type {
   AppHarness as AppHarnessContract,
+  History as HistoryContract,
   Output,
   TextInput as TextInputContract,
   TextInputOptions,
   ScrollPane,
+  SceneProducer,
   TuiEvent,
   TerminalMetadata,
   TuiOpenOptions,
@@ -33,13 +33,13 @@ export class AppHarness implements AppHarnessContract {
   get size(): TerminalMetadata { return this.tui.size; }
   nextEvent(signal?: AbortSignal): Promise<TuiEvent> { return this.tui.nextEvent(signal); }
 
-  render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
+  render(scene: SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);
     this.callTesting(() => tuiTestingAccess(this.tui).advance(0));
   }
 
-  createHistory(): HistoryHandle { return this.tui.createHistory(); }
-  createTextInput(options: TextInputOptions = {}): TextInputHandle { return this.tui.createTextInput(options); }
+  createHistory(): HistoryContract { return this.tui.createHistory(); }
+  createTextInput(options: TextInputOptions = {}): TextInputContract { return this.tui.createTextInput(options); }
   createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }
   createScrollPane(initial: View): ScrollPane { return this.tui.createScrollPane(initial); }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }

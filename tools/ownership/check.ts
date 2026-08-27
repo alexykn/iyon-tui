@@ -137,11 +137,11 @@ function tsImportGate(): void {
         violations.push(`${relative(ROOT, file)} -> "${spec}" (unresolved)`);
         continue;
       }
-      if (resolved.startsWith(FRAMEWORK_SRC)) continue;
       if (resolved === NATIVE_CONTRACT) {
         seams.push(`${relative(ROOT, file)} -> ../native.ts`);
         continue;
       }
+      if (resolved.startsWith(FRAMEWORK_SRC)) continue;
       violations.push(`${relative(ROOT, file)} -> "${spec}" escapes framework`);
     }
   }

@@ -7,9 +7,7 @@ import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
-import type { History } from "./history.ts";
 import { createTextInput } from "./text-input.ts";
-import type { TextInput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { createScrollPane } from "./scroll-pane.ts";
@@ -30,6 +28,7 @@ import type {
   Output,
   ScrollPane,
   Scene as SceneContract,
+  SceneProducer,
   History as HistoryContract,
   TerminalMetadata,
   TextInput as TextInputContract,
@@ -102,6 +101,12 @@ export class Tui implements TuiRuntime {
     // microtask (R5 scheduler semantics). render() additionally drains
     // pending work first so legacy/direct callers see a coherent frame.
     this.retainedRuntime = new RetainedExecutionRuntime({
+      // Scene sideband state is WIP alongside the root output. A failed
+      // evaluation/preparation must not leave a history staged for a future
+      // commit after the committed root stayed unchanged.
+      onBatchAbort: () => {
+        this.stagedHistory = this.boundHistory;
+      },
       createScopeProjection: () => {
         // Component scopes project as native view slots (R6a machinery).
         // The seed is framework plumbing, not a user semantic construction;
@@ -318,7 +323,7 @@ export class Tui implements TuiRuntime {
    * inside `builder` subscribe the root scope automatically, so tracked
    * state changes re-render WITHOUT calling render again.
    */
-  render(sceneOrBuilder: SceneContract | (() => SceneContract), signal?: AbortSignal): void {
+  render(sceneOrBuilder: SceneProducer, signal?: AbortSignal): void {
     if (typeof sceneOrBuilder === "function") {
       this.renderCanonical(sceneOrBuilder, signal);
       return;
@@ -511,7 +516,7 @@ export class Tui implements TuiRuntime {
   }
 
   /** Creates a Tui-owned History already attached to this host. */
-  createHistory(): History {
+  createHistory(): HistoryContract {
     this.prepareMutation("tui.createHistory");
     try {
       const history = createHistoryHandle(this.host.history() as never);
@@ -524,7 +529,7 @@ export class Tui implements TuiRuntime {
   }
 
   /** Creates a Tui-owned, host-bound TextInput with all options applied. */
-  createTextInput(options: TextInputOptions = {}): TextInput {
+  createTextInput(options: TextInputOptions = {}): TextInputContract {
     this.prepareMutation("tui.createTextInput");
     const border = options.border === undefined ? undefined : borderNodeFor(options.border);
     try {

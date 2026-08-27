@@ -367,6 +367,8 @@ let NEXT_SCOPE_ID = 1;
 export interface RetainedExecutionRuntimeOptions {
   createScopeProjection?: ScopeProjectionFactory;
   autoFlush?: boolean;
+  /** Internal transaction hook for boundary-owned WIP sideband state. */
+  onBatchAbort?: () => void;
 }
 
 export class RetainedExecutionRuntime {
@@ -375,6 +377,7 @@ export class RetainedExecutionRuntime {
   private readonly roots: RetainedExecutionScope[] = [];
   private readonly projectionFactory: ScopeProjectionFactory | undefined;
   private readonly autoFlush: boolean;
+  private readonly onBatchAbort: (() => void) | undefined;
   /**
    * Scheduled-flush token (post-R9 review): a generation counter, not a bare
    * boolean, so an EXPLICIT flush can consume an already-pending microtask.
@@ -390,6 +393,7 @@ export class RetainedExecutionRuntime {
   constructor(options: RetainedExecutionRuntimeOptions = {}) {
     this.projectionFactory = options.createScopeProjection;
     this.autoFlush = options.autoFlush ?? true;
+    this.onBatchAbort = options.onBatchAbort;
   }
 
   mountRoot<P>(component: ViewComponentType<P>, props: P): RetainedExecutionScope<P> {
@@ -399,6 +403,7 @@ export class RetainedExecutionRuntime {
     try {
       this.runWork(scope);
     } catch (error) {
+      this.onBatchAbort?.();
       // Roll back WIP (fresh evaluated children collected + disposed) before
       // detaching the failed root.
       const fresh: RetainedExecutionScope[] = [];
@@ -626,6 +631,11 @@ export class RetainedExecutionRuntime {
   }
 
   dispose(): void {
+    // Invalidate an already-posted microtask before dropping the queue. The
+    // callback must not even enter the runtime after Tui teardown, rather than
+    // merely observing an empty queue after disposal.
+    this.flushScheduled = false;
+    this.scheduledGeneration += 1;
     for (const root of this.roots.splice(0)) {
       this.disposeScopeTree(root);
     }
@@ -826,6 +836,10 @@ export class RetainedExecutionRuntime {
 
   private abortBatch(batch: ReadonlyArray<RetainedExecutionScope>): void {
     executionCounters.execution_commit_aborts += 1;
+    // Boundary-owned metadata (for example a pending scene sideband) is WIP
+    // too. Restore it only after an evaluation/PREPARE abort; commit-phase
+    // failures deliberately do not enter this path (§32.3).
+    this.onBatchAbort?.();
     const fresh: RetainedExecutionScope[] = [];
     for (const scope of batch) {
       this.abortLevel(scope.owner, fresh);
@@ -1225,16 +1239,13 @@ export function invokeComponent<P>(
 export class OwnedBuilderRoot {
   readonly scope: RetainedExecutionScope;
   private currentProducer: () => View;
-  private onFailure?: (previousProducer: () => View) => void;
 
   private constructor(
     runtime: RetainedExecutionRuntime,
     producer: () => View,
     target: PublicationTarget,
-    onFailure?: (previousProducer: () => View) => void,
   ) {
     this.currentProducer = producer;
-    this.onFailure = onFailure;
     // The scope renders whatever the CURRENT producer yields; the producer
     // itself is transactional state owned by this root (§32.2.6).
     const self = this;
@@ -1248,9 +1259,8 @@ export class OwnedBuilderRoot {
     runtime: RetainedExecutionRuntime,
     producer: () => View,
     target: PublicationTarget,
-    onFailure?: (previousProducer: () => View) => void,
   ): OwnedBuilderRoot {
-    const root = new OwnedBuilderRoot(runtime, producer, target, onFailure);
+    const root = new OwnedBuilderRoot(runtime, producer, target);
     runtime.mountExistingRoot(root.scope);
     return root;
   }

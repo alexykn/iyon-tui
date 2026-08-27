@@ -73,12 +73,11 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
     if (session !== undefined && initialView !== undefined) {
       this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
         if (this.disposed) return false;
-        try {
-          this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
-          return true;
-        } catch {
-          return false;
-        }
+        // Native failures must remain visible to the retained transaction;
+        // returning false here would silently turn a broken pane into a
+        // fallback/refusal and hide the original error.
+        this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
+        return true;
       });
       this.boundary.adopt(initialView);
     }

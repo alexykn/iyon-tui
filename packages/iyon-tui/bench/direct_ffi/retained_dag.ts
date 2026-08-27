@@ -611,8 +611,12 @@ function styleRefFor(style: StyleNode | undefined, tx: MaterializeTx): number {
     if (bit === undefined) {
       throw new RetainedFastFallbackError(`unknown text attribute ${name}`);
     }
+    const enabled = style.attributes[name];
+    if (typeof enabled !== "boolean") {
+      throw new RetainedFastFallbackError(`text attribute ${name} must be boolean`);
+    }
     present |= bit;
-    if (style.attributes[name]) truth |= bit;
+    if (enabled) truth |= bit;
   }
   const foreground = style.foreground === undefined ? 0 : styleAtomRef(styleColorAtom(style.foreground), tx);
   const background = style.background === undefined ? 0 : styleAtomRef(styleColorAtom(style.background), tx);
@@ -956,6 +960,16 @@ const MATERIALIZERS = new Map<number, NodeMaterializer>([
  */
 function installHint(node: BridgeViewNode, generation: number, nativeRef: number): void {
   BRIDGE_NATIVE.set(node, { generation, nativeRef });
+}
+
+/** @internal Refreshes a hint after a lease-bearing NodeId promotion. */
+export function refreshNativeHint(view: View, generation: number, nativeRef: number): void {
+  installHint(nodeForBridge(view), generation, nativeRef);
+}
+
+/** @internal Drops a confirmed-stale hint before complete fallback recovery. */
+export function clearNativeHint(view: View): void {
+  deleteBridgeNativeHint(nodeForBridge(view));
 }
 
 function deleteBridgeNativeHint(node: BridgeViewNode): void {
@@ -1508,6 +1522,9 @@ export class RetainedRootBoundary {
       try {
         rootRef = viewRefForNodeId(this.session.symbols, this.session.runtime, low, high);
         counters.node_id_ref_promotion_hits += 1;
+        // Keep a re-promoted NativeRef in the sidecar; otherwise every root
+        // update after slot reclamation repeats the same NodeId lookup.
+        installHint(node, this.session.abi.generation, rootRef);
         acquiredBoundaryLease = true;
       } catch (error) {
         if (!isExpectedNativeStatus(error)) {

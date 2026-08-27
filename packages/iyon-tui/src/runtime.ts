@@ -23,7 +23,7 @@ import type { RootPublication } from "./retained_dag.ts";
 import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./execution.ts";
 import { activeExecutionScope, protocolState, withoutRetainedComposition } from "./execution-context.ts";
 import type {
-  OutputHandle,
+  Output,
   ScrollPane,
   Scene as SceneContract,
   History as HistoryContract,
@@ -430,7 +430,7 @@ export class Tui implements TuiRuntime {
     this.host.bindKey(key, modifiers, routeId);
   }
 
-  route(output: OutputHandle<string>, routeId: string): void {
+  route(output: Output<string>, routeId: string): void {
     this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
   }
 

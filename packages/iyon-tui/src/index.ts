@@ -35,12 +35,10 @@ export type {
   KeyEvent,
   OutputEvent,
   Output,
-  OutputHandle,
   PasteEvent,
   Projector,
   RenderContext,
   Renderer,
-  ResizeEvent,
   SceneProducer,
   StreamAnnotation,
   StreamSegmentSnapshot,
@@ -108,11 +106,9 @@ export { TextVisitorAdapter } from "./traits/text-visitor.ts";
 export { TextRewriterAdapter } from "./traits/text-rewriter.ts";
 export { StreamingSourceAdapter } from "./traits/streaming-source.ts";
 export { ComponentAdapterBridge } from "./traits/component.ts";
-export { OutputRouter, RouteConflict } from "./output.ts";
 export { FocusController, InteractionRouter } from "./interaction.ts";
 export { Scene } from "./scene.ts";
 export { Tui } from "./runtime.ts";
-export { keyEvent, pasteEvent, resizeEvent, terminateEvent } from "./events.ts";
 export { AppHarness, createAppHarness } from "./testing.ts";
 
 export const tuiSmoke = "iyon:tui/t1" as const;

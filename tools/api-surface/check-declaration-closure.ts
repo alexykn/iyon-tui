@@ -40,7 +40,6 @@ const publicTypeNames = [
   "NativeViewSlot",
   "Output",
   "OutputEvent",
-  "OutputHandle",
   "OverflowIndicator",
   "ProjectionSpan",
   "RgbColor",
@@ -197,7 +196,7 @@ try {
 
   const probe = join(output, "public-surface-probe.ts");
   const probeReferences = publicTypeNames.map((name) =>
-    ["OutputHandle", "State", "TuiOperation"].includes(name)
+    ["Output", "State", "TuiOperation"].includes(name)
       ? `${name}<unknown>`
       : name,
   );

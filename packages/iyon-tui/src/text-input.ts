@@ -1,6 +1,6 @@
 import { HandleBase, nativeComponentIdOf, registerNativeResource } from "./handles.ts";
 import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
-import { OutputHandle } from "./types.ts";
+import { Output } from "./types.ts";
 import type { TextInput as TextInputContract } from "./types.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { View } from "./values/view.ts";
@@ -25,8 +25,8 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
   cursorBytes(): number { return this.call(() => this.nativeAs<NativeTextInputContract>().cursorBytes()); }
   setText(value: string): void { this.call(() => this.nativeAs<NativeTextInputContract>().setText(value)); }
   clear(): void { this.call(() => this.nativeAs<NativeTextInputContract>().clear()); }
-  submitted(): OutputHandle<string> {
-    return this.call(() => new NativeOutputHandle(this.nativeAs<NativeTextInputContract>().submitted() as never));
+  submitted(): Output<string> {
+    return this.call(() => new NativeOutput(this.nativeAs<NativeTextInputContract>().submitted() as never));
   }
   setMultiline(enabled: boolean): void { this.call(() => this.nativeAs<NativeTextInputContract>().setMultiline(enabled)); }
   isMultiline(): boolean { return this.call(() => this.nativeAs<NativeTextInputContract>().isMultiline()); }
@@ -43,7 +43,7 @@ export function createTextInput(nativeHandle: never): TextInput {
   return new Constructor(nativeHandle);
 }
 
-class NativeOutputHandle<T> extends OutputHandle<T> {
+class NativeOutput<T> extends Output<T> {
   /** @internal Native channel construction overload. */
   constructor(resource: never);
   constructor(resource: NativeTuiOutputContract) {

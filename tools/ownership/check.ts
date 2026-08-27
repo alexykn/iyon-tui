@@ -373,6 +373,55 @@ function componentFacadeGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 9: H1F typed output/event semantics guard
+// ---------------------------------------------------------------------------
+
+function typedOutputEventGate(): void {
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const offenders: string[] = [];
+
+  if (!/export\s+abstract\s+class\s+Output<[^>]+>[\s\S]*#outputBrand/u.test(types)) {
+    offenders.push("types.ts: missing opaque typed Output<T> identity");
+  }
+  if (/OutputHandle\b/u.test(types + textInput + runtime + testing)) {
+    offenders.push("legacy OutputHandle remains in the framework facade");
+  }
+  const outputClass = types.match(/export\s+abstract\s+class\s+Output<T>[\s\S]*?\n\}/u)?.[0] ?? "";
+  if (/export\s+type\s+Output\s*=/u.test(types) || /\bpayload\b/u.test(outputClass)) {
+    offenders.push("types.ts: Output is still a record or exposes a fake payload");
+  }
+  if (!/submitted\(\):\s*Output<string>/u.test(textInput) || !/submitted\(\):\s*TuiOperation<Output<string>>/u.test(types)) {
+    offenders.push("TextInput.submitted() does not expose Output<string>");
+  }
+  if (!/route\(output:\s*Output<string>,/u.test(runtime) || !/route\(output:\s*Output<string>,/u.test(testing)) {
+    offenders.push("runtime route contracts do not consume typed Output<string>");
+  }
+  if (!/emit<T>\(output:\s*Output<T>,\s*payload:\s*T\)/u.test(types)) {
+    offenders.push("ComponentContext.emit does not separate typed channel and payload");
+  }
+  if (/readonly\s+output:\s*Output\b/u.test(types)) {
+    offenders.push("InteractionResult still carries a record-shaped output field");
+  }
+  if (existsSync(join(FRAMEWORK_SRC, "output.ts"))) offenders.push("output.ts: parallel string-keyed OutputRouter remains");
+  if (/OutputRouter|RouteConflict|keyEvent|pasteEvent|resizeEvent|terminateEvent/u.test(index)) {
+    offenders.push("index.ts: standalone router or test-input event constructors remain exported");
+  }
+  if (!/export\s+interface\s+TuiEvent\b|export\s+type\s+TuiEvent\s*=\s*OutputEvent\s*\|\s*TerminateEvent/u.test(types)) {
+    offenders.push("types.ts: routed output/termination event union is missing");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1f-typed-output-events", offenders.join("; "));
+  } else {
+    pass("h1f-typed-output-events", "Output<T> is opaque, payloads are separate, and test-input constructors are not runtime exports");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -459,6 +508,7 @@ await themeStyleSemanticGate();
 opaqueHandleGate();
 controlLifecycleGate();
 componentFacadeGate();
+typedOutputEventGate();
 await publicSurfaceGate();
 
 if (failed) {

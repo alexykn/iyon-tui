@@ -213,7 +213,7 @@ export interface TextInput extends ComponentHandle {
   cursorBytes(): TuiOperation<number>;
   setText(value: string): TuiOperation<void>;
   clear(): TuiOperation<void>;
-  submitted(): TuiOperation<OutputHandle<string>>;
+  submitted(): TuiOperation<Output<string>>;
   setMultiline(enabled: boolean): TuiOperation<void>;
   isMultiline(): TuiOperation<boolean>;
   view(): TuiOperation<View>;
@@ -329,23 +329,24 @@ export interface ComponentAdapter {
   onTick?(context: ComponentContext): InteractionResult | Promise<InteractionResult>;
 }
 
+/**
+ * Borrow-scoped component event context. Outputs are typed channel identities;
+ * their payload is supplied separately, matching the native EventCx contract.
+ */
 export interface ComponentContext {
   readonly componentId: HandleId;
-  emit(output: Output): void;
+  emit<T>(output: Output<T>, payload: T): void;
 }
 
+/** Result of a generic component interaction; emitted values use ComponentContext.emit(). */
 export type InteractionResult =
   | { readonly type: "handled" }
-  | { readonly type: "ignored" }
-  | { readonly type: "output"; readonly output: Output };
+  | { readonly type: "ignored" };
 
-export type Output = Readonly<Record<string, unknown>>;
-
-/** Opaque routed output-channel identity; the payload is delivered separately. */
-export abstract class OutputHandle<T> {
-  #outputHandleBrand!: void;
+/** Opaque typed output-channel identity; payloads are delivered separately. */
+export abstract class Output<T> {
+  #outputBrand!: void;
   readonly kind = "output" as const;
-  readonly payload!: T;
   protected constructor() {}
 }
 
@@ -358,12 +359,6 @@ export interface KeyEvent {
 export interface PasteEvent {
   readonly type: "paste";
   readonly text: string;
-}
-
-export interface ResizeEvent {
-  readonly type: "resize";
-  readonly width: number;
-  readonly height: number;
 }
 
 export interface TerminateEvent {
@@ -417,7 +412,7 @@ export interface TuiRuntime {
   createViewSlot?(initial: View): ViewSlot;
   createScrollPane?(initial: View): ScrollPane;
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void;
-  route(output: OutputHandle<string>, routeId: string): void;
+  route(output: Output<string>, routeId: string): void;
   interceptPaste?(input: TextInput, routeId: string): void;
   forwardPaste?(text: string): void;
   setTheme?(theme: SemanticTheme): TuiOperation<void>;

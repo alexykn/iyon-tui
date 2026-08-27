@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ComponentAdapterBridge,
-  OutputRouter,
   RendererAdapter,
   TextContent,
   TextRewriterAdapter,
@@ -22,15 +21,6 @@ describe("T5 JS-thread trait adapters", () => {
     expect(await rewriter.rewrite(TextContent.plain("x"))).toMatchObject({ kind: "text-content" });
     expect(result).toBeInstanceOf(View);
     expect(calls).toEqual(["render", "rewrite"]);
-  });
-
-  test("output routing is FIFO and rejects conflicts", () => {
-    const router = new OutputRouter<number>();
-    router.route("change", (value) => Number(value.value));
-    expect(() => router.route("change", () => 2)).toThrow(/route/);
-    router.emit("change", { value: 1 });
-    router.emit("change", { value: 2 });
-    expect(router.drain()).toEqual([1, 2]);
   });
 
   test("component callbacks receive no borrowed native value", async () => {

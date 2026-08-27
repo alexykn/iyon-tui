@@ -4,7 +4,7 @@ import type { TextInput as RuntimeTextInput } from "./text-input.ts";
 import type {
   AppHarness as AppHarnessContract,
   History,
-  OutputHandle,
+  Output,
   TextInput,
   TextInputOptions,
   ScrollPane,
@@ -50,7 +50,7 @@ export class AppHarness implements AppHarnessContract {
     return this.tui.createScrollPane(initial);
   }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
-  route(output: OutputHandle<string>, actionId: string): void { this.tui.route(output, actionId); }
+  route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
   interceptPaste(input: TextInput, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
   forwardPaste(text: string): void { this.tui.forwardPaste(text); }
   setTheme(theme: Theme): void { this.tui.setTheme(theme); }

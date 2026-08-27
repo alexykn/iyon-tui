@@ -11,7 +11,9 @@ describe("native interaction host", () => {
     tui.enqueue({ type: "key", key: "a" });
     expect(await input.text()).toBe("a");
 
-    tui.route(await input.submitted(), "submit");
+    const submitted = await input.submitted();
+    expect("payload" in submitted).toBe(false);
+    tui.route(submitted, "submit");
     tui.enqueue({ type: "key", key: "Enter" });
     await expect(tui.nextAction()).resolves.toEqual({ actionId: "submit", payload: "a" });
     await tui.close();

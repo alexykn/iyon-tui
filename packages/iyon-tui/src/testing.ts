@@ -12,6 +12,7 @@ import type {
   TextInputOptions,
   ScrollPane,
   TuiEvent,
+  TerminalMetadata,
   TuiOpenOptions,
   View,
 } from "./types.ts";
@@ -19,21 +20,18 @@ import type { Theme } from "./values/theme.ts";
 
 export class AppHarness implements AppHarnessContract {
   private readonly tui: Tui;
-  private readonly options: { width: number; height: number };
   private clock = 0;
 
-  private constructor(tui: Tui, options: { width: number; height: number }) {
+  private constructor(tui: Tui) {
     this.tui = tui;
-    this.options = options;
   }
 
   static async open(options: TuiOpenOptions = {}): Promise<AppHarness> {
-    const size = { width: options.width ?? 80, height: options.height ?? 24 };
-    const tui = await Tui.open({ ...options, ...size, headless: true });
-    return new AppHarness(tui, size);
+    const tui = await Tui.open({ ...options, headless: true });
+    return new AppHarness(tui);
   }
 
-  get size(): { width: number; height: number } { return this.options; }
+  get size(): TerminalMetadata { return this.tui.size; }
   nextEvent(signal?: AbortSignal): Promise<TuiEvent> { return this.tui.nextEvent(signal); }
 
   render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
@@ -43,25 +41,15 @@ export class AppHarness implements AppHarnessContract {
 
   createHistory(): HistoryHandle { return this.tui.createHistory(); }
   createTextInput(options: TextInputOptions = {}): TextInputHandle { return this.tui.createTextInput(options); }
-  createViewSlot(initial: View): ViewSlotHandle {
-    if (this.tui.createViewSlot === undefined) throw tuiError("runtime", "native view slots are unavailable");
-    return this.tui.createViewSlot(initial);
-  }
-  createScrollPane(initial: View): ScrollPane {
-    if (this.tui.createScrollPane === undefined) throw tuiError("runtime", "native scroll panes are unavailable");
-    return this.tui.createScrollPane(initial);
-  }
+  createViewSlot(initial: View): ViewSlotHandle { return this.tui.createViewSlot(initial); }
+  createScrollPane(initial: View): ScrollPane { return this.tui.createScrollPane(initial); }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
   route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
   interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
   forwardPaste(text: string): void { this.tui.forwardPaste(text); }
   setTheme(theme: Theme): void { this.tui.setTheme(theme); }
 
-  resize(width: number, height: number): void {
-    this.options.width = width;
-    this.options.height = height;
-    this.tui.resize(width, height);
-  }
+  resize(width: number, height: number): void { this.tui.resize(width, height); }
 
   close(): void {
     this.tui.close();

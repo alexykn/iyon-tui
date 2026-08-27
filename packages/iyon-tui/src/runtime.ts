@@ -55,8 +55,8 @@ function claimHistoryOwner(history: HistoryContract, owner: Tui): void {
 export class Tui implements TuiRuntime {
   private closed = false;
   private readonly host: NativeTuiHostContract;
-  private readonly width: number;
-  private readonly height: number;
+  private width: number;
+  private height: number;
   private currentScene?: Scene;
   /**
    * PERF-12 T13 (§18/§49): the scene body's root-lease boundary. It owns
@@ -216,6 +216,7 @@ export class Tui implements TuiRuntime {
     }
   }
 
+  /** Current dimensions from the last successfully completed resize. */
   get size(): TerminalMetadata { return { width: this.width, height: this.height }; }
 
   async nextEvent(signal?: AbortSignal): Promise<TuiEvent> {
@@ -450,10 +451,13 @@ export class Tui implements TuiRuntime {
 
   forwardPaste(text: string): void { this.host.forwardPaste(text); }
 
+  /** Resize the host, publishing the new size only after it succeeds. */
   resize(width: number, height: number): void {
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
     validateSize(width, height);
     this.host.resize(width, height);
+    this.width = width;
+    this.height = height;
   }
 
   private disposeRootBuilder(): void {

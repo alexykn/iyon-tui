@@ -374,6 +374,12 @@ export interface RenderContext {
   readonly height: number;
 }
 
+/**
+ * Structural scene root accepted by the runtime.
+ *
+ * A concrete `Scene` value is convenient for callers that want an explicit
+ * root, while any object with this shape is also accepted at the boundary.
+ */
 export interface Scene {
   readonly history?: History;
   readonly body: View;
@@ -390,27 +396,34 @@ export interface TuiOpenOptions {
   readonly theme?: SemanticTheme;
 }
 
+/** Current terminal dimensions reported by a runtime. */
 export interface TerminalMetadata {
   readonly width: number;
   readonly height: number;
 }
 
 export interface TuiRuntime {
+  /** The current terminal size; it changes only after a successful resize. */
   readonly size: TerminalMetadata;
   nextEvent(signal?: AbortSignal): Promise<TuiEvent>;
+  /**
+   * Render either a structural scene value or a retained scene producer.
+   * Direct values take over the root immediately; producers own the retained
+   * root and remain subscribed to tracked state. These paths are distinct.
+   */
   render(scene: SceneProducer, signal?: AbortSignal): void;
   resize(width: number, height: number): void;
   close(): void;
   exit(): void;
-  createHistory?(): History;
-  createTextInput?(options?: TextInputOptions): TextInput;
-  createViewSlot?(initial: View): ViewSlot;
-  createScrollPane?(initial: View): ScrollPane;
+  createHistory(): History;
+  createTextInput(options?: TextInputOptions): TextInput;
+  createViewSlot(initial: View): ViewSlot;
+  createScrollPane(initial: View): ScrollPane;
   bindKey(key: string, routeId: string, modifiers?: readonly string[]): void;
   route(output: Output<string>, routeId: string): void;
-  interceptPaste?(input: TextInput, routeId: string): void;
-  forwardPaste?(text: string): void;
-  setTheme?(theme: SemanticTheme): void;
+  interceptPaste(input: TextInput, routeId: string): void;
+  forwardPaste(text: string): void;
+  setTheme(theme: SemanticTheme): void;
 }
 
 export interface AppHarness extends TuiRuntime {

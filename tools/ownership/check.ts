@@ -498,6 +498,46 @@ function rootAndTestingSurfaceGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 12: H1I runtime contract and authoritative size guard
+// ---------------------------------------------------------------------------
+
+function runtimeContractGate(): void {
+  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const runtimeBody = types.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+  const candidates = [
+    "createHistory",
+    "createTextInput",
+    "createViewSlot",
+    "createScrollPane",
+    "interceptPaste",
+    "forwardPaste",
+    "setTheme",
+  ];
+  const optional = candidates.filter((name) => new RegExp(`\\b${name}\\?\\s*\\(`, "u").test(runtimeBody));
+  const offenders: string[] = [];
+
+  if (optional.length > 0) offenders.push(`TuiRuntime keeps optional methods: ${optional.join(", ")}`);
+  if (/private readonly (?:width|height)\s*:/u.test(runtime)) offenders.push("Tui stores terminal dimensions as readonly open-time values");
+  if (!/this\.host\.resize\(width, height\);\s*this\.width = width;\s*this\.height = height;/su.test(runtime)) {
+    offenders.push("Tui does not publish dimensions after a successful host resize");
+  }
+  if (/private readonly options|this\.options\.(?:width|height)/u.test(testing)) {
+    offenders.push("AppHarness keeps an independent mutable size record");
+  }
+  if (!/get size\(\): TerminalMetadata\s*\{\s*return this\.tui\.size;\s*\}/su.test(testing)) {
+    offenders.push("AppHarness size is not delegated to the authoritative Tui size");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1i-runtime-contract", offenders.join("; "));
+  } else {
+    pass("h1i-runtime-contract", "runtime capabilities are required and Tui/AppHarness expose one authoritative post-resize size");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -587,6 +627,7 @@ componentFacadeGate();
 typedOutputEventGate();
 falseAliasGate();
 rootAndTestingSurfaceGate();
+runtimeContractGate();
 await publicSurfaceGate();
 
 if (failed) {

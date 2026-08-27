@@ -35,6 +35,7 @@ import {
   BRIDGE_LAYOUT_CHILD_KIND,
   BRIDGE_OVERFLOW_KIND,
   BRIDGE_VIEW_KIND,
+  BRIDGE_VERTICAL_ALIGN,
   BRIDGE_WRAP_MODE,
   emptyDecoration,
   emptyStyle,
@@ -54,9 +55,11 @@ import {
   ChildrenBuilder,
   composedAxis,
   GridBuilder,
-  rawGrid,
+  gridBuilderFromSpecification,
+  gridViewFromBuilder,
   View,
   type GridSpec,
+  type GridTrack,
   type LayoutChild,
   type OverflowIndicator,
 } from "./values/view.ts";
@@ -68,7 +71,7 @@ import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
 import type { DiffHunk } from "./values/diff.ts";
 import type { StyleRef, StyleSpec } from "./values/style.ts";
-import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute } from "./types.ts";
+import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute, VerticalAlign } from "./types.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -611,56 +614,67 @@ export function composeGrid(
   const scope = executionContext.top;
   if (scope === undefined) return View.grid(specification);
   const slot = scope.nextSemanticSlot();
-  const view = rawGrid(specification);
+  // Normalize only the public grid input. The previous implementation built a
+  // complete bridge node and View before comparing it, which defeated the
+  // retained no-op path for every grid update.
+  const builder = gridBuilderFromSpecification(specification);
   const previous = slot.current;
-  if (previous !== undefined && gridMatches(previous, view)) {
+  if (previous !== undefined && gridBuilderMatches(previous, builder)) {
     stageReuse(slot, previous);
     return previous;
   }
+  const view = gridViewFromBuilder(builder);
   stageFresh(slot, view);
   return view;
 }
 
-function gridMatches(previous: View, next: View): boolean {
+function gridBuilderMatches(previous: View, builder: GridBuilder): boolean {
   const past = nodeForBridge(previous);
-  const current = nodeForBridge(next);
-  if (past.kind !== BRIDGE_VIEW_KIND.grid || current.kind !== BRIDGE_VIEW_KIND.grid) return false;
+  if (past.kind !== BRIDGE_VIEW_KIND.grid) return false;
   // Do not force a wide grid's lazy row view to flatten merely to prove a
   // composition hit. Wide grids are intentionally rebuilt through their
   // PersistentSeq sidecar rather than scanned on the retained hot path.
   if (peekBridgeGridSequenceOverride(past) !== undefined) return false;
-  if (past.columnGap !== current.columnGap || past.rowGap !== current.rowGap) return false;
-  if (past.columns.length !== current.columns.length || past.rows.length !== current.rows.length) return false;
-  for (let index = 0; index < current.columns.length; index += 1) {
-    if (!gridTrackMatches(past.columns[index]!, current.columns[index]!)) return false;
+  if (past.columnGap !== builder.columnGapValue || past.rowGap !== builder.rowGapValue) return false;
+  if (past.columns.length !== builder.columnsValue.length || past.rows.length !== builder.rows.length) return false;
+  for (let index = 0; index < builder.columnsValue.length; index += 1) {
+    if (!gridTrackMatchesPublic(past.columns[index]!, builder.columnsValue[index]!)) return false;
   }
-  for (let rowIndex = 0; rowIndex < current.rows.length; rowIndex += 1) {
+  for (let rowIndex = 0; rowIndex < builder.rows.length; rowIndex += 1) {
     const oldRow = past.rows[rowIndex]!;
-    const newRow = current.rows[rowIndex]!;
-    if (!gridTrackMatches(oldRow.track, newRow.track) || oldRow.cells.length !== newRow.cells.length) return false;
+    const newRow = builder.rows[rowIndex]!;
+    if (!gridTrackMatchesPublic(oldRow.track, newRow.track ?? { kind: "content" })
+      || oldRow.cells.length !== newRow.cells.length) return false;
     for (let cellIndex = 0; cellIndex < newRow.cells.length; cellIndex += 1) {
       const oldCell = oldRow.cells[cellIndex]!;
       const newCell = newRow.cells[cellIndex]!;
-      if (oldCell.view !== newCell.view
-        || oldCell.columnSpan !== newCell.columnSpan
-        || oldCell.rowSpan !== newCell.rowSpan
-        || oldCell.horizontalAlign !== newCell.horizontalAlign
-        || oldCell.verticalAlign !== newCell.verticalAlign) return false;
+      if (oldCell.view !== nodeForBridge(newCell.view)
+        || oldCell.columnSpan !== validatePositiveU16(newCell.columnSpan ?? 1, "columnSpan")
+        || oldCell.rowSpan !== validatePositiveU16(newCell.rowSpan ?? 1, "rowSpan")
+        || oldCell.horizontalAlign !== horizontalAlignCode(newCell.horizontalAlign ?? "start")
+        || oldCell.verticalAlign !== verticalAlignCode(newCell.verticalAlign ?? "top")) return false;
     }
   }
   return true;
 }
 
-function gridTrackMatches(a: BridgeGridTrackNode, b: BridgeGridTrackNode): boolean {
-  if (a.kind !== b.kind) return false;
-  switch (a.kind) {
-    case BRIDGE_GRID_TRACK_KIND.content: return true;
-    case BRIDGE_GRID_TRACK_KIND.contentMax:
-    case BRIDGE_GRID_TRACK_KIND.flexMax:
-      return a.max === (b as Extract<BridgeGridTrackNode, { kind: typeof a.kind }>).max;
-    case BRIDGE_GRID_TRACK_KIND.fixed:
-      return a.size === (b as Extract<BridgeGridTrackNode, { kind: typeof a.kind }>).size;
-    case BRIDGE_GRID_TRACK_KIND.flex: return true;
+function gridTrackMatchesPublic(
+  bridged: BridgeGridTrackNode,
+  track: GridTrack,
+): boolean {
+  switch (track.kind) {
+    case "content": return bridged.kind === BRIDGE_GRID_TRACK_KIND.content;
+    case "contentMax":
+      return bridged.kind === BRIDGE_GRID_TRACK_KIND.contentMax
+        && bridged.max === validateU16(track.max, "grid track max");
+    case "fixed":
+      return bridged.kind === BRIDGE_GRID_TRACK_KIND.fixed
+        && bridged.size === validateU16(track.size, "grid track size");
+    case "flex": return bridged.kind === BRIDGE_GRID_TRACK_KIND.flex;
+    case "flexMax":
+      return bridged.kind === BRIDGE_GRID_TRACK_KIND.flexMax
+        && bridged.max === validateU16(track.max, "grid track max");
+    default: throw new TypeError("unknown grid track kind");
   }
 }
 
@@ -848,4 +862,27 @@ function horizontalAlignCode(align: HorizontalAlign): number {
     case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
     default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
   }
+}
+
+function verticalAlignCode(align: VerticalAlign): number {
+  switch (align) {
+    case "top": return BRIDGE_VERTICAL_ALIGN.top;
+    case "center": return BRIDGE_VERTICAL_ALIGN.center;
+    case "bottom": return BRIDGE_VERTICAL_ALIGN.bottom;
+    default: throw new RangeError(`unknown vertical alignment ${JSON.stringify(align)}`);
+  }
+}
+
+function validateU16(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new RangeError(`${name} must be an integer from 0 to 65535`);
+  }
+  return value;
+}
+
+function validatePositiveU16(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new RangeError(`${name} must be an integer from 1 to 65535`);
+  }
+  return value;
 }

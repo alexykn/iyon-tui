@@ -1973,12 +1973,17 @@ impl HostHistory {
     }
 
     pub fn set_layout(&self, layout: HistoryLayout) -> Result<()> {
-        self.lock_mut()?
+        let mut inner = self.lock_mut()?;
+        let history = inner
             .running
             .scene_history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .set_layout(layout);
-        Ok(())
+            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
+        if history.layout() == layout {
+            return Ok(());
+        }
+        history.set_layout(layout);
+        inner.running.invalidate_frame();
+        inner.advance_and_render()
     }
 
     pub fn push(&self, view: View) -> Result<HistoryUnitId> {

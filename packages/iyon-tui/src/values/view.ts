@@ -567,6 +567,13 @@ function createView(node: object): View {
 
 /** @internal Raw grid construction shared by public and retained composition paths. */
 export function rawGrid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
+  return gridViewFromBuilder(gridBuilderFromSpecification(specification));
+}
+
+/** @internal Builds the public grid input once, without allocating a semantic View. */
+export function gridBuilderFromSpecification(
+  specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void),
+): GridBuilder {
   const builder = new GridBuilder();
   if (Array.isArray(specification)) {
     builder.columns(specification.map(() => ({ kind: "content" as const })));
@@ -578,6 +585,11 @@ export function rawGrid(specification: readonly View[] | GridSpec | ((builder: G
     for (const row of spec.rows) builder.row(row);
     builder.columnGap(spec.columnGap ?? 0).rowGap(spec.rowGap ?? 0);
   }
+  return builder;
+}
+
+/** @internal Materializes a normalized grid after retained equality has been checked. */
+export function gridViewFromBuilder(builder: GridBuilder): View {
   const rows: BridgeGridRowNode[] = builder.rows.map((row) => ({
     track: bridgeGridTrack(row.track ?? { kind: "content" }),
     cells: row.cells.map((cell): BridgeGridCellNode => ({

@@ -1409,7 +1409,15 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const reference = acquireKnownRoot(this.session, view);
     if (reference === undefined) return false;
+    const previous = this.previousRef;
     this.transferRoot(reference);
+    // acquireKnownRoot always returns a new lease. If the adopted root is
+    // already this boundary's root, keep the existing boundary lease and
+    // release only the promotion lease rather than accumulating one per
+    // adoption/recovery.
+    if (previous === reference) {
+      viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(reference), 1);
+    }
     return true;
   }
 
@@ -1513,6 +1521,12 @@ export class RetainedRootBoundary {
     // Does this tx own a lease on the resolved ref (promotion/materialization),
     // or was it borrowed from a hint whose lease belongs to someone else?
     let ownsTempLease = tx.temporaryLeases.includes(resolvedRef);
+    // A NodeId promotion can reacquire the boundary's current root after a
+    // stale/missing JS hint. That lease is only a temporary probe; retaining
+    // it in `releaseAllExcept` would leak one native lease on every such
+    // recovery because transferRoot correctly sees the same root already
+    // installed.
+    if (ownsTempLease && resolvedRef === this.previousRef) ownsTempLease = false;
     let rootRef = resolvedRef;
     let acquiredBoundaryLease = false;
     if (!ownsTempLease && resolvedRef !== this.previousRef) {
@@ -1610,8 +1624,12 @@ export class RetainedRootBoundary {
           // safe to use for the next exact-root render.
           installHint(node, this.session.abi.generation, rootRef);
           // Transfer our lease on the new root into the boundary; the previous
-          // root's lease is released here exactly like transferRoot does.
+          // root's lease is released here exactly like transferRoot does. A
+          // cold decoder may rediscover the already-installed root, in which
+          // case its extra lease must not become a permanent duplicate.
+          const duplicateRoot = this.previousRef === rootRef;
           this.transferRoot(rootRef);
+          if (duplicateRoot) this.releaseColdLease(rootRef);
           transferred = true;
         } catch (error) {
           // A thrown install/host callback must not strand the materializer's

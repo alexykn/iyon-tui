@@ -18,6 +18,8 @@ const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
  * provide the host-bound border/component semantics. Each input has one
  * mounted component identity; duplicate View component nodes are rejected.
  */
+const outputInputs = new WeakMap<object, WeakRef<TextInput>>();
+
 export class TextInput extends FrameworkHandle<"text-input"> implements TextInputContract {
   private submittedOutput?: Output<string>;
 
@@ -36,6 +38,7 @@ export class TextInput extends FrameworkHandle<"text-input"> implements TextInpu
       // repeated calls preserve that channel identity on the JS side too.
       if (this.submittedOutput === undefined) {
         this.submittedOutput = createNativeOutput(this.nativeAs<NativeTextInputContract>().submitted());
+        outputInputs.set(this.submittedOutput, new WeakRef(this));
       }
       return this.submittedOutput;
     });
@@ -53,6 +56,11 @@ export class TextInput extends FrameworkHandle<"text-input"> implements TextInpu
 export function createTextInput(resource: never): TextInput {
   const Constructor = TextInput as unknown as new (resource: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInput;
   return new Constructor(resource, TEXT_INPUT_NATIVE_TOKEN);
+}
+
+/** @internal Identifies the TextInput that owns a native output channel. */
+export function textInputForOutput(output: object): TextInput | undefined {
+  return outputInputs.get(output)?.deref();
 }
 
 function createNativeOutput<T>(resource: NativeTuiOutputContract): Output<T> {

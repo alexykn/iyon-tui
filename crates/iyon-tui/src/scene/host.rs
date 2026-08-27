@@ -151,7 +151,9 @@ impl PreparedSceneFrame {
 struct StableScene {
     root: ResolvedRootScene,
     layout: ResolvedSceneLayout,
+    history_identity: u64,
     history_revision: u64,
+    native_history_revision: u64,
 }
 
 pub(crate) struct SceneHost {
@@ -255,6 +257,7 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.history_only_refresh = false;
     }
 
     pub(crate) fn next_tick_deadline(&self) -> Option<Instant> {
@@ -400,12 +403,21 @@ impl SceneHost {
             .map_err(SceneHostError::Transfer)?;
 
             match pressure {
-                NativePressure::Progress => continue,
+                NativePressure::Progress => {
+                    // Keep the candidate's retained body branch alive while
+                    // native History promotion changes only the frontier. The
+                    // next resolve refreshes the History branch instead of
+                    // falling back to a full body resolve.
+                    self.retained = Some(resolved);
+                    continue;
+                }
 
                 NativePressure::Blocked => {
                     // size may be reused: no native rows were inserted during
                     // the final blocked drain attempt, so viewport geometry did
-                    // not change.
+                    // not change. Retain the candidate so the NativeFrontier
+                    // projection can also reuse its body branch.
+                    self.retained = Some(resolved);
                     resolves += 1;
                     let pinned = self.resolve_stable_at_with_anchor(
                         scene,
@@ -591,6 +603,7 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.history_only_refresh = false;
         #[cfg(test)]
         {
             self.full_resolves += 1;
@@ -598,7 +611,9 @@ impl SceneHost {
         Ok(StableScene {
             root: resolved,
             layout,
+            history_identity: scene.history().map_or(0, crate::History::identity),
             history_revision: scene.history().map_or(0, crate::History::revision),
+            native_history_revision: scene.history().map_or(0, crate::History::native_revision),
         })
     }
 
@@ -610,24 +625,32 @@ impl SceneHost {
         anchor: HistoryViewportAnchor,
     ) -> Result<Option<StableScene>, ResolveError> {
         let history_revision = scene.history().map_or(0, crate::History::revision);
+        let native_history_revision = scene.history().map_or(0, crate::History::native_revision);
+        let history_identity = scene.history().map_or(0, crate::History::identity);
         let Some(retained_state) = self.retained.as_ref() else {
             return Ok(None);
         };
         if retained_state.layout.tree.size != size {
             return Ok(None);
         }
-        if !matches!(anchor, HistoryViewportAnchor::FollowEnd) {
-            return Ok(None);
-        }
 
         let body_changed =
             !crate::presentation::View::ptr_eq(&retained_state.root.body_view, scene.layout_body());
-        let history_changed = retained_state.history_revision != history_revision;
+        let history_changed = retained_state.history_identity != history_identity
+            || retained_state.history_revision != history_revision;
+        let native_history_changed =
+            retained_state.native_history_revision != native_history_revision;
         let body_invalidated = self.invalidated_components.iter().any(|component| {
             retained_state.root.scene.mounts.contains(*component)
                 && !retained_state.root.history_components.contains(component)
         });
-        if !body_changed && !body_invalidated && scene.history().is_some() && history_changed {
+        if !body_changed
+            && !body_invalidated
+            && scene.history().is_some()
+            && (history_changed
+                || native_history_changed
+                || !matches!(anchor, HistoryViewportAnchor::FollowEnd))
+        {
             let retained = self
                 .retained
                 .take()
@@ -645,7 +668,7 @@ impl SceneHost {
 
         if self.invalidated_components.is_empty()
             || body_changed
-            || (history_changed && !body_invalidated)
+            || ((history_changed || native_history_changed) && !body_invalidated)
         {
             return Ok(None);
         }
@@ -745,7 +768,11 @@ impl SceneHost {
                 .is_none_or(|geometry| geometry.outer.height != *height)
         });
         if scene.history().is_some()
-            && (history_changed || !patched || topology_changed || body_geometry_changed)
+            && (history_changed
+                || native_history_changed
+                || !patched
+                || topology_changed
+                || body_geometry_changed)
         {
             return self.refresh_history_projection(
                 scene,
@@ -799,6 +826,10 @@ impl SceneHost {
             self.retained = Some(retained);
             return Ok(None);
         };
+        // Rotate the retained layout generations before measuring any part of
+        // this new candidate. History-only refreshes bypass the full-resolve
+        // branch where the normal epoch rotation occurs.
+        self.layout_cache.begin_epoch();
         let body_affected = affected
             .iter()
             .any(|component| !retained.root.history_components.contains(component));
@@ -824,7 +855,15 @@ impl SceneHost {
         ) {
             Ok(projection) => projection,
             Err(error) => {
-                self.retained = Some(retained);
+                // The caller may have already staged a body component update
+                // into `retained`. No publication or paint occurred, so do not
+                // retain that partially prepared candidate as authoritative;
+                // the next attempt must rebuild from the committed host frame.
+                self.retained = None;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
                 return Err(error);
             }
         };
@@ -835,7 +874,7 @@ impl SceneHost {
             .history_scene
             .as_ref()
             .map_or(!history_scene.mounts.is_empty(), |old| {
-                old.mounts != history_scene.mounts
+                !old.mounts.same_topology(&history_scene.mounts)
             });
         let topology_changed = body_topology_changed || history_topology_changed;
         let merged = match merge_root_scene(
@@ -845,11 +884,28 @@ impl SceneHost {
         ) {
             Ok(merged) => merged,
             Err(error) => {
-                self.retained = Some(retained);
+                // `retained` may contain a staged body subtree update. A
+                // failed merge is an evaluation/prepare failure, therefore the
+                // previous painted frame—not this candidate—remains the only
+                // authoritative retained state.
+                self.retained = None;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
                 return Err(error);
             }
         };
         let layout = layout_resolved_scene_with_cache(&merged, size, &mut self.layout_cache);
+        let mut sync_components = Vec::new();
+        for component in affected {
+            if !merged.mounts.contains(component) {
+                continue;
+            }
+            sync_components.extend(merged.mounts.subtree_ids(component));
+        }
+        sync_components.sort_unstable();
+        sync_components.dedup();
         let body_view = retained.root.body_scene.view.clone();
         let root = ResolvedRootScene {
             scene: merged,
@@ -863,7 +919,7 @@ impl SceneHost {
             body_height,
         };
         self.history_only_refresh = true;
-        self.incremental_sync_components = affected;
+        self.incremental_sync_components = sync_components;
         self.incremental_topology_changed = topology_changed;
         self.incremental_requires_full_sync = topology_changed;
         self.incremental_paint_components.clear();
@@ -874,7 +930,9 @@ impl SceneHost {
         Ok(Some(StableScene {
             root,
             layout,
+            history_identity: history.identity(),
             history_revision: history.revision(),
+            native_history_revision: history.native_revision(),
         }))
     }
 
@@ -2171,4 +2229,5 @@ mod tests {
             host.resolve_count
         );
     }
+
 }

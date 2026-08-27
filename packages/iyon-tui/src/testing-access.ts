@@ -4,6 +4,7 @@ type TestingInputEvent =
   | { readonly type: "resize"; readonly width: number; readonly height: number };
 
 type TuiTestingAccess = {
+  flush(): void;
   enqueue(event: TestingInputEvent): void;
   screenRows(): readonly string[];
   nativeHistoryRows(): readonly string[];

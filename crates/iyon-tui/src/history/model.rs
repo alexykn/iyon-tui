@@ -3,10 +3,12 @@
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
+    sync::atomic::AtomicU64,
     time::Instant,
 };
 
 use crate::{
+    id::next_nonzero_id,
     perf::{self, Counter},
     presentation::IntoView,
     stream::StreamingSource,
@@ -17,6 +19,8 @@ use super::{
     HistoryUnit, HistoryUnitContent, HistoryUnitId,
     unit::{HistoryUnitLayout, HistoryUnitLayoutKey},
 };
+
+static NEXT_HISTORY_ID: AtomicU64 = AtomicU64::new(1);
 
 /// An ordered root-level historical, live, or streaming semantic flow.
 ///
@@ -36,10 +40,18 @@ use super::{
 /// ```
 pub struct History {
     pub(super) units: VecDeque<HistoryUnit>,
+    /// Stable identity for detecting replacement of the History object in a
+    /// retained Scene, even when its semantic/native revisions coincide.
+    identity: u64,
     layout: HistoryLayout,
     cached_total_height: Cell<Option<usize>>,
     stale_cached_heights: Cell<usize>,
     revision: Cell<u64>,
+    /// Display-frontier revision, separate from semantic History revision.
+    /// Native scrollback promotion mutates this frontier without changing the
+    /// ordered semantic units, so SceneHost can refresh its retained History
+    /// branch after a transfer without rebuilding the body branch.
+    native_revision: Cell<u64>,
     pub(super) native: super::native::NativeFrontier,
 }
 
@@ -53,10 +65,12 @@ impl History {
     pub fn new() -> Self {
         Self {
             units: VecDeque::new(),
+            identity: next_nonzero_id(&NEXT_HISTORY_ID, "history identity exhausted").get(),
             layout: HistoryLayout::default(),
             cached_total_height: Cell::new(None),
             stale_cached_heights: Cell::new(0),
             revision: Cell::new(0),
+            native_revision: Cell::new(0),
             native: super::native::NativeFrontier::default(),
         }
     }
@@ -269,8 +283,21 @@ impl History {
         self.layout
     }
 
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
+    }
+
     pub(crate) fn revision(&self) -> u64 {
         self.revision.get()
+    }
+
+    pub(crate) fn native_revision(&self) -> u64 {
+        self.native_revision.get()
+    }
+
+    pub(crate) fn bump_native_revision(&self) {
+        self.native_revision
+            .set(self.native_revision.get().wrapping_add(1));
     }
 
     fn bump_revision(&self) {

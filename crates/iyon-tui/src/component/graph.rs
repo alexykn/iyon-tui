@@ -94,6 +94,15 @@ impl MountGraph {
         self.iter().cloned().collect()
     }
 
+    /// Compares only mount ownership/order, not component revisions. A
+    /// revision change updates an existing component snapshot and must stay on
+    /// the incremental host path; it is not a topology change.
+    pub(crate) fn same_topology(&self, other: &Self) -> bool {
+        self.iter()
+            .map(|node| (node.id, node.parent))
+            .eq(other.iter().map(|node| (node.id, node.parent)))
+    }
+
     /// Reparents the roots of a standalone component subtree under its owner.
     pub(crate) fn reparent_roots(&mut self, parent: ComponentId) {
         for id in &self.roots {

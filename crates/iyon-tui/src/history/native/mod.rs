@@ -70,6 +70,13 @@ pub(crate) fn transfer_native_prefix_with_theme<S: NativeHistorySink>(
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
     let outcome = transfer_native_prefix_inner(history, sink, width, max_rows, theme)?;
     history.native.record_physical_rows(outcome.inserted);
+    // Native promotion changes the display frontier even when it inserts no
+    // physical rows (for example, retiring a zero-row stream/unit). Keep that
+    // revision separate from semantic History revision so retained SceneHost
+    // frames can refresh the History branch without rebuilding the body.
+    if outcome.inserted > 0 || matches!(outcome.status, NativeTransferStatus::Progress) {
+        history.bump_native_revision();
+    }
     Ok(outcome)
 }
 
@@ -348,6 +355,10 @@ fn transfer_stream<S: NativeHistorySink>(
             partial: None,
         });
         state.committed_through = next;
+        // The recursive call may ultimately report SemanticBlocked with zero
+        // physical rows, so the outer transfer status cannot carry this
+        // semantic frontier transition on its own.
+        history.bump_native_revision();
         return transfer_native_prefix_inner(history, sink, width, max_rows, theme);
     }
     let plan = plan_stream_transfer(
@@ -481,6 +492,10 @@ fn retire_front(history: &mut History) {
         .units
         .pop_front()
         .expect("retiring nonempty History");
+    // A zero-row unit can be retired through the recursive transfer path
+    // without any accepted physical row and therefore without a Progress
+    // outcome at the outer call. Record that frontier transition explicitly.
+    history.bump_native_revision();
     history.native.last_native_unit = Some(unit.id);
     history.native.reset_unit_state();
 }

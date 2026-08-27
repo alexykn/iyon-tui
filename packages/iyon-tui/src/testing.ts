@@ -59,10 +59,18 @@ export class AppHarness implements AppHarnessContract {
   }
 
   pressKey(key: string, modifiers?: readonly string[]): void {
-    this.callTesting(() => tuiTestingAccess(this.tui).enqueue({ type: "key", key, modifiers }));
+    this.callTesting(() => {
+      const access = tuiTestingAccess(this.tui);
+      access.flush();
+      access.enqueue({ type: "key", key, modifiers });
+    });
   }
   paste(text: string): void {
-    this.callTesting(() => tuiTestingAccess(this.tui).enqueue({ type: "paste", text }));
+    this.callTesting(() => {
+      const access = tuiTestingAccess(this.tui);
+      access.flush();
+      access.enqueue({ type: "paste", text });
+    });
   }
   advance(ms: number): void {
     if (!Number.isSafeInteger(ms) || ms < 0 || ms > Number.MAX_SAFE_INTEGER - this.clock) {
@@ -70,7 +78,11 @@ export class AppHarness implements AppHarnessContract {
     }
     // Keep the public deterministic clock transactional: a failed native
     // advancement must not make now() report time that was never applied.
-    this.callTesting(() => tuiTestingAccess(this.tui).advance(ms));
+    this.callTesting(() => {
+      const access = tuiTestingAccess(this.tui);
+      access.flush();
+      access.advance(ms);
+    });
     this.clock += ms;
   }
   screenRows(): readonly string[] {
@@ -94,6 +106,7 @@ export class AppHarness implements AppHarnessContract {
       // Flush retained/native zero-time work before a deterministic snapshot.
       // This keeps headless inspection coherent without exposing testing-only
       // clock control to application code.
+      access.flush();
       access.advance(0);
       return operation(access);
     });

@@ -7,7 +7,7 @@ import { nativeResourceOf, requireNativeClass } from "./handles.ts";
 import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
-import { createTextInput } from "./text-input.ts";
+import { createTextInput, textInputForOutput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { createScrollPane } from "./scroll-pane.ts";
@@ -134,6 +134,7 @@ export class Tui implements TuiRuntime {
       },
     });
     registerTuiTestingAccess(this, {
+      flush: () => this.drainExecution(),
       enqueue: (event) => {
         if (event.type === "key") this.host.dispatchKey(event.key, event.modifiers);
         if (event.type === "paste") this.host.dispatchPaste(event.text);
@@ -214,7 +215,7 @@ export class Tui implements TuiRuntime {
     if (historyToBind === undefined || historyToBind === previousHistory) return;
     assertHistoryOwner(historyToBind, this);
     const nativeObj = nativeResourceOf<NativeHistoryContract>(historyToBind);
-    if (nativeObj.isDetached?.() !== false) this.host.setHistory(nativeObj);
+    if (nativeObj.isDetached() !== false) this.host.setHistory(nativeObj);
     claimHistoryOwner(historyToBind, this);
     bindHistoryLifetime(historyToBind, this.historyLifetime);
     this.boundHistory = historyToBind;
@@ -570,6 +571,10 @@ export class Tui implements TuiRuntime {
 
   route(output: Output<string>, routeId: string): void {
     this.prepareMutation("tui.route");
+    const input = textInputForOutput(output);
+    if (input === undefined || input.disposed || !this.ownedHandles.has(input)) {
+      throw tuiError("invalid-handle", "output is not owned by this Tui");
+    }
     try {
       this.host.route(nativeResourceOf<NativeTuiOutputContract>(output), routeId);
     } catch (error) {

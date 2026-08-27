@@ -76,7 +76,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
       if (ref !== undefined) {
         try {
           const nativeHandle = this.nativeAs<NativeHistoryContract>();
-          if (nativeHandle.pushRef !== undefined) return nativeHandle.pushRef(ref);
+          return nativeHandle.pushRef(ref);
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
@@ -94,10 +94,8 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
       if (ref !== undefined) {
         try {
           const nativeHandle = this.nativeAs<NativeHistoryContract>();
-          if (nativeHandle.freezeRef !== undefined) {
-            nativeHandle.freezeRef(unit, ref);
-            return;
-          }
+          nativeHandle.freezeRef(unit, ref);
+          return;
         } finally {
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }

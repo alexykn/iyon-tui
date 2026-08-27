@@ -4,7 +4,6 @@ import { tuiTestingAccess } from "./testing-access.ts";
 import type { History as HistoryHandle } from "./history.ts";
 import type { TextInput as RuntimeTextInput } from "./text-input.ts";
 import type { TextInput as TextInputHandle } from "./text-input.ts";
-import type { ViewSlot as ViewSlotHandle } from "./component.ts";
 import type {
   AppHarness as AppHarnessContract,
   Output,
@@ -15,6 +14,7 @@ import type {
   TerminalMetadata,
   TuiOpenOptions,
   View,
+  ViewSlot as ViewSlotContract,
 } from "./types.ts";
 import type { Theme } from "./values/theme.ts";
 
@@ -41,7 +41,7 @@ export class AppHarness implements AppHarnessContract {
 
   createHistory(): HistoryHandle { return this.tui.createHistory(); }
   createTextInput(options: TextInputOptions = {}): TextInputHandle { return this.tui.createTextInput(options); }
-  createViewSlot(initial: View): ViewSlotHandle { return this.tui.createViewSlot(initial); }
+  createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }
   createScrollPane(initial: View): ScrollPane { return this.tui.createScrollPane(initial); }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
   route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }

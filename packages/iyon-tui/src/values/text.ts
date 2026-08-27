@@ -1,19 +1,25 @@
 import { StyleRef, StyleSpec } from "./style.ts";
-import type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
+import type { HorizontalAlign, TextPart, TextRole, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
 
 export class TextSelector {
   private constructor(readonly value: TextSelectorValue = {}) {}
 
   static any(): TextSelector { return new TextSelector(); }
-  static role(role: string): TextSelector { return TextSelector.any().role(role); }
-  static part(part: string): TextSelector { return TextSelector.any().part(part); }
+  static role(role: TextRole): TextSelector { return TextSelector.any().role(role); }
+  static part(part: TextPart): TextSelector { return TextSelector.any().part(part); }
   static annotation(namespace: string, name: string): TextSelector { return TextSelector.any().annotation(namespace, name); }
   static heading(): TextSelector { return TextSelector.role("heading"); }
   static inlineCode(): TextSelector { return TextSelector.role("inlineCode"); }
   static codeBlock(): TextSelector { return TextSelector.role("codeBlock"); }
 
-  role(role: string): TextSelector { return this.with({ roles: [...(this.value.roles ?? []), role] }); }
-  part(part: string): TextSelector { return this.with({ parts: [...(this.value.parts ?? []), part] }); }
+  role(role: TextRole): TextSelector {
+    validateTextRole(role);
+    return this.with({ roles: [...(this.value.roles ?? []), role] });
+  }
+  part(part: TextPart): TextSelector {
+    validateTextPart(part);
+    return this.with({ parts: [...(this.value.parts ?? []), part] });
+  }
   annotation(namespace: string, name: string): TextSelector {
     return this.with({ annotations: [...(this.value.annotations ?? []), { namespace, name }] });
   }
@@ -30,6 +36,52 @@ export class TextSelector {
     return new TextSelector({ ...this.value, ...update });
   }
 }
+
+function validateTextRole(role: string): TextRole {
+  if (!TEXT_ROLES.has(role as TextRole)) throw new RangeError(`unknown text role ${JSON.stringify(role)}`);
+  return role as TextRole;
+}
+
+function validateTextPart(part: string): TextPart {
+  if (!TEXT_PARTS.has(part as TextPart)) throw new RangeError(`unknown text part ${JSON.stringify(part)}`);
+  return part as TextPart;
+}
+
+const TEXT_ROLES = new Set<TextRole>([
+  "paragraph",
+  "heading",
+  "blockQuote",
+  "list",
+  "listItem",
+  "codeBlock",
+  "table",
+  "tableRow",
+  "tableCell",
+  "thematicBreak",
+  "rawBlock",
+  "container",
+  "strong",
+  "emphasis",
+  "strikethrough",
+  "underline",
+  "superscript",
+  "subscript",
+  "smallCaps",
+  "inlineCode",
+  "link",
+  "image",
+  "rawInline",
+]);
+
+const TEXT_PARTS = new Set<TextPart>([
+  "listMarker",
+  "taskMarker",
+  "quoteMarker",
+  "codeLabel",
+  "tableRule",
+  "thematicRule",
+  "imageFallback",
+]);
 
 export type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
 

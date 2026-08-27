@@ -15,6 +15,7 @@
  */
 
 import { RetainedExecutionRuntime, type RetainedExecutionRuntimeOptions } from "./execution.ts";
+import type { ViewSlot as ViewSlotImplementation } from "./component.ts";
 import { View } from "./values/view.ts";
 import type { Tui } from "./runtime.ts";
 
@@ -32,7 +33,7 @@ export function bindExecutionRuntime(
   return new RetainedExecutionRuntime({
     ...options,
     createScopeProjection: () => {
-      const slot = tui.createViewSlot(View.spacer(0));
+      const slot = tui.createViewSlot(View.spacer(0)) as ViewSlotImplementation;
       const view = slot.view();
       return {
         view,

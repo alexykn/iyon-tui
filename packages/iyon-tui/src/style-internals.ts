@@ -12,7 +12,7 @@ import type {
   StyleNode,
   TextSpanNode,
 } from "./ir.ts";
-import { StyleRef, StyleSpec } from "./values/style.ts";
+import { StyleRef, StyleSpec, validateTextAttribute } from "./values/style.ts";
 import type { TextSpan } from "./values/text.ts";
 import type { ThemeKey } from "./values/theme-key.ts";
 
@@ -62,7 +62,7 @@ export function styleNodeFor(style: StyleRef | StyleSpec | StyleSpecValue): Styl
     ...(theme === undefined ? {} : { theme }),
     ...(value.foreground === undefined ? {} : { foreground: colorNodeFor(value.foreground) }),
     ...(value.background === undefined ? {} : { background: colorNodeFor(value.background) }),
-    attributes: { ...value.attributes },
+    attributes: styleAttributesFor(value.attributes),
   };
 }
 
@@ -86,6 +86,17 @@ export function textSpanNodeFor(span: TextSpan): TextSpanNode {
 
 export function materializeStyle(style: StyleSpecValue): StyleNode {
   return styleNodeFor(style);
+}
+
+function styleAttributesFor(attributes: StyleSpecValue["attributes"]): Readonly<Record<string, boolean>> {
+  const lowered: Record<string, boolean> = {};
+  for (const [name, enabled] of Object.entries(attributes)) {
+    if (enabled === undefined) continue;
+    validateTextAttribute(name);
+    if (typeof enabled !== "boolean") throw new TypeError(`text attribute ${JSON.stringify(name)} must be boolean`);
+    lowered[name] = enabled;
+  }
+  return lowered;
 }
 
 /** Lowers a public Theme definition only at the native host boundary. */

@@ -85,7 +85,16 @@ export type ColorSpec = ThemeColorReference | ThemeColorNamed | ThemeColorIndexe
 
 export type BorderStyle = "plain" | "rounded" | "double";
 export type BorderEdges = "all" | "topBottom";
-export type BorderGlyphs = Readonly<Record<string, string>>;
+export interface BorderGlyphs {
+  readonly top: string;
+  readonly right: string;
+  readonly bottom: string;
+  readonly left: string;
+  readonly topLeft: string;
+  readonly topRight: string;
+  readonly bottomLeft: string;
+  readonly bottomRight: string;
+}
 
 /** Public border semantics; the native glyph/layout record is private. */
 export interface BorderSpec {
@@ -95,11 +104,20 @@ export interface BorderSpec {
   readonly color?: ColorSpec;
 }
 
+/** Text attributes supported by the native semantic style model. */
+export type TextAttribute =
+  | "bold"
+  | "dim"
+  | "italic"
+  | "underline"
+  | "reversed"
+  | "strikethrough";
+
 /** Sparse direct style data. Named-style identity belongs to StyleRef. */
 export interface StyleSpecValue {
   readonly foreground?: ColorSpec;
   readonly background?: ColorSpec;
-  readonly attributes: Readonly<Record<string, boolean>>;
+  readonly attributes: Readonly<Partial<Record<TextAttribute, boolean>>>;
 }
 
 export type VerticalAlign = "top" | "center" | "bottom";
@@ -140,12 +158,46 @@ export interface GridSpec {
   readonly rowGap?: number;
 }
 
+export type TextRole =
+  | "paragraph"
+  | "heading"
+  | "blockQuote"
+  | "list"
+  | "listItem"
+  | "codeBlock"
+  | "table"
+  | "tableRow"
+  | "tableCell"
+  | "thematicBreak"
+  | "rawBlock"
+  | "container"
+  | "strong"
+  | "emphasis"
+  | "strikethrough"
+  | "underline"
+  | "superscript"
+  | "subscript"
+  | "smallCaps"
+  | "inlineCode"
+  | "link"
+  | "image"
+  | "rawInline";
+
+export type TextPart =
+  | "listMarker"
+  | "taskMarker"
+  | "quoteMarker"
+  | "codeLabel"
+  | "tableRule"
+  | "thematicRule"
+  | "imageFallback";
+
 export interface TextSelectorValue {
   readonly focused?: boolean;
   readonly focusWithin?: boolean;
   readonly states?: Readonly<Record<string, string>>;
-  readonly roles?: readonly string[];
-  readonly parts?: readonly string[];
+  readonly roles?: readonly TextRole[];
+  readonly parts?: readonly TextPart[];
   readonly annotations?: readonly StreamAnnotation[];
   readonly language?: string;
   readonly origin?: string;

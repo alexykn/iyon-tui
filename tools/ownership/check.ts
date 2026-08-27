@@ -538,6 +538,125 @@ function runtimeContractGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 13: H1J public contract parity guard
+// ---------------------------------------------------------------------------
+
+function contractParityGate(): void {
+  const sources = new Map([
+    ["types.ts", readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8")],
+    ["runtime.ts", readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8")],
+    ["history.ts", readFileSync(join(FRAMEWORK_SRC, "history.ts"), "utf8")],
+    ["text-input.ts", readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8")],
+    ["stream.ts", readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8")],
+    ["component.ts", readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8")],
+    ["scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8")],
+    ["testing.ts", readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8")],
+    ["view.ts", readFileSync(join(FRAMEWORK_SRC, "values/view.ts"), "utf8")],
+    ["style.ts", readFileSync(join(FRAMEWORK_SRC, "values/style.ts"), "utf8")],
+    ["theme.ts", readFileSync(join(FRAMEWORK_SRC, "values/theme.ts"), "utf8")],
+    ["text.ts", readFileSync(join(FRAMEWORK_SRC, "values/text.ts"), "utf8")],
+    ["style-internals.ts", readFileSync(join(FRAMEWORK_SRC, "style-internals.ts"), "utf8")],
+  ]);
+  const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
+  const rustOutput = readFileSync(join(ROOT, "crates/iyon-tui/src/output/handle.rs"), "utf8");
+  const rustComponent = readFileSync(join(ROOT, "crates/iyon-tui/src/component/mod.rs"), "utf8");
+  const runtime = sources.get("runtime.ts")!;
+  const types = sources.get("types.ts")!;
+  const theme = sources.get("theme.ts")!;
+  const view = sources.get("view.ts")!;
+  const style = sources.get("style.ts")!;
+  const text = sources.get("text.ts")!;
+  const styleInternals = sources.get("style-internals.ts")!;
+  const offenders: string[] = [];
+
+  const implementations: readonly [string, RegExp][] = [
+    ["runtime.ts", /export\s+class\s+Tui\s+implements\s+TuiRuntime\b/u],
+    ["history.ts", /export\s+class\s+History[\s\S]*implements\s+HistoryContract\b/u],
+    ["text-input.ts", /export\s+class\s+TextInput[\s\S]*implements\s+TextInputContract\b/u],
+    ["stream.ts", /export\s+class\s+TextStream[\s\S]*implements\s+TextStreamContract\b/u],
+    ["component.ts", /export\s+class\s+ViewSlot[\s\S]*implements\s+ViewSlotContract\b/u],
+    ["scroll-pane.ts", /export\s+class\s+NativeScrollPane[\s\S]*implements\s+ScrollPaneContract\b/u],
+    ["testing.ts", /export\s+class\s+AppHarness\s+implements\s+AppHarnessContract\b/u],
+  ];
+  for (const [file, pattern] of implementations) {
+    if (!pattern.test(sources.get(file)!)) offenders.push(`${file}: implementation no longer declares contract parity`);
+  }
+
+  if (!/interface\s+ScrollPane[\s\S]*setContent\(view:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(types)) {
+    offenders.push("ScrollPane contract does not include retained builder content");
+  }
+  if (!/setContent\(viewOrBuilder:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(sources.get("scroll-pane.ts")!)) {
+    offenders.push("ScrollPane implementation does not include retained builder content");
+  }
+  if (!/interface\s+TextInputOptions\s*\{[\s\S]*border\?:\s*BorderSpec/u.test(types)
+    || !/const\s+border\s*=\s*options\.border[\s\S]*host\.textInput\(options\.multiline,\s*border\)/u.test(runtime)) {
+    offenders.push("TextInput border semantics are not present in both contract and host lowering");
+  }
+  if (/materialize\(\)\s*:\s*ThemeDefinition/u.test(theme) || !/themeDefinitionFor\(theme\)/u.test(runtime)) {
+    offenders.push("Theme lowering is still public or bypasses its private projection seam");
+  }
+
+  const semanticAttributes = ["bold", "dim", "italic", "underline", "reversed", "strikethrough"];
+  for (const attribute of semanticAttributes) {
+    if (!types.includes(`"${attribute}"`)) offenders.push(`types.ts: missing TextAttribute ${attribute}`);
+    if (!native.includes(`"${attribute}" => Some(`)) offenders.push(`native/tui.rs: missing TextAttribute ${attribute} lowering`);
+  }
+  if (!/attributes:\s*Readonly<Partial<Record<TextAttribute,\s*boolean>>>/u.test(types)) {
+    offenders.push("StyleSpecValue attributes are not closed to the native vocabulary");
+  }
+  if (!/attribute\(name:\s*TextAttribute/u.test(style) || !/textAttribute\(name:\s*TextAttribute/u.test(view)) {
+    offenders.push("StyleSpec/View text-attribute methods are not aligned with TextAttribute");
+  }
+  if (!/function\s+styleAttributesFor[\s\S]*validateTextAttribute\(name\)/u.test(styleInternals)) {
+    offenders.push("style lowering does not validate the closed native text-attribute vocabulary");
+  }
+
+  const textRoles = ["paragraph", "heading", "blockQuote", "list", "listItem", "codeBlock", "table", "tableRow", "tableCell", "thematicBreak", "rawBlock", "container", "strong", "emphasis", "strikethrough", "underline", "superscript", "subscript", "smallCaps", "inlineCode", "link", "image", "rawInline"];
+  const textParts = ["listMarker", "taskMarker", "quoteMarker", "codeLabel", "tableRule", "thematicRule", "imageFallback"];
+  for (const role of textRoles) {
+    if (!types.includes(`"${role}"`)) offenders.push(`types.ts: missing TextRole ${role}`);
+    if (!native.includes(`"${role}" =>`)) offenders.push(`native/tui.rs: missing TextRole ${role} lowering`);
+  }
+  for (const part of textParts) {
+    if (!types.includes(`"${part}"`)) offenders.push(`types.ts: missing TextPart ${part}`);
+    if (!native.includes(`"${part}" =>`)) offenders.push(`native/tui.rs: missing TextPart ${part} lowering`);
+  }
+  if (!/roles\?:\s*readonly\s*TextRole\[\]/u.test(types) || !/parts\?:\s*readonly\s*TextPart\[\]/u.test(types)) {
+    offenders.push("TextSelectorValue roles/parts are not closed semantic vocabularies");
+  }
+  if (!/role\(role:\s*TextRole\)/u.test(text) || !/part\(part:\s*TextPart\)/u.test(text)) {
+    offenders.push("TextSelector methods do not use the closed semantic vocabularies");
+  }
+
+  if (!/export\s+interface\s+BorderGlyphs\s*\{[\s\S]*topLeft:\s*string[\s\S]*bottomRight:\s*string/u.test(types)) {
+    offenders.push("BorderGlyphs does not name the complete native border record");
+  }
+  if (/static\s+(?:__rawGrid|axisSetChildForTransport|axisSpliceForTransport|gridSetCellForTransport|__composedAxis|textLayoutAtNativePathForTransport|textLayoutTransactionForTransport)\b/u.test(view)) {
+    offenders.push("View still exposes retained transport constructors as public statics");
+  }
+  if (!/createViewSlot\(initialView:\s*View\):\s*ViewSlotContract/u.test(runtime)
+    || !/createViewSlot\(initial:\s*View\):\s*ViewSlotContract/u.test(sources.get("testing.ts")!)) {
+    offenders.push("ViewSlot factory signatures expose implementation classes instead of semantic contracts");
+  }
+  if (!/pub\s+struct\s+Output<T:/u.test(rustOutput) || !/pub\s+trait\s+Component/u.test(rustComponent)) {
+    offenders.push("Rust typed Output or Component semantic reference is missing");
+  }
+  if (!/isRetainedConstruction\(\)/u.test(view) || !/OwnedBuilderRoot\.start/u.test(sources.get("component.ts")!)
+    || !/OwnedBuilderRoot\.start/u.test(sources.get("scroll-pane.ts")!)) {
+    offenders.push("facade controls no longer use the shared retained composition architecture");
+  }
+  if (!/renderCanonical[\s\S]*renderDirect/u.test(runtime)) {
+    offenders.push("direct and retained render ownership paths were merged");
+  }
+
+  if (offenders.length > 0) {
+    fail("h1j-contract-parity", offenders.join("; "));
+  } else {
+    pass("h1j-contract-parity", "TypeScript contracts, native lowering, Rust semantic references, and retained paths remain aligned");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -628,6 +747,7 @@ typedOutputEventGate();
 falseAliasGate();
 rootAndTestingSurfaceGate();
 runtimeContractGate();
+contractParityGate();
 await publicSurfaceGate();
 
 if (failed) {

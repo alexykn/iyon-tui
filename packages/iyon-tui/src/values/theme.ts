@@ -26,6 +26,14 @@ interface TextThemeEntry {
 
 export { ThemeKey } from "./theme-key.ts";
 
+interface ThemeData {
+  readonly styles: ReadonlyMap<string, ThemeEntry<StyleSpecValue>>;
+  readonly colors: ReadonlyMap<string, ThemeEntry<ThemeColor>>;
+  readonly textStyles: readonly TextThemeEntry[];
+}
+
+const themeData = new WeakMap<Theme, ThemeData>();
+
 export class Theme {
   readonly kind = "theme" as const;
 
@@ -33,45 +41,53 @@ export class Theme {
     private readonly styles: ReadonlyMap<string, ThemeEntry<StyleSpecValue>>,
     private readonly colors: ReadonlyMap<string, ThemeEntry<ThemeColor>>,
     private readonly textStyles: readonly TextThemeEntry[],
-  ) {}
+  ) {
+    themeData.set(this, { styles, colors, textStyles });
+  }
 
   static new(): Theme { return new Theme(new Map(), new Map(), []); }
 
   withStyle(key: string | ThemeKey, style: StyleSpec): Theme {
+    const name = themeKey(key);
+    const current = this.styles.get(name);
     const values = new Map(this.styles);
-    values.set(themeKey(key), { base: style.value, variants: [] });
+    values.set(name, { base: style.value, variants: current?.variants ?? [] });
     return new Theme(values, this.colors, this.textStyles);
   }
 
   withStyleVariant(key: string | ThemeKey, selector: StyleSelector, style: StyleSpec): Theme {
     const name = themeKey(key);
     const current = this.styles.get(name);
+    const selectorValue = styleSelectorValue(selector);
     const values = new Map(this.styles);
     values.set(name, {
       base: current?.base,
       variants: [
-        ...(current?.variants ?? []),
-        { selector: styleSelectorValue(selector), value: style.value },
+        ...(current?.variants ?? []).filter((variant) => !styleSelectorsEqual(variant.selector, selectorValue)),
+        { selector: selectorValue, value: style.value },
       ],
     });
     return new Theme(values, this.colors, this.textStyles);
   }
 
   withColor(key: string | ThemeKey, color: ThemeColor): Theme {
+    const name = themeKey(key);
+    const current = this.colors.get(name);
     const values = new Map(this.colors);
-    values.set(themeKey(key), { base: color, variants: [] });
+    values.set(name, { base: color, variants: current?.variants ?? [] });
     return new Theme(this.styles, values, this.textStyles);
   }
 
   withColorVariant(key: string | ThemeKey, selector: StyleSelector, color: ThemeColor): Theme {
     const name = themeKey(key);
     const current = this.colors.get(name);
+    const selectorValue = styleSelectorValue(selector);
     const values = new Map(this.colors);
     values.set(name, {
       base: current?.base,
       variants: [
-        ...(current?.variants ?? []),
-        { selector: styleSelectorValue(selector), value: color },
+        ...(current?.variants ?? []).filter((variant) => !styleSelectorsEqual(variant.selector, selectorValue)),
+        { selector: selectorValue, value: color },
       ],
     });
     return new Theme(this.styles, values, this.textStyles);
@@ -101,31 +117,34 @@ export class Theme {
     }
     return color;
   }
+}
 
-  materialize(): ThemeDefinition {
-    return {
-      styles: Object.fromEntries(
-        [...this.styles].map(([name, entry]): [string, ThemeStyleEntry] => [name, {
-          ...(entry.base === undefined ? {} : { base: entry.base }),
-          variants: entry.variants.map((variant) => ({
-            selector: variant.selector,
-            value: variant.value,
-          })),
-        }]),
-      ),
-      colors: Object.fromEntries([...this.colors].map(([name, entry]) => [name, {
+/** @internal Projects a Theme for the private native-boundary lowering. */
+export function themeDefinitionFor(theme: Theme): ThemeDefinition {
+  const data = themeData.get(theme);
+  if (data === undefined) throw new TypeError("value is not a framework Theme");
+  return {
+    styles: Object.fromEntries(
+      [...data.styles].map(([name, entry]): [string, ThemeStyleEntry] => [name, {
         ...(entry.base === undefined ? {} : { base: entry.base }),
         variants: entry.variants.map((variant) => ({
           selector: variant.selector,
           value: variant.value,
         })),
-      }])),
-      textStyles: this.textStyles.map((entry) => ({
-        selector: entry.selector,
-        value: entry.value,
+      }]),
+    ),
+    colors: Object.fromEntries([...data.colors].map(([name, entry]) => [name, {
+      ...(entry.base === undefined ? {} : { base: entry.base }),
+      variants: entry.variants.map((variant) => ({
+        selector: variant.selector,
+        value: variant.value,
       })),
-    };
-  }
+    }])),
+    textStyles: data.textStyles.map((entry) => ({
+      selector: entry.selector,
+      value: entry.value,
+    })),
+  };
 }
 
 function themeKey(key: string | ThemeKey): string {
@@ -141,6 +160,16 @@ function isUnconditional(selector: StyleSelectorValue): boolean {
   return selector.focused !== true
     && selector.focusWithin !== true
     && (selector.states === undefined || Object.keys(selector.states).length === 0);
+}
+
+function styleSelectorsEqual(left: StyleSelectorValue, right: StyleSelectorValue): boolean {
+  if ((left.focused === true) !== (right.focused === true)
+    || (left.focusWithin === true) !== (right.focusWithin === true)) return false;
+  const leftStates = left.states ?? {};
+  const rightStates = right.states ?? {};
+  const leftKeys = Object.keys(leftStates);
+  if (leftKeys.length !== Object.keys(rightStates).length) return false;
+  return leftKeys.every((key) => leftStates[key] === rightStates[key]);
 }
 
 export type { ColorSpec, StyleSelectorValue, ThemeColor } from "../types.ts";

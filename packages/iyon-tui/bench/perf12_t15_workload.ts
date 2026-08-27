@@ -1,6 +1,13 @@
 import { View } from "../src/index.ts";
 import { BRIDGE_VIEW_KIND } from "../src/ir.ts";
-import { NATIVE_PATH_VIEW_KIND, type NativePathStep } from "../src/values/view.ts";
+import {
+  axisSetChildForTransport,
+  axisSpliceForTransport,
+  gridSetCellForTransport,
+  NATIVE_PATH_VIEW_KIND,
+  textLayoutAtNativePathForTransport,
+  type NativePathStep,
+} from "../src/values/view.ts";
 
 export interface T15WorkloadConfig {
   readonly workload: string;
@@ -80,8 +87,8 @@ export function makeT15Scenario({ workload, mode, size }: T15WorkloadConfig): T1
       next: (seed) => {
         const child = View.text(`wide-${seed}`).noWrap();
         const next = mode === "wide_axis_set"
-          ? View.axisSetChildForTransport(current, index, child)
-          : View.axisSpliceForTransport(current, index, 1, [{ view: child }]);
+          ? axisSetChildForTransport(current, index, child)
+          : axisSpliceForTransport(current, index, 1, [{ view: child }]);
         current = next;
         return next;
       },
@@ -93,7 +100,7 @@ export function makeT15Scenario({ workload, mode, size }: T15WorkloadConfig): T1
     return {
       initial: current,
       next: (seed) => {
-        const next = View.gridSetCellForTransport(current, 0, 0, View.text(`cell-${seed}`).noWrap());
+        const next = gridSetCellForTransport(current, 0, 0, View.text(`cell-${seed}`).noWrap());
         current = next;
         return next;
       },
@@ -106,7 +113,7 @@ export function makeT15Scenario({ workload, mode, size }: T15WorkloadConfig): T1
     return {
       initial: current,
       next: (seed) => {
-        const next = View.textLayoutAtNativePathForTransport(
+        const next = textLayoutAtNativePathForTransport(
           current,
           [step],
           seed % 2 === 0 ? "noWrap" : "wordThenGrapheme",

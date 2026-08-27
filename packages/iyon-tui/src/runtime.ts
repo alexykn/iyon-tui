@@ -8,7 +8,7 @@ import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
 import { History } from "./history.ts";
 import { createTextInput, TextInput } from "./text-input.ts";
-import { createViewSlot, ViewSlot } from "./component.ts";
+import { createViewSlot } from "./component.ts";
 import { createScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
@@ -33,7 +33,9 @@ import type {
   TuiEvent,
   TuiOpenOptions,
   TuiRuntime,
+  ViewSlot as ViewSlotContract,
 } from "./types.ts";
+import { themeDefinitionFor } from "./values/theme.ts";
 import type { Theme } from "./values/theme.ts";
 import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "./native.ts";
 
@@ -428,7 +430,7 @@ export class Tui implements TuiRuntime {
   }
 
   /** Creates a Tui-owned slot using the shared retained execution runtime. */
-  createViewSlot(initialView: View): ViewSlot {
+  createViewSlot(initialView: View): ViewSlotContract {
     return this.ownHandle(createViewSlot(this.host as never, initialView, this.retainedRuntime as never));
   }
 
@@ -527,7 +529,7 @@ export class Tui implements TuiRuntime {
     // PERF-12 T13 theme-epoch rule: drop cached themed StyleRefs so later
     // retained materializations re-resolve against the new host theme.
     resetStyleRefCacheForThemeChange();
-    this.host.setTheme(materializeTheme(theme.materialize()));
+    this.host.setTheme(materializeTheme(themeDefinitionFor(theme)));
   }
 
 }

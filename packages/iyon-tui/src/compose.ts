@@ -51,7 +51,9 @@ import {
 } from "./ir.ts";
 import {
   ChildrenBuilder,
+  composedAxis,
   GridBuilder,
+  rawGrid,
   View,
   type GridSpec,
   type LayoutChild,
@@ -65,7 +67,7 @@ import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
 import type { DiffHunk } from "./values/diff.ts";
 import type { StyleRef, StyleSpec } from "./values/style.ts";
-import type { BorderSpec, ColorSpec, ComponentHandle, HandleId } from "./types.ts";
+import type { BorderSpec, ColorSpec, ComponentHandle, HandleId, TextAttribute } from "./types.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -237,7 +239,7 @@ function decorationDeltaMatches(
       return styleNodesEqual(dec.style, expected);
     }
     case MOD_TEXT_ATTRIBUTE: {
-      const name = a as string;
+      const name = a as TextAttribute;
       const value = (b as boolean | undefined) ?? true;
       if (!colorEqual(dec.style.theme, inherited.style.theme)) return false;
       if (!colorEqual(dec.style.foreground, inherited.style.foreground)) return false;
@@ -321,7 +323,7 @@ function applyDecorationDirect(base: View, tag: number, a: unknown, b: unknown):
       case MOD_FOREGROUND: return base.foreground(a as ColorSpec);
       case MOD_BACKGROUND: return base.background(a as ColorSpec);
       case MOD_STYLE_SPEC: return base.style(a as StyleRef | StyleSpec);
-      case MOD_TEXT_ATTRIBUTE: return base.textAttribute(a as string, (b as boolean | undefined) ?? true);
+      case MOD_TEXT_ATTRIBUTE: return base.textAttribute(a as TextAttribute, (b as boolean | undefined) ?? true);
       case MOD_STYLE_STATE: return base.styleState(a as string, b as string);
       case MOD_BORDER: return base.border(a as BorderSpec);
       default:
@@ -465,7 +467,7 @@ function composeAxisImpl(row: boolean, build: (children: ChildrenBuilder) => voi
   const gap = builderInstance.gapValue();
   const scope = executionContext.top;
   if (scope === undefined) {
-    return View.__composedAxis(row, entries, gap);
+    return composedAxis(row, entries, gap);
   }
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
@@ -473,7 +475,7 @@ function composeAxisImpl(row: boolean, build: (children: ChildrenBuilder) => voi
     stageReuse(slot, previous);
     return previous;
   }
-  const view = View.__composedAxis(row, entries, gap);
+  const view = composedAxis(row, entries, gap);
   stageFresh(slot, view);
   return view;
 }
@@ -600,7 +602,7 @@ export function composeGrid(
   const scope = executionContext.top;
   if (scope === undefined) return View.grid(specification);
   const slot = scope.nextSemanticSlot();
-  const view = View.__rawGrid(specification);
+  const view = rawGrid(specification);
   const previous = slot.current;
   if (previous !== undefined && gridMatches(previous, view)) {
     stageReuse(slot, previous);
@@ -731,8 +733,8 @@ export function composeStyleState(base: View, key: string, value: string): View 
   return applyDecoration(base, MOD_STYLE_STATE, key, value);
 }
 
-/** Lowers base.textAttribute(name) — bold/dim/italic/strikethrough family. */
-export function composeTextAttribute(base: View, name: string, enabled = true): View {
+/** Lowers base.textAttribute(name) — the closed native attribute vocabulary. */
+export function composeTextAttribute(base: View, name: TextAttribute, enabled = true): View {
   return applyDecoration(base, MOD_TEXT_ATTRIBUTE, name, enabled);
 }
 

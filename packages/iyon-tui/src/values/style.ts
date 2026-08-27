@@ -3,6 +3,7 @@ import type {
   ColorSpec,
   StyleSelectorValue,
   StyleSpecValue,
+  TextAttribute,
 } from "../types.ts";
 import { ThemeKey } from "./theme-key.ts";
 
@@ -19,8 +20,8 @@ export class StyleSpec {
     return new StyleSpec({ ...this.value, background: color });
   }
 
-  attribute(name: string, enabled = true): StyleSpec {
-    if (name.length === 0) throw new RangeError("style attribute name cannot be empty");
+  attribute(name: TextAttribute, enabled = true): StyleSpec {
+    validateTextAttribute(name);
     return new StyleSpec({ ...this.value, attributes: { ...this.value.attributes, [name]: enabled } });
   }
 
@@ -149,6 +150,23 @@ function mergeStyleValues(base: StyleSpecValue, patch: StyleSpecValue): StyleSpe
     attributes: { ...base.attributes, ...patch.attributes },
   };
 }
+
+/** @internal Validates the closed native text-attribute vocabulary. */
+export function validateTextAttribute(name: string): TextAttribute {
+  if (!TEXT_ATTRIBUTES.has(name as TextAttribute)) {
+    throw new RangeError(`unknown text attribute ${JSON.stringify(name)}`);
+  }
+  return name as TextAttribute;
+}
+
+const TEXT_ATTRIBUTES = new Set<TextAttribute>([
+  "bold",
+  "dim",
+  "italic",
+  "underline",
+  "reversed",
+  "strikethrough",
+]);
 
 export type { AnsiColor } from "../types.ts";
 

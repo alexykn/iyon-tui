@@ -22,6 +22,7 @@ import type {
   GridTrack as PublicGridTrack,
   HorizontalAlign,
   LayoutChild,
+  TextAttribute,
   VerticalAlign,
   WrapMode,
 } from "../types.ts";
@@ -70,7 +71,7 @@ import {
 import { PersistentSeq } from "../persistent_seq.ts";
 import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../style-internals.ts";
 import { nodeForBridge, setViewNode } from "../view-internals.ts";
-import { StyleSpec } from "./style.ts";
+import { StyleSpec, validateTextAttribute } from "./style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "./style.ts";
 import { TextSpan } from "./text.ts";
 import type { DiffHunk } from "./diff.ts";
@@ -415,210 +416,7 @@ export class View {
 
   static grid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
     if (isRetainedConstruction()) return composeGrid(specification);
-    return View.__rawGrid(specification);
-  }
-
-  /** @internal raw grid construction used by the scoped comparator. */
-  static __rawGrid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
-    const builder = new GridBuilder();
-    if (Array.isArray(specification)) {
-      builder.columns(specification.map(() => ({ kind: "content" as const })));
-      builder.row((row) => specification.forEach((view) => row.cell(view)));
-    } else if (typeof specification === "function") specification(builder);
-    else {
-      const spec = specification as GridSpec;
-      builder.columns(spec.columns ?? []);
-      for (const row of spec.rows) builder.row(row);
-      builder.columnGap(spec.columnGap ?? 0).rowGap(spec.rowGap ?? 0);
-    }
-    const rows: BridgeGridRowNode[] = builder.rows.map((row) => ({
-      track: bridgeGridTrack(row.track ?? { kind: "content" }),
-      cells: row.cells.map((cell): BridgeGridCellNode => ({
-        view: nodeForBridge(cell.view),
-        columnSpan: validatePositiveU16(cell.columnSpan ?? 1, "columnSpan"),
-        rowSpan: validatePositiveU16(cell.rowSpan ?? 1, "rowSpan"),
-        horizontalAlign: horizontalAlignCode(cell.horizontalAlign ?? "start"),
-        verticalAlign: verticalAlignCode(cell.verticalAlign ?? "top"),
-      })),
-    }));
-    const view = new View({
-      kind: BRIDGE_VIEW_KIND.grid,
-      columns: builder.columnsValue.map(bridgeGridTrack),
-      rows,
-      columnGap: builder.columnGapValue,
-      rowGap: builder.rowGapValue,
-    });
-    seedWideGridSequence(view, rows);
-    return view;
-  }
-
-  /**
-   * PERF-12 T10 (§34/§35): retained wide-edit constructors. Each builds
-   * the complete new semantic node eagerly (fresh NodeId, frozen shape) but
-   * stores the derived axis children as a PersistentSeq - O(log₃₂ N) JS work,
-   * no flat array. The sequence override is authoritative; `children`
-   * materializes the exact flat array lazily only when a consumer (Direct
-   * fallback) asks. The derivation hint lets ensureNative run the exact
-   * native retained edit (base ref + NodeId + index + child refs).
-   * Not part of the public semantic API.
-   */
-  static axisSetChildForTransport(base: View, index: number, child: View, trackWord = 0): View {
-    const baseNode = nodeForBridge(base);
-    if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
-      throw new TypeError("retained axis edit base is not a row or column");
-    }
-    const baseSequence = bridgeAxisSequence(baseNode);
-    if (!Number.isInteger(index) || index < 0 || index >= baseSequence.length) {
-      throw new RangeError("retained axis edit index out of range");
-    }
-    const childNode = nodeForBridge(child);
-    const current = baseSequence.get(index)!;
-    const next = trackWord === 0 ? { ...current, child: childNode } : layoutChildFromTrackWord(trackWord, childNode);
-    const sequence = baseSequence.set(index, next);
-    return buildWideAxisNode(baseNode, sequence, { kind: "axisSet", index }, {
-      kind: "axisSet",
-      base: baseNode,
-      index,
-      trackWord,
-      child: childNode,
-    });
-  }
-
-  static axisSpliceForTransport(
-    base: View,
-    index: number,
-    removeCount: number,
-    inserted: readonly { readonly view: View; readonly trackWord?: number }[],
-  ): View {
-    const baseNode = nodeForBridge(base);
-    if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
-      throw new TypeError("retained axis splice base is not a row or column");
-    }
-    const baseSequence = bridgeAxisSequence(baseNode);
-    if (!Number.isInteger(index) || index < 0 || index > baseSequence.length) {
-      throw new RangeError("retained axis splice index out of range");
-    }
-    if (!Number.isInteger(removeCount) || removeCount < 0 || index + removeCount > baseSequence.length) {
-      throw new RangeError("retained axis splice count out of range");
-    }
-    const insertedChildren = inserted.map((entry) => ({
-      node: nodeForBridge(entry.view),
-      trackWord: entry.trackWord ?? 0,
-    }));
-    const insertedLayout = insertedChildren.map((entry) => layoutChildFromTrackWord(entry.trackWord, entry.node));
-    const sequence = baseSequence.splice(index, removeCount, ...insertedLayout);
-    return buildWideAxisNode(
-      baseNode,
-      sequence,
-      { kind: "axisSplice", index, removeCount, insertedCount: insertedLayout.length },
-      { kind: "axisSplice", base: baseNode, index, removeCount, inserted: insertedChildren },
-    );
-  }
-
-  static gridSetCellForTransport(base: View, row: number, column: number, cellView: View): View {
-    const gridNode = nodeForBridge(base);
-    if (gridNode.kind !== BRIDGE_VIEW_KIND.grid) throw new TypeError("retained grid cell edit base is not a grid");
-    const gridOverride = peekBridgeGridSequenceOverride(gridNode);
-    const placement = gridOverride === undefined ? gridPlacement(gridNode.rows) : undefined;
-    const rowCount = gridOverride?.rowTracks.length ?? gridNode.rows.length;
-    if (!Number.isInteger(row) || row < 0 || row >= rowCount) throw new RangeError("retained grid cell row out of range");
-    const childNode = nodeForBridge(cellView);
-    if (gridOverride !== undefined) {
-      const sequenceIndex = gridOverride.cellIndices[row]?.get(column);
-      if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
-      const sequence = gridOverride.sequence.set(sequenceIndex, {
-        ...gridOverride.sequence.get(sequenceIndex)!,
-        view: childNode,
-      });
-      const derived = buildWideGridNode(gridNode, gridOverride, sequence);
-      setBridgeDerivation(nodeForBridge(derived), {
-        kind: "gridCell",
-        base: gridNode,
-        row,
-        column,
-        child: childNode,
-      });
-      return derived;
-    }
-    const sequenceIndex = placement!.cellIndices[row]?.get(column);
-    if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
-    const rowStart = placement!.rowOffsets[row]!;
-    const cellIndex = sequenceIndex - rowStart;
-    // Narrow grids retain the ordinary eager semantic shape; only the wide
-    // sidecar path above avoids copying the addressed row's cell array.
-    const rows = gridNode.rows.map((current, rowIndex) =>
-      rowIndex === row
-        ? { ...current, cells: current.cells.map((cell, index) => index === cellIndex ? { ...cell, view: childNode } : cell) }
-        : current,
-    );
-    const derived = new View({ kind: BRIDGE_VIEW_KIND.grid, columns: gridNode.columns, rows, columnGap: gridNode.columnGap, rowGap: gridNode.rowGap });
-    setBridgeDerivation(nodeForBridge(derived), {
-      kind: "gridCell",
-      base: gridNode,
-      row,
-      column,
-      child: childNode,
-    });
-    return derived;
-  }
-
-  /**
-   * PERF-12 T13.1 (@internal): construct an axis view from pre-composed
-   * layout entries so the composition layer builds the builder callback
-   * EXACTLY ONCE and reuses the entries for both reuse-check and construction
-   * (§19). Equivalent to View.vertical/horizontal over a builder callback,
-   * including the wide-sequence seed. Reinstituted in R1 for the scoped arm.
-   */
-  static __composedAxis(row: boolean, entries: readonly LayoutChild[], gap: number): View {
-    const loweredEntries = bridgeLayoutChildren(entries);
-    const view = new View({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: loweredEntries, gap });
-    seedWideAxisSequence(view, loweredEntries);
-    return view;
-  }
-
-  /** Internal retained-path constructor; not part of the public semantic API. */
-  static textLayoutAtNativePathForTransport(
-    view: View,
-    steps: readonly { readonly kind: number; readonly expectedViewKind: number; readonly selector: number }[],
-    wrap: WrapMode,
-    align: HorizontalAlign,
-  ): View {
-    if (steps.length > 4) throw new RangeError("native retained path depth must be at most 4");
-    const nextNode = patchBridgeTextPath(nodeForBridge(view), steps, wrapCode(wrap), horizontalAlignCode(align));
-    let lineage: NativePathLineage = Object.freeze({ baseNodeId: nodeForBridge(view).id, depth: 0 });
-    for (const step of steps) lineage = nativePathChildLineage(view, lineage, step);
-    const result = new View(nextNode);
-    nativePathLineages.set(result, freezeNativePathLineage(lineage));
-    return result;
-  }
-
-  /**
-   * Internal retained-transport constructor for multiple independent text
-   * edits. Builds complete eagerly-materialized path-patched nodes and
-   * records typed transaction metadata for the generated transaction call.
-   */
-  static textLayoutTransactionForTransport(
-    view: View,
-    edits: readonly {
-      readonly steps: readonly { readonly kind: number; readonly expectedViewKind: number; readonly selector: number }[];
-      readonly wrap: WrapMode;
-      readonly align: HorizontalAlign;
-    }[],
-  ): View {
-    if (edits.length < 2 || edits.length > 256) {
-      throw new RangeError("native text transaction must contain 2 through 256 edits");
-    }
-    const seen = new Set<string>();
-    let node = nodeForBridge(view);
-    for (const edit of edits) {
-      if (edit.steps.length > 4) throw new RangeError("native retained transaction path depth must be at most 4");
-      const key = edit.steps.map((step) => `${step.kind}:${step.expectedViewKind}:${step.selector}`).join("/");
-      if (!seen.add(key)) throw new RangeError("native text transaction paths must be distinct");
-      node = patchBridgeTextPath(node, edit.steps, wrapCode(edit.wrap), horizontalAlignCode(edit.align));
-    }
-    const result = new View(node);
-    nativeTextLayoutTransactions.set(result, buildTransactionEdits(view, nodeForBridge(result), edits));
-    return result;
+    return rawGrid(specification);
   }
 
   bold(): View { return this.textAttribute("bold"); }
@@ -627,7 +425,8 @@ export class View {
   underline(): View { return this.textAttribute("underline"); }
   reversed(): View { return this.textAttribute("reversed"); }
   strikethrough(): View { return this.textAttribute("strikethrough"); }
-  textAttribute(name: string, enabled = true): View {
+  textAttribute(name: TextAttribute, enabled = true): View {
+    validateTextAttribute(name);
     if (isRetainedConstruction()) return composeTextAttribute(this, name, enabled);
     return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } });
   }
@@ -730,6 +529,198 @@ export class View {
     }
     return this;
   }
+}
+
+/** @internal Creates a View from a private bridge node without exposing its constructor. */
+function createView(node: object): View {
+  const Constructor = View as unknown as new (node: object) => View;
+  return new Constructor(node);
+}
+
+/** @internal Raw grid construction shared by public and retained composition paths. */
+export function rawGrid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
+  const builder = new GridBuilder();
+  if (Array.isArray(specification)) {
+    builder.columns(specification.map(() => ({ kind: "content" as const })));
+    builder.row((row) => specification.forEach((view) => row.cell(view)));
+  } else if (typeof specification === "function") specification(builder);
+  else {
+    const spec = specification as GridSpec;
+    builder.columns(spec.columns ?? []);
+    for (const row of spec.rows) builder.row(row);
+    builder.columnGap(spec.columnGap ?? 0).rowGap(spec.rowGap ?? 0);
+  }
+  const rows: BridgeGridRowNode[] = builder.rows.map((row) => ({
+    track: bridgeGridTrack(row.track ?? { kind: "content" }),
+    cells: row.cells.map((cell): BridgeGridCellNode => ({
+      view: nodeForBridge(cell.view),
+      columnSpan: validatePositiveU16(cell.columnSpan ?? 1, "columnSpan"),
+      rowSpan: validatePositiveU16(cell.rowSpan ?? 1, "rowSpan"),
+      horizontalAlign: horizontalAlignCode(cell.horizontalAlign ?? "start"),
+      verticalAlign: verticalAlignCode(cell.verticalAlign ?? "top"),
+    })),
+  }));
+  const view = createView({
+    kind: BRIDGE_VIEW_KIND.grid,
+    columns: builder.columnsValue.map(bridgeGridTrack),
+    rows,
+    columnGap: builder.columnGapValue,
+    rowGap: builder.rowGapValue,
+  });
+  seedWideGridSequence(view, rows);
+  return view;
+}
+
+/** @internal PERF-12 wide retained axis replacement. */
+export function axisSetChildForTransport(base: View, index: number, child: View, trackWord = 0): View {
+  const baseNode = nodeForBridge(base);
+  if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
+    throw new TypeError("retained axis edit base is not a row or column");
+  }
+  const baseSequence = bridgeAxisSequence(baseNode);
+  if (!Number.isInteger(index) || index < 0 || index >= baseSequence.length) {
+    throw new RangeError("retained axis edit index out of range");
+  }
+  const childNode = nodeForBridge(child);
+  const current = baseSequence.get(index)!;
+  const next = trackWord === 0 ? { ...current, child: childNode } : layoutChildFromTrackWord(trackWord, childNode);
+  const sequence = baseSequence.set(index, next);
+  return buildWideAxisNode(baseNode, sequence, { kind: "axisSet", index }, {
+    kind: "axisSet",
+    base: baseNode,
+    index,
+    trackWord,
+    child: childNode,
+  });
+}
+
+/** @internal PERF-12 wide retained axis splice. */
+export function axisSpliceForTransport(
+  base: View,
+  index: number,
+  removeCount: number,
+  inserted: readonly { readonly view: View; readonly trackWord?: number }[],
+): View {
+  const baseNode = nodeForBridge(base);
+  if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
+    throw new TypeError("retained axis splice base is not a row or column");
+  }
+  const baseSequence = bridgeAxisSequence(baseNode);
+  if (!Number.isInteger(index) || index < 0 || index > baseSequence.length) {
+    throw new RangeError("retained axis splice index out of range");
+  }
+  if (!Number.isInteger(removeCount) || removeCount < 0 || index + removeCount > baseSequence.length) {
+    throw new RangeError("retained axis splice count out of range");
+  }
+  const insertedChildren = inserted.map((entry) => ({
+    node: nodeForBridge(entry.view),
+    trackWord: entry.trackWord ?? 0,
+  }));
+  const insertedLayout = insertedChildren.map((entry) => layoutChildFromTrackWord(entry.trackWord, entry.node));
+  const sequence = baseSequence.splice(index, removeCount, ...insertedLayout);
+  return buildWideAxisNode(
+    baseNode,
+    sequence,
+    { kind: "axisSplice", index, removeCount, insertedCount: insertedLayout.length },
+    { kind: "axisSplice", base: baseNode, index, removeCount, inserted: insertedChildren },
+  );
+}
+
+/** @internal PERF-12 retained grid-cell replacement. */
+export function gridSetCellForTransport(base: View, row: number, column: number, cellView: View): View {
+  const gridNode = nodeForBridge(base);
+  if (gridNode.kind !== BRIDGE_VIEW_KIND.grid) throw new TypeError("retained grid cell edit base is not a grid");
+  const gridOverride = peekBridgeGridSequenceOverride(gridNode);
+  const placement = gridOverride === undefined ? gridPlacement(gridNode.rows) : undefined;
+  const rowCount = gridOverride?.rowTracks.length ?? gridNode.rows.length;
+  if (!Number.isInteger(row) || row < 0 || row >= rowCount) throw new RangeError("retained grid cell row out of range");
+  const childNode = nodeForBridge(cellView);
+  if (gridOverride !== undefined) {
+    const sequenceIndex = gridOverride.cellIndices[row]?.get(column);
+    if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
+    const sequence = gridOverride.sequence.set(sequenceIndex, {
+      ...gridOverride.sequence.get(sequenceIndex)!,
+      view: childNode,
+    });
+    const derived = buildWideGridNode(gridNode, gridOverride, sequence);
+    setBridgeDerivation(nodeForBridge(derived), {
+      kind: "gridCell",
+      base: gridNode,
+      row,
+      column,
+      child: childNode,
+    });
+    return derived;
+  }
+  const sequenceIndex = placement!.cellIndices[row]?.get(column);
+  if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
+  const rowStart = placement!.rowOffsets[row]!;
+  const cellIndex = sequenceIndex - rowStart;
+  // Narrow grids retain the ordinary eager semantic shape; only the wide
+  // sidecar path above avoids copying the addressed row's cell array.
+  const rows = gridNode.rows.map((current, rowIndex) =>
+    rowIndex === row
+      ? { ...current, cells: current.cells.map((cell, index) => index === cellIndex ? { ...cell, view: childNode } : cell) }
+      : current,
+  );
+  const derived = createView({ kind: BRIDGE_VIEW_KIND.grid, columns: gridNode.columns, rows, columnGap: gridNode.columnGap, rowGap: gridNode.rowGap });
+  setBridgeDerivation(nodeForBridge(derived), {
+    kind: "gridCell",
+    base: gridNode,
+    row,
+    column,
+    child: childNode,
+  });
+  return derived;
+}
+
+/** @internal Retained axis construction used by compose.ts. */
+export function composedAxis(row: boolean, entries: readonly LayoutChild[], gap: number): View {
+  const loweredEntries = bridgeLayoutChildren(entries);
+  const view = createView({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: loweredEntries, gap });
+  seedWideAxisSequence(view, loweredEntries);
+  return view;
+}
+
+/** @internal Retained path patch constructor. */
+export function textLayoutAtNativePathForTransport(
+  view: View,
+  steps: readonly NativePathStep[],
+  wrap: WrapMode,
+  align: HorizontalAlign,
+): View {
+  if (steps.length > 4) throw new RangeError("native retained path depth must be at most 4");
+  const nextNode = patchBridgeTextPath(nodeForBridge(view), steps, wrapCode(wrap), horizontalAlignCode(align));
+  let lineage: NativePathLineage = Object.freeze({ baseNodeId: nodeForBridge(view).id, depth: 0 });
+  for (const step of steps) lineage = nativePathChildLineage(view, lineage, step);
+  const result = createView(nextNode);
+  nativePathLineages.set(result, freezeNativePathLineage(lineage));
+  return result;
+}
+
+/** @internal Retained transaction constructor for multiple text patches. */
+export function textLayoutTransactionForTransport(
+  view: View,
+  edits: readonly {
+    readonly steps: readonly { readonly kind: number; readonly expectedViewKind: number; readonly selector: number }[];
+    readonly wrap: WrapMode;
+    readonly align: HorizontalAlign;
+  }[],
+): View {
+  if (edits.length < 2 || edits.length > 256) {
+    throw new RangeError("native text transaction must contain 2 through 256 edits");
+  }
+  const seen = new Set<string>();
+  let node = nodeForBridge(view);
+  for (const edit of edits) {
+    if (edit.steps.length > 4) throw new RangeError("native retained transaction path depth must be at most 4");
+    const key = edit.steps.map((step) => `${step.kind}:${step.expectedViewKind}:${step.selector}`).join("/");
+    if (!seen.add(key)) throw new RangeError("native text transaction paths must be distinct");
+    node = patchBridgeTextPath(node, edit.steps, wrapCode(edit.wrap), horizontalAlignCode(edit.align));
+  }
+  const result = createView(node);
+  nativeTextLayoutTransactions.set(result, buildTransactionEdits(view, nodeForBridge(result), edits));
+  return result;
 }
 
 /**
@@ -1044,20 +1035,6 @@ export function nodeIdPair(view: View): readonly [number, number] {
  */
 export function viewNodeIdHighWater(): number {
   return nodeIdCounter.next - 1;
-}
-
-/**
- * Builds a path-aware immutable value for retained-path differential tests and
- * future structural builders. Construction assigns a fresh NodeId to the
- * changed leaf and every rebuilt ancestor.
- */
-export function textLayoutAtNativePathForTransport(
-  view: View,
-  steps: readonly NativePathStep[],
-  wrap: WrapMode,
-  align: HorizontalAlign,
-): View {
-  return View.textLayoutAtNativePathForTransport(view, steps, wrap, align);
 }
 
 function buildTransactionEdits(

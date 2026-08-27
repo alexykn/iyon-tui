@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE = join(ROOT, "packages/iyon-tui/src/index.ts");
+const TESTING_SOURCE = join(ROOT, "packages/iyon-tui/src/testing.ts");
 const PRIVATE_MODULES = new Set(["ir", "native", "retained_dag", "native_view_abi"]);
 const PRIVATE_TYPE = /\b(?:Bridge[A-Z]\w*|Native(?:Tui|View|History|Text|Scroll|Projector|Output)(?:Contract|Abi[A-Z]\w*))\b/u;
 
 const publicTypeNames = [
   "AnsiColor",
-  "AppHarness",
   "BorderEdges",
   "BorderGlyphs",
   "BorderSpec",
@@ -36,8 +36,6 @@ const publicTypeNames = [
   "InsetsValue",
   "InteractionResult",
   "LayoutChild",
-  "NativeScrollPane",
-  "NativeViewSlot",
   "Output",
   "OutputEvent",
   "OverflowIndicator",
@@ -158,15 +156,19 @@ try {
     "--types",
     "bun-types",
     SOURCE,
+    TESTING_SOURCE,
   ]);
   const rootDeclaration = join(output, "index.d.ts");
-  if (!existsSync(rootDeclaration)) {
-    console.error("H1A declaration closure: index.d.ts was not emitted");
-    failed = true;
+  const testingDeclaration = join(output, "testing.d.ts");
+  for (const [name, declaration] of [["index.d.ts", rootDeclaration], ["testing.d.ts", testingDeclaration]] as const) {
+    if (!existsSync(declaration)) {
+      console.error(`H1A/H1H declaration closure: ${name} was not emitted`);
+      failed = true;
+    }
   }
 
   const reachable = new Set<string>();
-  const pending = [rootDeclaration];
+  const pending = [rootDeclaration, testingDeclaration];
   while (pending.length > 0) {
     const declaration = pending.pop()!;
     if (reachable.has(declaration) || !existsSync(declaration)) continue;
@@ -221,7 +223,31 @@ try {
     failed = true;
   }
 
-  if (!failed) console.log(`PASS h1a-declaration-closure — ${reachable.size} declaration files reachable; all public probe types are nameable`);
+  const testingProbe = join(output, "testing-surface-probe.ts");
+  writeFileSync(
+    testingProbe,
+    `import type { AppHarness, createAppHarness } from "./testing.d.ts";\n\nexport type PublicTestingFactory = typeof createAppHarness;\nexport type PublicTestingSurface = AppHarness;\n`,
+  );
+  if (!runTsc([
+    "--ignoreConfig",
+    "--noEmit",
+    "--target",
+    "ESNext",
+    "--module",
+    "ESNext",
+    "--moduleResolution",
+    "Bundler",
+    "--strict",
+    "--allowImportingTsExtensions",
+    "--verbatimModuleSyntax",
+    "--skipLibCheck",
+    testingProbe,
+  ])) {
+    console.error("H1H declaration closure: testing subpath nameability probe failed");
+    failed = true;
+  }
+
+  if (!failed) console.log(`PASS h1a-declaration-closure — ${reachable.size} declaration files reachable; root and testing public types are nameable`);
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

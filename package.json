@@ -6,6 +6,7 @@
   "packageManager": "bun@1.4.0",
   "exports": {
     ".": "./packages/iyon-tui/src/index.ts",
+    "./testing": "./packages/iyon-tui/src/testing.ts",
     "./native-stage": "./packages/iyon-tui/scripts/stage-native.ts"
   },
   "bin": {

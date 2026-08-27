@@ -1,4 +1,5 @@
-import { Scene, Tui, View } from "../src/index.ts";
+import { Scene, View } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 
 const nativePerf = process.env.T13_R6B_COUNTERS === "1"
   ? require("../native/iyon-tui-native.node") as {
@@ -34,7 +35,7 @@ function bootstrapMedianInterval(values: readonly number[], rounds = 200): [numb
   return [medians[Math.floor(medians.length * 0.025)]!, medians[Math.floor(medians.length * 0.975)]!];
 }
 
-const tui = await Tui.open({ width: 80, height: 24, headless: true });
+const tui = await AppHarness.open({ width: 80, height: 24 });
 try {
   const slots = Array.from({ length: scopeCount }, () => tui.createViewSlot(View.text("x")));
   const body = View.vertical(slots.map((slot) => slot.view()));

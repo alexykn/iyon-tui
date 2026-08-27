@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
-import { AppHarness, StyleSpec, Tui, View, TextSpan } from "../src/index.ts";
+import { StyleSpec, View, TextSpan } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
 
@@ -17,7 +18,7 @@ const Host = native.NativeTuiHost as unknown as (new (width: number, height: num
 describe("PERF-11.9 native strings and style atoms", () => {
   test("preserves Unicode, styled spans, and embedded NUL parity", async () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
-    const tui = await Tui.open({ width: 24, height: 4, headless: true });
+    const tui = await AppHarness.open({ width: 24, height: 4 });
     const oracle = new Host(24, 4, true);
     const values = [
       View.text("héllo 🌍").bold().foreground({ type: "named", value: "red" }).noWrap(),

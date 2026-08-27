@@ -1,10 +1,5 @@
-import {
-  AppHarness,
-  History,
-  Scene,
-  TextStream,
-  View,
-} from "../../src/index.ts";
+import { History, Scene, TextStream, View } from "../../src/index.ts";
+import { AppHarness } from "../../src/testing.ts";
 
 export async function runTuiDemo(): Promise<{
   screenRows: readonly string[];

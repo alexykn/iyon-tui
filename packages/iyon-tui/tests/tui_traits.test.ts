@@ -1,12 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  ComponentAdapterBridge,
-  RendererAdapter,
-  TextContent,
-  TextRewriterAdapter,
-  View,
-} from "../src/index.ts";
+import { TextContent, View } from "../src/index.ts";
+import { ComponentAdapterBridge } from "../src/traits/component.ts";
+import { RendererAdapter } from "../src/traits/renderer.ts";
+import { TextRewriterAdapter } from "../src/traits/text-rewriter.ts";
 
 describe("T5 JS-thread trait adapters", () => {
   test("renderer and rewriter callbacks run as owned JS promises", async () => {

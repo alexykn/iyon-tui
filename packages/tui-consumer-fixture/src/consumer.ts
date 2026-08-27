@@ -2,8 +2,8 @@
  * PERF-12 T13.1 §13.3 external-consumer fixture — consumer source.
  *
  * Rules for EVERY file in this package:
- *   - import ONLY documented public iyon-tui APIs (the "@iyon/tui"
- *     package specifier);
+ *   - import ONLY documented public iyon-tui APIs (the "@iyon/tui" root
+ *     or "@iyon/tui/testing" testing entrypoint);
  *   - no internal runtime imports, no composition/compiler/plugin setup,
  *     no feature flags, no manual View memoization, no identity discipline.
  *
@@ -12,8 +12,9 @@
  * exact sources automatically; this file must never change to opt in.
  */
 
-import { Insets, Scene, Style, Tui, View } from "@iyon/tui";
-import type { History, ScrollPane, TextInput, View as ViewValue, ViewSlot } from "@iyon/tui";
+import { Insets, Scene, Style, View } from "@iyon/tui";
+import { AppHarness } from "@iyon/tui/testing";
+import type { History, ScrollPane, TextInput, TuiRuntime, View as ViewValue, ViewSlot } from "@iyon/tui";
 
 export interface ConsumerState {
   readonly title: string;
@@ -59,7 +60,7 @@ export function buildItemRows(items: readonly string[]): ViewValue {
 }
 
 export interface ConsumerSession {
-  readonly tui: Tui;
+  readonly tui: AppHarness;
   readonly history: History;
   readonly composer: TextInput;
   readonly listSlot: ViewSlot;
@@ -71,7 +72,7 @@ export interface ConsumerSession {
 }
 /** Normal public-API session setup — nothing composition-specific anywhere. */
 export async function openConsumerSession(): Promise<ConsumerSession> {
-  const tui = await Tui.open({ width: 60, height: 16, headless: true });
+  const tui = await AppHarness.open({ width: 60, height: 16 });
   const composer = tui.createTextInput({ multiline: false });
   const listSlot = tui.createViewSlot(View.spacer(0));
   const pane = tui.createScrollPane(View.spacer(0));
@@ -121,7 +122,7 @@ export interface ScopedConsumer {
   readonly renderApp: () => void;
 }
 
-export function buildScopedConsumer(tui: Tui): ScopedConsumer {
+export function buildScopedConsumer(tui: Pick<TuiRuntime, "render">): ScopedConsumer {
   const status = createStatePublic<string>("ready");
   const items = createStatePublic<readonly ScopedEntry[]>([
     { id: "a", label: "alpha" },

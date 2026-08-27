@@ -4,6 +4,7 @@ import { borderNodeFor, materializeTheme } from "./style-internals.ts";
 import { View } from "./values/view.ts";
 import { asTuiError, tuiError } from "./errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
+import { registerTuiTestingAccess } from "./testing-access.ts";
 import { Scene } from "./scene.ts";
 import { History } from "./history.ts";
 import { createTextInput, TextInput } from "./text-input.ts";
@@ -115,6 +116,23 @@ export class Tui implements TuiRuntime {
           },
         };
       },
+    });
+    registerTuiTestingAccess(this, {
+      enqueue: (event) => {
+        if (event.type === "key") this.host.dispatchKey(event.key, event.modifiers);
+        if (event.type === "paste") this.host.dispatchPaste(event.text);
+        if (event.type === "resize") this.resize(event.width, event.height);
+      },
+      screenRows: () => this.host.screenRows(),
+      nativeHistoryRows: () => this.host.nativeHistoryRows(),
+      styleAt: (row, column) => {
+        const style = this.host.styleAt(row, column) as Readonly<Record<string, unknown>> | null;
+        if (style === null) throw tuiError("runtime", "native cell style is unavailable");
+        return style;
+      },
+      cellXOfText: (row, text) => this.host.cellXOfText(row, text),
+      advance: (milliseconds) => this.host.advanceTime(milliseconds),
+      exited: () => this.host.exited(),
     });
   }
 
@@ -508,23 +526,6 @@ export class Tui implements TuiRuntime {
     this.host.setTheme(materializeTheme(theme.materialize()));
   }
 
-  enqueue(event: { readonly type: "key"; readonly key: string; readonly modifiers?: readonly string[] } | { readonly type: "paste"; readonly text: string } | { readonly type: "resize"; readonly width: number; readonly height: number }): void {
-    if (event.type === "key") this.host.dispatchKey(event.key, event.modifiers);
-    if (event.type === "paste") this.host.dispatchPaste(event.text);
-    if (event.type === "resize") this.resize(event.width, event.height);
-  }
-
-  screenRows(): readonly string[] { return this.host.screenRows(); }
-  nativeHistoryRows(): readonly string[] { return this.host.nativeHistoryRows(); }
-  styleAt(row: number, column: number): Readonly<Record<string, unknown>> {
-    const style = this.host.styleAt(row, column) as Readonly<Record<string, unknown>> | null;
-    if (style === null) throw tuiError("runtime", "native cell style is unavailable");
-    return style;
-  }
-  cellXOfText(row: number, text: string): number | null { return this.host.cellXOfText(row, text); }
-  exited(): boolean { return this.host.exited(); }
-  advance(ms: number): void { this.host.advanceTime(ms); }
-  current(): Scene | undefined { return this.currentScene; }
 }
 
 function waitForAbortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Scene, Tui, View } from "../src/index.ts";
+import { Scene, View } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 
 class Rng {
   private value: number;
@@ -44,8 +45,8 @@ function randomView(rng: Rng, depth: number, shared?: View): View {
 
 describe("PERF-12 T14 retained differential", () => {
   test("100 deterministic DAG seeds match a fresh cold render", async () => {
-    const retained = await Tui.open({ width: 32, height: 12, headless: true });
-    const cold = await Tui.open({ width: 32, height: 12, headless: true });
+    const retained = await AppHarness.open({ width: 32, height: 12 });
+    const cold = await AppHarness.open({ width: 32, height: 12 });
     try {
       for (let seed = 0; seed < 100; seed++) {
         const rng = new Rng(seed + 1);

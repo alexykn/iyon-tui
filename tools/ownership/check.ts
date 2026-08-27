@@ -186,11 +186,12 @@ function napiTransportGate(): void {
 
 function consumerFixtureGate(): void {
   const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
+  const allowedEntrypoints = new Set(["@iyon/tui", "@iyon/tui/testing"]);
   const violations: string[] = [];
   for (const file of walk(fixtureRoot)) {
     for (const spec of specifiersOf(readFileSync(file, "utf8"))) {
       if (!spec.startsWith(".") && !spec.startsWith("/")) {
-        if (spec !== "@iyon/tui" && !/^(bun|node):/.test(spec)) {
+        if (!allowedEntrypoints.has(spec) && !/^(bun|node):/.test(spec)) {
           violations.push(`${relative(ROOT, file)} -> "${spec}"`);
         }
         continue;
@@ -207,7 +208,7 @@ function consumerFixtureGate(): void {
     violations.push(`package dependencies are [${dependencies.join(", ")}]`);
   }
   if (violations.length > 0) fail("standalone-consumer-public-entrypoint", violations.join("; "));
-  else pass("standalone-consumer-public-entrypoint", "fixture source and dependency manifest use only @iyon/tui");
+  else pass("standalone-consumer-public-entrypoint", "fixture source and dependency manifest use only documented @iyon/tui root/testing entrypoints");
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +460,44 @@ function falseAliasGate(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Gate 11: H1H root and testing-subpath hygiene guard
+// ---------------------------------------------------------------------------
+
+function rootAndTestingSurfaceGate(): void {
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/iyon-tui/package.json"), "utf8")) as {
+    exports?: Record<string, unknown>;
+  };
+  const workspaceManifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
+    exports?: Record<string, unknown>;
+  };
+  const forbiddenRootNames = /\b(?:AppHarness|createAppHarness|NativeOutputHandle|NativeViewSlot|NativeScrollPane|(?:Renderer|Projector|TextVisitor|TextRewriter|StreamingSource)Adapter|ComponentAdapterBridge|FocusController|InteractionRouter)\b/u;
+  const testOnlyMethods = /^\s+(?:enqueue|screenRows|nativeHistoryRows|styleAt|cellXOfText|advance|current|exited)\s*\(/mu;
+  const offenders: string[] = [];
+
+  if (forbiddenRootNames.test(index)) offenders.push("implementation, adapter, interaction, or testing names remain root-exported");
+  if (testOnlyMethods.test(runtime)) offenders.push("Tui still declares direct test/inspection methods");
+  if (typeof packageManifest.exports?.["./testing"] !== "string") offenders.push("packages/iyon-tui does not export ./testing");
+  if (packageManifest.exports?.["./testing"] !== "./src/testing.ts") offenders.push("packages/iyon-tui ./testing does not target src/testing.ts");
+  if (workspaceManifest.exports?.["./testing"] !== "./packages/iyon-tui/src/testing.ts") offenders.push("workspace ./testing export is not aligned with the package");
+  if (!/export\s+class\s+AppHarness\b/u.test(testing) || !/export\s+const\s+createAppHarness\b/u.test(testing)) {
+    offenders.push("testing subpath does not expose AppHarness and createAppHarness");
+  }
+  if (/export\s+(?:const|function|class)\s+tuiTestingAccess\b/u.test(testing)) {
+    offenders.push("testing subpath exposes the private Tui testing-access seam");
+  }
+  if (existsSync(join(FRAMEWORK_SRC, "interaction.ts"))) offenders.push("unused TypeScript interaction facade remains");
+
+  if (offenders.length > 0) {
+    fail("h1h-root-testing-surface", offenders.join("; "));
+  } else {
+    pass("h1h-root-testing-surface", "the root is semantic, testing helpers live under ./testing, and Tui test hooks are private");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gate 3: Public API surface guard
 // ---------------------------------------------------------------------------
 
@@ -547,6 +586,7 @@ controlLifecycleGate();
 componentFacadeGate();
 typedOutputEventGate();
 falseAliasGate();
+rootAndTestingSurfaceGate();
 await publicSurfaceGate();
 
 if (failed) {

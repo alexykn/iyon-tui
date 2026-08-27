@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Scene, TextStream, Tui, View } from "../src/index.ts";
+import { Scene, TextStream, View } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -12,7 +13,7 @@ async function closeAfter(tui: { close(): void }, milliseconds: number): Promise
 
 describe("real-time native TUI driving", () => {
   test("real_runtime_drives_slot_tick_without_manual_clock_advance", async () => {
-    const tui = await Tui.open({ width: 60, height: 12, headless: true });
+    const tui = await AppHarness.open({ width: 60, height: 12 });
     try {
       const slot = tui.createViewSlot(View.text("frame one"));
       await slot.setAnimation([View.text("frame one"), View.text("frame two")], 80);
@@ -32,7 +33,7 @@ describe("real-time native TUI driving", () => {
   });
 
   test("stream_is_smoothed_in_real_runtime", async () => {
-    const tui = await Tui.open({ width: 60, height: 12, headless: true });
+    const tui = await AppHarness.open({ width: 60, height: 12 });
     try {
       const history = tui.createHistory();
       const stream = new TextStream({ projector: "markdown" });
@@ -58,7 +59,7 @@ describe("real-time native TUI driving", () => {
   });
 
   test("single_stream_append_is_paced_not_atomic", async () => {
-    const tui = await Tui.open({ width: 60, height: 12, headless: true });
+    const tui = await AppHarness.open({ width: 60, height: 12 });
     try {
       const history = tui.createHistory();
       const stream = new TextStream({ projector: "markdown" });

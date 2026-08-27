@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { AppHarness, TextStream, View } from "../src/index.ts";
+import { TextStream, View } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 
 describe("native headless harness", () => {
   test("uses native snapshots and dispatches input through the mounted host", async () => {

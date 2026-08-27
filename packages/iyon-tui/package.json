@@ -6,6 +6,7 @@
   "description": "Generic terminal UI framework for Bun and TypeScript consumers",
   "exports": {
     ".": "./src/index.ts",
+    "./testing": "./src/testing.ts",
     "./native-stage": "./scripts/stage-native.ts"
   },
   "bin": {

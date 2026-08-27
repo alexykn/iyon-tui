@@ -7,7 +7,7 @@ import {
   releaseNativeViewRef,
   tryNativeAxisCreateRender,
 } from "../src/native_view_abi.ts";
-import { Tui } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
 import { View } from "../src/values/view.ts";
 
@@ -56,7 +56,7 @@ describe("PERF-11.8 native builders and small constructors", () => {
 
   test("constructs a compact cold axis through the native builder and keeps text on fallback", async () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
-    const tui = await Tui.open({ width: 8, height: 6, headless: true });
+    const tui = await AppHarness.open({ width: 8, height: 6 });
     const oracle = new Host(8, 6, true);
     const spacers = Array.from({ length: 6 }, (_, index) => View.spacer(index + 1));
     const next = View.vertical(spacers);

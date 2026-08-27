@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
-import { Tui, View } from "../src/index.ts";
+import { View } from "../src/index.ts";
+import { AppHarness } from "../src/testing.ts";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
@@ -20,7 +21,7 @@ const Host = native.NativeTuiHost as unknown as (new (width: number, height: num
 describe("PERF-11.3 generated scalar retained route", () => {
   test("keeps exact identity O(1) and renders text layout through generated FFI", async () => {
     if (Host === undefined) return;
-    const tui = await Tui.open({ width: 8, height: 4, headless: true });
+    const tui = await AppHarness.open({ width: 8, height: 4 });
     const oracle = new Host(8, 4, true);
     const base = View.text("hello");
     const changed = base.noWrap().textAlign("center");
@@ -41,7 +42,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
 
   test("renders a depth-one text edit through an interned PathRef", async () => {
     if (Host === undefined) return;
-    const tui = await Tui.open({ width: 8, height: 4, headless: true });
+    const tui = await AppHarness.open({ width: 8, height: 4 });
     const oracle = new Host(8, 4, true);
     const base = View.vertical((column) => column.child(View.text("hello")));
     const changed = textLayoutAtNativePathForTransport(
@@ -63,7 +64,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
 
   test("keeps depth-specialized PathRef edits parity through depth four", async () => {
     if (Host === undefined) return;
-    const tui = await Tui.open({ width: 8, height: 4, headless: true });
+    const tui = await AppHarness.open({ width: 8, height: 4 });
     const oracle = new Host(8, 4, true);
     try {
       for (let depth = 1; depth <= 4; depth += 1) {
@@ -91,7 +92,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
 
   test("renders supported root common-field patches through generated FFI", async () => {
     if (Host === undefined) return;
-    const tui = await Tui.open({ width: 8, height: 4, headless: true });
+    const tui = await AppHarness.open({ width: 8, height: 4 });
     const oracle = new Host(8, 4, true);
     const base = View.text("x");
     const changed = base.padding(1);

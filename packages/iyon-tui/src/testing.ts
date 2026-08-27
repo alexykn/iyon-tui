@@ -1,11 +1,14 @@
 import { tuiError } from "./errors.ts";
 import { Tui } from "./runtime.ts";
+import { tuiTestingAccess } from "./testing-access.ts";
+import type { History as HistoryHandle } from "./history.ts";
 import type { TextInput as RuntimeTextInput } from "./text-input.ts";
+import type { TextInput as TextInputHandle } from "./text-input.ts";
+import type { ViewSlot as ViewSlotHandle } from "./component.ts";
 import type {
   AppHarness as AppHarnessContract,
-  History,
   Output,
-  TextInput,
+  TextInput as TextInputContract,
   TextInputOptions,
   ScrollPane,
   TuiEvent,
@@ -35,12 +38,12 @@ export class AppHarness implements AppHarnessContract {
 
   render(scene: import("./types.ts").SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);
-    this.tui.advance(0);
+    tuiTestingAccess(this.tui).advance(0);
   }
 
-  createHistory(): History { return this.tui.createHistory(); }
-  createTextInput(options: TextInputOptions = {}): TextInput { return this.tui.createTextInput(options); }
-  createViewSlot(initial: View) {
+  createHistory(): HistoryHandle { return this.tui.createHistory(); }
+  createTextInput(options: TextInputOptions = {}): TextInputHandle { return this.tui.createTextInput(options); }
+  createViewSlot(initial: View): ViewSlotHandle {
     if (this.tui.createViewSlot === undefined) throw tuiError("runtime", "native view slots are unavailable");
     return this.tui.createViewSlot(initial);
   }
@@ -50,7 +53,7 @@ export class AppHarness implements AppHarnessContract {
   }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
   route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
-  interceptPaste(input: TextInput, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
+  interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input as RuntimeTextInput, actionId); }
   forwardPaste(text: string): void { this.tui.forwardPaste(text); }
   setTheme(theme: Theme): void { this.tui.setTheme(theme); }
 
@@ -68,20 +71,20 @@ export class AppHarness implements AppHarnessContract {
     this.tui.exit();
   }
 
-  pressKey(key: string, modifiers?: readonly string[]): void { this.tui.enqueue({ type: "key", key, modifiers }); }
-  paste(text: string): void { this.tui.enqueue({ type: "paste", text }); }
+  pressKey(key: string, modifiers?: readonly string[]): void { tuiTestingAccess(this.tui).enqueue({ type: "key", key, modifiers }); }
+  paste(text: string): void { tuiTestingAccess(this.tui).enqueue({ type: "paste", text }); }
   advance(ms: number): void {
     if (!Number.isFinite(ms) || ms < 0) throw tuiError("validation", "clock advancement must be non-negative");
     this.clock += ms;
-    this.tui.advance(ms);
+    tuiTestingAccess(this.tui).advance(ms);
   }
-  screenRows(): readonly string[] { return this.tui.screenRows(); }
-  nativeHistoryRows(): readonly string[] { return this.tui.nativeHistoryRows(); }
-  styleAt(row: number, column: number): Readonly<Record<string, unknown>> { return this.tui.styleAt(row, column); }
+  screenRows(): readonly string[] { return tuiTestingAccess(this.tui).screenRows(); }
+  nativeHistoryRows(): readonly string[] { return tuiTestingAccess(this.tui).nativeHistoryRows(); }
+  styleAt(row: number, column: number): Readonly<Record<string, unknown>> { return tuiTestingAccess(this.tui).styleAt(row, column); }
   cellXOfText(row: number, text: string): number | null {
-    return this.tui.cellXOfText(row, text);
+    return tuiTestingAccess(this.tui).cellXOfText(row, text);
   }
-  exited(): boolean { return this.tui.exited(); }
+  exited(): boolean { return tuiTestingAccess(this.tui).exited(); }
   now(): number { return this.clock; }
 }
 

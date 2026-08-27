@@ -121,6 +121,13 @@ use super::{ResolveError, ResolveSession, ResolvedScene};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedRootScene {
     pub(crate) scene: ResolvedScene,
+    /// Independently resolved body branch retained for body-local updates.
+    pub(crate) body_scene: ResolvedScene,
+    /// Independently resolved History branch retained for history-local
+    /// projection updates.
+    pub(crate) history_scene: Option<ResolvedScene>,
+    /// Component identities resolved from the root-level History.
+    pub(crate) history_components: HashSet<ComponentId>,
     /// The independently resolved body root used to decide whether a local
     /// component update can avoid rebuilding the history/root wrapper.
     pub(crate) body_view: View,
@@ -173,27 +180,38 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
         .map_or(0, |_| size.height.saturating_sub(body_height));
 
     let body_view = body_scene.view.clone();
-    let (history_scene, history_overlay, history_overflow_rows) = match root.history.as_ref() {
-        Some(history) => {
-            let mut session = ResolveSession::new(registry);
-            let projection = project_into_session_for_host(
-                history,
-                Size::new(size.width, history_height),
-                &mut session,
-                anchor,
-            )?;
-            (
-                Some(session.finish(projection.view)),
-                projection.frozen_overlay,
-                projection.overflow_rows,
-            )
-        }
-        None => (None, None, 0),
-    };
-    let scene = merge_root_scene(history_scene, body_scene, root.layout_root())?;
+    let (history_scene, history_overlay, history_overflow_rows, history_components) =
+        match root.history.as_ref() {
+            Some(history) => {
+                let mut session = ResolveSession::new(registry);
+                let projection = project_into_session_for_host(
+                    history,
+                    Size::new(size.width, history_height),
+                    &mut session,
+                    anchor,
+                )?;
+                let history_scene = session.finish(projection.view);
+                let history_components = history_scene.mounts.ids().collect();
+                (
+                    Some(history_scene),
+                    projection.frozen_overlay,
+                    projection.overflow_rows,
+                    history_components,
+                )
+            }
+            None => (None, None, 0, HashSet::new()),
+        };
+    let scene = merge_root_scene(
+        history_scene.clone(),
+        body_scene.clone(),
+        root.layout_root(),
+    )?;
 
     Ok(ResolvedRootScene {
         scene,
+        body_scene,
+        history_scene,
+        history_components,
         body_view,
         history_overlay,
         history_overflow_rows,
@@ -224,7 +242,7 @@ pub(crate) fn resolve_component_subtree(
     Ok(resolved)
 }
 
-fn merge_root_scene(
+pub(crate) fn merge_root_scene(
     history: Option<ResolvedScene>,
     body: ResolvedScene,
     layout_root: &View,

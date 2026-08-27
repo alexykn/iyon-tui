@@ -31,8 +31,8 @@
  *   behavior on every supported consumer path (handoff §4.1/§25).
  */
 
-import { invokeComponent, type ViewComponent, type ViewComponentType } from "./execution.ts";
-import type { View } from "./values/view.ts";
+import { invokeComponent } from "./execution.ts";
+import type { View, ViewComponent, ViewComponentType } from "./types.ts";
 
 /**
  * Defines a retained view component from a pure synchronous render body.
@@ -53,4 +53,4 @@ export function defineView<P>(render: (props: P) => View): ViewComponent<P> {
   return component;
 }
 
-export type { ViewComponent, ViewComponentType };
+export type { ViewComponent, ViewComponentType } from "./types.ts";

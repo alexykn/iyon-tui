@@ -21,6 +21,7 @@ export type {
   ThemeColorReference,
   ComponentAdapter,
   ComponentCapabilities,
+  ComponentId,
   ComponentContext,
   ComponentHandle,
   GridCell,
@@ -32,6 +33,7 @@ export type {
   InteractionResult,
   LayoutChild,
   HistoryLayout,
+  FrameworkHandle,
   HandleId,
   KeyEvent,
   OutputEvent,
@@ -71,7 +73,7 @@ export type {
 export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./values/view.ts";
 export type { OverflowIndicator, ViewChildren } from "./values/view.ts";
 export { defineView } from "./define-view.ts";
-export type { ViewComponent } from "./execution.ts";
+export type { ViewComponent } from "./types.ts";
 export { state } from "./tracked-state.ts";
 export type { State } from "./tracked-state.ts";
 export { Insets } from "./values/geometry.ts";

@@ -19,6 +19,7 @@
 
 import { nodeForBridge } from "./view-internals.ts";
 import type { View } from "./values/view.ts";
+import type { ViewComponentType } from "./types.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
 import {
   ChildOwnerState,
@@ -40,23 +41,6 @@ export type { ViewKey };
 export { executionContext, activeExecutionScope };
 
 // --- Public-machinery types --------------------------------------------------
-
-/**
- * Core component abstraction: a stable identity token carrying its pure,
- * synchronous render body. Identity is object REFERENCE equality —
- * `defineView` returns one object per definition; structurally identical
- * literals are DIFFERENT types (mismatch ⇒ remount, §9.1). Property-arrow
- * syntax enforces contravariant props checking.
- */
-export interface ViewComponentType<P = unknown> {
-  readonly render: (props: P) => View;
-}
-
-/** The PUBLIC callable component value returned by `defineView`. */
-export interface ViewComponent<P = unknown> {
-  readonly render: (props: P) => View;
-  (props: P): View;
-}
 
 /**
  * One fallible-free publication of a prepared native root (R7 contract):

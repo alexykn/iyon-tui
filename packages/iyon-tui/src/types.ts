@@ -1,3 +1,9 @@
+import { asTuiError, tuiError } from "./errors.ts";
+import {
+  disposeFrameworkResource,
+  nativeResourceOf,
+  registerFrameworkHandle,
+} from "./handle-registry.ts";
 import type { View as SemanticView } from "./values/view.ts";
 import type { TextContent as SemanticTextContent } from "./values/text-content.ts";
 import type { StyleRef } from "./values/style.ts";
@@ -8,20 +14,64 @@ declare const handleIdBrand: unique symbol;
 /** JavaScript-local framework handle identity; this is not a native identifier. */
 export type HandleId = number & { readonly [handleIdBrand]: "HandleId" };
 
+declare const componentIdBrand: unique symbol;
+/** Native host identity for a mounted component, distinct from a JS handle id. */
+export type ComponentId = number & { readonly [componentIdBrand]: "ComponentId" };
+
 /**
- * Nominal base for framework-owned handles. The private field prevents an
- * arbitrary structural object from satisfying a handle contract.
+ * Nominal base for framework-owned handles. Native resources and lifecycle
+ * state are kept in private registries; consumers can name the handle
+ * contract without seeing or supplying a native object.
  */
-export abstract class FrameworkHandle {
+export abstract class FrameworkHandle<K extends string = string> {
   #frameworkHandleBrand!: void;
-  abstract readonly kind: string;
-  abstract readonly id: HandleId;
-  abstract readonly disposed: boolean;
-  abstract dispose(): void;
-  protected constructor() {}
+  readonly id: HandleId;
+  readonly kind: K;
+  private isDisposed = false;
+
+  protected constructor(kind: K, resource: never) {
+    this.kind = kind;
+    this.id = registerFrameworkHandle(this, resource as unknown as object);
+  }
+
+  protected nativeAs<T extends object>(): T {
+    return nativeResourceOf<T>(this);
+  }
+
+  get disposed(): boolean { return this.isDisposed; }
+
+  dispose(): void {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+    disposeFrameworkResource(this);
+  }
+
+  protected ensureOpen(): void {
+    if (this.isDisposed) throw tuiError("disposed-handle", `${this.kind} handle has been disposed`, { id: this.id });
+  }
+
+  protected call<R>(operation: () => R): R {
+    try {
+      this.ensureOpen();
+      return operation();
+    } catch (error) {
+      throw asTuiError(error);
+    }
+  }
 }
 
 export type View = SemanticView;
+
+/** Stable identity token for a retained user-defined View component. */
+export interface ViewComponentType<P = unknown> {
+  readonly render: (props: P) => View;
+}
+
+/** Callable retained View component returned by defineView. */
+export interface ViewComponent<P = unknown> {
+  readonly render: (props: P) => View;
+  (props: P): View;
+}
 
 /** Public geometry value used by semantic View construction. */
 export interface InsetsValue {
@@ -223,7 +273,7 @@ export interface TextInputOptions {
 
 export type TextContent = SemanticTextContent;
 
-export interface History extends FrameworkHandle {
+export interface History extends FrameworkHandle<"history"> {
   readonly kind: "history";
   layout(): HistoryLayout;
   push(view: View): number;
@@ -268,7 +318,7 @@ export interface TextStreamPacing {
   readonly maxUnitsPerSecond?: number;
 }
 
-export interface TextStream extends FrameworkHandle {
+export interface TextStream extends FrameworkHandle<"text-stream"> {
   readonly kind: "text-stream";
   update(text: string): void;
   append(text: string, annotations?: readonly StreamAnnotation[]): void;
@@ -298,7 +348,7 @@ export interface StreamSegmentSnapshot {
  * This is a mounted handle, not the user-implementable ComponentAdapter
  * behavior contract; use a control's `view()` projection for composition.
  */
-export interface ComponentHandle extends FrameworkHandle {
+export interface ComponentHandle extends FrameworkHandle<"component" | "text-input"> {
   readonly kind: "component" | "text-input";
   view(): View;
 }
@@ -364,7 +414,7 @@ export interface ComponentAdapter {
  * their payload is supplied separately, matching the native EventCx contract.
  */
 export interface ComponentContext {
-  readonly componentId: HandleId;
+  readonly componentId: ComponentId;
   emit<T>(output: Output<T>, payload: T): void;
 }
 
@@ -374,10 +424,10 @@ export type InteractionResult =
   | { readonly type: "ignored" };
 
 /** Opaque typed output-channel identity; payloads are delivered separately. */
-export abstract class Output<T> {
+export class Output<T> {
   #outputBrand!: void;
   readonly kind = "output" as const;
-  protected constructor() {}
+  private constructor() {}
 }
 
 export interface KeyEvent {

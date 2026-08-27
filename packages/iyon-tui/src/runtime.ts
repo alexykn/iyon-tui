@@ -393,21 +393,21 @@ export class Tui implements TuiRuntime {
     // Validate the structural body before transferring an attach-once History;
     // malformed runtime input must not partially mutate the scene sideband.
     const normalizedNode = nodeForBridge(normalized.body);
-    let requestedHistory: NativeHistoryContract | undefined;
+    const previousHistory = this.boundHistory;
     if (normalized.history !== undefined) {
       // Validate the handle before the identity no-op below. A disposed
       // History must never be accepted merely because the same object was
       // present in the last scene.
       assertHistoryOwner(normalized.history, this);
-      if (this.boundHistory !== undefined && this.boundHistory !== normalized.history) {
+      if (previousHistory !== undefined && previousHistory !== normalized.history) {
         throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
       }
-      requestedHistory = nativeResourceOf<NativeHistoryContract>(normalized.history);
+      nativeResourceOf<NativeHistoryContract>(normalized.history);
     }
     // An omitted history means "keep the existing sideband" for both direct
     // and retained scene ownership modes. Compare and record that effective
     // value rather than allowing currentScene to forget a bound History.
-    const effectiveHistory = normalized.history ?? this.boundHistory;
+    const effectiveHistory = normalized.history ?? previousHistory;
     if (
       this.currentScene !== undefined
       && this.currentScene.body === normalized.body
@@ -421,17 +421,41 @@ export class Tui implements TuiRuntime {
       // Projected components freeze rather than vanish: their JS scopes die
       // here while native retirement stays deferred until a successful frame
       // proves them unmounted (post-R9 invariant §32.3).
+      this.stagedHistory = effectiveHistory;
       this.disposeRootBuilder();
       return;
     }
-    if (normalized.history !== undefined) {
-      if (requestedHistory!.isDetached?.() === true) this.host.setHistory(requestedHistory!);
-      claimHistoryOwner(normalized.history, this);
-      bindHistoryLifetime(normalized.history, this.historyLifetime);
-      this.boundHistory = normalized.history;
-    }
     const previousBody = this.currentScene?.body;
     const session = nativeViewAbiSession();
+    const historyChanges = normalized.history !== undefined && normalized.history !== previousHistory;
+    if (historyChanges && session !== undefined) {
+      // Prepare the body before transferring a detached History. The native
+      // history transition is attach-once, so a malformed body must not make
+      // an otherwise reusable History permanently bound to this Tui.
+      this.ensureBoundary(session);
+      const retainedPublication = this.boundary!.prepareInstall(normalized.body);
+      const publication = retainedPublication ?? this.boundary!.prepareColdInstall(normalized.body);
+      if (publication !== undefined) {
+        try {
+          this.commitHistoryBinding(normalized.history, previousHistory);
+          publication.commit();
+        } catch (error) {
+          // If history preparation failed before commit, release the root
+          // lease acquired for the body and leave the old scene authoritative.
+          publication.abort();
+          throw error;
+        }
+        recordNativeViewRoute(retainedPublication === undefined ? "fallback" : "retained");
+        this.currentScene = new Scene(normalized.body, effectiveHistory);
+        this.stagedHistory = effectiveHistory;
+        this.disposeRootBuilder();
+        return;
+      }
+    }
+    // If the retained/cold preflight was unavailable, keep the legacy direct
+    // fallback behavior. The supported addon always has a preflight path for
+    // valid public Views; this branch is only for an older/incomplete addon.
+    if (historyChanges) this.commitHistoryBinding(normalized.history, previousHistory);
     // Exact-root fast path: identical body View, warm hint, one host call.
     if (
       session !== undefined
@@ -443,6 +467,7 @@ export class Tui implements TuiRuntime {
       if (exact.status === "ok") {
         recordNativeViewRoute("render_ref");
         this.currentScene = new Scene(normalized.body, effectiveHistory);
+        this.stagedHistory = effectiveHistory;
         this.disposeRootBuilder();
         return;
       }
@@ -470,6 +495,7 @@ export class Tui implements TuiRuntime {
       if (session !== undefined) this.boundary!.adopt(normalized.body);
     }
     this.currentScene = new Scene(normalized.body, effectiveHistory);
+    this.stagedHistory = effectiveHistory;
     this.disposeRootBuilder();
   }
 

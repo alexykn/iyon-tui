@@ -1,4 +1,4 @@
-import { HandleBase } from "./handles.ts";
+import { FrameworkHandle } from "./types.ts";
 import { assertTextStreamUsable } from "./history.ts";
 import { nativeTui } from "./native-handles.ts";
 import type { NativeTextStreamContract } from "./native.ts";
@@ -11,7 +11,7 @@ import type { StreamAnnotation, StreamSnapshot, TextStream as TextStreamContract
  * stream updates do not create a second stream or a second retained View path.
  * A stream is intended to have one active History attachment at a time.
  */
-export class TextStream extends HandleBase<"text-stream"> implements TextStreamContract {
+export class TextStream extends FrameworkHandle<"text-stream"> implements TextStreamContract {
   constructor(options: TextStreamOptions = {}) { super("text-stream", nativeTui.textStream(options) as never); }
   update(text: string): void {
     this.callSource(() => this.nativeAs<NativeTextStreamContract>().update(text));

@@ -68,7 +68,7 @@ import type { Insets } from "./values/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
 import type { DiffHunk } from "./values/diff.ts";
 import type { StyleRef, StyleSpec } from "./values/style.ts";
-import type { BorderSpec, ColorSpec, ComponentHandle, HandleId, TextAttribute } from "./types.ts";
+import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute } from "./types.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -421,7 +421,7 @@ export function composeSpacer(rows: number): View {
 
 /** Lowers a mounted component handle through the private placement facade. */
 export function composeComponent(handle: ComponentHandle): View {
-  const componentId = componentIdOf(handle) as HandleId;
+  const componentId = componentIdOf(handle);
   const scope = executionContext.top;
   if (scope === undefined) return componentViewFor(handle);
   const slot = scope.nextSemanticSlot();

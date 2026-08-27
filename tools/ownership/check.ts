@@ -7,6 +7,7 @@
  */
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, join, relative, resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -259,7 +260,7 @@ async function themeStyleSemanticGate(): Promise<void> {
 
 function opaqueHandleGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const handles = readFileSync(join(FRAMEWORK_SRC, "handles.ts"), "utf8");
+  const handles = `${readFileSync(join(FRAMEWORK_SRC, "handles.ts"), "utf8")}\n${readFileSync(join(FRAMEWORK_SRC, "handle-registry.ts"), "utf8")}`;
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
 
@@ -304,7 +305,7 @@ function controlLifecycleGate(): void {
   if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(types)) {
     offenders.push("types.ts: ScrollPane.setContent does not expose builder support");
   }
-  if (!/private\s+constructor\(nativeHandle:\s*never(?:,|\))/u.test(textInput)
+  if (!/private\s+constructor\((?:resource|nativeHandle):\s*never(?:,|\))/u.test(textInput)
     || !/TEXT_INPUT_NATIVE_TOKEN/u.test(textInput)
     || /new\s+TextInput\s*\(/u.test(textInput)) {
     offenders.push("text-input.ts: TextInput has a direct consumer constructor");
@@ -387,13 +388,13 @@ function typedOutputEventGate(): void {
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
 
-  if (!/export\s+abstract\s+class\s+Output<[^>]+>[\s\S]*#outputBrand/u.test(types)) {
+  if (!/export\s+class\s+Output<[^>]+>[\s\S]*#outputBrand[\s\S]*private\s+constructor/u.test(types)) {
     offenders.push("types.ts: missing opaque typed Output<T> identity");
   }
   if (/OutputHandle\b/u.test(types + textInput + runtime + testing)) {
     offenders.push("legacy OutputHandle remains in the framework facade");
   }
-  const outputClass = types.match(/export\s+abstract\s+class\s+Output<T>[\s\S]*?\n\}/u)?.[0] ?? "";
+  const outputClass = types.match(/export\s+class\s+Output<T>[\s\S]*?\n\}/u)?.[0] ?? "";
   if (/export\s+type\s+Output\s*=/u.test(types) || /\bpayload\b/u.test(outputClass)) {
     offenders.push("types.ts: Output is still a record or exposes a fake payload");
   }
@@ -713,6 +714,28 @@ async function publicSurfaceGate(): Promise<void> {
   // TypeScript facade exports vs frozen S0 snapshot.
   const baselinePath = join(ROOT, "docs/repository-separation/s0/api-surface.json");
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+  const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/iyon-tui/package.json"), "utf8")) as {
+    name?: string;
+  };
+  const typescriptSnapshot = baseline.typescriptTui as {
+    currentPackage?: string;
+    currentSubpath?: string;
+    source?: string;
+    sourceSha256?: string;
+  };
+  const identityErrors: string[] = [];
+  if (packageManifest.name !== "@iyon/tui") identityErrors.push(`package name is ${JSON.stringify(packageManifest.name)}`);
+  if (typescriptSnapshot.currentPackage !== "@iyon/tui") identityErrors.push("snapshot currentPackage is not @iyon/tui");
+  if (typescriptSnapshot.currentSubpath !== ".") identityErrors.push("snapshot currentSubpath is not the package root");
+  if (typescriptSnapshot.source !== "packages/iyon-tui/src/index.ts") identityErrors.push("snapshot source is not the canonical TUI root");
+  if (typescriptSnapshot.source === undefined || !existsSync(join(ROOT, typescriptSnapshot.source))) {
+    identityErrors.push("snapshot source does not exist");
+  } else {
+    const sourceHash = createHash("sha256").update(readFileSync(join(ROOT, typescriptSnapshot.source))).digest("hex");
+    if (typescriptSnapshot.sourceSha256 !== sourceHash) identityErrors.push("snapshot sourceSha256 is stale");
+  }
+  if (identityErrors.length > 0) fail("tui-package-identity", identityErrors.join("; "));
+  else pass("tui-package-identity", "@iyon/tui is the canonical framework package and snapshot root");
   const mod = await import(join(FRAMEWORK_SRC, "index.ts"));
   const values = Object.keys(mod).sort();
   const typeExports: string[] = [];

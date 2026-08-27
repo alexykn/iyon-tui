@@ -5,8 +5,18 @@ import { tmpdir } from "node:os";
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE = join(ROOT, "packages/iyon-tui/src/index.ts");
 const TESTING_SOURCE = join(ROOT, "packages/iyon-tui/src/testing.ts");
-const PRIVATE_MODULES = new Set(["ir", "native", "retained_dag", "native_view_abi"]);
-const PRIVATE_TYPE = /\b(?:Bridge[A-Z]\w*|Native(?:Tui|View|History|Text|Scroll|Projector|Output)(?:Contract|Abi[A-Z]\w*))\b/u;
+const PRIVATE_MODULES = new Set([
+  "ir",
+  "native",
+  "retained_dag",
+  "native_view_abi",
+  "generated",
+  "handles",
+  "handle-registry",
+  "style-internals",
+  "view-internals",
+]);
+const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native(?:Tui|View|History|Text|Scroll|Projector|Output)(?:Contract|Abi[A-Z]\w*))\b/u;
 
 const publicTypeNames = [
   "AnsiColor",
@@ -19,6 +29,7 @@ const publicTypeNames = [
   "ComponentAdapter",
   "ComponentCapabilities",
   "ComponentContext",
+  "ComponentId",
   "DiffHunk",
   "DiffLineKind",
   "DiffLineTermination",
@@ -29,6 +40,7 @@ const publicTypeNames = [
   "GridSpec",
   "GridTrack",
   "HandleId",
+  "FrameworkHandle",
   "History",
   "HistoryLayout",
   "HorizontalAlign",

@@ -1,4 +1,5 @@
-import { HandleBase, nativeComponentIdOf } from "./handles.ts";
+import { nativeComponentIdOf } from "./handles.ts";
+import { FrameworkHandle } from "./types.ts";
 import type { ComponentCapabilities, ScrollPane as ScrollPaneContract } from "./types.ts";
 import {
   nativeViewAbiSession,
@@ -53,7 +54,7 @@ function buildPaneHandle(host: NativeTuiHostContract, initialView?: View): objec
  * nodes are rejected and do not create independent panes. The handle must not
  * be used after its Tui closes.
  */
-export class NativeScrollPane extends HandleBase<"component"> implements ScrollPaneContract {
+export class NativeScrollPane extends FrameworkHandle<"component"> implements ScrollPaneContract {
   private currentView?: View;
   /** T13 (§18/§80): the pane owns one root lease on its current content. */
   private boundary?: RetainedRootBoundary;
@@ -169,6 +170,10 @@ export class NativeScrollPane extends HandleBase<"component"> implements ScrollP
       if (ref !== undefined) {
         try {
           this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
+          // The direct decoder returns a temporary lease, while the pane
+          // owns the installed content. Keep the boundary's root lease in
+          // sync before releasing that temporary lease.
+          this.boundary?.adopt(view);
           this.currentView = view;
           return;
         } finally {

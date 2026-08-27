@@ -1,6 +1,6 @@
-import { HandleBase, nativeComponentIdOf, registerNativeResource } from "./handles.ts";
+import { nativeComponentIdOf, registerNativeResource } from "./handles.ts";
 import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
-import { Output } from "./types.ts";
+import { FrameworkHandle, Output } from "./types.ts";
 import type { TextInput as TextInputContract } from "./types.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { View } from "./values/view.ts";
@@ -18,12 +18,12 @@ const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
  * provide the host-bound border/component semantics. Each input has one
  * mounted component identity; duplicate View component nodes are rejected.
  */
-export class TextInput extends HandleBase<"text-input"> implements TextInputContract {
+export class TextInput extends FrameworkHandle<"text-input"> implements TextInputContract {
   private submittedOutput?: Output<string>;
 
-  private constructor(nativeHandle: never, token?: typeof TEXT_INPUT_NATIVE_TOKEN) {
+  private constructor(resource: never, token?: typeof TEXT_INPUT_NATIVE_TOKEN) {
     if (token !== TEXT_INPUT_NATIVE_TOKEN) throw new TypeError("TextInput native construction is private");
-    super("text-input", nativeHandle as never);
+    super("text-input", resource as never);
   }
 
   text(): string { return this.call(() => this.nativeAs<NativeTextInputContract>().text()); }
@@ -35,7 +35,7 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
       // Rust exposes one stable channel per input. Cache the facade so
       // repeated calls preserve that channel identity on the JS side too.
       if (this.submittedOutput === undefined) {
-        this.submittedOutput = new NativeOutput(this.nativeAs<NativeTextInputContract>().submitted() as never);
+        this.submittedOutput = createNativeOutput(this.nativeAs<NativeTextInputContract>().submitted());
       }
       return this.submittedOutput;
     });
@@ -50,16 +50,17 @@ export class TextInput extends HandleBase<"text-input"> implements TextInputCont
 }
 
 /** @internal Creates the only supported TextInput construction path. */
-export function createTextInput(nativeHandle: never): TextInput {
-  const Constructor = TextInput as unknown as new (nativeHandle: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInput;
-  return new Constructor(nativeHandle, TEXT_INPUT_NATIVE_TOKEN);
+export function createTextInput(resource: never): TextInput {
+  const Constructor = TextInput as unknown as new (resource: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInput;
+  return new Constructor(resource, TEXT_INPUT_NATIVE_TOKEN);
 }
 
-class NativeOutput<T> extends Output<T> {
-  /** @internal Native channel construction overload. */
-  constructor(resource: never);
-  constructor(resource: NativeTuiOutputContract) {
-    super();
-    registerNativeResource(this, resource);
-  }
+function createNativeOutput<T>(resource: NativeTuiOutputContract): Output<T> {
+  // Output has a private constructor so consumers cannot manufacture a
+  // channel that lacks native routing identity. The native-backed instance is
+  // created here without adding another public implementation class.
+  const output = Object.create(Output.prototype) as Output<T>;
+  Object.defineProperty(output, "kind", { value: "output", enumerable: true });
+  registerNativeResource(output, resource);
+  return output;
 }

@@ -2,7 +2,8 @@ import { nodeForBridge } from "./view-internals.ts";
 import { tuiError } from "./errors.ts";
 import type { View } from "./values/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
-import { HandleBase, nativeResourceOf } from "./handles.ts";
+import { nativeResourceOf } from "./handles.ts";
+import { FrameworkHandle } from "./types.ts";
 import { nativeTui } from "./native-handles.ts";
 import type { NativeHistoryContract } from "./native.ts";
 import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
@@ -44,18 +45,18 @@ function assertStreamCanAttach(stream: object): void {
  *   be rebound to a different Tui after attachment.
  * - `freeze` and `discardLive` require an attached history.
  */
-export class History extends HandleBase<"history"> implements HistoryContract {
+export class History extends FrameworkHandle<"history"> implements HistoryContract {
   constructor();
-  constructor(nativeHandle?: NativeHistoryContract, token?: typeof HISTORY_NATIVE_TOKEN) {
-    let resource: NativeHistoryContract;
-    if (nativeHandle === undefined) {
+  constructor(resource?: NativeHistoryContract, token?: typeof HISTORY_NATIVE_TOKEN) {
+    let nativeResource: NativeHistoryContract;
+    if (resource === undefined) {
       if (token !== undefined) throw new TypeError("invalid History construction token");
-      resource = nativeTui.history();
+      nativeResource = nativeTui.history();
     } else {
       if (token !== HISTORY_NATIVE_TOKEN) throw new TypeError("History native construction is private");
-      resource = nativeHandle;
+      nativeResource = resource;
     }
-    super("history", resource as never);
+    super("history", nativeResource as never);
   }
 
   layout(): HistoryLayout {
@@ -155,9 +156,9 @@ export class History extends HandleBase<"history"> implements HistoryContract {
 }
 
 /** @internal Wraps a host-created History without exposing its native constructor. */
-export function createHistoryHandle(nativeHandle: never): History {
-  const Constructor = History as unknown as new (nativeHandle: never, token: typeof HISTORY_NATIVE_TOKEN) => History;
-  return new Constructor(nativeHandle, HISTORY_NATIVE_TOKEN);
+export function createHistoryHandle(resource: never): History {
+  const Constructor = History as unknown as new (resource: never, token: typeof HISTORY_NATIVE_TOKEN) => History;
+  return new Constructor(resource, HISTORY_NATIVE_TOKEN);
 }
 
 /** @internal Marks a caller-owned History as unavailable after its host closes. */

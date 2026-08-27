@@ -1,4 +1,5 @@
-import { HandleBase, nativeComponentIdOf } from "./handles.ts";
+import { nativeComponentIdOf } from "./handles.ts";
+import { FrameworkHandle } from "./types.ts";
 import type { ComponentCapabilities, ViewSlot as ViewSlotContract } from "./types.ts";
 import {
   nativeViewAbiSession,
@@ -77,7 +78,7 @@ type NativeViewSlotHandle = {
  * relinquishes any builder root only after installation succeeds. The handle
  * must not be used after its owning Tui closes.
  */
-export class ViewSlot extends HandleBase<"component"> implements ViewSlotContract {
+export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotContract {
   private currentView?: View;
   /** R7: mutable cell so transaction closures can promote currentView on commit. */
   private currentViewSet = (view: View): void => {
@@ -192,6 +193,10 @@ export class ViewSlot extends HandleBase<"component"> implements ViewSlotContrac
       if (ref !== undefined) {
         try {
           this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
+          // The direct decoder returns a temporary lease, while the slot
+          // owns the installed content. Keep the boundary's root lease in
+          // sync before releasing that temporary lease.
+          this.boundary?.adopt(view);
           this.currentView = view;
           return;
         } finally {

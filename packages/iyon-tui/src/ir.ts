@@ -1,4 +1,4 @@
-import type { HandleId } from "./types.ts";
+import type { ComponentId } from "./types.ts";
 import bridgeSchema from "./bridge-schema.json";
 import { PersistentSeq } from "./persistent_seq.ts";
 
@@ -146,7 +146,7 @@ export type ViewNode =
   | { readonly type: "grid"; readonly columns: readonly GridTrackNode[]; readonly rows: readonly GridRowNode[]; readonly columnGap: number; readonly rowGap: number }
   | { readonly type: "container" | "clamp"; readonly child: ViewNode; readonly maxRows?: number; readonly overflow?: OverflowIndicatorNode }
   | { readonly type: "contentMax"; readonly child: ViewNode; readonly maxRows: number }
-  | { readonly type: "component"; readonly handle: HandleId }
+  | { readonly type: "component"; readonly handle: ComponentId }
   | { readonly type: "decorated"; readonly child: ViewNode; readonly decoration: DecorationNode };
 
 export interface TextSpanNode {
@@ -278,7 +278,7 @@ type BridgeViewNodeData =
   | { readonly kind: typeof BRIDGE_VIEW_KIND.grid; readonly columns: readonly BridgeGridTrackNode[]; readonly rows: readonly BridgeGridRowNode[]; readonly columnGap: number; readonly rowGap: number }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.container | typeof BRIDGE_VIEW_KIND.clamp; readonly child: BridgeViewNode; readonly maxRows?: number; readonly overflow?: BridgeOverflowIndicatorNode }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.contentMax; readonly child: BridgeViewNode; readonly maxRows: number }
-  | { readonly kind: typeof BRIDGE_VIEW_KIND.component; readonly handle: HandleId }
+  | { readonly kind: typeof BRIDGE_VIEW_KIND.component; readonly handle: ComponentId }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.decorated; readonly child: BridgeViewNode; readonly decoration: DecorationNode };
 
 export type BridgeViewNodeDraft = BridgeViewNodeData;

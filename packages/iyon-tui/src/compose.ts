@@ -433,7 +433,7 @@ export function composeComponent(handle: ComponentHandle): View {
       return previous;
     }
   }
-  const view = withoutRetainedComposition(() => componentViewFor(handle));
+  const view = withoutRetainedComposition(() => componentViewFor(handle, componentId));
   stageFresh(slot, view);
   return view;
 }

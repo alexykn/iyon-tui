@@ -1,4 +1,3 @@
-import { nativeComponentIdOf } from "./handles.ts";
 import { FrameworkHandle } from "./types.ts";
 import type { ComponentCapabilities, ScrollPane as ScrollPaneContract } from "./types.ts";
 import {
@@ -13,7 +12,7 @@ import {
   type RetainedExecutionRuntime,
 } from "./execution.ts";
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
-import { componentViewFor } from "./component-facade.ts";
+import { composeComponent } from "./compose.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { View } from "./values/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
@@ -89,7 +88,7 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
 
   view(): View {
     this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
+    return composeComponent(this);
   }
 
   capabilities(): ComponentCapabilities { return this.call(() => ({ focusable: true, keys: ["up", "down", "pageup", "pagedown", "home", "end"] })); }

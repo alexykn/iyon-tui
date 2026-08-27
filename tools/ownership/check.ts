@@ -43,11 +43,10 @@ function resolveRelative(fromFile: string, specifier: string): string | null {
 
 /** All module specifiers referenced by a TS source (static, dynamic, bare). */
 function specifiersOf(source: string): string[] {
-  return [
-    ...[...source.matchAll(/(?:^|\s)from\s+"([^"]+)"/g)].map((m) => m[1]!),
-    ...[...source.matchAll(/import\(\s*"([^"]+)"\s*\)/g)].map((m) => m[1]!),
-    ...[...source.matchAll(/(?:^|\s)import\s+"([^"]+)"/g)].map((m) => m[1]!),
-  ];
+  const result: string[] = [];
+  const pattern = /\bfrom\s+["']([^"']+)["']|\bimport\s*(?:\(\s*)?["']([^"']+)["']/gu;
+  for (const match of source.matchAll(pattern)) result.push(match[1] ?? match[2]!);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +334,7 @@ function componentFacadeGate(): void {
   const view = readFileSync(join(FRAMEWORK_SRC, "values/view.ts"), "utf8");
   const facade = readFileSync(join(FRAMEWORK_SRC, "component-facade.ts"), "utf8");
   const compose = readFileSync(join(FRAMEWORK_SRC, "compose.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
   const scrollPane = readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8");
@@ -356,8 +356,11 @@ function componentFacadeGate(): void {
   if (!/export\s+function\s+componentViewFor\s*\(/u.test(facade)) {
     offenders.push("component-facade.ts: missing private component placement lowering");
   }
+  if (!/componentViewFor\(slot\)/u.test(runtime) || /\bslot\.view\(\)/u.test(runtime)) {
+    offenders.push("runtime.ts: internal component projection participates in parent composition");
+  }
   for (const [name, source] of [["component.ts", component], ["scroll-pane.ts", scrollPane], ["text-input.ts", textInput]] as const) {
-    if (!/componentViewFor\(this\)/u.test(source)) offenders.push(`${name}: control.view() bypasses the semantic projection helper`);
+    if (!/composeComponent\(this\)/u.test(source)) offenders.push(`${name}: control.view() bypasses retained composition`);
   }
   if (/\bexport\s+(?:class|interface|type)\s+Component\b/u.test(types) || /\bexport\s+class\s+Component\b/u.test(component)) {
     offenders.push("Component is still exposed as a concrete or structural root abstraction");
@@ -388,7 +391,7 @@ function typedOutputEventGate(): void {
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
 
-  if (!/export\s+class\s+Output<[^>]+>[\s\S]*#outputBrand[\s\S]*private\s+constructor/u.test(types)) {
+  if (!/export\s+class\s+Output<[^>]+>[\s\S]*#outputBrand[\s\S]*declare\s+private\s+readonly\s+outputType[\s\S]*private\s+constructor/u.test(types)) {
     offenders.push("types.ts: missing opaque typed Output<T> identity");
   }
   if (/OutputHandle\b/u.test(types + textInput + runtime + testing)) {

@@ -1,9 +1,9 @@
-import { nativeComponentIdOf, registerNativeResource } from "./handles.ts";
+import { registerNativeResource } from "./handles.ts";
 import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.ts";
 import { FrameworkHandle, Output } from "./types.ts";
 import type { TextInput as TextInputContract } from "./types.ts";
-import { componentViewFor } from "./component-facade.ts";
-import { View } from "./values/view.ts";
+import { composeComponent } from "./compose.ts";
+import type { View } from "./values/view.ts";
 
 const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
 
@@ -44,7 +44,7 @@ export class TextInput extends FrameworkHandle<"text-input"> implements TextInpu
   isMultiline(): boolean { return this.call(() => this.nativeAs<NativeTextInputContract>().isMultiline()); }
   view(): View {
     this.ensureOpen();
-    return nativeComponentIdOf(this) === undefined ? View.spacer(0) : componentViewFor(this);
+    return composeComponent(this);
   }
 
 }

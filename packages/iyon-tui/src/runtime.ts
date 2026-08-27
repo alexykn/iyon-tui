@@ -11,6 +11,7 @@ import type { History } from "./history.ts";
 import { createTextInput } from "./text-input.ts";
 import type { TextInput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
+import { componentViewFor } from "./component-facade.ts";
 import { createScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
@@ -106,7 +107,10 @@ export class Tui implements TuiRuntime {
         // The seed is framework plumbing, not a user semantic construction;
         // do not consume a parent scope's semantic slot for it.
         const slot = createViewSlot(hostRef as never, withoutRetainedComposition(() => View.spacer(0)), undefined);
-        const view = slot.view();
+        // This projection is framework plumbing, not a semantic operation in
+        // the parent scope. User-facing control.view() calls compose through
+        // the retained semantic slot; the internal projection must not.
+        const view = componentViewFor(slot);
         return {
           view,
           install(output: View): void {

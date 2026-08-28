@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
 import { StyleSpec, View, TextSpan } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
 

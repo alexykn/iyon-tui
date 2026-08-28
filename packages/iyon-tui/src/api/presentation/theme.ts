@@ -4,13 +4,13 @@ import type {
   TextSelectorValue,
   ThemeColor,
   ThemeColorReference,
-} from "../types.ts";
+} from "../../types.ts";
 import {
   StyleSelector,
   StyleSpec,
   styleSelectorValue,
 } from "./style.ts";
-import type { TextSelector } from "./text.ts";
+import type { TextSelector } from "../content/text.ts";
 import { ThemeKey } from "./theme-key.ts";
 
 interface ThemeEntry<T> {
@@ -192,5 +192,5 @@ function styleSelectorsEqual(left: StyleSelectorValue, right: StyleSelectorValue
   return leftKeys.every((key) => leftStates[key] === rightStates[key]);
 }
 
-export type { ColorSpec, StyleSelectorValue, ThemeColor } from "../types.ts";
+export type { ColorSpec, StyleSelectorValue, ThemeColor } from "../../types.ts";
 export { StyleSelector } from "./style.ts";

@@ -83,7 +83,7 @@ describe("retained TUI semantic values", () => {
 
   test("node identity survives module re-evaluation", async () => {
     const first = nodeForBridge(View.text("first")).id;
-    const reloaded = await import(`../src/values/view.ts?reload=${Date.now()}`);
+    const reloaded = await import(`../src/api/view/view.ts?reload=${Date.now()}`);
     const second = nodeForBridge(reloaded.View.text("second")).id;
     expect(second).toBeGreaterThan(first);
   });

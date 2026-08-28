@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { TextContent, View } from "../src/index.ts";
-import { ComponentAdapterBridge } from "../src/traits/component.ts";
-import { RendererAdapter } from "../src/traits/renderer.ts";
-import { TextRewriterAdapter } from "../src/traits/text-rewriter.ts";
+import { ComponentAdapterBridge } from "../src/api/extensions/traits/component.ts";
+import { RendererAdapter } from "../src/api/extensions/traits/renderer.ts";
+import { TextRewriterAdapter } from "../src/api/extensions/traits/text-rewriter.ts";
 
 describe("T5 JS-thread trait adapters", () => {
   test("renderer and rewriter callbacks run as owned JS promises", async () => {

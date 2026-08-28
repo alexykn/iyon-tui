@@ -14,7 +14,7 @@ import {
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
 import { composeComponent } from "./compose.ts";
 import { nodeForBridge } from "./view-internals.ts";
-import { View } from "./values/view.ts";
+import { View } from "./api/view/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 
 const SCROLL_PANE_NATIVE_TOKEN = Symbol("scroll-pane-native-construction");

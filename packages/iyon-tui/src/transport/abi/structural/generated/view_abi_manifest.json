@@ -139,7 +139,7 @@
     {
       "name": "WrapMode",
       "repr": "u32",
-      "source": "packages/iyon-tui/src/bridge-schema.json",
+      "source": "packages/iyon-tui/src/transport/abi/structural/schema/bridge-schema.json",
       "values": [
         {
           "name": "WordThenGrapheme",
@@ -158,7 +158,7 @@
     {
       "name": "HorizontalAlign",
       "repr": "u32",
-      "source": "packages/iyon-tui/src/bridge-schema.json",
+      "source": "packages/iyon-tui/src/transport/abi/structural/schema/bridge-schema.json",
       "values": [
         {
           "name": "Start",
@@ -4019,17 +4019,17 @@
     "crates/iyon-tui-native/src/generated/view_abi_table.rs",
     "crates/iyon-tui-native/src/generated/view_abi_napi.rs",
     "crates/iyon-tui-native/include/iyon_view_abi.h",
-    "packages/iyon-tui/src/generated/view_abi.ts",
-    "packages/iyon-tui/src/generated/view_abi_conformance.ts",
-    "packages/iyon-tui/src/generated/view_calls.ts",
-    "packages/iyon-tui/src/generated/view_materialize.ts",
-    "packages/iyon-tui/src/generated/view_abi_manifest.json",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_conformance.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_calls.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_materialize.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
     "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "docs/history/perf/PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "0b79288012c798d4cc0a43433ed9113b1e50283de95f86b6059047a63a057665",
+  "generator_blake3": "25aca9d7d779185803a767f5a63c40fd0ba8f19544b58ba635d2254d695cd91a",
   "handles": [
     {
       "kind": null,
@@ -4244,5 +4244,5 @@
       "size": 8
     }
   ],
-  "schema_blake3": "ba12318e83f692e82b105219fcfcc8a53da1db568f007d381e091b259c67bc5c"
+  "schema_blake3": "7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0"
 }

@@ -1,4 +1,4 @@
-import type { TextContent, TextRewriter } from "../types.ts";
+import type { TextContent, TextRewriter } from "../../../types.ts";
 
 export class TextRewriterAdapter implements TextRewriter {
   constructor(private readonly implementation: TextRewriter) {}

@@ -13,7 +13,7 @@ import {
   nativePathChildLineage,
   viewNodeId,
   View,
-} from "../src/values/view.ts";
+} from "../src/api/view/view.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
 
 type HostContract = {

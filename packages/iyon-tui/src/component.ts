@@ -14,7 +14,7 @@ import {
 import { activeExecutionScope, protocolState } from "./execution-context.ts";
 import { composeComponent } from "./compose.ts";
 import { nodeForBridge } from "./view-internals.ts";
-import { View } from "./values/view.ts";
+import { View } from "./api/view/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 
 /**
@@ -163,7 +163,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   private setViewBuilder(build: () => View): void {
     this.assertBuilderAllowed();
     const target = {
-      preparePublication: (o: import("./values/view.ts").View) => this.prepareSetView(o),
+      preparePublication: (o: import("./api/view/view.ts").View) => this.prepareSetView(o),
     };
     if (this.ownedBuilderRoot === undefined) {
       const runtime = this.#retainedRuntime!;

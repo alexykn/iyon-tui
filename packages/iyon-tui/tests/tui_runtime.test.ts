@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { Scene, View } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 
 describe("native interaction host", () => {
   test("local editing stays native and submit crosses as an action", async () => {

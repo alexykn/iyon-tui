@@ -44,8 +44,8 @@ import {
   viewNodeId,
   type NativePathLineage,
   type View,
-} from "../../src/values/view.ts";
-import manifest from "../../src/generated/view_abi_manifest.json";
+} from "../../src/api/view/view.ts";
+import manifest from "../../src/transport/abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
   NATIVE_SMALL_AXIS_ARITY_MAX,

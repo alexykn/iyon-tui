@@ -51,7 +51,7 @@ jobs:
             crates/iyon-tui-native/src/generated \
             crates/iyon-tui-native/include \
             crates/iyon-tui-native/tests/generated_view_abi.rs \
-            packages/iyon-tui/src/generated \
+            packages/iyon-tui/src/transport/abi/structural/generated \
             packages/iyon-tui/tests/generated \
             packages/iyon-tui/bench/generated \
             docs/history/perf/PERF-11-generated-abi-reference.md

@@ -35,15 +35,15 @@ import {
   editTxnCommitRender,
   editTxnAbort,
   type ViewAbiSymbols,
-} from "./generated/view_calls.ts";
+} from "./transport/abi/structural/generated/view_calls.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import {
   nodeIdPair,
   viewNodeId,
   type NativePathLineage,
   type View,
-} from "./values/view.ts";
-import manifest from "./generated/view_abi_manifest.json";
+} from "./api/view/view.ts";
+import manifest from "./transport/abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
   NATIVE_SMALL_AXIS_ARITY_MAX,

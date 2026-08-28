@@ -1,7 +1,7 @@
 import { componentIdOf } from "./handles.ts";
 import { BRIDGE_VIEW_KIND } from "./ir.ts";
 import type { ComponentHandle } from "./types.ts";
-import { View } from "./values/view.ts";
+import { View } from "./api/view/view.ts";
 
 /**
  * Private component-placement lowering. Public controls expose `view()`;

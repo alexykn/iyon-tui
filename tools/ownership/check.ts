@@ -171,7 +171,7 @@ function napiTransportGate(): void {
   }
 
   const generatedNapi = join(ROOT, "crates/iyon-tui-native/src/generated/view_abi_napi.rs");
-  const manifest = join(ROOT, "packages/iyon-tui/src/generated/view_abi_manifest.json");
+  const manifest = join(ROOT, "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json");
   const cargo = readFileSync(join(ROOT, "crates/iyon-tui-native/Cargo.toml"), "utf8");
   if (!existsSync(generatedNapi) || !existsSync(manifest) || !/direct-ffi\s*=\s*\[\]/u.test(cargo)) {
     fail("generated-napi-lowering", "generated N-API methods, manifest, or feature-gated direct qualification surface is missing");
@@ -239,7 +239,7 @@ async function themeStyleSemanticGate(): Promise<void> {
   const styleSpec = mod.StyleSpec as { readonly prototype: object } | undefined;
   const styleSpecTheme = styleSpec !== undefined
     && typeof (styleSpec.prototype as { readonly theme?: unknown }).theme === "function";
-  if (styleSpecTheme) offenders.push("packages/iyon-tui/src/values/style.ts: StyleSpec.theme");
+  if (styleSpecTheme) offenders.push("packages/iyon-tui/src/api/presentation/style.ts: StyleSpec.theme");
 
   const styleTypes = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   if (/interface StyleSpecValue\s*\{[^}]*\btheme\??\s*:/u.test(styleTypes)) {
@@ -331,7 +331,7 @@ function controlLifecycleGate(): void {
 // ---------------------------------------------------------------------------
 
 function componentFacadeGate(): void {
-  const view = readFileSync(join(FRAMEWORK_SRC, "values/view.ts"), "utf8");
+  const view = readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8");
   const facade = readFileSync(join(FRAMEWORK_SRC, "component-facade.ts"), "utf8");
   const compose = readFileSync(join(FRAMEWORK_SRC, "compose.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
@@ -348,7 +348,7 @@ function componentFacadeGate(): void {
   const offenders: string[] = [];
 
   if (/\bstatic\s+component\s*\(/u.test(stripComments(view))) {
-    offenders.push("values/view.ts: View.component remains public");
+    offenders.push("api/view/view.ts: View.component remains public");
   }
   if (activeSources.some((source) => /\bView\.component\s*\(/u.test(stripComments(source)))) {
     offenders.push("framework controls/composition still construct View.component directly");
@@ -387,7 +387,7 @@ function typedOutputEventGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
-  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
 
@@ -436,7 +436,7 @@ function falseAliasGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const stream = readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
-  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const native = readFileSync(join(FRAMEWORK_SRC, "native.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const tests = join(ROOT, "packages/iyon-tui/tests");
@@ -472,7 +472,7 @@ function falseAliasGate(): void {
 function rootAndTestingSurfaceGate(): void {
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
-  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/iyon-tui/package.json"), "utf8")) as {
     exports?: Record<string, unknown>;
   };
@@ -486,8 +486,8 @@ function rootAndTestingSurfaceGate(): void {
   if (forbiddenRootNames.test(index)) offenders.push("implementation, adapter, interaction, or testing names remain root-exported");
   if (testOnlyMethods.test(runtime)) offenders.push("Tui still declares direct test/inspection methods");
   if (typeof packageManifest.exports?.["./testing"] !== "string") offenders.push("packages/iyon-tui does not export ./testing");
-  if (packageManifest.exports?.["./testing"] !== "./src/testing.ts") offenders.push("packages/iyon-tui ./testing does not target src/testing.ts");
-  if (workspaceManifest.exports?.["./testing"] !== "./packages/iyon-tui/src/testing.ts") offenders.push("workspace ./testing export is not aligned with the package");
+  if (packageManifest.exports?.["./testing"] !== "./src/testing/index.ts") offenders.push("packages/iyon-tui ./testing does not target src/testing/index.ts");
+  if (workspaceManifest.exports?.["./testing"] !== "./packages/iyon-tui/src/testing/index.ts") offenders.push("workspace ./testing export is not aligned with the package");
   if (!/export\s+class\s+AppHarness\b/u.test(testing) || !/export\s+const\s+createAppHarness\b/u.test(testing)) {
     offenders.push("testing subpath does not expose AppHarness and createAppHarness");
   }
@@ -510,7 +510,7 @@ function rootAndTestingSurfaceGate(): void {
 function runtimeContractGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
-  const testing = readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8");
+  const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const runtimeBody = types.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
   const candidates = [
     "createHistory",
@@ -556,11 +556,11 @@ function contractParityGate(): void {
     ["stream.ts", readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8")],
     ["component.ts", readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8")],
     ["scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8")],
-    ["testing.ts", readFileSync(join(FRAMEWORK_SRC, "testing.ts"), "utf8")],
-    ["view.ts", readFileSync(join(FRAMEWORK_SRC, "values/view.ts"), "utf8")],
-    ["style.ts", readFileSync(join(FRAMEWORK_SRC, "values/style.ts"), "utf8")],
-    ["theme.ts", readFileSync(join(FRAMEWORK_SRC, "values/theme.ts"), "utf8")],
-    ["text.ts", readFileSync(join(FRAMEWORK_SRC, "values/text.ts"), "utf8")],
+    ["testing/index.ts", readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8")],
+    ["view.ts", readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8")],
+    ["style.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/style.ts"), "utf8")],
+    ["theme.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/theme.ts"), "utf8")],
+    ["text.ts", readFileSync(join(FRAMEWORK_SRC, "api/content/text.ts"), "utf8")],
     ["style-internals.ts", readFileSync(join(FRAMEWORK_SRC, "style-internals.ts"), "utf8")],
     ["native_view_abi.ts", readFileSync(join(FRAMEWORK_SRC, "native_view_abi.ts"), "utf8")],
   ]);
@@ -586,7 +586,7 @@ function contractParityGate(): void {
     ["stream.ts", /export\s+class\s+TextStream[\s\S]*implements\s+TextStreamContract\b/u],
     ["component.ts", /export\s+class\s+ViewSlot[\s\S]*implements\s+ViewSlotContract\b/u],
     ["scroll-pane.ts", /export\s+class\s+NativeScrollPane[\s\S]*implements\s+ScrollPaneContract\b/u],
-    ["testing.ts", /export\s+class\s+AppHarness\s+implements\s+AppHarnessContract\b/u],
+    ["testing/index.ts", /export\s+class\s+AppHarness\s+implements\s+AppHarnessContract\b/u],
   ];
   for (const [file, pattern] of implementations) {
     if (!pattern.test(sources.get(file)!)) offenders.push(`${file}: implementation no longer declares contract parity`);
@@ -672,7 +672,7 @@ function contractParityGate(): void {
     offenders.push("View still exposes retained transport constructors as public statics");
   }
   if (!/createViewSlot\(initialView:\s*View\):\s*ViewSlotContract/u.test(runtime)
-    || !/createViewSlot\(initial:\s*View\):\s*ViewSlotContract/u.test(sources.get("testing.ts")!)) {
+    || !/createViewSlot\(initial:\s*View\):\s*ViewSlotContract/u.test(sources.get("testing/index.ts")!)) {
     offenders.push("ViewSlot factory signatures expose implementation classes instead of semantic contracts");
   }
   if (!/pub\s+struct\s+Output<T:/u.test(rustOutput) || !/pub\s+trait\s+Component/u.test(rustComponent)) {

@@ -526,7 +526,7 @@
     "currentPackage": "@iyon/tui",
     "currentSubpath": ".",
     "source": "packages/iyon-tui/src/index.ts",
-    "sourceSha256": "43b07cac381a033a03260c32e6d77c48f77112739a90b31b90a575cc5d9567d9",
+    "sourceSha256": "17ae14fab9eaa01f493d62b0793a6c7dd7a5558520bf7cdd390ca0a8b36669bb",
     "typeExports": [
       "AnsiColor",
       "BorderEdges",

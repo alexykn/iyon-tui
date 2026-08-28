@@ -1,5 +1,5 @@
 import type { ComponentId } from "./types.ts";
-import bridgeSchema from "./bridge-schema.json";
+import bridgeSchema from "./transport/abi/structural/schema/bridge-schema.json";
 import { PersistentSeq } from "./persistent_seq.ts";
 
 type BridgeSchema = {

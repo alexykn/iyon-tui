@@ -1,4 +1,4 @@
-import type { InsetsValue } from "../types.ts";
+import type { InsetsValue } from "../../types.ts";
 
 export class Insets {
   readonly kind = "insets" as const;

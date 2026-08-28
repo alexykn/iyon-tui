@@ -1,5 +1,5 @@
-import type { History as HistoryContract, Scene as SceneContract } from "./types.ts";
-import type { View } from "./values/view.ts";
+import type { History as HistoryContract, Scene as SceneContract } from "../../types.ts";
+import type { View } from "./view.ts";
 
 /**
  * Concrete root value for a body and optional history sideband.

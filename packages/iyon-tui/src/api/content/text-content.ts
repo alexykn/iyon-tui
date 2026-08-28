@@ -1,4 +1,4 @@
-import { View } from "./view.ts";
+import { View } from "../view/view.ts";
 
 export type TextFormat = "plain" | "markdown";
 

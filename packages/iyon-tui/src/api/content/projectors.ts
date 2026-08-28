@@ -1,6 +1,6 @@
-import { TextContent } from "./values/text-content.ts";
-import { Projection } from "./values/projection.ts";
-import { nativeTui } from "./native-handles.ts";
+import { TextContent } from "./text-content.ts";
+import { Projection } from "./projection.ts";
+import { nativeTui } from "../../native-handles.ts";
 
 export class PlainTextProjector {
   private readonly native = nativeTui.plainProjector();

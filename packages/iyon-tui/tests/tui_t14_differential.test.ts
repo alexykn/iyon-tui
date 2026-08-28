@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Scene, View } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 
 class Rng {
   private value: number;

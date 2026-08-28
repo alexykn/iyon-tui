@@ -7,7 +7,7 @@ import {
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
   type NativePathStep,
-} from "../src/values/view.ts";
+} from "../src/api/view/view.ts";
 
 export interface T15WorkloadConfig {
   readonly workload: string;

@@ -1,4 +1,4 @@
-import type { RenderContext, Renderer, View } from "../types.ts";
+import type { RenderContext, Renderer, View } from "../../../types.ts";
 
 export class RendererAdapter implements Renderer {
   constructor(private readonly implementation: Renderer) {}

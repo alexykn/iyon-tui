@@ -1,6 +1,6 @@
 import { native } from "../src/native.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
-import type { View } from "../src/values/view.ts";
+import type { View } from "../src/api/view/view.ts";
 import {
   RetainedRootBoundary,
   resetRetainedIdentityCounters,

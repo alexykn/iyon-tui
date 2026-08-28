@@ -25,7 +25,7 @@ import type {
   TextAttribute,
   VerticalAlign,
   WrapMode,
-} from "../types.ts";
+} from "../../types.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
   BRIDGE_DIFF_LINE_TERMINATION,
@@ -56,7 +56,7 @@ import {
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
-} from "../ir.ts";
+} from "../../ir.ts";
 import { insets, Insets } from "./geometry.ts";
 import {
   setBridgeDerivation,
@@ -67,20 +67,20 @@ import {
   type AxisSequenceEdit,
   type BridgeCommonScalarDerivation,
   type BridgeDerivation,
-} from "../ir.ts";
-import { PersistentSeq } from "../persistent_seq.ts";
-import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../style-internals.ts";
-import { nodeForBridge, setViewNode } from "../view-internals.ts";
-import { StyleSpec, validateTextAttribute } from "./style.ts";
-import type { StyleRef, StyleStateKey, StyleStateValue } from "./style.ts";
-import { TextSpan } from "./text.ts";
-import type { DiffHunk } from "./diff.ts";
+} from "../../ir.ts";
+import { PersistentSeq } from "../../persistent_seq.ts";
+import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../../style-internals.ts";
+import { nodeForBridge, setViewNode } from "../../view-internals.ts";
+import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
+import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
+import { TextSpan } from "../content/text.ts";
+import type { DiffHunk } from "../content/diff.ts";
 import {
   activeChildOwnerOrThrow,
   executionContext,
   semanticConstruction,
   withKeyedChildOwner,
-} from "../execution-context.ts";
+} from "../../execution-context.ts";
 import {
   composeBackground,
   composeBorder,
@@ -111,7 +111,7 @@ import {
   composeTextAttribute,
   composeVertical,
   composeWrap,
-} from "../compose.ts";
+} from "../../compose.ts";
 
 export type ViewChildren = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
@@ -179,7 +179,7 @@ export type OverflowIndicator =
   | { readonly kind: "ellipsis"; readonly style: StyleRef | StyleSpec }
   | { readonly kind: "footer"; readonly prefix: string; readonly style: StyleRef | StyleSpec };
 
-export type { LayoutChild } from "../types.ts";
+export type { LayoutChild } from "../../types.ts";
 export type GridTrack = PublicGridTrack;
 export type GridCell = PublicGridCell;
 export type GridRow = PublicGridRow;

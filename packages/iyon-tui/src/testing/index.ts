@@ -1,6 +1,6 @@
-import { asTuiError, tuiError } from "./errors.ts";
-import { Tui } from "./runtime.ts";
-import { tuiTestingAccess } from "./testing-access.ts";
+import { asTuiError, tuiError } from "../api/errors.ts";
+import { Tui } from "../runtime.ts";
+import { tuiTestingAccess } from "./access.ts";
 import type {
   AppHarness as AppHarnessContract,
   History as HistoryContract,
@@ -14,8 +14,8 @@ import type {
   TuiOpenOptions,
   View,
   ViewSlot as ViewSlotContract,
-} from "./types.ts";
-import type { Theme } from "./values/theme.ts";
+} from "../types.ts";
+import type { Theme } from "../api/presentation/theme.ts";
 
 export class AppHarness implements AppHarnessContract {
   private readonly tui: Tui;

@@ -6,7 +6,7 @@
  * handles, View ABI calls, and generic terminal operations.
  */
 
-import type { NativeViewAbiHandle } from "./generated/view_abi.ts";
+import type { NativeViewAbiHandle } from "./transport/abi/structural/generated/view_abi.ts";
 export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {

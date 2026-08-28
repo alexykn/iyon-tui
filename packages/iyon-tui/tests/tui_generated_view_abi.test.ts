@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { native } from "../src/native.ts";
 import { nativeViewAbiSession } from "../src/native_view_abi.ts";
-import { hostRenderRef, runtimeNoop, viewCommonPatchRoot, viewRefForNodeId, viewRenderRef, viewReleaseMany, viewSpacerCreate, viewTextLayoutPatchRoot } from "../src/generated/view_calls.ts";
+import { hostRenderRef, runtimeNoop, viewCommonPatchRoot, viewRefForNodeId, viewRenderRef, viewReleaseMany, viewSpacerCreate, viewTextLayoutPatchRoot } from "../src/transport/abi/structural/generated/view_calls.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
-import { nodeIdPair, View } from "../src/values/view.ts";
+import { nodeIdPair, View } from "../src/api/view/view.ts";
 
 type AbiHost = NonNullable<typeof native.NativeTuiHost> extends new (...args: never[]) => infer T ? T : never;
 

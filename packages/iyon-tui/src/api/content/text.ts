@@ -1,5 +1,5 @@
-import { StyleRef, StyleSpec, StyleStateKey, StyleStateValue } from "./style.ts";
-import type { HorizontalAlign, TextPart, TextRole, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
+import { StyleRef, StyleSpec, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
+import type { HorizontalAlign, TextPart, TextRole, TextSelectorValue, TextSpanValue, WrapMode } from "../../types.ts";
 
 export class TextSelector {
   private constructor(readonly value: TextSelectorValue = {}) {}
@@ -108,7 +108,7 @@ const TEXT_PARTS = new Set<TextPart>([
   "imageFallback",
 ]);
 
-export type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../types.ts";
+export type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../../types.ts";
 
 export class TextSpan {
   readonly kind = "text-span" as const;

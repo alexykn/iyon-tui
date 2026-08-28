@@ -145,18 +145,20 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
     });
     if has_axis {
         output.push_str(
-            "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../ir.ts\";\n",
+            "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../../../../ir.ts\";\n",
         );
         output.push_str(
-            "import { RetainedFastFallbackError, ensureNative } from \"../retained_dag.ts\";\n",
+            "import { RetainedFastFallbackError, ensureNative } from \"../../../../retained_dag.ts\";\n",
         );
         if has_axis_buffer {
             // PERF-12 T8 (§50): retained cap for one borrowed-buffer axis call.
-            output.push_str("import { MAX_DIRECT_AXIS_REFS } from \"../native_view_policy.ts\";\n");
+            output.push_str(
+                "import { MAX_DIRECT_AXIS_REFS } from \"../../../../native_view_policy.ts\";\n",
+            );
         }
         // Axis lowerings recurse into ensureNative, so the transaction type
         // is owned by the runtime module; re-exported here for callers.
-        output.push_str("import type { MaterializeTx } from \"../retained_dag.ts\";\n");
+        output.push_str("import type { MaterializeTx } from \"../../../../retained_dag.ts\";\n");
         output.push_str("export type { MaterializeTx };\n\n");
     } else {
         output.push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: NativeViewAbiHandle;\n}\n\n");
@@ -400,7 +402,7 @@ pub fn layout_test(document: &AbiDocument, schema_hash: &str, generator_hash: &s
     let mut output = banner(schema_hash, generator_hash);
     output.push_str(&format!(
         r#"import {{ expect, test }} from "bun:test";
-import manifest from "../../src/generated/view_abi_manifest.json";
+import manifest from "../../src/transport/abi/structural/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {{
   expect(manifest.schema_blake3).toBe("{}");

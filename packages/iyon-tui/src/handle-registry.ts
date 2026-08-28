@@ -1,4 +1,4 @@
-import { asTuiError, tuiError } from "./errors.ts";
+import { asTuiError, tuiError } from "./api/errors.ts";
 import type { HandleId } from "./types.ts";
 
 interface DisposableResource {

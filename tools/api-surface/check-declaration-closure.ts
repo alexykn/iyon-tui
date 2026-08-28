@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 
 const ROOT = resolve(import.meta.dir, "../..");
 const SOURCE = join(ROOT, "packages/iyon-tui/src/index.ts");
-const TESTING_SOURCE = join(ROOT, "packages/iyon-tui/src/testing.ts");
+const TESTING_SOURCE = join(ROOT, "packages/iyon-tui/src/testing/index.ts");
 const PRIVATE_MODULES = new Set([
   "ir",
   "native",
@@ -172,8 +172,8 @@ try {
     TESTING_SOURCE,
   ]);
   const rootDeclaration = join(output, "index.d.ts");
-  const testingDeclaration = join(output, "testing.d.ts");
-  for (const [name, declaration] of [["index.d.ts", rootDeclaration], ["testing.d.ts", testingDeclaration]] as const) {
+  const testingDeclaration = join(output, "testing", "index.d.ts");
+  for (const [name, declaration] of [["index.d.ts", rootDeclaration], ["testing/index.d.ts", testingDeclaration]] as const) {
     if (!existsSync(declaration)) {
       console.error(`H1A/H1H declaration closure: ${name} was not emitted`);
       failed = true;
@@ -239,7 +239,7 @@ try {
   const testingProbe = join(output, "testing-surface-probe.ts");
   writeFileSync(
     testingProbe,
-    `import type { AppHarness, createAppHarness } from "./testing.d.ts";\nimport type { History, Output, TextInput } from "./index.d.ts";\n\nexport type PublicTestingFactory = typeof createAppHarness;\nexport type PublicTestingSurface = AppHarness;\ndeclare const harness: AppHarness;\nconst historyFromHarness: History = harness.createHistory();\nconst inputFromHarness: TextInput = harness.createTextInput();\nconst outputFromHarness: Output<string> = inputFromHarness.submitted();\nvoid historyFromHarness;\nvoid outputFromHarness;\n`,
+    `import type { AppHarness, createAppHarness } from "./testing/index.d.ts";\nimport type { History, Output, TextInput } from "./index.d.ts";\n\nexport type PublicTestingFactory = typeof createAppHarness;\nexport type PublicTestingSurface = AppHarness;\ndeclare const harness: AppHarness;\nconst historyFromHarness: History = harness.createHistory();\nconst inputFromHarness: TextInput = harness.createTextInput();\nconst outputFromHarness: Output<string> = inputFromHarness.submitted();\nvoid historyFromHarness;\nvoid outputFromHarness;\n`,
   );
   if (!runTsc([
     "--ignoreConfig",

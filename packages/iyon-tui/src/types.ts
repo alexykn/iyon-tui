@@ -1,14 +1,14 @@
-import { asTuiError, tuiError } from "./errors.ts";
+import { asTuiError, tuiError } from "./api/errors.ts";
 import {
   disposeFrameworkResource,
   nativeResourceOf,
   registerFrameworkHandle,
 } from "./handle-registry.ts";
-import type { View as SemanticView } from "./values/view.ts";
-import type { TextContent as SemanticTextContent } from "./values/text-content.ts";
-import type { StyleRef } from "./values/style.ts";
-import type { Theme as SemanticTheme } from "./values/theme.ts";
-import type { ThemeKey } from "./values/theme-key.ts";
+import type { View as SemanticView } from "./api/view/view.ts";
+import type { TextContent as SemanticTextContent } from "./api/content/text-content.ts";
+import type { StyleRef } from "./api/presentation/style.ts";
+import type { Theme as SemanticTheme } from "./api/presentation/theme.ts";
+import type { ThemeKey } from "./api/presentation/theme-key.ts";
 
 declare const handleIdBrand: unique symbol;
 /** JavaScript-local framework handle identity; this is not a native identifier. */

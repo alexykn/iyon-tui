@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Scene, TextStream, View } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

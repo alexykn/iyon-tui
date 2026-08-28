@@ -7,9 +7,9 @@ import {
   releaseNativeViewRef,
   tryNativeAxisCreateRender,
 } from "../src/native_view_abi.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
-import { View } from "../src/values/view.ts";
+import { View } from "../src/api/view/view.ts";
 
 type HostContract = {
   render(view: object): void;

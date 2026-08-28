@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ba12318e83f692e82b105219fcfcc8a53da1db568f007d381e091b259c67bc5c
-// generator_blake3 = 0b79288012c798d4cc0a43433ed9113b1e50283de95f86b6059047a63a057665
+// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
+// generator_blake3 = 25aca9d7d779185803a767f5a63c40fd0ba8f19544b58ba635d2254d695cd91a
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {

@@ -1,11 +1,11 @@
 import { native } from "./native.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { borderNodeFor, materializeTheme } from "./style-internals.ts";
-import { View } from "./values/view.ts";
-import { asTuiError, tuiError } from "./errors.ts";
+import { View } from "./api/view/view.ts";
+import { asTuiError, tuiError } from "./api/errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
-import { registerTuiTestingAccess } from "./testing-access.ts";
-import { Scene } from "./scene.ts";
+import { registerTuiTestingAccess } from "./testing/access.ts";
+import { Scene } from "./api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
 import { createTextInput, textInputForOutput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
@@ -38,8 +38,8 @@ import type {
   TuiRuntime,
   ViewSlot as ViewSlotContract,
 } from "./types.ts";
-import { themeDefinitionFor } from "./values/theme.ts";
-import type { Theme } from "./values/theme.ts";
+import { themeDefinitionFor } from "./api/presentation/theme.ts";
+import type { Theme } from "./api/presentation/theme.ts";
 import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "./native.ts";
 
 type OwnedHandle = { dispose(): void };

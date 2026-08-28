@@ -1,4 +1,4 @@
-import type { ComponentAdapter, ComponentCapabilities, ComponentContext, InteractionResult, KeyEvent, PasteEvent, View } from "../types.ts";
+import type { ComponentAdapter, ComponentCapabilities, ComponentContext, InteractionResult, KeyEvent, PasteEvent, View } from "../../../types.ts";
 
 export class ComponentAdapterBridge {
   constructor(private readonly implementation: ComponentAdapter) {}

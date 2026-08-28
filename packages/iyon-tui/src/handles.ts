@@ -1,4 +1,4 @@
-import { tuiError } from "./errors.ts";
+import { tuiError } from "./api/errors.ts";
 import {
   handleIdOf,
   nativeResourceOf,

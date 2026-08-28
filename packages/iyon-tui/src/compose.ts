@@ -62,15 +62,15 @@ import {
   type GridTrack,
   type LayoutChild,
   type OverflowIndicator,
-} from "./values/view.ts";
+} from "./api/view/view.ts";
 import { componentIdOf } from "./handles.ts";
 import { componentViewFor } from "./component-facade.ts";
 import { nodeForBridge } from "./view-internals.ts";
-import { insets } from "./values/geometry.ts";
-import type { Insets } from "./values/geometry.ts";
-import type { HorizontalAlign, TextSpan, WrapMode } from "./values/text.ts";
-import type { DiffHunk } from "./values/diff.ts";
-import type { StyleRef, StyleSpec } from "./values/style.ts";
+import { insets } from "./api/view/geometry.ts";
+import type { Insets } from "./api/view/geometry.ts";
+import type { HorizontalAlign, TextSpan, WrapMode } from "./api/content/text.ts";
+import type { DiffHunk } from "./api/content/diff.ts";
+import type { StyleRef, StyleSpec } from "./api/presentation/style.ts";
 import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute, VerticalAlign } from "./types.ts";
 
 // --- Slot staging ------------------------------------------------------------
@@ -492,11 +492,11 @@ function composeAxisImpl(row: boolean, build: (children: ChildrenBuilder) => voi
   return view;
 }
 
-export function composeVertical(build: (children: import("./values/view.ts").ChildrenBuilder) => void): View {
+export function composeVertical(build: (children: import("./api/view/view.ts").ChildrenBuilder) => void): View {
   return composeAxisImpl(false, build);
 }
 
-export function composeHorizontal(build: (children: import("./values/view.ts").ChildrenBuilder) => void): View {
+export function composeHorizontal(build: (children: import("./api/view/view.ts").ChildrenBuilder) => void): View {
   return composeAxisImpl(true, build);
 }
 

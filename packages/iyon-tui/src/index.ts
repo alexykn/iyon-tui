@@ -4,8 +4,8 @@ export {
   isTuiCancelledError,
   isTuiError,
   tuiError,
-} from "./errors.ts";
-export type { TuiErrorCategory } from "./errors.ts";
+} from "./api/errors.ts";
+export type { TuiErrorCategory } from "./api/errors.ts";
 export type {
   AnsiColor,
   BorderEdges,
@@ -70,13 +70,13 @@ export type {
   ViewSlot,
   ScrollPane,
 } from "./types.ts";
-export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./values/view.ts";
-export type { OverflowIndicator, ViewChildren } from "./values/view.ts";
+export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./api/view/view.ts";
+export type { OverflowIndicator, ViewChildren } from "./api/view/view.ts";
 export { defineView } from "./define-view.ts";
 export type { ViewComponent } from "./types.ts";
 export { state } from "./tracked-state.ts";
 export type { State } from "./tracked-state.ts";
-export { Insets } from "./values/geometry.ts";
+export { Insets } from "./api/view/geometry.ts";
 export {
   Style,
   StyleRef,
@@ -84,20 +84,20 @@ export {
   StyleSpec,
   StyleStateKey,
   StyleStateValue,
-} from "./values/style.ts";
-export { TextSelector, TextSpan } from "./values/text.ts";
+} from "./api/presentation/style.ts";
+export { TextSelector, TextSpan } from "./api/content/text.ts";
 export { History } from "./history.ts";
 export { TextInput } from "./text-input.ts";
 export { TextStream } from "./stream.ts";
-export { TextContent, RawText } from "./values/text-content.ts";
-export { Annotations } from "./values/annotations.ts";
-export { Projection, ProjectionBuilder, Smooth } from "./values/projection.ts";
-export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./values/diff.ts";
-export { Theme, ThemeKey, themeColor } from "./values/theme.ts";
-export type { DiffLineKind, DiffLineTermination } from "./values/diff.ts";
-export type { ProjectionSpan } from "./values/projection.ts";
-export type { SemanticTag, SemanticValue } from "./values/annotations.ts";
-export type { TextFormat, TextOrigin } from "./values/text-content.ts";
-export { PlainTextProjector, MarkdownProjector } from "./projectors.ts";
-export { Scene } from "./scene.ts";
+export { TextContent, RawText } from "./api/content/text-content.ts";
+export { Annotations } from "./api/content/annotations.ts";
+export { Projection, ProjectionBuilder, Smooth } from "./api/content/projection.ts";
+export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./api/content/diff.ts";
+export { Theme, ThemeKey, themeColor } from "./api/presentation/theme.ts";
+export type { DiffLineKind, DiffLineTermination } from "./api/content/diff.ts";
+export type { ProjectionSpan } from "./api/content/projection.ts";
+export type { SemanticTag, SemanticValue } from "./api/content/annotations.ts";
+export type { TextFormat, TextOrigin } from "./api/content/text-content.ts";
+export { PlainTextProjector, MarkdownProjector } from "./api/content/projectors.ts";
+export { Scene } from "./api/view/scene.ts";
 export { Tui } from "./runtime.ts";

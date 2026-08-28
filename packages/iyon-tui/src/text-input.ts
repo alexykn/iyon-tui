@@ -3,7 +3,7 @@ import type { NativeTextInputContract, NativeTuiOutputContract } from "./native.
 import { FrameworkHandle, Output } from "./types.ts";
 import type { TextInput as TextInputContract } from "./types.ts";
 import { composeComponent } from "./compose.ts";
-import type { View } from "./values/view.ts";
+import type { View } from "./api/view/view.ts";
 
 const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
 

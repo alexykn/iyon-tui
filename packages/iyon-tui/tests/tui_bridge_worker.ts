@@ -1,6 +1,6 @@
 import { native } from "../src/native.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
-import { View } from "../src/values/view.ts";
+import { View } from "../src/api/view/view.ts";
 
 const Host = native.NativeTuiHost;
 if (Host === undefined) throw new Error("native TUI host is unavailable");

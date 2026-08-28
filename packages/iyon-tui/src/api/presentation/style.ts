@@ -4,7 +4,7 @@ import type {
   StyleSelectorValue,
   StyleSpecValue,
   TextAttribute,
-} from "../types.ts";
+} from "../../types.ts";
 import { ThemeKey } from "./theme-key.ts";
 
 export class StyleSpec {
@@ -174,7 +174,7 @@ const TEXT_ATTRIBUTES = new Set<TextAttribute>([
   "strikethrough",
 ]);
 
-export type { AnsiColor } from "../types.ts";
+export type { AnsiColor } from "../../types.ts";
 
 export const Style = {
   plain: (): StyleSpec => new StyleSpec().plain(),

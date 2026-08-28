@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { native } from "../src/native.ts";
 import { View } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
-} from "../src/values/view.ts";
+} from "../src/api/view/view.ts";
 import { nodeForBridge } from "../src/view-internals.ts";
 
 type OracleHost = {

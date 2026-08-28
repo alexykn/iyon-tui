@@ -1,4 +1,4 @@
-import type { Projector, TextContent } from "../types.ts";
+import type { Projector, TextContent } from "../../../types.ts";
 
 export class ProjectorAdapter implements Projector {
   constructor(private readonly implementation: Projector) {}

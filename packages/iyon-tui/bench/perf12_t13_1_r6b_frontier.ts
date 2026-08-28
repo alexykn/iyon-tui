@@ -1,5 +1,5 @@
 import { Scene, View } from "../src/index.ts";
-import { AppHarness } from "../src/testing.ts";
+import { AppHarness } from "../src/testing/index.ts";
 
 const nativePerf = process.env.T13_R6B_COUNTERS === "1"
   ? require("../native/iyon-tui-native.node") as {

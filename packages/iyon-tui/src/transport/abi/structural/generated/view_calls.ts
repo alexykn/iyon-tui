@@ -1,7 +1,7 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = ba12318e83f692e82b105219fcfcc8a53da1db568f007d381e091b259c67bc5c
-// generator_blake3 = 0b79288012c798d4cc0a43433ed9113b1e50283de95f86b6059047a63a057665
-import type { NativeViewAbiHandle, NativeTuiHostContract } from "../native.ts";
+// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
+// generator_blake3 = 25aca9d7d779185803a767f5a63c40fd0ba8f19544b58ba635d2254d695cd91a
+import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../../native.ts";
 export type ViewAbiSymbols = NativeViewAbiHandle;
 
 const ERROR_BIT = 0x8000_0000;

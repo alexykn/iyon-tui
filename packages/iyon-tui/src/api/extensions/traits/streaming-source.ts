@@ -1,4 +1,4 @@
-import type { StreamSnapshot, StreamingSource } from "../types.ts";
+import type { StreamSnapshot, StreamingSource } from "../../../types.ts";
 
 export class StreamingSourceAdapter implements StreamingSource {
   constructor(private readonly implementation: StreamingSource) {}

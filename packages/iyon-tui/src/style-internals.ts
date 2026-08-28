@@ -13,9 +13,9 @@ import type {
   StyleNode,
   TextSpanNode,
 } from "./ir.ts";
-import { StyleRef, StyleSpec, validateTextAttribute } from "./values/style.ts";
-import type { TextSpan } from "./values/text.ts";
-import type { ThemeKey } from "./values/theme-key.ts";
+import { StyleRef, StyleSpec, validateTextAttribute } from "./api/presentation/style.ts";
+import type { TextSpan } from "./api/content/text.ts";
+import type { ThemeKey } from "./api/presentation/theme-key.ts";
 
 interface ThemeEntry<T> {
   readonly base?: T;

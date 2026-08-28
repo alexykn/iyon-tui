@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DiffHunk, DiffLine, DiffRange, DiffRenderer, View } from "../src/index.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import { native } from "../src/native.ts";
 
 describe("retained TUI semantic values", () => {

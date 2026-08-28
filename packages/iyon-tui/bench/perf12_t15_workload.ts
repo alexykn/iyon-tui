@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { BRIDGE_VIEW_KIND } from "../src/ir.ts";
+import { BRIDGE_VIEW_KIND } from "../src/transport/structural/ir.ts";
 import {
   axisSetChildForTransport,
   axisSpliceForTransport,

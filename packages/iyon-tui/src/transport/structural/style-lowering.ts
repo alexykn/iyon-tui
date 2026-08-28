@@ -6,16 +6,16 @@ import type {
   StyleSpecValue,
   TextSelectorValue,
   ThemeColor,
-} from "./types.ts";
+} from "../../types.ts";
 import type {
   BorderNode,
   ColorNode,
   StyleNode,
   TextSpanNode,
 } from "./ir.ts";
-import { StyleRef, StyleSpec, validateTextAttribute } from "./api/presentation/style.ts";
-import type { TextSpan } from "./api/content/text.ts";
-import type { ThemeKey } from "./api/presentation/theme-key.ts";
+import { StyleRef, StyleSpec, validateTextAttribute } from "../../api/presentation/style.ts";
+import type { TextSpan } from "../../api/content/text.ts";
+import type { ThemeKey } from "../../api/presentation/theme-key.ts";
 
 interface ThemeEntry<T> {
   readonly base?: T;

@@ -8,7 +8,7 @@
 
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, join, relative, resolve, dirname } from "node:path";
+import { join, relative, resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "../..");
 let failed = false;
@@ -151,7 +151,94 @@ function tsImportGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: S6 safe N-API transport boundary
+// Gate 3: H2 CUT 2 composition/structural ownership
+// ---------------------------------------------------------------------------
+
+function cut2OwnershipGate(): void {
+  const required = [
+    "composition/child-owner.ts",
+    "composition/compose.ts",
+    "composition/define-view.ts",
+    "composition/execution-context.ts",
+    "composition/execution.ts",
+    "composition/internal-composition.ts",
+    "composition/persistent-seq.ts",
+    "composition/tracked-state.ts",
+    "transport/structural/component-view.ts",
+    "transport/structural/ir.ts",
+    "transport/structural/native-view-abi.ts",
+    "transport/structural/policy.ts",
+    "transport/structural/retained-dag.ts",
+    "transport/structural/style-lowering.ts",
+    "transport/structural/view-bridge.ts",
+  ];
+  const legacy = [
+    "child-owner.ts",
+    "compose.ts",
+    "define-view.ts",
+    "execution-context.ts",
+    "execution.ts",
+    "internal-composition.ts",
+    "persistent_seq.ts",
+    "tracked-state.ts",
+    "component-facade.ts",
+    "ir.ts",
+    "native_view_abi.ts",
+    "native_view_policy.ts",
+    "retained_dag.ts",
+    "style-internals.ts",
+    "view-internals.ts",
+  ];
+  const missing = required.filter((path) => !existsSync(join(FRAMEWORK_SRC, path)));
+  const stale = legacy.filter((path) => existsSync(join(FRAMEWORK_SRC, path)));
+  const offenders: string[] = [];
+  if (missing.length > 0) offenders.push(`missing CUT 2 owners: ${missing.join(", ")}`);
+  if (stale.length > 0) offenders.push(`legacy root owners remain: ${stale.join(", ")}`);
+
+  const compositionRootImports = new Set([
+    "runtime.ts",
+    "tui.ts",
+    "native.ts",
+    "native-handles.ts",
+    "handles.ts",
+    "handle-registry.ts",
+    "component.ts",
+    "history.ts",
+    "text-input.ts",
+    "stream.ts",
+    "scroll-pane.ts",
+  ]);
+  for (const file of walk(join(FRAMEWORK_SRC, "composition"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved);
+      if (compositionRootImports.has(target)) {
+        offenders.push(`${relative(ROOT, file)} imports live runtime/native owner ${target}`);
+      }
+    }
+  }
+
+  for (const file of walk(join(FRAMEWORK_SRC, "api"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved !== null && relative(FRAMEWORK_SRC, resolved).startsWith("transport/abi/")) {
+        offenders.push(`${relative(ROOT, file)} imports generated structural ABI directly`);
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut2-ownership", offenders.join("; "));
+  } else {
+    pass("h2-cut2-ownership", "composition and structural transport have dedicated owners with no legacy root peers");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4: S6 safe N-API transport boundary
 // ---------------------------------------------------------------------------
 
 function napiTransportGate(): void {
@@ -181,7 +268,7 @@ function napiTransportGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: Standalone external-consumer fixture
+// Gate 5: Standalone external-consumer fixture
 // ---------------------------------------------------------------------------
 
 function consumerFixtureGate(): void {
@@ -212,21 +299,21 @@ function consumerFixtureGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 5: H1B theme/style semantic guard
+// Gate 6: H1B theme/style semantic guard
 // ---------------------------------------------------------------------------
 
 async function themeStyleSemanticGate(): Promise<void> {
   const privateFiles = new Set([
-    "ir.ts",
+    "transport/structural/ir.ts",
     "native.ts",
-    "native_view_abi.ts",
-    "retained_dag.ts",
-    "style-internals.ts",
-    "view-internals.ts",
+    "transport/structural/native-view-abi.ts",
+    "transport/structural/retained-dag.ts",
+    "transport/structural/style-lowering.ts",
+    "transport/structural/view-bridge.ts",
   ]);
   const offenders: string[] = [];
   for (const file of walk(FRAMEWORK_SRC)) {
-    if (privateFiles.has(basename(file))) continue;
+    if (privateFiles.has(relative(FRAMEWORK_SRC, file))) continue;
     const source = readFileSync(file, "utf8");
     if (/["'`]theme:/u.test(source)) offenders.push(relative(ROOT, file));
   }
@@ -254,7 +341,7 @@ async function themeStyleSemanticGate(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6: H1C opaque framework-handle guard
+// Gate 7: H1C opaque framework-handle guard
 // ---------------------------------------------------------------------------
 
 function opaqueHandleGate(): void {
@@ -289,7 +376,7 @@ function opaqueHandleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 7: H1D control-construction/lifecycle guard
+// Gate 8: H1D control-construction/lifecycle guard
 // ---------------------------------------------------------------------------
 
 function controlLifecycleGate(): void {
@@ -327,13 +414,13 @@ function controlLifecycleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 8: H1E component-composition facade guard
+// Gate 9: H1E component-composition facade guard
 // ---------------------------------------------------------------------------
 
 function componentFacadeGate(): void {
   const view = readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8");
-  const facade = readFileSync(join(FRAMEWORK_SRC, "component-facade.ts"), "utf8");
-  const compose = readFileSync(join(FRAMEWORK_SRC, "compose.ts"), "utf8");
+  const facade = readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-view.ts"), "utf8");
+  const compose = readFileSync(join(FRAMEWORK_SRC, "composition/compose.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
@@ -354,7 +441,7 @@ function componentFacadeGate(): void {
     offenders.push("framework controls/composition still construct View.component directly");
   }
   if (!/export\s+function\s+componentViewFor\s*\(/u.test(facade)) {
-    offenders.push("component-facade.ts: missing private component placement lowering");
+    offenders.push("transport/structural/component-view.ts: missing private component placement lowering");
   }
   if (!/componentViewFor\(slot\)/u.test(runtime) || /\bslot\.view\(\)/u.test(runtime)) {
     offenders.push("runtime.ts: internal component projection participates in parent composition");
@@ -380,7 +467,7 @@ function componentFacadeGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 9: H1F typed output/event semantics guard
+// Gate 10: H1F typed output/event semantics guard
 // ---------------------------------------------------------------------------
 
 function typedOutputEventGate(): void {
@@ -429,7 +516,7 @@ function typedOutputEventGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 10: H1G false-alias and compatibility removal guard
+// Gate 11: H1G false-alias and compatibility removal guard
 // ---------------------------------------------------------------------------
 
 function falseAliasGate(): void {
@@ -466,7 +553,7 @@ function falseAliasGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 11: H1H root and testing-subpath hygiene guard
+// Gate 12: H1H root and testing-subpath hygiene guard
 // ---------------------------------------------------------------------------
 
 function rootAndTestingSurfaceGate(): void {
@@ -504,7 +591,7 @@ function rootAndTestingSurfaceGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 12: H1I runtime contract and authoritative size guard
+// Gate 13: H1I runtime contract and authoritative size guard
 // ---------------------------------------------------------------------------
 
 function runtimeContractGate(): void {
@@ -544,7 +631,7 @@ function runtimeContractGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 13: H1J public contract parity guard
+// Gate 14: H1J public contract parity guard
 // ---------------------------------------------------------------------------
 
 function contractParityGate(): void {
@@ -561,8 +648,8 @@ function contractParityGate(): void {
     ["style.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/style.ts"), "utf8")],
     ["theme.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/theme.ts"), "utf8")],
     ["text.ts", readFileSync(join(FRAMEWORK_SRC, "api/content/text.ts"), "utf8")],
-    ["style-internals.ts", readFileSync(join(FRAMEWORK_SRC, "style-internals.ts"), "utf8")],
-    ["native_view_abi.ts", readFileSync(join(FRAMEWORK_SRC, "native_view_abi.ts"), "utf8")],
+    ["style-lowering.ts", readFileSync(join(FRAMEWORK_SRC, "transport/structural/style-lowering.ts"), "utf8")],
+    ["native-view-abi.ts", readFileSync(join(FRAMEWORK_SRC, "transport/structural/native-view-abi.ts"), "utf8")],
   ]);
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
@@ -574,8 +661,8 @@ function contractParityGate(): void {
   const view = sources.get("view.ts")!;
   const style = sources.get("style.ts")!;
   const text = sources.get("text.ts")!;
-  const styleInternals = sources.get("style-internals.ts")!;
-  const nativeViewAbi = sources.get("native_view_abi.ts")!;
+  const styleInternals = sources.get("style-lowering.ts")!;
+  const nativeViewAbi = sources.get("native-view-abi.ts")!;
   const kernel = readFileSync(join(ROOT, "crates/iyon-tui/src/application/kernel.rs"), "utf8");
   const offenders: string[] = [];
 
@@ -694,7 +781,7 @@ function contractParityGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 3: Public API surface guard
+// Gate 15: Public API surface guard
 // ---------------------------------------------------------------------------
 
 const BANNED_SURFACE_NAMES = [
@@ -796,6 +883,7 @@ async function publicSurfaceGate(): Promise<void> {
 
 rustDependencyGate();
 tsImportGate();
+cut2OwnershipGate();
 napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();

@@ -1,5 +1,5 @@
 import { native } from "../src/native.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import type { View } from "../src/api/view/view.ts";
 import {
   RetainedRootBoundary,
@@ -8,8 +8,8 @@ import {
   setRetainedPhaseInstrumentation,
   setRootColdMaterializer,
   type RetainedPhaseSample,
-} from "../src/retained_dag.ts";
-import { nativeViewAbiSession, tryNativeMaterialize } from "../src/native_view_abi.ts";
+} from "../src/transport/structural/retained-dag.ts";
+import { nativeViewAbiSession, tryNativeMaterialize } from "../src/transport/structural/native-view-abi.ts";
 import { makeT15Scenario } from "./perf12_t15_workload.ts";
 
 const workload = process.env.T15_WORKLOAD ?? "plain_text";

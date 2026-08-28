@@ -6,8 +6,8 @@ import {
   tryNativeAxisSetChildRender,
   tryNativeAxisSpliceRender,
   tryNativeGridSetCellRender,
-} from "../src/native_view_abi.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+} from "../src/transport/structural/native-view-abi.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import { View } from "../src/api/view/view.ts";
 
 type StructuralHost = {

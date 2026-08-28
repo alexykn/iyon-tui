@@ -8,7 +8,7 @@ import {
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
 } from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 
 type OracleHost = {
   render(view: object): void;

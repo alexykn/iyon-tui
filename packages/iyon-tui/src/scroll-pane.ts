@@ -5,15 +5,15 @@ import {
   releaseNativeViewRef,
   tryNativeMaterialize,
   tryRetainedMaterializeRef,
-} from "./native_view_abi.ts";
-import { RetainedRootBoundary } from "./retained_dag.ts";
+} from "./transport/structural/native-view-abi.ts";
+import { RetainedRootBoundary } from "./transport/structural/retained-dag.ts";
 import {
   OwnedBuilderRoot,
   type RetainedExecutionRuntime,
-} from "./execution.ts";
-import { activeExecutionScope, protocolState } from "./execution-context.ts";
-import { composeComponent } from "./compose.ts";
-import { nodeForBridge } from "./view-internals.ts";
+} from "./composition/execution.ts";
+import { activeExecutionScope, protocolState } from "./composition/execution-context.ts";
+import { composeComponent } from "./composition/compose.ts";
+import { nodeForBridge } from "./transport/structural/view-bridge.ts";
 import { View } from "./api/view/view.ts";
 import type { NativeTuiHostContract } from "./native.ts";
 

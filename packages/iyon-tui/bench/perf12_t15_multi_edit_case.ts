@@ -1,6 +1,6 @@
 import { View } from "../src/index.ts";
 import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, viewNodeId, type View as ViewValue } from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -40,7 +40,7 @@ const nativeModule = (direct
   : await import("../src/native.ts")) as unknown as NativeModule;
 const abi = (direct
   ? await import("./direct_ffi/native_view_abi.ts")
-  : await import("../src/native_view_abi.ts")) as unknown as AbiModule;
+  : await import("../src/transport/structural/native-view-abi.ts")) as unknown as AbiModule;
 const Host = nativeModule.native.NativeTuiHost;
 if (Host === undefined) throw new Error(`missing NativeTuiHost for ${transport}`);
 const host = new Host(80, Math.max(8, editCount + 2), true);

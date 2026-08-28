@@ -1,5 +1,5 @@
 import { Tui, View } from "../src/index.ts";
-import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/native_view_abi.ts";
+import { nativeViewRouteSnapshot, resetNativeViewRouteCounters } from "../src/transport/structural/native-view-abi.ts";
 
 const warmup = 50;
 const samples = 200;

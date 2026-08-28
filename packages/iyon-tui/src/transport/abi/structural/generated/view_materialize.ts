@@ -1,13 +1,13 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = 25aca9d7d779185803a767f5a63c40fd0ba8f19544b58ba635d2254d695cd91a
+// generator_blake3 = 53867e5df44df8c30e5f2fd4e776f9a531dcffdb4a85df99452a72f04e0d8248
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../../native.ts";
 import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
 import type { ViewAbiSymbols } from "./view_calls";
-import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../../../ir.ts";
-import { RetainedFastFallbackError, ensureNative } from "../../../../retained_dag.ts";
-import { MAX_DIRECT_AXIS_REFS } from "../../../../native_view_policy.ts";
-import type { MaterializeTx } from "../../../../retained_dag.ts";
+import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../../structural/ir.ts";
+import { RetainedFastFallbackError, ensureNative } from "../../../structural/retained-dag.ts";
+import { MAX_DIRECT_AXIS_REFS } from "../../../structural/policy.ts";
+import type { MaterializeTx } from "../../../structural/retained-dag.ts";
 export type { MaterializeTx };
 
 const ERROR_BIT = 0x8000_0000;

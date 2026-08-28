@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -43,10 +43,10 @@ const nativeModule = (direct
   : await import("../src/native.ts")) as unknown as NativeCaseModule;
 const abi = (direct
   ? await import("./direct_ffi/native_view_abi.ts")
-  : await import("../src/native_view_abi.ts")) as unknown as AbiCaseModule;
+  : await import("../src/transport/structural/native-view-abi.ts")) as unknown as AbiCaseModule;
 const retained = (direct
   ? await import("./direct_ffi/retained_dag.ts")
-  : await import("../src/retained_dag.ts")) as unknown as RetainedCaseModule;
+  : await import("../src/transport/structural/retained-dag.ts")) as unknown as RetainedCaseModule;
 
 const Host = nativeModule.native.NativeTuiHost;
 if (Host === undefined) throw new Error(`missing NativeTuiHost for ${transport}`);

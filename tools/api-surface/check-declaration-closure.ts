@@ -8,13 +8,15 @@ const TESTING_SOURCE = join(ROOT, "packages/iyon-tui/src/testing/index.ts");
 const PRIVATE_MODULES = new Set([
   "ir",
   "native",
-  "retained_dag",
-  "native_view_abi",
+  "retained-dag",
+  "native-view-abi",
+  "policy",
   "generated",
   "handles",
   "handle-registry",
-  "style-internals",
-  "view-internals",
+  "style-lowering",
+  "view-bridge",
+  "component-view",
 ]);
 const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native[A-Z]\w*(?:Contract|Abi[A-Z]\w*))\b/u;
 

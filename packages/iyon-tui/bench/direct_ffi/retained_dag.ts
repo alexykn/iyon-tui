@@ -32,8 +32,8 @@ import {
   materializeSpacer,
 } from "./view_materialize.ts";
 import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/ir.ts";
-import { nodeForBridge } from "../../src/view-internals.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/transport/structural/ir.ts";
+import { nodeForBridge } from "../../src/transport/structural/view-bridge.ts";
 import { viewNodeIdHighWater, type View } from "../../src/api/view/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -44,7 +44,7 @@ import {
   MAX_DIRECT_TEXT_BYTES,
   MAX_RETAINED_DEPTH,
   MAX_RETAINED_NEW_NODES,
-} from "../../src/native_view_policy.ts";
+} from "../../src/transport/structural/policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
 export interface BridgeNativeHint {

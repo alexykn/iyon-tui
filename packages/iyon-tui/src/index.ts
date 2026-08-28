@@ -72,10 +72,10 @@ export type {
 } from "./types.ts";
 export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./api/view/view.ts";
 export type { OverflowIndicator, ViewChildren } from "./api/view/view.ts";
-export { defineView } from "./define-view.ts";
+export { defineView } from "./composition/define-view.ts";
 export type { ViewComponent } from "./types.ts";
-export { state } from "./tracked-state.ts";
-export type { State } from "./tracked-state.ts";
+export { state } from "./composition/tracked-state.ts";
+export type { State } from "./composition/tracked-state.ts";
 export { Insets } from "./api/view/geometry.ts";
 export {
   Style,

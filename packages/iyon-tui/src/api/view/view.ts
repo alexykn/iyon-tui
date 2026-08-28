@@ -56,7 +56,7 @@ import {
   type OverflowIndicatorNode,
   type StyleNode,
   VIEW_BRIDGE_SCHEMA_VERSION,
-} from "../../ir.ts";
+} from "../../transport/structural/ir.ts";
 import { insets, Insets } from "./geometry.ts";
 import {
   setBridgeDerivation,
@@ -67,10 +67,10 @@ import {
   type AxisSequenceEdit,
   type BridgeCommonScalarDerivation,
   type BridgeDerivation,
-} from "../../ir.ts";
-import { PersistentSeq } from "../../persistent_seq.ts";
-import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../../style-internals.ts";
-import { nodeForBridge, setViewNode } from "../../view-internals.ts";
+} from "../../transport/structural/ir.ts";
+import { PersistentSeq } from "../../composition/persistent-seq.ts";
+import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../../transport/structural/style-lowering.ts";
+import { nodeForBridge, setViewNode } from "../../transport/structural/view-bridge.ts";
 import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
 import { TextSpan } from "../content/text.ts";
@@ -80,7 +80,7 @@ import {
   executionContext,
   semanticConstruction,
   withKeyedChildOwner,
-} from "../../execution-context.ts";
+} from "../../composition/execution-context.ts";
 import {
   composeBackground,
   composeBorder,
@@ -111,7 +111,7 @@ import {
   composeTextAttribute,
   composeVertical,
   composeWrap,
-} from "../../compose.ts";
+} from "../../composition/compose.ts";
 
 export type ViewChildren = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };

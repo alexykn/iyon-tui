@@ -28,7 +28,7 @@
 
 import { executionContext, executionCounters } from "./execution.ts";
 import { withoutRetainedComposition } from "./execution-context.ts";
-import { borderNodeFor, colorNodeFor, styleNodeFor } from "./style-internals.ts";
+import { borderNodeFor, colorNodeFor, styleNodeFor } from "../transport/structural/style-lowering.ts";
 import {
   BRIDGE_GRID_TRACK_KIND,
   BRIDGE_HORIZONTAL_ALIGN,
@@ -50,7 +50,7 @@ import {
   type ColorNode,
   type DecorationNode,
   type StyleNode,
-} from "./ir.ts";
+} from "../transport/structural/ir.ts";
 import {
   ChildrenBuilder,
   composedAxis,
@@ -62,16 +62,15 @@ import {
   type GridTrack,
   type LayoutChild,
   type OverflowIndicator,
-} from "./api/view/view.ts";
-import { componentIdOf } from "./handles.ts";
-import { componentViewFor } from "./component-facade.ts";
-import { nodeForBridge } from "./view-internals.ts";
-import { insets } from "./api/view/geometry.ts";
-import type { Insets } from "./api/view/geometry.ts";
-import type { HorizontalAlign, TextSpan, WrapMode } from "./api/content/text.ts";
-import type { DiffHunk } from "./api/content/diff.ts";
-import type { StyleRef, StyleSpec } from "./api/presentation/style.ts";
-import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute, VerticalAlign } from "./types.ts";
+} from "../api/view/view.ts";
+import { componentIdForPlacement, componentViewFor } from "../transport/structural/component-view.ts";
+import { nodeForBridge } from "../transport/structural/view-bridge.ts";
+import { insets } from "../api/view/geometry.ts";
+import type { Insets } from "../api/view/geometry.ts";
+import type { HorizontalAlign, TextSpan, WrapMode } from "../api/content/text.ts";
+import type { DiffHunk } from "../api/content/diff.ts";
+import type { StyleRef, StyleSpec } from "../api/presentation/style.ts";
+import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute, VerticalAlign } from "../types.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -425,7 +424,7 @@ export function composeSpacer(rows: number): View {
 
 /** Lowers a mounted component handle through the private placement facade. */
 export function composeComponent(handle: ComponentHandle): View {
-  const componentId = componentIdOf(handle);
+  const componentId = componentIdForPlacement(handle);
   const scope = executionContext.top;
   if (scope === undefined) return componentViewFor(handle);
   const slot = scope.nextSemanticSlot();
@@ -492,11 +491,11 @@ function composeAxisImpl(row: boolean, build: (children: ChildrenBuilder) => voi
   return view;
 }
 
-export function composeVertical(build: (children: import("./api/view/view.ts").ChildrenBuilder) => void): View {
+export function composeVertical(build: (children: import("../api/view/view.ts").ChildrenBuilder) => void): View {
   return composeAxisImpl(false, build);
 }
 
-export function composeHorizontal(build: (children: import("./api/view/view.ts").ChildrenBuilder) => void): View {
+export function composeHorizontal(build: (children: import("../api/view/view.ts").ChildrenBuilder) => void): View {
   return composeAxisImpl(true, build);
 }
 

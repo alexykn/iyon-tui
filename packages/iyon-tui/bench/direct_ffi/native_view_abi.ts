@@ -38,7 +38,7 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "./view_calls.ts";
-import { nodeForBridge } from "../../src/view-internals.ts";
+import { nodeForBridge } from "../../src/transport/structural/view-bridge.ts";
 import {
   nodeIdPair,
   viewNodeId,
@@ -49,7 +49,7 @@ import manifest from "../../src/transport/abi/structural/generated/view_abi_mani
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
   NATIVE_SMALL_AXIS_ARITY_MAX,
-} from "../../src/native_view_policy.ts";
+} from "../../src/transport/structural/policy.ts";
 
 export interface NativeViewAbiSession {
   readonly runtime: Pointer;

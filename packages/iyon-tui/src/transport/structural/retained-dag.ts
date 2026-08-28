@@ -24,17 +24,17 @@
  * complete cold path (§49).
  */
 
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../../native.ts";
 import {
   materializeColumn,
   materializeRow,
   materializeSpacer,
-} from "./transport/abi/structural/generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./transport/abi/structural/generated/view_calls.ts";
+} from "../abi/structural/generated/view_materialize.ts";
+import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
-import { nodeForBridge } from "./view-internals.ts";
-import { viewNodeIdHighWater, type View } from "./api/view/view.ts";
-import type { NativeViewAbiSession } from "./native_view_abi.ts";
+import { nodeForBridge } from "./view-bridge.ts";
+import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
+import type { NativeViewAbiSession } from "./native-view-abi.ts";
 import {
   MAX_DIRECT_AXIS_REFS,
   MAX_DIRECT_DIFF_BYTES,
@@ -43,7 +43,7 @@ import {
   MAX_DIRECT_TEXT_BYTES,
   MAX_RETAINED_DEPTH,
   MAX_RETAINED_NEW_NODES,
-} from "./native_view_policy.ts";
+} from "./policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
 export interface BridgeNativeHint {
@@ -1337,7 +1337,7 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * {@link RetainedRootBoundary.prepareColdInstall}: decodes a whole View tree
  * into a leased native root reference WITHOUT painting. Bootstrap wires this
  * to the Direct N-API decode (`tryNativeMaterialize`) — kept behind a hook
- * because retained_dag must not import native_view_abi (cycle).
+ * because retained-dag must not import native-view-abi (cycle).
  */
 let COLD_ROOT_MATERIALIZER: ((view: View) => number | undefined) | undefined;
 

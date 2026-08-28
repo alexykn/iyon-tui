@@ -1,5 +1,5 @@
 import { native } from "../src/native.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import { View } from "../src/api/view/view.ts";
 
 const Host = native.NativeTuiHost;

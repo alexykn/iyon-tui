@@ -1,7 +1,7 @@
-import { nodeForBridge } from "./view-internals.ts";
+import { nodeForBridge } from "./transport/structural/view-bridge.ts";
 import { tuiError } from "./api/errors.ts";
 import type { View } from "./api/view/view.ts";
-import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./native_view_abi.ts";
+import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./transport/structural/native-view-abi.ts";
 import { nativeResourceOf } from "./handles.ts";
 import { FrameworkHandle } from "./types.ts";
 import { nativeTui } from "./native-handles.ts";

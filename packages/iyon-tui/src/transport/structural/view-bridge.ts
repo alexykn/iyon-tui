@@ -1,5 +1,5 @@
 import type { BridgeViewNode } from "./ir.ts";
-import type { View } from "./api/view/view.ts";
+import type { View } from "../../api/view/view.ts";
 
 /** Private semantic-node association used by the retained materializer. */
 const nodes = new WeakMap<View, BridgeViewNode>();

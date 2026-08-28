@@ -1,6 +1,6 @@
 import { native } from "./native.ts";
-import { nodeForBridge } from "./view-internals.ts";
-import { borderNodeFor, materializeTheme } from "./style-internals.ts";
+import { nodeForBridge } from "./transport/structural/view-bridge.ts";
+import { borderNodeFor, materializeTheme } from "./transport/structural/style-lowering.ts";
 import { View } from "./api/view/view.ts";
 import { asTuiError, tuiError } from "./api/errors.ts";
 import { nativeResourceOf, requireNativeClass } from "./handles.ts";
@@ -9,21 +9,21 @@ import { Scene } from "./api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
 import { createTextInput, textInputForOutput } from "./text-input.ts";
 import { createViewSlot } from "./component.ts";
-import { componentViewFor } from "./component-facade.ts";
+import { componentViewFor } from "./transport/structural/component-view.ts";
 import { createScrollPane } from "./scroll-pane.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
   tryNativeMaterialize,
-} from "./native_view_abi.ts";
+} from "./transport/structural/native-view-abi.ts";
 import {
   resetStyleRefCacheForThemeChange,
   RetainedRootBoundary,
   setRootColdMaterializer,
-} from "./retained_dag.ts";
-import type { RootPublication } from "./retained_dag.ts";
-import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./execution.ts";
-import { activeExecutionScope, protocolState, withoutRetainedComposition } from "./execution-context.ts";
+} from "./transport/structural/retained-dag.ts";
+import type { RootPublication } from "./transport/structural/retained-dag.ts";
+import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./composition/execution.ts";
+import { activeExecutionScope, protocolState, withoutRetainedComposition } from "./composition/execution-context.ts";
 import type {
   Output,
   ScrollPane,

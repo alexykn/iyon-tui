@@ -145,20 +145,22 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
     });
     if has_axis {
         output.push_str(
-            "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../../../../ir.ts\";\n",
+            "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../../../structural/ir.ts\";\n",
         );
         output.push_str(
-            "import { RetainedFastFallbackError, ensureNative } from \"../../../../retained_dag.ts\";\n",
+            "import { RetainedFastFallbackError, ensureNative } from \"../../../structural/retained-dag.ts\";\n",
         );
         if has_axis_buffer {
             // PERF-12 T8 (§50): retained cap for one borrowed-buffer axis call.
             output.push_str(
-                "import { MAX_DIRECT_AXIS_REFS } from \"../../../../native_view_policy.ts\";\n",
+                "import { MAX_DIRECT_AXIS_REFS } from \"../../../structural/policy.ts\";\n",
             );
         }
         // Axis lowerings recurse into ensureNative, so the transaction type
         // is owned by the runtime module; re-exported here for callers.
-        output.push_str("import type { MaterializeTx } from \"../../../../retained_dag.ts\";\n");
+        output.push_str(
+            "import type { MaterializeTx } from \"../../../structural/retained-dag.ts\";\n",
+        );
         output.push_str("export type { MaterializeTx };\n\n");
     } else {
         output.push_str("export interface MaterializeTx {\n  readonly symbols: ViewAbiSymbols;\n  readonly runtime: NativeViewAbiHandle;\n}\n\n");

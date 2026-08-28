@@ -1,4 +1,4 @@
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "./native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../../native.ts";
 import {
   clearNativeHint,
   ensureNative,
@@ -6,7 +6,7 @@ import {
   refreshNativeHint,
   RetainedCycleError,
   RetainedFastFallbackError,
-} from "./retained_dag.ts";
+} from "./retained-dag.ts";
 import {
   hostRenderRef,
   pathChild,
@@ -35,19 +35,19 @@ import {
   editTxnCommitRender,
   editTxnAbort,
   type ViewAbiSymbols,
-} from "./transport/abi/structural/generated/view_calls.ts";
-import { nodeForBridge } from "./view-internals.ts";
+} from "../abi/structural/generated/view_calls.ts";
+import { nodeForBridge } from "./view-bridge.ts";
 import {
   nodeIdPair,
   viewNodeId,
   type NativePathLineage,
   type View,
-} from "./api/view/view.ts";
-import manifest from "./transport/abi/structural/generated/view_abi_manifest.json";
+} from "../../api/view/view.ts";
+import manifest from "../abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
   NATIVE_SMALL_AXIS_ARITY_MAX,
-} from "./native_view_policy.ts";
+} from "./policy.ts";
 
 export interface NativeViewAbiSession {
   /** Opaque environment-owned N-API object; no runtime address crosses JS. */

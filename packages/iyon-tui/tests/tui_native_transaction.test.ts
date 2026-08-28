@@ -6,7 +6,7 @@ import {
   nativeViewRefForNodeId,
   releaseNativeViewRef,
   tryNativeEditTransactionRender,
-} from "../src/native_view_abi.ts";
+} from "../src/transport/structural/native-view-abi.ts";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
@@ -14,7 +14,7 @@ import {
   viewNodeId,
   View,
 } from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 
 type HostContract = {
   render(view: object): void;

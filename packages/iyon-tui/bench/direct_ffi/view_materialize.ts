@@ -3,9 +3,9 @@
 // generator_blake3 = 99901fd5ac04c07b1365ddc232714345a1a325ca6c2d6deaffc6b4866dc1ffeb
 import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls.ts";
 import type { ViewAbiSymbols } from "./view_calls.ts";
-import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../src/ir.ts";
+import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../src/transport/structural/ir.ts";
 import { RetainedFastFallbackError, ensureNative } from "./retained_dag.ts";
-import { MAX_DIRECT_AXIS_REFS } from "../../src/native_view_policy.ts";
+import { MAX_DIRECT_AXIS_REFS } from "../../src/transport/structural/policy.ts";
 import type { MaterializeTx } from "./retained_dag.ts";
 export type { MaterializeTx };
 

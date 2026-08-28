@@ -6,9 +6,9 @@ import {
   nativeViewRefForNodeId,
   releaseNativeViewRef,
   tryNativeAxisCreateRender,
-} from "../src/native_view_abi.ts";
+} from "../src/transport/structural/native-view-abi.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import { nodeForBridge } from "../src/view-internals.ts";
+import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import { View } from "../src/api/view/view.ts";
 
 type HostContract = {

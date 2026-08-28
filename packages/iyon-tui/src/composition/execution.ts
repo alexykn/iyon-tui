@@ -17,9 +17,9 @@
  * allocation-free exact reuse inside dirty scopes.
  */
 
-import { nodeForBridge } from "./view-internals.ts";
-import type { View } from "./api/view/view.ts";
-import type { ViewComponentType } from "./types.ts";
+import { nodeForBridge } from "../transport/structural/view-bridge.ts";
+import type { View } from "../api/view/view.ts";
+import type { ViewComponentType } from "../types.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
 import {
   ChildOwnerState,

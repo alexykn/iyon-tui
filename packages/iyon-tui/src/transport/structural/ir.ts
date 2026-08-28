@@ -1,6 +1,6 @@
-import type { ComponentId } from "./types.ts";
-import bridgeSchema from "./transport/abi/structural/schema/bridge-schema.json";
-import { PersistentSeq } from "./persistent_seq.ts";
+import type { ComponentId } from "../../types.ts";
+import bridgeSchema from "../abi/structural/schema/bridge-schema.json";
+import { PersistentSeq } from "../../composition/persistent-seq.ts";
 
 type BridgeSchema = {
   readonly schemaVersion: 1;

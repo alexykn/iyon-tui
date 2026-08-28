@@ -176,6 +176,9 @@ pub(crate) struct SceneHost {
     incremental_topology_changed: bool,
     incremental_requires_full_sync: bool,
     incremental_paint_components: Vec<ComponentId>,
+    /// True when the retained History branch can be painted without walking
+    /// the clean body branch.
+    incremental_paint_history: bool,
     /// True while the current retained candidate was rebuilt from the History
     /// branch without re-resolving the body branch.
     history_only_refresh: bool,
@@ -185,6 +188,8 @@ pub(crate) struct SceneHost {
     pub(crate) resolve_count: usize,
     #[cfg(test)]
     pub(crate) full_resolves: usize,
+    #[cfg(test)]
+    pub(crate) full_paints: usize,
     #[cfg(test)]
     pub(crate) incremental_resolves: usize,
 }
@@ -217,11 +222,14 @@ impl Default for SceneHost {
             incremental_topology_changed: false,
             incremental_requires_full_sync: false,
             incremental_paint_components: Vec::new(),
+            incremental_paint_history: false,
             history_only_refresh: false,
             #[cfg(test)]
             resolve_count: 0,
             #[cfg(test)]
             full_resolves: 0,
+            #[cfg(test)]
+            full_paints: 0,
             #[cfg(test)]
             incremental_resolves: 0,
         }
@@ -238,6 +246,7 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_history = false;
         self.history_only_refresh = false;
     }
 
@@ -257,6 +266,7 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_history = false;
         self.history_only_refresh = false;
     }
 
@@ -541,6 +551,7 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_history = false;
                 self.history_only_refresh = false;
                 continue;
             }
@@ -579,6 +590,7 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_history = false;
                 self.history_only_refresh = false;
                 continue;
             }
@@ -617,6 +629,7 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_history = false;
         self.history_only_refresh = false;
         #[cfg(test)]
         {
@@ -726,6 +739,7 @@ impl SceneHost {
                     self.incremental_topology_changed = false;
                     self.incremental_requires_full_sync = false;
                     self.incremental_paint_components.clear();
+                    self.incremental_paint_history = false;
                     return Err(error);
                 }
             }
@@ -795,7 +809,7 @@ impl SceneHost {
                 anchor,
                 retained,
                 roots.clone(),
-                topology_changed,
+                topology_changed || body_geometry_changed,
             );
         }
         if !patched || topology_changed {
@@ -807,12 +821,14 @@ impl SceneHost {
             );
             self.incremental_requires_full_sync = true;
             self.incremental_paint_components.clear();
+            self.incremental_paint_history = false;
         } else {
             self.incremental_requires_full_sync = false;
             self.incremental_sync_components = roots
                 .iter()
                 .flat_map(|root| retained.root.scene.mounts.subtree_ids(*root))
                 .collect();
+            self.incremental_paint_history = false;
             self.incremental_paint_components = roots;
         }
         #[cfg(test)]
@@ -834,7 +850,7 @@ impl SceneHost {
         anchor: HistoryViewportAnchor,
         retained: StableScene,
         affected: Vec<ComponentId>,
-        body_topology_changed: bool,
+        body_layout_changed: bool,
     ) -> Result<Option<StableScene>, ResolveError> {
         let Some(history) = scene.history() else {
             self.retained = Some(retained);
@@ -878,19 +894,17 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_history = false;
                 return Err(error);
             }
         };
         let history_scene = session.finish(projection.view);
         let history_components: HashSet<ComponentId> = history_scene.mounts.ids().collect();
-        let history_topology_changed = retained
-            .root
-            .history_scene
-            .as_ref()
-            .map_or(!history_scene.mounts.is_empty(), |old| {
-                !old.mounts.same_topology(&history_scene.mounts)
-            });
-        let topology_changed = body_topology_changed || history_topology_changed;
+        let history_topology_changed = match retained.root.history_scene.as_ref() {
+            None => true,
+            Some(old) => !old.mounts.same_topology(&history_scene.mounts),
+        };
+        let topology_changed = body_layout_changed || history_topology_changed;
         let merged = match merge_root_scene(
             Some(history_scene.clone()),
             retained.root.body_scene.clone(),
@@ -907,6 +921,7 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_history = false;
                 return Err(error);
             }
         };
@@ -943,7 +958,7 @@ impl SceneHost {
             scene: merged,
             body_scene: retained.root.body_scene,
             history_scene: Some(history_scene),
-            history_components,
+            history_components: history_components.clone(),
             body_view,
             history_overlay: projection.frozen_overlay,
             history_overflow_rows: projection.overflow_rows,
@@ -951,10 +966,22 @@ impl SceneHost {
             body_height,
         };
         self.history_only_refresh = true;
+        // A topology- and geometry-stable History update has a concrete paint
+        // target. Leaving this plan empty would make paint() mistake a normal
+        // History refresh for a failed incremental update and repaint the root.
         self.incremental_sync_components = sync_components;
         self.incremental_topology_changed = topology_changed;
         self.incremental_requires_full_sync = topology_changed;
-        self.incremental_paint_components.clear();
+        self.incremental_paint_history = !topology_changed;
+        self.incremental_paint_components = if topology_changed {
+            Vec::new()
+        } else {
+            self.incremental_sync_components
+                .iter()
+                .copied()
+                .filter(|component| !history_components.contains(component))
+                .collect()
+        };
         #[cfg(test)]
         {
             self.incremental_resolves += 1;
@@ -972,22 +999,45 @@ impl SceneHost {
         self.retained = Some(resolved);
         let retained = self.retained.as_ref().expect("retained frame installed");
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
-        if !self.incremental_paint_components.is_empty() {
+        if self.incremental_paint_history || !self.incremental_paint_components.is_empty() {
             if let Some(mut surface) = self.last_surface.take() {
                 let mut incremental = true;
                 let mut incremental_cache = PaintCache::default();
-                for component in self.incremental_paint_components.iter().copied() {
-                    if !ViewPainter.paint_component_into(
-                        &compiler,
-                        &retained.layout.tree,
-                        component,
-                        &mut surface,
-                        &mut incremental_cache,
-                    ) {
-                        incremental = false;
-                        break;
+                if self.incremental_paint_history {
+                    let history_root = retained.root.history_scene.as_ref().and_then(|_| {
+                        retained
+                            .layout
+                            .tree
+                            .node(retained.layout.tree.root)
+                            .children
+                            .first()
+                            .copied()
+                    });
+                    incremental = history_root.is_some_and(|root| {
+                        ViewPainter.paint_subtree_into(
+                            &compiler,
+                            &retained.layout.tree,
+                            root,
+                            &mut surface,
+                            &mut incremental_cache,
+                        )
+                    });
+                }
+                if incremental {
+                    for component in self.incremental_paint_components.iter().copied() {
+                        if !ViewPainter.paint_component_into(
+                            &compiler,
+                            &retained.layout.tree,
+                            component,
+                            &mut surface,
+                            &mut incremental_cache,
+                        ) {
+                            incremental = false;
+                            break;
+                        }
                     }
                 }
+                self.incremental_paint_history = false;
                 self.incremental_paint_components.clear();
                 if incremental {
                     let output = surface.clone();
@@ -998,7 +1048,12 @@ impl SceneHost {
                     };
                 }
             }
+            self.incremental_paint_history = false;
             self.incremental_paint_components.clear();
+        }
+        #[cfg(test)]
+        {
+            self.full_paints += 1;
         }
         self.paint_cache.begin_epoch(theme);
         let surface = ViewPainter.paint_tree_with_cache(
@@ -1243,6 +1298,28 @@ mod tests {
     #[derive(Debug)]
     struct R6bLeaf {
         text: String,
+    }
+
+    #[derive(Debug)]
+    struct TickingLeaf {
+        frame: usize,
+    }
+
+    impl Component for TickingLeaf {
+        fn view(&self) -> View {
+            View::text(format!("tick-{}", self.frame)).into_view()
+        }
+
+        fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
+            cx.tick(std::time::Duration::from_millis(80), Self::tick);
+        }
+    }
+
+    impl TickingLeaf {
+        fn tick(component: &mut Self, _now: Instant, _cx: &mut crate::EventCx<'_>) -> bool {
+            component.frame += 1;
+            true
+        }
     }
 
     impl Component for R6bLeaf {
@@ -1532,6 +1609,121 @@ mod tests {
         let lines = frame.screen_lines();
         assert!(lines.iter().any(|line| line.starts_with("history-new")));
         assert!(lines.iter().any(|line| line.starts_with("body-new")));
+    }
+
+    #[test]
+    fn history_stream_refresh_paints_only_the_history_branch() {
+        let mut history = crate::History::new();
+        let stream = history
+            .push_stream(BlockableStreamSource::new("old\nstale", 0, false))
+            .unwrap();
+        let body = View::vertical(|column| {
+            for row in 0..100 {
+                column.child(View::text(format!("body-{row}")));
+            }
+        });
+        let mut scene = Scene::with_history(history, body);
+        let mut registry = ComponentRegistry::new();
+        let size = Size::new(20, 120);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+        host.full_paints = 0;
+
+        scene
+            .history_mut()
+            .unwrap()
+            .update_stream(stream, |source| {
+                source.text = "new\n      ".to_owned();
+                source.revision += 1;
+            })
+            .unwrap();
+        let updated = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let mut cold_host = SceneHost::default();
+        let cold = cold_host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let cold_frame = cold_host.paint(cold, &Theme::default());
+
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        let frame = host.paint(updated, &Theme::default());
+        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
+        assert_eq!(host.full_paints, 0);
+        assert!(
+            frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with("new"))
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert!(
+                counters.value(crate::perf::Counter::PaintNodesVisited) < 10,
+                "History refresh should not repaint the clean body: {:?}",
+                counters.value(crate::perf::Counter::PaintNodesVisited)
+            );
+        }
+    }
+
+    #[test]
+    fn stream_refresh_and_animation_tick_repaint_independent_targets() {
+        let mut history = crate::History::new();
+        let stream = history
+            .push_stream(BlockableStreamSource::new("old", 0, false))
+            .unwrap();
+        let mut registry = ComponentRegistry::new();
+        let ticking = registry.register(TickingLeaf { frame: 0 });
+        let mut scene = Scene::with_history(history, View::component(ticking));
+        let size = Size::new(20, 4);
+        let now = Instant::now();
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable_at::<()>(&scene, &mut registry, size, now)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+        host.full_paints = 0;
+
+        scene
+            .history_mut()
+            .unwrap()
+            .update_stream(stream, |source| {
+                source.text = "new".to_owned();
+                source.revision += 1;
+            })
+            .unwrap();
+        let tick = host.tick_due(now + std::time::Duration::from_millis(80), &mut registry);
+        assert_eq!(tick.changed_components, vec![ticking.id()]);
+        let updated = host
+            .resolve_stable_at::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now + std::time::Duration::from_millis(80),
+            )
+            .unwrap();
+        let frame = host.paint(updated, &Theme::default());
+
+        assert_eq!(host.full_paints, 0);
+        assert!(
+            frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with("new"))
+        );
+        assert!(
+            frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with("tick-1"))
+        );
     }
 
     #[test]

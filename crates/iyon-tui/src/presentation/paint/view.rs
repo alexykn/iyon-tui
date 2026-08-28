@@ -140,7 +140,24 @@ impl ViewPainter {
         let Some(component_root) = tree.component_roots.get(&component).copied() else {
             return false;
         };
-        let path = tree.path_to_root(component_root);
+        self.paint_subtree_into(compiler, tree, component_root, surface, cache)
+    }
+
+    /// Repaints one non-component subtree into an existing frame surface.
+    ///
+    /// This is used for the root-level History branch: a History revision can
+    /// change its projected rows without changing the body layout or component
+    /// forest. Painting this root keeps the retained surface contract while
+    /// avoiding a walk of the clean sibling branch.
+    pub(crate) fn paint_subtree_into(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        subtree_root: LayoutNodeId,
+        surface: &mut Surface,
+        cache: &mut PaintCache,
+    ) -> bool {
+        let path = tree.path_to_root(subtree_root);
         if path.is_empty() {
             return false;
         }
@@ -167,11 +184,11 @@ impl ViewPainter {
         if let Some(background) = inherited_background {
             inherited.background = Some(background);
         }
-        let node = tree.node(component_root);
+        let node = tree.node(subtree_root);
         let painted = self.paint_node(
             compiler,
             tree,
-            component_root,
+            subtree_root,
             inherited,
             context,
             cache,

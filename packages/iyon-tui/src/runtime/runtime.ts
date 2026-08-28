@@ -4,7 +4,7 @@ import { nodeForBridge } from "../transport/structural/view-bridge.ts";
 import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
 import { View } from "../api/view/view.ts";
 import { asTuiError, tuiError } from "../api/errors.ts";
-import { registerTuiTestingAccess } from "../testing/access.ts";
+import { registerRuntimeAccess } from "./access.ts";
 import { Scene } from "../api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/history.ts";
 import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
@@ -164,7 +164,7 @@ export class Tui implements TuiRuntime {
         };
       },
     });
-    registerTuiTestingAccess(this, {
+    registerRuntimeAccess(this, {
       flush: () => this.drainExecution(),
       enqueue: (event) => {
         if (event.type === "key") this.host.dispatchKey(event.key, event.modifiers);

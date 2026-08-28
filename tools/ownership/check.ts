@@ -435,7 +435,212 @@ function cut4RootCleanupGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6: S6 safe N-API transport boundary
+// Gate 6: H2 CUT 5 import-direction enforcement
+// ---------------------------------------------------------------------------
+
+function cut5ImportBoundaryGate(): void {
+  const offenders: string[] = [];
+  for (const file of walk(FRAMEWORK_SRC)) {
+    const owner = relative(FRAMEWORK_SRC, file).replaceAll("\\", "/");
+    const production = !owner.startsWith("testing/");
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".") && !specifier.startsWith("/")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+
+      if (production && target.startsWith("testing/")) {
+        offenders.push(`${relative(ROOT, file)} imports production code from testing: ${target}`);
+      }
+      if (owner.startsWith("composition/") && (
+        target.startsWith("runtime/")
+        || target.startsWith("transport/native/")
+        || target.startsWith("testing/")
+      )) {
+        offenders.push(`${relative(ROOT, file)} imports live host/native/testing ownership: ${target}`);
+      }
+      if (owner.startsWith("api/") && (
+        target.startsWith("transport/abi/")
+        || target.includes("/generated/")
+      )) {
+        offenders.push(`${relative(ROOT, file)} imports generated ABI from semantic API: ${target}`);
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut5-import-boundaries", offenders.join("; "));
+  } else {
+    pass("h2-cut5-import-boundaries", "production does not import testing, composition avoids live host/native seams, and API code avoids generated ABI");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 7: H2 CUT 5 root publication boundary
+// ---------------------------------------------------------------------------
+
+function cut5RootPublicationGate(): void {
+  const indexPath = join(FRAMEWORK_SRC, "index.ts");
+  const index = readFileSync(indexPath, "utf8");
+  const allowedTargets = new Set([
+    "runtime/events.ts",
+    "runtime/runtime.ts",
+    "composition/define-view.ts",
+    "composition/tracked-state.ts",
+  ]);
+  const offenders: string[] = [];
+
+  if (/\bexport\s+(?:type\s+)?\*/u.test(index)) {
+    offenders.push("index.ts: wildcard export hides the public/private boundary");
+  }
+
+  const exportPattern = /export(?:\s+type)?\s*\{([\s\S]*?)\}\s*from\s*["']([^"']+)["']/gu;
+  for (const match of index.matchAll(exportPattern)) {
+    const clause = match[1]!;
+    const specifier = match[2]!;
+    const resolved = resolveRelative(indexPath, specifier);
+    if (resolved === null) {
+      offenders.push(`index.ts: unresolved public export target ${specifier}`);
+      continue;
+    }
+    const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+    if (!target.startsWith("api/") && !allowedTargets.has(target)) {
+      offenders.push(`index.ts: private module is root-exported: ${target}`);
+    }
+    if (target.startsWith("transport/") || target.startsWith("testing/")) {
+      offenders.push(`index.ts: bridge/native/generated/testing module is root-exported: ${target}`);
+    }
+
+    for (const item of clause.split(",")) {
+      const exportedName = item
+        .replace(/\/\/.*$/u, "")
+        .trim()
+        .replace(/^type\s+/u, "")
+        .split(/\s+as\s+/u)
+        .pop()!
+        .trim();
+      if (/^(?:Bridge|Native)[A-Z]/u.test(exportedName)) {
+        offenders.push(`index.ts: bridge/native symbol is root-exported: ${exportedName}`);
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut5-root-publication", offenders.join("; "));
+  } else {
+    pass("h2-cut5-root-publication", "root exports are explicit semantic/API owners and do not publish bridge, native, generated, or testing modules");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 8: H2 CUT 5 module identity and alias guard
+// ---------------------------------------------------------------------------
+
+function cut5ModuleIdentityGate(): void {
+  const offenders: string[] = [];
+  for (const configPath of ["tsconfig.json", "packages/iyon-tui/tsconfig.json"]) {
+    const config = JSON.parse(readFileSync(join(ROOT, configPath), "utf8")) as {
+      compilerOptions?: { baseUrl?: unknown; paths?: Record<string, unknown> };
+    };
+    const compilerOptions = config.compilerOptions ?? {};
+    if (compilerOptions.baseUrl !== undefined) {
+      offenders.push(`${configPath}: compilerOptions.baseUrl creates an alternate module root`);
+    }
+    if (compilerOptions.paths !== undefined && Object.keys(compilerOptions.paths).length > 0) {
+      offenders.push(`${configPath}: compilerOptions.paths creates an alternate module identity`);
+    }
+  }
+
+  for (const file of walk(FRAMEWORK_SRC)) {
+    const targetSpellings = new Map<string, Set<string>>();
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (specifier === "@iyon/tui" || specifier.startsWith("@iyon/tui/")) {
+        offenders.push(`${relative(ROOT, file)} imports the package from inside its own source: ${specifier}`);
+        continue;
+      }
+      if (specifier.startsWith("/")) {
+        offenders.push(`${relative(ROOT, file)} uses an absolute local import: ${specifier}`);
+        continue;
+      }
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+      const spellings = targetSpellings.get(target) ?? new Set<string>();
+      spellings.add(specifier);
+      targetSpellings.set(target, spellings);
+    }
+    for (const [target, spellings] of targetSpellings) {
+      if (spellings.size > 1) {
+        offenders.push(`${relative(ROOT, file)} has alternate spellings for ${target}: ${[...spellings].join(", ")}`);
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut5-module-identity", offenders.join("; "));
+  } else {
+    pass("h2-cut5-module-identity", "framework source has no path aliases, package self-imports, absolute imports, or duplicate local spellings");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 9: H2 CUT 5 package/publication and future-plane guard
+// ---------------------------------------------------------------------------
+
+function cut5PackagePublicationGate(): void {
+  const offenders: string[] = [];
+  const futurePaths = [
+    "transport/state",
+    "transport/content",
+    "transport/abi/state",
+    "transport/abi/content",
+  ];
+  for (const path of futurePaths) {
+    if (existsSync(join(FRAMEWORK_SRC, path))) offenders.push(`future PERF-13 ownership slot is prematurely implemented or published: ${path}`);
+  }
+
+  const manifests: readonly [string, Record<string, string>][] = [
+    ["package.json", {
+      ".": "./packages/iyon-tui/src/index.ts",
+      "./testing": "./packages/iyon-tui/src/testing/index.ts",
+      "./native-stage": "./packages/iyon-tui/scripts/stage-native.ts",
+    }],
+    ["packages/iyon-tui/package.json", {
+      ".": "./src/index.ts",
+      "./testing": "./src/testing/index.ts",
+      "./native-stage": "./scripts/stage-native.ts",
+    }],
+  ];
+  for (const [path, expected] of manifests) {
+    const manifest = JSON.parse(readFileSync(join(ROOT, path), "utf8")) as { exports?: Record<string, unknown> };
+    const actual = manifest.exports;
+    if (actual === undefined) {
+      offenders.push(`${path}: package exports are missing`);
+      continue;
+    }
+    for (const key of Object.keys(actual)) {
+      if (!(key in expected)) offenders.push(`${path}: undocumented deep export ${key}`);
+    }
+    for (const [key, value] of Object.entries(expected)) {
+      if (actual[key] !== value) offenders.push(`${path}: export ${key} is ${JSON.stringify(actual[key])}, expected ${JSON.stringify(value)}`);
+    }
+    for (const key of Object.keys(actual)) {
+      if (/\.\/(?:state|content|transport|abi)(?:\/|$)/u.test(key)) {
+        offenders.push(`${path}: future/private plane is published as ${key}`);
+      }
+    }
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut5-package-publication", offenders.join("; "));
+  } else {
+    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and future state/content planes remain unpublished");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 10: S6 safe N-API transport boundary
 // ---------------------------------------------------------------------------
 
 function napiTransportGate(): void {
@@ -486,7 +691,15 @@ function consumerFixtureGate(): void {
       }
     }
   }
-  const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/tui-consumer-fixture/package.json"), "utf8"));
+  const fixturePackageRoot = join(ROOT, "packages/tui-consumer-fixture");
+  for (const file of walk(fixturePackageRoot)) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (specifier.startsWith("@iyon/tui/") && specifier !== "@iyon/tui/testing") {
+        violations.push(`${relative(ROOT, file)} -> undocumented deep import "${specifier}"`);
+      }
+    }
+  }
+  const packageManifest = JSON.parse(readFileSync(join(fixturePackageRoot, "package.json"), "utf8"));
   const dependencies = Object.keys(packageManifest.dependencies ?? {}).sort();
   if (dependencies.length !== 1 || dependencies[0] !== "@iyon/tui") {
     violations.push(`package dependencies are [${dependencies.join(", ")}]`);
@@ -1083,6 +1296,10 @@ tsImportGate();
 cut2OwnershipGate();
 cut3OwnershipGate();
 cut4RootCleanupGate();
+cut5ImportBoundaryGate();
+cut5RootPublicationGate();
+cut5ModuleIdentityGate();
+cut5PackagePublicationGate();
 napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();

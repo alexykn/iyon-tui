@@ -20,6 +20,7 @@ const PRIVATE_MODULES = new Set([
   "addon",
   "factories",
   "resources",
+  "access",
   "types",
   "style-internals",
   "view-internals",
@@ -28,6 +29,7 @@ const PRIVATE_MODULES = new Set([
   "tui",
 ]);
 const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native[A-Z]\w*(?:Contract|Abi[A-Z]\w*))\b/u;
+const PRIVATE_DECLARATION_PATH = /(?:^|\/)transport\//u;
 
 const publicTypeNames = [
   "AnsiColor",
@@ -153,7 +155,10 @@ function localSpecifiers(source: string): string[] {
 function forbiddenModule(path: string): boolean {
   const normalized = path.split(sep).join("/");
   const file = basename(normalized).replace(/\.d\.ts$/u, "");
-  return PRIVATE_MODULES.has(file) || normalized.includes("/generated/");
+  return PRIVATE_MODULES.has(file)
+    || normalized.startsWith("transport/")
+    || normalized.includes("/transport/")
+    || normalized.includes("/generated/");
 }
 
 const output = mkdtempSync(join(tmpdir(), "iyon-tui-declaration-"));
@@ -203,6 +208,11 @@ try {
       failed = true;
     }
     for (const specifier of localSpecifiers(sourceText)) {
+      if (PRIVATE_DECLARATION_PATH.test(specifier)) {
+        console.error(`H2 CUT 5 declaration boundary: public declaration imports transport path ${relative(output, declaration)} -> ${specifier}`);
+        failed = true;
+        continue;
+      }
       const target = resolveDeclaration(declaration, specifier);
       if (target === undefined) {
         console.error(`H1A declaration closure: unresolved ${specifier} from ${relative(output, declaration)}`);
@@ -271,7 +281,10 @@ try {
     failed = true;
   }
 
-  if (!failed) console.log(`PASS h1a-declaration-closure — ${reachable.size} declaration files reachable; root and testing public types are nameable`);
+  if (!failed) {
+    console.log(`PASS h2-cut5-public-declaration-boundary — ${reachable.size} reachable public declarations contain no transport-path imports`);
+    console.log(`PASS h1a-declaration-closure — ${reachable.size} declaration files reachable; root and testing public types are nameable`);
+  }
 } finally {
   rmSync(output, { recursive: true, force: true });
 }

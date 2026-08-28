@@ -1,6 +1,6 @@
 import { asTuiError, tuiError } from "../api/errors.ts";
 import { Tui } from "../runtime/runtime.ts";
-import { tuiTestingAccess } from "./access.ts";
+import { runtimeAccess } from "../runtime/access.ts";
 import type { Output } from "../api/controls/output.ts";
 import type { History as HistoryContract } from "../api/controls/history.ts";
 import type { ScrollPane as ScrollPaneContract } from "../api/controls/scroll-pane.ts";
@@ -46,7 +46,7 @@ export class AppHarness implements AppHarnessContract {
 
   render(scene: SceneProducer, signal?: AbortSignal): void {
     this.tui.render(scene, signal);
-    this.callTesting(() => tuiTestingAccess(this.tui).advance(0));
+    this.callTesting(() => runtimeAccess(this.tui).advance(0));
   }
 
   createHistory(): HistoryContract { return this.tui.createHistory(); }
@@ -71,14 +71,14 @@ export class AppHarness implements AppHarnessContract {
 
   pressKey(key: string, modifiers?: readonly string[]): void {
     this.callTesting(() => {
-      const access = tuiTestingAccess(this.tui);
+      const access = runtimeAccess(this.tui);
       access.flush();
       access.enqueue({ type: "key", key, modifiers });
     });
   }
   paste(text: string): void {
     this.callTesting(() => {
-      const access = tuiTestingAccess(this.tui);
+      const access = runtimeAccess(this.tui);
       access.flush();
       access.enqueue({ type: "paste", text });
     });
@@ -90,7 +90,7 @@ export class AppHarness implements AppHarnessContract {
     // Keep the public deterministic clock transactional: a failed native
     // advancement must not make now() report time that was never applied.
     this.callTesting(() => {
-      const access = tuiTestingAccess(this.tui);
+      const access = runtimeAccess(this.tui);
       access.flush();
       access.advance(ms);
     });
@@ -108,12 +108,12 @@ export class AppHarness implements AppHarnessContract {
   cellXOfText(row: number, text: string): number | null {
     return this.inspect((access) => access.cellXOfText(row, text));
   }
-  exited(): boolean { return this.callTesting(() => tuiTestingAccess(this.tui).exited()); }
+  exited(): boolean { return this.callTesting(() => runtimeAccess(this.tui).exited()); }
   now(): number { return this.clock; }
 
-  private inspect<R>(operation: (access: ReturnType<typeof tuiTestingAccess>) => R): R {
+  private inspect<R>(operation: (access: ReturnType<typeof runtimeAccess>) => R): R {
     return this.callTesting(() => {
-      const access = tuiTestingAccess(this.tui);
+      const access = runtimeAccess(this.tui);
       // Flush retained/native zero-time work before a deterministic snapshot.
       // This keeps headless inspection coherent without exposing testing-only
       // clock control to application code.

@@ -1,11 +1,11 @@
-type TestingInputEvent =
+type RuntimeInputEvent =
   | { readonly type: "key"; readonly key: string; readonly modifiers?: readonly string[] }
   | { readonly type: "paste"; readonly text: string }
   | { readonly type: "resize"; readonly width: number; readonly height: number };
 
-type TuiTestingAccess = {
+type RuntimeAccess = {
   flush(): void;
-  enqueue(event: TestingInputEvent): void;
+  enqueue(event: RuntimeInputEvent): void;
   screenRows(): readonly string[];
   nativeHistoryRows(): readonly string[];
   styleAt(row: number, column: number): Readonly<Record<string, unknown>>;
@@ -14,14 +14,14 @@ type TuiTestingAccess = {
   exited(): boolean;
 };
 
-const accesses = new WeakMap<object, TuiTestingAccess>();
+const accesses = new WeakMap<object, RuntimeAccess>();
 
-export function registerTuiTestingAccess(owner: object, access: TuiTestingAccess): void {
+export function registerRuntimeAccess(owner: object, access: RuntimeAccess): void {
   accesses.set(owner, access);
 }
 
-export function tuiTestingAccess(owner: object): TuiTestingAccess {
+export function runtimeAccess(owner: object): RuntimeAccess {
   const access = accesses.get(owner);
-  if (access === undefined) throw new Error("TUI testing access is unavailable");
+  if (access === undefined) throw new Error("TUI runtime access is unavailable");
   return access;
 }

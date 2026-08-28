@@ -8,10 +8,7 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
-    "types": ["bun-types"],
-    "paths": {
-      "@iyon/tui": ["./packages/iyon-tui/src/index.ts"]
-    }
+    "types": ["bun-types"]
   },
   "include": [
     "packages/iyon-tui/**/*.ts",

@@ -116,7 +116,7 @@ function rustDependencyGate(): void {
 // ---------------------------------------------------------------------------
 
 const FRAMEWORK_SRC = join(ROOT, "packages/iyon-tui/src");
-const NATIVE_CONTRACT = resolve(ROOT, "packages/iyon-tui/src/native.ts");
+const NATIVE_CONTRACT = resolve(ROOT, "packages/iyon-tui/src/transport/native/addon.ts");
 
 function tsImportGate(): void {
   const files = walk(FRAMEWORK_SRC);
@@ -138,7 +138,7 @@ function tsImportGate(): void {
         continue;
       }
       if (resolved === NATIVE_CONTRACT) {
-        seams.push(`${relative(ROOT, file)} -> ../native.ts`);
+        seams.push(`${relative(ROOT, file)} -> transport/native/addon.ts`);
         continue;
       }
       if (resolved.startsWith(FRAMEWORK_SRC)) continue;
@@ -238,7 +238,101 @@ function cut2OwnershipGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: S6 safe N-API transport boundary
+// Gate 4: H2 CUT 3 runtime/native/control ownership
+// ---------------------------------------------------------------------------
+
+function cut3OwnershipGate(): void {
+  const required = [
+    "api/controls/framework-handle.ts",
+    "api/controls/history.ts",
+    "api/controls/scroll-pane.ts",
+    "api/controls/text-input.ts",
+    "api/controls/text-stream.ts",
+    "api/controls/view-slot.ts",
+    "runtime/handle-registry.ts",
+    "runtime/runtime.ts",
+    "runtime/tui.ts",
+    "transport/native/addon.ts",
+    "transport/native/factories.ts",
+    "transport/native/resources.ts",
+  ];
+  const legacy = [
+    "component.ts",
+    "handle-registry.ts",
+    "handles.ts",
+    "history.ts",
+    "native-handles.ts",
+    "native.ts",
+    "runtime.ts",
+    "scroll-pane.ts",
+    "stream.ts",
+    "text-input.ts",
+    "tui.ts",
+  ];
+  const missing = required.filter((path) => !existsSync(join(FRAMEWORK_SRC, path)));
+  const stale = legacy.filter((path) => existsSync(join(FRAMEWORK_SRC, path)));
+  const offenders: string[] = [];
+  if (missing.length > 0) offenders.push(`missing CUT 3 owners: ${missing.join(", ")}`);
+  if (stale.length > 0) offenders.push(`legacy runtime/native/control roots remain: ${stale.join(", ")}`);
+
+  const compositionForbidden = ["runtime/", "transport/native/", "api/controls/"];
+  for (const file of walk(join(FRAMEWORK_SRC, "composition"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved);
+      if (compositionForbidden.some((prefix) => target.startsWith(prefix))) {
+        offenders.push(`${relative(ROOT, file)} imports live runtime/native/control owner ${target}`);
+      }
+    }
+  }
+
+  for (const file of walk(join(FRAMEWORK_SRC, "transport/native"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved);
+      if (target.startsWith("runtime/")) {
+        offenders.push(`${relative(ROOT, file)} imports runtime ownership from transport/native: ${target}`);
+      }
+    }
+  }
+
+  const frameworkHandle = readFileSync(join(FRAMEWORK_SRC, "api/controls/framework-handle.ts"), "utf8");
+  const runtimeRegistry = readFileSync(join(FRAMEWORK_SRC, "runtime/handle-registry.ts"), "utf8");
+  const nativeResources = readFileSync(join(FRAMEWORK_SRC, "transport/native/resources.ts"), "utf8");
+  const addon = readFileSync(join(FRAMEWORK_SRC, "transport/native/addon.ts"), "utf8");
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  if (!/export\s+abstract\s+class\s+FrameworkHandle[\s\S]*#frameworkHandleBrand/u.test(frameworkHandle)) {
+    offenders.push("api/controls/framework-handle.ts: missing nominal public handle implementation");
+  }
+  if (!/registerFrameworkHandle[\s\S]*disposeFrameworkResource/u.test(frameworkHandle)) {
+    offenders.push("api/controls/framework-handle.ts: public handle does not delegate runtime lifecycle");
+  }
+  if (!/new\s+WeakMap<object,\s*object>\(\)[\s\S]*nativeResourceOf/u.test(nativeResources)) {
+    offenders.push("transport/native/resources.ts: raw native-resource registry is missing");
+  }
+  if (/new\s+WeakMap<object,\s*object>\(\)/u.test(runtimeRegistry)) {
+    offenders.push("runtime/handle-registry.ts: raw native resources remain in runtime ownership");
+  }
+  if (!/require\("\.\.\/\.\.\/\.\.\/native\/iyon-tui-native\.node"\)/u.test(addon)) {
+    offenders.push("transport/native/addon.ts: addon loading is not owned by transport/native");
+  }
+  if (/\b(?:transport\/native|transport\/structural|runtime\/handle-registry)\//u.test(index)) {
+    offenders.push("index.ts: private runtime/native/transport path is exported");
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut3-ownership", offenders.join("; "));
+  } else {
+    pass("h2-cut3-ownership", "controls, live runtime ownership, and raw native access have dedicated owners with no legacy root peers");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5: S6 safe N-API transport boundary
 // ---------------------------------------------------------------------------
 
 function napiTransportGate(): void {
@@ -305,7 +399,7 @@ function consumerFixtureGate(): void {
 async function themeStyleSemanticGate(): Promise<void> {
   const privateFiles = new Set([
     "transport/structural/ir.ts",
-    "native.ts",
+    "transport/native/addon.ts",
     "transport/structural/native-view-abi.ts",
     "transport/structural/retained-dag.ts",
     "transport/structural/style-lowering.ts",
@@ -346,15 +440,16 @@ async function themeStyleSemanticGate(): Promise<void> {
 
 function opaqueHandleGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const handles = `${readFileSync(join(FRAMEWORK_SRC, "handles.ts"), "utf8")}\n${readFileSync(join(FRAMEWORK_SRC, "handle-registry.ts"), "utf8")}`;
+  const frameworkHandle = readFileSync(join(FRAMEWORK_SRC, "api/controls/framework-handle.ts"), "utf8");
+  const handles = `${frameworkHandle}\n${readFileSync(join(FRAMEWORK_SRC, "runtime/handle-registry.ts"), "utf8")}\n${readFileSync(join(FRAMEWORK_SRC, "transport/native/resources.ts"), "utf8")}`;
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
 
-  if (!/export\s+abstract\s+class\s+FrameworkHandle[\s\S]*#frameworkHandleBrand/u.test(types)) {
-    offenders.push("types.ts: missing nominal FrameworkHandle brand");
+  if (!/export\s+abstract\s+class\s+FrameworkHandle[\s\S]*#frameworkHandleBrand/u.test(frameworkHandle)) {
+    offenders.push("api/controls/framework-handle.ts: missing nominal FrameworkHandle brand");
   }
-  if (!/new\s+WeakMap<object,\s*object>\(\)/u.test(handles) || !/function\s+nativeResourceOf/u.test(handles)) {
-    offenders.push("handles.ts: missing private native-resource registry");
+  if (!/new\s+WeakMap<object,\s*object>\(\)[\s\S]*function\s+nativeResourceOf/u.test(handles)) {
+    offenders.push("transport/native/resources.ts: missing private native-resource registry");
   }
   if (/\bNativeHandle(?:Id)?\b/u.test(index)) {
     offenders.push("index.ts: NativeHandle/NativeHandleId remains a consumer export");
@@ -381,11 +476,11 @@ function opaqueHandleGate(): void {
 
 function controlLifecycleGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
-  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
-  const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
-  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8");
-  const nativeHandles = readFileSync(join(FRAMEWORK_SRC, "native-handles.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
+  const component = readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8");
+  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8");
+  const nativeHandles = readFileSync(join(FRAMEWORK_SRC, "transport/native/factories.ts"), "utf8");
   const offenders: string[] = [];
 
   if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(types)) {
@@ -394,16 +489,16 @@ function controlLifecycleGate(): void {
   if (!/private\s+constructor\((?:resource|nativeHandle):\s*never(?:,|\))/u.test(textInput)
     || !/TEXT_INPUT_NATIVE_TOKEN/u.test(textInput)
     || /new\s+TextInput\s*\(/u.test(textInput)) {
-    offenders.push("text-input.ts: TextInput has a direct consumer constructor");
+    offenders.push("api/controls/text-input.ts: TextInput has a direct consumer constructor");
   }
   if (!/private\s+constructor\(host: never/u.test(component) || /new\s+ViewSlot\s*\(/u.test(runtime)) {
-    offenders.push("component.ts/runtime.ts: ViewSlot is not Tui-factory-only");
+    offenders.push("api/controls/view-slot.ts/runtime/runtime.ts: ViewSlot is not Tui-factory-only");
   }
   if (!/private\s+constructor\(host: never/u.test(scrollPane) || /new\s+NativeScrollPane\s*\(/u.test(runtime)) {
-    offenders.push("scroll-pane.ts/runtime.ts: ScrollPane is not Tui-factory-only");
+    offenders.push("api/controls/scroll-pane.ts/runtime/runtime.ts: ScrollPane is not Tui-factory-only");
   }
   if (/nativeTui\.textInput/u.test(nativeHandles) || !/disposeOwnedHandles\(\)/u.test(runtime)) {
-    offenders.push("runtime/native-handles.ts: Tui-owned control lifecycle is not centralized");
+    offenders.push("runtime/runtime.ts/transport/native/factories.ts: Tui-owned control lifecycle is not centralized");
   }
 
   if (offenders.length > 0) {
@@ -421,11 +516,11 @@ function componentFacadeGate(): void {
   const view = readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8");
   const facade = readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-view.ts"), "utf8");
   const compose = readFileSync(join(FRAMEWORK_SRC, "composition/compose.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const component = readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8");
-  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8");
-  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
+  const component = readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8");
+  const scrollPane = readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
   const stripComments = (source: string): string => source
@@ -444,9 +539,9 @@ function componentFacadeGate(): void {
     offenders.push("transport/structural/component-view.ts: missing private component placement lowering");
   }
   if (!/componentViewFor\(slot\)/u.test(runtime) || /\bslot\.view\(\)/u.test(runtime)) {
-    offenders.push("runtime.ts: internal component projection participates in parent composition");
+    offenders.push("runtime/runtime.ts: internal component projection participates in parent composition");
   }
-  for (const [name, source] of [["component.ts", component], ["scroll-pane.ts", scrollPane], ["text-input.ts", textInput]] as const) {
+  for (const [name, source] of [["api/controls/view-slot.ts", component], ["api/controls/scroll-pane.ts", scrollPane], ["api/controls/text-input.ts", textInput]] as const) {
     if (!/composeComponent\(this\)/u.test(source)) offenders.push(`${name}: control.view() bypasses retained composition`);
   }
   if (/\bexport\s+(?:class|interface|type)\s+Component\b/u.test(types) || /\bexport\s+class\s+Component\b/u.test(component)) {
@@ -472,8 +567,8 @@ function componentFacadeGate(): void {
 
 function typedOutputEventGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const textInput = readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const offenders: string[] = [];
@@ -521,10 +616,10 @@ function typedOutputEventGate(): void {
 
 function falseAliasGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const stream = readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const stream = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
-  const native = readFileSync(join(FRAMEWORK_SRC, "native.ts"), "utf8");
+  const native = readFileSync(join(FRAMEWORK_SRC, "transport/native/addon.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const tests = join(ROOT, "packages/iyon-tui/tests");
   const stage = readFileSync(join(ROOT, "packages/iyon-tui/scripts/stage-native.ts"), "utf8");
@@ -558,7 +653,7 @@ function falseAliasGate(): void {
 
 function rootAndTestingSurfaceGate(): void {
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const packageManifest = JSON.parse(readFileSync(join(ROOT, "packages/iyon-tui/package.json"), "utf8")) as {
     exports?: Record<string, unknown>;
@@ -596,7 +691,7 @@ function rootAndTestingSurfaceGate(): void {
 
 function runtimeContractGate(): void {
   const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
-  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8");
+  const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const runtimeBody = types.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
   const candidates = [
@@ -637,12 +732,12 @@ function runtimeContractGate(): void {
 function contractParityGate(): void {
   const sources = new Map([
     ["types.ts", readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8")],
-    ["runtime.ts", readFileSync(join(FRAMEWORK_SRC, "runtime.ts"), "utf8")],
-    ["history.ts", readFileSync(join(FRAMEWORK_SRC, "history.ts"), "utf8")],
-    ["text-input.ts", readFileSync(join(FRAMEWORK_SRC, "text-input.ts"), "utf8")],
-    ["stream.ts", readFileSync(join(FRAMEWORK_SRC, "stream.ts"), "utf8")],
-    ["component.ts", readFileSync(join(FRAMEWORK_SRC, "component.ts"), "utf8")],
-    ["scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "scroll-pane.ts"), "utf8")],
+    ["runtime/runtime.ts", readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8")],
+    ["api/controls/history.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/history.ts"), "utf8")],
+    ["api/controls/text-input.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8")],
+    ["api/controls/text-stream.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8")],
+    ["api/controls/view-slot.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8")],
+    ["api/controls/scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8")],
     ["testing/index.ts", readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8")],
     ["view.ts", readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8")],
     ["style.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/style.ts"), "utf8")],
@@ -655,7 +750,7 @@ function contractParityGate(): void {
   const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
   const rustOutput = readFileSync(join(ROOT, "crates/iyon-tui/src/output/handle.rs"), "utf8");
   const rustComponent = readFileSync(join(ROOT, "crates/iyon-tui/src/component/mod.rs"), "utf8");
-  const runtime = sources.get("runtime.ts")!;
+  const runtime = sources.get("runtime/runtime.ts")!;
   const types = sources.get("types.ts")!;
   const theme = sources.get("theme.ts")!;
   const view = sources.get("view.ts")!;
@@ -667,12 +762,12 @@ function contractParityGate(): void {
   const offenders: string[] = [];
 
   const implementations: readonly [string, RegExp][] = [
-    ["runtime.ts", /export\s+class\s+Tui\s+implements\s+TuiRuntime\b/u],
-    ["history.ts", /export\s+class\s+History[\s\S]*implements\s+HistoryContract\b/u],
-    ["text-input.ts", /export\s+class\s+TextInput[\s\S]*implements\s+TextInputContract\b/u],
-    ["stream.ts", /export\s+class\s+TextStream[\s\S]*implements\s+TextStreamContract\b/u],
-    ["component.ts", /export\s+class\s+ViewSlot[\s\S]*implements\s+ViewSlotContract\b/u],
-    ["scroll-pane.ts", /export\s+class\s+NativeScrollPane[\s\S]*implements\s+ScrollPaneContract\b/u],
+    ["runtime/runtime.ts", /export\s+class\s+Tui\s+implements\s+TuiRuntime\b/u],
+    ["api/controls/history.ts", /export\s+class\s+History[\s\S]*implements\s+HistoryContract\b/u],
+    ["api/controls/text-input.ts", /export\s+class\s+TextInput[\s\S]*implements\s+TextInputContract\b/u],
+    ["api/controls/text-stream.ts", /export\s+class\s+TextStream[\s\S]*implements\s+TextStreamContract\b/u],
+    ["api/controls/view-slot.ts", /export\s+class\s+ViewSlot[\s\S]*implements\s+ViewSlotContract\b/u],
+    ["api/controls/scroll-pane.ts", /export\s+class\s+NativeScrollPane[\s\S]*implements\s+ScrollPaneContract\b/u],
     ["testing/index.ts", /export\s+class\s+AppHarness\s+implements\s+AppHarnessContract\b/u],
   ];
   for (const [file, pattern] of implementations) {
@@ -688,7 +783,7 @@ function contractParityGate(): void {
   if (!/interface\s+AppHarness[\s\S]*now\(\):\s*number/u.test(types)) {
     offenders.push("AppHarness contract omits its public deterministic clock accessor");
   }
-  if (!/setContent\(viewOrBuilder:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(sources.get("scroll-pane.ts")!)) {
+  if (!/setContent\(viewOrBuilder:\s*View\s*\|\s*\(\(\)\s*=>\s*View\)\):\s*void/u.test(sources.get("api/controls/scroll-pane.ts")!)) {
     offenders.push("ScrollPane implementation does not include retained builder content");
   }
   if (!/interface\s+TextInputOptions\s*\{[\s\S]*border\?:\s*BorderSpec/u.test(types)
@@ -765,8 +860,8 @@ function contractParityGate(): void {
   if (!/pub\s+struct\s+Output<T:/u.test(rustOutput) || !/pub\s+trait\s+Component/u.test(rustComponent)) {
     offenders.push("Rust typed Output or Component semantic reference is missing");
   }
-  if (!/isRetainedConstruction\(\)/u.test(view) || !/OwnedBuilderRoot\.start/u.test(sources.get("component.ts")!)
-    || !/OwnedBuilderRoot\.start/u.test(sources.get("scroll-pane.ts")!)) {
+  if (!/isRetainedConstruction\(\)/u.test(view) || !/OwnedBuilderRoot\.start/u.test(sources.get("api/controls/view-slot.ts")!)
+    || !/OwnedBuilderRoot\.start/u.test(sources.get("api/controls/scroll-pane.ts")!)) {
     offenders.push("facade controls no longer use the shared retained composition architecture");
   }
   if (!/renderCanonical[\s\S]*renderDirect/u.test(runtime)) {
@@ -884,6 +979,7 @@ async function publicSurfaceGate(): Promise<void> {
 rustDependencyGate();
 tsImportGate();
 cut2OwnershipGate();
+cut3OwnershipGate();
 napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();

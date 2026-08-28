@@ -1,12 +1,12 @@
-import { nodeForBridge } from "./transport/structural/view-bridge.ts";
-import { tuiError } from "./api/errors.ts";
-import type { View } from "./api/view/view.ts";
-import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "./transport/structural/native-view-abi.ts";
-import { nativeResourceOf } from "./handles.ts";
-import { FrameworkHandle } from "./types.ts";
-import { nativeTui } from "./native-handles.ts";
-import type { NativeHistoryContract } from "./native.ts";
-import type { History as HistoryContract, HistoryLayout, TextStream } from "./types.ts";
+import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
+import { tuiError } from "../errors.ts";
+import type { View } from "../view/view.ts";
+import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "../../transport/structural/native-view-abi.ts";
+import { nativeResourceOf } from "../../transport/native/resources.ts";
+import { FrameworkHandle } from "./framework-handle.ts";
+import { nativeTui } from "../../transport/native/factories.ts";
+import type { NativeHistoryContract } from "../../transport/native/addon.ts";
+import type { History as HistoryContract, HistoryLayout, TextStream } from "../../types.ts";
 
 const streamOwners = new WeakMap<object, WeakRef<HistoryContract>>();
 const historyStreams = new WeakMap<object, Set<WeakRef<object>>>();

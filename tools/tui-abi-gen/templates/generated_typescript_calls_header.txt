@@ -1,2 +1,2 @@
-{{ banner }}import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../../native.ts";
+{{ banner }}import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 

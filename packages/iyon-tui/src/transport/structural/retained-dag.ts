@@ -24,7 +24,7 @@
  * complete cold path (§49).
  */
 
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../../native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
 import {
   materializeColumn,
   materializeRow,

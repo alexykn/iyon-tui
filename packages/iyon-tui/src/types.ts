@@ -1,64 +1,15 @@
-import { asTuiError, tuiError } from "./api/errors.ts";
-import {
-  disposeFrameworkResource,
-  nativeResourceOf,
-  registerFrameworkHandle,
-} from "./handle-registry.ts";
+import type { FrameworkHandle } from "./api/controls/framework-handle.ts";
 import type { View as SemanticView } from "./api/view/view.ts";
 import type { TextContent as SemanticTextContent } from "./api/content/text-content.ts";
 import type { StyleRef } from "./api/presentation/style.ts";
 import type { Theme as SemanticTheme } from "./api/presentation/theme.ts";
 import type { ThemeKey } from "./api/presentation/theme-key.ts";
 
-declare const handleIdBrand: unique symbol;
-/** JavaScript-local framework handle identity; this is not a native identifier. */
-export type HandleId = number & { readonly [handleIdBrand]: "HandleId" };
+export type { FrameworkHandle, HandleId } from "./api/controls/framework-handle.ts";
 
 declare const componentIdBrand: unique symbol;
 /** Native host identity for a mounted component, distinct from a JS handle id. */
 export type ComponentId = number & { readonly [componentIdBrand]: "ComponentId" };
-
-/**
- * Nominal base for framework-owned handles. Native resources and lifecycle
- * state are kept in private registries; consumers can name the handle
- * contract without seeing or supplying a native object.
- */
-export abstract class FrameworkHandle<K extends string = string> {
-  #frameworkHandleBrand!: void;
-  readonly id: HandleId;
-  readonly kind: K;
-  private isDisposed = false;
-
-  protected constructor(kind: K, resource: never) {
-    this.kind = kind;
-    this.id = registerFrameworkHandle(this, resource as unknown as object);
-  }
-
-  protected nativeAs<T extends object>(): T {
-    return nativeResourceOf<T>(this);
-  }
-
-  get disposed(): boolean { return this.isDisposed; }
-
-  dispose(): void {
-    if (this.isDisposed) return;
-    this.isDisposed = true;
-    disposeFrameworkResource(this);
-  }
-
-  protected ensureOpen(): void {
-    if (this.isDisposed) throw tuiError("disposed-handle", `${this.kind} handle has been disposed`, { id: this.id });
-  }
-
-  protected call<R>(operation: () => R): R {
-    try {
-      this.ensureOpen();
-      return operation();
-    } catch (error) {
-      throw asTuiError(error);
-    }
-  }
-}
 
 export type View = SemanticView;
 

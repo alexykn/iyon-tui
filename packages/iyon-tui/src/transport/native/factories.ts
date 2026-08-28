@@ -1,6 +1,5 @@
-import { native } from "./native.ts";
-import { requireNativeClass } from "./handles.ts";
-import type { TextStreamOptions } from "./types.ts";
+import { native, requireNativeClass } from "./addon.ts";
+import type { TextStreamOptions } from "../../types.ts";
 
 /** Private factories for native-backed framework handles. */
 export const nativeTui = {

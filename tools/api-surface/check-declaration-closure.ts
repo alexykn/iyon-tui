@@ -17,6 +17,9 @@ const PRIVATE_MODULES = new Set([
   "style-lowering",
   "view-bridge",
   "component-view",
+  "addon",
+  "factories",
+  "resources",
 ]);
 const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native[A-Z]\w*(?:Contract|Abi[A-Z]\w*))\b/u;
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { native } from "../src/native.ts";
+import { native } from "../src/transport/native/addon.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import { viewRenderRef } from "../src/transport/abi/structural/generated/view_calls.ts";
 import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";

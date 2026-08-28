@@ -1,5 +1,5 @@
 import { asTuiError, tuiError } from "../api/errors.ts";
-import { Tui } from "../runtime.ts";
+import { Tui } from "../runtime/tui.ts";
 import { tuiTestingAccess } from "./access.ts";
 import type {
   AppHarness as AppHarnessContract,

@@ -1,21 +1,21 @@
-import { FrameworkHandle } from "./types.ts";
-import type { ComponentCapabilities, ViewSlot as ViewSlotContract } from "./types.ts";
+import { FrameworkHandle } from "./framework-handle.ts";
+import type { ComponentCapabilities, ViewSlot as ViewSlotContract } from "../../types.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
   tryNativeMaterialize,
   tryRetainedMaterializeRef,
-} from "./transport/structural/native-view-abi.ts";
-import { RetainedRootBoundary } from "./transport/structural/retained-dag.ts";
+} from "../../transport/structural/native-view-abi.ts";
+import { RetainedRootBoundary } from "../../transport/structural/retained-dag.ts";
 import {
   OwnedBuilderRoot,
   type RetainedExecutionRuntime,
-} from "./composition/execution.ts";
-import { activeExecutionScope, protocolState } from "./composition/execution-context.ts";
-import { composeComponent } from "./composition/compose.ts";
-import { nodeForBridge } from "./transport/structural/view-bridge.ts";
-import { View } from "./api/view/view.ts";
-import type { NativeTuiHostContract } from "./native.ts";
+} from "../../composition/execution.ts";
+import { activeExecutionScope, protocolState } from "../../composition/execution-context.ts";
+import { composeComponent } from "../../composition/compose.ts";
+import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
+import { View } from "../view/view.ts";
+import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
 
 /**
  * PERF-12 T13: builds the native slot for the initial content. Retained
@@ -163,7 +163,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   private setViewBuilder(build: () => View): void {
     this.assertBuilderAllowed();
     const target = {
-      preparePublication: (o: import("./api/view/view.ts").View) => this.prepareSetView(o),
+      preparePublication: (o: import("../view/view.ts").View) => this.prepareSetView(o),
     };
     if (this.ownedBuilderRoot === undefined) {
       const runtime = this.#retainedRuntime!;

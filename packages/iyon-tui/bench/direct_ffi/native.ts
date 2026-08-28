@@ -1,5 +1,5 @@
 import type { Pointer } from "bun:ffi";
-import { native as baseNative, type NativeTuiAddon } from "../../src/native.ts";
+import { native as baseNative, type NativeTuiAddon } from "../../src/transport/native/addon.ts";
 
 export interface NativeViewAbiBootstrap {
   readonly runtime_ptr: number;

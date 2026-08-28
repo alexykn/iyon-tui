@@ -86,9 +86,9 @@ export {
   StyleStateValue,
 } from "./api/presentation/style.ts";
 export { TextSelector, TextSpan } from "./api/content/text.ts";
-export { History } from "./history.ts";
-export { TextInput } from "./text-input.ts";
-export { TextStream } from "./stream.ts";
+export { History } from "./api/controls/history.ts";
+export { TextInput } from "./api/controls/text-input.ts";
+export { TextStream } from "./api/controls/text-stream.ts";
 export { TextContent, RawText } from "./api/content/text-content.ts";
 export { Annotations } from "./api/content/annotations.ts";
 export { Projection, ProjectionBuilder, Smooth } from "./api/content/projection.ts";
@@ -100,4 +100,4 @@ export type { SemanticTag, SemanticValue } from "./api/content/annotations.ts";
 export type { TextFormat, TextOrigin } from "./api/content/text-content.ts";
 export { PlainTextProjector, MarkdownProjector } from "./api/content/projectors.ts";
 export { Scene } from "./api/view/scene.ts";
-export { Tui } from "./runtime.ts";
+export { Tui } from "./runtime/tui.ts";

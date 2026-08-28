@@ -1,8 +1,8 @@
-import { FrameworkHandle } from "./types.ts";
+import { FrameworkHandle } from "./framework-handle.ts";
 import { assertTextStreamUsable } from "./history.ts";
-import { nativeTui } from "./native-handles.ts";
-import type { NativeTextStreamContract } from "./native.ts";
-import type { StreamAnnotation, StreamSnapshot, TextStream as TextStreamContract, TextStreamOptions } from "./types.ts";
+import { nativeTui } from "../../transport/native/factories.ts";
+import type { NativeTextStreamContract } from "../../transport/native/addon.ts";
+import type { StreamAnnotation, StreamSnapshot, TextStream as TextStreamContract, TextStreamOptions } from "../../types.ts";
 
 /**
  * Independent mutable text source. `new TextStream()` is the canonical

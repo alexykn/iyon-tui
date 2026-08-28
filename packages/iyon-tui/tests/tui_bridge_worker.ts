@@ -1,4 +1,4 @@
-import { native } from "../src/native.ts";
+import { native } from "../src/transport/native/addon.ts";
 import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
 import { View } from "../src/api/view/view.ts";
 

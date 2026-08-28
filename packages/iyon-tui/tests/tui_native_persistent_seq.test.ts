@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { native } from "../src/native.ts";
+import { native } from "../src/transport/native/addon.ts";
 import {
   nativeViewRefForNodeId,
   tryNativeAxisSetChildRender,

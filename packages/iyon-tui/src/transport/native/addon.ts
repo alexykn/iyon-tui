@@ -6,7 +6,8 @@
  * handles, View ABI calls, and generic terminal operations.
  */
 
-import type { NativeViewAbiHandle } from "./transport/abi/structural/generated/view_abi.ts";
+import { tuiError } from "../../api/errors.ts";
+import type { NativeViewAbiHandle } from "../abi/structural/generated/view_abi.ts";
 export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {
@@ -164,4 +165,10 @@ export interface NativeTuiAddon {
 }
 
 // The package owns this loader and its staged `iyon-tui-native.node` artifact.
-export const native = require("../native/iyon-tui-native.node") as NativeTuiAddon;
+export const native = require("../../../native/iyon-tui-native.node") as NativeTuiAddon;
+
+/** Requires a native constructor without exposing addon details to callers. */
+export function requireNativeClass<T>(factory: T | undefined, name: string): T {
+  if (factory === undefined) throw tuiError("runtime", `${name} is unavailable in the native addon`);
+  return factory;
+}

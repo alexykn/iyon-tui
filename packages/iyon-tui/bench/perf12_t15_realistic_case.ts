@@ -42,7 +42,7 @@ interface RetainedModule {
 
 const nativeModule = (direct
   ? await import("./direct_ffi/native.ts")
-  : await import("../src/native.ts")) as unknown as NativeModule;
+  : await import("../src/transport/native/addon.ts")) as unknown as NativeModule;
 const abi = (direct
   ? await import("./direct_ffi/native_view_abi.ts")
   : await import("../src/transport/structural/native-view-abi.ts")) as unknown as AbiModule;

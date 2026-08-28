@@ -1,4 +1,4 @@
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../../native.ts";
+import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
 import {
   clearNativeHint,
   ensureNative,

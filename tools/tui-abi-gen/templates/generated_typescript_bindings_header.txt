@@ -1,2 +1,2 @@
-{{ banner }}import type { NativeTuiHostContract } from "../../../../native.ts";
+{{ banner }}import type { NativeTuiHostContract } from "../../../native/addon.ts";
 

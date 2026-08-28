@@ -1,29 +1,29 @@
-import { native } from "./native.ts";
-import { nodeForBridge } from "./transport/structural/view-bridge.ts";
-import { borderNodeFor, materializeTheme } from "./transport/structural/style-lowering.ts";
-import { View } from "./api/view/view.ts";
-import { asTuiError, tuiError } from "./api/errors.ts";
-import { nativeResourceOf, requireNativeClass } from "./handles.ts";
-import { registerTuiTestingAccess } from "./testing/access.ts";
-import { Scene } from "./api/view/scene.ts";
-import { bindHistoryLifetime, createHistoryHandle } from "./history.ts";
-import { createTextInput, textInputForOutput } from "./text-input.ts";
-import { createViewSlot } from "./component.ts";
-import { componentViewFor } from "./transport/structural/component-view.ts";
-import { createScrollPane } from "./scroll-pane.ts";
+import { native, requireNativeClass } from "../transport/native/addon.ts";
+import { nativeResourceOf } from "../transport/native/resources.ts";
+import { nodeForBridge } from "../transport/structural/view-bridge.ts";
+import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
+import { View } from "../api/view/view.ts";
+import { asTuiError, tuiError } from "../api/errors.ts";
+import { registerTuiTestingAccess } from "../testing/access.ts";
+import { Scene } from "../api/view/scene.ts";
+import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/history.ts";
+import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
+import { createViewSlot } from "../api/controls/view-slot.ts";
+import { componentViewFor } from "../transport/structural/component-view.ts";
+import { createScrollPane } from "../api/controls/scroll-pane.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
   tryNativeMaterialize,
-} from "./transport/structural/native-view-abi.ts";
+} from "../transport/structural/native-view-abi.ts";
 import {
   resetStyleRefCacheForThemeChange,
   RetainedRootBoundary,
   setRootColdMaterializer,
-} from "./transport/structural/retained-dag.ts";
-import type { RootPublication } from "./transport/structural/retained-dag.ts";
-import { OwnedBuilderRoot, RetainedExecutionRuntime } from "./composition/execution.ts";
-import { activeExecutionScope, protocolState, withoutRetainedComposition } from "./composition/execution-context.ts";
+} from "../transport/structural/retained-dag.ts";
+import type { RootPublication } from "../transport/structural/retained-dag.ts";
+import { OwnedBuilderRoot, RetainedExecutionRuntime } from "../composition/execution.ts";
+import { activeExecutionScope, protocolState, withoutRetainedComposition } from "../composition/execution-context.ts";
 import type {
   Output,
   ScrollPane,
@@ -37,10 +37,10 @@ import type {
   TuiOpenOptions,
   TuiRuntime,
   ViewSlot as ViewSlotContract,
-} from "./types.ts";
-import { themeDefinitionFor } from "./api/presentation/theme.ts";
-import type { Theme } from "./api/presentation/theme.ts";
-import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "./native.ts";
+} from "../types.ts";
+import { themeDefinitionFor } from "../api/presentation/theme.ts";
+import type { Theme } from "../api/presentation/theme.ts";
+import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "../transport/native/addon.ts";
 
 type OwnedHandle = { dispose(): void };
 const historyOwners = new WeakMap<object, Tui>();

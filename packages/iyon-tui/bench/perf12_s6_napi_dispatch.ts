@@ -1,4 +1,4 @@
-import { native } from "../src/native.ts";
+import { native } from "../src/transport/native/addon.ts";
 
 const session = native.tuiViewAbiSession?.();
 const gitSha = process.env.PERF12_GIT_SHA ?? "unknown";

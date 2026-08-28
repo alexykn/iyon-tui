@@ -39,6 +39,12 @@ H2 makes the TypeScript filesystem match the architecture already established by
                               Rust
 ```
 
+## 0.1 Branch continuity
+
+All subsequent H2 cuts continue on the existing implementation branch. Do not create a new branch for each cut or commit. Make atomic commits on this same branch throughout H2; create, switch, or merge branches only when explicitly requested.
+
+The current implementation branch is `api-h2-cut-1`, and it remains the branch for CUT 2 through CUT 5.
+
 For H2:
 
 - `transport/structural/` is real and populated from PERF-12.

@@ -152,6 +152,21 @@ where
         self.scene_host.clear_retained_views();
     }
 
+    fn invalidate_interaction_components(
+        &mut self,
+        previous: Option<crate::component::ComponentId>,
+        next: Option<crate::component::ComponentId>,
+    ) {
+        if let Some(id) = previous {
+            self.scene_host.invalidate_component(id);
+        }
+        if next != previous {
+            if let Some(id) = next {
+                self.scene_host.invalidate_component(id);
+            }
+        }
+    }
+
     pub(crate) fn host_set_body(&mut self, body: View) {
         if self.scene.body() == &body {
             self.body_dirty = false;
@@ -276,9 +291,11 @@ where
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
         }
+        let previous_focus = self.scene_host.focused_component();
         let result = self
             .scene_host
             .dispatch_key_local(key, &mut self.components);
+        let next_focus = self.scene_host.focused_component();
         self.drain_outputs_to_actions()?;
         if result == InteractionResult::Ignored
             && let Some(action) = self.global_bindings.action(key)
@@ -287,6 +304,7 @@ where
             return Ok(InteractionResult::Consumed);
         }
         if result == InteractionResult::Consumed {
+            self.invalidate_interaction_components(previous_focus, next_focus);
             self.dirty = true;
         }
         Ok(result)
@@ -306,9 +324,12 @@ where
             return Ok(InteractionResult::Consumed);
         }
 
+        let previous_focus = self.scene_host.focused_component();
         let result = self.scene_host.dispatch_paste(text, &mut self.components);
+        let next_focus = self.scene_host.focused_component();
         self.drain_outputs_to_actions()?;
         if result == InteractionResult::Consumed {
+            self.invalidate_interaction_components(previous_focus, next_focus);
             self.dirty = true;
         }
         Ok(result)
@@ -473,9 +494,12 @@ where
 
     pub(crate) fn drain_deferred_pastes(&mut self) -> Result<(), KernelError<Error>> {
         while let Some(text) = self.deferred_pastes.pop_front() {
+            let previous_focus = self.scene_host.focused_component();
             let result = self.scene_host.dispatch_paste(&text, &mut self.components);
+            let next_focus = self.scene_host.focused_component();
             self.drain_outputs_to_actions()?;
             if result == InteractionResult::Consumed {
+                self.invalidate_interaction_components(previous_focus, next_focus);
                 self.dirty = true;
             }
         }

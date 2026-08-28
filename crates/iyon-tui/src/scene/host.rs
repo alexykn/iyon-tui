@@ -264,9 +264,13 @@ impl SceneHost {
         self.ticker.next_deadline()
     }
 
+    pub(crate) fn focused_component(&self) -> Option<crate::component::ComponentId> {
+        self.focus.focused()
+    }
+
     #[cfg(test)]
     pub(crate) fn focused(&self) -> Option<crate::component::ComponentId> {
-        self.focus.focused()
+        self.focused_component()
     }
 
     #[cfg(test)]

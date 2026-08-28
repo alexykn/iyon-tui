@@ -868,7 +868,7 @@ impl SceneHost {
             }
         };
         let history_scene = session.finish(projection.view);
-        let history_components = history_scene.mounts.ids().collect();
+        let history_components: HashSet<ComponentId> = history_scene.mounts.ids().collect();
         let history_topology_changed = retained
             .root
             .history_scene
@@ -903,6 +903,24 @@ impl SceneHost {
                 continue;
             }
             sync_components.extend(merged.mounts.subtree_ids(component));
+        }
+        // A History-only projection can change the allocated size of a
+        // mounted control without changing that control's revision. Include
+        // exactly those History components whose content size changed so
+        // layout callbacks (notably TextInput/ScrollPane viewport repair) are
+        // delivered without synchronizing the clean body forest.
+        let mut history_geometry_components = retained.root.history_components.clone();
+        history_geometry_components.extend(history_components.iter().copied());
+        for component in history_geometry_components {
+            let Some(old_geometry) = retained.layout.components.entries.get(&component) else {
+                continue;
+            };
+            let Some(new_geometry) = layout.components.entries.get(&component) else {
+                continue;
+            };
+            if old_geometry.content.size() != new_geometry.content.size() {
+                sync_components.push(component);
+            }
         }
         sync_components.sort_unstable();
         sync_components.dedup();
@@ -2229,5 +2247,4 @@ mod tests {
             host.resolve_count
         );
     }
-
 }

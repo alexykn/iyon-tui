@@ -30,7 +30,7 @@ import {
   materializeRow,
   materializeSpacer,
 } from "./generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
+import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./generated/view_calls.ts";
 import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
 import { nodeForBridge } from "./view-internals.ts";
 import { viewNodeIdHighWater, type View } from "./values/view.ts";
@@ -1508,6 +1508,7 @@ export class RetainedRootBoundary {
     );
     const prepareEnd = phaseNow();
     const materializeStart = phaseNow();
+    const hintedRoot = BRIDGE_NATIVE.get(node);
     let resolvedRef: number;
     try {
       resolvedRef = ensureNative(node, tx);
@@ -1517,6 +1518,25 @@ export class RetainedRootBoundary {
       tx.releaseAll();
       if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
       throw error;
+    }
+    // A generation-valid hint is only an acceleration hint. The current-root
+    // case is the one that cannot be repaired by the NodeId promotion below:
+    // it deliberately avoids taking a second lease for the already-installed
+    // ref. Validate that hint before returning a prepared publication;
+    // otherwise a scavenged slot would fail during commit, where the
+    // transaction can no longer take the documented cold-fallback path.
+    if (hintedRoot?.generation === this.session.abi.generation && resolvedRef === this.previousRef) {
+      try {
+        viewRenderRef(this.session.symbols, this.session.runtime, resolvedRef);
+      } catch (error) {
+        if (!isExpectedNativeStatus(error)) throw error;
+        const recovered = recoverStaleNode(node, tx);
+        if (recovered === undefined) {
+          tx.releaseAll();
+          return undefined;
+        }
+        resolvedRef = recovered;
+      }
     }
     // Does this tx own a lease on the resolved ref (promotion/materialization),
     // or was it borrowed from a hint whose lease belongs to someone else?

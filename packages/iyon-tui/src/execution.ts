@@ -1006,10 +1006,18 @@ export class RetainedExecutionRuntime {
       return { scope: committed.scope, created: false };
     }
     const scope = new RetainedExecutionScope(this, parent, type, undefined, ordinal, key, NEXT_SCOPE_ID++);
-    if (this.projectionFactory !== undefined) {
-      scope.projection = this.projectionFactory(scope as RetainedExecutionScope<never>) ?? undefined;
-    }
     executionCounters.execution_scope_mounts += 1;
+    try {
+      if (this.projectionFactory !== undefined) {
+        scope.projection = this.projectionFactory(scope as RetainedExecutionScope<never>) ?? undefined;
+      }
+    } catch (error) {
+      // The projection is framework-owned native state. If its factory fails
+      // before the child is entered into WIP ownership, dispose the partially
+      // created scope here; the parent's abort walk cannot discover it yet.
+      scope.dispose();
+      throw error;
+    }
     owner.pendingChildren[ordinal] = { type, key, scope };
     return { scope, created: true };
   }

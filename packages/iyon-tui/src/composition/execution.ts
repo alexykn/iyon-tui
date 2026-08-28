@@ -19,7 +19,7 @@
 
 import { nodeForBridge } from "../transport/structural/view-bridge.ts";
 import type { View } from "../api/view/view.ts";
-import type { ViewComponentType } from "../types.ts";
+import type { ViewComponentType } from "./define-view.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
 import {
   ChildOwnerState,

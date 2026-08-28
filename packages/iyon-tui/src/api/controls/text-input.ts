@@ -1,10 +1,30 @@
 import { registerNativeResource } from "../../transport/native/resources.ts";
 import type { NativeTextInputContract, NativeTuiOutputContract } from "../../transport/native/addon.ts";
 import { FrameworkHandle } from "./framework-handle.ts";
-import { Output } from "../../types.ts";
-import type { TextInput as TextInputContract } from "../../types.ts";
+import type { ComponentHandle } from "./framework-handle.ts";
+import { Output } from "./output.ts";
 import { composeComponent } from "../../composition/compose.ts";
 import type { View } from "../view/view.ts";
+import type { BorderSpec } from "../presentation/style.ts";
+
+export interface TextInputOptions {
+  readonly multiline?: boolean;
+  readonly border?: BorderSpec;
+}
+
+export interface TextInput extends ComponentHandle {
+  readonly kind: "text-input";
+  text(): string;
+  cursorBytes(): number;
+  setText(value: string): void;
+  clear(): void;
+  submitted(): Output<string>;
+  setMultiline(enabled: boolean): void;
+  isMultiline(): boolean;
+  view(): View;
+}
+
+type TextInputContract = TextInput;
 
 const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
 
@@ -19,7 +39,7 @@ const TEXT_INPUT_NATIVE_TOKEN = Symbol("text-input-native-construction");
  * provide the host-bound border/component semantics. Each input has one
  * mounted component identity; duplicate View component nodes are rejected.
  */
-const outputInputs = new WeakMap<object, WeakRef<TextInput>>();
+const outputInputs = new WeakMap<object, WeakRef<TextInputContract>>();
 
 export class TextInput extends FrameworkHandle<"text-input"> implements TextInputContract {
   private submittedOutput?: Output<string>;
@@ -54,13 +74,13 @@ export class TextInput extends FrameworkHandle<"text-input"> implements TextInpu
 }
 
 /** @internal Creates the only supported TextInput construction path. */
-export function createTextInput(resource: never): TextInput {
-  const Constructor = TextInput as unknown as new (resource: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInput;
+export function createTextInput(resource: never): TextInputContract {
+  const Constructor = TextInput as unknown as new (resource: never, token: typeof TEXT_INPUT_NATIVE_TOKEN) => TextInputContract;
   return new Constructor(resource, TEXT_INPUT_NATIVE_TOKEN);
 }
 
 /** @internal Identifies the TextInput that owns a native output channel. */
-export function textInputForOutput(output: object): TextInput | undefined {
+export function textInputForOutput(output: object): TextInputContract | undefined {
   return outputInputs.get(output)?.deref();
 }
 

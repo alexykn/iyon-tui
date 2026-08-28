@@ -1,12 +1,6 @@
-import type {
-  BorderSpec,
-  ColorSpec,
-  RgbColor,
-  StyleSelectorValue,
-  StyleSpecValue,
-  TextSelectorValue,
-  ThemeColor,
-} from "../../types.ts";
+import type { BorderSpec, StyleSelectorValue, StyleSpecValue } from "../../api/presentation/style.ts";
+import type { ColorSpec, RgbColor, ThemeColor } from "../../api/presentation/theme.ts";
+import type { TextSelectorValue } from "../../api/content/text.ts";
 import type {
   BorderNode,
   ColorNode,

@@ -1,21 +1,32 @@
 import { asTuiError, tuiError } from "../api/errors.ts";
-import { Tui } from "../runtime/tui.ts";
+import { Tui } from "../runtime/runtime.ts";
 import { tuiTestingAccess } from "./access.ts";
-import type {
-  AppHarness as AppHarnessContract,
-  History as HistoryContract,
-  Output,
-  TextInput as TextInputContract,
-  TextInputOptions,
-  ScrollPane,
-  SceneProducer,
-  TuiEvent,
-  TerminalMetadata,
-  TuiOpenOptions,
-  View,
-  ViewSlot as ViewSlotContract,
-} from "../types.ts";
+import type { Output } from "../api/controls/output.ts";
+import type { History as HistoryContract } from "../api/controls/history.ts";
+import type { ScrollPane as ScrollPaneContract } from "../api/controls/scroll-pane.ts";
+import type { TextInput as TextInputContract, TextInputOptions } from "../api/controls/text-input.ts";
+import type { ViewSlot as ViewSlotContract } from "../api/controls/view-slot.ts";
+import type { SceneProducer } from "../api/view/scene.ts";
+import type { View } from "../api/view/view.ts";
+import type { TuiEvent } from "../runtime/events.ts";
+import type { TuiRuntime, TerminalMetadata, TuiOpenOptions } from "../runtime/runtime.ts";
 import type { Theme } from "../api/presentation/theme.ts";
+
+interface AppHarnessContract extends TuiRuntime {
+  createHistory(): HistoryContract;
+  createTextInput(options?: TextInputOptions): TextInputContract;
+  createViewSlot(initial: View): ViewSlotContract;
+  createScrollPane(initial: View): ScrollPaneContract;
+  pressKey(key: string, modifiers?: readonly string[]): void;
+  paste(text: string): void;
+  advance(ms: number): void;
+  screenRows(): readonly string[];
+  nativeHistoryRows(): readonly string[];
+  styleAt(row: number, column: number): Readonly<Record<string, unknown>>;
+  cellXOfText(row: number, text: string): number | null;
+  exited(): boolean;
+  now(): number;
+}
 
 export class AppHarness implements AppHarnessContract {
   private readonly tui: Tui;
@@ -41,7 +52,7 @@ export class AppHarness implements AppHarnessContract {
   createHistory(): HistoryContract { return this.tui.createHistory(); }
   createTextInput(options: TextInputOptions = {}): TextInputContract { return this.tui.createTextInput(options); }
   createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }
-  createScrollPane(initial: View): ScrollPane { return this.tui.createScrollPane(initial); }
+  createScrollPane(initial: View): ScrollPaneContract { return this.tui.createScrollPane(initial); }
   bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
   route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
   interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input, actionId); }

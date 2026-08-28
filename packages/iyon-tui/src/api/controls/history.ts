@@ -6,7 +6,25 @@ import { nativeResourceOf } from "../../transport/native/resources.ts";
 import { FrameworkHandle } from "./framework-handle.ts";
 import { nativeTui } from "../../transport/native/factories.ts";
 import type { NativeHistoryContract } from "../../transport/native/addon.ts";
-import type { History as HistoryContract, HistoryLayout, TextStream } from "../../types.ts";
+import type { TextStream as TextStreamContract } from "./text-stream.ts";
+
+export interface History extends FrameworkHandle<"history"> {
+  readonly kind: "history";
+  layout(): HistoryLayout;
+  push(view: View): number;
+  freeze(unit: number, view: View): void;
+  discardLive(unit: number): void;
+  pushStream(stream: TextStreamContract): void;
+  sealStream(stream: TextStreamContract): void;
+  setLayout(layout: HistoryLayout): void;
+}
+
+type HistoryContract = History;
+
+export interface HistoryLayout {
+  readonly padding: number;
+  readonly gap: number;
+}
 
 const streamOwners = new WeakMap<object, WeakRef<HistoryContract>>();
 const historyStreams = new WeakMap<object, Set<WeakRef<object>>>();
@@ -111,7 +129,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
     });
   }
 
-  pushStream(stream: TextStream): void {
+  pushStream(stream: TextStreamContract): void {
     History.callHost(this, () => {
       const streamResource = nativeResourceOf<object>(stream);
       assertStreamCanAttach(stream);
@@ -129,7 +147,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
     });
   }
 
-  sealStream(stream: TextStream): void {
+  sealStream(stream: TextStreamContract): void {
     History.callHost(this, () => {
       if (streamOwnerOf(stream) !== this) {
         throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
@@ -154,8 +172,8 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
 }
 
 /** @internal Wraps a host-created History without exposing its native constructor. */
-export function createHistoryHandle(resource: never): History {
-  const Constructor = History as unknown as new (resource: never, token: typeof HISTORY_NATIVE_TOKEN) => History;
+export function createHistoryHandle(resource: never): HistoryContract {
+  const Constructor = History as unknown as new (resource: never, token: typeof HISTORY_NATIVE_TOKEN) => HistoryContract;
   return new Constructor(resource, HISTORY_NATIVE_TOKEN);
 }
 

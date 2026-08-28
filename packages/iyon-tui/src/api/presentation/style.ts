@@ -1,11 +1,49 @@
-import type {
-  AnsiColor,
-  ColorSpec,
-  StyleSelectorValue,
-  StyleSpecValue,
-  TextAttribute,
-} from "../../types.ts";
+import type { ColorSpec } from "./theme.ts";
 import { ThemeKey } from "./theme-key.ts";
+
+export type BorderStyle = "plain" | "rounded" | "double";
+export type BorderEdges = "all" | "topBottom";
+export interface BorderGlyphs {
+  readonly top: string;
+  readonly right: string;
+  readonly bottom: string;
+  readonly left: string;
+  readonly topLeft: string;
+  readonly topRight: string;
+  readonly bottomLeft: string;
+  readonly bottomRight: string;
+}
+
+/** Public border semantics; the native glyph/layout record is private. */
+export interface BorderSpec {
+  readonly glyphs?: BorderGlyphs;
+  readonly style?: BorderStyle;
+  readonly edges?: BorderEdges;
+  readonly color?: ColorSpec;
+}
+
+/** Text attributes supported by the native semantic style model. */
+export type TextAttribute =
+  | "bold"
+  | "dim"
+  | "italic"
+  | "underline"
+  | "reversed"
+  | "strikethrough";
+
+/** Sparse direct style data. Named-style identity belongs to StyleRef. */
+export interface StyleSpecValue {
+  readonly foreground?: ColorSpec;
+  readonly background?: ColorSpec;
+  readonly attributes: Readonly<Partial<Record<TextAttribute, boolean>>>;
+}
+
+/** Structural selector value used when a Theme crosses the host boundary. */
+export interface StyleSelectorValue {
+  readonly focused?: boolean;
+  readonly focusWithin?: boolean;
+  readonly states?: Readonly<Record<string, string>>;
+}
 
 export class StyleSpec {
   readonly kind = "style" as const;
@@ -174,7 +212,7 @@ const TEXT_ATTRIBUTES = new Set<TextAttribute>([
   "strikethrough",
 ]);
 
-export type { AnsiColor } from "../../types.ts";
+export type { AnsiColor, ColorSpec } from "./theme.ts";
 
 export const Style = {
   plain: (): StyleSpec => new StyleSpec().plain(),

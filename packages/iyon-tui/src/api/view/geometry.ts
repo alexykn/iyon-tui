@@ -1,4 +1,10 @@
-import type { InsetsValue } from "../../types.ts";
+/** Public geometry value used by semantic View construction. */
+export interface InsetsValue {
+  readonly top: number;
+  readonly right: number;
+  readonly bottom: number;
+  readonly left: number;
+}
 
 export class Insets {
   readonly kind = "insets" as const;

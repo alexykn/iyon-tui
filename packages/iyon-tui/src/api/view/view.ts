@@ -13,19 +13,8 @@
  *
  */
 
-import type {
-  BorderSpec,
-  ColorSpec,
-  GridCell as PublicGridCell,
-  GridRow as PublicGridRow,
-  GridSpec as PublicGridSpec,
-  GridTrack as PublicGridTrack,
-  HorizontalAlign,
-  LayoutChild,
-  TextAttribute,
-  VerticalAlign,
-  WrapMode,
-} from "../../types.ts";
+import type { BorderSpec, TextAttribute } from "../presentation/style.ts";
+import type { ColorSpec } from "../presentation/theme.ts";
 import {
   BRIDGE_DIFF_LINE_KIND,
   BRIDGE_DIFF_LINE_TERMINATION,
@@ -113,6 +102,44 @@ import {
   composeWrap,
 } from "../../composition/compose.ts";
 
+export type HorizontalAlign = "start" | "center" | "end";
+export type VerticalAlign = "top" | "center" | "bottom";
+export type WrapMode = "wordThenGrapheme" | "grapheme" | "noWrap";
+
+export type LayoutChild =
+  | { readonly kind: "normal"; readonly child: View }
+  | { readonly kind: "fixed"; readonly size: number; readonly child: View }
+  | { readonly kind: "flex"; readonly child: View }
+  | { readonly kind: "flexMax"; readonly maxRows: number; readonly child: View }
+  | { readonly kind: "contentMax"; readonly maxRows: number; readonly child: View };
+
+export type GridTrack =
+  | { readonly kind: "content" }
+  | { readonly kind: "contentMax"; readonly max: number }
+  | { readonly kind: "fixed"; readonly size: number }
+  | { readonly kind: "flex" }
+  | { readonly kind: "flexMax"; readonly max: number };
+
+export interface GridCell {
+  readonly view: View;
+  readonly columnSpan?: number;
+  readonly rowSpan?: number;
+  readonly horizontalAlign?: HorizontalAlign;
+  readonly verticalAlign?: VerticalAlign;
+}
+
+export interface GridRow {
+  readonly track?: GridTrack;
+  readonly cells: readonly GridCell[];
+}
+
+export interface GridSpec {
+  readonly columns?: readonly GridTrack[];
+  readonly rows: readonly GridRow[];
+  readonly columnGap?: number;
+  readonly rowGap?: number;
+}
+
 export type ViewChildren = readonly View[] | ((builder: ChildrenBuilder) => void);
 type CounterBox = { next: number };
 const NODE_ID_COUNTER = Symbol.for("iyon:tui:private-view-node-counter");
@@ -178,12 +205,6 @@ export type OverflowIndicator =
   | { readonly kind: "none" }
   | { readonly kind: "ellipsis"; readonly style: StyleRef | StyleSpec }
   | { readonly kind: "footer"; readonly prefix: string; readonly style: StyleRef | StyleSpec };
-
-export type { LayoutChild } from "../../types.ts";
-export type GridTrack = PublicGridTrack;
-export type GridCell = PublicGridCell;
-export type GridRow = PublicGridRow;
-export type GridSpec = PublicGridSpec;
 
 export class GridRowBuilder {
   readonly cells: GridCell[] = [];

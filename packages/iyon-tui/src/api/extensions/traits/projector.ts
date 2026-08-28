@@ -1,4 +1,8 @@
-import type { Projector, TextContent } from "../../../types.ts";
+import type { TextContent } from "../../content/text-content.ts";
+
+export interface Projector {
+  project(content: TextContent): TextContent | Promise<TextContent>;
+}
 
 export class ProjectorAdapter implements Projector {
   constructor(private readonly implementation: Projector) {}

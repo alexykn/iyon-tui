@@ -1,5 +1,57 @@
 import { StyleRef, StyleSpec, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
-import type { HorizontalAlign, TextPart, TextRole, TextSelectorValue, TextSpanValue, WrapMode } from "../../types.ts";
+import type { HorizontalAlign, WrapMode } from "../view/view.ts";
+import type { StreamAnnotation } from "./stream-snapshot.ts";
+
+export type TextRole =
+  | "paragraph"
+  | "heading"
+  | "blockQuote"
+  | "list"
+  | "listItem"
+  | "codeBlock"
+  | "table"
+  | "tableRow"
+  | "tableCell"
+  | "thematicBreak"
+  | "rawBlock"
+  | "container"
+  | "strong"
+  | "emphasis"
+  | "strikethrough"
+  | "underline"
+  | "superscript"
+  | "subscript"
+  | "smallCaps"
+  | "inlineCode"
+  | "link"
+  | "image"
+  | "rawInline";
+
+export type TextPart =
+  | "listMarker"
+  | "taskMarker"
+  | "quoteMarker"
+  | "codeLabel"
+  | "tableRule"
+  | "thematicRule"
+  | "imageFallback";
+
+export interface TextSelectorValue {
+  readonly focused?: boolean;
+  readonly focusWithin?: boolean;
+  readonly states?: Readonly<Record<string, string>>;
+  readonly roles?: readonly TextRole[];
+  readonly parts?: readonly TextPart[];
+  readonly annotations?: readonly StreamAnnotation[];
+  readonly language?: string;
+  readonly origin?: string;
+  readonly format?: string;
+}
+
+export interface TextSpanValue {
+  readonly text: string;
+  readonly style?: StyleRef;
+}
 
 export class TextSelector {
   private constructor(readonly value: TextSelectorValue = {}) {}
@@ -108,7 +160,7 @@ const TEXT_PARTS = new Set<TextPart>([
   "imageFallback",
 ]);
 
-export type { HorizontalAlign, TextSelectorValue, TextSpanValue, WrapMode } from "../../types.ts";
+export type { HorizontalAlign, WrapMode } from "../view/view.ts";
 
 export class TextSpan {
   readonly kind = "text-span" as const;

@@ -20,6 +20,12 @@ const PRIVATE_MODULES = new Set([
   "addon",
   "factories",
   "resources",
+  "types",
+  "style-internals",
+  "view-internals",
+  "component-facade",
+  "internal-composition",
+  "tui",
 ]);
 const PRIVATE_TYPE = /\b(?:HandleBase|Bridge[A-Z]\w*|Native[A-Z]\w*(?:Contract|Abi[A-Z]\w*))\b/u;
 

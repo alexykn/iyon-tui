@@ -117,6 +117,41 @@ function rustDependencyGate(): void {
 
 const FRAMEWORK_SRC = join(ROOT, "packages/iyon-tui/src");
 const NATIVE_CONTRACT = resolve(ROOT, "packages/iyon-tui/src/transport/native/addon.ts");
+const PUBLIC_CONTRACT_PATHS = [
+  "api/controls/framework-handle.ts",
+  "api/controls/history.ts",
+  "api/controls/output.ts",
+  "api/controls/scroll-pane.ts",
+  "api/controls/text-input.ts",
+  "api/controls/text-stream.ts",
+  "api/controls/view-slot.ts",
+  "api/content/stream-snapshot.ts",
+  "api/content/text-content.ts",
+  "api/content/text.ts",
+  "api/errors.ts",
+  "api/extensions/traits/component.ts",
+  "api/extensions/traits/projector.ts",
+  "api/extensions/traits/renderer.ts",
+  "api/extensions/traits/streaming-source.ts",
+  "api/extensions/traits/text-rewriter.ts",
+  "api/extensions/traits/text-visitor.ts",
+  "api/presentation/style.ts",
+  "api/presentation/theme.ts",
+  "api/view/geometry.ts",
+  "api/view/scene.ts",
+  "api/view/view.ts",
+  "composition/define-view.ts",
+  "composition/tracked-state.ts",
+  "runtime/events.ts",
+  "runtime/runtime.ts",
+  "testing/index.ts",
+] as const;
+
+function publicContractSource(): string {
+  return PUBLIC_CONTRACT_PATHS
+    .map((path) => readFileSync(join(FRAMEWORK_SRC, path), "utf8"))
+    .join("\n");
+}
 
 function tsImportGate(): void {
   const files = walk(FRAMEWORK_SRC);
@@ -161,7 +196,6 @@ function cut2OwnershipGate(): void {
     "composition/define-view.ts",
     "composition/execution-context.ts",
     "composition/execution.ts",
-    "composition/internal-composition.ts",
     "composition/persistent-seq.ts",
     "composition/tracked-state.ts",
     "transport/structural/component-view.ts",
@@ -251,7 +285,6 @@ function cut3OwnershipGate(): void {
     "api/controls/view-slot.ts",
     "runtime/handle-registry.ts",
     "runtime/runtime.ts",
-    "runtime/tui.ts",
     "transport/native/addon.ts",
     "transport/native/factories.ts",
     "transport/native/resources.ts",
@@ -282,7 +315,8 @@ function cut3OwnershipGate(): void {
       const resolved = resolveRelative(file, specifier);
       if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
       const target = relative(FRAMEWORK_SRC, resolved);
-      if (compositionForbidden.some((prefix) => target.startsWith(prefix))) {
+      const semanticHandleContract = target === "api/controls/framework-handle.ts";
+      if (!semanticHandleContract && compositionForbidden.some((prefix) => target.startsWith(prefix))) {
         offenders.push(`${relative(ROOT, file)} imports live runtime/native/control owner ${target}`);
       }
     }
@@ -332,7 +366,76 @@ function cut3OwnershipGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 5: S6 safe N-API transport boundary
+// Gate 5: H2 CUT 4 root cleanup and contract ownership
+// ---------------------------------------------------------------------------
+
+function cut4RootCleanupGate(): void {
+  const rootFiles = Array.from(readdirSync(FRAMEWORK_SRC))
+    .filter((entry) => entry.endsWith(".ts"))
+    .sort();
+  const offenders: string[] = [];
+  const unexpectedRootFiles = rootFiles.filter((entry) => entry !== "index.ts");
+  if (unexpectedRootFiles.length > 0) {
+    offenders.push(`root implementation files remain: ${unexpectedRootFiles.join(", ")}`);
+  }
+
+  const removedResidue = [
+    "types.ts",
+    "style-internals.ts",
+    "view-internals.ts",
+    "component-facade.ts",
+    "internal-composition.ts",
+    "composition/internal-composition.ts",
+    "runtime/tui.ts",
+  ];
+  const staleResidue = removedResidue.filter((path) => existsSync(join(FRAMEWORK_SRC, path)));
+  if (staleResidue.length > 0) offenders.push(`ambiguous or forwarding modules remain: ${staleResidue.join(", ")}`);
+
+  const forbiddenImportFiles = walk(FRAMEWORK_SRC).filter((file) =>
+    specifiersOf(readFileSync(file, "utf8")).some((specifier) => /(?:^|\/)types\.ts$/u.test(specifier)),
+  );
+  if (forbiddenImportFiles.length > 0) {
+    offenders.push(`legacy types.ts imports remain: ${forbiddenImportFiles.map((file) => relative(ROOT, file)).join(", ")}`);
+  }
+
+  const forbiddenDirectories = ["shared", "common", "misc", "utils"];
+  const escapeHatches = forbiddenDirectories.filter((name) => existsSync(join(FRAMEWORK_SRC, name)));
+  if (escapeHatches.length > 0) offenders.push(`architectural escape-hatch directories remain: ${escapeHatches.join(", ")}`);
+
+  const owners: readonly [string, RegExp][] = [
+    ["api/presentation/style.ts", /export\s+interface\s+StyleSpecValue\b/u],
+    ["api/content/text.ts", /export\s+interface\s+TextSelectorValue\b/u],
+    ["api/view/scene.ts", /export\s+type\s+SceneProducer\b/u],
+    ["api/controls/history.ts", /export\s+interface\s+History\b/u],
+    ["api/controls/text-input.ts", /export\s+interface\s+TextInput\b/u],
+    ["api/controls/text-stream.ts", /export\s+interface\s+TextStream\b/u],
+    ["api/controls/view-slot.ts", /export\s+interface\s+ViewSlot\b/u],
+    ["api/controls/scroll-pane.ts", /export\s+interface\s+ScrollPane\b/u],
+    ["api/extensions/traits/component.ts", /export\s+interface\s+ComponentAdapter\b/u],
+    ["runtime/events.ts", /export\s+type\s+TuiEvent\b/u],
+    ["runtime/runtime.ts", /export\s+interface\s+TuiRuntime\b/u],
+  ];
+  for (const [path, pattern] of owners) {
+    const full = join(FRAMEWORK_SRC, path);
+    if (!existsSync(full) || !pattern.test(readFileSync(full, "utf8"))) {
+      offenders.push(`${path}: semantic contract has no explicit owner`);
+    }
+  }
+
+  const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  if (/from\s+["']\.\/(?:types|style-internals|view-internals|component-facade)[^"']*["']/u.test(index)) {
+    offenders.push("index.ts: root barrel still forwards an eliminated module");
+  }
+
+  if (offenders.length > 0) {
+    fail("h2-cut4-root-cleanup", offenders.join("; "));
+  } else {
+    pass("h2-cut4-root-cleanup", "root contains only the curated barrel; mixed contracts and forwarding residue have explicit owners");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 6: S6 safe N-API transport boundary
 // ---------------------------------------------------------------------------
 
 function napiTransportGate(): void {
@@ -362,7 +465,7 @@ function napiTransportGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 5: Standalone external-consumer fixture
+// Gate 7: Standalone external-consumer fixture
 // ---------------------------------------------------------------------------
 
 function consumerFixtureGate(): void {
@@ -393,7 +496,7 @@ function consumerFixtureGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 6: H1B theme/style semantic guard
+// Gate 8: H1B theme/style semantic guard
 // ---------------------------------------------------------------------------
 
 async function themeStyleSemanticGate(): Promise<void> {
@@ -422,9 +525,9 @@ async function themeStyleSemanticGate(): Promise<void> {
     && typeof (styleSpec.prototype as { readonly theme?: unknown }).theme === "function";
   if (styleSpecTheme) offenders.push("packages/iyon-tui/src/api/presentation/style.ts: StyleSpec.theme");
 
-  const styleTypes = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const styleTypes = readFileSync(join(FRAMEWORK_SRC, "api/presentation/style.ts"), "utf8");
   if (/interface StyleSpecValue\s*\{[^}]*\btheme\??\s*:/u.test(styleTypes)) {
-    offenders.push("packages/iyon-tui/src/types.ts: StyleSpecValue.theme");
+    offenders.push("packages/iyon-tui/src/api/presentation/style.ts: StyleSpecValue.theme");
   }
 
   if (offenders.length > 0) {
@@ -435,11 +538,10 @@ async function themeStyleSemanticGate(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 7: H1C opaque framework-handle guard
+// Gate 9: H1C opaque framework-handle guard
 // ---------------------------------------------------------------------------
 
 function opaqueHandleGate(): void {
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const frameworkHandle = readFileSync(join(FRAMEWORK_SRC, "api/controls/framework-handle.ts"), "utf8");
   const handles = `${frameworkHandle}\n${readFileSync(join(FRAMEWORK_SRC, "runtime/handle-registry.ts"), "utf8")}\n${readFileSync(join(FRAMEWORK_SRC, "transport/native/resources.ts"), "utf8")}`;
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
@@ -471,11 +573,10 @@ function opaqueHandleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 8: H1D control-construction/lifecycle guard
+// Gate 10: H1D control-construction/lifecycle guard
 // ---------------------------------------------------------------------------
 
 function controlLifecycleGate(): void {
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
   const component = readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8");
@@ -483,8 +584,8 @@ function controlLifecycleGate(): void {
   const nativeHandles = readFileSync(join(FRAMEWORK_SRC, "transport/native/factories.ts"), "utf8");
   const offenders: string[] = [];
 
-  if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(types)) {
-    offenders.push("types.ts: ScrollPane.setContent does not expose builder support");
+  if (!/setContent\(view: View \| \(\(\) => View\)\)/u.test(scrollPane)) {
+    offenders.push("api/controls/scroll-pane.ts: ScrollPane.setContent does not expose builder support");
   }
   if (!/private\s+constructor\((?:resource|nativeHandle):\s*never(?:,|\))/u.test(textInput)
     || !/TEXT_INPUT_NATIVE_TOKEN/u.test(textInput)
@@ -509,7 +610,7 @@ function controlLifecycleGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 9: H1E component-composition facade guard
+// Gate 11: H1E component-composition facade guard
 // ---------------------------------------------------------------------------
 
 function componentFacadeGate(): void {
@@ -517,7 +618,7 @@ function componentFacadeGate(): void {
   const facade = readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-view.ts"), "utf8");
   const compose = readFileSync(join(FRAMEWORK_SRC, "composition/compose.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const contracts = publicContractSource();
   const component = readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8");
   const scrollPane = readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8");
   const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
@@ -544,7 +645,7 @@ function componentFacadeGate(): void {
   for (const [name, source] of [["api/controls/view-slot.ts", component], ["api/controls/scroll-pane.ts", scrollPane], ["api/controls/text-input.ts", textInput]] as const) {
     if (!/composeComponent\(this\)/u.test(source)) offenders.push(`${name}: control.view() bypasses retained composition`);
   }
-  if (/\bexport\s+(?:class|interface|type)\s+Component\b/u.test(types) || /\bexport\s+class\s+Component\b/u.test(component)) {
+  if (/\bexport\s+(?:class|interface|type)\s+Component\b/u.test(contracts) || /\bexport\s+class\s+Component\b/u.test(component)) {
     offenders.push("Component is still exposed as a concrete or structural root abstraction");
   }
   if (/\bexport\s*\{[^}]*\bComponent\b/u.test(index)) {
@@ -562,45 +663,48 @@ function componentFacadeGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 10: H1F typed output/event semantics guard
+// Gate 12: H1F typed output/event semantics guard
 // ---------------------------------------------------------------------------
 
 function typedOutputEventGate(): void {
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
+  const output = readFileSync(join(FRAMEWORK_SRC, "api/controls/output.ts"), "utf8");
+  const component = readFileSync(join(FRAMEWORK_SRC, "api/extensions/traits/component.ts"), "utf8");
   const textInput = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
+  const events = readFileSync(join(FRAMEWORK_SRC, "runtime/events.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const contracts = output + component + textInput + runtime + testing + events;
   const offenders: string[] = [];
 
-  if (!/export\s+class\s+Output<[^>]+>[\s\S]*#outputBrand[\s\S]*declare\s+private\s+readonly\s+outputType[\s\S]*private\s+constructor/u.test(types)) {
-    offenders.push("types.ts: missing opaque typed Output<T> identity");
+  if (!/export\s+class\s+Output<[^>]+>[\s\S]*#outputBrand[\s\S]*declare\s+private\s+readonly\s+outputType[\s\S]*private\s+constructor/u.test(output)) {
+    offenders.push("api/controls/output.ts: missing opaque typed Output<T> identity");
   }
-  if (/OutputHandle\b/u.test(types + textInput + runtime + testing)) {
+  if (/OutputHandle\b/u.test(contracts)) {
     offenders.push("legacy OutputHandle remains in the framework facade");
   }
-  const outputClass = types.match(/export\s+class\s+Output<T>[\s\S]*?\n\}/u)?.[0] ?? "";
-  if (/export\s+type\s+Output\s*=/u.test(types) || /\bpayload\b/u.test(outputClass)) {
-    offenders.push("types.ts: Output is still a record or exposes a fake payload");
+  const outputClass = output.match(/export\s+class\s+Output<T>[\s\S]*?\n\}/u)?.[0] ?? "";
+  if (/export\s+type\s+Output\s*=/u.test(output) || /\bpayload\b/u.test(outputClass)) {
+    offenders.push("api/controls/output.ts: Output is still a record or exposes a fake payload");
   }
-  if (!/submitted\(\):\s*Output<string>/u.test(textInput) || !/submitted\(\):\s*Output<string>/u.test(types)) {
+  if (!/submitted\(\):\s*Output<string>/u.test(textInput)) {
     offenders.push("TextInput.submitted() does not expose Output<string>");
   }
   if (!/route\(output:\s*Output<string>,/u.test(runtime) || !/route\(output:\s*Output<string>,/u.test(testing)) {
     offenders.push("runtime route contracts do not consume typed Output<string>");
   }
-  if (!/emit<T>\(output:\s*Output<T>,\s*payload:\s*T\)/u.test(types)) {
+  if (!/emit<T>\(output:\s*Output<T>,\s*payload:\s*T\)/u.test(component)) {
     offenders.push("ComponentContext.emit does not separate typed channel and payload");
   }
-  if (/readonly\s+output:\s*Output\b/u.test(types)) {
+  if (/readonly\s+output:\s*Output\b/u.test(contracts)) {
     offenders.push("InteractionResult still carries a record-shaped output field");
   }
   if (existsSync(join(FRAMEWORK_SRC, "output.ts"))) offenders.push("output.ts: parallel string-keyed OutputRouter remains");
   if (/OutputRouter|RouteConflict|keyEvent|pasteEvent|resizeEvent|terminateEvent/u.test(index)) {
     offenders.push("index.ts: standalone router or test-input event constructors remain exported");
   }
-  if (!/export\s+interface\s+TuiEvent\b|export\s+type\s+TuiEvent\s*=\s*OutputEvent\s*\|\s*TerminateEvent/u.test(types)) {
-    offenders.push("types.ts: routed output/termination event union is missing");
+  if (!/export\s+type\s+TuiEvent\s*=\s*OutputEvent\s*\|\s*TerminateEvent/u.test(events)) {
+    offenders.push("runtime/events.ts: routed output/termination event union is missing");
   }
 
   if (offenders.length > 0) {
@@ -611,11 +715,10 @@ function typedOutputEventGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 11: H1G false-alias and compatibility removal guard
+// Gate 13: H1G false-alias and compatibility removal guard
 // ---------------------------------------------------------------------------
 
 function falseAliasGate(): void {
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const stream = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
@@ -623,12 +726,12 @@ function falseAliasGate(): void {
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
   const tests = join(ROOT, "packages/iyon-tui/tests");
   const stage = readFileSync(join(ROOT, "packages/iyon-tui/scripts/stage-native.ts"), "utf8");
-  const publicSources = types + stream + runtime + testing + index;
+  const publicSources = stream + runtime + testing + index;
   const offenders: string[] = [];
 
   if (/\bStreamPane\b/u.test(publicSources)) offenders.push("StreamPane remains a TypeScript TextStream alias");
   if (/\b(?:TuiOperation|TuiFailure)\b/u.test(publicSources)) offenders.push("no-op TuiOperation/TuiFailure aliases remain public");
-  if (/\bnextAction\b/u.test(types + runtime + testing)) offenders.push("nextAction remains in the public runtime or harness facade");
+  if (/\bnextAction\b/u.test(runtime + testing)) offenders.push("nextAction remains in the public runtime or harness facade");
   if (walk(tests).some((file) => /\bnextAction\b/u.test(readFileSync(file, "utf8")))) offenders.push("framework tests still use nextAction");
   if (/\b(?:nextAction|waitForAction)\s*\(/u.test(native)) offenders.push("native host contract still declares compatibility action aliases");
   if (/\b(?:next_action|wait_for_action)\s*\(/u.test(readFileSync(join(ROOT, "crates/iyon-tui/src/application/host.rs"), "utf8"))) {
@@ -648,7 +751,7 @@ function falseAliasGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 12: H1H root and testing-subpath hygiene guard
+// Gate 14: H1H root and testing-subpath hygiene guard
 // ---------------------------------------------------------------------------
 
 function rootAndTestingSurfaceGate(): void {
@@ -686,14 +789,13 @@ function rootAndTestingSurfaceGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 13: H1I runtime contract and authoritative size guard
+// Gate 15: H1I runtime contract and authoritative size guard
 // ---------------------------------------------------------------------------
 
 function runtimeContractGate(): void {
-  const types = readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
-  const runtimeBody = types.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
+  const runtimeBody = runtime.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
   const candidates = [
     "createHistory",
     "createTextInput",
@@ -726,12 +828,12 @@ function runtimeContractGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 14: H1J public contract parity guard
+// Gate 16: H1J public contract parity guard
 // ---------------------------------------------------------------------------
 
 function contractParityGate(): void {
   const sources = new Map([
-    ["types.ts", readFileSync(join(FRAMEWORK_SRC, "types.ts"), "utf8")],
+    ["contracts", publicContractSource()],
     ["runtime/runtime.ts", readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8")],
     ["api/controls/history.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/history.ts"), "utf8")],
     ["api/controls/text-input.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8")],
@@ -751,7 +853,7 @@ function contractParityGate(): void {
   const rustOutput = readFileSync(join(ROOT, "crates/iyon-tui/src/output/handle.rs"), "utf8");
   const rustComponent = readFileSync(join(ROOT, "crates/iyon-tui/src/component/mod.rs"), "utf8");
   const runtime = sources.get("runtime/runtime.ts")!;
-  const types = sources.get("types.ts")!;
+  const types = sources.get("contracts")!;
   const theme = sources.get("theme.ts")!;
   const view = sources.get("view.ts")!;
   const style = sources.get("style.ts")!;
@@ -796,7 +898,7 @@ function contractParityGate(): void {
 
   const semanticAttributes = ["bold", "dim", "italic", "underline", "reversed", "strikethrough"];
   for (const attribute of semanticAttributes) {
-    if (!types.includes(`"${attribute}"`)) offenders.push(`types.ts: missing TextAttribute ${attribute}`);
+    if (!types.includes(`"${attribute}"`)) offenders.push(`api/presentation/style.ts: missing TextAttribute ${attribute}`);
     if (!native.includes(`"${attribute}" => Some(`)) offenders.push(`native/tui.rs: missing TextAttribute ${attribute} lowering`);
   }
   if (!/attributes:\s*Readonly<Partial<Record<TextAttribute,\s*boolean>>>/u.test(types)) {
@@ -827,11 +929,11 @@ function contractParityGate(): void {
   const textRoles = ["paragraph", "heading", "blockQuote", "list", "listItem", "codeBlock", "table", "tableRow", "tableCell", "thematicBreak", "rawBlock", "container", "strong", "emphasis", "strikethrough", "underline", "superscript", "subscript", "smallCaps", "inlineCode", "link", "image", "rawInline"];
   const textParts = ["listMarker", "taskMarker", "quoteMarker", "codeLabel", "tableRule", "thematicRule", "imageFallback"];
   for (const role of textRoles) {
-    if (!types.includes(`"${role}"`)) offenders.push(`types.ts: missing TextRole ${role}`);
+    if (!types.includes(`"${role}"`)) offenders.push(`api/content/text.ts: missing TextRole ${role}`);
     if (!native.includes(`"${role}" =>`)) offenders.push(`native/tui.rs: missing TextRole ${role} lowering`);
   }
   for (const part of textParts) {
-    if (!types.includes(`"${part}"`)) offenders.push(`types.ts: missing TextPart ${part}`);
+    if (!types.includes(`"${part}"`)) offenders.push(`api/content/text.ts: missing TextPart ${part}`);
     if (!native.includes(`"${part}" =>`)) offenders.push(`native/tui.rs: missing TextPart ${part} lowering`);
   }
   if (!/roles\?:\s*readonly\s*TextRole\[\]/u.test(types) || !/parts\?:\s*readonly\s*TextPart\[\]/u.test(types)) {
@@ -876,7 +978,7 @@ function contractParityGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 15: Public API surface guard
+// Gate 17: Public API surface guard
 // ---------------------------------------------------------------------------
 
 const BANNED_SURFACE_NAMES = [
@@ -980,6 +1082,7 @@ rustDependencyGate();
 tsImportGate();
 cut2OwnershipGate();
 cut3OwnershipGate();
+cut4RootCleanupGate();
 napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();

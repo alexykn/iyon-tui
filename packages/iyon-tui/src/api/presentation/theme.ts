@@ -1,17 +1,63 @@
-import type {
-  StyleSelectorValue,
-  StyleSpecValue,
-  TextSelectorValue,
-  ThemeColor,
-  ThemeColorReference,
-} from "../../types.ts";
+import type { StyleSelectorValue, StyleSpecValue } from "./style.ts";
 import {
   StyleSelector,
   StyleSpec,
   styleSelectorValue,
 } from "./style.ts";
+import type { TextSelectorValue } from "../content/text.ts";
 import type { TextSelector } from "../content/text.ts";
 import { ThemeKey } from "./theme-key.ts";
+
+export type AnsiColor =
+  | "black"
+  | "red"
+  | "green"
+  | "yellow"
+  | "blue"
+  | "magenta"
+  | "cyan"
+  | "gray"
+  | "darkGray"
+  | "lightRed"
+  | "lightGreen"
+  | "lightYellow"
+  | "lightBlue"
+  | "lightMagenta"
+  | "lightCyan"
+  | "white";
+
+/** A resolved color value stored in a Theme definition. */
+export interface ThemeColorDefault {
+  readonly type: "default";
+}
+
+export interface ThemeColorNamed {
+  readonly type: "named";
+  readonly value: AnsiColor;
+}
+
+export interface ThemeColorIndexed {
+  readonly type: "indexed";
+  readonly value: number;
+}
+
+export interface RgbColor {
+  readonly type: "rgb";
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+}
+
+export type ThemeColor = ThemeColorDefault | ThemeColorNamed | ThemeColorIndexed | RgbColor;
+
+/** A semantic reference resolved by the active Theme. */
+export interface ThemeColorReference {
+  readonly type: "theme";
+  readonly key: string | ThemeKey;
+}
+
+/** Explicit theme reference, named ANSI, indexed ANSI, or RGB color. */
+export type ColorSpec = ThemeColorReference | ThemeColorNamed | ThemeColorIndexed | RgbColor;
 
 interface ThemeEntry<T> {
   readonly base?: T;
@@ -192,5 +238,5 @@ function styleSelectorsEqual(left: StyleSelectorValue, right: StyleSelectorValue
   return leftKeys.every((key) => leftStates[key] === rightStates[key]);
 }
 
-export type { ColorSpec, StyleSelectorValue, ThemeColor } from "../../types.ts";
+export type { StyleSelectorValue } from "./style.ts";
 export { StyleSelector } from "./style.ts";

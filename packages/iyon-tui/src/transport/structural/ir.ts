@@ -1,4 +1,4 @@
-import type { ComponentId } from "../../types.ts";
+import type { ComponentId } from "../../api/extensions/traits/component.ts";
 import bridgeSchema from "../abi/structural/schema/bridge-schema.json";
 import { PersistentSeq } from "../../composition/persistent-seq.ts";
 

@@ -1,5 +1,5 @@
 import { native, requireNativeClass } from "./addon.ts";
-import type { TextStreamOptions } from "../../types.ts";
+import type { TextStreamOptions } from "../../api/controls/text-stream.ts";
 
 /** Private factories for native-backed framework handles. */
 export const nativeTui = {

@@ -1,7 +1,8 @@
 import { tuiError } from "../../api/errors.ts";
 import { nativeResourceOf } from "../native/resources.ts";
 import { BRIDGE_VIEW_KIND } from "./ir.ts";
-import type { ComponentHandle, ComponentId } from "../../types.ts";
+import type { ComponentHandle } from "../../api/controls/framework-handle.ts";
+import type { ComponentId } from "../../api/extensions/traits/component.ts";
 import { View } from "../../api/view/view.ts";
 
 /** Reads an optional native component identity without consulting public methods. */

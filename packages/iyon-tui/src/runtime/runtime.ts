@@ -24,23 +24,54 @@ import {
 import type { RootPublication } from "../transport/structural/retained-dag.ts";
 import { OwnedBuilderRoot, RetainedExecutionRuntime } from "../composition/execution.ts";
 import { activeExecutionScope, protocolState, withoutRetainedComposition } from "../composition/execution-context.ts";
-import type {
-  Output,
-  ScrollPane,
-  Scene as SceneContract,
-  SceneProducer,
-  History as HistoryContract,
-  TerminalMetadata,
-  TextInput as TextInputContract,
-  TextInputOptions,
-  TuiEvent,
-  TuiOpenOptions,
-  TuiRuntime,
-  ViewSlot as ViewSlotContract,
-} from "../types.ts";
+import type { Output } from "../api/controls/output.ts";
+import type { History as HistoryContract } from "../api/controls/history.ts";
+import type { ScrollPane as ScrollPaneContract } from "../api/controls/scroll-pane.ts";
+import type { TextInput as TextInputContract, TextInputOptions } from "../api/controls/text-input.ts";
+import type { ViewSlot as ViewSlotContract } from "../api/controls/view-slot.ts";
+import type { SceneContract, SceneProducer } from "../api/view/scene.ts";
+import type { TuiEvent } from "./events.ts";
 import { themeDefinitionFor } from "../api/presentation/theme.ts";
 import type { Theme } from "../api/presentation/theme.ts";
 import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "../transport/native/addon.ts";
+
+/** Current terminal dimensions reported by a runtime. */
+export interface TerminalMetadata {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface TuiOpenOptions {
+  readonly width?: number;
+  readonly height?: number;
+  readonly headless?: boolean;
+  readonly signal?: AbortSignal;
+  readonly theme?: Theme;
+}
+
+export interface TuiRuntime {
+  /** The current terminal size; it changes only after a successful resize. */
+  readonly size: TerminalMetadata;
+  nextEvent(signal?: AbortSignal): Promise<TuiEvent>;
+  /**
+   * Render either a structural scene value or a retained scene producer.
+   * Direct values take over the root immediately; producers own the retained
+   * root and remain subscribed to tracked state. These paths are distinct.
+   */
+  render(scene: SceneProducer, signal?: AbortSignal): void;
+  resize(width: number, height: number): void;
+  close(): void;
+  exit(): void;
+  createHistory(): HistoryContract;
+  createTextInput(options?: TextInputOptions): TextInputContract;
+  createViewSlot(initial: View): ViewSlotContract;
+  createScrollPane(initial: View): ScrollPaneContract;
+  bindKey(key: string, routeId: string, modifiers?: readonly string[]): void;
+  route(output: Output<string>, routeId: string): void;
+  interceptPaste(input: TextInputContract, routeId: string): void;
+  forwardPaste(text: string): void;
+  setTheme(theme: Theme): void;
+}
 
 type OwnedHandle = { dispose(): void };
 const historyOwners = new WeakMap<object, Tui>();
@@ -551,7 +582,7 @@ export class Tui implements TuiRuntime {
   }
 
   /** Creates a Tui-owned pane using the shared retained execution runtime. */
-  createScrollPane(initialView: View): ScrollPane {
+  createScrollPane(initialView: View): ScrollPaneContract {
     this.prepareMutation("tui.createScrollPane");
     try {
       return this.ownHandle(createScrollPane(this.host as never, initialView, this.retainedRuntime as never));

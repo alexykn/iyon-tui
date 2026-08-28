@@ -2,7 +2,34 @@ import { FrameworkHandle } from "./framework-handle.ts";
 import { assertTextStreamUsable } from "./history.ts";
 import { nativeTui } from "../../transport/native/factories.ts";
 import type { NativeTextStreamContract } from "../../transport/native/addon.ts";
-import type { StreamAnnotation, StreamSnapshot, TextStream as TextStreamContract, TextStreamOptions } from "../../types.ts";
+import type { StreamAnnotation, StreamSnapshot } from "../content/stream-snapshot.ts";
+
+export interface TextStreamPresentation {
+  readonly insets?: { readonly top?: number; readonly right?: number; readonly bottom?: number; readonly left?: number };
+}
+
+export interface TextStreamPacing {
+  readonly tickIntervalMs?: number;
+  readonly spring?: number;
+  readonly minUnitsPerSecond?: number;
+  readonly maxUnitsPerSecond?: number;
+}
+
+export interface TextStreamOptions {
+  readonly projector?: "markdown";
+  readonly presentation?: TextStreamPresentation;
+  readonly pacing?: TextStreamPacing;
+}
+
+export interface TextStream extends FrameworkHandle<"text-stream"> {
+  readonly kind: "text-stream";
+  update(text: string): void;
+  append(text: string, annotations?: readonly StreamAnnotation[]): void;
+  seal(): void;
+  snapshot(): StreamSnapshot;
+}
+
+type TextStreamContract = TextStream;
 
 /**
  * Independent mutable text source. `new TextStream()` is the canonical

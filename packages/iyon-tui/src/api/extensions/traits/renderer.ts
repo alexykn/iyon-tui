@@ -1,4 +1,13 @@
-import type { RenderContext, Renderer, View } from "../../../types.ts";
+import type { View } from "../../view/view.ts";
+
+export interface RenderContext {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface Renderer {
+  render(view: View, context?: RenderContext): View | Promise<View>;
+}
 
 export class RendererAdapter implements Renderer {
   constructor(private readonly implementation: Renderer) {}

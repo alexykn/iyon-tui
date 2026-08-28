@@ -69,8 +69,10 @@ import { insets } from "../api/view/geometry.ts";
 import type { Insets } from "../api/view/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "../api/content/text.ts";
 import type { DiffHunk } from "../api/content/diff.ts";
-import type { StyleRef, StyleSpec } from "../api/presentation/style.ts";
-import type { BorderSpec, ColorSpec, ComponentHandle, TextAttribute, VerticalAlign } from "../types.ts";
+import type { StyleRef, StyleSpec, BorderSpec, TextAttribute } from "../api/presentation/style.ts";
+import type { ColorSpec } from "../api/presentation/theme.ts";
+import type { VerticalAlign } from "../api/view/view.ts";
+import type { ComponentHandle } from "../api/controls/framework-handle.ts";
 
 // --- Slot staging ------------------------------------------------------------
 

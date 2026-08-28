@@ -32,7 +32,18 @@
  */
 
 import { invokeComponent } from "./execution.ts";
-import type { View, ViewComponent, ViewComponentType } from "../types.ts";
+import type { View } from "../api/view/view.ts";
+
+/** Stable identity token for a retained user-defined View component. */
+export interface ViewComponentType<P = unknown> {
+  readonly render: (props: P) => View;
+}
+
+/** Callable retained View component returned by defineView. */
+export interface ViewComponent<P = unknown> {
+  readonly render: (props: P) => View;
+  (props: P): View;
+}
 
 /**
  * Defines a retained view component from a pure synchronous render body.
@@ -52,5 +63,3 @@ export function defineView<P>(render: (props: P) => View): ViewComponent<P> {
   (component as { render: (props: P) => View }).render = render;
   return component;
 }
-
-export type { ViewComponent, ViewComponentType } from "../types.ts";

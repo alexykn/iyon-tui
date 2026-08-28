@@ -4,6 +4,7 @@ import {
   registerFrameworkHandle,
 } from "../../runtime/handle-registry.ts";
 import { nativeResourceOf } from "../../transport/native/resources.ts";
+import type { View } from "../view/view.ts";
 
 declare const handleIdBrand: unique symbol;
 /** JavaScript-local framework handle identity; this is not a native identifier. */
@@ -49,4 +50,10 @@ export abstract class FrameworkHandle<K extends string = string> {
       throw asTuiError(error);
     }
   }
+}
+
+/** Public mounted component handle projected into the semantic View tree. */
+export interface ComponentHandle extends FrameworkHandle<"component" | "text-input"> {
+  readonly kind: "component" | "text-input";
+  view(): View;
 }

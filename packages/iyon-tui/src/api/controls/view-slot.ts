@@ -1,5 +1,6 @@
 import { FrameworkHandle } from "./framework-handle.ts";
-import type { ComponentCapabilities, ViewSlot as ViewSlotContract } from "../../types.ts";
+import type { ComponentHandle } from "./framework-handle.ts";
+import type { ComponentCapabilities } from "../extensions/traits/component.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
@@ -37,6 +38,22 @@ function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): objec
 }
 
 const ANIMATION_REF_SCRATCH = new WeakMap<object, Uint32Array>();
+
+export interface ViewSlot extends ComponentHandle {
+  readonly kind: "component";
+  capabilities(): ComponentCapabilities;
+  setView(view: View | (() => View)): void;
+  setAnimation(frames: readonly View[], intervalMs: number): void;
+  setAnimationAtCycleBoundary(frames: readonly View[], intervalMs: number): void;
+  stopAnimation(view: View): void;
+  revision(): number;
+}
+
+type ViewSlotContract = ViewSlot;
+
+interface ViewSlotImplementation extends ViewSlotContract {
+  prepareSetView(view: View): { commit(): void; abort(): void } | undefined;
+}
 
 const VIEW_SLOT_NATIVE_TOKEN = Symbol("view-slot-native-construction");
 
@@ -411,7 +428,7 @@ export function createViewSlot(
   host: never,
   initialView: View,
   retainedRuntime?: never,
-): ViewSlot {
-  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) => ViewSlot;
+): ViewSlotImplementation {
+  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) => ViewSlotImplementation;
   return new Constructor(host, initialView, retainedRuntime, VIEW_SLOT_NATIVE_TOKEN);
 }

@@ -1,5 +1,6 @@
 import { FrameworkHandle } from "./framework-handle.ts";
-import type { ComponentCapabilities, ScrollPane as ScrollPaneContract } from "../../types.ts";
+import type { ComponentHandle } from "./framework-handle.ts";
+import type { ComponentCapabilities } from "../extensions/traits/component.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
@@ -16,6 +17,15 @@ import { composeComponent } from "../../composition/compose.ts";
 import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
+
+export interface ScrollPane extends ComponentHandle {
+  readonly kind: "component";
+  capabilities(): ComponentCapabilities;
+  setContent(view: View | (() => View)): void;
+  followEnd(): void;
+}
+
+type ScrollPaneContract = ScrollPane;
 
 const SCROLL_PANE_NATIVE_TOKEN = Symbol("scroll-pane-native-construction");
 

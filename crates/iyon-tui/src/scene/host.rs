@@ -270,6 +270,23 @@ impl SceneHost {
         self.history_only_refresh = false;
     }
 
+    /// Applies revisions/capabilities for a topology-preserving candidate to
+    /// the interaction indexes without cloning clean mounted entries. The
+    /// retained candidate has already completed all fallible preparation when
+    /// this is called, so the committed host indexes remain transactional.
+    fn update_incremental_host_state(&mut self, resolved: &StableScene) {
+        for id in self.incremental_sync_components.iter().copied() {
+            if let Some(node) = resolved.root.scene.mounts.node(id) {
+                self.graph.update_revision(id, node.revision);
+            }
+            if let Some(capabilities) = resolved.root.scene.capabilities.entries.get(&id) {
+                self.capabilities.insert(id, capabilities.clone());
+            } else {
+                self.capabilities.entries.remove(&id);
+            }
+        }
+    }
+
     pub(crate) fn next_tick_deadline(&self) -> Option<Instant> {
         self.ticker.next_deadline()
     }
@@ -556,8 +573,18 @@ impl SceneHost {
                 continue;
             }
 
-            self.graph = resolved.root.scene.mounts.clone();
-            self.capabilities = resolved.root.scene.capabilities.clone();
+            if self.incremental_topology_changed
+                || (!self.history_only_refresh && self.incremental_sync_components.is_empty())
+            {
+                // Full/root or topology-changing candidates replace the host
+                // indexes together after all fallible preparation succeeds.
+                // A topology-preserving local candidate updates only its
+                // affected entries below, avoiding an O(total-mounts) clone.
+                self.graph = resolved.root.scene.mounts.clone();
+                self.capabilities = resolved.root.scene.capabilities.clone();
+            } else {
+                self.update_incremental_host_state(&resolved);
+            }
             let focus_changed = if incremental_host {
                 self.focus.reconcile_incremental(
                     &self.incremental_sync_components,
@@ -1400,6 +1427,7 @@ mod tests {
             let counters = crate::perf::snapshot();
             assert!(counters.value(crate::perf::Counter::ResolverNodesVisited) <= 4);
             assert!(counters.value(crate::perf::Counter::MeasureNodeCalls) <= 16);
+            assert!(counters.value(crate::perf::Counter::ComponentGeometryNodesVisited) <= 4);
             // Incremental painting patches the retained surface directly; it does
             // not walk clean siblings through the full-tree paint cache.
             assert!(counters.value(crate::perf::Counter::PaintNodesVisited) <= 2);

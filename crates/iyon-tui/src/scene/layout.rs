@@ -71,7 +71,12 @@ impl ResolvedSceneLayout {
         if !tree_patched {
             return false;
         }
-        self.components = self.tree.component_geometry();
+        if !self
+            .tree
+            .patch_component_geometry(component, &mut self.components)
+        {
+            return false;
+        }
         true
     }
 }

@@ -131,6 +131,31 @@ impl FocusState {
         self.modal_restore.push((next_parent, None));
     }
 
+    fn update_geometry_incremental(
+        &mut self,
+        geometry: Option<&ComponentGeometryMap>,
+        changed: &[ComponentId],
+    ) {
+        let Some(geometry) = geometry else {
+            self.geometry = None;
+            return;
+        };
+        let Some(current) = self.geometry.as_mut() else {
+            self.geometry = Some(geometry.clone());
+            return;
+        };
+        for id in changed {
+            match geometry.entries.get(id) {
+                Some(entry) => {
+                    current.entries.insert(*id, *entry);
+                }
+                None => {
+                    current.entries.remove(id);
+                }
+            }
+        }
+    }
+
     /// Reconciles a topology-preserving local update without rebuilding the
     /// complete focus order unless the changed capabilities can affect focus
     /// eligibility or modal ownership.
@@ -142,7 +167,7 @@ impl FocusState {
         geometry: Option<&ComponentGeometryMap>,
         registry: &mut ComponentRegistry,
     ) -> bool {
-        self.geometry = geometry.cloned();
+        self.update_geometry_incremental(geometry, changed);
         let Some(focused) = self.focused else {
             return false;
         };

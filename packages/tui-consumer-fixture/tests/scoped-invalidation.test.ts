@@ -13,8 +13,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { state } from "@iyon/tui";
-import { TextStream, View } from "@iyon/tui";
+import { defineView, Scene, state, TextStream, View } from "@iyon/tui";
+import { AppHarness } from "@iyon/tui/testing";
 import {
   buildScopedConsumer,
   openConsumerSession,
@@ -48,6 +48,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       consumer.renderApp();
       await drain();
 
+      expect(consumer.appExecutions()).toBe(1);
       expect(consumer.headerExecutions()).toBe(1);
       expect(consumer.cardExecutions("a")).toBe(1);
       expect(consumer.cardExecutions("b")).toBe(1);
@@ -56,6 +57,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       consumer.status.set("running");
       await drain();
 
+      expect(consumer.appExecutions()).toBe(1);
       expect(consumer.headerExecutions()).toBe(2);
       expect(consumer.cardExecutions("a")).toBe(1);
       expect(consumer.cardExecutions("b")).toBe(1);
@@ -69,6 +71,50 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
     }
   });
 
+  test("1,000 sibling scopes update only the reading scope", async () => {
+    const tui = await AppHarness.open({ width: 32, height: 24 });
+    const values = Array.from({ length: 1_000 }, (_, index) => state(`item-${index}`));
+    const calls = Array.from({ length: 1_000 }, () => 0);
+    let appCalls = 0;
+    const Child = defineView<{ readonly index: number }>(({ index }) => {
+      calls[index] += 1;
+      return View.text(values[index]!.value);
+    });
+    const App = defineView(() => {
+      appCalls += 1;
+      return View.vertical((column) => {
+        for (let index = 0; index < values.length; index += 1) {
+          column.child(Child({ index }));
+        }
+      });
+    });
+
+    try {
+      tui.render(() => new Scene(App({})));
+      await drain();
+      expect(appCalls).toBe(1);
+      expect(calls.every((count) => count === 1)).toBe(true);
+
+      values[500]!.set("changed");
+      await drain();
+
+      expect(appCalls).toBe(1);
+      expect(calls[500]).toBe(2);
+      expect(calls.every((count, index) => index === 500 || count === 1)).toBe(true);
+
+      // Geometry-changing content still keeps the execution frontier narrow;
+      // the native R6b differential tests separately prove the required
+      // layout/paint propagation and cold-frame parity.
+      values[500]!.set("changed\nrow");
+      await drain();
+      expect(appCalls).toBe(1);
+      expect(calls[500]).toBe(3);
+      expect(calls.every((count, index) => index === 500 || count === 1)).toBe(true);
+    } finally {
+      tui.close();
+    }
+  });
+
   test("keyed reorder preserves identity and skips bodies", async () => {
     const session = await openConsumerSession();
     try {
@@ -76,6 +122,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       consumer.renderApp();
       await drain();
 
+      const baseApp = consumer.appExecutions();
       const baseA = consumer.cardExecutions("a");
       const baseB = consumer.cardExecutions("b");
       expect(baseA).toBe(1);
@@ -87,6 +134,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       consumer.renderApp();
       await drain();
 
+      expect(consumer.appExecutions()).toBe(baseApp + 1);
       expect(consumer.cardExecutions("a")).toBe(baseA);
       expect(consumer.cardExecutions("b")).toBe(baseB);
 
@@ -98,6 +146,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       consumer.renderApp();
       await drain();
 
+      expect(consumer.appExecutions()).toBe(baseApp + 2);
       expect(consumer.cardExecutions("b")).toBe(baseB + 1);
       expect(consumer.cardExecutions("a")).toBe(baseA);
     } finally {
@@ -154,7 +203,8 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
 
       const stream = new TextStream();
       const history = session.history;
-      history.pushStream(stream as never);
+      const before = stream.snapshot();
+      history.pushStream(stream);
 
       for (let index = 0; index < 10_000; index += 1) {
         stream.append(`line ${index}\n`);
@@ -165,9 +215,21 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
       expect(consumer.headerExecutions()).toBe(baselineHeader);
       expect(consumer.cardExecutions("a")).toBe(baselineA);
       expect(consumer.cardExecutions("b")).toBe(1);
+      const after = stream.snapshot();
+      expect(after.revision).toBeGreaterThan(before.revision);
+      expect(after.sealed).toBe(false);
+      // Promotion may compact the stream's resident source text; the native
+      // History plus visible tail are the authoritative retained content.
+      const observedRows = [...session.tui.nativeHistoryRows(), ...session.tui.screenRows()]
+        .map((row) => row.trim())
+        .filter((row) => /^line \d+$/u.test(row));
+      expect(observedRows).toEqual(
+        Array.from({ length: 10_000 }, (_, index) => `line ${index}`),
+      );
 
       stream.seal();
-      history.sealStream(stream as never);
+      history.sealStream(stream);
+      expect(stream.snapshot().sealed).toBe(true);
     } finally {
       session.close();
     }

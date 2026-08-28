@@ -264,6 +264,49 @@ impl LayoutTree {
         }
     }
 
+    /// Refreshes component geometry for one already-indexed subtree. The caller
+    /// uses this only after a topology-preserving patch, so the component-root
+    /// index remains valid and clean siblings are not traversed.
+    pub(crate) fn patch_component_geometry(
+        &self,
+        component: ComponentId,
+        geometry: &mut ComponentGeometryMap,
+    ) -> bool {
+        let Some(component_root) = self.component_roots.get(&component).copied() else {
+            return false;
+        };
+        let path = self.path_to_root(component_root);
+        let mut offset_y = 0;
+        let mut inherited_clip =
+            SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
+        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
+            let node = self.node(*ancestor);
+            let clip = SignedRect::from(node.clip_rect)
+                .translate_y(offset_y)
+                .intersection(inherited_clip)
+                .unwrap_or(SignedRect {
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                });
+            offset_y = match node.content {
+                LayoutContent::RowViewport { skip_rows } => {
+                    offset_y.saturating_sub(i32::from(skip_rows))
+                }
+                _ => offset_y,
+            };
+            inherited_clip = clip;
+        }
+        self.collect_component_geometry(
+            component_root,
+            offset_y,
+            inherited_clip,
+            &mut geometry.entries,
+        );
+        true
+    }
+
     fn collect_component_geometry(
         &self,
         id: LayoutNodeId,
@@ -271,6 +314,7 @@ impl LayoutTree {
         inherited_clip: SignedRect,
         entries: &mut HashMap<ComponentId, ComponentGeometry>,
     ) {
+        crate::perf::inc(crate::perf::Counter::ComponentGeometryNodesVisited);
         let node = self.node(id);
         let rect = SignedRect::from(node.rect).translate_y(offset_y);
         let content = SignedRect::from(node.content_rect).translate_y(offset_y);

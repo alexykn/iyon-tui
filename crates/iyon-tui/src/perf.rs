@@ -45,10 +45,11 @@ pub enum Counter {
     PersistentSeqLeafClones,
     PersistentSeqBranchClones,
     PersistentSeqItemsIteratedDuringPatch,
+    ComponentGeometryNodesVisited,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::PersistentSeqItemsIteratedDuringPatch as usize + 1;
+    pub const COUNT: usize = Self::ComponentGeometryNodesVisited as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -88,6 +89,7 @@ const NAMES: [&str; Counter::COUNT] = [
     "persistent_seq_leaf_clones",
     "persistent_seq_branch_clones",
     "persistent_seq_items_iterated_during_patch",
+    "component_geometry_nodes_visited",
 ];
 
 #[cfg(feature = "perf-counters")]

@@ -10,26 +10,32 @@ consumer after the repository separation completes.
 ## Layers
 
 ```text
-TypeScript public facade        packages/iyon-tui/src/**   (`@iyon/tui`)
-        |  private native contract seam (src/native.ts)
-generated safe N-API addon       crates/iyon-tui-native
+Public semantics                packages/iyon-tui/src/api/**   (`@iyon/tui`)
+Retained semantic execution     packages/iyon-tui/src/composition/**
+Live runtime/lifetime           packages/iyon-tui/src/runtime/**
+Structural/native transport    packages/iyon-tui/src/transport/**
+Testing facade                 packages/iyon-tui/src/testing/** (`@iyon/tui/testing`)
+        |
+generated safe N-API addon     crates/iyon-tui-native
         | direct-FFI symbols remain feature-gated for qualification/oracle/rollback
         |
-Rust framework                  crates/iyon-tui
+Rust framework                 crates/iyon-tui
 ```
 
 ## Ownership rules
 
 - `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import
   `iyon-core` or `iyon-api`. Enforced by `bun run check:ownership`.
-- Framework TypeScript may import only framework modules plus the single
-  native-contract seam (`packages/iyon-tui/src/native.ts`). The default
-  transport is generated safe N-API over opaque native session/host objects;
-  the generated semantic DAG, leases, NativeRef hints, PersistentSeq edits,
-  payload lanes, and stream specialization are transport-independent. The
-  direct-FFI symbols remain feature-gated for qualification, oracle
-  comparison, and rollback through later PERF/S tranches; they are not part of
-  the default addon or public package contract.
+- Framework TypeScript may import only framework modules. Raw native contracts
+  and addon loading are private to `packages/iyon-tui/src/transport/native/`;
+  structural ABI/schema/generated code is private to
+  `packages/iyon-tui/src/transport/abi/structural/`. The default transport is
+  generated safe N-API over opaque native session/host objects; the generated
+  semantic DAG, leases, NativeRef hints, PersistentSeq edits, payload lanes,
+  and stream specialization are transport-independent. Direct-FFI symbols
+  remain feature-gated for qualification, oracle comparison, and rollback
+  through later PERF/S tranches; they are not part of the default addon or
+  public package contract.
 - Application code in `alexykn/iyon` consumes the framework only through public
   surfaces: the `@iyon/tui` package or its application-owned `iyon:tui` alias.
   Deep imports into `packages/iyon-tui/src/**`, retained-DAG internals, View ABI
@@ -55,9 +61,13 @@ between Rust, native, and TypeScript layers is mandatory.
 Run before completing any change:
 
 ```sh
+bun run check:tui-abi
+bun run typecheck
+bun run check:tui-declarations
 bun run check:ownership
 ```
 
 The gates cover: Rust dependency direction, TUI-native module purity,
-framework Rust/TypeScript purity, the standalone consumer's public dependency,
-and both public-surface snapshots.
+framework Rust/TypeScript purity, composition/runtime/native ownership,
+public declaration closure, package/publication boundaries, the standalone
+consumer's public dependency, and both public-surface snapshots.

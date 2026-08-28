@@ -22,6 +22,6 @@ export function registerRuntimeAccess(owner: object, access: RuntimeAccess): voi
 
 export function runtimeAccess(owner: object): RuntimeAccess {
   const access = accesses.get(owner);
-  if (access === undefined) throw new Error("TUI runtime access is unavailable");
+  if (access === undefined) throw new Error("TUI testing access is unavailable");
   return access;
 }

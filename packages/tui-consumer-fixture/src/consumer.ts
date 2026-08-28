@@ -116,6 +116,7 @@ export interface ScopedEntry {
 export interface ScopedConsumer {
   readonly status: ReturnType<typeof createStatePublic<string>>;
   readonly items: ReturnType<typeof createStatePublic<readonly ScopedEntry[]>>;
+  readonly appExecutions: () => number;
   readonly headerExecutions: () => number;
   readonly cardExecutions: (id: string) => number;
   /** Renders the scoped App tree through the Tui's canonical render path. */
@@ -129,6 +130,7 @@ export function buildScopedConsumer(tui: Pick<TuiRuntime, "render">): ScopedCons
     { id: "b", label: "beta" },
   ]);
 
+  const appCount = { n: 0 };
   const headerCount = { n: 0 };
   const cardCounts = new Map<string, number>();
 
@@ -144,19 +146,21 @@ export function buildScopedConsumer(tui: Pick<TuiRuntime, "render">): ScopedCons
 
   const Footer = defineViewPublic(() => View.text("footer"));
 
-  const App = defineViewPublic(() =>
-    View.vertical((column) => {
+  const App = defineViewPublic(() => {
+    appCount.n += 1;
+    return View.vertical((column) => {
       column.child(Header({}));
       for (const entry of items.value) {
         column.child(View.key(entry.id, () => ItemCard(entry)));
       }
       column.child(Footer({}));
-    }),
-  );
+    });
+  });
 
   return {
     status,
     items,
+    appExecutions: () => appCount.n,
     headerExecutions: () => headerCount.n,
     cardExecutions: (id) => cardCounts.get(id) ?? 0,
     renderApp: () => {

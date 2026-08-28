@@ -45,10 +45,11 @@ struct TickRegistration {
     driver: Box<dyn TickDriver>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TickOutcome {
     pub(crate) ran: bool,
     pub(crate) dirty: bool,
+    pub(crate) changed_components: Vec<ComponentId>,
 }
 
 /// Private scheduler for mounted retained components.
@@ -246,6 +247,7 @@ impl TickScheduler {
             return TickOutcome {
                 ran: false,
                 dirty: false,
+                changed_components: Vec::new(),
             };
         }
         let due: Vec<_> = self
@@ -262,19 +264,28 @@ impl TickScheduler {
 
         let mut dirty = false;
         let mut ran = false;
+        let mut changed_components = Vec::new();
         let mut cx = queue.event_cx();
         for id in due {
             let Some(registration) = self.registrations.get_mut(&id) else {
                 continue;
             };
             ran = true;
-            dirty |= registration.driver.tick(id, now, registry, &mut cx);
+            let changed = registration.driver.tick(id, now, registry, &mut cx);
+            dirty |= changed;
+            if changed {
+                changed_components.push(id);
+            }
             registration.next_due = Some(
                 now.checked_add(registration.interval)
                     .expect("component tick deadline exhausted"),
             );
         }
-        TickOutcome { ran, dirty }
+        TickOutcome {
+            ran,
+            dirty,
+            changed_components,
+        }
     }
 
     fn activate(&mut self, id: ComponentId, now: Instant) {

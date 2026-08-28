@@ -337,8 +337,18 @@ impl SceneHost {
         now: Instant,
         registry: &mut ComponentRegistry,
     ) -> TickOutcome {
-        self.ticker
-            .tick_due_with_events(now, registry, &mut self.outputs)
+        let outcome = self
+            .ticker
+            .tick_due_with_events(now, registry, &mut self.outputs);
+        // Tick callbacks mutate the registry through with_any_mut(), but that
+        // alone is not enough to drive retained scene reconciliation. Record
+        // the same changed components as interaction invalidations so a
+        // History-only refresh cannot reuse a stale slot frame. Each timer
+        // remains independent; this only publishes its own changed component.
+        for id in outcome.changed_components.iter().copied() {
+            self.invalidate_component(id);
+        }
+        outcome
     }
 
     /// Resolves, synchronizes, paints, and—when necessary—promotes the generic

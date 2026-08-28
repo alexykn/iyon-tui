@@ -17,8 +17,7 @@ packages/iyon-tui/src/
 │   │   ├── projectors.ts
 │   │   ├── stream-snapshot.ts
 │   │   ├── text-content.ts
-│   │   ├── text.ts
-│   │   └── [no Source/Funnel/Connector/ContentPort]
+│   │   └── text.ts
 │   ├── controls/
 │   │   ├── framework-handle.ts
 │   │   ├── history.ts

@@ -2,8 +2,8 @@
 
 **Status:** COMPLETE
 **Baseline:** H3-D `81229fc` (`refactor: remove H3 migration compatibility paths`)
-**Final implementation:** `c807cd6` (`fix: preserve structural axis track encoding`)
-**Final report commit:** the commit introducing this report
+**Final implementation:** `fe05092` (`fix: harden H3 retained transport boundaries`), including `c807cd6` (`fix: preserve structural axis track encoding`)
+**Final report commit:** the commit introducing this audit update
 **Platform:** macOS arm64
 **Bun:** `1.4.0` (`34cbb9a40`)
 **Rust:** `1.97.1 (8bab26f4f 2026-07-14)`
@@ -162,6 +162,7 @@ relationships:
 ```text
 composition -> transport/structural: 0 matches
 transport/structural -> composition: 0 matches
+transport/structural -> runtime: 0 matches
 api/view -> transport/structural or transport/abi: 0 matches
 ```
 
@@ -211,6 +212,9 @@ cargo test -p iyon-tui-native --features direct-ffi
 cargo run -q -p tui-abi-gen -- check
   PASS
 
+cargo test --workspace --features direct-ffi
+  PASS; 735 Rust tests plus public/native/integration suites
+
 git diff --check
   PASS
 ```
@@ -238,8 +242,8 @@ require a deep-import or application-specific framework compatibility change.
 
 ## 7. PERF-12 retained non-regression and parity
 
-The authoritative T15 matrix was run once after the final implementation fix
-against source `c807cd6`:
+The authoritative T15 matrix was run once against source `c807cd6`, before
+this audit's TypeScript-only hardening:
 
 ```text
 311 cases per arm
@@ -250,9 +254,17 @@ first rendered screen row: equal for every case
 overall geometric mean (N-API median / direct median): 0.6546
 ```
 
+This audit intentionally did **not** rerun the full PERF-12 matrix. The T15
+runner is now stricter: each future candidate record carries the complete
+rendered `screen_rows` snapshot and the measured semantic NodeId creation
+count, and comparison rejects either mismatch in addition to structural
+counter differences. A focused post-audit parity smoke covered 48 cases per
+arm (96 result records) and reported zero correctness failures.
+
 A value below `1.0` means the generated safe N-API arm was faster than the
-feature-gated direct-FFI oracle for this run. Timings are smoke evidence; the
-structural equality and route/counter invariants are the acceptance gate.
+feature-gated direct-FFI oracle for that run. Timings are smoke evidence; the
+structural equality, full-screen equality, semantic-NodeId, and route/counter
+invariants are the acceptance gate.
 
 Representative N-API records from that matrix:
 
@@ -281,6 +293,27 @@ semantic hint, small mutations stop at the changed frontier, wide edits use
 semantic sequence derivations, and the warm retained path reports zero cold
 bridge allocations. The H3-C representative counters remain equal after the
 H3-D cleanup and the axis-encoding correction.
+
+### Post-sign-off audit corrections
+
+The handoff audit found and corrected four real shortcuts without changing the
+public surface or ABI:
+
+- `Tui.render(scene)` now validates the semantic root without eagerly building
+  a cold bridge before the retained exact-root/frontier route. Cold lowering is
+  deferred to the actual fallback; the no-session compatibility path still
+  preflights before a History transfer.
+- `tryNativeMaterialize` now attempts NodeId promotion before constructing a
+  cold bridge, avoiding unnecessary whole-tree lowering for an already-retained
+  physical root.
+- Remaining retained decoration, style, diff, grid-cell, coordinate, and axis
+  numeric packing is centralized in `transport/structural/encoding.ts` rather
+  than being duplicated in the retained-DAG walker.
+- The ownership checker now rejects future `transport/structural -> runtime`
+  imports, in addition to the composition and semantic-layer boundaries.
+
+These changes were checked by the focused 48-case-per-arm T15 smoke and the
+framework suites above. No full PERF-12 benchmark was rerun.
 
 ## 8. Memory convergence
 

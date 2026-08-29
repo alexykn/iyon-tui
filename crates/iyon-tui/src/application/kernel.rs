@@ -398,6 +398,10 @@ where
         Ok(self.status(!self.actions.is_empty()))
     }
 
+    pub(crate) fn has_pending_actions(&self) -> bool {
+        !self.actions.is_empty()
+    }
+
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         [
             self.timers.next_deadline(),

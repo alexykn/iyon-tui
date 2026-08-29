@@ -182,6 +182,11 @@ pub(crate) struct SceneHost {
     /// True while the current retained candidate was rebuilt from the History
     /// branch without re-resolving the body branch.
     history_only_refresh: bool,
+    /// A body geometry/topology change has been prepared, but native History
+    /// promotion may require another retained History refresh before painting.
+    /// Keep the final paint whole so that refresh cannot leave moved body rows
+    /// from the previously committed surface behind.
+    full_paint_pending: bool,
     /// Counts calls to `resolve_stable_at_with_anchor` for structural test
     /// assertions. Not compiled into production builds.
     #[cfg(test)]
@@ -224,6 +229,7 @@ impl Default for SceneHost {
             incremental_paint_components: Vec::new(),
             incremental_paint_history: false,
             history_only_refresh: false,
+            full_paint_pending: false,
             #[cfg(test)]
             resolve_count: 0,
             #[cfg(test)]
@@ -248,6 +254,7 @@ impl SceneHost {
         self.incremental_paint_components.clear();
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
+        self.full_paint_pending = false;
     }
 
     /// Marks one native component as changed. The next frame can resolve only
@@ -268,6 +275,7 @@ impl SceneHost {
         self.incremental_paint_components.clear();
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
+        self.full_paint_pending = false;
     }
 
     /// Applies revisions/capabilities for a topology-preserving candidate to
@@ -772,7 +780,7 @@ impl SceneHost {
             }
         }
         let topology_changed = updates.iter().any(|update| update.topology_changed);
-        let old_body_heights = roots
+        let old_body_rects = roots
             .iter()
             .filter_map(|id| {
                 retained
@@ -780,7 +788,7 @@ impl SceneHost {
                     .components
                     .entries
                     .get(id)
-                    .map(|geometry| (*id, geometry.outer.height))
+                    .map(|geometry| (*id, geometry.outer))
             })
             .collect::<Vec<_>>();
         for update in updates {
@@ -814,14 +822,22 @@ impl SceneHost {
                 break;
             }
         }
-        let body_geometry_changed = old_body_heights.iter().any(|(id, height)| {
+        let body_geometry_changed = old_body_rects.iter().any(|(id, rect)| {
             retained
                 .layout
                 .components
                 .entries
                 .get(id)
-                .is_none_or(|geometry| geometry.outer.height != *height)
+                .is_none_or(|geometry| geometry.outer != *rect)
         });
+        // A failed local patch leaves the retained geometry map unchanged, so
+        // the old/new geometry comparison above cannot observe the new size.
+        // Treat a failed body patch as a layout change before native History
+        // promotion can trigger a second History-only refresh.
+        let body_patch_failed = !patched
+            && roots
+                .iter()
+                .any(|id| !retained.root.history_components.contains(id));
         if scene.history().is_some()
             && (history_changed
                 || native_history_changed
@@ -836,7 +852,7 @@ impl SceneHost {
                 anchor,
                 retained,
                 roots.clone(),
-                topology_changed || body_geometry_changed,
+                topology_changed || body_geometry_changed || body_patch_failed,
             );
         }
         if !patched || topology_changed {
@@ -903,6 +919,11 @@ impl SceneHost {
             retained.root.body_height
         };
         let history_height = size.height.saturating_sub(body_height);
+        // The body track sits below History. If promotion changes the track
+        // boundary, every body component can move even when its own height is
+        // unchanged; an incremental component paint cannot clear its old row.
+        let body_geometry_changed =
+            body_layout_changed || retained.root.history_height != history_height;
         let mut session = ResolveSession::new(registry);
         let projection = match project_into_session_for_host(
             history,
@@ -922,6 +943,7 @@ impl SceneHost {
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
                 self.incremental_paint_history = false;
+                self.full_paint_pending = false;
                 return Err(error);
             }
         };
@@ -931,7 +953,7 @@ impl SceneHost {
             None => true,
             Some(old) => !old.mounts.same_topology(&history_scene.mounts),
         };
-        let topology_changed = body_layout_changed || history_topology_changed;
+        let topology_changed = body_geometry_changed || history_topology_changed;
         let merged = match merge_root_scene(
             Some(history_scene.clone()),
             retained.root.body_scene.clone(),
@@ -949,6 +971,7 @@ impl SceneHost {
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
                 self.incremental_paint_history = false;
+                self.full_paint_pending = false;
                 return Err(error);
             }
         };
@@ -993,6 +1016,7 @@ impl SceneHost {
             body_height,
         };
         self.history_only_refresh = true;
+        self.full_paint_pending |= body_geometry_changed;
         // A topology- and geometry-stable History update has a concrete paint
         // target. Leaving this plan empty would make paint() mistake a normal
         // History refresh for a failed incremental update and repaint the root.
@@ -1026,7 +1050,9 @@ impl SceneHost {
         self.retained = Some(resolved);
         let retained = self.retained.as_ref().expect("retained frame installed");
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
-        if self.incremental_paint_history || !self.incremental_paint_components.is_empty() {
+        if !self.full_paint_pending
+            && (self.incremental_paint_history || !self.incremental_paint_components.is_empty())
+        {
             if let Some(mut surface) = self.last_surface.take() {
                 let mut incremental = true;
                 let mut incremental_cache = PaintCache::default();
@@ -1078,6 +1104,8 @@ impl SceneHost {
             self.incremental_paint_history = false;
             self.incremental_paint_components.clear();
         }
+        self.incremental_paint_history = false;
+        self.incremental_paint_components.clear();
         #[cfg(test)]
         {
             self.full_paints += 1;
@@ -1090,6 +1118,7 @@ impl SceneHost {
         );
         let output = surface.clone();
         self.last_surface = Some(surface);
+        self.full_paint_pending = false;
         PreparedSceneFrame {
             surface: output,
             history_overlay: retained.root.history_overlay.clone(),
@@ -1637,6 +1666,104 @@ mod tests {
         let lines = frame.screen_lines();
         assert!(lines.iter().any(|line| line.starts_with("history-new")));
         assert!(lines.iter().any(|line| line.starts_with("body-new")));
+    }
+
+    #[test]
+    fn geometry_change_with_history_repaints_body_and_clears_old_surface() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(R6bLeaf {
+            text: "body-old".to_owned(),
+        });
+        let mut history = crate::History::new();
+        history.push("history").unwrap();
+        let scene = Scene::with_history(
+            history,
+            View::vertical(|column| {
+                column.child(View::text("tail"));
+                column.child(View::component(handle));
+            }),
+        );
+        let size = Size::new(12, 20);
+        let mut host = SceneHost::default();
+        let initial = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let _ = host.paint(initial, &Theme::default());
+
+        registry
+            .with_mut(handle, |leaf| leaf.text = "body-new\nbody-line".to_owned())
+            .unwrap();
+        host.invalidate_component(handle.id());
+        let updated = host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let frame = host.paint(updated, &Theme::default());
+
+        let mut cold_host = SceneHost::default();
+        let cold = cold_host
+            .resolve_stable::<()>(&scene, &mut registry, size)
+            .unwrap();
+        let cold_frame = cold_host.paint(cold, &Theme::default());
+        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
+    }
+
+    #[test]
+    fn geometry_change_after_history_transfer_repaints_the_body() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(R6bLeaf {
+            text: "body-old".to_owned(),
+        });
+        let mut history = crate::History::new();
+        for index in 0..50 {
+            history
+                .push(View::text(format!("old-{index}")).fill_width())
+                .unwrap();
+        }
+        let mut scene = Scene::with_history(
+            history,
+            View::vertical(|column| {
+                column.child(View::text("tail"));
+                column.child(View::component(handle));
+            }),
+        );
+        let size = Size::new(12, 20);
+        let mut host = SceneHost::default();
+        let mut sink = TestSink::default();
+        host.render(
+            &mut scene,
+            &mut registry,
+            &Theme::default(),
+            &mut sink,
+            |_| Ok(size),
+        )
+        .unwrap();
+
+        registry
+            .with_mut(handle, |leaf| leaf.text = "body-new\nbody-line".to_owned())
+            .unwrap();
+        host.invalidate_component(handle.id());
+        let frame = host
+            .render(
+                &mut scene,
+                &mut registry,
+                &Theme::default(),
+                &mut sink,
+                |_| Ok(size),
+            )
+            .unwrap();
+
+        let mut cold_host = SceneHost::default();
+        let mut cold_sink = TestSink::default();
+        let cold_frame = cold_host
+            .render(
+                &mut scene,
+                &mut registry,
+                &Theme::default(),
+                &mut cold_sink,
+                |_| Ok(size),
+            )
+            .unwrap();
+        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
     }
 
     #[test]

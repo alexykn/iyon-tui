@@ -96,6 +96,8 @@ type HostRunning = crate::application::kernel::RunningApp<
     fn(&HostState) -> View,
 >;
 
+const INPUT_PUMP_BUDGET: usize = 32;
+
 #[derive(Default)]
 struct HeadlessSink {
     width: u16,
@@ -122,6 +124,11 @@ struct HostInner {
     backend: HostBackend,
     frame: PreparedSceneFrame,
     presentation: Option<PresentReceipt>,
+    /// The latest prepared frame has not yet been handed to the terminal
+    /// worker. A real terminal presents asynchronously, so a burst of native
+    /// mutations may prepare several frames while one presentation is still
+    /// in flight; the newest one must remain pending instead of being lost.
+    frame_pending: bool,
     now: Instant,
     headless: bool,
     closed: bool,
@@ -2110,6 +2117,7 @@ impl TuiHost {
             backend,
             frame,
             presentation: None,
+            frame_pending: true,
             now,
             headless,
             closed: false,
@@ -2403,32 +2411,41 @@ impl TuiHost {
 
     pub fn poll_terminal(&self) -> Result<()> {
         let mut inner = self.lock_mut()?;
-        let event = match &mut inner.backend {
-            HostBackend::Headless(_) => None,
-            HostBackend::Real(backend) => backend.try_next_event()?,
-        };
         inner.sync_real_time();
-        match event {
-            Some(TerminalEvent::Key(key)) => {
-                inner
-                    .running
-                    .dispatch_key(key)
-                    .map_err(|error| anyhow::anyhow!("key dispatch failed: {error:?}"))?;
-                inner.advance_and_render()
+        for _ in 0..INPUT_PUMP_BUDGET {
+            if inner.running.has_pending_actions() {
+                break;
             }
-            Some(TerminalEvent::Paste(text)) => {
-                inner
-                    .running
-                    .dispatch_paste(&text)
-                    .map_err(|error| anyhow::anyhow!("paste dispatch failed: {error:?}"))?;
-                inner.advance_and_render()
+            let event = match &mut inner.backend {
+                HostBackend::Headless(_) => None,
+                HostBackend::Real(backend) => backend.try_next_event()?,
+            };
+            let Some(event) = event else {
+                break;
+            };
+            match event {
+                TerminalEvent::Key(key) => {
+                    inner
+                        .running
+                        .dispatch_key(key)
+                        .map_err(|error| anyhow::anyhow!("key dispatch failed: {error:?}"))?;
+                }
+                TerminalEvent::Paste(text) => {
+                    inner
+                        .running
+                        .dispatch_paste(&text)
+                        .map_err(|error| anyhow::anyhow!("paste dispatch failed: {error:?}"))?;
+                }
+                TerminalEvent::Resize => inner.running.invalidate_frame(),
             }
-            Some(TerminalEvent::Resize) => {
-                inner.running.invalidate_frame();
-                inner.advance_and_render()
+            // Do not consume input after a routed action. The caller must
+            // reduce that action before later keystrokes can change focus or
+            // clear the composer.
+            if inner.running.has_pending_actions() {
+                break;
             }
-            None => inner.advance_and_render(),
         }
+        inner.advance_and_render()
     }
 
     /// Run the native interaction driver until a caller-defined routed output
@@ -2539,6 +2556,7 @@ impl Drop for TuiHost {
 impl HostInner {
     fn render(&mut self) -> Result<()> {
         self.frame = prepare_frame(&mut self.running, &mut self.backend, self.now)?;
+        self.frame_pending = true;
         self.present_frame()
     }
 
@@ -2556,14 +2574,22 @@ impl HostInner {
                 }
             }
         }
+        if !self.frame_pending {
+            return Ok(());
+        }
         if let HostBackend::Real(backend) = &mut self.backend {
             match backend.begin_frame(&self.frame) {
-                Ok(receipt) => self.presentation = Some(receipt),
+                Ok(receipt) => {
+                    self.presentation = Some(receipt);
+                    self.frame_pending = false;
+                }
                 Err(error) if error.to_string().contains("terminal worker stopped") => {
                     self.closed = true;
                 }
                 Err(error) => return Err(error),
             }
+        } else {
+            self.frame_pending = false;
         }
         Ok(())
     }
@@ -2575,6 +2601,12 @@ impl HostInner {
             .map_err(|error| anyhow::anyhow!("host update failed: {error:?}"))?;
         if status.dirty {
             self.render()?;
+        } else if self.frame_pending {
+            // A previous call prepared a newer frame while the terminal worker
+            // was busy. Poll its receipt even when the kernel itself is clean;
+            // otherwise the pending frame waits indefinitely for another user
+            // action or tick.
+            self.present_frame()?;
         }
         Ok(())
     }

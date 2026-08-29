@@ -1,15 +1,14 @@
 import { native, requireNativeClass } from "../transport/native/addon.ts";
 import { nativeResourceOf } from "../transport/native/resources.ts";
-import { nodeForBridge } from "../transport/structural/view-bridge.ts";
+import { lowerColdView } from "../transport/structural/cold-lowering.ts";
 import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
-import { View } from "../api/view/view.ts";
+import { componentViewForHandle, View } from "../api/view/view.ts";
 import { asTuiError, tuiError } from "../api/errors.ts";
 import { registerRuntimeAccess } from "./access.ts";
 import { Scene } from "../api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/history.ts";
 import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
 import { createViewSlot } from "../api/controls/view-slot.ts";
-import { componentViewFor } from "../transport/structural/component-view.ts";
 import { createScrollPane } from "../api/controls/scroll-pane.ts";
 import {
   nativeViewAbiSession,
@@ -146,17 +145,13 @@ export class Tui implements TuiRuntime {
         // This projection is framework plumbing, not a semantic operation in
         // the parent scope. User-facing control.view() calls compose through
         // the retained semantic slot; the internal projection must not.
-        const view = componentViewFor(slot);
+        const view = componentViewForHandle(slot.id);
         return {
           view,
-          install(output: View): void {
-            // Commit publication runs with the framework's internal publication
-            // token, so the ordinary direct setter is safe here without
-            // exposing an execution-only mutation method on ViewSlot.
-            slot.setView(output);
-          },
-          preparePublication(output: View) {
-            return slot.prepareSetView(output);
+          target: {
+            preparePublication(output: View) {
+              return slot.prepareSetView(output);
+            },
           },
           dispose(): void {
             slot.dispose();
@@ -205,7 +200,7 @@ export class Tui implements TuiRuntime {
         rootRef: 0,
         commit: (): void => {
           this.commitHistoryBinding(historyToBind, previousHistory);
-          this.host.render(nodeForBridge(output));
+          this.host.render(lowerColdView(output));
           this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
         },
         abort(): void {},
@@ -433,7 +428,7 @@ export class Tui implements TuiRuntime {
     const normalized = Scene.from(scene);
     // Validate the structural body before transferring an attach-once History;
     // malformed runtime input must not partially mutate the scene sideband.
-    const normalizedNode = nodeForBridge(normalized.body);
+    const normalizedNode = lowerColdView(normalized.body);
     const previousHistory = this.boundHistory;
     if (normalized.history !== undefined) {
       // Validate the handle before the identity no-op below. A disposed

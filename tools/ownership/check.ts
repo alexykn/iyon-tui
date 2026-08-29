@@ -196,15 +196,18 @@ function cut2OwnershipGate(): void {
     "composition/define-view.ts",
     "composition/execution-context.ts",
     "composition/execution.ts",
+    "composition/publication.ts",
     "composition/persistent-seq.ts",
     "composition/tracked-state.ts",
-    "transport/structural/component-view.ts",
+    "transport/structural/component-id.ts",
+    "transport/structural/cold-lowering.ts",
+    "transport/structural/encoding.ts",
     "transport/structural/ir.ts",
     "transport/structural/native-view-abi.ts",
     "transport/structural/policy.ts",
     "transport/structural/retained-dag.ts",
     "transport/structural/style-lowering.ts",
-    "transport/structural/view-bridge.ts",
+    "transport/structural/retained-path.ts",
   ];
   const legacy = [
     "child-owner.ts",
@@ -524,7 +527,70 @@ function h3cStructuralCompositionGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 9: H2 CUT 5 root publication boundary
+// Gate 9: H3-D residual architecture cleanup
+// ---------------------------------------------------------------------------
+
+function h3dResidualCleanupGate(): void {
+  const offenders: string[] = [];
+  const semanticNames = /\b(?:nodeForBridge|setViewNode|BridgeViewNode|BRIDGE_VIEW_KIND|VIEW_BRIDGE_SCHEMA_VERSION|NativeRef|viewRefForNodeId|pathRef|trackWord|NativePath\w*|nativePath\w*|nativeTextLayoutTransaction|NATIVE_PATH\w*)\b/u;
+  const stripComments = (source: string): string => source
+    .replace(/\/\*[\s\S]*?\*\//gu, "")
+    .replace(/\/\/.*$/gmu, "");
+
+  for (const relativePath of [
+    "transport/structural/view-bridge.ts",
+    "transport/structural/component-view.ts",
+  ]) {
+    if (existsSync(join(FRAMEWORK_SRC, relativePath))) offenders.push(`superseded module remains: ${relativePath}`);
+  }
+
+  for (const root of ["api/view", "composition"] as const) {
+    for (const file of walk(join(FRAMEWORK_SRC, root))) {
+      const source = stripComments(readFileSync(file, "utf8"));
+      if (semanticNames.test(source)) offenders.push(`${relative(ROOT, file)} contains physical semantic-layer symbol`);
+      for (const specifier of specifiersOf(source)) {
+        if (!specifier.startsWith(".")) continue;
+        const resolved = resolveRelative(file, specifier);
+        if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+        const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+        if (root === "api/view" && (target.startsWith("transport/structural/") || target.startsWith("transport/abi/"))) {
+          offenders.push(`${relative(ROOT, file)} imports structural transport: ${target}`);
+        }
+      }
+    }
+  }
+
+  const publication = readFileSync(join(FRAMEWORK_SRC, "composition/publication.ts"), "utf8");
+  const execution = readFileSync(join(FRAMEWORK_SRC, "composition/execution.ts"), "utf8");
+  if (!/export\s+interface\s+PreparedStructuralPublication\b/u.test(publication)
+    || !/export\s+interface\s+StructuralPublicationTarget\b/u.test(publication)
+    || !/preparePublication\(output:\s*View\)/u.test(publication)) {
+    offenders.push("composition/publication.ts: structural publication contract is incomplete");
+  }
+  if (/\b(?:ScopeProjection|PublicationTarget|PreparedPublication)\b/u.test(execution)
+    || /\b(?:projection\.)?install\(output:\s*View\)/u.test(execution)
+    || /\bprojection\.install\(/u.test(execution)) {
+    offenders.push("composition/execution.ts: legacy projection publication path remains");
+  }
+
+  const cold = readFileSync(join(FRAMEWORK_SRC, "transport/structural/cold-lowering.ts"), "utf8");
+  const ir = readFileSync(join(FRAMEWORK_SRC, "transport/structural/ir.ts"), "utf8");
+  if (/\b(?:semanticNodeForBridge|setBridgeDerivation|peekBridgeDerivation|setBridgeSequenceOverride|peekBridgeSequenceOverride|setBridgeGridSequenceOverride|peekBridgeGridSequenceOverride|BridgeDerivation|BridgeSequenceOverride|BridgeGridSequenceOverride)\b/u.test(cold + "\n" + ir)) {
+    offenders.push("structural transport: migration-only bridge derivation/sequence sidecars remain");
+  }
+  if (/\b(?:componentViewFor|componentIdForPlacement)\b/u.test(readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-id.ts"), "utf8"))) {
+    offenders.push("transport/structural/component-id.ts: semantic component construction remains");
+  }
+
+  if (offenders.length > 0) {
+    fail("h3d-residual-cleanup", offenders.join("; "));
+  } else {
+    pass("h3d-residual-cleanup", "semantic View and composition are physical-transport free; legacy bridge/publication residue is removed");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 10: H2 CUT 5 root publication boundary
 // ---------------------------------------------------------------------------
 
 function cut5RootPublicationGate(): void {
@@ -769,7 +835,7 @@ async function themeStyleSemanticGate(): Promise<void> {
     "transport/structural/style-lowering.ts",
     "transport/structural/cold-lowering.ts",
     "transport/structural/encoding.ts",
-    "transport/structural/view-bridge.ts",
+    "transport/structural/component-id.ts",
   ]);
   const offenders: string[] = [];
   for (const file of walk(FRAMEWORK_SRC)) {
@@ -878,7 +944,7 @@ function controlLifecycleGate(): void {
 
 function componentFacadeGate(): void {
   const view = readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8");
-  const facade = readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-view.ts"), "utf8");
+  const facade = readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-id.ts"), "utf8");
   const compose = readFileSync(join(FRAMEWORK_SRC, "composition/compose.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const contracts = publicContractSource();
@@ -899,10 +965,10 @@ function componentFacadeGate(): void {
   if (activeSources.some((source) => /\bView\.component\s*\(/u.test(stripComments(source)))) {
     offenders.push("framework controls/composition still construct View.component directly");
   }
-  if (!/export\s+function\s+componentViewFor\s*\(/u.test(facade)) {
-    offenders.push("transport/structural/component-view.ts: missing private component placement lowering");
+  if (!/export\s+function\s+componentIdForHandleId\s*\(/u.test(facade)) {
+    offenders.push("transport/structural/component-id.ts: missing private component identity lowering");
   }
-  if (!/componentViewFor\(slot\)/u.test(runtime) || /\bslot\.view\(\)/u.test(runtime)) {
+  if (!/componentViewForHandle\(slot\.id\)/u.test(runtime) || /\bslot\.view\(\)/u.test(runtime)) {
     offenders.push("runtime/runtime.ts: internal component projection participates in parent composition");
   }
   for (const [name, source] of [["api/controls/view-slot.ts", component], ["api/controls/scroll-pane.ts", scrollPane], ["api/controls/text-input.ts", textInput]] as const) {
@@ -1349,6 +1415,7 @@ cut4RootCleanupGate();
 cut5ImportBoundaryGate();
 h3bCompositionTransportGate();
 h3cStructuralCompositionGate();
+h3dResidualCleanupGate();
 cut5RootPublicationGate();
 cut5ModuleIdentityGate();
 cut5PackagePublicationGate();

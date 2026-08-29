@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import { viewRenderRef } from "../src/transport/abi/structural/generated/view_calls.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { View } from "../src/api/view/view.ts";
 
 const Host = native.NativeTuiHost as unknown as
@@ -32,7 +32,7 @@ describe("PERF-12 T14 malformed-boundary properties", () => {
     if (session === undefined) return;
     const host = new Host(12, 4, true);
     try {
-      host.render(nodeForBridge(View.text("stable")));
+      host.render(lowerColdView(View.text("stable")));
       const baseline = host.screenRows();
       for (let seed = 1; seed <= 100; seed++) {
         try {

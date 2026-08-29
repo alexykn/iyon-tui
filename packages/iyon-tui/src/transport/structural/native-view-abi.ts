@@ -41,9 +41,12 @@ import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
   nodeIdPair,
   viewNodeId,
-  type NativePathLineage,
   type View,
 } from "../../api/view/view.ts";
+import type {
+  NativePathLineage,
+  NativeTextLayoutTransactionEdit,
+} from "./retained-path.ts";
 import manifest from "../abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
@@ -110,14 +113,6 @@ export function recordNativeViewRoute(route: NativeViewRoute): void {
  * One typed transaction edit. NodeIds are ordered from changed leaf toward the
  * new root, matching the fixed lanes in the generated ABI.
  */
-export interface NativeTextLayoutTransactionEdit {
-  readonly lineage: NativePathLineage;
-  /** Construction-time scalar NodeIds, ordered leaf toward root. */
-  readonly nodeIds: readonly number[];
-  readonly wrap: number;
-  readonly align: number;
-}
-
 export interface NativeAxisSpliceChild {
   readonly view: View;
   /** `(track kind in low byte, value in the high 16 bits)`; zero means content. */

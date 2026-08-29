@@ -54,8 +54,6 @@ import {
   BRIDGE_VERTICAL_ALIGN,
   BRIDGE_WRAP_MODE,
   VIEW_BRIDGE_SCHEMA_VERSION,
-  peekBridgeDerivation,
-  type BridgeDerivation,
   type BridgeGridTrackNode,
   type BridgeLayoutChild,
   type BridgeOverflowIndicatorNode,
@@ -65,7 +63,7 @@ import {
   type StyleNode,
 } from "../src/transport/structural/ir.ts";
 import { colorNodeFor, borderNodeFor, styleNodeFor, textSpanNodeFor } from "../src/transport/structural/style-lowering.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import {
   axisSetChildForTransport,
   axisSpliceForTransport,
@@ -93,8 +91,8 @@ const ANSI_COLORS = new Set([
 
 /**
  * Test-only bridge oracle. It intentionally lives under tests: H3-A proves
- * the future semantic vocabulary against the current production bridge but
- * does not make this compatibility translation part of the runtime route.
+ * the semantic vocabulary against the complete cold bridge fallback but does
+ * not make this compatibility translation part of the runtime route.
  */
 function semanticFromBridge(root: BridgeViewNode): SemanticViewNode {
   const seen = new WeakMap<BridgeViewNode, SemanticViewNode>();
@@ -211,99 +209,6 @@ function semanticFromBridge(root: BridgeViewNode): SemanticViewNode {
   };
 
   return visit(root);
-}
-
-/** Decodes current packed derivation metadata into semantic facts for A6. */
-function semanticDerivationFromBridge(derivation: BridgeDerivation): SemanticDerivation {
-  switch (derivation.kind) {
-    case "textLayout":
-      return {
-        kind: "textLayout",
-        base: semanticFromBridge(derivation.base),
-        wrap: semanticWrapFromBridge(derivation.wrap),
-        align: semanticHorizontalAlignFromBridge(derivation.align),
-      };
-    case "commonScalar":
-      return {
-        kind: "commonScalar",
-        base: semanticFromBridge(derivation.base),
-        changes: semanticScalarChangesFromBridge(derivation),
-      };
-    case "axisSet":
-      return {
-        kind: "axisSet",
-        base: semanticFromBridge(derivation.base),
-        index: derivation.index,
-        track: semanticAxisTrackFromWord(derivation.trackWord, true),
-        child: semanticFromBridge(derivation.child),
-      };
-    case "axisSplice":
-      return {
-        kind: "axisSplice",
-        base: semanticFromBridge(derivation.base),
-        index: derivation.index,
-        removeCount: derivation.removeCount,
-        inserted: derivation.inserted.map((entry) => ({
-          track: semanticAxisTrackFromWord(entry.trackWord, false)!,
-          child: semanticFromBridge(entry.node),
-        })),
-      };
-    case "gridCell":
-      return {
-        kind: "gridCell",
-        base: semanticFromBridge(derivation.base),
-        row: derivation.row,
-        column: derivation.column,
-        child: semanticFromBridge(derivation.child),
-      };
-  }
-}
-
-function semanticScalarChangesFromBridge(derivation: Extract<BridgeDerivation, { kind: "commonScalar" }>) {
-  const changes: {
-    padding?: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
-    width?: "fit" | "fill";
-    height?: "fit" | "fill";
-    minWidth?: number;
-    maxWidth?: number;
-    minHeight?: number;
-    maxHeight?: number;
-  } = {};
-  if ((derivation.mask & 4) !== 0) {
-    changes.padding = {
-      top: derivation.paddingTopRight & 0xffff,
-      right: derivation.paddingTopRight >>> 16,
-      bottom: derivation.paddingBottomLeft & 0xffff,
-      left: derivation.paddingBottomLeft >>> 16,
-    };
-  }
-  if ((derivation.mask & 8) !== 0) changes.width = scalarModeFromWord(derivation.widthRule, "width");
-  if ((derivation.mask & 16) !== 0) changes.height = scalarModeFromWord(derivation.heightRule, "height");
-  if ((derivation.mask & 32) !== 0) changes.minWidth = derivation.minWidth;
-  if ((derivation.mask & 64) !== 0) changes.maxWidth = derivation.maxWidth;
-  if ((derivation.mask & 128) !== 0) changes.minHeight = derivation.minHeight;
-  if ((derivation.mask & 256) !== 0) changes.maxHeight = derivation.maxHeight;
-  return Object.freeze(changes);
-}
-
-function scalarModeFromWord(value: number, label: string): "fit" | "fill" {
-  if (value === 1) return "fit";
-  if (value === 2) return "fill";
-  throw new TypeError(`unknown ${label} scalar word ${value}`);
-}
-
-function semanticAxisTrackFromWord(trackWord: number, zeroMeansPreserve: boolean): SemanticAxisTrack | undefined {
-  if (trackWord === 0) return zeroMeansPreserve ? undefined : { kind: "normal" };
-  const kind = trackWord & 0xff;
-  const amount = trackWord >>> 8;
-  switch (kind) {
-    case 0: return { kind: "normal" };
-    case 2: return { kind: "contentMax", maxRows: amount };
-    case 3: return { kind: "fixed", size: amount };
-    case 4: return { kind: "flex" };
-    case 5: return { kind: "flexMax", maxRows: amount };
-    default: throw new TypeError(`unknown bridge axis track word ${trackWord}`);
-  }
 }
 
 function semanticDerivationComparable(derivation: SemanticDerivation): unknown {
@@ -818,21 +723,21 @@ function sampleBridgeNodes(): BridgeViewNode[] {
   } as BridgeViewNode;
 
   return [
-    nodeForBridge(View.text("text").noWrap().textAlign("center")),
-    nodeForBridge(View.text("grapheme").wrap("grapheme").textAlign("end")),
-    nodeForBridge(styled),
-    nodeForBridge(diff),
-    nodeForBridge(View.spacer(3)),
-    nodeForBridge(axis),
-    nodeForBridge(View.vertical([View.text("column")])),
-    nodeForBridge(View.hanging(View.text("> "), View.text("  "), View.text("body"))),
-    nodeForBridge(grid),
-    nodeForBridge(View.text("container").container()),
-    nodeForBridge(View.text("clamp").clampRows(2, { kind: "ellipsis", style })),
-    nodeForBridge(View.text("footer").clampRows(2, { kind: "footer", prefix: "more ", style })),
-    nodeForBridge(View.contentMax(4, View.text("content"))),
+    lowerColdView(View.text("text").noWrap().textAlign("center")),
+    lowerColdView(View.text("grapheme").wrap("grapheme").textAlign("end")),
+    lowerColdView(styled),
+    lowerColdView(diff),
+    lowerColdView(View.spacer(3)),
+    lowerColdView(axis),
+    lowerColdView(View.vertical([View.text("column")])),
+    lowerColdView(View.hanging(View.text("> "), View.text("  "), View.text("body"))),
+    lowerColdView(grid),
+    lowerColdView(View.text("container").container()),
+    lowerColdView(View.text("clamp").clampRows(2, { kind: "ellipsis", style })),
+    lowerColdView(View.text("footer").clampRows(2, { kind: "footer", prefix: "more ", style })),
+    lowerColdView(View.contentMax(4, View.text("content"))),
     component,
-    nodeForBridge(decorated),
+    lowerColdView(decorated),
   ];
 }
 
@@ -862,12 +767,12 @@ describe("API-H3 H3-A semantic foundation", () => {
 
   test("semantic conversion preserves shared child identity and excludes bridge metadata", () => {
     const child = View.text("shared");
-    const bridge = nodeForBridge(View.horizontal([child, child]));
+    const bridge = lowerColdView(View.horizontal([child, child]));
     const semantic = semanticFromBridge(bridge);
     if (semantic.kind !== SEMANTIC_VIEW_KIND.row) throw new Error("expected semantic row");
 
     expect(semantic.children[0]!.child).toBe(semantic.children[1]!.child);
-    expect(semantic.children[0]!.child.id).toBe(nodeForBridge(child).id);
+    expect(semantic.children[0]!.child.id).toBe(lowerColdView(child).id);
     expect(semantic.id).toBe(bridge.id);
     expect(Object.isFrozen(semantic)).toBe(true);
     expect(Object.isFrozen(semantic.children)).toBe(true);
@@ -875,7 +780,7 @@ describe("API-H3 H3-A semantic foundation", () => {
     expect("handle" in semantic).toBe(false);
 
     const associated = View.text("associated");
-    const associatedNode = semanticFromBridge(nodeForBridge(associated));
+    const associatedNode = semanticFromBridge(lowerColdView(associated));
     installSemanticNode(associated, associatedNode);
     expect(semanticNodeOf(associated)).toBe(associatedNode);
     expect(() => semanticNodeOf({} as View)).toThrow(/semantic value/);
@@ -1055,51 +960,51 @@ describe("API-H3 H3-A semantic foundation", () => {
     const text = View.text("text").noWrap();
     const scalar = View.text("scalar").padding(1);
     const axisBase = View.horizontal([View.text("a"), View.text("b")]);
-    const axisSet = axisSetChildForTransport(axisBase, 0, View.text("replacement"), 3 | (4 << 8));
-    const axisSplice = axisSpliceForTransport(axisBase, 1, 1, [{ view: View.text("inserted"), trackWord: 5 | (3 << 8) }]);
+    const axisSet = axisSetChildForTransport(axisBase, 0, View.text("replacement"), { kind: "fixed", size: 4 });
+    const axisSplice = axisSpliceForTransport(axisBase, 1, 1, [{ view: View.text("inserted"), track: { kind: "flexMax", maxRows: 3 } }]);
     const gridBase = View.grid([View.text("cell")]);
     const gridCell = gridSetCellForTransport(gridBase, 0, 0, View.text("new cell"));
-    const bridgeDerivations = [
-      peekBridgeDerivation(nodeForBridge(text)),
-      peekBridgeDerivation(nodeForBridge(scalar)),
-      peekBridgeDerivation(nodeForBridge(axisSet)),
-      peekBridgeDerivation(nodeForBridge(axisSplice)),
-      peekBridgeDerivation(nodeForBridge(gridCell)),
+    const semanticDerivations = [
+      peekSemanticDerivation(semanticNodeOf(text)),
+      peekSemanticDerivation(semanticNodeOf(scalar)),
+      peekSemanticDerivation(semanticNodeOf(axisSet)),
+      peekSemanticDerivation(semanticNodeOf(axisSplice)),
+      peekSemanticDerivation(semanticNodeOf(gridCell)),
     ];
-    if (bridgeDerivations.some((derivation) => derivation === undefined)) {
-      throw new Error("current retained derivation fixture did not produce every derivation family");
+    if (semanticDerivations.some((derivation) => derivation === undefined)) {
+      throw new Error("retained derivation fixture did not produce every derivation family");
     }
-    const textDerivation = bridgeDerivations[0] as Extract<BridgeDerivation, { kind: "textLayout" }>;
-    const scalarDerivation = bridgeDerivations[1] as Extract<BridgeDerivation, { kind: "commonScalar" }>;
-    const axisSetDerivation = bridgeDerivations[2] as Extract<BridgeDerivation, { kind: "axisSet" }>;
-    const axisSpliceDerivation = bridgeDerivations[3] as Extract<BridgeDerivation, { kind: "axisSplice" }>;
-    const gridCellDerivation = bridgeDerivations[4] as Extract<BridgeDerivation, { kind: "gridCell" }>;
-    expect(semanticDerivationComparable(semanticDerivationFromBridge(textDerivation))).toEqual({
+    const textDerivation = semanticDerivations[0] as Extract<SemanticDerivation, { kind: "textLayout" }>;
+    const scalarDerivation = semanticDerivations[1] as Extract<SemanticDerivation, { kind: "commonScalar" }>;
+    const axisSetDerivation = semanticDerivations[2] as Extract<SemanticDerivation, { kind: "axisSet" }>;
+    const axisSpliceDerivation = semanticDerivations[3] as Extract<SemanticDerivation, { kind: "axisSplice" }>;
+    const gridCellDerivation = semanticDerivations[4] as Extract<SemanticDerivation, { kind: "gridCell" }>;
+    expect(semanticDerivationComparable(textDerivation)).toEqual({
       kind: "textLayout",
       base: textDerivation.base.id,
       wrap: "noWrap",
       align: "start",
     });
-    expect(semanticDerivationComparable(semanticDerivationFromBridge(scalarDerivation))).toEqual({
+    expect(semanticDerivationComparable(scalarDerivation)).toEqual({
       kind: "commonScalar",
       base: scalarDerivation.base.id,
       changes: { padding: { top: 1, right: 1, bottom: 1, left: 1 } },
     });
-    expect(semanticDerivationComparable(semanticDerivationFromBridge(axisSetDerivation))).toEqual({
+    expect(semanticDerivationComparable(axisSetDerivation)).toEqual({
       kind: "axisSet",
       base: axisSetDerivation.base.id,
       index: 0,
       track: { kind: "fixed", size: 4 },
       child: axisSetDerivation.child.id,
     });
-    expect(semanticDerivationComparable(semanticDerivationFromBridge(axisSpliceDerivation))).toEqual({
+    expect(semanticDerivationComparable(axisSpliceDerivation)).toEqual({
       kind: "axisSplice",
       base: axisSpliceDerivation.base.id,
       index: 1,
       removeCount: 1,
-      inserted: [{ track: { kind: "flexMax", maxRows: 3 }, child: axisSpliceDerivation.inserted[0]!.node.id }],
+      inserted: [{ track: { kind: "flexMax", maxRows: 3 }, child: axisSpliceDerivation.inserted[0]!.child.id }],
     });
-    expect(semanticDerivationComparable(semanticDerivationFromBridge(gridCellDerivation))).toEqual({
+    expect(semanticDerivationComparable(gridCellDerivation)).toEqual({
       kind: "gridCell",
       base: gridCellDerivation.base.id,
       row: 0,

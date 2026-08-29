@@ -37,9 +37,9 @@ import {
   verticalAlignCode,
   wrapModeCode,
 } from "./encoding.ts";
-import { semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
-import { componentIdForHandleId } from "./component-view.ts";
-import { lowerSemanticView, semanticNodeForBridge } from "./cold-lowering.ts";
+import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
+import { componentIdForHandleId } from "./component-id.ts";
+import { lowerSemanticView } from "./cold-lowering.ts";
 import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
 import type { NativeViewAbiSession } from "./native-view-abi.ts";
 import {
@@ -1021,10 +1021,10 @@ function splitNodeId(id: number): [number, number] {
 export function ensureNative(node: SemanticViewNode, tx: MaterializeTx): number;
 export function ensureNative(node: object, tx: MaterializeTx): number;
 export function ensureNative(node: SemanticViewNode | object, tx: MaterializeTx): number {
-  const semantic = semanticNodeForBridge(node);
-  if (semantic !== undefined) return ensureSemanticNative(semantic, tx);
-  if ("schema" in node) throw new RetainedFastFallbackError("bridge node was not produced by cold lowering");
-  return ensureSemanticNative(node as SemanticViewNode, tx);
+  if (!isSemanticViewNode(node)) {
+    throw new RetainedFastFallbackError("structural materialization requires a semantic node");
+  }
+  return ensureSemanticNative(node, tx);
 }
 
 /** @internal Semantic-only retained entrypoint; bridge callers use ensureNative. */

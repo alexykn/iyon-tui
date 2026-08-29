@@ -1,13 +1,14 @@
 import { View } from "../src/index.ts";
-import { BRIDGE_VIEW_KIND } from "../src/transport/structural/ir.ts";
 import {
   axisSetChildForTransport,
   axisSpliceForTransport,
   gridSetCellForTransport,
+} from "../src/api/view/view.ts";
+import {
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
   type NativePathStep,
-} from "../src/api/view/view.ts";
+} from "../src/transport/structural/retained-path.ts";
 
 export interface T15WorkloadConfig {
   readonly workload: string;

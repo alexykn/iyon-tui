@@ -14,7 +14,7 @@ import {
 } from "../../composition/execution.ts";
 import { activeExecutionScope, protocolState } from "../../composition/execution-context.ts";
 import { composeComponent } from "../../composition/compose.ts";
-import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
+import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
 
@@ -48,7 +48,7 @@ function buildPaneHandle(host: NativeTuiHostContract, initialView?: View): objec
       releaseNativeViewRef(nativeViewAbiSession(), retained);
     }
   }
-  return host.scrollPane(nodeForBridge(seed));
+  return host.scrollPane(lowerColdView(seed));
 }
 
 /**
@@ -137,7 +137,7 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
       // valid through a transactional native semantic publication.
       return {
         commit: (): void => {
-          this.nativeAs<NativeScrollPaneHandle>().setContent(nodeForBridge(output));
+          this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(output));
           this.currentView = output;
         },
         abort(): void {},
@@ -188,7 +188,7 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeAs<NativeScrollPaneHandle>().setContent(nodeForBridge(view));
+      this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(view));
       this.currentView = view;
     });
     // Transactional ownership transition (direct wins after successful

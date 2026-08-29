@@ -32,8 +32,13 @@ import {
   materializeSpacer,
 } from "./view_materialize.ts";
 import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/transport/structural/ir.ts";
-import { nodeForBridge } from "../../src/transport/structural/view-bridge.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/transport/structural/ir.ts";
+import {
+  lowerColdViewForDirect,
+  peekBridgeDerivation,
+  peekBridgeGridSequenceOverride,
+  peekBridgeSequenceOverride,
+} from "./bridge-metadata.ts";
 import { viewNodeIdHighWater, type View } from "../../src/api/view/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -964,12 +969,12 @@ function installHint(node: BridgeViewNode, generation: number, nativeRef: number
 
 /** @internal Refreshes a hint after a lease-bearing NodeId promotion. */
 export function refreshNativeHint(view: View, generation: number, nativeRef: number): void {
-  installHint(nodeForBridge(view), generation, nativeRef);
+  installHint(lowerColdViewForDirect(view), generation, nativeRef);
 }
 
 /** @internal Drops a confirmed-stale hint before complete fallback recovery. */
 export function clearNativeHint(view: View): void {
-  deleteBridgeNativeHint(nodeForBridge(view));
+  deleteBridgeNativeHint(lowerColdViewForDirect(view));
 }
 
 function deleteBridgeNativeHint(node: BridgeViewNode): void {
@@ -1221,7 +1226,7 @@ export function renderExactRoot(
   hostPointer: Pointer,
   view: View,
 ): ExactRootRender {
-  const node = nodeForBridge(view);
+  const node = lowerColdViewForDirect(view);
   const generation = session.abi.generation;
   const hint = BRIDGE_NATIVE.get(node);
 
@@ -1299,7 +1304,7 @@ export function renderExactRoot(
  * boundary owns as its root lease.
  */
 export function acquireKnownRoot(session: NativeViewAbiSession, view: View): number | undefined {
-  const node = nodeForBridge(view);
+  const node = lowerColdViewForDirect(view);
   const [low, high] = splitNodeId(node.id);
   counters.node_id_ref_promotion_attempts += 1;
   try {
@@ -1492,7 +1497,7 @@ export class RetainedRootBoundary {
     acquiredBoundaryLease: boolean;
   } | undefined {
     const prepareStart = phaseNow();
-    const node = nodeForBridge(view);
+    const node = lowerColdViewForDirect(view);
     const tx = new MaterializeTx(
       this.session.symbols,
       this.session.runtime,
@@ -1563,7 +1568,7 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const materialize = COLD_ROOT_MATERIALIZER;
     if (materialize === undefined) return undefined;
-    const node = nodeForBridge(view);
+    const node = lowerColdViewForDirect(view);
     const materializeStart = phaseNow();
     const rootRef = materialize(view);
     const materializeEnd = phaseNow();

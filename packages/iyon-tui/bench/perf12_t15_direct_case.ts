@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
@@ -55,7 +55,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(nodeForBridge(view));
+  host.render(lowerColdView(view));
   if (!boundary.adopt(view)) throw new Error("direct-ffi cold fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });

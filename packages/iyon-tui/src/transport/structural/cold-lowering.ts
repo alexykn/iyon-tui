@@ -1,24 +1,16 @@
 /**
- * Transitional complete semantic-to-bridge lowering for H3-B.
+ * Complete derived semantic-to-bridge lowering for the cold structural path.
  *
- * This module is the correctness path while retained-dag.ts still consumes
- * bridge records. It is intentionally derived and weakly cached: the semantic
- * node remains authoritative, and H3-C will remove bridge construction from
- * the warm retained route.
+ * The semantic node remains authoritative. This module is used only when a
+ * caller needs a complete bridge object for safe N-API decoding; retained
+ * materialization consumes semantic nodes directly.
  */
 
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
-  peekSemanticDerivation,
-  peekSemanticGridSequenceOverride,
-  peekSemanticSequenceOverride,
   SEMANTIC_VIEW_KIND,
-  type SemanticAxisTrack,
   type SemanticColor,
-  type SemanticCommonScalarChanges,
   type SemanticDecoration,
-  type SemanticDerivation,
-  type SemanticGridCell,
   type SemanticGridTrack,
   type SemanticLayoutChild,
   type SemanticOverflowIndicator,
@@ -35,29 +27,22 @@ import {
   BRIDGE_VIEW_KIND,
   BRIDGE_VERTICAL_ALIGN,
   BRIDGE_WRAP_MODE,
-  setBridgeDerivation,
-  setBridgeGridSequenceOverride,
-  setBridgeSequenceOverride,
   VIEW_BRIDGE_SCHEMA_VERSION,
   type BorderNode,
-  type BridgeDerivation,
   type BridgeGridCellNode,
   type BridgeGridTrackNode,
   type BridgeLayoutChild,
   type BridgeOverflowIndicatorNode,
-  type BridgeSequence,
   type BridgeViewNode,
   type BridgeViewNodeDraft,
   type ColorNode,
   type DecorationNode,
   type StyleNode,
 } from "./ir.ts";
-import { componentIdForHandleId } from "./component-view.ts";
+import { componentIdForHandleId } from "./component-id.ts";
 import type { View } from "../../api/view/view.ts";
 
 const semanticToBridge = new WeakMap<SemanticViewNode, BridgeViewNode>();
-/** Transitional reverse association for the generated bridge materializer. */
-const bridgeToSemantic = new WeakMap<object, SemanticViewNode>();
 const lowering = new WeakSet<SemanticViewNode>();
 const coldCounters = { cold_bridge_objects_allocated: 0 };
 
@@ -93,17 +78,10 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
       ...draft,
     } as BridgeViewNode);
     semanticToBridge.set(node, bridge);
-    bridgeToSemantic.set(bridge, node);
-    attachBridgeSidecars(node, bridge);
     return bridge;
   } finally {
     lowering.delete(node);
   }
-}
-
-/** @internal Resolves only bridge records produced by this cold lowerer. */
-export function semanticNodeForBridge(bridge: object): SemanticViewNode | undefined {
-  return bridgeToSemantic.get(bridge);
 }
 
 function semanticDraftFor(node: SemanticViewNode): BridgeViewNodeDraft {
@@ -195,46 +173,6 @@ function semanticDraftFor(node: SemanticViewNode): BridgeViewNodeDraft {
   }
 }
 
-function attachBridgeSidecars(node: SemanticViewNode, bridge: BridgeViewNode): void {
-  const derivation = peekSemanticDerivation(node);
-  if (derivation !== undefined) setBridgeDerivation(bridge, bridgeDerivation(derivation));
-
-  const axis = peekSemanticSequenceOverride(node);
-  if (axis !== undefined) {
-    setBridgeSequenceOverride(bridge, {
-      baseNode: lowerSemanticView(axis.baseNode),
-      sequence: mapSequence(axis.sequence, bridgeLayoutChild),
-      edit: axis.edit,
-    });
-  }
-
-  const grid = peekSemanticGridSequenceOverride(node);
-  if (grid !== undefined) {
-    setBridgeGridSequenceOverride(bridge, {
-      baseNode: lowerSemanticView(grid.baseNode),
-      sequence: mapSequence(grid.sequence, bridgeGridCell),
-      rowOffsets: grid.rowOffsets,
-      rowTracks: grid.rowTracks.map(bridgeGridTrack),
-      cellIndices: grid.cellIndices,
-    });
-  }
-}
-
-function mapSequence<T, U>(source: { readonly length: number; get(index: number): T | undefined }, map: (value: T) => U): BridgeSequence<U> {
-  const mapped = new Map<number, U>();
-  return {
-    length: source.length,
-    get(index: number): U | undefined {
-      if (mapped.has(index)) return mapped.get(index);
-      const value = source.get(index);
-      if (value === undefined) return undefined;
-      const result = map(value);
-      mapped.set(index, result);
-      return result;
-    },
-  };
-}
-
 function bridgeLayoutChild(child: SemanticLayoutChild): BridgeLayoutChild {
   switch (child.kind) {
     case "normal": return { kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: lowerSemanticView(child.child) };
@@ -243,16 +181,6 @@ function bridgeLayoutChild(child: SemanticLayoutChild): BridgeLayoutChild {
     case "flexMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: child.maxRows, child: lowerSemanticView(child.child) };
     case "contentMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: child.maxRows, child: lowerSemanticView(child.child) };
   }
-}
-
-function bridgeGridCell(cell: SemanticGridCell): BridgeGridCellNode {
-  return {
-    view: lowerSemanticView(cell.view),
-    columnSpan: cell.columnSpan,
-    rowSpan: cell.rowSpan,
-    horizontalAlign: bridgeHorizontalAlign(cell.horizontalAlign),
-    verticalAlign: bridgeVerticalAlign(cell.verticalAlign),
-  };
 }
 
 function bridgeGridTrack(track: SemanticGridTrack): BridgeGridTrackNode {
@@ -314,87 +242,6 @@ function bridgeOverflow(overflow: SemanticOverflowIndicator): BridgeOverflowIndi
     case "none": return { kind: BRIDGE_OVERFLOW_KIND.none };
     case "ellipsis": return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: bridgeStyleFor(overflow.style) };
     case "footer": return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: bridgeStyleFor(overflow.style) };
-  }
-}
-
-function bridgeDerivation(derivation: SemanticDerivation): BridgeDerivation {
-  switch (derivation.kind) {
-    case "textLayout":
-      return {
-        kind: "textLayout",
-        base: lowerSemanticView(derivation.base),
-        wrap: bridgeWrapMode(derivation.wrap),
-        align: bridgeHorizontalAlign(derivation.align),
-      };
-    case "commonScalar":
-      return bridgeCommonScalarDerivation(derivation.base, derivation.changes);
-    case "axisSet":
-      return {
-        kind: "axisSet",
-        base: lowerSemanticView(derivation.base),
-        index: derivation.index,
-        trackWord: bridgeTrackWord(derivation.track),
-        child: lowerSemanticView(derivation.child),
-      };
-    case "axisSplice":
-      return {
-        kind: "axisSplice",
-        base: lowerSemanticView(derivation.base),
-        index: derivation.index,
-        removeCount: derivation.removeCount,
-        inserted: derivation.inserted.map((entry) => ({
-          node: lowerSemanticView(entry.child),
-          trackWord: bridgeTrackWord(entry.track),
-        })),
-      };
-    case "gridCell":
-      return {
-        kind: "gridCell",
-        base: lowerSemanticView(derivation.base),
-        row: derivation.row,
-        column: derivation.column,
-        child: lowerSemanticView(derivation.child),
-      };
-  }
-}
-
-function bridgeCommonScalarDerivation(
-  base: SemanticViewNode,
-  changes: SemanticCommonScalarChanges,
-): Extract<BridgeDerivation, { kind: "commonScalar" }> {
-  const mask =
-    (changes.padding === undefined ? 0 : 4)
-    | (changes.width === undefined ? 0 : 8)
-    | (changes.height === undefined ? 0 : 16)
-    | (changes.minWidth === undefined ? 0 : 32)
-    | (changes.maxWidth === undefined ? 0 : 64)
-    | (changes.minHeight === undefined ? 0 : 128)
-    | (changes.maxHeight === undefined ? 0 : 256);
-  return {
-    kind: "commonScalar",
-    base: lowerSemanticView(base),
-    mask,
-    paddingTopRight: changes.padding === undefined ? 0 : (changes.padding.top & 0xffff) | ((changes.padding.right & 0xffff) << 16),
-    paddingBottomLeft: changes.padding === undefined ? 0 : (changes.padding.bottom & 0xffff) | ((changes.padding.left & 0xffff) << 16),
-    widthRule: changes.width === undefined ? 0 : changes.width === "fit" ? 1 : 2,
-    heightRule: changes.height === undefined ? 0 : changes.height === "fit" ? 1 : 2,
-    minWidth: changes.minWidth ?? 0,
-    maxWidth: changes.maxWidth ?? 0,
-    minHeight: changes.minHeight ?? 0,
-    maxHeight: changes.maxHeight ?? 0,
-  };
-}
-
-function bridgeTrackWord(track: SemanticAxisTrack | undefined): number {
-  // The compact retained edit word is a distinct encoding from
-  // BRIDGE_LAYOUT_CHILD_KIND: zero=normal, 2=contentMax, 3=fixed,
-  // 4=flex, and 5=flexMax. Keep this mapping explicit at the boundary.
-  if (track === undefined || track.kind === "normal") return 0;
-  switch (track.kind) {
-    case "contentMax": return 2 | (track.maxRows << 8);
-    case "fixed": return 3 | (track.size << 8);
-    case "flex": return 4;
-    case "flexMax": return 5 | (track.maxRows << 8);
   }
 }
 

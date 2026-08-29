@@ -275,13 +275,17 @@ export type SemanticViewNodeDraft = WithoutId<SemanticViewNode>;
  */
 export function createSemanticViewNode(id: SemanticNodeId, draft: SemanticViewNodeDraft): SemanticViewNode {
   if (!Number.isSafeInteger(id) || id < 1) throw new RangeError("semantic View node identity must be a positive safe integer");
-  return freezeSemanticViewNode({ id, ...draft } as SemanticViewNode);
+  const node = freezeSemanticViewNode({ id, ...draft } as SemanticViewNode);
+  semanticNodeBrand.add(node);
+  return node;
 }
 
 /** Private association used when H3-B makes semantic nodes View-authoritative. */
 const semanticNodes = new WeakMap<View, SemanticViewNode>();
+const semanticNodeBrand = new WeakSet<object>();
 
 export function installSemanticNode(view: View, node: SemanticViewNode): void {
+  semanticNodeBrand.add(node);
   semanticNodes.set(view, node);
 }
 
@@ -289,6 +293,11 @@ export function semanticNodeOf(view: View): SemanticViewNode {
   const node = semanticNodes.get(view);
   if (node === undefined) throw new TypeError("view is not a framework semantic value");
   return node;
+}
+
+/** @internal Brand check for transport entrypoints that already hold a node. */
+export function isSemanticViewNode(value: unknown): value is SemanticViewNode {
+  return typeof value === "object" && value !== null && semanticNodeBrand.has(value);
 }
 
 /** Freezes semantic records without introducing a transport-shaped copy. */

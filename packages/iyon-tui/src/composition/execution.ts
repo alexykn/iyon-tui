@@ -8,8 +8,8 @@
  *     never mutates committed keyed state;
  *   - ACTIVE_CHILD_OWNER context (execution-context.ts): View.key swaps only
  *     where component invocations reconcile — never the executing scope;
- *   - PublicationTarget split from ScopeProjection: builder roots publish
- *     somewhere without being projected into a parent;
+ *   - StructuralPublicationTarget split from child projection identity:
+ *     builder roots publish somewhere without being projected into a parent;
  *   - OwnedBuilderRoot: producer is part of the transaction (§32.2.6).
  *
  * All R1–R7 invariants stand: immutable outputs, prepare-all/commit-once,
@@ -21,6 +21,12 @@ import { semanticNodeOf } from "../api/view/semantic-node.ts";
 import type { View } from "../api/view/view.ts";
 import type { ViewComponentType } from "./define-view.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
+import type {
+  PreparedStructuralPublication,
+  StructuralPublicationTarget,
+  StructuralScopeProjection,
+  StructuralScopeProjectionFactory,
+} from "./publication.ts";
 import {
   ChildOwnerState,
   KeyGroup,
@@ -40,56 +46,8 @@ import {
 export type { ViewKey };
 export { executionContext, activeExecutionScope };
 
-// --- Public-machinery types --------------------------------------------------
-
-/**
- * One fallible-free publication of a prepared native root (R7 contract):
- * commit is infallible after successful preparation; abort leaves the old
- * root installed and leased.
- */
-export interface PreparedPublication {
-  commit(): void;
-  abort(): void;
-}
-
-/**
- * WHERE a scope's latest immutable output gets installed (R8 split from
- * projection). Builder roots have a target but no projection.
- */
-export interface PublicationTarget {
-  /**
-   * Prepares everything fallible without publishing. `undefined` counts as
-   * refused preparation (the enclosing batch aborts atomically).
-   */
-  preparePublication(output: View): PreparedPublication | undefined;
-  /**
-   * Optional metadata-only publication trigger. Root boundaries use this for
-   * Scene sideband changes (for example History) when the semantic body View
-   * is unchanged.
-   */
-  needsPublication?(output: View): boolean;
-}
-
-/**
- * HOW a child scope is represented in its parent: a stable component/ref
- * view created once at mount, behind which content swaps happen.
- */
-export interface ScopeProjection {
-  readonly view: View;
-  /**
-   * R7 transactional publication. OPTIONAL on projections: legacy/detached
-   * projections without it fall back to per-scope `install` (non-atomic).
-   * Production targets always provide it.
-   */
-  preparePublication?(output: View): PreparedPublication | undefined;
-  /** Legacy per-scope fallback (non-transactional). */
-  install(output: View): void;
-  /** Releases the sub-root lease and native slot. Must be idempotent. */
-  dispose(): void;
-}
-
-/** Optional factory consulted when a child scope mounts. */
-export type ScopeProjectionFactory = (scope: RetainedExecutionScope<never>) => ScopeProjection | undefined;
+// Publication contracts are owned by composition/publication.ts. This module
+// owns their execution protocol, not their structural implementation.
 
 interface SemanticSlot {
   current: View | undefined;
@@ -146,7 +104,7 @@ export type ExecutionScopeState = "clean" | "evaluating" | "aborted";
 
 /**
  * One logical component instance. Continuity boundary between successive
- * evaluations: ExecutionScope identity ≠ NodeId ≠ NativeRef (handoff §6).
+ * evaluations: ExecutionScope identity ≠ NodeId ≠ physical resource (handoff §6).
  */
 export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
   readonly id: number;
@@ -184,11 +142,11 @@ export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
   }
 
   /** WHERE output installs (builder roots / projected children). */
-  publicationTarget: PublicationTarget | undefined = undefined;
+  publicationTarget: StructuralPublicationTarget | undefined = undefined;
   /** HOW represented in the parent (projected children only). */
-  projection: ScopeProjection | undefined = undefined;
+  projection: StructuralScopeProjection | undefined = undefined;
   projectedOutput: View | undefined = undefined;
-  stagedPublication: PreparedPublication | undefined = undefined;
+  stagedPublication: PreparedStructuralPublication | undefined = undefined;
 
   constructor(
     runtime: RetainedExecutionRuntime,
@@ -226,13 +184,9 @@ export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
     return this.table.slots.length;
   }
 
-  /** Active publication target: explicit target, else a transactional projection. */
-  get effectivePublicationTarget(): PublicationTarget | undefined {
-    if (this.publicationTarget !== undefined) return this.publicationTarget;
-    const prepare = this.projection?.preparePublication;
-    return prepare === undefined
-      ? undefined
-      : { preparePublication: (output: View) => prepare.call(this.projection!, output) };
+  /** Active publication target: explicit target, else the child projection target. */
+  get effectivePublicationTarget(): StructuralPublicationTarget | undefined {
+    return this.publicationTarget ?? this.projection?.target;
   }
 
   dispose(): void {
@@ -365,7 +319,7 @@ export function propsShallowEqual(a: unknown, b: unknown): boolean {
 let NEXT_SCOPE_ID = 1;
 
 export interface RetainedExecutionRuntimeOptions {
-  createScopeProjection?: ScopeProjectionFactory;
+  createScopeProjection?: StructuralScopeProjectionFactory;
   autoFlush?: boolean;
   /** Internal transaction hook for boundary-owned WIP sideband state. */
   onBatchAbort?: () => void;
@@ -375,7 +329,7 @@ export class RetainedExecutionRuntime {
   private queue: RetainedExecutionScope[] = [];
   private flushing = false;
   private readonly roots: RetainedExecutionScope[] = [];
-  private readonly projectionFactory: ScopeProjectionFactory | undefined;
+  private readonly projectionFactory: StructuralScopeProjectionFactory | undefined;
   private readonly autoFlush: boolean;
   private readonly onBatchAbort: (() => void) | undefined;
   /**
@@ -709,22 +663,16 @@ export class RetainedExecutionRuntime {
         pendingOutput !== scope.projectedOutput
         || target?.needsPublication?.(pendingOutput) === true
       );
-    if (needsPublication) {
-      const publication = prepare.call(target, pendingOutput);
-      if (publication === undefined) {
-        // A projection may lack a native boundary (for example a detached
-        // compatibility host). Its fallback install path remains the complete
-        // fallback. Explicit publication targets, such as the scene root,
-        // have no legacy target and must still abort atomically on refusal.
-        if (scope.projection !== undefined && scope.publicationTarget === undefined) return;
-        throw new ExecutionError(
-          "TUI_EXECUTION_PREPARE_REFUSED",
-          `publication target for scope ${scope.id} refused preparation; batch aborts atomically`,
-        );
-      }
-      scope.stagedPublication = publication;
-      staged.push(scope);
+    if (!needsPublication) return;
+    const publication = prepare.call(target, pendingOutput);
+    if (publication === undefined) {
+      throw new ExecutionError(
+        "TUI_EXECUTION_PREPARE_REFUSED",
+        `publication target for scope ${scope.id} refused preparation; batch aborts atomically`,
+      );
     }
+    scope.stagedPublication = publication;
+    staged.push(scope);
   }
 
   /** Stages every pending component below an execution owner. */
@@ -794,15 +742,6 @@ export class RetainedExecutionRuntime {
         protocolState.internalPublication = false;
       }
       scope.stagedPublication = undefined;
-      scope.projectedOutput = newOutput;
-    } else if (scope.projection !== undefined && newOutput !== scope.projectedOutput) {
-      // Legacy per-scope fallback for projections without transactions.
-      protocolState.internalPublication = true;
-      try {
-        scope.projection.install(newOutput);
-      } finally {
-        protocolState.internalPublication = false;
-      }
       scope.projectedOutput = newOutput;
     }
     if (newOutput === scope.currentOutput) {
@@ -1251,7 +1190,7 @@ export class OwnedBuilderRoot {
   private constructor(
     runtime: RetainedExecutionRuntime,
     producer: () => View,
-    target: PublicationTarget,
+    target: StructuralPublicationTarget,
   ) {
     this.currentProducer = producer;
     // The scope renders whatever the CURRENT producer yields; the producer
@@ -1266,7 +1205,7 @@ export class OwnedBuilderRoot {
   static start(
     runtime: RetainedExecutionRuntime,
     producer: () => View,
-    target: PublicationTarget,
+    target: StructuralPublicationTarget,
   ): OwnedBuilderRoot {
     const root = new OwnedBuilderRoot(runtime, producer, target);
     runtime.mountExistingRoot(root.scope);

@@ -878,7 +878,7 @@ describe("API-H3 H3-A semantic foundation", () => {
     const associatedNode = semanticFromBridge(nodeForBridge(associated));
     installSemanticNode(associated, associatedNode);
     expect(semanticNodeOf(associated)).toBe(associatedNode);
-    expect(() => semanticNodeOf(View.text("unassociated"))).toThrow(/semantic value/);
+    expect(() => semanticNodeOf({} as View)).toThrow(/semantic value/);
   });
 
   test("semantic normalizers match the current bridge lowering for every public presentation form", () => {

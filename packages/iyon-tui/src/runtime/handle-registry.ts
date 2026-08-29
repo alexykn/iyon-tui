@@ -15,7 +15,7 @@ export function registerFrameworkHandle(handle: object, resource: object): Handl
   const id = nextHandleId++ as HandleId;
   try {
     handleIds.set(handle, id);
-    registerNativeResource(handle, resource);
+    registerNativeResource(handle, resource, id);
     return id;
   } catch (error) {
     handleIds.delete(handle);
@@ -32,7 +32,8 @@ export function handleIdOf(handle: object): HandleId {
 
 /** Removes runtime identity and its associated raw resource. */
 export function releaseFrameworkHandle(handle: object): void {
-  releaseNativeResource(handle);
+  const id = handleIds.get(handle);
+  releaseNativeResource(handle, id);
   handleIds.delete(handle);
 }
 

@@ -476,7 +476,31 @@ function cut5ImportBoundaryGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 7: H2 CUT 5 root publication boundary
+// Gate 7: H3-B composition/structural transport seam
+// ---------------------------------------------------------------------------
+
+function h3bCompositionTransportGate(): void {
+  const offenders: string[] = [];
+  for (const file of walk(join(FRAMEWORK_SRC, "composition"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+      if (target.startsWith("transport/")) {
+        offenders.push(`${relative(ROOT, file)} imports structural transport: ${target}`);
+      }
+    }
+  }
+  if (offenders.length > 0) {
+    fail("h3b-composition-transport-seam", offenders.join("; "));
+  } else {
+    pass("h3b-composition-transport-seam", "composition imports no structural/native transport implementation");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 8: H2 CUT 5 root publication boundary
 // ---------------------------------------------------------------------------
 
 function cut5RootPublicationGate(): void {
@@ -719,6 +743,7 @@ async function themeStyleSemanticGate(): Promise<void> {
     "transport/structural/native-view-abi.ts",
     "transport/structural/retained-dag.ts",
     "transport/structural/style-lowering.ts",
+    "transport/structural/cold-lowering.ts",
     "transport/structural/view-bridge.ts",
   ]);
   const offenders: string[] = [];
@@ -1297,6 +1322,7 @@ cut2OwnershipGate();
 cut3OwnershipGate();
 cut4RootCleanupGate();
 cut5ImportBoundaryGate();
+h3bCompositionTransportGate();
 cut5RootPublicationGate();
 cut5ModuleIdentityGate();
 cut5PackagePublicationGate();

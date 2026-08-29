@@ -1,6 +1,5 @@
 import type { ComponentId } from "../../api/extensions/traits/component.ts";
 import bridgeSchema from "../abi/structural/schema/bridge-schema.json";
-import { PersistentSeq } from "../../composition/persistent-seq.ts";
 
 type BridgeSchema = {
   readonly schemaVersion: 1;
@@ -376,6 +375,12 @@ export type BridgeDerivation =
   | BridgeAxisSpliceDerivation
   | BridgeGridCellDerivation;
 
+/** Read-only bridge sequence view used by retained transport operations. */
+export interface BridgeSequence<T> {
+  readonly length: number;
+  get(index: number): T | undefined;
+}
+
 /** Axis sequence edit descriptor carried alongside the authoritative seq. */
 export type AxisSequenceEdit =
   | { readonly kind: "axisSet"; readonly index: number }
@@ -383,14 +388,14 @@ export type AxisSequenceEdit =
 
 export interface BridgeSequenceOverride {
   readonly baseNode: BridgeViewNode;
-  readonly sequence: PersistentSeq<BridgeLayoutChild>;
+  readonly sequence: BridgeSequence<BridgeLayoutChild>;
   /** Undefined for the initial wide-axis sequence seed. */
   readonly edit?: AxisSequenceEdit;
 }
 
 export interface BridgeGridSequenceOverride {
   readonly baseNode: BridgeViewNode;
-  readonly sequence: PersistentSeq<BridgeGridCellNode>;
+  readonly sequence: BridgeSequence<BridgeGridCellNode>;
   /** Prefix cell offsets; length = row count + 1. */
   readonly rowOffsets: readonly number[];
   readonly rowTracks: readonly BridgeGridTrackNode[];

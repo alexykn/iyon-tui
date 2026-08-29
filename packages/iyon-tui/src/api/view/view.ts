@@ -1,69 +1,62 @@
 /**
- * PERF-12 T4: eager immutable semantic View DAG (PERF-12 handoff §13/§14/§84).
+ * Immutable semantic View values.
  *
- * Production has been restored to the historical 7v2 semantic model
- * (e5292d62c4011610850cbdc1ba4a35f296f78e4f), mechanically adapted to the
- * current schema. NodeId assignment, freezing, child identity sharing, and
- * the lookup-only nodeForBridge are exactly 7v2. The post-7v2 text-span
- * style pushdown was evaluated and dropped: under the eager model it is
- * slower than the 7v2 decorated wrapper at construction (measured 1,145 ns
- * vs 661 ns for one modifier) and is render-equivalent, so faithful 7v2
- * semantics win; a cheaper form can return as a PERF-12 §27 derivation hint
- * in the T9 tranche if it ever measures as a net win.
- *
+ * The View layer owns semantic identity, child relationships, normalized
+ * presentation values, and retained derivation hints. Structural transport is
+ * deliberately absent here; it consumes these values through its private
+ * compatibility/lowering boundary while H3-C moves the warm path directly to
+ * the semantic model.
  */
 
 import type { BorderSpec, TextAttribute } from "../presentation/style.ts";
-import type { ColorSpec } from "../presentation/theme.ts";
-import {
-  BRIDGE_DIFF_LINE_KIND,
-  BRIDGE_DIFF_LINE_TERMINATION,
-  BRIDGE_GRID_TRACK_KIND,
-  BRIDGE_HORIZONTAL_ALIGN,
-  BRIDGE_LAYOUT_CHILD_KIND,
-  BRIDGE_OVERFLOW_KIND,
-  BRIDGE_VIEW_KIND,
-  BRIDGE_VERTICAL_ALIGN,
-  BRIDGE_WRAP_MODE,
-  cloneDecoration,
-  cloneStyle,
-  emptyDecoration,
-  emptyStyle,
-  mergeStyles,
-  type BridgeDiffHunkNode,
-  type BridgeGridCellNode,
-  type BridgeGridRowNode,
-  type BridgeGridTrackNode,
-  type BridgeLayoutChild,
-  type BridgeOverflowIndicatorNode,
-  type BridgeViewNode,
-  type BridgeViewNodeDraft,
-  type ColorNode,
-  type DecorationNode,
-  type DiffHunkNode,
-  type DiffLineNode,
-  type OverflowIndicatorNode,
-  type StyleNode,
-  VIEW_BRIDGE_SCHEMA_VERSION,
-} from "../../transport/structural/ir.ts";
-import { insets, Insets } from "./geometry.ts";
-import {
-  setBridgeDerivation,
-  setBridgeSequenceOverride,
-  peekBridgeSequenceOverride,
-  setBridgeGridSequenceOverride,
-  peekBridgeGridSequenceOverride,
-  type AxisSequenceEdit,
-  type BridgeCommonScalarDerivation,
-  type BridgeDerivation,
-} from "../../transport/structural/ir.ts";
-import { PersistentSeq } from "../../composition/persistent-seq.ts";
-import { borderNodeFor, colorNodeFor, styleNodeFor, textSpanNodeFor } from "../../transport/structural/style-lowering.ts";
-import { nodeForBridge, setViewNode } from "../../transport/structural/view-bridge.ts";
 import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
-import { TextSpan } from "../content/text.ts";
+import type { HandleId } from "../controls/framework-handle.ts";
+import type { ColorSpec } from "../presentation/theme.ts";
+import { insets, Insets } from "./geometry.ts";
 import type { DiffHunk } from "../content/diff.ts";
+import { TextSpan } from "../content/text.ts";
+import {
+  semanticBorderFor,
+  semanticCloneDecoration,
+  semanticColorFor,
+  semanticCloneStyle,
+  semanticDecorationFor,
+  semanticEmptyStyle,
+  semanticMergeStyles,
+  semanticOverflowFor,
+  semanticStyleFor,
+  semanticTextSpanFor,
+} from "../presentation/semantic-style.ts";
+import {
+  createSemanticViewNode,
+  installSemanticNode,
+  peekSemanticGridSequenceOverride,
+  peekSemanticSequenceOverride,
+  SEMANTIC_VIEW_KIND,
+  semanticNodeOf,
+  setSemanticDerivation,
+  setSemanticGridSequenceOverride,
+  setSemanticSequenceOverride,
+  type SemanticAxisSequenceEdit,
+  type SemanticAxisTrack,
+  type SemanticCommonScalarChanges,
+  type SemanticDecoration,
+  type SemanticDerivation,
+  type SemanticDiffHunk,
+  type SemanticDiffLine,
+  type SemanticGridCell,
+  type SemanticGridRow,
+  type SemanticGridTrack,
+  type SemanticHorizontalAlign,
+  type SemanticLayoutChild,
+  type SemanticOverflowIndicator,
+  type SemanticTextNode,
+  type SemanticViewNode,
+  type SemanticViewNodeDraft,
+  type SemanticWrapMode,
+} from "./semantic-node.ts";
+import { PersistentSeq } from "../../composition/persistent-seq.ts";
 import {
   activeChildOwnerOrThrow,
   executionContext,
@@ -261,96 +254,25 @@ export class ChildrenBuilder {
   gapValue(): number { return this.layoutGap; }
 }
 
-function withPrivateIdentity(node: BridgeViewNode | BridgeViewNodeDraft): BridgeViewNode {
-  const { id: _oldId, schema: _oldSchema, ...draft } = node as BridgeViewNode;
-  return freezeBridgeNode({ id: nextNodeId(), schema: VIEW_BRIDGE_SCHEMA_VERSION, ...draft } as BridgeViewNode);
+function semanticDraftOf(node: SemanticViewNode): SemanticViewNodeDraft {
+  const { id: _id, ...draft } = node;
+  return draft as SemanticViewNodeDraft;
 }
 
-function freezeColor(color: ColorNode | undefined): void {
-  if (color !== undefined && typeof color === "object") Object.freeze(color);
+function withSemanticIdentity(node: SemanticViewNode | SemanticViewNodeDraft): SemanticViewNode {
+  return createSemanticViewNode(
+    nextNodeId(),
+    "id" in node ? semanticDraftOf(node) : node,
+  );
 }
 
-function freezeStyle(style: StyleNode): void {
-  freezeColor(style.foreground);
-  freezeColor(style.background);
-  Object.freeze(style.attributes);
-  Object.freeze(style);
+/** Applies a same-kind semantic replacement after the caller has narrowed it. */
+function withSemanticUpdate(node: SemanticViewNode, update: object): SemanticViewNode {
+  return withSemanticIdentity({ ...semanticDraftOf(node), ...update } as SemanticViewNodeDraft);
 }
 
-function freezeDecoration(decoration: DecorationNode): void {
-  if (decoration.padding !== undefined) Object.freeze(decoration.padding);
-  freezeColor(decoration.background);
-  freezeColor(decoration.foreground);
-  if (decoration.border !== undefined) {
-    if (decoration.border.glyphs !== undefined) Object.freeze(decoration.border.glyphs);
-    freezeColor(decoration.border.color);
-    Object.freeze(decoration.border);
-  }
-  freezeStyle(decoration.style);
-  if (decoration.styleStates !== undefined) Object.freeze(decoration.styleStates);
-  Object.freeze(decoration);
-}
-
-function freezeOverflow(overflow: BridgeOverflowIndicatorNode | undefined): void {
-  if (overflow === undefined) return;
-  if (overflow.kind !== BRIDGE_OVERFLOW_KIND.none) freezeStyle(overflow.style);
-  Object.freeze(overflow);
-}
-
-function freezeDiff(hunks: readonly BridgeDiffHunkNode[]): void {
-  for (const hunk of hunks) {
-    Object.freeze(hunk.oldRange);
-    Object.freeze(hunk.newRange);
-    for (const line of hunk.lines) Object.freeze(line);
-    Object.freeze(hunk.lines);
-    Object.freeze(hunk);
-  }
-  Object.freeze(hunks);
-}
-
-function freezeBridgeNode(node: BridgeViewNode): BridgeViewNode {
-  switch (node.kind) {
-    case BRIDGE_VIEW_KIND.text:
-      for (const span of node.spans) {
-        if (span.style !== undefined) freezeStyle(span.style);
-        Object.freeze(span);
-      }
-      Object.freeze(node.spans);
-      break;
-    case BRIDGE_VIEW_KIND.diff:
-      freezeDiff(node.hunks);
-      break;
-    case BRIDGE_VIEW_KIND.row:
-    case BRIDGE_VIEW_KIND.column:
-      for (const child of node.children) Object.freeze(child);
-      Object.freeze(node.children);
-      break;
-    case BRIDGE_VIEW_KIND.grid:
-      for (const track of node.columns) Object.freeze(track);
-      Object.freeze(node.columns);
-      for (const row of node.rows) {
-        Object.freeze(row.track);
-        for (const cell of row.cells) Object.freeze(cell);
-        Object.freeze(row.cells);
-        Object.freeze(row);
-      }
-      Object.freeze(node.rows);
-      break;
-    case BRIDGE_VIEW_KIND.container:
-    case BRIDGE_VIEW_KIND.contentMax:
-      break;
-    case BRIDGE_VIEW_KIND.clamp:
-      freezeOverflow(node.overflow);
-      break;
-    case BRIDGE_VIEW_KIND.decorated:
-      freezeDecoration(node.decoration);
-      break;
-    case BRIDGE_VIEW_KIND.hanging:
-    case BRIDGE_VIEW_KIND.spacer:
-    case BRIDGE_VIEW_KIND.component:
-      break;
-  }
-  return Object.freeze(node);
+function createSemanticView(draft: SemanticViewNodeDraft): View {
+  return createView(createSemanticViewNode(nextNodeId(), draft));
 }
 
 export class View {
@@ -373,37 +295,47 @@ export class View {
 
   readonly kind = "view" as const;
 
-  private constructor(node: object) {
-    setViewNode(this, withPrivateIdentity(node as BridgeViewNode | BridgeViewNodeDraft));
+  private constructor(draft: SemanticViewNodeDraft) {
+    installSemanticNode(this, createSemanticViewNode(nextNodeId(), draft));
     Object.freeze(this);
   }
 
   static contentMax(maxRows: number, child: View): View {
     validateU16(maxRows, "maxRows");
     if (isRetainedConstruction()) return composeContentMax(maxRows, child);
-    return new View({ kind: BRIDGE_VIEW_KIND.contentMax, child: nodeForBridge(child), maxRows });
+    return new View({ kind: SEMANTIC_VIEW_KIND.contentMax, child: semanticNodeOf(child), maxRows });
   }
 
   static diff(hunks: readonly DiffHunk[]): View {
     if (isRetainedConstruction()) return composeDiff(hunks);
-    return new View({ kind: BRIDGE_VIEW_KIND.diff, hunks: hunks.map(toBridgeHunk) });
+    return new View({ kind: SEMANTIC_VIEW_KIND.diff, hunks: hunks.map(toSemanticHunk) });
   }
 
   static text(value: string): View {
     if (typeof value !== "string") throw new TypeError("View.text requires a string");
     if (isRetainedConstruction()) return composeText(value);
-    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: [{ text: value }], wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
+    return new View({
+      kind: SEMANTIC_VIEW_KIND.text,
+      spans: [{ text: value }],
+      wrap: "wordThenGrapheme",
+      align: "start",
+    });
   }
 
   static styledText(spans: readonly TextSpan[]): View {
     if (isRetainedConstruction()) return composeStyledText(spans);
-    return new View({ kind: BRIDGE_VIEW_KIND.text, spans: spans.map(textSpanNodeFor), wrap: BRIDGE_WRAP_MODE.wordThenGrapheme, align: BRIDGE_HORIZONTAL_ALIGN.start });
+    return new View({
+      kind: SEMANTIC_VIEW_KIND.text,
+      spans: spans.map(semanticTextSpanFor),
+      wrap: "wordThenGrapheme",
+      align: "start",
+    });
   }
 
   static spacer(rows: number): View {
     validateU16(rows, "rows");
     if (isRetainedConstruction()) return composeSpacer(rows);
-    return new View({ kind: BRIDGE_VIEW_KIND.spacer, rows });
+    return new View({ kind: SEMANTIC_VIEW_KIND.spacer, rows });
   }
 
   static horizontal(children: ViewChildren): View {
@@ -412,8 +344,8 @@ export class View {
       return composeHorizontal(build);
     }
     const builder = buildChildren(children);
-    const entries = bridgeLayoutChildren(builder.children);
-    const view = new View({ kind: BRIDGE_VIEW_KIND.row, children: entries, gap: builder.gapValue() });
+    const entries = semanticLayoutChildren(builder.children);
+    const view = new View({ kind: SEMANTIC_VIEW_KIND.row, children: entries, gap: builder.gapValue() });
     seedWideAxisSequence(view, entries);
     return view;
   }
@@ -424,15 +356,20 @@ export class View {
       return composeVertical(build);
     }
     const builder = buildChildren(children);
-    const entries = bridgeLayoutChildren(builder.children);
-    const view = new View({ kind: BRIDGE_VIEW_KIND.column, children: entries, gap: builder.gapValue() });
+    const entries = semanticLayoutChildren(builder.children);
+    const view = new View({ kind: SEMANTIC_VIEW_KIND.column, children: entries, gap: builder.gapValue() });
     seedWideAxisSequence(view, entries);
     return view;
   }
 
   static hanging(prefix: View, continuation: View, body: View): View {
     if (isRetainedConstruction()) return composeHanging(prefix, continuation, body);
-    return new View({ kind: BRIDGE_VIEW_KIND.hanging, prefix: nodeForBridge(prefix), continuation: nodeForBridge(continuation), body: nodeForBridge(body) });
+    return new View({
+      kind: SEMANTIC_VIEW_KIND.hanging,
+      prefix: semanticNodeOf(prefix),
+      continuation: semanticNodeOf(continuation),
+      body: semanticNodeOf(body),
+    });
   }
 
   static grid(specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void)): View {
@@ -450,35 +387,37 @@ export class View {
     validateTextAttribute(name);
     if (typeof enabled !== "boolean") throw new TypeError("text attribute value must be boolean");
     if (isRetainedConstruction()) return composeTextAttribute(this, name, enabled);
-    return this.decorate({ style: { ...emptyStyle(), attributes: { [name]: enabled } } });
+    return this.decorate({ style: { ...semanticEmptyStyle(), attributes: { [name]: enabled } } });
   }
   padding(value: number | Insets): View { return isRetainedConstruction() ? composePadding(this, value) : this.decorate({ padding: insets(value) }); }
   background(color: ColorSpec): View {
     if (isRetainedConstruction()) return composeBackground(this, color);
-    return this.decorate({ background: colorNodeFor(color) });
+    return this.decorate({ background: semanticColorFor(color) });
   }
   foreground(color: ColorSpec): View {
     if (isRetainedConstruction()) return composeForeground(this, color);
     // Foreground is an inherited text-style patch in the Rust semantic API,
     // not a separate decoration field. Keeping it in the style record also
     // preserves fluent ordering with StyleRef named-style replacement.
-    return this.decorate({ style: { ...emptyStyle(), foreground: colorNodeFor(color) } });
+    return this.decorate({ style: { ...semanticEmptyStyle(), foreground: semanticColorFor(color) } });
   }
   border(border: BorderSpec): View {
     if (isRetainedConstruction()) return composeBorder(this, border);
-    return this.decorate({ border: borderNodeFor(border) });
+    return this.decorate({ border: semanticBorderFor(border) });
   }
   style(style: StyleRef | StyleSpec): View {
     if (isRetainedConstruction()) return composeStyle(this, style);
-    const lowered = styleNodeFor(style);
+    const normalized = semanticStyleFor(style);
     // A named StyleRef replaces the current text-style identity; a direct
     // StyleSpec remains a sparse overlay. This mirrors Rust's View::style
     // distinction and keeps named-style selection from inheriting stale local
     // fields from an earlier style call.
-    // Only a named StyleRef replaces the current semantic style. A direct
-    // StyleRef has no ThemeKey and is the same sparse overlay as a StyleSpec.
     const replacesStyle = style.kind === "style-ref" && style.themeKey !== undefined;
-    return this.decorate({ style: mergeStyles(emptyStyle(), lowered) }, replacesStyle);
+    return this.decorate({
+      style: replacesStyle
+        ? normalized
+        : semanticMergeStyles(semanticEmptyStyle(), normalized),
+    }, replacesStyle);
   }
 
   styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {
@@ -490,16 +429,36 @@ export class View {
     }
     if (isRetainedConstruction()) return composeStyleState(this, stateKey, stateValue);
     const decorated = this.decoratedNode();
-    const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
-    const child = decorated?.child ?? nodeForBridge(this);
-    return new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: { ...current, styleStates: { ...current.styleStates, [stateKey]: stateValue } } });
+    const current = decorated === undefined ? semanticDecorationFor() : semanticCloneDecoration(decorated.decoration);
+    const child = decorated?.child ?? semanticNodeOf(this);
+    return new View({
+      kind: SEMANTIC_VIEW_KIND.decorated,
+      child,
+      decoration: {
+        ...current,
+        styleStates: { ...current.styleStates, [stateKey]: stateValue },
+      },
+    });
   }
 
-  container(): View { return isRetainedConstruction() ? composeContainer(this) : new View({ kind: BRIDGE_VIEW_KIND.container, child: nodeForBridge(this) }); }
+  container(): View {
+    return isRetainedConstruction()
+      ? composeContainer(this)
+      : new View({ kind: SEMANTIC_VIEW_KIND.container, child: semanticNodeOf(this) });
+  }
+
   clampRows(maxRows: number, overflow: OverflowIndicator = { kind: "none" }): View {
     validateU16(maxRows, "maxRows");
-    return isRetainedConstruction() ? composeClampRows(this, maxRows, overflow) : new View({ kind: BRIDGE_VIEW_KIND.clamp, child: nodeForBridge(this), maxRows, overflow: bridgeOverflow(overflow) });
+    return isRetainedConstruction()
+      ? composeClampRows(this, maxRows, overflow)
+      : new View({
+        kind: SEMANTIC_VIEW_KIND.clamp,
+        child: semanticNodeOf(this),
+        maxRows,
+        overflow: semanticOverflowFor(overflow),
+      });
   }
+
   fitWidth(): View { return isRetainedConstruction() ? composeFitWidth(this) : this.decorate({ width: "fit" }); }
   fillWidth(): View { return isRetainedConstruction() ? composeFillWidth(this) : this.decorate({ width: "fill" }); }
   fitHeight(): View { return isRetainedConstruction() ? composeFitHeight(this) : this.decorate({ height: "fit" }); }
@@ -508,44 +467,50 @@ export class View {
   maxWidth(value: number): View { const validated = validateU16(value, "maxWidth"); return isRetainedConstruction() ? composeMaxWidth(this, validated) : this.decorate({ maxWidth: validated }); }
   minHeight(value: number): View { const validated = validateU16(value, "minHeight"); return isRetainedConstruction() ? composeMinHeight(this, validated) : this.decorate({ minHeight: validated }); }
   maxHeight(value: number): View { const validated = validateU16(value, "maxHeight"); return isRetainedConstruction() ? composeMaxHeight(this, validated) : this.decorate({ maxHeight: validated }); }
-  wrap(mode: WrapMode): View { return isRetainedConstruction() ? composeWrap(this, mode) : this.textLayoutPatch(wrapCode(mode), undefined); }
+  wrap(mode: WrapMode): View { return isRetainedConstruction() ? composeWrap(this, mode) : this.textLayoutPatch(mode, undefined); }
   noWrap(): View { return this.wrap("noWrap"); }
-  textAlign(align: HorizontalAlign): View { return isRetainedConstruction() ? composeTextAlign(this, align) : this.textLayoutPatch(undefined, horizontalAlignCode(align)); }
+  textAlign(align: HorizontalAlign): View { return isRetainedConstruction() ? composeTextAlign(this, align) : this.textLayoutPatch(undefined, align); }
 
-  private decoratedNode(): Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }> | undefined {
-    const node = nodeForBridge(this);
-    return node.kind === BRIDGE_VIEW_KIND.decorated ? node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }> : undefined;
+  private decoratedNode(): Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.decorated }> | undefined {
+    const node = semanticNodeOf(this);
+    return node.kind === SEMANTIC_VIEW_KIND.decorated ? node : undefined;
   }
 
-  private decorate(decoration: Partial<DecorationNode>, replaceStyle = false): View {
+  private decorate(decoration: Partial<SemanticDecoration>, replaceStyle = false): View {
     const decorated = this.decoratedNode();
-    const current = decorated === undefined ? emptyDecoration() : cloneDecoration(decorated.decoration);
-    const child = decorated?.child ?? nodeForBridge(this);
-    const next: DecorationNode = {
+    const current = decorated === undefined ? semanticDecorationFor() : semanticCloneDecoration(decorated.decoration);
+    const child = decorated?.child ?? semanticNodeOf(this);
+    const next: SemanticDecoration = {
       ...current,
       ...decoration,
       style: decoration.style === undefined
         ? current.style
-        : replaceStyle ? cloneStyle(decoration.style) : mergeStyles(current.style, decoration.style),
+        : replaceStyle ? semanticCloneStyle(decoration.style) : semanticMergeStyles(current.style, decoration.style),
     };
-    const derived = new View({ kind: BRIDGE_VIEW_KIND.decorated, child, decoration: cloneDecoration(next) });
+    const derived = new View({
+      kind: SEMANTIC_VIEW_KIND.decorated,
+      child,
+      decoration: semanticCloneDecoration(next),
+    });
     // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
     // `base + masked modifiers`, which the retained common patch expresses
     // without re-materializing the base subtree. Mixed decorations stay
     // unhinted and route through normal materialization/fallback.
     const scalarDerivation = commonScalarDerivation(child, next);
-    if (scalarDerivation !== undefined) setBridgeDerivation(nodeForBridge(derived), scalarDerivation);
+    if (scalarDerivation !== undefined) setSemanticDerivation(semanticNodeOf(derived), scalarDerivation);
     return derived;
   }
 
-  private textLayoutPatch(wrap: number | undefined, align: number | undefined): View {
-    const node = nodeForBridge(this);
-    if (node.kind === BRIDGE_VIEW_KIND.text) {
-      const derived = new View({ ...node, ...(wrap === undefined ? {} : { wrap }), ...(align === undefined ? {} : { align }) });
-      // PERF-12 T9 (§27/§38): a wrap/align-only text change is derivable —
-      // the retained path may clone the base's native text payload with new
-      // layout scalars instead of re-importing the payload.
-      setBridgeDerivation(nodeForBridge(derived), {
+  private textLayoutPatch(wrap: WrapMode | undefined, align: HorizontalAlign | undefined): View {
+    const node = semanticNodeOf(this);
+    if (node.kind === SEMANTIC_VIEW_KIND.text) {
+      const derived = new View({
+        kind: SEMANTIC_VIEW_KIND.text,
+        spans: node.spans,
+        wrap: wrap ?? node.wrap,
+        align: align ?? node.align,
+      });
+      setSemanticDerivation(semanticNodeOf(derived), {
         kind: "textLayout",
         base: node,
         wrap: wrap ?? node.wrap,
@@ -553,37 +518,48 @@ export class View {
       });
       return derived;
     }
-    if (node.kind === BRIDGE_VIEW_KIND.decorated && node.child.kind === BRIDGE_VIEW_KIND.text) {
-      const decorated = node as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.decorated }>;
-      const baseText = decorated.child as Extract<BridgeViewNode, { kind: typeof BRIDGE_VIEW_KIND.text }>;
+    if (node.kind === SEMANTIC_VIEW_KIND.decorated && node.child.kind === SEMANTIC_VIEW_KIND.text) {
+      const baseText = node.child;
       // The patched text child is a semantic mutation in its own right. Give
       // it a fresh NodeId before placing it under the preserved decoration;
       // reusing baseText.id would let NodeId promotion return the old layout.
-      const child = withPrivateIdentity({
-        ...baseText,
-        ...(wrap === undefined ? {} : { wrap }),
-        ...(align === undefined ? {} : { align }),
+      const child = withSemanticUpdate(baseText, {
+        wrap: wrap ?? baseText.wrap,
+        align: align ?? baseText.align,
       });
-      const derived = new View({ ...decorated, child });
-      const derivedNode = nodeForBridge(derived);
-      if (derivedNode.kind === BRIDGE_VIEW_KIND.decorated) {
-        setBridgeDerivation(derivedNode.child, {
-          kind: "textLayout",
-          base: baseText,
-          wrap: wrap ?? baseText.wrap,
-          align: align ?? baseText.align,
-        });
-      }
+      const derived = new View({
+        kind: SEMANTIC_VIEW_KIND.decorated,
+        child,
+        decoration: node.decoration,
+      });
+      setSemanticDerivation(child, {
+        kind: "textLayout",
+        base: baseText,
+        wrap: wrap ?? baseText.wrap,
+        align: align ?? baseText.align,
+      });
       return derived;
     }
     return this;
   }
 }
 
-/** @internal Creates a View from a private bridge node without exposing its constructor. */
-function createView(node: object): View {
-  const Constructor = View as unknown as new (node: object) => View;
-  return new Constructor(node);
+/** @internal Creates a View from an already-owned semantic node. */
+function createView(node: SemanticViewNode): View {
+  const view = Object.create(View.prototype) as View;
+  Object.defineProperty(view, "kind", {
+    configurable: true,
+    enumerable: true,
+    value: "view",
+    writable: true,
+  });
+  installSemanticNode(view, node);
+  return Object.freeze(view) as View;
+}
+
+/** @internal Creates a semantic component occurrence from a local HandleId. */
+export function componentViewForHandle(handleId: HandleId): View {
+  return createSemanticView({ kind: SEMANTIC_VIEW_KIND.component, handleId });
 }
 
 /** @internal Raw grid construction shared by public and retained composition paths. */
@@ -611,19 +587,19 @@ export function gridBuilderFromSpecification(
 
 /** @internal Materializes a normalized grid after retained equality has been checked. */
 export function gridViewFromBuilder(builder: GridBuilder): View {
-  const rows: BridgeGridRowNode[] = builder.rows.map((row) => ({
-    track: bridgeGridTrack(row.track ?? { kind: "content" }),
-    cells: row.cells.map((cell): BridgeGridCellNode => ({
-      view: nodeForBridge(cell.view),
+  const rows: SemanticGridRow[] = builder.rows.map((row) => ({
+    track: semanticGridTrack(row.track ?? { kind: "content" }),
+    cells: row.cells.map((cell): SemanticGridCell => ({
+      view: semanticNodeOf(cell.view),
       columnSpan: validatePositiveU16(cell.columnSpan ?? 1, "columnSpan"),
       rowSpan: validatePositiveU16(cell.rowSpan ?? 1, "rowSpan"),
-      horizontalAlign: horizontalAlignCode(cell.horizontalAlign ?? "start"),
-      verticalAlign: verticalAlignCode(cell.verticalAlign ?? "top"),
+      horizontalAlign: cell.horizontalAlign ?? "start",
+      verticalAlign: cell.verticalAlign ?? "top",
     })),
   }));
-  const view = createView({
-    kind: BRIDGE_VIEW_KIND.grid,
-    columns: builder.columnsValue.map(bridgeGridTrack),
+  const view = createSemanticView({
+    kind: SEMANTIC_VIEW_KIND.grid,
+    columns: builder.columnsValue.map(semanticGridTrack),
     rows,
     columnGap: builder.columnGapValue,
     rowGap: builder.rowGapValue,
@@ -634,23 +610,24 @@ export function gridViewFromBuilder(builder: GridBuilder): View {
 
 /** @internal PERF-12 wide retained axis replacement. */
 export function axisSetChildForTransport(base: View, index: number, child: View, trackWord = 0): View {
-  const baseNode = nodeForBridge(base);
-  if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
+  const baseNode = semanticNodeOf(base);
+  if (baseNode.kind !== SEMANTIC_VIEW_KIND.row && baseNode.kind !== SEMANTIC_VIEW_KIND.column) {
     throw new TypeError("retained axis edit base is not a row or column");
   }
-  const baseSequence = bridgeAxisSequence(baseNode);
+  const baseSequence = semanticAxisSequence(baseNode);
   if (!Number.isInteger(index) || index < 0 || index >= baseSequence.length) {
     throw new RangeError("retained axis edit index out of range");
   }
-  const childNode = nodeForBridge(child);
+  const childNode = semanticNodeOf(child);
   const current = baseSequence.get(index)!;
-  const next = trackWord === 0 ? { ...current, child: childNode } : layoutChildFromTrackWord(trackWord, childNode);
+  const track = semanticAxisTrackFromWord(trackWord, true);
+  const next = track === undefined ? { ...current, child: childNode } : layoutChildFromAxisTrack(track, childNode);
   const sequence = baseSequence.set(index, next);
   return buildWideAxisNode(baseNode, sequence, { kind: "axisSet", index }, {
     kind: "axisSet",
     base: baseNode,
     index,
-    trackWord,
+    track,
     child: childNode,
   });
 }
@@ -662,11 +639,11 @@ export function axisSpliceForTransport(
   removeCount: number,
   inserted: readonly { readonly view: View; readonly trackWord?: number }[],
 ): View {
-  const baseNode = nodeForBridge(base);
-  if (baseNode.kind !== BRIDGE_VIEW_KIND.row && baseNode.kind !== BRIDGE_VIEW_KIND.column) {
-    throw new TypeError("retained axis splice base is not a row or column");
+  const baseNode = semanticNodeOf(base);
+  if (baseNode.kind !== SEMANTIC_VIEW_KIND.row && baseNode.kind !== SEMANTIC_VIEW_KIND.column) {
+    throw new TypeError("retained axis edit base is not a row or column");
   }
-  const baseSequence = bridgeAxisSequence(baseNode);
+  const baseSequence = semanticAxisSequence(baseNode);
   if (!Number.isInteger(index) || index < 0 || index > baseSequence.length) {
     throw new RangeError("retained axis splice index out of range");
   }
@@ -674,10 +651,10 @@ export function axisSpliceForTransport(
     throw new RangeError("retained axis splice count out of range");
   }
   const insertedChildren = inserted.map((entry) => ({
-    node: nodeForBridge(entry.view),
-    trackWord: entry.trackWord ?? 0,
+    child: semanticNodeOf(entry.view),
+    track: semanticAxisTrackFromWord(entry.trackWord ?? 0, false)!,
   }));
-  const insertedLayout = insertedChildren.map((entry) => layoutChildFromTrackWord(entry.trackWord, entry.node));
+  const insertedLayout = insertedChildren.map((entry) => layoutChildFromAxisTrack(entry.track, entry.child));
   const sequence = baseSequence.splice(index, removeCount, ...insertedLayout);
   return buildWideAxisNode(
     baseNode,
@@ -689,22 +666,22 @@ export function axisSpliceForTransport(
 
 /** @internal PERF-12 retained grid-cell replacement. */
 export function gridSetCellForTransport(base: View, row: number, column: number, cellView: View): View {
-  const gridNode = nodeForBridge(base);
-  if (gridNode.kind !== BRIDGE_VIEW_KIND.grid) throw new TypeError("retained grid cell edit base is not a grid");
-  const gridOverride = peekBridgeGridSequenceOverride(gridNode);
+  const gridNode = semanticNodeOf(base);
+  if (gridNode.kind !== SEMANTIC_VIEW_KIND.grid) throw new TypeError("retained grid cell edit base is not a grid");
+  const gridOverride = peekSemanticGridSequenceOverride(gridNode);
   const placement = gridOverride === undefined ? gridPlacement(gridNode.rows) : undefined;
   const rowCount = gridOverride?.rowTracks.length ?? gridNode.rows.length;
   if (!Number.isInteger(row) || row < 0 || row >= rowCount) throw new RangeError("retained grid cell row out of range");
-  const childNode = nodeForBridge(cellView);
+  const childNode = semanticNodeOf(cellView);
   if (gridOverride !== undefined) {
     const sequenceIndex = gridOverride.cellIndices[row]?.get(column);
     if (sequenceIndex === undefined) throw new RangeError("retained grid cell column out of range");
-    const sequence = gridOverride.sequence.set(sequenceIndex, {
+    const sequence = (gridOverride.sequence as PersistentSeq<SemanticGridCell>).set(sequenceIndex, {
       ...gridOverride.sequence.get(sequenceIndex)!,
       view: childNode,
     });
     const derived = buildWideGridNode(gridNode, gridOverride, sequence);
-    setBridgeDerivation(nodeForBridge(derived), {
+    setSemanticDerivation(semanticNodeOf(derived), {
       kind: "gridCell",
       base: gridNode,
       row,
@@ -724,8 +701,14 @@ export function gridSetCellForTransport(base: View, row: number, column: number,
       ? { ...current, cells: current.cells.map((cell, index) => index === cellIndex ? { ...cell, view: childNode } : cell) }
       : current,
   );
-  const derived = createView({ kind: BRIDGE_VIEW_KIND.grid, columns: gridNode.columns, rows, columnGap: gridNode.columnGap, rowGap: gridNode.rowGap });
-  setBridgeDerivation(nodeForBridge(derived), {
+  const derived = createSemanticView({
+    kind: SEMANTIC_VIEW_KIND.grid,
+    columns: gridNode.columns,
+    rows,
+    columnGap: gridNode.columnGap,
+    rowGap: gridNode.rowGap,
+  });
+  setSemanticDerivation(semanticNodeOf(derived), {
     kind: "gridCell",
     base: gridNode,
     row,
@@ -737,9 +720,9 @@ export function gridSetCellForTransport(base: View, row: number, column: number,
 
 /** @internal Retained axis construction used by compose.ts. */
 export function composedAxis(row: boolean, entries: readonly LayoutChild[], gap: number): View {
-  const loweredEntries = bridgeLayoutChildren(entries);
-  const view = createView({ kind: row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column, children: loweredEntries, gap });
-  seedWideAxisSequence(view, loweredEntries);
+  const semanticEntries = semanticLayoutChildren(entries);
+  const view = createSemanticView({ kind: row ? SEMANTIC_VIEW_KIND.row : SEMANTIC_VIEW_KIND.column, children: semanticEntries, gap });
+  seedWideAxisSequence(view, semanticEntries);
   return view;
 }
 
@@ -751,9 +734,8 @@ export function textLayoutAtNativePathForTransport(
   align: HorizontalAlign,
 ): View {
   if (steps.length > 4) throw new RangeError("native retained path depth must be at most 4");
-  const nextNode = patchBridgeTextPath(nodeForBridge(view), steps, wrapCode(wrap), horizontalAlignCode(align));
-  let lineage: NativePathLineage = Object.freeze({ baseNodeId: nodeForBridge(view).id, depth: 0 });
-  for (const step of steps) lineage = nativePathChildLineage(view, lineage, step);
+  const nextNode = patchSemanticTextPath(semanticNodeOf(view), steps, wrap, align);
+  const lineage = nativePathLineageForSteps(view, steps);
   const result = createView(nextNode);
   nativePathLineages.set(result, freezeNativePathLineage(lineage));
   return result;
@@ -772,15 +754,15 @@ export function textLayoutTransactionForTransport(
     throw new RangeError("native text transaction must contain 2 through 256 edits");
   }
   const seen = new Set<string>();
-  let node = nodeForBridge(view);
+  let node = semanticNodeOf(view);
   for (const edit of edits) {
     if (edit.steps.length > 4) throw new RangeError("native retained transaction path depth must be at most 4");
     const key = edit.steps.map((step) => `${step.kind}:${step.expectedViewKind}:${step.selector}`).join("/");
     if (!seen.add(key)) throw new RangeError("native text transaction paths must be distinct");
-    node = patchBridgeTextPath(node, edit.steps, wrapCode(edit.wrap), horizontalAlignCode(edit.align));
+    node = patchSemanticTextPath(node, edit.steps, edit.wrap, edit.align);
   }
   const result = createView(node);
-  nativeTextLayoutTransactions.set(result, buildTransactionEdits(view, nodeForBridge(result), edits));
+  nativeTextLayoutTransactions.set(result, buildTransactionEdits(view, node, edits));
   return result;
 }
 
@@ -790,78 +772,49 @@ export function textLayoutTransactionForTransport(
  * non-scalar content (color, border, non-empty style, styleStates) or no
  * scalar modifier at all — those have no exact retained primitive and stay
  * unhinted (§27: the hint must not guess).
- *
- * Mask bit values mirror the native view_common_patch_root implementation.
  */
-const PATCH_PADDING = 4;
-const PATCH_WIDTH = 8;
-const PATCH_HEIGHT = 16;
-const PATCH_MIN_WIDTH = 32;
-const PATCH_MAX_WIDTH = 64;
-const PATCH_MIN_HEIGHT = 128;
-const PATCH_MAX_HEIGHT = 256;
+function commonScalarDerivation(
+  base: SemanticViewNode,
+  decoration: SemanticDecoration,
+): Extract<SemanticDerivation, { kind: "commonScalar" }> | undefined {
+  if (decoration.background !== undefined || decoration.foreground !== undefined || decoration.border !== undefined) return undefined;
+  if (decoration.styleStates !== undefined && Object.keys(decoration.styleStates).length > 0) return undefined;
+  if (!isEmptyStyle(decoration.style)) return undefined;
+  const changes: {
+    padding?: SemanticCommonScalarChanges["padding"];
+    width?: SemanticCommonScalarChanges["width"];
+    height?: SemanticCommonScalarChanges["height"];
+    minWidth?: SemanticCommonScalarChanges["minWidth"];
+    maxWidth?: SemanticCommonScalarChanges["maxWidth"];
+    minHeight?: SemanticCommonScalarChanges["minHeight"];
+    maxHeight?: SemanticCommonScalarChanges["maxHeight"];
+  } = {};
+  if (decoration.padding !== undefined) changes.padding = { ...decoration.padding };
+  if (decoration.width !== undefined) changes.width = decoration.width;
+  if (decoration.height !== undefined) changes.height = decoration.height;
+  if (decoration.minWidth !== undefined) changes.minWidth = decoration.minWidth;
+  if (decoration.maxWidth !== undefined) changes.maxWidth = decoration.maxWidth;
+  if (decoration.minHeight !== undefined) changes.minHeight = decoration.minHeight;
+  if (decoration.maxHeight !== undefined) changes.maxHeight = decoration.maxHeight;
+  if (Object.keys(changes).length === 0) return undefined;
+  return { kind: "commonScalar", base, changes };
+}
 
-function isEmptyStyle(style: StyleNode): boolean {
+function isEmptyStyle(style: { readonly theme?: string; readonly foreground?: unknown; readonly background?: unknown; readonly attributes: Readonly<Record<string, boolean>> }): boolean {
   return style.theme === undefined && style.foreground === undefined && style.background === undefined
     && Object.keys(style.attributes).length === 0;
 }
 
-function commonScalarDerivation(base: BridgeViewNode, decoration: DecorationNode): BridgeCommonScalarDerivation | undefined {
-  if (decoration.background !== undefined || decoration.foreground !== undefined || decoration.border !== undefined) return undefined;
-  if (decoration.styleStates !== undefined && Object.keys(decoration.styleStates).length > 0) return undefined;
-  if (!isEmptyStyle(decoration.style)) return undefined;
-  let mask = 0;
-  let paddingTopRight = 0;
-  let paddingBottomLeft = 0;
-  if (decoration.padding !== undefined) {
-    mask |= PATCH_PADDING;
-    paddingTopRight = (decoration.padding.top & 0xffff) | ((decoration.padding.right & 0xffff) << 16);
-    paddingBottomLeft = (decoration.padding.bottom & 0xffff) | ((decoration.padding.left & 0xffff) << 16);
-  }
-  let widthRule = 0;
-  if (decoration.width !== undefined) {
-    mask |= PATCH_WIDTH;
-    widthRule = decoration.width === "fit" ? 1 : 2;
-  }
-  let heightRule = 0;
-  if (decoration.height !== undefined) {
-    mask |= PATCH_HEIGHT;
-    heightRule = decoration.height === "fit" ? 1 : 2;
-  }
-  const minWidth = decoration.minWidth ?? 0;
-  if (decoration.minWidth !== undefined) mask |= PATCH_MIN_WIDTH;
-  const maxWidth = decoration.maxWidth ?? 0;
-  if (decoration.maxWidth !== undefined) mask |= PATCH_MAX_WIDTH;
-  const minHeight = decoration.minHeight ?? 0;
-  if (decoration.minHeight !== undefined) mask |= PATCH_MIN_HEIGHT;
-  const maxHeight = decoration.maxHeight ?? 0;
-  if (decoration.maxHeight !== undefined) mask |= PATCH_MAX_HEIGHT;
-  if (mask === 0) return undefined;
-  return {
-    kind: "commonScalar",
-    base,
-    mask,
-    paddingTopRight,
-    paddingBottomLeft,
-    widthRule,
-    heightRule,
-    minWidth,
-    maxWidth,
-    minHeight,
-    maxHeight,
-  };
-}
-
-function seedWideAxisSequence(view: View, children: readonly BridgeLayoutChild[]): void {
+function seedWideAxisSequence(view: View, children: readonly SemanticLayoutChild[]): void {
   if (children.length <= WIDE_AXIS_SEQUENCE_THRESHOLD) return;
-  const node = nodeForBridge(view);
-  setBridgeSequenceOverride(node, {
+  const node = semanticNodeOf(view);
+  setSemanticSequenceOverride(node, {
     baseNode: node,
     sequence: PersistentSeq.from(children),
   });
 }
 
-function gridPlacement(rows: readonly BridgeGridRowNode[]): {
+function gridPlacement(rows: readonly SemanticGridRow[]): {
   readonly rowOffsets: readonly number[];
   readonly cellIndices: readonly ReadonlyMap<number, number>[];
 } {
@@ -901,15 +854,15 @@ function gridPlacement(rows: readonly BridgeGridRowNode[]): {
   };
 }
 
-function seedWideGridSequence(view: View, rows: readonly BridgeGridRowNode[]): void {
+function seedWideGridSequence(view: View, rows: readonly SemanticGridRow[]): void {
   const totalCells = rows.reduce((total, row) => total + row.cells.length, 0);
   if (totalCells <= WIDE_GRID_SEQUENCE_THRESHOLD) return;
   const placement = gridPlacement(rows);
-  const rowTracks: BridgeGridTrackNode[] = rows.map((row) => row.track);
-  const cells: BridgeGridCellNode[] = [];
+  const rowTracks = rows.map((row) => row.track);
+  const cells: SemanticGridCell[] = [];
   for (const row of rows) cells.push(...row.cells);
-  const node = nodeForBridge(view);
-  setBridgeGridSequenceOverride(node, {
+  const node = semanticNodeOf(view);
+  setSemanticGridSequenceOverride(node, {
     baseNode: node,
     sequence: PersistentSeq.from(cells),
     rowOffsets: placement.rowOffsets,
@@ -919,27 +872,26 @@ function seedWideGridSequence(view: View, rows: readonly BridgeGridRowNode[]): v
 }
 
 function buildWideGridNode(
-  baseNode: BridgeViewNode,
+  baseNode: Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.grid }>,
   override: {
     readonly rowOffsets: readonly number[];
-    readonly rowTracks: readonly BridgeGridTrackNode[];
+    readonly rowTracks: readonly SemanticGridTrack[];
     readonly cellIndices: readonly ReadonlyMap<number, number>[];
   },
-  sequence: PersistentSeq<BridgeGridCellNode>,
+  sequence: PersistentSeq<SemanticGridCell>,
 ): View {
-  let flatRows: readonly BridgeGridRowNode[] | undefined;
+  let flatRows: readonly SemanticGridRow[] | undefined;
   const node = Object.freeze({
     id: nextNodeId(),
-    schema: VIEW_BRIDGE_SCHEMA_VERSION,
-    kind: BRIDGE_VIEW_KIND.grid,
-    columns: baseNode.kind === BRIDGE_VIEW_KIND.grid ? baseNode.columns : [],
-    get rows(): readonly BridgeGridRowNode[] {
+    kind: SEMANTIC_VIEW_KIND.grid,
+    columns: baseNode.columns,
+    get rows(): readonly SemanticGridRow[] {
       if (flatRows === undefined) {
-        const rows: BridgeGridRowNode[] = [];
+        const rows: SemanticGridRow[] = [];
         for (let rowIndex = 0; rowIndex < override.rowTracks.length; rowIndex += 1) {
           const start = override.rowOffsets[rowIndex]!;
           const end = override.rowOffsets[rowIndex + 1]!;
-          const cells: BridgeGridCellNode[] = [];
+          const cells: SemanticGridCell[] = [];
           for (let index = start; index < end; index += 1) cells.push(Object.freeze({ ...sequence.get(index)! }));
           rows.push(Object.freeze({ track: override.rowTracks[rowIndex]!, cells: Object.freeze(cells) }));
         }
@@ -947,88 +899,85 @@ function buildWideGridNode(
       }
       return flatRows;
     },
-    columnGap: baseNode.kind === BRIDGE_VIEW_KIND.grid ? baseNode.columnGap : 0,
-    rowGap: baseNode.kind === BRIDGE_VIEW_KIND.grid ? baseNode.rowGap : 0,
-  }) as unknown as BridgeViewNode;
-  setBridgeGridSequenceOverride(node, {
+    columnGap: baseNode.columnGap,
+    rowGap: baseNode.rowGap,
+  }) as SemanticViewNode;
+  setSemanticGridSequenceOverride(node, {
     baseNode,
     sequence,
     rowOffsets: override.rowOffsets,
     rowTracks: override.rowTracks,
     cellIndices: override.cellIndices,
   });
-  return wrapFrozenBridgeNode(node);
+  return wrapFrozenSemanticNode(node);
 }
 
 /**
  * PERF-12 T10 (§34): authoritative children sequence of an axis node - the
  * wide override when present, else a one-time snapshot of the flat array.
  */
-function bridgeAxisSequence(node: BridgeViewNode): PersistentSeq<BridgeLayoutChild> {
-  const override = peekBridgeSequenceOverride(node);
-  if (override !== undefined) return override.sequence;
-  if (node.kind !== BRIDGE_VIEW_KIND.row && node.kind !== BRIDGE_VIEW_KIND.column) {
-    throw new TypeError("axis sequence requested from a non-axis node");
-  }
+function semanticAxisSequence(node: Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_VIEW_KIND.column }>): PersistentSeq<SemanticLayoutChild> {
+  const override = peekSemanticSequenceOverride(node);
+  if (override !== undefined) return override.sequence as PersistentSeq<SemanticLayoutChild>;
   return PersistentSeq.from(node.children);
 }
 
-/** Inverse of the generated layoutTrackWord encoding (axis track words). */
-function layoutChildFromTrackWord(trackWord: number, child: BridgeViewNode): BridgeLayoutChild {
+function semanticAxisTrackFromWord(trackWord: number, zeroMeansPreserve: boolean): SemanticAxisTrack | undefined {
+  if (trackWord === 0) return zeroMeansPreserve ? undefined : { kind: "normal" };
   const kind = trackWord & 0xff;
   const amount = trackWord >>> 8;
   switch (kind) {
-    case 0: return { kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child };
+    case 0: return { kind: "normal" };
     case 2:
       if (amount === 0 || amount > 0xffff) throw new RangeError("retained track word contentMax rows out of range");
-      return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: amount, child };
+      return { kind: "contentMax", maxRows: amount };
     case 3:
       if (amount === 0 || amount > 0xffff) throw new RangeError("retained track word fixed size out of range");
-      return { kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: amount, child };
-    case 4: return { kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child };
+      return { kind: "fixed", size: amount };
+    case 4: return { kind: "flex" };
     case 5:
       if (amount === 0 || amount > 0xffff) throw new RangeError("retained track word flexMax rows out of range");
-      return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: amount, child };
+      return { kind: "flexMax", maxRows: amount };
     default:
       throw new RangeError(`retained track word kind ${kind} is invalid`);
   }
 }
 
-/**
- * Builds the frozen derived axis node with sequence-backed lazy children
- * (§34): construction performs O(log₃₂ N) work; the exact flat array is
- * materialized once on first access and cached in the closure.
- */
-function buildWideAxisNode(
-  baseNode: BridgeViewNode,
-  sequence: PersistentSeq<BridgeLayoutChild>,
-  edit: AxisSequenceEdit,
-  derivation: BridgeDerivation,
-): View {
-  let flat: readonly BridgeLayoutChild[] | undefined;
-  const kind = baseNode.kind as typeof BRIDGE_VIEW_KIND.row | typeof BRIDGE_VIEW_KIND.column;
-  const node = Object.freeze({
-    id: nextNodeId(),
-    schema: VIEW_BRIDGE_SCHEMA_VERSION,
-    kind,
-    gap: (baseNode as { gap: number }).gap,
-    get children(): readonly BridgeLayoutChild[] {
-      if (flat === undefined) {
-        flat = Object.freeze(sequence.toArray().map((entry) => Object.freeze({ ...entry })));
-      }
-      return flat;
-    },
-  }) as unknown as BridgeViewNode;
-  setBridgeSequenceOverride(node, { baseNode, sequence, edit });
-  setBridgeDerivation(node, derivation);
-  // The node is already frozen with its final identity; the normal
-  // constructor path would re-assign a NodeId and eagerly walk children
-  // (materializing the flat array), defeating §34's laziness.
-  return wrapFrozenBridgeNode(node as unknown as BridgeViewNode);
+function layoutChildFromAxisTrack(track: SemanticAxisTrack, child: SemanticViewNode): SemanticLayoutChild {
+  switch (track.kind) {
+    case "normal": return { kind: "normal", child };
+    case "fixed": return { kind: "fixed", size: track.size, child };
+    case "flex": return { kind: "flex", child };
+    case "flexMax": return { kind: "flexMax", maxRows: track.maxRows, child };
+    case "contentMax": return { kind: "contentMax", maxRows: track.maxRows, child };
+  }
 }
 
-/** Installs an already-frozen bridge node under a fresh View wrapper. */
-function wrapFrozenBridgeNode(node: BridgeViewNode): View {
+function buildWideAxisNode(
+  baseNode: Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_VIEW_KIND.column }>,
+  sequence: PersistentSeq<SemanticLayoutChild>,
+  edit: SemanticAxisSequenceEdit,
+  derivation: Extract<SemanticDerivation, { kind: "axisSet" | "axisSplice" }>,
+): View {
+  let flat: readonly SemanticLayoutChild[] | undefined;
+  const node = Object.freeze({
+    id: nextNodeId(),
+    kind: baseNode.kind,
+    gap: baseNode.gap,
+    get children(): readonly SemanticLayoutChild[] {
+      if (flat === undefined) flat = Object.freeze(sequence.toArray().map((entry) => Object.freeze({ ...entry })));
+      return flat;
+    },
+  }) as SemanticViewNode;
+  setSemanticSequenceOverride(node, { baseNode, sequence, edit });
+  setSemanticDerivation(node, derivation);
+  // The node is already frozen with its final identity; evaluating children
+  // here would materialize the lazy wide sequence and defeat §34.
+  return wrapFrozenSemanticNode(node);
+}
+
+/** Internal component-free identity helper used by semantic construction. */
+function wrapFrozenSemanticNode(node: SemanticViewNode): View {
   const view = Object.create(View.prototype) as View;
   Object.defineProperty(view, "kind", {
     configurable: true,
@@ -1036,7 +985,7 @@ function wrapFrozenBridgeNode(node: BridgeViewNode): View {
     value: "view",
     writable: true,
   });
-  setViewNode(view, node);
+  installSemanticNode(view, node);
   return Object.freeze(view) as View;
 }
 
@@ -1047,6 +996,12 @@ function freezeNativePathLineage(lineage: NativePathLineage): NativePathLineage 
   const parent = lineage.parent === undefined ? undefined : freezeNativePathLineage(lineage.parent);
   const step = lineage.step === undefined ? undefined : Object.freeze({ ...lineage.step });
   return Object.freeze({ baseNodeId: lineage.baseNodeId, parent, step, depth: lineage.depth });
+}
+
+function nativePathLineageForSteps(view: View, steps: readonly NativePathStep[]): NativePathLineage {
+  let lineage: NativePathLineage = Object.freeze({ baseNodeId: viewNodeId(view), depth: 0 });
+  for (const step of steps) lineage = nativePathChildLineage(view, lineage, step);
+  return lineage;
 }
 
 /** Returns the one-time retained path lineage attached during construction. */
@@ -1074,7 +1029,7 @@ export function attachNativePathLineage(view: View, lineage: NativePathLineage):
 
 /** Returns the full semantic NodeId of the View's frozen semantic node. */
 export function viewNodeId(view: View): number {
-  return nodeForBridge(view).id;
+  return semanticNodeOf(view).id;
 }
 
 /** Returns construction-time typed transaction metadata without rebuilding it. */
@@ -1084,7 +1039,7 @@ export function nativeTextLayoutTransaction(view: View): readonly NativeTextLayo
 
 /** Returns the u32 halves of a View's full safe-integer NodeId. */
 export function nodeIdPair(view: View): readonly [number, number] {
-  const id = nodeForBridge(view).id;
+  const id = viewNodeId(view);
   return [id >>> 0, Math.floor(id / 0x1_0000_0000)];
 }
 
@@ -1092,7 +1047,7 @@ export function nodeIdPair(view: View): readonly [number, number] {
  * Current high-water of the private monotonic NodeId allocator (§18).
  * View-bearing boundaries capture this after each successful commit as
  * `nativeLookupCeiling`: only NodeIds at or below it may already exist in the
- * native semantic cache and are eligible for NodeId→NativeRef promotion.
+ * native semantic cache and are eligible for generation-scoped promotion.
  */
 export function viewNodeIdHighWater(): number {
   return nodeIdCounter.next - 1;
@@ -1100,7 +1055,7 @@ export function viewNodeIdHighWater(): number {
 
 function buildTransactionEdits(
   base: View,
-  finalNode: BridgeViewNode,
+  finalNode: SemanticViewNode,
   edits: readonly {
     readonly steps: readonly NativePathStep[];
     readonly wrap: WrapMode;
@@ -1108,8 +1063,8 @@ function buildTransactionEdits(
   }[],
 ): readonly NativeTextLayoutTransactionEdit[] {
   return Object.freeze(edits.map((edit) => {
-    const nodes_ = bridgePathNodesForTransaction(finalNode, edit.steps);
-    if (nodes_ === undefined || nodes_[nodes_.length - 1]?.kind !== BRIDGE_VIEW_KIND.text) {
+    const nodes_ = semanticPathNodesForTransaction(finalNode, edit.steps);
+    if (nodes_ === undefined || nodes_[nodes_.length - 1]?.kind !== SEMANTIC_VIEW_KIND.text) {
       throw new TypeError("native text transaction path does not terminate at text");
     }
     let lineage: NativePathLineage = Object.freeze({ baseNodeId: viewNodeId(base), depth: 0 });
@@ -1123,47 +1078,41 @@ function buildTransactionEdits(
   }));
 }
 
-function patchBridgeTextPath(
-  node: BridgeViewNode,
+function patchSemanticTextPath(
+  node: SemanticViewNode,
   steps: readonly NativePathStep[],
-  wrap: number,
-  align: number,
-): BridgeViewNode {
+  wrap: WrapMode,
+  align: HorizontalAlign,
+): SemanticViewNode {
   const step = steps[0];
   if (step === undefined) {
-    if (node.kind !== BRIDGE_VIEW_KIND.text) throw new TypeError("native retained text path must terminate at text");
-    return withPrivateIdentity({ ...node, wrap, align });
+    if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new TypeError("native retained text path must terminate at text");
+    return withSemanticUpdate(node, { wrap, align });
   }
-  if (bridgePathViewKind(node.kind) !== step.expectedViewKind) {
-    throw new TypeError("native retained path expected view kind does not match bridge node");
+  if (semanticPathViewKind(node.kind) !== step.expectedViewKind) {
+    throw new TypeError("native retained path expected view kind does not match semantic node");
   }
   const tail = steps.slice(1);
   switch (step.kind) {
     case NATIVE_PATH_STEP.containerChild:
     case NATIVE_PATH_STEP.clampChild: {
-      if (step.selector !== 0 || (node.kind !== BRIDGE_VIEW_KIND.container && node.kind !== BRIDGE_VIEW_KIND.clamp && node.kind !== BRIDGE_VIEW_KIND.contentMax)) {
+      if (step.selector !== 0 || (node.kind !== SEMANTIC_VIEW_KIND.container && node.kind !== SEMANTIC_VIEW_KIND.clamp && node.kind !== SEMANTIC_VIEW_KIND.contentMax)) {
         throw new RangeError("native retained single-child path is invalid");
       }
-      return withPrivateIdentity({ ...node, child: patchBridgeTextPath(node.child, tail, wrap, align) });
+      return withSemanticUpdate(node, { child: patchSemanticTextPath(node.child, tail, wrap, align) });
     }
-    case NATIVE_PATH_STEP.columnChild: {
-      if (node.kind !== BRIDGE_VIEW_KIND.column) throw new TypeError("native retained column path kind is invalid");
-      if (!Number.isInteger(step.selector) || step.selector < 0 || step.selector >= node.children.length) throw new RangeError("native retained column path selector is out of range");
-      const children = node.children.map((child, index) => index === step.selector
-        ? { ...child, child: patchBridgeTextPath(child.child, tail, wrap, align) }
-        : child);
-      return withPrivateIdentity({ ...node, children });
-    }
+    case NATIVE_PATH_STEP.columnChild:
     case NATIVE_PATH_STEP.rowChild: {
-      if (node.kind !== BRIDGE_VIEW_KIND.row) throw new TypeError("native retained row path kind is invalid");
-      if (!Number.isInteger(step.selector) || step.selector < 0 || step.selector >= node.children.length) throw new RangeError("native retained row path selector is out of range");
+      const expected = step.kind === NATIVE_PATH_STEP.columnChild ? SEMANTIC_VIEW_KIND.column : SEMANTIC_VIEW_KIND.row;
+      if (node.kind !== expected) throw new TypeError("native retained axis path kind is invalid");
+      if (!Number.isInteger(step.selector) || step.selector < 0 || step.selector >= node.children.length) throw new RangeError("native retained axis path selector is out of range");
       const children = node.children.map((child, index) => index === step.selector
-        ? { ...child, child: patchBridgeTextPath(child.child, tail, wrap, align) }
+        ? { ...child, child: patchSemanticTextPath(child.child, tail, wrap, align) }
         : child);
-      return withPrivateIdentity({ ...node, children });
+      return withSemanticUpdate(node, { children });
     }
     case NATIVE_PATH_STEP.gridCell: {
-      if (node.kind !== BRIDGE_VIEW_KIND.grid || !Number.isInteger(step.selector) || step.selector < 0) throw new TypeError("native retained grid path kind is invalid");
+      if (node.kind !== SEMANTIC_VIEW_KIND.grid || !Number.isInteger(step.selector) || step.selector < 0) throw new TypeError("native retained grid path kind is invalid");
       let remaining = step.selector;
       let changed = false;
       const rows = node.rows.map((row) => ({
@@ -1174,50 +1123,51 @@ function patchBridgeTextPath(
             return cell;
           }
           changed = true;
-          return { ...cell, view: patchBridgeTextPath(cell.view, tail, wrap, align) };
+          return { ...cell, view: patchSemanticTextPath(cell.view, tail, wrap, align) };
         }),
       }));
       if (!changed || remaining !== 0) throw new RangeError("native retained grid path selector is out of range");
-      return withPrivateIdentity({ ...node, rows });
+      return withSemanticUpdate(node, { rows });
     }
     case NATIVE_PATH_STEP.hangingPrefix:
     case NATIVE_PATH_STEP.hangingContinuation:
     case NATIVE_PATH_STEP.hangingBody: {
-      if (node.kind !== BRIDGE_VIEW_KIND.hanging || step.selector !== 0) throw new TypeError("native retained hanging path is invalid");
+      if (node.kind !== SEMANTIC_VIEW_KIND.hanging || step.selector !== 0) throw new TypeError("native retained hanging path is invalid");
       const key = step.kind === NATIVE_PATH_STEP.hangingPrefix ? "prefix" : step.kind === NATIVE_PATH_STEP.hangingContinuation ? "continuation" : "body";
-      return withPrivateIdentity({ ...node, [key]: patchBridgeTextPath(node[key], tail, wrap, align) });
+      return withSemanticUpdate(node, { [key]: patchSemanticTextPath(node[key], tail, wrap, align) });
     }
     default: throw new TypeError("unknown native retained path step");
   }
 }
 
-function bridgePathNodesForTransaction(
-  root: BridgeViewNode,
+function semanticPathNodesForTransaction(
+  root: SemanticViewNode,
   steps: readonly NativePathStep[],
-): BridgeViewNode[] | undefined {
+): SemanticViewNode[] | undefined {
   const collected = [root];
   let current = root;
   for (const step of steps) {
-    if (bridgePathViewKind(current.kind) !== step.expectedViewKind) return undefined;
+    if (semanticPathViewKind(current.kind) !== step.expectedViewKind) return undefined;
     switch (step.kind) {
       case NATIVE_PATH_STEP.containerChild:
       case NATIVE_PATH_STEP.clampChild:
       case NATIVE_PATH_STEP.rowViewportChild:
-        if (step.selector !== 0 || (current.kind !== BRIDGE_VIEW_KIND.container && current.kind !== BRIDGE_VIEW_KIND.clamp && current.kind !== BRIDGE_VIEW_KIND.contentMax)) return undefined;
+        if (step.selector !== 0 || (current.kind !== SEMANTIC_VIEW_KIND.container && current.kind !== SEMANTIC_VIEW_KIND.clamp && current.kind !== SEMANTIC_VIEW_KIND.contentMax)) return undefined;
         current = current.child;
         break;
       case NATIVE_PATH_STEP.columnChild:
       case NATIVE_PATH_STEP.rowChild: {
-        if (current.kind !== (step.kind === NATIVE_PATH_STEP.columnChild ? BRIDGE_VIEW_KIND.column : BRIDGE_VIEW_KIND.row)) return undefined;
+        const expected = step.kind === NATIVE_PATH_STEP.columnChild ? SEMANTIC_VIEW_KIND.column : SEMANTIC_VIEW_KIND.row;
+        if (current.kind !== expected) return undefined;
         const child = current.children[step.selector];
         if (child === undefined) return undefined;
         current = child.child;
         break;
       }
       case NATIVE_PATH_STEP.gridCell: {
-        if (current.kind !== BRIDGE_VIEW_KIND.grid || step.selector < 0) return undefined;
+        if (current.kind !== SEMANTIC_VIEW_KIND.grid || step.selector < 0) return undefined;
         let remaining = step.selector;
-        let found: BridgeViewNode | undefined;
+        let found: SemanticViewNode | undefined;
         for (const row of current.rows) {
           for (const cell of row.cells) {
             if (remaining === 0) found = cell.view;
@@ -1231,7 +1181,7 @@ function bridgePathNodesForTransaction(
       case NATIVE_PATH_STEP.hangingPrefix:
       case NATIVE_PATH_STEP.hangingContinuation:
       case NATIVE_PATH_STEP.hangingBody:
-        if (current.kind !== BRIDGE_VIEW_KIND.hanging || step.selector !== 0) return undefined;
+        if (current.kind !== SEMANTIC_VIEW_KIND.hanging || step.selector !== 0) return undefined;
         current = step.kind === NATIVE_PATH_STEP.hangingPrefix ? current.prefix : step.kind === NATIVE_PATH_STEP.hangingContinuation ? current.continuation : current.body;
         break;
       default: return undefined;
@@ -1241,56 +1191,57 @@ function bridgePathNodesForTransaction(
   return collected;
 }
 
-function bridgePathViewKind(kind: number): number {
+function semanticPathViewKind(kind: SemanticViewNode["kind"]): number {
   switch (kind) {
-    case BRIDGE_VIEW_KIND.text: return NATIVE_PATH_VIEW_KIND.text;
-    case BRIDGE_VIEW_KIND.row: return NATIVE_PATH_VIEW_KIND.row;
-    case BRIDGE_VIEW_KIND.column: return NATIVE_PATH_VIEW_KIND.column;
-    case BRIDGE_VIEW_KIND.grid: return NATIVE_PATH_VIEW_KIND.grid;
-    case BRIDGE_VIEW_KIND.hanging: return NATIVE_PATH_VIEW_KIND.hanging;
-    case BRIDGE_VIEW_KIND.container: return NATIVE_PATH_VIEW_KIND.container;
-    case BRIDGE_VIEW_KIND.clamp:
-    case BRIDGE_VIEW_KIND.contentMax: return NATIVE_PATH_VIEW_KIND.clampRows;
+    case SEMANTIC_VIEW_KIND.text: return NATIVE_PATH_VIEW_KIND.text;
+    case SEMANTIC_VIEW_KIND.row: return NATIVE_PATH_VIEW_KIND.row;
+    case SEMANTIC_VIEW_KIND.column: return NATIVE_PATH_VIEW_KIND.column;
+    case SEMANTIC_VIEW_KIND.grid: return NATIVE_PATH_VIEW_KIND.grid;
+    case SEMANTIC_VIEW_KIND.hanging: return NATIVE_PATH_VIEW_KIND.hanging;
+    case SEMANTIC_VIEW_KIND.container: return NATIVE_PATH_VIEW_KIND.container;
+    case SEMANTIC_VIEW_KIND.clamp:
+    case SEMANTIC_VIEW_KIND.contentMax: return NATIVE_PATH_VIEW_KIND.clampRows;
     default: return 0;
   }
 }
 
-export function textRowsForHarness(view: View): string[] { return rows(nodeForBridge(view)); }
+export function textRowsForHarness(view: View): string[] { return rows(semanticNodeOf(view)); }
 
-function rows(node: BridgeViewNode): string[] {
+function rows(node: SemanticViewNode): string[] {
   switch (node.kind) {
-    case BRIDGE_VIEW_KIND.text: return [node.spans.map((span) => span.text).join("")];
-    case BRIDGE_VIEW_KIND.diff: return node.hunks.flatMap((hunk) => [
+    case SEMANTIC_VIEW_KIND.text: return [node.spans.map((span) => span.text).join("")];
+    case SEMANTIC_VIEW_KIND.diff: return node.hunks.flatMap((hunk) => [
       `@@ -${displayDiffRange(hunk.oldRange)} +${displayDiffRange(hunk.newRange)} @@`,
       ...hunk.lines.flatMap((line) => [
-        `${line.kind === BRIDGE_DIFF_LINE_KIND.addition ? "+" : line.kind === BRIDGE_DIFF_LINE_KIND.deletion ? "-" : " "}${line.text}`,
-        ...(line.termination === BRIDGE_DIFF_LINE_TERMINATION.unterminated ? ["\\ No newline at end of file"] : []),
+        `${line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : " "}${line.text}`,
+        ...(line.termination === "unterminated" ? ["\\ No newline at end of file"] : []),
       ]),
     ]);
-    case BRIDGE_VIEW_KIND.spacer: return Array.from({ length: node.rows }, () => "");
-    case BRIDGE_VIEW_KIND.row: return [node.children.flatMap((child) => rows(child.child)).join("")];
-    case BRIDGE_VIEW_KIND.column: return node.children.flatMap((child) => rows(child.child));
-    case BRIDGE_VIEW_KIND.grid: return node.rows.flatMap((row) => row.cells.flatMap((cell) => rows(cell.view)));
-    case BRIDGE_VIEW_KIND.hanging: return rows(node.prefix).map((prefix, index) => `${prefix}${index === 0 ? rows(node.body)[0] ?? "" : rows(node.body)[index] ?? ""}`);
-    case BRIDGE_VIEW_KIND.container: case BRIDGE_VIEW_KIND.clamp: return rows(node.child).slice(0, node.maxRows);
-    case BRIDGE_VIEW_KIND.contentMax: return rows(node.child).slice(0, node.maxRows);
-    case BRIDGE_VIEW_KIND.component: return [""];
-    case BRIDGE_VIEW_KIND.decorated: return rows(node.child);
+    case SEMANTIC_VIEW_KIND.spacer: return Array.from({ length: node.rows }, () => "");
+    case SEMANTIC_VIEW_KIND.row: return [node.children.flatMap((child) => rows(child.child)).join("")];
+    case SEMANTIC_VIEW_KIND.column: return node.children.flatMap((child) => rows(child.child));
+    case SEMANTIC_VIEW_KIND.grid: return node.rows.flatMap((row) => row.cells.flatMap((cell) => rows(cell.view)));
+    case SEMANTIC_VIEW_KIND.hanging: return rows(node.prefix).map((prefix, index) => `${prefix}${index === 0 ? rows(node.body)[0] ?? "" : rows(node.body)[index] ?? ""}`);
+    case SEMANTIC_VIEW_KIND.container: return rows(node.child);
+    case SEMANTIC_VIEW_KIND.clamp: return rows(node.child).slice(0, node.maxRows);
+    case SEMANTIC_VIEW_KIND.contentMax: return rows(node.child).slice(0, node.maxRows);
+    case SEMANTIC_VIEW_KIND.component: return [""];
+    case SEMANTIC_VIEW_KIND.decorated: return rows(node.child);
   }
 }
 
-function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
+function toSemanticHunk(hunk: DiffHunk): SemanticDiffHunk {
   let oldLine = hunk.oldRange.start + 1;
   let newLine = hunk.newRange.start + 1;
-  const lines = hunk.lines.map((line) => {
+  const lines: SemanticDiffLine[] = hunk.lines.map((line) => {
     const node = {
-      kind: diffLineKindCode(line.lineKind),
+      kind: line.lineKind,
       text: line.text,
-      termination: diffLineTerminationCode(line.termination),
+      termination: line.termination === "none" ? "unterminated" as const : "terminated" as const,
       ...(line.lineKind === "context" ? { oldLine, newLine } : {}),
       ...(line.lineKind === "addition" ? { newLine } : {}),
       ...(line.lineKind === "deletion" ? { oldLine } : {}),
-    } as const;
+    } as SemanticDiffLine;
     if (line.lineKind !== "addition") oldLine += 1;
     if (line.lineKind !== "deletion") newLine += 1;
     return node;
@@ -1302,56 +1253,25 @@ function toBridgeHunk(hunk: DiffHunk): BridgeDiffHunkNode {
   };
 }
 
-function diffLineKindCode(
-  kind: DiffHunk["lines"][number]["lineKind"],
-): (typeof BRIDGE_DIFF_LINE_KIND)[keyof typeof BRIDGE_DIFF_LINE_KIND] {
-  switch (kind) {
-    case "context": return BRIDGE_DIFF_LINE_KIND.context;
-    case "addition": return BRIDGE_DIFF_LINE_KIND.addition;
-    case "deletion": return BRIDGE_DIFF_LINE_KIND.deletion;
-    default: throw new TypeError("unknown diff line kind");
-  }
-}
-
-function diffLineTerminationCode(
-  termination: DiffHunk["lines"][number]["termination"],
-): (typeof BRIDGE_DIFF_LINE_TERMINATION)[keyof typeof BRIDGE_DIFF_LINE_TERMINATION] {
-  switch (termination) {
-    case "lf":
-    case "crlf": return BRIDGE_DIFF_LINE_TERMINATION.terminated;
-    case "none": return BRIDGE_DIFF_LINE_TERMINATION.unterminated;
-    default: throw new TypeError("unknown diff line termination");
-  }
-}
-
-function bridgeOverflow(overflow: OverflowIndicator): BridgeOverflowIndicatorNode {
-  switch (overflow.kind) {
-    case "none": return { kind: BRIDGE_OVERFLOW_KIND.none };
-    case "ellipsis": return { kind: BRIDGE_OVERFLOW_KIND.ellipsis, style: cloneStyle(styleNodeFor(overflow.style)) };
-    case "footer": return { kind: BRIDGE_OVERFLOW_KIND.footer, prefix: overflow.prefix, style: cloneStyle(styleNodeFor(overflow.style)) };
-    default: throw new TypeError("unknown overflow indicator kind");
-  }
-}
-
-function bridgeGridTrack(track: GridTrack): BridgeGridTrackNode {
+function semanticGridTrack(track: GridTrack): SemanticGridTrack {
   switch (track.kind) {
-    case "content": return { kind: BRIDGE_GRID_TRACK_KIND.content };
-    case "contentMax": return { kind: BRIDGE_GRID_TRACK_KIND.contentMax, max: validateU16(track.max, "grid track max") };
-    case "fixed": return { kind: BRIDGE_GRID_TRACK_KIND.fixed, size: validateU16(track.size, "grid track size") };
-    case "flex": return { kind: BRIDGE_GRID_TRACK_KIND.flex };
-    case "flexMax": return { kind: BRIDGE_GRID_TRACK_KIND.flexMax, max: validateU16(track.max, "grid track max") };
+    case "content": return { kind: "content" };
+    case "contentMax": return { kind: "contentMax", max: validateU16(track.max, "grid track max") };
+    case "fixed": return { kind: "fixed", size: validateU16(track.size, "grid track size") };
+    case "flex": return { kind: "flex" };
+    case "flexMax": return { kind: "flexMax", max: validateU16(track.max, "grid track max") };
     default: throw new TypeError("unknown grid track kind");
   }
 }
 
-function bridgeLayoutChildren(children: readonly LayoutChild[]): BridgeLayoutChild[] {
+function semanticLayoutChildren(children: readonly LayoutChild[]): SemanticLayoutChild[] {
   return children.map((entry) => {
     switch (entry.kind) {
-      case "normal": return { kind: BRIDGE_LAYOUT_CHILD_KIND.normal, child: nodeForBridge(entry.child) };
-      case "fixed": return { kind: BRIDGE_LAYOUT_CHILD_KIND.fixed, size: validateU16(entry.size, "size"), child: nodeForBridge(entry.child) };
-      case "flex": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flex, child: nodeForBridge(entry.child) };
-      case "flexMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.flexMax, maxRows: validateU16(entry.maxRows, "maxRows"), child: nodeForBridge(entry.child) };
-      case "contentMax": return { kind: BRIDGE_LAYOUT_CHILD_KIND.contentMax, maxRows: validateU16(entry.maxRows, "maxRows"), child: nodeForBridge(entry.child) };
+      case "normal": return { kind: "normal", child: semanticNodeOf(entry.child) };
+      case "fixed": return { kind: "fixed", size: validateU16(entry.size, "size"), child: semanticNodeOf(entry.child) };
+      case "flex": return { kind: "flex", child: semanticNodeOf(entry.child) };
+      case "flexMax": return { kind: "flexMax", maxRows: validateU16(entry.maxRows, "maxRows"), child: semanticNodeOf(entry.child) };
+      case "contentMax": return { kind: "contentMax", maxRows: validateU16(entry.maxRows, "maxRows"), child: semanticNodeOf(entry.child) };
       default: throw new TypeError("unknown layout child kind");
     }
   });
@@ -1372,28 +1292,19 @@ function displayDiffRange(range: { readonly start: number; readonly count: numbe
 
 function wrapCode(mode: WrapMode): number {
   switch (mode) {
-    case "wordThenGrapheme": return BRIDGE_WRAP_MODE.wordThenGrapheme;
-    case "grapheme": return BRIDGE_WRAP_MODE.grapheme;
-    case "noWrap": return BRIDGE_WRAP_MODE.noWrap;
+    case "wordThenGrapheme": return 1;
+    case "grapheme": return 2;
+    case "noWrap": return 3;
     default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
   }
 }
 
 function horizontalAlignCode(align: HorizontalAlign): number {
   switch (align) {
-    case "start": return BRIDGE_HORIZONTAL_ALIGN.start;
-    case "center": return BRIDGE_HORIZONTAL_ALIGN.center;
-    case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
+    case "start": return 1;
+    case "center": return 2;
+    case "end": return 3;
     default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
-  }
-}
-
-function verticalAlignCode(align: "top" | "center" | "bottom"): number {
-  switch (align) {
-    case "top": return BRIDGE_VERTICAL_ALIGN.top;
-    case "center": return BRIDGE_VERTICAL_ALIGN.center;
-    case "bottom": return BRIDGE_VERTICAL_ALIGN.bottom;
-    default: throw new RangeError(`unknown vertical alignment ${JSON.stringify(align)}`);
   }
 }
 

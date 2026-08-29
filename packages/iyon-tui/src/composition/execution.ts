@@ -17,7 +17,7 @@
  * allocation-free exact reuse inside dirty scopes.
  */
 
-import { nodeForBridge } from "../transport/structural/view-bridge.ts";
+import { semanticNodeOf } from "../api/view/semantic-node.ts";
 import type { View } from "../api/view/view.ts";
 import type { ViewComponentType } from "./define-view.ts";
 import type { TrackedStateSource } from "./tracked-state.ts";
@@ -682,7 +682,7 @@ export class RetainedExecutionRuntime {
       // and can violate that contract. Validate before the output can become
       // pending state; otherwise an ignored invalid child could be promoted as
       // mounted without an authoritative output.
-      nodeForBridge(output);
+      semanticNodeOf(output);
       scope.pendingOutput = output;
     } finally {
       popActive(scope);

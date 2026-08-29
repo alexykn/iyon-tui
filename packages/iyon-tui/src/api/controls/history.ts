@@ -1,4 +1,4 @@
-import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
+import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { tuiError } from "../errors.ts";
 import type { View } from "../view/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "../../transport/structural/native-view-abi.ts";
@@ -99,7 +99,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      return this.nativeAs<NativeHistoryContract>().push(nodeForBridge(view));
+      return this.nativeAs<NativeHistoryContract>().push(lowerColdView(view));
     });
   }
 
@@ -118,7 +118,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeAs<NativeHistoryContract>().freeze(unit, nodeForBridge(view));
+      this.nativeAs<NativeHistoryContract>().freeze(unit, lowerColdView(view));
     });
   }
 

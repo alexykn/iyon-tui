@@ -1,7 +1,7 @@
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
 import {
   clearNativeHint,
-  ensureNative,
+  ensureSemanticNative,
   MaterializeTx,
   refreshNativeHint,
   RetainedCycleError,
@@ -36,13 +36,18 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "../abi/structural/generated/view_calls.ts";
-import { nodeForBridge } from "./view-bridge.ts";
+import { lowerColdView } from "./cold-lowering.ts";
+import { axisKindForHorizontal } from "./encoding.ts";
+import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
   nodeIdPair,
   viewNodeId,
-  type NativePathLineage,
   type View,
 } from "../../api/view/view.ts";
+import type {
+  NativePathLineage,
+  NativeTextLayoutTransactionEdit,
+} from "./retained-path.ts";
 import manifest from "../abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
@@ -109,14 +114,6 @@ export function recordNativeViewRoute(route: NativeViewRoute): void {
  * One typed transaction edit. NodeIds are ordered from changed leaf toward the
  * new root, matching the fixed lanes in the generated ABI.
  */
-export interface NativeTextLayoutTransactionEdit {
-  readonly lineage: NativePathLineage;
-  /** Construction-time scalar NodeIds, ordered leaf toward root. */
-  readonly nodeIds: readonly number[];
-  readonly wrap: number;
-  readonly align: number;
-}
-
 export interface NativeAxisSpliceChild {
   readonly view: View;
   /** `(track kind in low byte, value in the high 16 bits)`; zero means content. */
@@ -178,8 +175,8 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
 /**
  * PERF-12 T13 (§78/§80): retained materialization for boundaries that keep a
  * View only transiently (History unit import, animation frames) or that run
- * their own §18 boundary. Identity-first: BridgeNativeHint hits reuse already-
- * materialized nodes with zero payload reads; ceiling is 0 so genuinely new
+ * their own §18 boundary. Identity-first: semantic NativeRef hint hits reuse
+ * already-materialized nodes with zero payload reads; ceiling is 0 so genuinely new
  * nodes skip the NodeId probe exactly like the §19 ordering requires — cold
  * unit imports pay no extra per-node round trips, while anything previously
  * materialized through any boundary rides its hint.
@@ -195,10 +192,10 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
+  const node = semanticNodeOf(next);
   const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
   try {
-    let reference = ensureNative(node, tx);
+    let reference = ensureSemanticNative(node, tx);
     // ensureNative deliberately treats hints as borrowed. Transient users of
     // this helper must own one lease before they can release it, even when the
     // root was already materialized by a different boundary.
@@ -233,7 +230,6 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
 export function tryNativeMaterialize(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
   try {
     const [low, high] = nodeIdPair(next);
     return viewRefForNodeId(session.symbols, session.runtime, low, high);
@@ -242,7 +238,11 @@ export function tryNativeMaterialize(next: View): number | undefined {
   }
   const decodeRef = native.tuiViewAbiDecodeRef;
   if (decodeRef === undefined) return undefined;
-  const reference = decodeRef(node as unknown as object);
+  // Only construct the complete bridge after the NodeId promotion misses.
+  // Existing native roots are a physical fast path and do not need semantic
+  // payload lowering merely to discover that they are already retained.
+  const bridge = lowerColdView(next);
+  const reference = decodeRef(bridge as unknown as object);
   return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
     ? reference
     : undefined;
@@ -274,7 +274,7 @@ export function tryNativeAxisCreate(
       refs.push(reference);
     }
     const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
-    const axisKind = horizontal ? 1 : 2;
+    const axisKind = axisKindForHorizontal(horizontal);
     return children.length <= NATIVE_SMALL_AXIS_ARITY_MAX
       ? createSmallAxis(session, horizontal, nodeIdLow, nodeIdHigh, gap, children, refs)
       : createAxisWithBuilder(session, axisKind, nodeIdLow, nodeIdHigh, gap, children, refs);

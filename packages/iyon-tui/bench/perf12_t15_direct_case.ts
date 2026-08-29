@@ -1,5 +1,6 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { viewNodeIdHighWater } from "../src/api/view/view.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
@@ -55,7 +56,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(nodeForBridge(view));
+  host.render(lowerColdView(view));
   if (!boundary.adopt(view)) throw new Error("direct-ffi cold fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });
@@ -75,6 +76,7 @@ try {
   });
   const semanticConstruction: number[] = [];
   const transportAndHost: number[] = [];
+  const measuredNodeIdStart = viewNodeIdHighWater();
   try {
     for (let index = 0; index < measured; index++) {
       const constructStart = Bun.nanoseconds();
@@ -119,6 +121,8 @@ try {
     median_ci95_ns: bootstrap(total),
     structural_delta: retainedIdentityCounterSnapshot(),
     first_screen_row: host.screenRows()[0] ?? "",
+    screen_rows: host.screenRows(),
+    semantic_node_ids_created: viewNodeIdHighWater() - measuredNodeIdStart,
   }));
 } finally {
   setRetainedPhaseInstrumentation(undefined);

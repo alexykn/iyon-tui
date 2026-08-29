@@ -8,7 +8,7 @@ import {
   tryNativeAxisCreateRender,
 } from "../src/transport/structural/native-view-abi.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { View } from "../src/api/view/view.ts";
 
 type HostContract = {
@@ -32,9 +32,9 @@ describe("PERF-11.8 native builders and small constructors", () => {
       column.flex(right);
     });
     try {
-      host.render(nodeForBridge(left));
+      host.render(lowerColdView(left));
       const leftRef = nativeViewRefForNodeId(left);
-      host.render(nodeForBridge(right));
+      host.render(lowerColdView(right));
       const rightRef = nativeViewRefForNodeId(right);
       expect(leftRef).toBeGreaterThan(0);
       expect(rightRef).toBeGreaterThan(0);
@@ -45,7 +45,7 @@ describe("PERF-11.8 native builders and small constructors", () => {
       expect(result).toBeGreaterThan(0);
       releaseNativeViewRef(nativeViewAbiSession(), leftRef!);
       releaseNativeViewRef(nativeViewAbiSession(), rightRef!);
-      oracle.render(nodeForBridge(next));
+      oracle.render(lowerColdView(next));
       expect(host.screenRows()).toEqual(oracle.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {
@@ -62,12 +62,12 @@ describe("PERF-11.8 native builders and small constructors", () => {
     const next = View.vertical(spacers);
     try {
       tui.render({ body: next });
-      oracle.render(nodeForBridge(next));
+      oracle.render(lowerColdView(next));
       expect(tui.screenRows()).toEqual(oracle.screenRows());
 
       const textFallback = View.vertical([View.text("unsupported"), View.spacer(1)]);
       tui.render({ body: textFallback });
-      oracle.render(nodeForBridge(textFallback));
+      oracle.render(lowerColdView(textFallback));
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();

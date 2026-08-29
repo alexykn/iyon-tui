@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import type { RetainedPhaseSample } from "../src/transport/structural/retained-dag.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
@@ -92,7 +92,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(nodeForBridge(view));
+  host.render(lowerColdView(view));
   if (!boundary.adopt(view)) throw new Error("realistic trace fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });

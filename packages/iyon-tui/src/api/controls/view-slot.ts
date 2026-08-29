@@ -14,7 +14,7 @@ import {
 } from "../../composition/execution.ts";
 import { activeExecutionScope, protocolState } from "../../composition/execution-context.ts";
 import { composeComponent } from "../../composition/compose.ts";
-import { nodeForBridge } from "../../transport/structural/view-bridge.ts";
+import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
 
@@ -34,7 +34,7 @@ function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): objec
       releaseNativeViewRef(nativeViewAbiSession(), retained);
     }
   }
-  return host.createViewSlot(nodeForBridge(seed));
+  return host.createViewSlot(lowerColdView(seed));
 }
 
 const ANIMATION_REF_SCRATCH = new WeakMap<object, Uint32Array>();
@@ -218,7 +218,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeAs<NativeViewSlotHandle>().setView(nodeForBridge(view));
+      this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
       this.currentView = view;
     });
     // Transactional ownership transition (direct wins only after successful
@@ -250,7 +250,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
       // than reporting a false builder-unsupported error.
       return {
         commit: (): void => {
-          this.nativeAs<NativeViewSlotHandle>().setView(nodeForBridge(view));
+          this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
           this.currentViewSet(view);
         },
         abort(): void {},
@@ -336,8 +336,8 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     return scratch;
   }
   private setAnimationBridge(frames: readonly View[], intervalMs: number, atCycleBoundary: boolean): void {
-    if (atCycleBoundary) this.nativeAs<NativeViewSlotHandle>().setAnimationAtCycleBoundary(frames.map(nodeForBridge), intervalMs);
-    else this.nativeAs<NativeViewSlotHandle>().setAnimation(frames.map(nodeForBridge), intervalMs);
+    if (atCycleBoundary) this.nativeAs<NativeViewSlotHandle>().setAnimationAtCycleBoundary(frames.map(lowerColdView), intervalMs);
+    else this.nativeAs<NativeViewSlotHandle>().setAnimation(frames.map(lowerColdView), intervalMs);
   }
 
   private setFixedAnimationRefs(refs: readonly number[], intervalMs: number, atCycleBoundary: boolean): boolean {
@@ -396,7 +396,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
           releaseNativeViewRef(nativeViewAbiSession(), ref);
         }
       }
-      this.nativeAs<NativeViewSlotHandle>().stopAnimation(nodeForBridge(view));
+      this.nativeAs<NativeViewSlotHandle>().stopAnimation(lowerColdView(view));
     });
     this.disposeOwnedBuilder();
   }

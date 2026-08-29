@@ -288,7 +288,10 @@ export class PersistentSeq<T> {
 
   toArray(): readonly T[] { return [...this]; }
 
-  *[Symbol.iterator](): Iterator<T> {
+  /** Read-only semantic sequence view over the persistent contents. */
+  values(): IterableIterator<T> { return this[Symbol.iterator](); }
+
+  *[Symbol.iterator](): IterableIterator<T> {
     const stack: Frame<T>[] = [{ node: this.#root, index: 0 }];
     while (stack.length > 0) {
       const frame = stack[stack.length - 1]!;

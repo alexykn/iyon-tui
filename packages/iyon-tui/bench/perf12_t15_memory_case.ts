@@ -1,5 +1,5 @@
 import { View } from "../src/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -65,7 +65,7 @@ function render(view: View): void {
     publication.commit();
     return;
   }
-  host.render(nodeForBridge(view));
+  host.render(lowerColdView(view));
   if (!boundary.adopt(view)) throw new Error("memory case failed to adopt root");
 }
 

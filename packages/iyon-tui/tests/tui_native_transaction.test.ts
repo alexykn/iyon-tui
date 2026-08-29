@@ -7,14 +7,13 @@ import {
   releaseNativeViewRef,
   tryNativeEditTransactionRender,
 } from "../src/transport/structural/native-view-abi.ts";
+import { viewNodeId, View } from "../src/api/view/view.ts";
 import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
   nativePathChildLineage,
-  viewNodeId,
-  View,
-} from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+} from "../src/transport/structural/retained-path.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 
 type HostContract = {
   render(view: object): void;
@@ -43,7 +42,7 @@ describe("PERF-11.6 native edit transactions", () => {
       column.child(changedRight);
     });
     try {
-      host.render(nodeForBridge(base));
+      host.render(lowerColdView(base));
       const baseRef = nativeViewRefForNodeId(base);
       if (baseRef === undefined) return;
       const leftLineage = nativePathChildLineage(base, undefined, {
@@ -61,7 +60,7 @@ describe("PERF-11.6 native edit transactions", () => {
         { lineage: rightLineage, nodeIds: [viewNodeId(changedRight), viewNodeId(changed)], wrap: 2, align: 2 },
       ]);
       expect(result).toBeGreaterThan(0);
-      oracle.render(nodeForBridge(changed));
+      oracle.render(lowerColdView(changed));
       expect(host.screenRows()).toEqual(oracle.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {

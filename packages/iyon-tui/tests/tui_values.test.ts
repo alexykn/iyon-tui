@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { DiffHunk, DiffLine, DiffRange, DiffRenderer, View } from "../src/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { native } from "../src/transport/native/addon.ts";
 
 describe("retained TUI semantic values", () => {
@@ -22,7 +22,7 @@ describe("retained TUI semantic values", () => {
     const Host = native.NativeTuiHost;
     if (Host === undefined) throw new Error("native TUI host is unavailable");
     const host = new Host(20, 4, true);
-    host.render(nodeForBridge(view));
+    host.render(lowerColdView(view));
     host.dispose();
   });
 
@@ -33,7 +33,7 @@ describe("retained TUI semantic values", () => {
     const diff = new DiffRenderer().render(new DiffHunk(new DiffRange(0, 1), new DiffRange(0, 1), [
       new DiffLine("context", "same"),
     ]));
-    host.render(nodeForBridge(diff));
+    host.render(lowerColdView(diff));
     expect(host.screenRows().some((row) => row.includes("@@ -1 +1 @@"))).toBe(true);
     expect(host.screenRows().some((row) => row.includes(" same"))).toBe(true);
     host.dispose();
@@ -62,7 +62,7 @@ describe("retained TUI semantic values", () => {
     const Host = native.NativeTuiHost;
     if (Host === undefined) throw new Error("native TUI host is unavailable");
     const host = new Host(20, 4, true);
-    const node = nodeForBridge(View.text("cached"));
+    const node = lowerColdView(View.text("cached"));
     expect(Object.isFrozen(node)).toBe(true);
     host.render(node);
     const malformed = { ...node, kind: 999 } as unknown as typeof node;
@@ -74,17 +74,17 @@ describe("retained TUI semantic values", () => {
     const Host = native.NativeTuiHost;
     if (Host === undefined) throw new Error("native TUI host is unavailable");
     const host = new Host(20, 4, true);
-    host.render(nodeForBridge(View.text("κ🙂")));
+    host.render(lowerColdView(View.text("κ🙂")));
     expect(host.screenRows().some((row) => row.includes("κ🙂"))).toBe(true);
-    host.render(nodeForBridge(View.text("replacement")));
+    host.render(lowerColdView(View.text("replacement")));
     expect(host.screenRows().some((row) => row.includes("replacement"))).toBe(true);
     host.dispose();
   });
 
   test("node identity survives module re-evaluation", async () => {
-    const first = nodeForBridge(View.text("first")).id;
+    const first = lowerColdView(View.text("first")).id;
     const reloaded = await import(`../src/api/view/view.ts?reload=${Date.now()}`);
-    const second = nodeForBridge(reloaded.View.text("second")).id;
+    const second = lowerColdView(reloaded.View.text("second")).id;
     expect(second).toBeGreaterThan(first);
   });
 

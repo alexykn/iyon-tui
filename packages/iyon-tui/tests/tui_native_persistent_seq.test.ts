@@ -7,7 +7,7 @@ import {
   tryNativeAxisSpliceRender,
   tryNativeGridSetCellRender,
 } from "../src/transport/structural/native-view-abi.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { View } from "../src/api/view/view.ts";
 
 type StructuralHost = {
@@ -22,10 +22,10 @@ const Host = native.NativeTuiHost as unknown as
 
 function seed(host: StructuralHost, base: View, ...children: View[]): number {
   for (const child of children) {
-    host.render(nodeForBridge(child));
+    host.render(lowerColdView(child));
     if (nativeViewRefForNodeId(child) === undefined) throw new Error("native child ref unavailable");
   }
-  host.render(nodeForBridge(base));
+  host.render(lowerColdView(base));
   const reference = nativeViewRefForNodeId(base);
   if (reference === undefined) throw new Error("native base ref unavailable");
   return reference;
@@ -61,7 +61,7 @@ test("native axis replace/insert/remove preserves wide host parity", () => {
       const baseRef = seed(host, base, ...children);
       const nextRef = op(host, baseRef);
       expect(nextRef).toBeDefined();
-      oracle.render(nodeForBridge(next));
+      oracle.render(lowerColdView(next));
       expect(host.screenRows()).toEqual(oracle.screenRows());
     } finally {
       host.dispose();
@@ -97,7 +97,7 @@ test("native grid cell path copy preserves placement and parity", () => {
     const baseRef = seed(host, base, replacement);
     const nextRef = tryNativeGridSetCellRender(host, base, baseRef, next, 31, 0, replacement);
     expect(nextRef).toBeDefined();
-    oracle.render(nodeForBridge(next));
+    oracle.render(lowerColdView(next));
     expect(host.screenRows()).toEqual(oracle.screenRows());
   } finally {
     host.dispose();

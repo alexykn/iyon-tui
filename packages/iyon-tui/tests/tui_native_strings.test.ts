@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
 import { StyleSpec, View, TextSpan } from "../src/index.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 
 type HostContract = {
@@ -41,7 +41,7 @@ describe("PERF-11.9 native strings and style atoms", () => {
       // the Direct oracle exactly.
       for (const value of values) {
         tui.render({ body: value });
-        oracle.render(nodeForBridge(value));
+        oracle.render(lowerColdView(value));
         expect(tui.screenRows()).toEqual(oracle.screenRows());
       }
     } finally {

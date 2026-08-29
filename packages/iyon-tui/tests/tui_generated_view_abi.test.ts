@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import { hostRenderRef, runtimeNoop, viewCommonPatchRoot, viewRefForNodeId, viewRenderRef, viewReleaseMany, viewSpacerCreate, viewTextLayoutPatchRoot } from "../src/transport/abi/structural/generated/view_calls.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { nodeIdPair, View } from "../src/api/view/view.ts";
 
 type AbiHost = NonNullable<typeof native.NativeTuiHost> extends new (...args: never[]) => infer T ? T : never;
@@ -32,7 +32,7 @@ describe("PERF-11 generated vertical slice", () => {
     expect((host as unknown as Record<string, unknown>).tuiViewAbiHostPointer).toBeUndefined();
     const view = View.spacer(2);
     try {
-      host.render(nodeForBridge(view));
+      host.render(lowerColdView(view));
       const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
       const reference = viewRefForNodeId(session.symbols, session.runtime, nodeIdLow, nodeIdHigh);
       expect(hostRenderRef(session.symbols, session.runtime, host, reference)).toBe(0);
@@ -64,7 +64,7 @@ describe("PERF-11 generated vertical slice", () => {
     const textBase = View.text("hello");
     const textChanged = textBase.noWrap().textAlign("center");
     try {
-      host.render(nodeForBridge(textBase));
+      host.render(lowerColdView(textBase));
       const [textLow, textHigh] = nodeIdPair(textBase);
       const textRef = viewRefForNodeId(session.symbols, session.runtime, textLow, textHigh);
       const [textChangedLow, textChangedHigh] = nodeIdPair(textChanged);
@@ -78,9 +78,9 @@ describe("PERF-11 generated vertical slice", () => {
         2,
       );
       expect(textChangedRef).toBeGreaterThan(0);
-      host.render(nodeForBridge(textChanged));
+      host.render(lowerColdView(textChanged));
       const directText = View.text("hello").noWrap().textAlign("center");
-      direct.render(nodeForBridge(directText));
+      direct.render(lowerColdView(directText));
       expect(host.screenRows()).toEqual(direct.screenRows());
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([textRef, textChangedRef]), 2);
 
@@ -108,11 +108,11 @@ describe("PERF-11 generated vertical slice", () => {
         baseRef,
       );
       expect(changedRef).toBeGreaterThan(0);
-      host.render(nodeForBridge(base));
-      host.render(nodeForBridge(changed));
+      host.render(lowerColdView(base));
+      host.render(lowerColdView(changed));
       const directBase = View.spacer(1);
-      direct.render(nodeForBridge(directBase));
-      direct.render(nodeForBridge(directBase.padding(1)));
+      direct.render(lowerColdView(directBase));
+      direct.render(lowerColdView(directBase.padding(1)));
       expect(host.screenRows()).toEqual(direct.screenRows());
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([baseRef, changedRef]), 2);
     } finally {

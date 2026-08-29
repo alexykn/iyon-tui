@@ -11,48 +11,44 @@
  *      operation's raw arguments against the slot's committed View BEFORE
  *      allocating anything (§19), return the exact previous View on match,
  *      otherwise construct one new immutable View;
- *   3. children compare by BridgeViewNode identity — they were themselves
+ *   3. children compare by SemanticViewNode identity — they were themselves
  *      composed inside their own scopes/slots, so identity IS the shallow
  *      equality proof (§17.1);
  *   4. no rest arrays/string dispatch/reflection on the hot path (§52.8);
  *      modifier deltas use small integer tags.
  *
- * Control-flow shifts realign the dense cursor: they may reduce local reuse
- * but can never select another component instance or produce stale semantics
- * — immediate equality still authorizes every hit (AMENDMENT-C §10.1).
- *
- * Comparators operate on frozen normalized bridge records (§18). The only
+ * Comparators operate on frozen normalized semantic records (§18). The only
  * property-name loops are bounded comparisons over tiny normalized style /
  * style-state records, never tree walks or generic reflection.
  */
 
 import { executionContext, executionCounters } from "./execution.ts";
 import { withoutRetainedComposition } from "./execution-context.ts";
-import { borderNodeFor, colorNodeFor, styleNodeFor } from "../transport/structural/style-lowering.ts";
 import {
-  BRIDGE_GRID_TRACK_KIND,
-  BRIDGE_HORIZONTAL_ALIGN,
-  BRIDGE_LAYOUT_CHILD_KIND,
-  BRIDGE_OVERFLOW_KIND,
-  BRIDGE_VIEW_KIND,
-  BRIDGE_VERTICAL_ALIGN,
-  BRIDGE_WRAP_MODE,
-  emptyDecoration,
-  emptyStyle,
-  mergeStyles,
-  peekBridgeGridSequenceOverride,
-  peekBridgeSequenceOverride,
-  type BorderNode,
-  type BridgeGridTrackNode,
-  type BridgeLayoutChild,
-  type BridgeOverflowIndicatorNode,
-  type BridgeViewNode,
-  type ColorNode,
-  type DecorationNode,
-  type StyleNode,
-} from "../transport/structural/ir.ts";
+  semanticBorderFor,
+  semanticColorFor,
+  semanticDecorationFor,
+  semanticEmptyStyle,
+  semanticMergeStyles,
+  semanticStyleFor,
+} from "../api/presentation/semantic-style.ts";
+import {
+  peekSemanticGridSequenceOverride,
+  peekSemanticSequenceOverride,
+  SEMANTIC_VIEW_KIND,
+  semanticNodeOf,
+  type SemanticBorder,
+  type SemanticColor,
+  type SemanticDecoration,
+  type SemanticGridTrack,
+  type SemanticLayoutChild,
+  type SemanticOverflowIndicator,
+  type SemanticStyle,
+  type SemanticViewNode,
+} from "../api/view/semantic-node.ts";
 import {
   ChildrenBuilder,
+  componentViewForHandle,
   composedAxis,
   GridBuilder,
   gridBuilderFromSpecification,
@@ -63,8 +59,6 @@ import {
   type LayoutChild,
   type OverflowIndicator,
 } from "../api/view/view.ts";
-import { componentIdForPlacement, componentViewFor } from "../transport/structural/component-view.ts";
-import { nodeForBridge } from "../transport/structural/view-bridge.ts";
 import { insets } from "../api/view/geometry.ts";
 import type { Insets } from "../api/view/geometry.ts";
 import type { HorizontalAlign, TextSpan, WrapMode } from "../api/content/text.ts";
@@ -104,13 +98,20 @@ const MOD_TEXT_ATTRIBUTE = 13;
 const MOD_STYLE_STATE = 14;
 const MOD_BORDER = 15;
 
-// --- Field comparators over normalized bridge records (§18). ----------------
+// --- Field comparators over normalized semantic records (§18). -------------
 
-function colorEqual(a: ColorNode | undefined, b: ColorNode | undefined): boolean {
+function colorEqual(a: SemanticColor | undefined, b: SemanticColor | undefined): boolean {
   if (a === b) return true;
-  if (typeof a === "string" || typeof b === "string") return false;
-  if (a === undefined || b === undefined) return false;
-  return a.type === b.type && a.value === b.value;
+  if (a === undefined || b === undefined || a.kind !== b.kind) return false;
+  switch (a.kind) {
+    case "theme": return a.key === (b as Extract<SemanticColor, { kind: "theme" }>).key;
+    case "named": return a.value === (b as Extract<SemanticColor, { kind: "named" }>).value;
+    case "indexed": return a.value === (b as Extract<SemanticColor, { kind: "indexed" }>).value;
+    case "rgb": {
+      const other = b as Extract<SemanticColor, { kind: "rgb" }>;
+      return a.r === other.r && a.g === other.g && a.b === other.b;
+    }
+  }
 }
 
 function insetsEqual(
@@ -136,7 +137,7 @@ function attributesEqual(
   return aCount === bCount;
 }
 
-function styleNodesEqual(a: StyleNode | undefined, b: StyleNode | undefined): boolean {
+function styleNodesEqual(a: SemanticStyle | undefined, b: SemanticStyle | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
   return a.theme === b.theme
@@ -161,7 +162,7 @@ function styleStatesEqual(
   return aCount === bCount;
 }
 
-function borderEqual(a: BorderNode | undefined, b: BorderNode | undefined): boolean {
+function borderEqual(a: SemanticBorder | undefined, b: SemanticBorder | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
   if (a.style !== b.style || a.edges !== b.edges || !colorEqual(a.color, b.color)) return false;
@@ -169,14 +170,14 @@ function borderEqual(a: BorderNode | undefined, b: BorderNode | undefined): bool
   const bGlyphs = b.glyphs;
   if (aGlyphs === bGlyphs) return true;
   if (aGlyphs === undefined || bGlyphs === undefined) return false;
-  let count = 0;
-  for (const key in aGlyphs) {
-    if (bGlyphs[key] !== aGlyphs[key]) return false;
-    count += 1;
-  }
-  let bCount = 0;
-  for (const _key in bGlyphs) bCount += 1;
-  return count === bCount;
+  return aGlyphs.top === bGlyphs.top
+    && aGlyphs.right === bGlyphs.right
+    && aGlyphs.bottom === bGlyphs.bottom
+    && aGlyphs.left === bGlyphs.left
+    && aGlyphs.topLeft === bGlyphs.topLeft
+    && aGlyphs.topRight === bGlyphs.topRight
+    && aGlyphs.bottomLeft === bGlyphs.bottomLeft
+    && aGlyphs.bottomRight === bGlyphs.bottomRight;
 }
 
 /**
@@ -184,7 +185,7 @@ function borderEqual(a: BorderNode | undefined, b: BorderNode | undefined): bool
  * inherits the ENTIRE previous chain state unchanged, e.g. layout patches
  * over decorated text).
  */
-function decorationFullyEqual(a: DecorationNode, b: DecorationNode): boolean {
+function decorationFullyEqual(a: SemanticDecoration, b: SemanticDecoration): boolean {
   return insetsEqual(a.padding, b.padding)
     && colorEqual(a.background, b.background)
     && colorEqual(a.foreground, b.foreground)
@@ -206,8 +207,8 @@ function decorationFullyEqual(a: DecorationNode, b: DecorationNode): boolean {
  * touched fields come from this call site.
  */
 function decorationDeltaMatches(
-  dec: DecorationNode,
-  inherited: DecorationNode,
+  dec: SemanticDecoration,
+  inherited: SemanticDecoration,
   tag: number,
   a: unknown,
   b: unknown,
@@ -237,28 +238,28 @@ function decorationDeltaMatches(
     case MOD_MAX_HEIGHT: return dec.maxHeight === a;
     case MOD_PADDING: return insetsEqual(dec.padding, insets(a as number | Insets));
     case MOD_FOREGROUND: {
-      const expected = mergeStyles(inherited.style, { ...emptyStyle(), foreground: colorNodeFor(a as ColorSpec) });
+      const expected = semanticMergeStyles(inherited.style, { ...semanticEmptyStyle(), foreground: semanticColorFor(a as ColorSpec) });
       return styleNodesEqual(dec.style, expected);
     }
-    case MOD_BACKGROUND: return colorEqual(dec.background, colorNodeFor(a as ColorSpec));
-    case MOD_BORDER: return borderEqual(dec.border, borderNodeFor(a as BorderSpec));
+    case MOD_BACKGROUND: return colorEqual(dec.background, semanticColorFor(a as ColorSpec));
+    case MOD_BORDER: return borderEqual(dec.border, semanticBorderFor(a as BorderSpec));
     case MOD_STYLE_SPEC: {
       const style = a as StyleRef | StyleSpec;
-      const lowered = mergeStyles(emptyStyle(), styleNodeFor(style));
+      const lowered = semanticMergeStyles(semanticEmptyStyle(), semanticStyleFor(style));
       const replacesStyle = style.kind === "style-ref" && style.themeKey !== undefined;
       const expected = replacesStyle
         ? lowered
-        : mergeStyles(inherited.style, lowered);
+        : semanticMergeStyles(inherited.style, lowered);
       return styleNodesEqual(dec.style, expected);
     }
     case MOD_TEXT_ATTRIBUTE: {
       const name = a as TextAttribute;
       const value = (b as boolean | undefined) ?? true;
-      if (!colorEqual(dec.style.theme, inherited.style.theme)) return false;
+      if (dec.style.theme !== inherited.style.theme) return false;
       if (!colorEqual(dec.style.foreground, inherited.style.foreground)) return false;
       if (!colorEqual(dec.style.background, inherited.style.background)) return false;
-      const inheritedAttributes = inherited.style.attributes;
-      const actual = dec.style.attributes;
+      const inheritedAttributes = inherited.style.attributes as Readonly<Record<string, boolean>>;
+      const actual = dec.style.attributes as Readonly<Record<string, boolean>>;
       let expectedCount = 0;
       for (const key in inheritedAttributes) {
         expectedCount += 1;
@@ -303,13 +304,13 @@ function applyDecoration(base: View, tag: number, a?: unknown, b?: unknown): Vie
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const previousNode = nodeForBridge(previous);
-    if (previousNode.kind === BRIDGE_VIEW_KIND.decorated) {
-      const baseNode = nodeForBridge(base);
+    const previousNode = semanticNodeOf(previous);
+    if (previousNode.kind === SEMANTIC_VIEW_KIND.decorated) {
+      const baseNode = semanticNodeOf(base);
       // decorate() flattens decorated bases: the result wraps the INNER child
       // and clones the base's accumulated decoration as the merge input.
-      const inner = baseNode.kind === BRIDGE_VIEW_KIND.decorated ? baseNode.child : baseNode;
-      const inherited = baseNode.kind === BRIDGE_VIEW_KIND.decorated ? baseNode.decoration : emptyDecoration();
+      const inner = baseNode.kind === SEMANTIC_VIEW_KIND.decorated ? baseNode.child : baseNode;
+      const inherited = baseNode.kind === SEMANTIC_VIEW_KIND.decorated ? baseNode.decoration : emptySemanticDecoration();
       if (previousNode.child === inner && decorationDeltaMatches(previousNode.decoration, inherited, tag, a, b)) {
         stageReuse(slot, previous);
         return previous;
@@ -346,23 +347,27 @@ function applyDecorationDirect(base: View, tag: number, a: unknown, b: unknown):
   return executionContext.top === undefined ? construct() : withoutRetainedComposition(construct);
 }
 
+function emptySemanticDecoration(): SemanticDecoration {
+  return semanticDecorationFor();
+}
+
 // --- Factory helpers. -------------------------------------------------------
 
-/** Lowers View.text(content). */
+/** Constructs/reuses View.text(content). */
 export function composeText(content: string): View {
   const scope = executionContext.top;
   if (scope === undefined) return View.text(content);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
+    const node = semanticNodeOf(previous);
     if (
-      node.kind === BRIDGE_VIEW_KIND.text
+      node.kind === SEMANTIC_VIEW_KIND.text
       && node.spans.length === 1
       && node.spans[0]!.style === undefined
       && node.spans[0]!.text === content
-      && node.wrap === BRIDGE_WRAP_MODE.wordThenGrapheme
-      && node.align === BRIDGE_HORIZONTAL_ALIGN.start
+      && node.wrap === "wordThenGrapheme"
+      && node.align === "start"
     ) {
       stageReuse(slot, previous);
       return previous;
@@ -373,15 +378,15 @@ export function composeText(content: string): View {
   return view;
 }
 
-/** Lowers View.styledText(spans). */
+/** Constructs/reuses View.styledText(spans). */
 export function composeStyledText(spans: readonly TextSpan[]): View {
   const scope = executionContext.top;
   if (scope === undefined) return View.styledText(spans);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
-    if (node.kind === BRIDGE_VIEW_KIND.text && styledSpansMatch(node.spans, spans)) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.text && styledSpansMatch(node.spans, spans)) {
       stageReuse(slot, previous);
       return previous;
     }
@@ -392,29 +397,29 @@ export function composeStyledText(spans: readonly TextSpan[]): View {
 }
 
 function styledSpansMatch(
-  bridgeSpans: readonly { readonly text: string; readonly style?: StyleNode }[],
+  semanticSpans: readonly { readonly text: string; readonly style?: SemanticStyle }[],
   spans: readonly TextSpan[],
 ): boolean {
-  if (bridgeSpans.length !== spans.length) return false;
+  if (semanticSpans.length !== spans.length) return false;
   for (let index = 0; index < spans.length; index += 1) {
     const span = spans[index]!.value;
-    const bridged = bridgeSpans[index]!;
-    if (bridged.text !== span.text) return false;
-    const style = span.style === undefined ? undefined : styleNodeFor(span.style);
-    if (!styleNodesEqual(bridged.style, style)) return false;
+    const semantic = semanticSpans[index]!;
+    if (semantic.text !== span.text) return false;
+    const style = span.style === undefined ? undefined : semanticStyleFor(span.style);
+    if (!styleNodesEqual(semantic.style, style)) return false;
   }
   return true;
 }
 
-/** Lowers View.spacer(rows). */
+/** Constructs/reuses View.spacer(rows). */
 export function composeSpacer(rows: number): View {
   const scope = executionContext.top;
   if (scope === undefined) return View.spacer(rows);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
-    if (node.kind === BRIDGE_VIEW_KIND.spacer && node.rows === rows) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.spacer && node.rows === rows) {
       stageReuse(slot, previous);
       return previous;
     }
@@ -424,38 +429,38 @@ export function composeSpacer(rows: number): View {
   return view;
 }
 
-/** Lowers a mounted component handle through the private placement facade. */
+/** Reuses/constructs a semantic component occurrence by local HandleId. */
 export function composeComponent(handle: ComponentHandle): View {
-  const componentId = componentIdForPlacement(handle);
+  const handleId = handle.id;
   const scope = executionContext.top;
-  if (scope === undefined) return componentViewFor(handle);
+  if (scope === undefined) return componentViewForHandle(handleId);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
-    if (node.kind === BRIDGE_VIEW_KIND.component && node.handle === componentId) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.component && node.handleId === handleId) {
       stageReuse(slot, previous);
       return previous;
     }
   }
-  const view = withoutRetainedComposition(() => componentViewFor(handle, componentId));
+  const view = withoutRetainedComposition(() => componentViewForHandle(handleId));
   stageFresh(slot, view);
   return view;
 }
 
-/** Lowers View.hanging(prefix, continuation, body). */
+/** Constructs/reuses View.hanging(prefix, continuation, body). */
 export function composeHanging(prefix: View, continuation: View, body: View): View {
   const scope = executionContext.top;
   if (scope === undefined) return View.hanging(prefix, continuation, body);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
+    const node = semanticNodeOf(previous);
     if (
-      node.kind === BRIDGE_VIEW_KIND.hanging
-      && node.prefix === nodeForBridge(prefix)
-      && node.continuation === nodeForBridge(continuation)
-      && node.body === nodeForBridge(body)
+      node.kind === SEMANTIC_VIEW_KIND.hanging
+      && node.prefix === semanticNodeOf(prefix)
+      && node.continuation === semanticNodeOf(continuation)
+      && node.body === semanticNodeOf(body)
     ) {
       stageReuse(slot, previous);
       return previous;
@@ -467,8 +472,8 @@ export function composeHanging(prefix: View, continuation: View, body: View): Vi
 }
 
 /**
- * Lowers View.vertical(build)/View.horizontal(build) (§12.4). The builder
- * executes FIRST so children flow through their own slots/scopes; the
+ * Constructs/reuses View.vertical(build)/View.horizontal(build) (§12.4). The
+ * builder executes FIRST so children flow through their own slots/scopes; the
  * container then compares immediate semantics (entry count/kinds/scalars/
  * child identities/gap) before allocating a parent. Wide sequence-backed
  * axes bail out instead of being flattened (§22.3).
@@ -479,9 +484,7 @@ function composeAxisImpl(row: boolean, build: (children: ChildrenBuilder) => voi
   const entries = builderInstance.children;
   const gap = builderInstance.gapValue();
   const scope = executionContext.top;
-  if (scope === undefined) {
-    return composedAxis(row, entries, gap);
-  }
+  if (scope === undefined) return composedAxis(row, entries, gap);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined && axisMatches(previous, row, entries, gap)) {
@@ -502,29 +505,29 @@ export function composeHorizontal(build: (children: import("../api/view/view.ts"
 }
 
 function axisMatches(previous: View, row: boolean, entries: readonly LayoutChild[], gap: number): boolean {
-  const node = nodeForBridge(previous);
-  const expectedKind = row ? BRIDGE_VIEW_KIND.row : BRIDGE_VIEW_KIND.column;
+  const node = semanticNodeOf(previous);
+  const expectedKind = row ? SEMANTIC_VIEW_KIND.row : SEMANTIC_VIEW_KIND.column;
   if (node.kind !== expectedKind) return false;
-  // Wide sequence-backed axes carry PersistentSeq overrides; comparing their
-  // lazy children would flatten them (§22.3). Rebuild instead of guessing.
-  if (peekBridgeSequenceOverride(node) !== undefined) return false;
+  // Wide sequence-backed axes carry semantic sequence overrides; comparing
+  // their lazy children would flatten them (§22.3). Rebuild instead of guessing.
+  if (peekSemanticSequenceOverride(node) !== undefined) return false;
   if (node.gap !== gap) return false;
   const previousEntries = node.children;
   if (previousEntries.length !== entries.length) return false;
   for (let index = 0; index < entries.length; index += 1) {
     const past = previousEntries[index]!;
     const next = entries[index]!;
-    if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND[next.kind]) return false;
-    if (past.child !== nodeForBridge(next.child)) return false;
+    if (past.kind !== next.kind) return false;
+    if (past.child !== semanticNodeOf(next.child)) return false;
     switch (next.kind) {
       case "fixed":
-        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.fixed || past.size !== next.size) return false;
+        if (past.kind !== "fixed" || past.size !== next.size) return false;
         break;
       case "flexMax":
-        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.flexMax || past.maxRows !== next.maxRows) return false;
+        if (past.kind !== "flexMax" || past.maxRows !== next.maxRows) return false;
         break;
       case "contentMax":
-        if (past.kind !== BRIDGE_LAYOUT_CHILD_KIND.contentMax || past.maxRows !== next.maxRows) return false;
+        if (past.kind !== "contentMax" || past.maxRows !== next.maxRows) return false;
         break;
     }
   }
@@ -533,15 +536,15 @@ function axisMatches(previous: View, row: boolean, entries: readonly LayoutChild
 
 // --- Factory helpers (axis entries below). ---------------------------------
 
-/** Lowers static View.contentMax(maxRows, child). */
+/** Constructs/reuses static View.contentMax(maxRows, child). */
 export function composeContentMax(maxRows: number, child: View): View {
   const scope = executionContext.top;
   if (scope === undefined) return View.contentMax(maxRows, child);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
-    if (node.kind === BRIDGE_VIEW_KIND.contentMax && node.maxRows === maxRows && node.child === nodeForBridge(child)) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.contentMax && node.maxRows === maxRows && node.child === semanticNodeOf(child)) {
       stageReuse(slot, previous);
       return previous;
     }
@@ -551,15 +554,15 @@ export function composeContentMax(maxRows: number, child: View): View {
   return view;
 }
 
-/** Lowers base.container(). */
+/** Constructs/reuses base.container(). */
 export function composeContainer(base: View): View {
   const scope = executionContext.top;
   if (scope === undefined) return base.container();
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
-    if (node.kind === BRIDGE_VIEW_KIND.container && node.child === nodeForBridge(base)) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.container && node.child === semanticNodeOf(base)) {
       stageReuse(slot, previous);
       return previous;
     }
@@ -569,7 +572,7 @@ export function composeContainer(base: View): View {
   return view;
 }
 
-/** Lowers base.clampRows(maxRows, overflow). */
+/** Constructs/reuses base.clampRows(maxRows, overflow). */
 export function composeClampRows(
   base: View,
   maxRows: number,
@@ -580,12 +583,11 @@ export function composeClampRows(
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
-    const node = nodeForBridge(previous);
+    const node = semanticNodeOf(previous);
     if (
-      node.kind === BRIDGE_VIEW_KIND.clamp
+      node.kind === SEMANTIC_VIEW_KIND.clamp
       && node.maxRows === maxRows
-      && node.child === nodeForBridge(base)
-      && node.overflow !== undefined
+      && node.child === semanticNodeOf(base)
       && overflowIndicatorMatches(node.overflow, overflow)
     ) {
       stageReuse(slot, previous);
@@ -597,18 +599,17 @@ export function composeClampRows(
   return view;
 }
 
-function overflowIndicatorMatches(bridged: BridgeOverflowIndicatorNode, overflow: OverflowIndicator): boolean {
-  if (overflow.kind === "none") return bridged.kind === BRIDGE_OVERFLOW_KIND.none;
+function overflowIndicatorMatches(semantic: SemanticOverflowIndicator, overflow: OverflowIndicator): boolean {
+  if (overflow.kind === "none") return semantic.kind === "none";
   if (overflow.kind === "ellipsis") {
-    return bridged.kind === BRIDGE_OVERFLOW_KIND.ellipsis
-      && styleNodesEqual(bridged.style, styleNodeFor(overflow.style));
+    return semantic.kind === "ellipsis" && styleNodesEqual(semantic.style, semanticStyleFor(overflow.style));
   }
-  return bridged.kind === BRIDGE_OVERFLOW_KIND.footer
-    && bridged.prefix === overflow.prefix
-    && styleNodesEqual(bridged.style, styleNodeFor(overflow.style));
+  return semantic.kind === "footer"
+    && semantic.prefix === overflow.prefix
+    && styleNodesEqual(semantic.style, semanticStyleFor(overflow.style));
 }
 
-/** Lowers View.grid(specification) with immediate child/track equality. */
+/** Constructs/reuses View.grid(specification) with immediate semantic equality. */
 export function composeGrid(
   specification: readonly View[] | GridSpec | ((builder: GridBuilder) => void),
 ): View {
@@ -630,12 +631,12 @@ export function composeGrid(
 }
 
 function gridBuilderMatches(previous: View, builder: GridBuilder): boolean {
-  const past = nodeForBridge(previous);
-  if (past.kind !== BRIDGE_VIEW_KIND.grid) return false;
+  const past = semanticNodeOf(previous);
+  if (past.kind !== SEMANTIC_VIEW_KIND.grid) return false;
   // Do not force a wide grid's lazy row view to flatten merely to prove a
   // composition hit. Wide grids are intentionally rebuilt through their
   // PersistentSeq sidecar rather than scanned on the retained hot path.
-  if (peekBridgeGridSequenceOverride(past) !== undefined) return false;
+  if (peekSemanticGridSequenceOverride(past) !== undefined) return false;
   if (past.columnGap !== builder.columnGapValue || past.rowGap !== builder.rowGapValue) return false;
   if (past.columns.length !== builder.columnsValue.length || past.rows.length !== builder.rows.length) return false;
   for (let index = 0; index < builder.columnsValue.length; index += 1) {
@@ -649,40 +650,40 @@ function gridBuilderMatches(previous: View, builder: GridBuilder): boolean {
     for (let cellIndex = 0; cellIndex < newRow.cells.length; cellIndex += 1) {
       const oldCell = oldRow.cells[cellIndex]!;
       const newCell = newRow.cells[cellIndex]!;
-      if (oldCell.view !== nodeForBridge(newCell.view)
+      if (oldCell.view !== semanticNodeOf(newCell.view)
         || oldCell.columnSpan !== validatePositiveU16(newCell.columnSpan ?? 1, "columnSpan")
         || oldCell.rowSpan !== validatePositiveU16(newCell.rowSpan ?? 1, "rowSpan")
-        || oldCell.horizontalAlign !== horizontalAlignCode(newCell.horizontalAlign ?? "start")
-        || oldCell.verticalAlign !== verticalAlignCode(newCell.verticalAlign ?? "top")) return false;
+        || oldCell.horizontalAlign !== (newCell.horizontalAlign ?? "start")
+        || oldCell.verticalAlign !== (newCell.verticalAlign ?? "top")) return false;
     }
   }
   return true;
 }
 
 function gridTrackMatchesPublic(
-  bridged: BridgeGridTrackNode,
+  semantic: SemanticGridTrack,
   track: GridTrack,
 ): boolean {
   switch (track.kind) {
-    case "content": return bridged.kind === BRIDGE_GRID_TRACK_KIND.content;
+    case "content": return semantic.kind === "content";
     case "contentMax":
-      return bridged.kind === BRIDGE_GRID_TRACK_KIND.contentMax
-        && bridged.max === validateU16(track.max, "grid track max");
+      return semantic.kind === "contentMax"
+        && semantic.max === validateU16(track.max, "grid track max");
     case "fixed":
-      return bridged.kind === BRIDGE_GRID_TRACK_KIND.fixed
-        && bridged.size === validateU16(track.size, "grid track size");
-    case "flex": return bridged.kind === BRIDGE_GRID_TRACK_KIND.flex;
+      return semantic.kind === "fixed"
+        && semantic.size === validateU16(track.size, "grid track size");
+    case "flex": return semantic.kind === "flex";
     case "flexMax":
-      return bridged.kind === BRIDGE_GRID_TRACK_KIND.flexMax
-        && bridged.max === validateU16(track.max, "grid track max");
+      return semantic.kind === "flexMax"
+        && semantic.max === validateU16(track.max, "grid track max");
     default: throw new TypeError("unknown grid track kind");
   }
 }
 
 /**
- * Lowers View.diff(hunks) (§18.7): diff payloads have no cheap immediate
- * equality, so composition stages a fresh immutable View every evaluation —
- * but ALWAYS consumes a slot to keep the scope cursor aligned across renders.
+ * View.diff has no cheap immediate equality, so composition stages a fresh
+ * immutable View every evaluation — but ALWAYS consumes a slot to keep the
+ * scope cursor aligned across renders.
  */
 export function composeDiff(hunks: readonly DiffHunk[]): View {
   const scope = executionContext.top;
@@ -696,110 +697,45 @@ export function composeDiff(hunks: readonly DiffHunk[]): View {
 
 // --- Modifier helpers. ------------------------------------------------------
 
-/** Lowers base.fillWidth(). */
-export function composeFillWidth(base: View): View {
-  return applyDecoration(base, MOD_FILL_WIDTH);
-}
+export function composeFillWidth(base: View): View { return applyDecoration(base, MOD_FILL_WIDTH); }
+export function composeFitWidth(base: View): View { return applyDecoration(base, MOD_FIT_WIDTH); }
+export function composeFillHeight(base: View): View { return applyDecoration(base, MOD_FILL_HEIGHT); }
+export function composeFitHeight(base: View): View { return applyDecoration(base, MOD_FIT_HEIGHT); }
+export function composeMinWidth(base: View, value: number): View { return applyDecoration(base, MOD_MIN_WIDTH, value); }
+export function composeMaxWidth(base: View, value: number): View { return applyDecoration(base, MOD_MAX_WIDTH, value); }
+export function composeMinHeight(base: View, value: number): View { return applyDecoration(base, MOD_MIN_HEIGHT, value); }
+export function composeMaxHeight(base: View, value: number): View { return applyDecoration(base, MOD_MAX_HEIGHT, value); }
+export function composePadding(base: View, value: number | Insets): View { return applyDecoration(base, MOD_PADDING, value); }
+export function composeForeground(base: View, color: ColorSpec): View { return applyDecoration(base, MOD_FOREGROUND, color); }
+export function composeBackground(base: View, color: ColorSpec): View { return applyDecoration(base, MOD_BACKGROUND, color); }
+export function composeStyle(base: View, spec: StyleRef | StyleSpec): View { return applyDecoration(base, MOD_STYLE_SPEC, spec); }
+export function composeStyleState(base: View, key: string, value: string): View { return applyDecoration(base, MOD_STYLE_STATE, key, value); }
+export function composeTextAttribute(base: View, name: TextAttribute, enabled = true): View { return applyDecoration(base, MOD_TEXT_ATTRIBUTE, name, enabled); }
+export function composeBorder(base: View, border: BorderSpec): View { return applyDecoration(base, MOD_BORDER, border); }
 
-/** Lowers base.fitWidth(). */
-export function composeFitWidth(base: View): View {
-  return applyDecoration(base, MOD_FIT_WIDTH);
-}
-
-/** Lowers base.fillHeight(). */
-export function composeFillHeight(base: View): View {
-  return applyDecoration(base, MOD_FILL_HEIGHT);
-}
-
-/** Lowers base.fitHeight(). */
-export function composeFitHeight(base: View): View {
-  return applyDecoration(base, MOD_FIT_HEIGHT);
-}
-
-/** Lowers base.minWidth(value). */
-export function composeMinWidth(base: View, value: number): View {
-  return applyDecoration(base, MOD_MIN_WIDTH, value);
-}
-
-/** Lowers base.maxWidth(value). */
-export function composeMaxWidth(base: View, value: number): View {
-  return applyDecoration(base, MOD_MAX_WIDTH, value);
-}
-
-/** Lowers base.minHeight(value). */
-export function composeMinHeight(base: View, value: number): View {
-  return applyDecoration(base, MOD_MIN_HEIGHT, value);
-}
-
-/** Lowers base.maxHeight(value). */
-export function composeMaxHeight(base: View, value: number): View {
-  return applyDecoration(base, MOD_MAX_HEIGHT, value);
-}
-
-/** Lowers base.padding(value). */
-export function composePadding(base: View, value: number | Insets): View {
-  return applyDecoration(base, MOD_PADDING, value);
-}
-
-/** Lowers base.foreground(color). */
-export function composeForeground(base: View, color: ColorSpec): View {
-  return applyDecoration(base, MOD_FOREGROUND, color);
-}
-
-/** Lowers base.background(color). */
-export function composeBackground(base: View, color: ColorSpec): View {
-  return applyDecoration(base, MOD_BACKGROUND, color);
-}
-
-/** Lowers base.style(spec). */
-export function composeStyle(base: View, spec: StyleRef | StyleSpec): View {
-  return applyDecoration(base, MOD_STYLE_SPEC, spec);
-}
-
-/** Lowers base.styleState(key, value). */
-export function composeStyleState(base: View, key: string, value: string): View {
-  return applyDecoration(base, MOD_STYLE_STATE, key, value);
-}
-
-/** Lowers base.textAttribute(name) — the closed native attribute vocabulary. */
-export function composeTextAttribute(base: View, name: TextAttribute, enabled = true): View {
-  return applyDecoration(base, MOD_TEXT_ATTRIBUTE, name, enabled);
-}
-
-/** Lowers base.border(spec). */
-export function composeBorder(base: View, border: BorderSpec): View {
-  return applyDecoration(base, MOD_BORDER, border);
-}
-
-/**
- * Lowers base.wrap(mode)/base.noWrap(): a text-layout patch mirroring the
- * public method's three shapes — plain text, decorated-wrapped text, and the
- * pass-through for non-text bases.
- */
+/** Constructs/reuses base.wrap(mode). */
 export function composeWrap(base: View, mode: WrapMode): View {
   return composeLayoutPatch(base, mode, undefined);
 }
 
-/** Lowers base.textAlign(align). */
+/** Constructs/reuses base.textAlign(align). */
 export function composeTextAlign(base: View, align: HorizontalAlign): View {
   return composeLayoutPatch(base, undefined, align);
 }
 
 function composeLayoutPatch(base: View, wrapMode: WrapMode | undefined, alignMode: HorizontalAlign | undefined): View {
+  if (wrapMode !== undefined) validateWrapMode(wrapMode);
+  if (alignMode !== undefined) validateHorizontalAlign(alignMode);
   const scope = executionContext.top;
   if (scope === undefined) {
     if (wrapMode !== undefined) return base.wrap(wrapMode);
     if (alignMode !== undefined) return base.textAlign(alignMode);
     return base;
   }
-  // Comparators work on canonical numeric codes; the build path passes the
-  // original string modes to the public methods unchanged.
-  const wrap = wrapMode === undefined ? undefined : wrapCode(wrapMode);
-  const align = alignMode === undefined ? undefined : horizontalAlignCode(alignMode);
   const slot = scope.nextSemanticSlot();
-  const baseNode = nodeForBridge(base);
+  const baseNode = semanticNodeOf(base);
   const previous = slot.current;
-  if (previous !== undefined && layoutPatchMatches(previous, baseNode, wrap, align)) {
+  if (previous !== undefined && layoutPatchMatches(previous, baseNode, wrapMode, alignMode)) {
     stageReuse(slot, previous);
     return previous;
   }
@@ -817,60 +753,59 @@ function composeLayoutPatch(base: View, wrapMode: WrapMode | undefined, alignMod
 
 function layoutPatchMatches(
   previous: View,
-  baseNode: BridgeViewNode,
-  wrap: number | undefined,
-  align: number | undefined,
+  baseNode: SemanticViewNode,
+  wrap: WrapMode | undefined,
+  align: HorizontalAlign | undefined,
 ): boolean {
-  if (baseNode.kind === BRIDGE_VIEW_KIND.text) {
+  if (baseNode.kind === SEMANTIC_VIEW_KIND.text) {
     // Patch spreads the base text node: payload identity (the frozen spans
     // array) plus the untouched layout scalar prove equality.
-    const previousNode = nodeForBridge(previous);
-    if (previousNode.kind !== BRIDGE_VIEW_KIND.text) return false;
+    const previousNode = semanticNodeOf(previous);
+    if (previousNode.kind !== SEMANTIC_VIEW_KIND.text) return false;
     return previousNode.spans === baseNode.spans
       && previousNode.align === (align ?? baseNode.align)
       && previousNode.wrap === (wrap ?? baseNode.wrap);
   }
-  if (baseNode.kind === BRIDGE_VIEW_KIND.decorated && baseNode.child.kind === BRIDGE_VIEW_KIND.text) {
-    const previousNode = nodeForBridge(previous);
-    if (previousNode.kind !== BRIDGE_VIEW_KIND.decorated) return false;
+  if (baseNode.kind === SEMANTIC_VIEW_KIND.decorated && baseNode.child.kind === SEMANTIC_VIEW_KIND.text) {
+    const previousNode = semanticNodeOf(previous);
+    if (previousNode.kind !== SEMANTIC_VIEW_KIND.decorated) return false;
     if (previousNode.child === baseNode.child) {
-      return (wrap === undefined || baseNode.child.wrap === wrap)
+      // A flattened decorated base can keep the same text child while its
+      // decoration changes. The layout patch preserves that decoration, so
+      // child identity alone is not enough to authorize reuse here.
+      return decorationFullyEqual(previousNode.decoration, baseNode.decoration)
+        && (wrap === undefined || baseNode.child.wrap === wrap)
         && (align === undefined || baseNode.child.align === align);
     }
-    if (previousNode.child.kind !== BRIDGE_VIEW_KIND.text) return false;
+    if (previousNode.child.kind !== SEMANTIC_VIEW_KIND.text) return false;
     return previousNode.child.spans === baseNode.child.spans
       && previousNode.child.align === baseNode.child.align
       && previousNode.child.wrap === (wrap ?? baseNode.child.wrap)
       && decorationFullyEqual(previousNode.decoration, baseNode.decoration);
   }
   // Non-text bases pass through unchanged: the composed result IS the base.
-  return nodeForBridge(previous) === baseNode;
+  return semanticNodeOf(previous) === baseNode;
 }
 
-function wrapCode(mode: WrapMode): number {
+function validateWrapMode(mode: WrapMode): void {
   switch (mode) {
-    case "wordThenGrapheme": return BRIDGE_WRAP_MODE.wordThenGrapheme;
-    case "grapheme": return BRIDGE_WRAP_MODE.grapheme;
-    case "noWrap": return BRIDGE_WRAP_MODE.noWrap;
-    default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
+    case "wordThenGrapheme":
+    case "grapheme":
+    case "noWrap":
+      return;
+    default:
+      throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
   }
 }
 
-function horizontalAlignCode(align: HorizontalAlign): number {
+function validateHorizontalAlign(align: HorizontalAlign): void {
   switch (align) {
-    case "start": return BRIDGE_HORIZONTAL_ALIGN.start;
-    case "center": return BRIDGE_HORIZONTAL_ALIGN.center;
-    case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
-    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
-  }
-}
-
-function verticalAlignCode(align: VerticalAlign): number {
-  switch (align) {
-    case "top": return BRIDGE_VERTICAL_ALIGN.top;
-    case "center": return BRIDGE_VERTICAL_ALIGN.center;
-    case "bottom": return BRIDGE_VERTICAL_ALIGN.bottom;
-    default: throw new RangeError(`unknown vertical alignment ${JSON.stringify(align)}`);
+    case "start":
+    case "center":
+    case "end":
+      return;
+    default:
+      throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
   }
 }
 

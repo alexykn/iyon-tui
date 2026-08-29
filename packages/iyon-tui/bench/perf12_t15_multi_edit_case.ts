@@ -1,6 +1,7 @@
 import { View } from "../src/index.ts";
-import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND, viewNodeId, type View as ViewValue } from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+import { nativePathChildLineage, NATIVE_PATH_STEP, NATIVE_PATH_VIEW_KIND } from "../src/transport/structural/retained-path.ts";
+import { viewNodeId, type View as ViewValue } from "../src/api/view/view.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -69,7 +70,7 @@ function bootstrap(values: readonly number[], rounds = 500): [number, number] {
 
 const baseChildren = Array.from({ length: editCount }, (_, index) => View.text(`base-${index}`).noWrap());
 const base = View.vertical(baseChildren);
-host.render(nodeForBridge(base));
+host.render(lowerColdView(base));
 const baseRef = abi.nativeViewRefForNodeId(base);
 if (baseRef === undefined) throw new Error("unable to acquire base NativeRef");
 
@@ -115,7 +116,7 @@ try {
   if (finalRef === undefined) throw new Error("final edit transaction refused");
   const oracle = new Host(80, Math.max(8, editCount + 2), true);
   try {
-    oracle.render(nodeForBridge(final.root));
+    oracle.render(lowerColdView(final.root));
     const correctness = JSON.stringify(host.screenRows()) === JSON.stringify(oracle.screenRows());
     console.log(JSON.stringify({
       benchmark_version: "PERF-12-T15-MULTI-EDIT",

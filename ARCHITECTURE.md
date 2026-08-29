@@ -22,6 +22,41 @@ generated safe N-API addon     crates/iyon-tui-native
 Rust framework                 crates/iyon-tui
 ```
 
+## H3 ownership boundary
+
+The immutable semantic View model is the common language between composition
+and transport:
+
+```text
+api/view/**                 immutable semantic View, NodeId, children, styles,
+                            derivations, and semantic sequence facts
+composition/**              semantic slot reuse, execution scopes, state
+                            subscriptions, and prepared publication protocol
+runtime/**                  lifecycle/orchestration and concrete target binding
+transport/structural/**     ABI encoding, NativeRef/lease retention, generated
+                            calls, native component resolution, and cold bridge
+                            lowering
+```
+
+Composition may inspect semantic View identity and fields, but it must not
+import structural/native transport. Structural transport may consume semantic
+nodes, but it must not import composition implementation details. `PersistentSeq`
+remains a composition-owned semantic retention optimization and is exposed to
+transport only through the read-only `SemanticSequence` contract.
+
+Structural publication is intentionally narrow:
+
+```ts
+StructuralPublicationTarget.preparePublication(view)
+  -> PreparedStructuralPublication | undefined
+PreparedStructuralPublication.commit() | abort()
+```
+
+Preparation is fallible and atomic; commit promotes prepared physical state;
+abort leaves the previously committed frame authoritative. The contract carries
+only semantic `View` values and does not include native references, ABI records,
+leases, or future state/content transport.
+
 ## Ownership rules
 
 - `crates/iyon-tui` and `crates/iyon-tui-native` must never depend on or import

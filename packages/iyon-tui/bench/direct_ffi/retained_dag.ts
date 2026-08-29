@@ -32,8 +32,13 @@ import {
   materializeSpacer,
 } from "./view_materialize.ts";
 import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "./view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/transport/structural/ir.ts";
-import { nodeForBridge } from "../../src/transport/structural/view-bridge.ts";
+import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "../../src/transport/structural/ir.ts";
+import {
+  lowerColdViewForDirect,
+  peekBridgeDerivation,
+  peekBridgeGridSequenceOverride,
+  peekBridgeSequenceOverride,
+} from "./bridge-metadata.ts";
 import { viewNodeIdHighWater, type View } from "../../src/api/view/view.ts";
 import type { NativeViewAbiSession } from "./native_view_abi.ts";
 import {
@@ -57,20 +62,26 @@ const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
 
 /**
  * PERF-12 T8 (§30): environment-level reusable axis-ref scratch (small tier).
- * Single-slot: one live NativeViewRuntime per environment, and a stale
- * pointer's storage is simply replaced at the next allocation, so nothing
- * accumulates across environment resets. Native retains no pointer into it
- * after any call returns (§29).
+ * One buffer is retained per active materialization depth. A parent may keep a
+ * borrowed buffer live while a child is materialized, so a single global slot
+ * would let the child overwrite the parent's ABI input before its call.
+ * Native retains no pointer into these buffers after any call returns (§29).
  */
-const AXIS_REF_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+const AXIS_REF_SCRATCH: {
+  runtime: Pointer | undefined;
+  arrays: Uint32Array[];
+} = {
   runtime: undefined,
-  array: new Uint32Array(0),
+  arrays: [],
 };
 
 /** PERF-12 T10 (§30/§36): reusable medium-tier flat-grid word scratch. */
-const GRID_WORD_SCRATCH: { runtime: Pointer | undefined; array: Uint32Array } = {
+const GRID_WORD_SCRATCH: {
+  runtime: Pointer | undefined;
+  arrays: Uint32Array[];
+} = {
   runtime: undefined,
-  array: new Uint32Array(0),
+  arrays: [],
 };
 
 /** PERF-12 T11 (§30): reusable byte tier for text/diff UTF-8 payloads. */
@@ -232,17 +243,22 @@ export class MaterializeTx {
       );
     }
     const words = childCount * 2;
-    // Small tier sized for exactly the retained cap; allocated once per
-    // runtime generation and reused by every transaction.
-    if (
-      AXIS_REF_SCRATCH.runtime !== this.runtime ||
-      AXIS_REF_SCRATCH.array.length < words
-    ) {
+    // Keep one reusable buffer per active semantic recursion level. The
+    // inProgress set includes the node currently being materialized, so its
+    // size is a stable nesting slot even when a derivation asks for child refs
+    // before a generated constructor runs.
+    const depth = this.inProgress.size;
+    if (AXIS_REF_SCRATCH.runtime !== this.runtime) {
       AXIS_REF_SCRATCH.runtime = this.runtime;
-      AXIS_REF_SCRATCH.array = new Uint32Array(MAX_DIRECT_AXIS_REFS * 2);
+      AXIS_REF_SCRATCH.arrays = [];
+    }
+    let array = AXIS_REF_SCRATCH.arrays[depth];
+    if (array === undefined || array.length < words) {
+      array = new Uint32Array(Math.max(words, 1));
+      AXIS_REF_SCRATCH.arrays[depth] = array;
     }
     counters.transport_scratch_reuses += 1;
-    return AXIS_REF_SCRATCH.array.subarray(0, words);
+    return array.subarray(0, words);
   }
 
   /** Returns reusable u32 construction scratch; no per-node TypedArray. */
@@ -253,13 +269,18 @@ export class MaterializeTx {
         `${label} word payload ${wordCount} exceeds the retained cap ${cap}`,
       );
     }
-    const size = Math.max(MAX_DIRECT_DIFF_WORDS, MAX_DIRECT_GRID_WORDS);
-    if (GRID_WORD_SCRATCH.runtime !== this.runtime || GRID_WORD_SCRATCH.array.length < size) {
+    const depth = this.inProgress.size;
+    if (GRID_WORD_SCRATCH.runtime !== this.runtime) {
       GRID_WORD_SCRATCH.runtime = this.runtime;
-      GRID_WORD_SCRATCH.array = new Uint32Array(size);
+      GRID_WORD_SCRATCH.arrays = [];
+    }
+    let array = GRID_WORD_SCRATCH.arrays[depth];
+    if (array === undefined || array.length < wordCount) {
+      array = new Uint32Array(Math.max(wordCount, 1));
+      GRID_WORD_SCRATCH.arrays[depth] = array;
     }
     counters.transport_scratch_reuses += 1;
-    return GRID_WORD_SCRATCH.array.subarray(0, wordCount);
+    return array.subarray(0, wordCount);
   }
 
   /** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch. */
@@ -964,12 +985,12 @@ function installHint(node: BridgeViewNode, generation: number, nativeRef: number
 
 /** @internal Refreshes a hint after a lease-bearing NodeId promotion. */
 export function refreshNativeHint(view: View, generation: number, nativeRef: number): void {
-  installHint(nodeForBridge(view), generation, nativeRef);
+  installHint(lowerColdViewForDirect(view), generation, nativeRef);
 }
 
 /** @internal Drops a confirmed-stale hint before complete fallback recovery. */
 export function clearNativeHint(view: View): void {
-  deleteBridgeNativeHint(nodeForBridge(view));
+  deleteBridgeNativeHint(lowerColdViewForDirect(view));
 }
 
 function deleteBridgeNativeHint(node: BridgeViewNode): void {
@@ -1221,7 +1242,7 @@ export function renderExactRoot(
   hostPointer: Pointer,
   view: View,
 ): ExactRootRender {
-  const node = nodeForBridge(view);
+  const node = lowerColdViewForDirect(view);
   const generation = session.abi.generation;
   const hint = BRIDGE_NATIVE.get(node);
 
@@ -1299,7 +1320,7 @@ export function renderExactRoot(
  * boundary owns as its root lease.
  */
 export function acquireKnownRoot(session: NativeViewAbiSession, view: View): number | undefined {
-  const node = nodeForBridge(view);
+  const node = lowerColdViewForDirect(view);
   const [low, high] = splitNodeId(node.id);
   counters.node_id_ref_promotion_attempts += 1;
   try {
@@ -1492,7 +1513,7 @@ export class RetainedRootBoundary {
     acquiredBoundaryLease: boolean;
   } | undefined {
     const prepareStart = phaseNow();
-    const node = nodeForBridge(view);
+    const node = lowerColdViewForDirect(view);
     const tx = new MaterializeTx(
       this.session.symbols,
       this.session.runtime,
@@ -1563,7 +1584,7 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const materialize = COLD_ROOT_MATERIALIZER;
     if (materialize === undefined) return undefined;
-    const node = nodeForBridge(view);
+    const node = lowerColdViewForDirect(view);
     const materializeStart = phaseNow();
     const rootRef = materialize(view);
     const materializeEnd = phaseNow();

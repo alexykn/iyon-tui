@@ -7,8 +7,8 @@ import {
   NATIVE_PATH_STEP,
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
-} from "../src/api/view/view.ts";
-import { nodeForBridge } from "../src/transport/structural/view-bridge.ts";
+} from "../src/transport/structural/retained-path.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 
 type OracleHost = {
   render(view: object): void;
@@ -32,7 +32,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
       expect(tui.screenRows()).toEqual(first);
 
       tui.render({ body: changed });
-      oracle.render(nodeForBridge(changed));
+      oracle.render(lowerColdView(changed));
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();
@@ -54,7 +54,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      oracle.render(nodeForBridge(changed));
+      oracle.render(lowerColdView(changed));
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();
@@ -81,7 +81,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
         const changed = textLayoutAtNativePathForTransport(base, steps, "noWrap", "center");
         tui.render({ body: base });
         tui.render({ body: changed });
-        oracle.render(nodeForBridge(changed));
+        oracle.render(lowerColdView(changed));
         expect(tui.screenRows()).toEqual(oracle.screenRows());
       }
     } finally {
@@ -99,7 +99,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      oracle.render(nodeForBridge(changed));
+      oracle.render(lowerColdView(changed));
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();

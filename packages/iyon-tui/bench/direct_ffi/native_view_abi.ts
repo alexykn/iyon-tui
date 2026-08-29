@@ -38,13 +38,9 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "./view_calls.ts";
-import { nodeForBridge } from "../../src/transport/structural/view-bridge.ts";
-import {
-  nodeIdPair,
-  viewNodeId,
-  type NativePathLineage,
-  type View,
-} from "../../src/api/view/view.ts";
+import { lowerColdView } from "../../src/transport/structural/cold-lowering.ts";
+import { nodeIdPair, viewNodeId, type View } from "../../src/api/view/view.ts";
+import type { NativePathLineage } from "../../src/transport/structural/retained-path.ts";
 import manifest from "../../src/transport/abi/structural/generated/view_abi_manifest.json";
 import {
   NATIVE_BUILDER_MAX_CHILDREN,
@@ -321,7 +317,7 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
+  const node = lowerColdView(next);
   const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
   try {
     let reference = ensureNative(node, tx);
@@ -358,7 +354,7 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
 export function tryNativeMaterialize(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
+  const node = lowerColdView(next);
   try {
     const [low, high] = nodeIdPair(next);
     return viewRefForNodeId(session.symbols, session.runtime, low, high);

@@ -67,6 +67,8 @@ interface ResultRecord {
   readonly median_ci95_ns: readonly [number, number];
   readonly structural_delta: Record<string, number>;
   readonly first_screen_row: string;
+  readonly screen_rows: readonly string[];
+  readonly semantic_node_ids_created: number;
   readonly [key: string]: unknown;
 }
 
@@ -282,8 +284,13 @@ function compare(results: readonly ResultRecord[], definitions: readonly CaseDef
       continue;
     }
     const structuralDeltaMatch = structuralEqual(napi.structural_delta, direct.structural_delta);
-    const correctnessMatch = structuralDeltaMatch && napi.first_screen_row === direct.first_screen_row;
-    if (!correctnessMatch) correctnessFailures.push(`${key}: structural or screen mismatch`);
+    const screenMatch = JSON.stringify(napi.screen_rows) === JSON.stringify(direct.screen_rows);
+    const semanticNodeIdCountMatch = napi.semantic_node_ids_created === direct.semantic_node_ids_created;
+    const correctnessMatch = structuralDeltaMatch
+      && screenMatch
+      && semanticNodeIdCountMatch
+      && napi.first_screen_row === direct.first_screen_row;
+    if (!correctnessMatch) correctnessFailures.push(`${key}: structural, rendered-screen, or semantic NodeId mismatch`);
     comparisons.push({
       key,
       workload: definition.workload,

@@ -11,6 +11,7 @@ import {
   semanticNodeOf,
   type SemanticViewNode,
 } from "../../api/view/semantic-node.ts";
+import { horizontalAlignCode, wrapModeCode } from "./encoding.ts";
 
 /** Native path selectors and lineage are physical retained metadata. */
 export interface NativePathStep {
@@ -162,7 +163,7 @@ function buildTransactionEdits(
     return Object.freeze({
       lineage,
       nodeIds: Object.freeze(nodes_.slice().reverse().map((entry) => entry.id)),
-      wrap: wrapCode(edit.wrap),
+      wrap: wrapModeCode(edit.wrap),
       align: horizontalAlignCode(edit.align),
     });
   }));
@@ -292,23 +293,5 @@ function semanticPathViewKind(kind: SemanticViewNode["kind"]): number {
     case SEMANTIC_VIEW_KIND.clamp:
     case SEMANTIC_VIEW_KIND.contentMax: return NATIVE_PATH_VIEW_KIND.clampRows;
     default: return 0;
-  }
-}
-
-function wrapCode(mode: WrapMode): number {
-  switch (mode) {
-    case "wordThenGrapheme": return 1;
-    case "grapheme": return 2;
-    case "noWrap": return 3;
-    default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
-  }
-}
-
-function horizontalAlignCode(align: HorizontalAlign): number {
-  switch (align) {
-    case "start": return 1;
-    case "center": return 2;
-    case "end": return 3;
-    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
   }
 }

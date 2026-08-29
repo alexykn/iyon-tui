@@ -1,4 +1,5 @@
 import { View } from "../src/index.ts";
+import { viewNodeIdHighWater } from "../src/api/view/view.ts";
 import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import {
   resetRetainedIdentityCounters,
@@ -75,6 +76,7 @@ try {
   });
   const semanticConstruction: number[] = [];
   const transportAndHost: number[] = [];
+  const measuredNodeIdStart = viewNodeIdHighWater();
   try {
     for (let index = 0; index < measured; index++) {
       const constructStart = Bun.nanoseconds();
@@ -119,6 +121,8 @@ try {
     median_ci95_ns: bootstrap(total),
     structural_delta: retainedIdentityCounterSnapshot(),
     first_screen_row: host.screenRows()[0] ?? "",
+    screen_rows: host.screenRows(),
+    semantic_node_ids_created: viewNodeIdHighWater() - measuredNodeIdStart,
   }));
 } finally {
   setRetainedPhaseInstrumentation(undefined);

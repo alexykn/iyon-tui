@@ -517,6 +517,9 @@ function h3cStructuralCompositionGate(): void {
       if (target.startsWith("composition/")) {
         offenders.push(`${relative(ROOT, file)} imports composition implementation: ${target}`);
       }
+      if (target.startsWith("runtime/")) {
+        offenders.push(`${relative(ROOT, file)} imports runtime ownership from structural transport: ${target}`);
+      }
     }
   }
   if (offenders.length > 0) {

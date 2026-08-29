@@ -3,6 +3,7 @@ import { nativeResourceOf } from "../transport/native/resources.ts";
 import { lowerColdView } from "../transport/structural/cold-lowering.ts";
 import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
 import { componentViewForHandle, View } from "../api/view/view.ts";
+import { semanticNodeOf } from "../api/view/semantic-node.ts";
 import { asTuiError, tuiError } from "../api/errors.ts";
 import { registerRuntimeAccess } from "./access.ts";
 import { Scene } from "../api/view/scene.ts";
@@ -426,9 +427,11 @@ export class Tui implements TuiRuntime {
     this.drainExecution();
     this.assertNotMutating("tui.render(scene)");
     const normalized = Scene.from(scene);
-    // Validate the structural body before transferring an attach-once History;
+    // Validate the semantic body before transferring an attach-once History;
     // malformed runtime input must not partially mutate the scene sideband.
-    const normalizedNode = lowerColdView(normalized.body);
+    // Do not cold-lower here: direct scenes still take the retained exact-root
+    // or semantic frontier path below.
+    semanticNodeOf(normalized.body);
     const previousHistory = this.boundHistory;
     if (normalized.history !== undefined) {
       // Validate the handle before the identity no-op below. A disposed
@@ -463,6 +466,10 @@ export class Tui implements TuiRuntime {
     }
     const previousBody = this.currentScene?.body;
     const session = nativeViewAbiSession();
+    // The legacy no-session route still needs a complete preflight before a
+    // History transfer. Supported retained sessions intentionally defer this
+    // cold lowering until the retained/cold fallback actually needs it.
+    const legacyNormalizedNode = session === undefined ? lowerColdView(normalized.body) : undefined;
     const historyChanges = normalized.history !== undefined && normalized.history !== previousHistory;
     if (historyChanges && session !== undefined) {
       // Prepare the body before transferring a detached History. The native
@@ -526,7 +533,7 @@ export class Tui implements TuiRuntime {
       // that this decode consults NodeId-first, so wasted prefix work is not
       // repeated — it shortens the fallback.
       recordNativeViewRoute("fallback");
-      this.host.render(normalizedNode);
+      this.host.render(legacyNormalizedNode ?? lowerColdView(normalized.body));
       // Adopt so future renders hit the exact-root fast path.
       if (session !== undefined) this.boundary!.adopt(normalized.body);
     }

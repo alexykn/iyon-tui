@@ -18,8 +18,11 @@ import {
 } from "./ir.ts";
 import type {
   SemanticAxisTrack,
+  SemanticBorderEdges,
+  SemanticBorderStyle,
   SemanticColor,
   SemanticCommonScalarChanges,
+  SemanticDecoration,
   SemanticDiffLineKind,
   SemanticDiffLineTermination,
   SemanticGridTrack,
@@ -27,6 +30,7 @@ import type {
   SemanticLayoutChild,
   SemanticOverflowIndicator,
   SemanticSizeMode,
+  SemanticStyle,
   SemanticViewKind,
   SemanticVerticalAlign,
   SemanticWrapMode,
@@ -52,6 +56,10 @@ export function bridgeViewKind(kind: SemanticViewKind): number {
 
 export function axisKind(kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_VIEW_KIND.column): number {
   return kind === SEMANTIC_VIEW_KIND.row ? 1 : 2;
+}
+
+export function axisKindForHorizontal(horizontal: boolean): number {
+  return axisKind(horizontal ? SEMANTIC_VIEW_KIND.row : SEMANTIC_VIEW_KIND.column);
 }
 
 // Axis-create words intentionally use a different discriminant lane from the
@@ -145,6 +153,134 @@ export function overflowKindCode(overflow: SemanticOverflowIndicator): number {
 export function sizeModeCode(mode: SemanticSizeMode | undefined): number {
   if (mode === undefined) return 0;
   return mode === "fit" ? 1 : 2;
+}
+
+/** Packs the native diff line kind/termination lanes. */
+export function diffLineMetadata(
+  kind: SemanticDiffLineKind,
+  termination: SemanticDiffLineTermination,
+): number {
+  return diffLineKindCode(kind) | (diffTerminationCode(termination) << 16);
+}
+
+/** Splits a safe non-negative coordinate for the fixed ABI u64 lanes. */
+export function u64Words(value: number): readonly [number, number] | undefined {
+  if (!Number.isSafeInteger(value) || value < 0) return undefined;
+  return [value % 0x1_0000_0000, Math.floor(value / 0x1_0000_0000)];
+}
+
+export interface StyleAttributeEncoding {
+  readonly valid: true;
+  readonly present: number;
+  readonly truth: number;
+}
+
+export interface InvalidStyleAttributeEncoding {
+  readonly valid: false;
+  readonly name: string;
+  readonly reason: "unknown" | "nonBoolean";
+}
+
+const STYLE_ATTRIBUTE_BITS = {
+  bold: 1,
+  dim: 2,
+  italic: 4,
+  underline: 8,
+  reversed: 16,
+  strikethrough: 32,
+} as const;
+
+/** Packs semantic style attributes into the native presence/value lanes. */
+export function styleAttributeEncoding(
+  style: SemanticStyle,
+): StyleAttributeEncoding | InvalidStyleAttributeEncoding {
+  let present = 0;
+  let truth = 0;
+  for (const [name, enabled] of Object.entries(style.attributes)) {
+    const bit = STYLE_ATTRIBUTE_BITS[name as keyof typeof STYLE_ATTRIBUTE_BITS];
+    if (bit === undefined) return { valid: false, name, reason: "unknown" };
+    if (typeof enabled !== "boolean") return { valid: false, name, reason: "nonBoolean" };
+    present |= bit;
+    if (enabled) truth |= bit;
+  }
+  return { valid: true, present, truth };
+}
+
+export interface DecorationWordEncoding {
+  readonly mask: number;
+  readonly paddingTopRight: number;
+  readonly paddingBottomLeft: number;
+  readonly sizeModes: number;
+  readonly minWidthMaxWidth: number;
+  readonly minHeightMaxHeight: number;
+  readonly borderStyleEdges: number;
+}
+
+const DECORATION_PADDING = 1;
+const DECORATION_BACKGROUND = 2;
+const DECORATION_FOREGROUND = 4;
+const DECORATION_BORDER = 8;
+const DECORATION_WIDTH = 16;
+const DECORATION_HEIGHT = 32;
+const DECORATION_MIN_WIDTH = 64;
+const DECORATION_MAX_WIDTH = 128;
+const DECORATION_MIN_HEIGHT = 256;
+const DECORATION_MAX_HEIGHT = 512;
+const BORDER_STYLE_CODES = { plain: 1, rounded: 2, double: 3 } as const;
+const BORDER_EDGE_CODES = { all: 1, topBottom: 2 } as const;
+
+/** Packs the fixed numeric lanes of a retained decoration payload. */
+export function decorationWordEncoding(decoration: SemanticDecoration): DecorationWordEncoding {
+  const padding = decoration.padding;
+  let mask = 0;
+  if (padding !== undefined) mask |= DECORATION_PADDING;
+  if (decoration.background !== undefined) mask |= DECORATION_BACKGROUND;
+  if (decoration.foreground !== undefined) mask |= DECORATION_FOREGROUND;
+  if (decoration.border !== undefined) mask |= DECORATION_BORDER;
+  if (decoration.width !== undefined) mask |= DECORATION_WIDTH;
+  if (decoration.height !== undefined) mask |= DECORATION_HEIGHT;
+  if (decoration.minWidth !== undefined) mask |= DECORATION_MIN_WIDTH;
+  if (decoration.maxWidth !== undefined) mask |= DECORATION_MAX_WIDTH;
+  if (decoration.minHeight !== undefined) mask |= DECORATION_MIN_HEIGHT;
+  if (decoration.maxHeight !== undefined) mask |= DECORATION_MAX_HEIGHT;
+  const borderStyle = borderStyleCode(decoration.border?.style);
+  const borderEdges = borderEdgeCode(decoration.border?.edges);
+  return {
+    mask,
+    paddingTopRight: pairU16(padding?.top, padding?.right),
+    paddingBottomLeft: pairU16(padding?.bottom, padding?.left),
+    sizeModes: sizeModeCode(decoration.width) | (sizeModeCode(decoration.height) << 16),
+    minWidthMaxWidth: pairU16(decoration.minWidth, decoration.maxWidth),
+    minHeightMaxHeight: pairU16(decoration.minHeight, decoration.maxHeight),
+    borderStyleEdges: borderStyle | (borderEdges << 8),
+  };
+}
+
+/** Packs two validated u16 values into one native word; absent means zero. */
+function pairU16(low: number | undefined, high: number | undefined): number {
+  return (low ?? 0) | ((high ?? 0) << 16);
+}
+
+function borderStyleCode(style: SemanticBorderStyle | undefined): number {
+  if (style === undefined) return 0;
+  return BORDER_STYLE_CODES[style];
+}
+
+function borderEdgeCode(edges: SemanticBorderEdges | undefined): number {
+  if (edges === undefined) return 0;
+  return BORDER_EDGE_CODES[edges];
+}
+
+export function gridCellSpanWord(columnSpan: number, rowSpan: number): number {
+  return (columnSpan & 0xffff) | ((rowSpan & 0xffff) << 16);
+}
+
+export function gridCellAlignmentWord(
+  horizontal: SemanticHorizontalAlign,
+  vertical: SemanticVerticalAlign,
+): number {
+  return (horizontalAlignCode(horizontal) & 0xffff)
+    | ((verticalAlignCode(vertical) & 0xffff) << 16);
 }
 
 export interface CommonScalarEncoding {

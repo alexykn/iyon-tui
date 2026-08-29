@@ -37,6 +37,7 @@ import {
   type ViewAbiSymbols,
 } from "../abi/structural/generated/view_calls.ts";
 import { lowerColdView } from "./cold-lowering.ts";
+import { axisKindForHorizontal } from "./encoding.ts";
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
   nodeIdPair,
@@ -229,7 +230,6 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
 export function tryNativeMaterialize(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const bridge = lowerColdView(next);
   try {
     const [low, high] = nodeIdPair(next);
     return viewRefForNodeId(session.symbols, session.runtime, low, high);
@@ -238,6 +238,10 @@ export function tryNativeMaterialize(next: View): number | undefined {
   }
   const decodeRef = native.tuiViewAbiDecodeRef;
   if (decodeRef === undefined) return undefined;
+  // Only construct the complete bridge after the NodeId promotion misses.
+  // Existing native roots are a physical fast path and do not need semantic
+  // payload lowering merely to discover that they are already retained.
+  const bridge = lowerColdView(next);
   const reference = decodeRef(bridge as unknown as object);
   return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
     ? reference
@@ -270,7 +274,7 @@ export function tryNativeAxisCreate(
       refs.push(reference);
     }
     const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
-    const axisKind = horizontal ? 1 : 2;
+    const axisKind = axisKindForHorizontal(horizontal);
     return children.length <= NATIVE_SMALL_AXIS_ARITY_MAX
       ? createSmallAxis(session, horizontal, nodeIdLow, nodeIdHigh, gap, children, refs)
       : createAxisWithBuilder(session, axisKind, nodeIdLow, nodeIdHigh, gap, children, refs);

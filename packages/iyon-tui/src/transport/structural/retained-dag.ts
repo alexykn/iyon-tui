@@ -27,14 +27,16 @@ import {
   axisTrackWord,
   colorAtomValue,
   commonScalarEncoding,
-  diffLineKindCode,
-  diffTerminationCode,
+  decorationWordEncoding,
+  diffLineMetadata,
+  gridCellAlignmentWord,
+  gridCellSpanWord,
   gridTrackWord,
   horizontalAlignCode,
   layoutTrackWord,
   overflowKindCode,
-  sizeModeCode,
-  verticalAlignCode,
+  styleAttributeEncoding,
+  u64Words,
   wrapModeCode,
 } from "./encoding.ts";
 import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
@@ -573,9 +575,8 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
       const cell = override === undefined ? rowCells![index - start]! : override.sequence.get(index);
       if (cell === undefined) throw new RetainedFastFallbackError("grid sequence contains a missing cell");
       words[offset++] = ensureSemanticNative(cell.view, tx);
-      words[offset++] = (cell.columnSpan & 0xffff) | ((cell.rowSpan & 0xffff) << 16);
-      words[offset++] = (horizontalAlignCode(cell.horizontalAlign) & 0xffff)
-        | ((verticalAlignCode(cell.verticalAlign) & 0xffff) << 16);
+      words[offset++] = gridCellSpanWord(cell.columnSpan, cell.rowSpan);
+      words[offset++] = gridCellAlignmentWord(cell.horizontalAlign, cell.verticalAlign);
     }
   }
   tx.noteRefWords(wordCount);
@@ -608,15 +609,6 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
  */
 const TEXT_ENCODER = new TextEncoder();
 
-const STYLE_ATTRIBUTE_BITS = {
-  bold: 1,
-  dim: 2,
-  italic: 4,
-  underline: 8,
-  reversed: 16,
-  strikethrough: 32,
-} as const;
-
 function ensureStyleCache(tx: MaterializeTx): void {
   if (STYLE_REF_CACHE.runtime !== tx.runtime || STYLE_REF_CACHE.generation !== tx.generation) {
     STYLE_REF_CACHE.runtime = tx.runtime;
@@ -648,24 +640,18 @@ function styleRefFor(style: SemanticStyle | undefined, tx: MaterializeTx): numbe
   ensureStyleCache(tx);
   const cached = STYLE_REF_CACHE.refs.get(style);
   if (cached !== undefined) return cached;
-  let present = 0;
-  let truth = 0;
-  for (const name of Object.keys(style.attributes)) {
-    const bit = STYLE_ATTRIBUTE_BITS[name as keyof typeof STYLE_ATTRIBUTE_BITS];
-    if (bit === undefined) {
-      throw new RetainedFastFallbackError(`unknown text attribute ${name}`);
-    }
-    const enabled = style.attributes[name as keyof typeof style.attributes];
-    if (typeof enabled !== "boolean") {
-      throw new RetainedFastFallbackError(`text attribute ${name} must be boolean`);
-    }
-    present |= bit;
-    if (enabled) truth |= bit;
+  const attributes = styleAttributeEncoding(style);
+  if (!attributes.valid) {
+    throw new RetainedFastFallbackError(
+      attributes.reason === "unknown"
+        ? `unknown text attribute ${attributes.name}`
+        : `text attribute ${attributes.name} must be boolean`,
+    );
   }
   const foreground = style.foreground === undefined ? 0 : styleAtomRef(styleColorAtom(style.foreground), tx);
   const background = style.background === undefined ? 0 : styleAtomRef(styleColorAtom(style.background), tx);
   const theme = style.theme === undefined ? 0 : styleAtomRef(`theme:${style.theme}`, tx);
-  const reference = styleCreateBits(tx.symbols, tx.runtime, 0, present, truth, foreground, background, theme);
+  const reference = styleCreateBits(tx.symbols, tx.runtime, 0, attributes.present, attributes.truth, foreground, background, theme);
   STYLE_REF_CACHE.refs.set(style, reference);
   return reference;
 }
@@ -740,11 +726,12 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
 }
 
 /** Splits a safe-integer coordinate into the canonical lo/hi word pair. */
-function u64Words(value: number): [number, number] {
-  if (!Number.isSafeInteger(value) || value < 0) {
+function requiredU64Words(value: number): readonly [number, number] {
+  const words = u64Words(value);
+  if (words === undefined) {
     throw new RetainedFastFallbackError(`diff coordinate ${value} is not a safe non-negative integer`);
   }
-  return [value % 0x1_0000_0000, Math.floor(value / 0x1_0000_0000)];
+  return words;
 }
 
 /** PERF-12 T11 (§41): new-Diff construction through one words+bytes call. */
@@ -763,17 +750,17 @@ function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number 
   };
   writeWords(hunks.length);
   for (const hunk of hunks) {
-    const oldStart = u64Words(hunk.oldRange.start);
-    const oldCount = u64Words(hunk.oldRange.count);
-    const newStart = u64Words(hunk.newRange.start);
-    const newCount = u64Words(hunk.newRange.count);
+    const oldStart = requiredU64Words(hunk.oldRange.start);
+    const oldCount = requiredU64Words(hunk.oldRange.count);
+    const newStart = requiredU64Words(hunk.newRange.start);
+    const newCount = requiredU64Words(hunk.newRange.count);
     writeWords(oldStart[0], oldStart[1], oldCount[0], oldCount[1]);
     writeWords(newStart[0], newStart[1], newCount[0], newCount[1]);
     writeWords(hunk.lines.length);
     for (const line of hunk.lines) {
-      const meta = diffLineKindCode(line.kind) | (diffTerminationCode(line.termination) << 16);
-      const oldLine = line.oldLine === undefined ? [0, 0] : u64Words(line.oldLine);
-      const newLine = line.newLine === undefined ? [0, 0] : u64Words(line.newLine);
+      const meta = diffLineMetadata(line.kind, line.termination);
+      const oldLine = line.oldLine === undefined ? [0, 0] as const : requiredU64Words(line.oldLine);
+      const newLine = line.newLine === undefined ? [0, 0] as const : requiredU64Words(line.newLine);
       const encoded = TEXT_ENCODER.encodeInto(line.text, bytes.subarray(byteOffset));
       if (encoded.read !== line.text.length || encoded.written > 0xffff_ffff) {
         counters.cold_fallbacks += 1;
@@ -856,27 +843,13 @@ function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number
 function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.component) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  const handleWords = u64Words(componentIdForHandleId(node.handleId));
+  const handleWords = requiredU64Words(componentIdForHandleId(node.handleId));
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("component", () =>
     viewComponentCreate(tx.symbols, tx.runtime, low, high, handleWords[0], handleWords[1])
   );
 }
 
-/** Decoration mask bits shared with the native parser (T13 §76 framing). */
-const DECORATION_PADDING = 1;
-const DECORATION_BACKGROUND = 2;
-const DECORATION_FOREGROUND = 4;
-const DECORATION_BORDER = 8;
-const DECORATION_WIDTH = 16;
-const DECORATION_HEIGHT = 32;
-const DECORATION_MIN_WIDTH = 64;
-const DECORATION_MAX_WIDTH = 128;
-const DECORATION_MIN_HEIGHT = 256;
-const DECORATION_MAX_HEIGHT = 512;
-
-const BORDER_STYLE_CODES = { plain: 1, rounded: 2, double: 3 } as const;
-const BORDER_EDGE_CODES = { all: 1, topBottom: 2 } as const;
 function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
@@ -886,7 +859,7 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
     counters.cold_fallbacks += 1;
     throw new RetainedFastFallbackError("custom border glyphs are not expressible on the retained lane");
   }
-  let mask = 0;
+  const encodedDecoration = decorationWordEncoding(decoration);
   const states = Object.entries(decoration.styleStates ?? {});
   // Fixed header: mask + 9 payload words + state count, then 4 words per state.
   const wordCount = 11 + states.length * 4;
@@ -906,33 +879,20 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
     }
     throw error;
   }
-  const borderStyle = decoration.border?.style === undefined ? 0 : BORDER_STYLE_CODES[decoration.border.style];
-  const borderEdges = decoration.border?.edges === undefined ? 0 : BORDER_EDGE_CODES[decoration.border.edges];
   const borderColorAtom = decoration.border?.color === undefined || decoration.border === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.border.color), tx);
-  const padding = decoration.padding;
-  if (padding !== undefined) mask |= DECORATION_PADDING;
-  if (decoration.background !== undefined) mask |= DECORATION_BACKGROUND;
-  if (decoration.foreground !== undefined) mask |= DECORATION_FOREGROUND;
-  if (decoration.border !== undefined) mask |= DECORATION_BORDER;
-  if (decoration.width !== undefined) mask |= DECORATION_WIDTH;
-  if (decoration.height !== undefined) mask |= DECORATION_HEIGHT;
-  if (decoration.minWidth !== undefined) mask |= DECORATION_MIN_WIDTH;
-  if (decoration.maxWidth !== undefined) mask |= DECORATION_MAX_WIDTH;
-  if (decoration.minHeight !== undefined) mask |= DECORATION_MIN_HEIGHT;
-  if (decoration.maxHeight !== undefined) mask |= DECORATION_MAX_HEIGHT;
   let wordOffset = 0;
   const writeWord = (value: number): void => {
     words[wordOffset++] = value;
   };
-  writeWord(mask);
-  writeWord(padding === undefined ? 0 : (padding.top | (padding.right << 16)) >>> 0);
-  writeWord(padding === undefined ? 0 : (padding.bottom | (padding.left << 16)) >>> 0);
-  writeWord(sizeModeCode(decoration.width) | (sizeModeCode(decoration.height) << 16));
-  writeWord((decoration.minWidth ?? 0) | ((decoration.maxWidth ?? 0) << 16));
-  writeWord((decoration.minHeight ?? 0) | ((decoration.maxHeight ?? 0) << 16));
+  writeWord(encodedDecoration.mask);
+  writeWord(encodedDecoration.paddingTopRight);
+  writeWord(encodedDecoration.paddingBottomLeft);
+  writeWord(encodedDecoration.sizeModes);
+  writeWord(encodedDecoration.minWidthMaxWidth);
+  writeWord(encodedDecoration.minHeightMaxHeight);
   writeWord(colorAtoms[0]);
   writeWord(colorAtoms[1]);
-  writeWord(borderStyle | (borderEdges << 8));
+  writeWord(encodedDecoration.borderStyleEdges);
   writeWord(borderColorAtom);
   writeWord(states.length);
   for (const [key, value] of states) {

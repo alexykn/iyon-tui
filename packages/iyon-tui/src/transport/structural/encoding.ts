@@ -11,7 +11,6 @@ import {
   BRIDGE_DIFF_LINE_TERMINATION,
   BRIDGE_GRID_TRACK_KIND,
   BRIDGE_HORIZONTAL_ALIGN,
-  BRIDGE_LAYOUT_CHILD_KIND,
   BRIDGE_OVERFLOW_KIND,
   BRIDGE_VIEW_KIND,
   BRIDGE_VERTICAL_ALIGN,
@@ -55,15 +54,23 @@ export function axisKind(kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_V
   return kind === SEMANTIC_VIEW_KIND.row ? 1 : 2;
 }
 
+// Axis-create words intentionally use a different discriminant lane from the
+// bridge layout-child records. Keep these physical ABI codes local to the
+// structural encoder rather than reusing BRIDGE_LAYOUT_CHILD_KIND values.
+const AXIS_TRACK_CONTENT_MAX = 2;
+const AXIS_TRACK_FIXED = 3;
+const AXIS_TRACK_FLEX = 4;
+const AXIS_TRACK_FLEX_MAX = 5;
+
 /** Encodes an eager axis child edge for row/column construction. */
 export function layoutTrackWord(child: SemanticLayoutChild): number {
   switch (child.kind) {
     case "normal": return 0;
-    case "fixed": return BRIDGE_LAYOUT_CHILD_KIND.fixed | (child.size << 8);
+    case "fixed": return AXIS_TRACK_FIXED | (child.size << 8);
     // The ABI's axis-create family represents flex with a minimum of one.
-    case "flex": return BRIDGE_LAYOUT_CHILD_KIND.flex | (1 << 8);
-    case "flexMax": return BRIDGE_LAYOUT_CHILD_KIND.flexMax | (child.maxRows << 8);
-    case "contentMax": return BRIDGE_LAYOUT_CHILD_KIND.contentMax | (child.maxRows << 8);
+    case "flex": return AXIS_TRACK_FLEX | (1 << 8);
+    case "flexMax": return AXIS_TRACK_FLEX_MAX | (child.maxRows << 8);
+    case "contentMax": return AXIS_TRACK_CONTENT_MAX | (child.maxRows << 8);
   }
 }
 

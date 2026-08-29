@@ -43,7 +43,12 @@ import { componentIdForHandleId } from "./component-id.ts";
 import type { View } from "../../api/view/view.ts";
 
 const semanticToBridge = new WeakMap<SemanticViewNode, BridgeViewNode>();
+/** Semantic subtrees containing physical component identities are rebuilt on
+ * every cold lowering so HandleId resolution cannot become stale in a cached
+ * bridge artifact. */
+const componentBearing = new WeakSet<SemanticViewNode>();
 const lowering = new WeakSet<SemanticViewNode>();
+const loweringStack: SemanticViewNode[] = [];
 const coldCounters = { cold_bridge_objects_allocated: 0 };
 
 export interface ColdLoweringCounters {
@@ -65,11 +70,20 @@ export function lowerColdView(view: View): BridgeViewNode {
 
 /** Lowers a semantic node completely for the safe bridge fallback. */
 export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
+  // A cached bridge component embeds a physical ComponentId. Do not reuse
+  // that artifact after the HandleId's resource is disposed or recreated;
+  // component-bearing subtrees are marked while they are lowered and rebuilt
+  // on every later cold request. Component-free subtrees retain the normal
+  // weak cache without a preflight tree walk.
   const cached = semanticToBridge.get(node);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && !componentBearing.has(node)) return cached;
   if (lowering.has(node)) throw new TypeError("semantic View graph contains a cycle");
   lowering.add(node);
+  loweringStack.push(node);
   try {
+    if (node.kind === SEMANTIC_VIEW_KIND.component) {
+      for (const active of loweringStack) componentBearing.add(active);
+    }
     coldCounters.cold_bridge_objects_allocated += 1;
     const draft = semanticDraftFor(node);
     const bridge = freezeBridgeNode({
@@ -77,9 +91,10 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
       schema: VIEW_BRIDGE_SCHEMA_VERSION,
       ...draft,
     } as BridgeViewNode);
-    semanticToBridge.set(node, bridge);
+    if (!componentBearing.has(node)) semanticToBridge.set(node, bridge);
     return bridge;
   } finally {
+    loweringStack.pop();
     lowering.delete(node);
   }
 }

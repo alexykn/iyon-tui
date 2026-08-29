@@ -2,8 +2,8 @@
 
 **Status:** COMPLETE
 **Baseline:** H3-D `81229fc` (`refactor: remove H3 migration compatibility paths`)
-**Final implementation:** `fe05092` (`fix: harden H3 retained transport boundaries`), including `c807cd6` (`fix: preserve structural axis track encoding`)
-**Final report commit:** the commit introducing this audit update
+**Final implementation:** the post-sign-off review commit on top of `fe05092`, including `c807cd6` (`fix: preserve structural axis track encoding`)
+**Final report commit:** the commit introducing this sign-off update
 **Platform:** macOS arm64
 **Bun:** `1.4.0` (`34cbb9a40`)
 **Rust:** `1.97.1 (8bab26f4f 2026-07-14)`
@@ -314,6 +314,33 @@ public surface or ABI:
 
 These changes were checked by the focused 48-case-per-arm T15 smoke and the
 framework suites above. No full PERF-12 benchmark was rerun.
+
+### Follow-up review fixes
+
+A second implementation review found and corrected additional concrete seam
+issues without changing the public surface, Rust code, or structural ABI:
+
+- Retained axis/grid scratch buffers are now depth-separated, so nested
+  materializers cannot overwrite a parent buffer that is still awaiting its ABI
+  call. The direct-FFI oracle uses the same protection.
+- The retained clamp encoder now maps semantic overflow kinds to the native
+  `0/1/2` lane instead of the bridge schema's `1/2/3` lane. Explicit normal
+  axis tracks likewise use the nonzero native content code because zero means
+  preserve on axis-set.
+- Cold bridge caching is disabled for component-bearing semantic subtrees, so
+  every cold lowering resolves the current `HandleId` resource rather than
+  reusing a stale physical `ComponentId` after disposal or recreation.
+- Semantic construction again validates wrap/alignment and mutable diff-line
+  discriminants at the API boundary. Publication cleanup also restores staged
+  sideband state on initial mount refusal, rejects missing root hosts, and
+  surfaces a non-cache-miss exact-root retry status.
+- Layout-patch reuse now compares flattened decoration state, preventing a
+  changed decoration from being hidden by an unchanged text child.
+
+Focused nested retained/cold parity, disposed-component lowering, explicit
+track, invalid-input, and publication-abort probes passed. The full framework
+suite and all lightweight H3 gates remain green; the full PERF-12 suite was not
+rerun.
 
 ## 8. Memory convergence
 

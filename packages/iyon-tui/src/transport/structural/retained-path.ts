@@ -68,6 +68,10 @@ export function textLayoutAtNativePathForTransport(
   align: HorizontalAlign,
 ): View {
   if (steps.length > 4) throw new RangeError("native retained path depth must be at most 4");
+  // The semantic patch stores string modes, so validate them at the same
+  // boundary where the former bridge patch converted them to ABI codes.
+  wrapModeCode(wrap);
+  horizontalAlignCode(align);
   const nextNode = patchSemanticTextPath(viewNode(view), steps, wrap, align);
   const lineage = nativePathLineageForSteps(view, steps);
   const result = createViewFromSemanticNode(nextNode);
@@ -93,6 +97,8 @@ export function textLayoutTransactionForTransport(
     if (edit.steps.length > 4) throw new RangeError("native retained transaction path depth must be at most 4");
     const key = edit.steps.map((step) => `${step.kind}:${step.expectedViewKind}:${step.selector}`).join("/");
     if (!seen.add(key)) throw new RangeError("native text transaction paths must be distinct");
+    wrapModeCode(edit.wrap);
+    horizontalAlignCode(edit.align);
     node = patchSemanticTextPath(node, edit.steps, edit.wrap, edit.align);
   }
   const result = createViewFromSemanticNode(node);

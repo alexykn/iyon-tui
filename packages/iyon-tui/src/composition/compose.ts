@@ -724,6 +724,8 @@ export function composeTextAlign(base: View, align: HorizontalAlign): View {
 }
 
 function composeLayoutPatch(base: View, wrapMode: WrapMode | undefined, alignMode: HorizontalAlign | undefined): View {
+  if (wrapMode !== undefined) validateWrapMode(wrapMode);
+  if (alignMode !== undefined) validateHorizontalAlign(alignMode);
   const scope = executionContext.top;
   if (scope === undefined) {
     if (wrapMode !== undefined) return base.wrap(wrapMode);
@@ -768,7 +770,11 @@ function layoutPatchMatches(
     const previousNode = semanticNodeOf(previous);
     if (previousNode.kind !== SEMANTIC_VIEW_KIND.decorated) return false;
     if (previousNode.child === baseNode.child) {
-      return (wrap === undefined || baseNode.child.wrap === wrap)
+      // A flattened decorated base can keep the same text child while its
+      // decoration changes. The layout patch preserves that decoration, so
+      // child identity alone is not enough to authorize reuse here.
+      return decorationFullyEqual(previousNode.decoration, baseNode.decoration)
+        && (wrap === undefined || baseNode.child.wrap === wrap)
         && (align === undefined || baseNode.child.align === align);
     }
     if (previousNode.child.kind !== SEMANTIC_VIEW_KIND.text) return false;
@@ -779,6 +785,28 @@ function layoutPatchMatches(
   }
   // Non-text bases pass through unchanged: the composed result IS the base.
   return semanticNodeOf(previous) === baseNode;
+}
+
+function validateWrapMode(mode: WrapMode): void {
+  switch (mode) {
+    case "wordThenGrapheme":
+    case "grapheme":
+    case "noWrap":
+      return;
+    default:
+      throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
+  }
+}
+
+function validateHorizontalAlign(align: HorizontalAlign): void {
+  switch (align) {
+    case "start":
+    case "center":
+    case "end":
+      return;
+    default:
+      throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
+  }
 }
 
 function validateU16(value: number, name: string): number {

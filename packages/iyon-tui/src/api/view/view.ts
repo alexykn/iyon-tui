@@ -48,6 +48,7 @@ import {
   type SemanticGridRow,
   type SemanticGridTrack,
   type SemanticHorizontalAlign,
+  type SemanticVerticalAlign,
   type SemanticLayoutChild,
   type SemanticOverflowIndicator,
   type SemanticTextNode,
@@ -427,9 +428,13 @@ export class View {
   maxWidth(value: number): View { const validated = validateU16(value, "maxWidth"); return isRetainedConstruction() ? composeMaxWidth(this, validated) : this.decorate({ maxWidth: validated }); }
   minHeight(value: number): View { const validated = validateU16(value, "minHeight"); return isRetainedConstruction() ? composeMinHeight(this, validated) : this.decorate({ minHeight: validated }); }
   maxHeight(value: number): View { const validated = validateU16(value, "maxHeight"); return isRetainedConstruction() ? composeMaxHeight(this, validated) : this.decorate({ maxHeight: validated }); }
-  wrap(mode: WrapMode): View { return isRetainedConstruction() ? composeWrap(this, mode) : this.textLayoutPatch(mode, undefined); }
+  wrap(mode: WrapMode): View {
+    return isRetainedConstruction() ? composeWrap(this, mode) : this.textLayoutPatch(mode, undefined);
+  }
   noWrap(): View { return this.wrap("noWrap"); }
-  textAlign(align: HorizontalAlign): View { return isRetainedConstruction() ? composeTextAlign(this, align) : this.textLayoutPatch(undefined, align); }
+  textAlign(align: HorizontalAlign): View {
+    return isRetainedConstruction() ? composeTextAlign(this, align) : this.textLayoutPatch(undefined, align);
+  }
 
   private decoratedNode(): Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.decorated }> | undefined {
     const node = semanticNodeOf(this);
@@ -462,6 +467,8 @@ export class View {
   }
 
   private textLayoutPatch(wrap: WrapMode | undefined, align: HorizontalAlign | undefined): View {
+    if (wrap !== undefined) validateWrapMode(wrap);
+    if (align !== undefined) validateHorizontalAlign(align);
     const node = semanticNodeOf(this);
     if (node.kind === SEMANTIC_VIEW_KIND.text) {
       const derived = new View({
@@ -558,8 +565,8 @@ export function gridViewFromBuilder(builder: GridBuilder): View {
       view: semanticNodeOf(cell.view),
       columnSpan: validatePositiveU16(cell.columnSpan ?? 1, "columnSpan"),
       rowSpan: validatePositiveU16(cell.rowSpan ?? 1, "rowSpan"),
-      horizontalAlign: cell.horizontalAlign ?? "start",
-      verticalAlign: cell.verticalAlign ?? "top",
+      horizontalAlign: semanticHorizontalAlign(cell.horizontalAlign ?? "start"),
+      verticalAlign: semanticVerticalAlign(cell.verticalAlign ?? "top"),
     })),
   }));
   const view = createSemanticView({
@@ -584,14 +591,15 @@ export function axisSetChildForTransport(base: View, index: number, child: View,
     throw new RangeError("retained axis edit index out of range");
   }
   const childNode = semanticNodeOf(child);
+  const semanticTrack = track === undefined ? undefined : semanticAxisTrackFor(track);
   const current = baseSequence.get(index)!;
-  const next = track === undefined ? { ...current, child: childNode } : layoutChildFromAxisTrack(track, childNode);
+  const next = semanticTrack === undefined ? { ...current, child: childNode } : layoutChildFromAxisTrack(semanticTrack, childNode);
   const sequence = baseSequence.set(index, next);
   return buildWideAxisNode(baseNode, sequence, { kind: "axisSet", index }, {
     kind: "axisSet",
     base: baseNode,
     index,
-    track,
+    track: semanticTrack,
     child: childNode,
   });
 }
@@ -616,7 +624,7 @@ export function axisSpliceForTransport(
   }
   const insertedChildren = inserted.map((entry) => ({
     child: semanticNodeOf(entry.view),
-    track: entry.track ?? { kind: "normal" },
+    track: semanticAxisTrackFor(entry.track ?? { kind: "normal" }),
   }));
   const insertedLayout = insertedChildren.map((entry) => layoutChildFromAxisTrack(entry.track, entry.child));
   const sequence = baseSequence.splice(index, removeCount, ...insertedLayout);
@@ -846,13 +854,25 @@ function semanticAxisSequence(node: Extract<SemanticViewNode, { kind: typeof SEM
   return PersistentSeq.from(node.children);
 }
 
+function semanticAxisTrackFor(track: SemanticAxisTrack): SemanticAxisTrack {
+  switch (track.kind) {
+    case "normal": return Object.freeze({ kind: "normal" });
+    case "fixed": return Object.freeze({ kind: "fixed", size: validateU16(track.size, "size") });
+    case "flex": return Object.freeze({ kind: "flex" });
+    case "flexMax": return Object.freeze({ kind: "flexMax", maxRows: validateU16(track.maxRows, "maxRows") });
+    case "contentMax": return Object.freeze({ kind: "contentMax", maxRows: validateU16(track.maxRows, "maxRows") });
+    default: throw new TypeError("unknown semantic axis track kind");
+  }
+}
+
 function layoutChildFromAxisTrack(track: SemanticAxisTrack, child: SemanticViewNode): SemanticLayoutChild {
   switch (track.kind) {
     case "normal": return { kind: "normal", child };
-    case "fixed": return { kind: "fixed", size: track.size, child };
+    case "fixed": return { kind: "fixed", size: validateU16(track.size, "size"), child };
     case "flex": return { kind: "flex", child };
-    case "flexMax": return { kind: "flexMax", maxRows: track.maxRows, child };
-    case "contentMax": return { kind: "contentMax", maxRows: track.maxRows, child };
+    case "flexMax": return { kind: "flexMax", maxRows: validateU16(track.maxRows, "maxRows"), child };
+    case "contentMax": return { kind: "contentMax", maxRows: validateU16(track.maxRows, "maxRows"), child };
+    default: throw new TypeError("unknown semantic axis track kind");
   }
 }
 
@@ -942,16 +962,18 @@ function toSemanticHunk(hunk: DiffHunk): SemanticDiffHunk {
   let oldLine = hunk.oldRange.start + 1;
   let newLine = hunk.newRange.start + 1;
   const lines: SemanticDiffLine[] = hunk.lines.map((line) => {
+    const lineKind = semanticDiffLineKind(line.lineKind);
+    const termination = semanticDiffTermination(line.termination);
     const node = {
-      kind: line.lineKind,
+      kind: lineKind,
       text: line.text,
-      termination: line.termination === "none" ? "unterminated" as const : "terminated" as const,
-      ...(line.lineKind === "context" ? { oldLine, newLine } : {}),
-      ...(line.lineKind === "addition" ? { newLine } : {}),
-      ...(line.lineKind === "deletion" ? { oldLine } : {}),
+      termination,
+      ...(lineKind === "context" ? { oldLine, newLine } : {}),
+      ...(lineKind === "addition" ? { newLine } : {}),
+      ...(lineKind === "deletion" ? { oldLine } : {}),
     } as SemanticDiffLine;
-    if (line.lineKind !== "addition") oldLine += 1;
-    if (line.lineKind !== "deletion") newLine += 1;
+    if (lineKind !== "addition") oldLine += 1;
+    if (lineKind !== "deletion") newLine += 1;
     return node;
   });
   return {
@@ -959,6 +981,60 @@ function toSemanticHunk(hunk: DiffHunk): SemanticDiffHunk {
     newRange: { start: hunk.newRange.start, count: hunk.newRange.lineCount },
     lines,
   };
+}
+
+function semanticDiffLineKind(kind: string): SemanticDiffLine["kind"] {
+  switch (kind) {
+    case "context": return "context";
+    case "addition": return "addition";
+    case "deletion": return "deletion";
+    default: throw new TypeError(`unknown diff line kind ${JSON.stringify(kind)}`);
+  }
+}
+
+function semanticDiffTermination(termination: string): SemanticDiffLine["termination"] {
+  switch (termination) {
+    case "lf":
+    case "crlf": return "terminated";
+    case "none": return "unterminated";
+    default: throw new TypeError(`unknown diff line termination ${JSON.stringify(termination)}`);
+  }
+}
+
+function semanticHorizontalAlign(align: HorizontalAlign): SemanticHorizontalAlign {
+  switch (align) {
+    case "start": return "start";
+    case "center": return "center";
+    case "end": return "end";
+    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
+  }
+}
+
+function semanticVerticalAlign(align: VerticalAlign): SemanticVerticalAlign {
+  switch (align) {
+    case "top": return "top";
+    case "center": return "center";
+    case "bottom": return "bottom";
+    default: throw new RangeError(`unknown vertical alignment ${JSON.stringify(align)}`);
+  }
+}
+
+function validateWrapMode(mode: WrapMode): WrapMode {
+  switch (mode) {
+    case "wordThenGrapheme":
+    case "grapheme":
+    case "noWrap": return mode;
+    default: throw new RangeError(`unknown wrap mode ${JSON.stringify(mode)}`);
+  }
+}
+
+function validateHorizontalAlign(align: HorizontalAlign): HorizontalAlign {
+  switch (align) {
+    case "start":
+    case "center":
+    case "end": return align;
+    default: throw new RangeError(`unknown horizontal alignment ${JSON.stringify(align)}`);
+  }
 }
 
 function semanticGridTrack(track: GridTrack): SemanticGridTrack {

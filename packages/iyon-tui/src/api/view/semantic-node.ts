@@ -275,7 +275,9 @@ export type SemanticViewNodeDraft = WithoutId<SemanticViewNode>;
  */
 export function createSemanticViewNode(id: SemanticNodeId, draft: SemanticViewNodeDraft): SemanticViewNode {
   if (!Number.isSafeInteger(id) || id < 1) throw new RangeError("semantic View node identity must be a positive safe integer");
-  const node = freezeSemanticViewNode({ id, ...draft } as SemanticViewNode);
+  // Keep the allocator-supplied identity authoritative even if an
+  // untyped/private caller smuggles an `id` field into the draft.
+  const node = freezeSemanticViewNode({ ...draft, id } as SemanticViewNode);
   semanticNodeBrand.add(node);
   return node;
 }

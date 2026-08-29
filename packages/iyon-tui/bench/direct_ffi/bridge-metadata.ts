@@ -283,8 +283,11 @@ function bridgeDerivation(derivation: SemanticDerivation): BridgeDerivation {
 }
 
 function bridgeTrackWord(track: SemanticAxisTrack | undefined): number {
-  if (track === undefined || track.kind === "normal") return 0;
+  // Axis-set reserves zero for preserving the existing track; an explicit
+  // semantic normal track must use the nonzero content code.
+  if (track === undefined) return 0;
   switch (track.kind) {
+    case "normal": return 1;
     case "contentMax": return 2 | (track.maxRows << 8);
     case "fixed": return 3 | (track.size << 8);
     case "flex": return 4;

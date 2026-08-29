@@ -374,10 +374,17 @@ export class RetainedExecutionRuntime {
       throw error;
     }
     const staged: RetainedExecutionScope[] = [];
+    let commitStarted = false;
     try {
       this.stagePublicationsRecursive(scope, staged);
+      commitStarted = true;
       this.commitBatch([scope]);
     } catch (error) {
+      // Publication preparation is a batch abort too: boundary-owned WIP
+      // sidebands must roll back even when evaluation itself succeeded. A
+      // commit-phase throw is pathological and must not be treated as a
+      // normal rollback.
+      if (!commitStarted) this.onBatchAbort?.();
       let unwindError: unknown;
       try {
         unwindStaged(staged);
@@ -844,11 +851,16 @@ export class RetainedExecutionRuntime {
     this.roots.push(scope);
     executionCounters.execution_scope_mounts += 1;
     const staged: RetainedExecutionScope[] = [];
+    let commitStarted = false;
     try {
       this.runWork(scope);
       this.stagePublicationsRecursive(scope, staged);
+      commitStarted = true;
       this.commitBatch([scope]);
     } catch (error) {
+      // Owned builder roots have the same sideband rollback obligation as
+      // ordinary roots when their initial evaluation or preparation refuses.
+      if (!commitStarted) this.onBatchAbort?.();
       let unwindError: unknown;
       try {
         unwindStaged(staged);

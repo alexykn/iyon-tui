@@ -11,7 +11,6 @@ import {
   BRIDGE_DIFF_LINE_TERMINATION,
   BRIDGE_GRID_TRACK_KIND,
   BRIDGE_HORIZONTAL_ALIGN,
-  BRIDGE_OVERFLOW_KIND,
   BRIDGE_VIEW_KIND,
   BRIDGE_VERTICAL_ALIGN,
   BRIDGE_WRAP_MODE,
@@ -84,8 +83,11 @@ export function layoutTrackWord(child: SemanticLayoutChild): number {
 
 /** Encodes the compact edit word; zero means preserve the existing track. */
 export function axisTrackWord(track: SemanticAxisTrack | undefined): number {
-  if (track === undefined || track.kind === "normal") return 0;
+  // The axis-set ABI reserves zero for "preserve the existing track". An
+  // explicit semantic normal track therefore uses the nonzero content code.
+  if (track === undefined) return 0;
   switch (track.kind) {
+    case "normal": return 1;
     case "contentMax": return 2 | (track.maxRows << 8);
     case "fixed": return 3 | (track.size << 8);
     // The edit primitive defaults a flex minimum to one when the value lane is 0.
@@ -142,11 +144,17 @@ export function diffTerminationCode(termination: SemanticDiffLineTermination): n
     : BRIDGE_DIFF_LINE_TERMINATION.unterminated;
 }
 
+/** Maps semantic overflow kinds to the retained ABI's 0/1/2 value lane.
+ *
+ * The cold bridge schema uses 1/2/3 (including an explicit `none` tag), while
+ * `viewClampCreate` uses zero for none. Keep this mapping independent from the
+ * bridge discriminants so a clamp never shifts its indicator kind at the ABI.
+ */
 export function overflowKindCode(overflow: SemanticOverflowIndicator): number {
   switch (overflow.kind) {
-    case "none": return BRIDGE_OVERFLOW_KIND.none;
-    case "ellipsis": return BRIDGE_OVERFLOW_KIND.ellipsis;
-    case "footer": return BRIDGE_OVERFLOW_KIND.footer;
+    case "none": return 0;
+    case "ellipsis": return 1;
+    case "footer": return 2;
   }
 }
 

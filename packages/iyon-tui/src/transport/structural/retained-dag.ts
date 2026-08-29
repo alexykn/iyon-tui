@@ -65,20 +65,26 @@ const SEMANTIC_NATIVE = new WeakMap<SemanticViewNode, SemanticNativeHint>();
 
 /**
  * PERF-12 T8 (§30): environment-level reusable axis-ref scratch (small tier).
- * Single-slot: one live NativeViewRuntime per environment, and a stale
- * pointer's storage is simply replaced at the next allocation, so nothing
- * accumulates across environment resets. Native retains no pointer into it
- * after any call returns (§29).
+ * One buffer is retained per active materialization depth. A parent may keep a
+ * borrowed buffer live while a child is materialized, so a single global slot
+ * would let the child overwrite the parent's ABI input before its call.
+ * Native retains no pointer into these buffers after any call returns (§29).
  */
-const AXIS_REF_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
+const AXIS_REF_SCRATCH: {
+  runtime: NativeViewAbiHandle | undefined;
+  arrays: Uint32Array[];
+} = {
   runtime: undefined,
-  array: new Uint32Array(0),
+  arrays: [],
 };
 
 /** PERF-12 T10 (§30/§36): reusable medium-tier flat-grid word scratch. */
-const GRID_WORD_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint32Array } = {
+const GRID_WORD_SCRATCH: {
+  runtime: NativeViewAbiHandle | undefined;
+  arrays: Uint32Array[];
+} = {
   runtime: undefined,
-  array: new Uint32Array(0),
+  arrays: [],
 };
 
 /** PERF-12 T11 (§30): reusable byte tier for text/diff UTF-8 payloads. */
@@ -240,17 +246,22 @@ export class MaterializeTx {
       );
     }
     const words = childCount * 2;
-    // Small tier sized for exactly the retained cap; allocated once per
-    // runtime generation and reused by every transaction.
-    if (
-      AXIS_REF_SCRATCH.runtime !== this.runtime ||
-      AXIS_REF_SCRATCH.array.length < words
-    ) {
+    // Keep one reusable buffer per active semantic recursion level. The
+    // inProgress set includes the node currently being materialized, so its
+    // size is a stable nesting slot even when a derivation asks for child refs
+    // before a generated constructor runs.
+    const depth = this.inProgress.size;
+    if (AXIS_REF_SCRATCH.runtime !== this.runtime) {
       AXIS_REF_SCRATCH.runtime = this.runtime;
-      AXIS_REF_SCRATCH.array = new Uint32Array(MAX_DIRECT_AXIS_REFS * 2);
+      AXIS_REF_SCRATCH.arrays = [];
+    }
+    let array = AXIS_REF_SCRATCH.arrays[depth];
+    if (array === undefined || array.length < words) {
+      array = new Uint32Array(Math.max(words, 1));
+      AXIS_REF_SCRATCH.arrays[depth] = array;
     }
     counters.transport_scratch_reuses += 1;
-    return AXIS_REF_SCRATCH.array.subarray(0, words);
+    return array.subarray(0, words);
   }
 
   /** Returns reusable u32 construction scratch; no per-node TypedArray. */
@@ -261,13 +272,18 @@ export class MaterializeTx {
         `${label} word payload ${wordCount} exceeds the retained cap ${cap}`,
       );
     }
-    const size = Math.max(MAX_DIRECT_DIFF_WORDS, MAX_DIRECT_GRID_WORDS);
-    if (GRID_WORD_SCRATCH.runtime !== this.runtime || GRID_WORD_SCRATCH.array.length < size) {
+    const depth = this.inProgress.size;
+    if (GRID_WORD_SCRATCH.runtime !== this.runtime) {
       GRID_WORD_SCRATCH.runtime = this.runtime;
-      GRID_WORD_SCRATCH.array = new Uint32Array(size);
+      GRID_WORD_SCRATCH.arrays = [];
+    }
+    let array = GRID_WORD_SCRATCH.arrays[depth];
+    if (array === undefined || array.length < wordCount) {
+      array = new Uint32Array(Math.max(wordCount, 1));
+      GRID_WORD_SCRATCH.arrays[depth] = array;
     }
     counters.transport_scratch_reuses += 1;
-    return GRID_WORD_SCRATCH.array.subarray(0, wordCount);
+    return array.subarray(0, wordCount);
   }
 
   /** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch. */
@@ -1280,8 +1296,11 @@ export function renderExactRoot(
           releaseRecoveredLease = false;
           return { status: "ok", rootRef: recoveredRef, recovered: true };
         }
-        SEMANTIC_NATIVE.delete(node);
-        return { status: "no_root_ref" };
+        if (retryStatus === HOST_STATUS_CACHE_MISS) {
+          SEMANTIC_NATIVE.delete(node);
+          return { status: "no_root_ref" };
+        }
+        throw new Error(`hostRenderRef retry failed with status ${retryStatus}`);
       } finally {
         if (releaseRecoveredLease) {
           const batch = Uint32Array.of(recoveredRef);
@@ -1503,8 +1522,9 @@ export class RetainedRootBoundary {
     };
     acquiredBoundaryLease: boolean;
   } | undefined {
-    const prepareStart = phaseNow();
     const node = semanticNodeOf(view);
+    if (this.installRef === undefined && this.host() === undefined) return undefined;
+    const prepareStart = phaseNow();
     const tx = new MaterializeTx(
       this.session.symbols,
       this.session.runtime,
@@ -1534,8 +1554,17 @@ export class RetainedRootBoundary {
       try {
         viewRenderRef(this.session.symbols, this.session.runtime, resolvedRef);
       } catch (error) {
-        if (!isExpectedNativeStatus(error)) throw error;
-        const recovered = recoverStaleNode(node, tx);
+        if (!isExpectedNativeStatus(error)) {
+          tx.releaseAll();
+          throw error;
+        }
+        let recovered: number | undefined;
+        try {
+          recovered = recoverStaleNode(node, tx);
+        } catch (recoveryError) {
+          tx.releaseAll();
+          throw recoveryError;
+        }
         if (recovered === undefined) {
           tx.releaseAll();
           return undefined;
@@ -1571,7 +1600,13 @@ export class RetainedRootBoundary {
           throw error;
         }
         counters.node_id_ref_promotion_misses += 1;
-        const recovered = recoverStaleNode(node, tx);
+        let recovered: number | undefined;
+        try {
+          recovered = recoverStaleNode(node, tx);
+        } catch (recoveryError) {
+          tx.releaseAll();
+          throw recoveryError;
+        }
         if (recovered === undefined) {
           tx.releaseAll();
           return undefined;
@@ -1600,9 +1635,10 @@ export class RetainedRootBoundary {
    */
   prepareColdInstall(view: View): RootPublication | undefined {
     if (this.closed) throw new Error("boundary is closed");
+    const node = semanticNodeOf(view);
+    if (this.installRef === undefined && this.host() === undefined) return undefined;
     const materialize = COLD_ROOT_MATERIALIZER;
     if (materialize === undefined) return undefined;
-    const node = semanticNodeOf(view);
     const materializeStart = phaseNow();
     const rootRef = materialize(view);
     const materializeEnd = phaseNow();
@@ -1702,15 +1738,20 @@ export class RetainedRootBoundary {
         }
       } else {
         const host = this.host();
-        if (host !== undefined) {
-          const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
-          if (status !== HOST_STATUS_OK) {
-            // Release only a freshly acquired boundary lease whose ref is not
-            // already the boundary's leased previous root (§18 failure keeps
-            // the old root installed).
-            this.unwindPrepared(prepared);
-            return false;
-          }
+        if (host === undefined) {
+          // A root publication without a live host is a refusal, not a
+          // successful no-op. Keep the old root authoritative and release all
+          // state acquired during prepare.
+          this.unwindPrepared(prepared);
+          return false;
+        }
+        const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
+        if (status !== HOST_STATUS_OK) {
+          // Release only a freshly acquired boundary lease whose ref is not
+          // already the boundary's leased previous root (§18 failure keeps
+          // the old root installed).
+          this.unwindPrepared(prepared);
+          return false;
         }
         counters.host_mutations += 1;
       }

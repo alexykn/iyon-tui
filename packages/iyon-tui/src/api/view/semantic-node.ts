@@ -5,9 +5,9 @@
  * handles, ABI schema, or generated calls. It is the private semantic model
  * that API/view and composition will share during the H3 cutover.
  *
- * H3-A keeps the existing bridge-backed production View path unchanged. The
- * factories and sidecars here are therefore private migration infrastructure;
- * H3-B will make them authoritative for View construction.
+ * H3-C keeps bridge records as derived cold-fallback artifacts only. The
+ * factories and sidecars here are private semantic infrastructure; retained
+ * structural transport consumes these nodes directly.
  */
 
 import type { HandleId } from "../controls/framework-handle.ts";
@@ -271,7 +271,7 @@ export type SemanticViewNodeDraft = WithoutId<SemanticViewNode>;
 /**
  * Installs a semantic identity on an already-owned semantic draft.
  * Construction is private and intentionally receives the identity from the
- * current View owner until H3-B moves allocation into this module.
+ * current API/view owner.
  */
 export function createSemanticViewNode(id: SemanticNodeId, draft: SemanticViewNodeDraft): SemanticViewNode {
   if (!Number.isSafeInteger(id) || id < 1) throw new RangeError("semantic View node identity must be a positive safe integer");

@@ -56,7 +56,22 @@ import { componentIdForHandleId } from "./component-view.ts";
 import type { View } from "../../api/view/view.ts";
 
 const semanticToBridge = new WeakMap<SemanticViewNode, BridgeViewNode>();
+/** Transitional reverse association for the generated bridge materializer. */
+const bridgeToSemantic = new WeakMap<object, SemanticViewNode>();
 const lowering = new WeakSet<SemanticViewNode>();
+const coldCounters = { cold_bridge_objects_allocated: 0 };
+
+export interface ColdLoweringCounters {
+  readonly cold_bridge_objects_allocated: number;
+}
+
+export function coldLoweringCounterSnapshot(): ColdLoweringCounters {
+  return { ...coldCounters };
+}
+
+export function resetColdLoweringCounters(): void {
+  coldCounters.cold_bridge_objects_allocated = 0;
+}
 
 /** Lowers a public View through its private semantic association. */
 export function lowerColdView(view: View): BridgeViewNode {
@@ -70,6 +85,7 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
   if (lowering.has(node)) throw new TypeError("semantic View graph contains a cycle");
   lowering.add(node);
   try {
+    coldCounters.cold_bridge_objects_allocated += 1;
     const draft = semanticDraftFor(node);
     const bridge = freezeBridgeNode({
       id: node.id,
@@ -77,11 +93,17 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
       ...draft,
     } as BridgeViewNode);
     semanticToBridge.set(node, bridge);
+    bridgeToSemantic.set(bridge, node);
     attachBridgeSidecars(node, bridge);
     return bridge;
   } finally {
     lowering.delete(node);
   }
+}
+
+/** @internal Resolves only bridge records produced by this cold lowerer. */
+export function semanticNodeForBridge(bridge: object): SemanticViewNode | undefined {
+  return bridgeToSemantic.get(bridge);
 }
 
 function semanticDraftFor(node: SemanticViewNode): BridgeViewNodeDraft {

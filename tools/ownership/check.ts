@@ -500,7 +500,31 @@ function h3bCompositionTransportGate(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Gate 8: H2 CUT 5 root publication boundary
+// Gate 8: H3-C structural transport/composition seam
+// ---------------------------------------------------------------------------
+
+function h3cStructuralCompositionGate(): void {
+  const offenders: string[] = [];
+  for (const file of walk(join(FRAMEWORK_SRC, "transport/structural"))) {
+    for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
+      if (!specifier.startsWith(".")) continue;
+      const resolved = resolveRelative(file, specifier);
+      if (resolved === null || !resolved.startsWith(FRAMEWORK_SRC)) continue;
+      const target = relative(FRAMEWORK_SRC, resolved).replaceAll("\\", "/");
+      if (target.startsWith("composition/")) {
+        offenders.push(`${relative(ROOT, file)} imports composition implementation: ${target}`);
+      }
+    }
+  }
+  if (offenders.length > 0) {
+    fail("h3c-structural-composition-seam", offenders.join("; "));
+  } else {
+    pass("h3c-structural-composition-seam", "structural transport imports no composition implementation");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gate 9: H2 CUT 5 root publication boundary
 // ---------------------------------------------------------------------------
 
 function cut5RootPublicationGate(): void {
@@ -744,6 +768,7 @@ async function themeStyleSemanticGate(): Promise<void> {
     "transport/structural/retained-dag.ts",
     "transport/structural/style-lowering.ts",
     "transport/structural/cold-lowering.ts",
+    "transport/structural/encoding.ts",
     "transport/structural/view-bridge.ts",
   ]);
   const offenders: string[] = [];
@@ -1323,6 +1348,7 @@ cut3OwnershipGate();
 cut4RootCleanupGate();
 cut5ImportBoundaryGate();
 h3bCompositionTransportGate();
+h3cStructuralCompositionGate();
 cut5RootPublicationGate();
 cut5ModuleIdentityGate();
 cut5PackagePublicationGate();

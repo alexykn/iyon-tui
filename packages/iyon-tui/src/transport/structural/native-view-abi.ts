@@ -1,7 +1,7 @@
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
 import {
   clearNativeHint,
-  ensureNative,
+  ensureSemanticNative,
   MaterializeTx,
   refreshNativeHint,
   RetainedCycleError,
@@ -36,7 +36,8 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "../abi/structural/generated/view_calls.ts";
-import { nodeForBridge } from "./view-bridge.ts";
+import { lowerColdView } from "./cold-lowering.ts";
+import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
   nodeIdPair,
   viewNodeId,
@@ -178,8 +179,8 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
 /**
  * PERF-12 T13 (§78/§80): retained materialization for boundaries that keep a
  * View only transiently (History unit import, animation frames) or that run
- * their own §18 boundary. Identity-first: BridgeNativeHint hits reuse already-
- * materialized nodes with zero payload reads; ceiling is 0 so genuinely new
+ * their own §18 boundary. Identity-first: semantic NativeRef hint hits reuse
+ * already-materialized nodes with zero payload reads; ceiling is 0 so genuinely new
  * nodes skip the NodeId probe exactly like the §19 ordering requires — cold
  * unit imports pay no extra per-node round trips, while anything previously
  * materialized through any boundary rides its hint.
@@ -195,10 +196,10 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
+  const node = semanticNodeOf(next);
   const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
   try {
-    let reference = ensureNative(node, tx);
+    let reference = ensureSemanticNative(node, tx);
     // ensureNative deliberately treats hints as borrowed. Transient users of
     // this helper must own one lease before they can release it, even when the
     // root was already materialized by a different boundary.
@@ -233,7 +234,7 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
 export function tryNativeMaterialize(next: View): number | undefined {
   const session = nativeViewAbiSession();
   if (session === undefined) return undefined;
-  const node = nodeForBridge(next);
+  const bridge = lowerColdView(next);
   try {
     const [low, high] = nodeIdPair(next);
     return viewRefForNodeId(session.symbols, session.runtime, low, high);
@@ -242,7 +243,7 @@ export function tryNativeMaterialize(next: View): number | undefined {
   }
   const decodeRef = native.tuiViewAbiDecodeRef;
   if (decodeRef === undefined) return undefined;
-  const reference = decodeRef(node as unknown as object);
+  const reference = decodeRef(bridge as unknown as object);
   return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
     ? reference
     : undefined;

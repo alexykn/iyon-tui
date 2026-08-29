@@ -3,9 +3,8 @@
  *
  * The View layer owns semantic identity, child relationships, normalized
  * presentation values, and retained derivation hints. Structural transport is
- * deliberately absent here; it consumes these values through its private
- * compatibility/lowering boundary while H3-C moves the warm path directly to
- * the semantic model.
+ * deliberately absent here; the retained path consumes these semantic values
+ * directly and the cold path lowers them only at the physical boundary.
  */
 
 import type { BorderSpec, TextAttribute } from "../presentation/style.ts";

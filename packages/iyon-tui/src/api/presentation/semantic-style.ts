@@ -4,9 +4,10 @@
  * The public style/theme objects are convenient immutable facades, while the
  * structural bridge uses a different representation (string color atoms,
  * numeric tags, and native packing). H3-A gives semantic View construction a
- * copied, frozen representation independent of that bridge. The existing
- * structural style-lowering module remains authoritative for the production
- * route until H3-C.
+ * copied, frozen representation independent of that bridge. Retained
+ * structural transport now consumes these semantic styles directly; structural
+ * style-lowering remains for public/native boundary and cold compatibility
+ * paths.
  */
 
 import type { OverflowIndicator } from "../view/view.ts";

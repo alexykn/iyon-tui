@@ -1,15 +1,14 @@
 /**
- * PERF-12 T6: retained-DAG identity fast paths (handoff §18–§21, §48, §15/§16).
+ * PERF-12 retained-DAG identity fast paths over the semantic View model.
  *
- * The immutable BridgeViewNode DAG is the semantic declaration; the Rust View
- * DAG is the retained native representation; a NativeRef is the correspondence
- * between them. This module owns the JS side of that correspondence:
+ * The semantic node DAG is the declaration; this module owns the physical
+ * NativeRef correspondence and generated structural calls:
  *
- * - `BRIDGE_NATIVE`: generation-scoped NativeRef hints in a WeakMap sidecar.
+ * - `SEMANTIC_NATIVE`: generation-scoped NativeRef hints in a WeakMap sidecar.
  *   Hints are weak acceleration, never per-node leases (§16).
  * - `ensureNative` (§19): identity-first resolution — hint, transaction-local
  *   ref, ceiling-gated NodeId→NativeRef promotion, then — only for genuinely
- *   new nodes — payload inspection and generated direct materialization.
+ *   new nodes — semantic payload inspection and direct ABI materialization.
  * - exact-root fast path (§20): one `hostRenderRef`, zero semantic field
  *   reads, zero buffer writes.
  * - `RetainedRootBoundary` (§18): the root-lease protocol every View-bearing
@@ -17,22 +16,30 @@
  *   fully materialized and installed; temporary leases drain in one batch;
  *   the private NodeId high-water is captured as `nativeLookupCeiling`.
  *
- * Production routing is NOT switched over here (T13 routes boundaries); this
- * module is exercised through its own conformance and scaling suites until
- * then. Only materializers emitted by the canonical generator are available;
- * unknown kinds raise `RetainedFastFallbackError` so callers route to the
- * complete cold path (§49).
+ * The retained path consumes semantic nodes directly. Complete bridge objects
+ * are produced only by the separate cold fallback.
  */
 
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
+import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import {
-  materializeColumn,
-  materializeRow,
-  materializeSpacer,
-} from "../abi/structural/generated/view_materialize.ts";
-import { NativeAbiStatusError, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
-import { BRIDGE_DIFF_LINE_KIND, BRIDGE_DIFF_LINE_TERMINATION, BRIDGE_GRID_TRACK_KIND, BRIDGE_OVERFLOW_KIND, BRIDGE_VIEW_KIND, peekBridgeDerivation, peekBridgeGridSequenceOverride, peekBridgeSequenceOverride, type BridgeGridTrackNode, type BridgeViewNode, type ColorNode, type StyleNode } from "./ir.ts";
-import { nodeForBridge } from "./view-bridge.ts";
+  axisKind,
+  axisTrackWord,
+  colorAtomValue,
+  commonScalarEncoding,
+  diffLineKindCode,
+  diffTerminationCode,
+  gridTrackWord,
+  horizontalAlignCode,
+  layoutTrackWord,
+  overflowKindCode,
+  sizeModeCode,
+  verticalAlignCode,
+  wrapModeCode,
+} from "./encoding.ts";
+import { semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
+import { componentIdForHandleId } from "./component-view.ts";
+import { lowerSemanticView, semanticNodeForBridge } from "./cold-lowering.ts";
 import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
 import type { NativeViewAbiSession } from "./native-view-abi.ts";
 import {
@@ -46,13 +53,13 @@ import {
 } from "./policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
-export interface BridgeNativeHint {
+export interface SemanticNativeHint {
   readonly generation: number;
   readonly nativeRef: number;
 }
 
 /** NodeId → NativeRef hints. Values die with the semantic node (§15). */
-const BRIDGE_NATIVE = new WeakMap<BridgeViewNode, BridgeNativeHint>();
+const SEMANTIC_NATIVE = new WeakMap<SemanticViewNode, SemanticNativeHint>();
 
 /**
  * PERF-12 T8 (§30): environment-level reusable axis-ref scratch (small tier).
@@ -82,7 +89,7 @@ const BYTE_SCRATCH: { runtime: NativeViewAbiHandle | undefined; array: Uint8Arra
  * PERF-12 T11 (§40): generation-scoped StyleRef sidecar. Stable style objects
  * map to native style refs exactly once per runtime generation; the native
  * runtime's style table stays the only authoritative style cache (§40 bans a
- * second one — this sidecar is acceleration metadata, like BRIDGE_NATIVE).
+ * second one — this sidecar is acceleration metadata, like SEMANTIC_NATIVE).
  * Refs die with the generation; the single-slot reset mirrors AXIS_REF_SCRATCH.
  */
 const STYLE_REF_CACHE: {
@@ -194,12 +201,12 @@ export class RetainedCycleError extends Error {
  * root is installed, then all non-root leases drain through `viewReleaseMany`.
  */
 export class MaterializeTx {
-  readonly refs = new Map<BridgeViewNode, number>();
-  readonly inProgress = new Set<BridgeViewNode>();
+  readonly refs = new Map<SemanticViewNode, number>();
+  readonly inProgress = new Set<SemanticViewNode>();
   /** Refs this tx must release unless ownership transfers to the boundary. */
   readonly temporaryLeases: number[] = [];
   /** Hint hits borrowed for this tx; no lease was taken (§16/§47). */
-  readonly borrowedHints: { readonly node: BridgeViewNode; readonly nativeRef: number }[] = [];
+  readonly borrowedHints: { readonly node: SemanticViewNode; readonly nativeRef: number }[] = [];
   newNodeCount = 0;
   depth = 0;
   /** One targeted stale-ref recovery is allowed per root transaction (§47). */
@@ -212,7 +219,7 @@ export class MaterializeTx {
     readonly nativeLookupCeiling: number,
   ) {}
 
-  noteBorrowedHint(node: BridgeViewNode, nativeRef: number): void {
+  noteBorrowedHint(node: SemanticViewNode, nativeRef: number): void {
     this.borrowedHints.push({ node, nativeRef });
   }
 
@@ -319,7 +326,7 @@ export class MaterializeTx {
   }
 }
 
-type NodeMaterializer = (node: BridgeViewNode, tx: MaterializeTx) => number;
+type NodeMaterializer = (node: SemanticViewNode, tx: MaterializeTx) => number;
 
 const FAST_CACHE_MISS = 0x8000_0004;
 const STATUS_DETAIL_CHILD_KIND = 1;
@@ -353,11 +360,11 @@ function isStaleBase(error: unknown): boolean {
     && (nativeStatusDetail(error) >>> 30) === STATUS_DETAIL_BASE_KIND;
 }
 
-/** Exceptional §73 recovery: Direct decodes one node and returns one lease. */
-function recoverNodeWithDirectDecode(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
+/** Exceptional §73 recovery: cold-decode one semantic node and return a lease. */
+function recoverNodeWithDirectDecode(node: SemanticViewNode, tx: MaterializeTx): number | undefined {
   const decodeRef = native.tuiViewAbiDecodeRef;
   if (decodeRef === undefined) return undefined;
-  const reference = decodeRef(node as unknown as object);
+  const reference = decodeRef(lowerSemanticView(node) as unknown as object);
   if (!isValidNativeRef(reference)) return undefined;
   installHint(node, tx.generation, reference);
   tx.refs.set(node, reference);
@@ -365,15 +372,15 @@ function recoverNodeWithDirectDecode(node: BridgeViewNode, tx: MaterializeTx): n
   return reference;
 }
 
-function childAtOrdinal(node: BridgeViewNode, ordinal: number): BridgeViewNode | undefined {
+function childAtOrdinal(node: SemanticViewNode, ordinal: number): SemanticViewNode | undefined {
   if (!Number.isSafeInteger(ordinal) || ordinal < 0) return undefined;
-  if (node.kind === BRIDGE_VIEW_KIND.row || node.kind === BRIDGE_VIEW_KIND.column) {
-    const override = peekBridgeSequenceOverride(node);
+  if (node.kind === SEMANTIC_VIEW_KIND.row || node.kind === SEMANTIC_VIEW_KIND.column) {
+    const override = peekSemanticSequenceOverride(node);
     const child = override?.sequence.get(ordinal) ?? node.children[ordinal];
     return child?.child;
   }
-  if (node.kind === BRIDGE_VIEW_KIND.grid) {
-    const override = peekBridgeGridSequenceOverride(node);
+  if (node.kind === SEMANTIC_VIEW_KIND.grid) {
+    const override = peekSemanticGridSequenceOverride(node);
     if (override !== undefined) return override.sequence.get(ordinal)?.view;
     let offset = ordinal;
     for (const row of node.rows) {
@@ -381,43 +388,38 @@ function childAtOrdinal(node: BridgeViewNode, ordinal: number): BridgeViewNode |
       offset -= row.cells.length;
     }
   }
-  if (node.kind === BRIDGE_VIEW_KIND.hanging) {
+  if (node.kind === SEMANTIC_VIEW_KIND.hanging) {
     return [node.prefix, node.continuation, node.body][ordinal];
   }
-  if (node.kind === BRIDGE_VIEW_KIND.container || node.kind === BRIDGE_VIEW_KIND.clamp || node.kind === BRIDGE_VIEW_KIND.contentMax) {
+  if (node.kind === SEMANTIC_VIEW_KIND.container || node.kind === SEMANTIC_VIEW_KIND.clamp || node.kind === SEMANTIC_VIEW_KIND.contentMax) {
     return ordinal === 0 ? node.child : undefined;
   }
-  if (node.kind === BRIDGE_VIEW_KIND.decorated) return ordinal === 0 ? node.child : undefined;
+  if (node.kind === SEMANTIC_VIEW_KIND.decorated) return ordinal === 0 ? node.child : undefined;
   return undefined;
 }
 
-function derivationChildAt(derivation: NonNullable<ReturnType<typeof peekBridgeDerivation>>, ordinal: number): BridgeViewNode | undefined {
+function derivationChildAt(derivation: SemanticDerivation, ordinal: number): SemanticViewNode | undefined {
   switch (derivation.kind) {
     case "axisSet":
     case "gridCell":
       return ordinal === 0 ? derivation.child : undefined;
     case "axisSplice":
-      return derivation.inserted[ordinal]?.node;
+      return derivation.inserted[ordinal]?.child;
     case "textLayout":
     case "commonScalar":
       return undefined;
   }
 }
 
-/**
- * Invalidates one stale hint and performs the bounded recovery used by both
- * constructors and retained edit primitives. The Direct decoder is the
- * authoritative exceptional fallback when this node has no retained
- * materializer of its own (§47/§73).
- */
-function recoverStaleNode(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
+/** Invalidates one stale hint and performs bounded semantic recovery. */
+function recoverStaleNode(node: SemanticViewNode, tx: MaterializeTx): number | undefined {
   if (tx.staleRefRetries >= 1) return undefined;
   tx.staleRefRetries += 1;
   counters.stale_ref_retries += 1;
-  deleteBridgeNativeHint(node);
+  deleteSemanticNativeHint(node);
   tx.refs.delete(node);
   try {
-    return ensureNative(node, tx);
+    return ensureSemanticNative(node, tx);
   } catch (error) {
     if (!(error instanceof RetainedFastFallbackError) && !(error instanceof RetainedCycleError)) throw error;
   }
@@ -425,7 +427,7 @@ function recoverStaleNode(node: BridgeViewNode, tx: MaterializeTx): number | und
 }
 
 function materializeWithRecovery(
-  node: BridgeViewNode,
+  node: SemanticViewNode,
   tx: MaterializeTx,
   materializer: NodeMaterializer,
 ): number {
@@ -460,81 +462,124 @@ function materializeWithRecovery(
   }
 }
 
-/**
- * Runs one generated lowering and converts expected native failure statuses
- * into a fast fallback so the caller routes the complete cold path (§49).
- * Unexpected errors propagate.
- */
+/** Runs one direct encoding and leaves expected native failures to recovery. */
 function runMaterializer(_kind: string, lower: () => number): number {
-  // Native status errors stay typed until ensureNative can perform the one
-  // targeted stale-child retry. Non-cache failures become the complete
-  // fallback there; unexpected exceptions remain visible to the caller.
   return lower();
 }
 
-function materializeSpacerNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.spacer) throw new RetainedFastFallbackError("kind mismatch");
+function materializeSpacerNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.spacer) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  return runMaterializer("spacer", () =>
-    materializeSpacer(node as unknown as Parameters<typeof materializeSpacer>[0], tx),
-  );
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("spacer", () => viewSpacerCreate(tx.symbols, tx.runtime, low, high, node.rows));
 }
 
-function materializeRowNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.row) throw new RetainedFastFallbackError("kind mismatch");
-  counters.bridge_children_visited += node.children.length;
-  counters.bridge_semantic_nodes_inspected += 1;
-  return runMaterializer("row", () => materializeRow(node as unknown as Parameters<typeof materializeRow>[0], tx));
+type SemanticAxisNode = Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_VIEW_KIND.column }>;
+
+function axisChildAt(node: SemanticAxisNode, index: number): SemanticLayoutChild | undefined {
+  const override = peekSemanticSequenceOverride(node);
+  return override === undefined ? node.children[index] : override.sequence.get(index);
 }
 
-function materializeColumnNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.column) throw new RetainedFastFallbackError("kind mismatch");
-  counters.bridge_children_visited += node.children.length;
-  counters.bridge_semantic_nodes_inspected += 1;
-  return runMaterializer(
-    "column",
-    () => materializeColumn(node as unknown as Parameters<typeof materializeColumn>[0], tx),
-  );
+function axisChildCount(node: SemanticAxisNode): number {
+  return peekSemanticSequenceOverride(node)?.sequence.length ?? node.children.length;
 }
 
-function gridTrackAmount(value: number, label: string): number {
-  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
-    throw new RetainedFastFallbackError(`grid ${label} is outside the u16 range`);
+function materializeAxisNode(node: SemanticAxisNode, tx: MaterializeTx): number {
+  const count = axisChildCount(node);
+  const childAt = (index: number): SemanticLayoutChild => {
+    const child = axisChildAt(node, index);
+    if (child === undefined) throw new RetainedFastFallbackError("axis sequence contains a missing child");
+    return child;
+  };
+  counters.bridge_children_visited += count;
+  counters.bridge_semantic_nodes_inspected += 1;
+  const [low, high] = splitNodeId(node.id);
+  if (count <= 4) {
+    const child0 = count > 0 ? childAt(0) : undefined;
+    const child1 = count > 1 ? childAt(1) : undefined;
+    const child2 = count > 2 ? childAt(2) : undefined;
+    const child3 = count > 3 ? childAt(3) : undefined;
+    const ref = (child: SemanticLayoutChild): number => ensureSemanticNative(child.child, tx);
+    if (node.kind === SEMANTIC_VIEW_KIND.row) {
+      switch (count) {
+        case 0: return runMaterializer("row", () => viewRowCreate0(tx.symbols, tx.runtime, low, high, node.gap));
+        case 1: return runMaterializer("row", () => viewRowCreate1(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!)));
+        case 2: return runMaterializer("row", () => viewRowCreate2(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!)));
+        case 3: return runMaterializer("row", () => viewRowCreate3(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!), layoutTrackWord(child2!), ref(child2!)));
+        default: return runMaterializer("row", () => viewRowCreate4(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!), layoutTrackWord(child2!), ref(child2!), layoutTrackWord(child3!), ref(child3!)));
+      }
+    }
+    switch (count) {
+      case 0: return runMaterializer("column", () => viewColumnCreate0(tx.symbols, tx.runtime, low, high, node.gap));
+      case 1: return runMaterializer("column", () => viewColumnCreate1(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!)));
+      case 2: return runMaterializer("column", () => viewColumnCreate2(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!)));
+      case 3: return runMaterializer("column", () => viewColumnCreate3(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!), layoutTrackWord(child2!), ref(child2!)));
+      default: return runMaterializer("column", () => viewColumnCreate4(tx.symbols, tx.runtime, low, high, node.gap, layoutTrackWord(child0!), ref(child0!), layoutTrackWord(child1!), ref(child1!), layoutTrackWord(child2!), ref(child2!), layoutTrackWord(child3!), ref(child3!)));
+    }
   }
-  return value;
+  const words = tx.axisRefScratch(count);
+  let offset = 0;
+  for (let index = 0; index < count; index += 1) {
+    const child = childAt(index);
+    words[offset++] = layoutTrackWord(child);
+    words[offset++] = ensureSemanticNative(child.child, tx);
+  }
+  tx.noteRefWords(offset);
+  return runMaterializer("axis", () => viewAxisCreateBuffer(
+    tx.symbols,
+    tx.runtime,
+    low,
+    high,
+    axisKind(node.kind),
+    node.gap,
+    words,
+    count,
+  ));
 }
 
-function gridTrackWord(track: BridgeGridTrackNode): number {
-  switch (track.kind) {
-    case BRIDGE_GRID_TRACK_KIND.content: return 1;
-    case BRIDGE_GRID_TRACK_KIND.contentMax: return 2 | (gridTrackAmount(track.max, "contentMax") << 8);
-    case BRIDGE_GRID_TRACK_KIND.fixed: return 3 | (gridTrackAmount(track.size, "fixed") << 8);
-    case BRIDGE_GRID_TRACK_KIND.flex: return 4;
-    case BRIDGE_GRID_TRACK_KIND.flexMax: return 5 | (gridTrackAmount(track.max, "flexMax") << 8);
-  }
+function materializeRowNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.row) throw new RetainedFastFallbackError("kind mismatch");
+  return materializeAxisNode(node, tx);
+}
+
+function materializeColumnNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.column) throw new RetainedFastFallbackError("kind mismatch");
+  return materializeAxisNode(node, tx);
 }
 
 /** PERF-12 T10 (§36): new Grid construction through one borrowed word lane. */
-function materializeGridNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.grid) throw new RetainedFastFallbackError("kind mismatch");
-  const wordCount = 2 + node.columns.length
-    + node.rows.reduce((total, row) => total + 2 + row.cells.length * 3, 0);
+function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.grid) throw new RetainedFastFallbackError("kind mismatch");
+  const override = peekSemanticGridSequenceOverride(node);
+  const rowCount = override?.rowTracks.length ?? node.rows.length;
+  const cellCount = override?.sequence.length ?? node.rows.reduce((total, row) => total + row.cells.length, 0);
+  const wordCount = 2 + node.columns.length + rowCount * 2 + cellCount * 3;
   const words = tx.gridWordScratch(wordCount);
   let offset = 0;
   words[offset++] = node.columns.length;
   for (const track of node.columns) words[offset++] = gridTrackWord(track);
-  words[offset++] = node.rows.length;
-  for (const row of node.rows) {
-    words[offset++] = gridTrackWord(row.track);
-    words[offset++] = row.cells.length;
-    for (const cell of row.cells) {
-      words[offset++] = ensureNative(cell.view, tx);
+  words[offset++] = rowCount;
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const row = override === undefined ? node.rows[rowIndex]! : undefined;
+    const track = override?.rowTracks[rowIndex] ?? row?.track;
+    if (track === undefined) throw new RetainedFastFallbackError("grid sequence contains a missing row track");
+    const start = override?.rowOffsets[rowIndex] ?? 0;
+    const end = override?.rowOffsets[rowIndex + 1] ?? row!.cells.length;
+    const rowCells = override === undefined ? row!.cells : undefined;
+    words[offset++] = gridTrackWord(track);
+    words[offset++] = end - start;
+    for (let index = start; index < end; index += 1) {
+      const cell = override === undefined ? rowCells![index - start]! : override.sequence.get(index);
+      if (cell === undefined) throw new RetainedFastFallbackError("grid sequence contains a missing cell");
+      words[offset++] = ensureSemanticNative(cell.view, tx);
       words[offset++] = (cell.columnSpan & 0xffff) | ((cell.rowSpan & 0xffff) << 16);
-      words[offset++] = (cell.horizontalAlign & 0xffff) | ((cell.verticalAlign & 0xffff) << 16);
+      words[offset++] = (horizontalAlignCode(cell.horizontalAlign) & 0xffff)
+        | ((verticalAlignCode(cell.verticalAlign) & 0xffff) << 16);
     }
   }
   tx.noteRefWords(wordCount);
-  counters.bridge_children_visited += node.rows.reduce((total, row) => total + row.cells.length, 0);
+  counters.bridge_children_visited += cellCount;
   counters.bridge_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("grid", () => viewGridCreateBuffer(
@@ -581,8 +626,8 @@ function ensureStyleCache(tx: MaterializeTx): void {
   }
 }
 
-function styleColorAtom(color: ColorNode): string {
-  return typeof color === "string" ? color : `ansi:${color.value}`;
+function styleColorAtom(color: SemanticColor): string {
+  return colorAtomValue(color);
 }
 
 function styleAtomRef(value: string, tx: MaterializeTx): number {
@@ -598,7 +643,7 @@ function styleAtomRef(value: string, tx: MaterializeTx): number {
 }
 
 /** Resolves one stable style object to its native StyleRef (0 = unstyled). */
-function styleRefFor(style: StyleNode | undefined, tx: MaterializeTx): number {
+function styleRefFor(style: SemanticStyle | undefined, tx: MaterializeTx): number {
   if (style === undefined) return 0;
   ensureStyleCache(tx);
   const cached = STYLE_REF_CACHE.refs.get(style);
@@ -610,7 +655,7 @@ function styleRefFor(style: StyleNode | undefined, tx: MaterializeTx): number {
     if (bit === undefined) {
       throw new RetainedFastFallbackError(`unknown text attribute ${name}`);
     }
-    const enabled = style.attributes[name];
+    const enabled = style.attributes[name as keyof typeof style.attributes];
     if (typeof enabled !== "boolean") {
       throw new RetainedFastFallbackError(`text attribute ${name} must be boolean`);
     }
@@ -625,8 +670,8 @@ function styleRefFor(style: StyleNode | undefined, tx: MaterializeTx): number {
   return reference;
 }
 
-function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.text) throw new RetainedFastFallbackError("kind mismatch");
+function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const spans = node.spans;
   if (spans.length < 1 || spans.length > 4) {
@@ -634,8 +679,6 @@ function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
     throw new RetainedFastFallbackError(`text span count ${spans.length} is outside the retained family`);
   }
   // Payload dependencies resolve before any transport (children-first analog).
-  // Style publication failures are retained-path refusals: they count the
-  // fallback and route the complete cold path like any other cap/shape miss.
   const styleRefs = spans.map((span) => {
     try {
       return styleRefFor(span.style, tx);
@@ -650,6 +693,8 @@ function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
       throw error;
     }
   });
+  const wrap = wrapModeCode(node.wrap);
+  const align = horizontalAlignCode(node.align);
   const [low, high] = splitNodeId(node.id);
   let hasEmbeddedNul = false;
   for (const span of spans) {
@@ -662,10 +707,10 @@ function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
     counters.byte_payload_bytes += 0; // cstring lane encodes nothing in JS.
     return runMaterializer("text", () => {
       switch (spans.length) {
-        case 1: return viewTextCreateCstring(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, node.wrap, node.align);
-        case 2: return viewTextCreateCstring2(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, node.wrap, node.align);
-        case 3: return viewTextCreateCstring3(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, node.wrap, node.align);
-        default: return viewTextCreateCstring4(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, spans[3]!.text, styleRefs[3]!, node.wrap, node.align);
+        case 1: return viewTextCreateCstring(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, wrap, align);
+        case 2: return viewTextCreateCstring2(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, wrap, align);
+        case 3: return viewTextCreateCstring3(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, wrap, align);
+        default: return viewTextCreateCstring4(tx.symbols, tx.runtime, low, high, spans[0]!.text, styleRefs[0]!, spans[1]!.text, styleRefs[1]!, spans[2]!.text, styleRefs[2]!, spans[3]!.text, styleRefs[3]!, wrap, align);
       }
     });
   }
@@ -686,10 +731,10 @@ function materializeTextNode(node: BridgeViewNode, tx: MaterializeTx): number {
   counters.byte_payload_bytes += offset;
   return runMaterializer("text", () => {
     switch (spans.length) {
-      case 1: return viewTextCreateUtf8(tx.symbols, tx.runtime, low, high, scratch, offset, styleRefs[0]!, node.wrap, node.align);
-      case 2: return viewTextCreateUtf82(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, node.wrap, node.align);
-      case 3: return viewTextCreateUtf83(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, node.wrap, node.align);
-      default: return viewTextCreateUtf84(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, lengths[3]!, styleRefs[3]!, node.wrap, node.align);
+      case 1: return viewTextCreateUtf8(tx.symbols, tx.runtime, low, high, scratch, offset, styleRefs[0]!, wrap, align);
+      case 2: return viewTextCreateUtf82(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, wrap, align);
+      case 3: return viewTextCreateUtf83(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, wrap, align);
+      default: return viewTextCreateUtf84(tx.symbols, tx.runtime, low, high, scratch, offset, lengths[0]!, styleRefs[0]!, lengths[1]!, styleRefs[1]!, lengths[2]!, styleRefs[2]!, lengths[3]!, styleRefs[3]!, wrap, align);
     }
   });
 }
@@ -703,16 +748,12 @@ function u64Words(value: number): [number, number] {
 }
 
 /** PERF-12 T11 (§41): new-Diff construction through one words+bytes call. */
-function materializeDiffNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.diff) throw new RetainedFastFallbackError("kind mismatch");
+function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.diff) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const hunks = node.hunks;
-  let lineTotal = 0;
   let wordCount = 1;
-  for (const hunk of hunks) {
-    lineTotal += hunk.lines.length;
-    wordCount += 9 + hunk.lines.length * 6;
-  }
+  for (const hunk of hunks) wordCount += 9 + hunk.lines.length * 6;
   const words = tx.diffWordScratch(wordCount);
   const bytes = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "diff");
   let wordOffset = 0;
@@ -730,7 +771,7 @@ function materializeDiffNode(node: BridgeViewNode, tx: MaterializeTx): number {
     writeWords(newStart[0], newStart[1], newCount[0], newCount[1]);
     writeWords(hunk.lines.length);
     for (const line of hunk.lines) {
-      const meta = line.kind | (line.termination << 16);
+      const meta = diffLineKindCode(line.kind) | (diffTerminationCode(line.termination) << 16);
       const oldLine = line.oldLine === undefined ? [0, 0] : u64Words(line.oldLine);
       const newLine = line.newLine === undefined ? [0, 0] : u64Words(line.newLine);
       const encoded = TEXT_ENCODER.encodeInto(line.text, bytes.subarray(byteOffset));
@@ -750,16 +791,11 @@ function materializeDiffNode(node: BridgeViewNode, tx: MaterializeTx): number {
   );
 }
 
-/** PERF-12 T13: overflow-indicator codes shared with the native parser. */
-const OVERFLOW_NONE = 0;
-const OVERFLOW_ELLIPSIS = 1;
-const OVERFLOW_FOOTER = 2;
-
 /**
  * T13: styleRefFor with retained-refusal accounting — publication failures
  * count one cold fallback and route the complete cold path like any cap miss.
  */
-function styleRefCounted(style: StyleNode | undefined, tx: MaterializeTx): number {
+function styleRefCounted(style: SemanticStyle | undefined, tx: MaterializeTx): number {
   try {
     return styleRefFor(style, tx);
   } catch (error) {
@@ -772,22 +808,22 @@ function styleRefCounted(style: StyleNode | undefined, tx: MaterializeTx): numbe
   }
 }
 
-function materializeHangingNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.hanging) throw new RetainedFastFallbackError("kind mismatch");
+function materializeHangingNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.hanging) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  const prefixRef = ensureNative(node.prefix, tx);
-  const continuationRef = ensureNative(node.continuation, tx);
-  const bodyRef = ensureNative(node.body, tx);
+  const prefixRef = ensureSemanticNative(node.prefix, tx);
+  const continuationRef = ensureSemanticNative(node.continuation, tx);
+  const bodyRef = ensureSemanticNative(node.body, tx);
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("hanging", () =>
     viewHangingCreate(tx.symbols, tx.runtime, low, high, prefixRef, continuationRef, bodyRef)
   );
 }
 
-function materializeContainerNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.container) throw new RetainedFastFallbackError("kind mismatch");
+function materializeContainerNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.container) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  const childRef = ensureNative(node.child, tx);
+  const childRef = ensureSemanticNative(node.child, tx);
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("container", () =>
     viewContainerCreate(tx.symbols, tx.runtime, low, high, childRef)
@@ -795,31 +831,32 @@ function materializeContainerNode(node: BridgeViewNode, tx: MaterializeTx): numb
 }
 
 /** Lowers clamp/contentMax nodes; contentMax is a clamp with no indicator. */
-function materializeClampNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.clamp && node.kind !== BRIDGE_VIEW_KIND.contentMax) {
+function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.clamp && node.kind !== SEMANTIC_VIEW_KIND.contentMax) {
     throw new RetainedFastFallbackError("kind mismatch");
   }
   counters.bridge_semantic_nodes_inspected += 1;
-  const childRef = ensureNative(node.child, tx);
-  let overflowKind = OVERFLOW_NONE;
+  const childRef = ensureSemanticNative(node.child, tx);
   let overflowStyleRef = 0;
   let prefix = "";
-  if (node.kind === BRIDGE_VIEW_KIND.clamp && node.overflow !== undefined && node.overflow.kind !== BRIDGE_OVERFLOW_KIND.none) {
-    const overflow = node.overflow;
-    overflowKind = overflow.kind === BRIDGE_OVERFLOW_KIND.ellipsis ? OVERFLOW_ELLIPSIS : OVERFLOW_FOOTER;
-    overflowStyleRef = styleRefCounted(overflow.style, tx);
-    if (overflow.kind === BRIDGE_OVERFLOW_KIND.footer) prefix = overflow.prefix;
+  let overflowKind = 0;
+  if (node.kind === SEMANTIC_VIEW_KIND.clamp) {
+    overflowKind = overflowKindCode(node.overflow);
+    if (node.overflow.kind !== "none") {
+      overflowStyleRef = styleRefCounted(node.overflow.style, tx);
+      if (node.overflow.kind === "footer") prefix = node.overflow.prefix;
+    }
   }
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("clamp", () =>
-    viewClampCreate(tx.symbols, tx.runtime, low, high, childRef, node.maxRows ?? 0, overflowKind, overflowStyleRef, prefix)
+    viewClampCreate(tx.symbols, tx.runtime, low, high, childRef, node.maxRows, overflowKind, overflowStyleRef, prefix)
   );
 }
 
-function materializeComponentNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.component) throw new RetainedFastFallbackError("kind mismatch");
+function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.component) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  const handleWords = u64Words(node.handle);
+  const handleWords = u64Words(componentIdForHandleId(node.handleId));
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("component", () =>
     viewComponentCreate(tx.symbols, tx.runtime, low, high, handleWords[0], handleWords[1])
@@ -840,12 +877,10 @@ const DECORATION_MAX_HEIGHT = 512;
 
 const BORDER_STYLE_CODES = { plain: 1, rounded: 2, double: 3 } as const;
 const BORDER_EDGE_CODES = { all: 1, topBottom: 2 } as const;
-const WIDTH_RULE_CODES = { fit: 1, fill: 2 } as const;
-
-function materializeDecoratedNode(node: BridgeViewNode, tx: MaterializeTx): number {
-  if (node.kind !== BRIDGE_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
+function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  const childRef = ensureNative(node.child, tx);
+  const childRef = ensureSemanticNative(node.child, tx);
   const decoration = node.decoration;
   if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {
     counters.cold_fallbacks += 1;
@@ -892,8 +927,7 @@ function materializeDecoratedNode(node: BridgeViewNode, tx: MaterializeTx): numb
   writeWord(mask);
   writeWord(padding === undefined ? 0 : (padding.top | (padding.right << 16)) >>> 0);
   writeWord(padding === undefined ? 0 : (padding.bottom | (padding.left << 16)) >>> 0);
-  writeWord((decoration.width === undefined ? 0 : WIDTH_RULE_CODES[decoration.width])
-    | ((decoration.height === undefined ? 0 : WIDTH_RULE_CODES[decoration.height]) << 16));
+  writeWord(sizeModeCode(decoration.width) | (sizeModeCode(decoration.height) << 16));
   writeWord((decoration.minWidth ?? 0) | ((decoration.maxWidth ?? 0) << 16));
   writeWord((decoration.minHeight ?? 0) | ((decoration.maxHeight ?? 0) << 16));
   writeWord(colorAtoms[0]);
@@ -939,40 +973,40 @@ function materializeDecoratedNode(node: BridgeViewNode, tx: MaterializeTx): numb
  * fallback-routed (text spans >4, oversized payloads, custom border glyphs).
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
-  [BRIDGE_VIEW_KIND.spacer, materializeSpacerNode],
-  [BRIDGE_VIEW_KIND.row, materializeRowNode],
-  [BRIDGE_VIEW_KIND.column, materializeColumnNode],
-  [BRIDGE_VIEW_KIND.grid, materializeGridNode],
-  [BRIDGE_VIEW_KIND.text, materializeTextNode],
-  [BRIDGE_VIEW_KIND.diff, materializeDiffNode],
-  [BRIDGE_VIEW_KIND.hanging, materializeHangingNode],
-  [BRIDGE_VIEW_KIND.container, materializeContainerNode],
-  [BRIDGE_VIEW_KIND.clamp, materializeClampNode],
-  [BRIDGE_VIEW_KIND.contentMax, materializeClampNode],
-  [BRIDGE_VIEW_KIND.component, materializeComponentNode],
-  [BRIDGE_VIEW_KIND.decorated, materializeDecoratedNode],
+  [SEMANTIC_VIEW_KIND.spacer, materializeSpacerNode],
+  [SEMANTIC_VIEW_KIND.row, materializeRowNode],
+  [SEMANTIC_VIEW_KIND.column, materializeColumnNode],
+  [SEMANTIC_VIEW_KIND.grid, materializeGridNode],
+  [SEMANTIC_VIEW_KIND.text, materializeTextNode],
+  [SEMANTIC_VIEW_KIND.diff, materializeDiffNode],
+  [SEMANTIC_VIEW_KIND.hanging, materializeHangingNode],
+  [SEMANTIC_VIEW_KIND.container, materializeContainerNode],
+  [SEMANTIC_VIEW_KIND.clamp, materializeClampNode],
+  [SEMANTIC_VIEW_KIND.contentMax, materializeClampNode],
+  [SEMANTIC_VIEW_KIND.component, materializeComponentNode],
+  [SEMANTIC_VIEW_KIND.decorated, materializeDecoratedNode],
 ]);
 
 /**
- * Installs or refreshes the NativeRef hint for a node under the tx's
+ * Installs or refreshes the NativeRef hint for a semantic node under the tx's
  * generation. Hints are acceleration only; they never take a lease (§16).
  */
-function installHint(node: BridgeViewNode, generation: number, nativeRef: number): void {
-  BRIDGE_NATIVE.set(node, { generation, nativeRef });
+function installHint(node: SemanticViewNode, generation: number, nativeRef: number): void {
+  SEMANTIC_NATIVE.set(node, { generation, nativeRef });
 }
 
 /** @internal Refreshes a hint after a lease-bearing NodeId promotion. */
 export function refreshNativeHint(view: View, generation: number, nativeRef: number): void {
-  installHint(nodeForBridge(view), generation, nativeRef);
+  installHint(semanticNodeOf(view), generation, nativeRef);
 }
 
 /** @internal Drops a confirmed-stale hint before complete fallback recovery. */
 export function clearNativeHint(view: View): void {
-  deleteBridgeNativeHint(nodeForBridge(view));
+  deleteSemanticNativeHint(semanticNodeOf(view));
 }
 
-function deleteBridgeNativeHint(node: BridgeViewNode): void {
-  BRIDGE_NATIVE.delete(node);
+function deleteSemanticNativeHint(node: SemanticViewNode): void {
+  SEMANTIC_NATIVE.delete(node);
 }
 
 function splitNodeId(id: number): [number, number] {
@@ -981,11 +1015,21 @@ function splitNodeId(id: number): [number, number] {
 
 /**
  * Core identity-first resolution (§19). Hard ordering:
- * BRIDGE_NATIVE lookup → transaction-local ref → ceiling-gated
- * NodeId→NativeRef promotion → kind/payload inspection → child traversal.
+ * semantic NativeRef hint lookup → transaction-local ref → ceiling-gated
+ * NodeId→NativeRef promotion → semantic payload inspection → child traversal.
  */
-export function ensureNative(node: BridgeViewNode, tx: MaterializeTx): number {
-  const hint = BRIDGE_NATIVE.get(node);
+export function ensureNative(node: SemanticViewNode, tx: MaterializeTx): number;
+export function ensureNative(node: object, tx: MaterializeTx): number;
+export function ensureNative(node: SemanticViewNode | object, tx: MaterializeTx): number {
+  const semantic = semanticNodeForBridge(node);
+  if (semantic !== undefined) return ensureSemanticNative(semantic, tx);
+  if ("schema" in node) throw new RetainedFastFallbackError("bridge node was not produced by cold lowering");
+  return ensureSemanticNative(node as SemanticViewNode, tx);
+}
+
+/** @internal Semantic-only retained entrypoint; bridge callers use ensureNative. */
+export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx): number {
+  const hint = SEMANTIC_NATIVE.get(node);
   if (hint !== undefined && hint.generation === tx.generation) {
     counters.bridge_hint_hits += 1;
     tx.noteBorrowedHint(node, hint.nativeRef);
@@ -1057,8 +1101,8 @@ export function ensureNative(node: BridgeViewNode, tx: MaterializeTx): number {
  * lease joins the transaction's temporary leases so it drains with the tx on
  * every path. An unavailable base leaves the hint unused (§38 fallback rule).
  */
-function derivationBaseRef(base: BridgeViewNode, tx: MaterializeTx): number | undefined {
-  const hint = BRIDGE_NATIVE.get(base);
+function derivationBaseRef(base: SemanticViewNode, tx: MaterializeTx): number | undefined {
+  const hint = SEMANTIC_NATIVE.get(base);
   if (hint !== undefined && hint.generation === tx.generation) return hint.nativeRef;
   if (base.id > tx.nativeLookupCeiling) return undefined;
   counters.node_id_ref_promotion_attempts += 1;
@@ -1089,8 +1133,8 @@ function derivationBaseRef(base: BridgeViewNode, tx: MaterializeTx): number | un
  * is unavailable, fall back to direct semantic materialization'). The hint
  * itself stays attached: it may succeed after the base is re-adopted.
  */
-function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefined {
-  const derivation = peekBridgeDerivation(node);
+function tryDerivation(node: SemanticViewNode, tx: MaterializeTx): number | undefined {
+  const derivation = peekSemanticDerivation(node);
   if (derivation === undefined) return undefined;
   const baseRef = derivationBaseRef(derivation.base, tx);
   if (baseRef === undefined) return undefined;
@@ -1104,31 +1148,32 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
         baseRef,
         low,
         high,
-        derivation.wrap,
-        derivation.align,
+        wrapModeCode(derivation.wrap),
+        horizontalAlignCode(derivation.align),
       );
     } else if (derivation.kind === "commonScalar") {
+      const encoded = commonScalarEncoding(derivation.changes);
       reference = viewCommonPatchRoot(
         tx.symbols,
         tx.runtime,
         baseRef,
         low,
         high,
-        derivation.mask,
-        derivation.paddingTopRight,
-        derivation.paddingBottomLeft,
-        derivation.widthRule,
-        derivation.heightRule,
-        derivation.minWidth,
-        derivation.maxWidth,
-        derivation.minHeight,
-        derivation.maxHeight,
+        encoded.mask,
+        encoded.paddingTopRight,
+        encoded.paddingBottomLeft,
+        encoded.widthRule,
+        encoded.heightRule,
+        encoded.minWidth,
+        encoded.maxWidth,
+        encoded.minHeight,
+        encoded.maxHeight,
         0,
       );
     } else if (derivation.kind === "axisSet") {
       // §35 children-first: resolve only the replacement child, never the
       // old wide sequence.
-      const childRef = ensureNative(derivation.child, tx);
+      const childRef = ensureSemanticNative(derivation.child, tx);
       reference = viewAxisSetChild(
         tx.symbols,
         tx.runtime,
@@ -1136,7 +1181,7 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
         low,
         high,
         derivation.index,
-        derivation.trackWord,
+        axisTrackWord(derivation.track),
         childRef,
       );
     } else if (derivation.kind === "axisSplice") {
@@ -1144,8 +1189,8 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
       const scratch = tx.axisRefScratch(derivation.inserted.length);
       let offset = 0;
       for (const entry of derivation.inserted) {
-        scratch[offset++] = entry.trackWord;
-        scratch[offset++] = ensureNative(entry.node, tx);
+        scratch[offset++] = axisTrackWord(entry.track);
+        scratch[offset++] = ensureSemanticNative(entry.child, tx);
       }
       tx.noteRefWords(offset);
       reference = viewAxisSpliceBuffer(
@@ -1160,7 +1205,7 @@ function tryDerivation(node: BridgeViewNode, tx: MaterializeTx): number | undefi
         derivation.inserted.length,
       );
     } else {
-      const childRef = ensureNative(derivation.child, tx);
+      const childRef = ensureSemanticNative(derivation.child, tx);
       reference = viewGridSetCell(
         tx.symbols,
         tx.runtime,
@@ -1220,9 +1265,9 @@ export function renderExactRoot(
   host: NativeTuiHostContract,
   view: View,
 ): ExactRootRender {
-  const node = nodeForBridge(view);
+  const node = semanticNodeOf(view);
   const generation = session.abi.generation;
-  const hint = BRIDGE_NATIVE.get(node);
+  const hint = SEMANTIC_NATIVE.get(node);
 
   if (hint !== undefined && hint.generation === generation) {
     counters.bridge_hint_hits += 1;
@@ -1240,7 +1285,7 @@ export function renderExactRoot(
       // One targeted retry (§47 hard rule): the hinted ref went stale.
       counters.stale_ref_retries += 1;
       counters.node_id_ref_promotion_attempts += 1;
-      BRIDGE_NATIVE.delete(node);
+      SEMANTIC_NATIVE.delete(node);
       const [low, high] = splitNodeId(node.id);
       let recoveredRef: number | undefined;
       try {
@@ -1251,11 +1296,11 @@ export function renderExactRoot(
         counters.node_id_ref_promotion_misses += 1;
         const decodeRef = native.tuiViewAbiDecodeRef;
         if (decodeRef !== undefined) {
-          recoveredRef = decodeRef(node as unknown as object);
+          recoveredRef = decodeRef(lowerSemanticView(node) as unknown as object);
         }
       }
       if (recoveredRef === undefined || !isValidNativeRef(recoveredRef)) {
-        BRIDGE_NATIVE.delete(node);
+        SEMANTIC_NATIVE.delete(node);
         return { status: "no_root_ref" };
       }
       // A NodeId promotion or direct recovery returns one lease. Keep it on a
@@ -1275,7 +1320,7 @@ export function renderExactRoot(
           releaseRecoveredLease = false;
           return { status: "ok", rootRef: recoveredRef, recovered: true };
         }
-        BRIDGE_NATIVE.delete(node);
+        SEMANTIC_NATIVE.delete(node);
         return { status: "no_root_ref" };
       } finally {
         if (releaseRecoveredLease) {
@@ -1298,7 +1343,7 @@ export function renderExactRoot(
  * boundary owns as its root lease.
  */
 export function acquireKnownRoot(session: NativeViewAbiSession, view: View): number | undefined {
-  const node = nodeForBridge(view);
+  const node = semanticNodeOf(view);
   const [low, high] = splitNodeId(node.id);
   counters.node_id_ref_promotion_attempts += 1;
   try {
@@ -1370,7 +1415,7 @@ export interface RootPublication {
 }
 
 interface PreparedRootInstall {
-  readonly node: BridgeViewNode;
+  readonly node: SemanticViewNode;
   readonly rootRef: number;
   readonly tx: MaterializeTx;
   readonly ownsTempLease: boolean;
@@ -1488,7 +1533,7 @@ export class RetainedRootBoundary {
   private prepareFrom(
     view: View,
   ): {
-    node: BridgeViewNode;
+    node: SemanticViewNode;
     rootRef: number;
     tx: MaterializeTx;
     ownsTempLease: boolean;
@@ -1499,7 +1544,7 @@ export class RetainedRootBoundary {
     acquiredBoundaryLease: boolean;
   } | undefined {
     const prepareStart = phaseNow();
-    const node = nodeForBridge(view);
+    const node = semanticNodeOf(view);
     const tx = new MaterializeTx(
       this.session.symbols,
       this.session.runtime,
@@ -1508,10 +1553,10 @@ export class RetainedRootBoundary {
     );
     const prepareEnd = phaseNow();
     const materializeStart = phaseNow();
-    const hintedRoot = BRIDGE_NATIVE.get(node);
+    const hintedRoot = SEMANTIC_NATIVE.get(node);
     let resolvedRef: number;
     try {
-      resolvedRef = ensureNative(node, tx);
+      resolvedRef = ensureSemanticNative(node, tx);
     } catch (error) {
       // Fallback, cycle guard, and unexpected errors all drain every
       // temporary lease before the caller sees the failure.
@@ -1597,7 +1642,7 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const materialize = COLD_ROOT_MATERIALIZER;
     if (materialize === undefined) return undefined;
-    const node = nodeForBridge(view);
+    const node = semanticNodeOf(view);
     const materializeStart = phaseNow();
     const rootRef = materialize(view);
     const materializeEnd = phaseNow();
@@ -1677,7 +1722,7 @@ export class RetainedRootBoundary {
    * installed); unwinds all acquired leases in that case.
    */
   private publishPrepared(prepared: {
-    node: BridgeViewNode;
+    node: SemanticViewNode;
     rootRef: number;
     tx: MaterializeTx;
     ownsTempLease: boolean;

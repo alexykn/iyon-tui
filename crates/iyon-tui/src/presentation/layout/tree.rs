@@ -211,6 +211,51 @@ impl LayoutTree {
         path
     }
 
+    /// Returns the vertical translation and effective ancestor clip needed to
+    /// repaint one subtree directly into the committed screen surface. A
+    /// RowViewport keeps child layout coordinates in its unscrolled space;
+    /// incremental paint must apply the same offset as full-tree compositing.
+    pub(crate) fn incremental_paint_geometry(&self, id: LayoutNodeId) -> (i32, Rect) {
+        let path = self.path_to_root(id);
+        let mut offset_y = 0;
+        let mut inherited_clip =
+            SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
+        for ancestor in path.iter().take(path.len().saturating_sub(1)) {
+            let node = self.node(*ancestor);
+            inherited_clip = SignedRect::from(node.clip_rect)
+                .translate_y(offset_y)
+                .intersection(inherited_clip)
+                .unwrap_or(SignedRect {
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                });
+            if let LayoutContent::RowViewport { skip_rows } = node.content {
+                offset_y = offset_y.saturating_sub(i32::from(skip_rows));
+            }
+        }
+        let node = self.node(id);
+        let clip = SignedRect::from(node.clip_rect)
+            .translate_y(offset_y)
+            .intersection(inherited_clip)
+            .unwrap_or(SignedRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            });
+        (offset_y, clip.to_rect())
+    }
+
+    pub(crate) fn incremental_paint_rect(&self, id: LayoutNodeId) -> Option<Rect> {
+        let (offset_y, clip) = self.incremental_paint_geometry(id);
+        SignedRect::from(self.node(id).rect)
+            .translate_y(offset_y)
+            .intersection(SignedRect::from(clip))
+            .and_then(SignedRect::to_rect_opt)
+    }
+
     /// Replaces a component's content subtree in place when its layout shape
     /// and geometry remain unchanged. Parent and sibling node ids stay stable,
     /// so the paint cache can reuse every clean sibling surface.

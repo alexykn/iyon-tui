@@ -14,7 +14,7 @@ import {
   validateSemanticAttachments,
   type AttachmentRuntimeContext,
 } from "./attachments.ts";
-import type { RuntimeHostRegistration } from "./wake-broker.ts";
+import type { NativeHostCommit, RuntimeHostRegistration } from "./wake-broker.ts";
 import { Scene } from "../api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/history.ts";
 import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
@@ -150,7 +150,7 @@ export class Tui implements TuiRuntime {
     this.hostRegistration = this.runtimeEnvironment.registerHost(
       host,
       this.runtimeErrors,
-      () => owner.deref()?.commitVisibleAfterDrain(),
+      (commit) => owner.deref()?.commitVisibleAfterDrain(commit),
     );
     this.attachmentContext = {
       registry: this.runtimeEnvironment.resources,
@@ -297,9 +297,12 @@ export class Tui implements TuiRuntime {
         try {
           this.commitHistoryBinding(historyToBind, previousHistory);
           prepared!.commit();
-          this.attachmentBindings.commitDesired(attachments);
           const deferredFrame = this.host.setDesiredViewRef !== undefined
             && this.host.flushPendingHosts !== undefined;
+          const desiredRevision = deferredFrame
+            ? this.host.epochs?.().desired_structural_revision
+            : undefined;
+          this.attachmentBindings.commitDesired(attachments, desiredRevision);
           if (deferredFrame) this.hostRegistration.markPending();
           else this.attachmentBindings.commitVisible();
           this.currentScene = nextScene;
@@ -829,9 +832,10 @@ export class Tui implements TuiRuntime {
     if (finalErrors.length > 1) throw new AggregateError(finalErrors, "TUI owned-handle cleanup failed");
   }
 
-  private commitVisibleAfterDrain(): void {
-    this.boundary?.commitVisible();
-    this.attachmentBindings.commitVisible();
+  private commitVisibleAfterDrain(commit?: NativeHostCommit): void {
+    const revision = commit?.visible_structural_revision;
+    this.boundary?.commitVisible(revision);
+    this.attachmentBindings.commitVisible(revision);
   }
 
   private disposeRetainedExecution(): void {

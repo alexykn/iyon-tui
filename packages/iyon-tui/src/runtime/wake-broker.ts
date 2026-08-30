@@ -3,9 +3,16 @@ import { RuntimeErrorChannel, type FramePhase, type RuntimeFrameErrorCode, type 
 export interface NativeHostEpochs {
   readonly host_id: string | number;
   readonly desired_structural_revision: string | number;
+  readonly visible_structural_revision?: string | number;
   readonly visible_frame_revision: string | number;
   readonly pending_epoch: string | number;
   readonly committed_epoch: string | number;
+}
+
+export interface NativeHostCommit {
+  readonly host_id: string | number;
+  readonly committed_epoch: string | number;
+  readonly visible_structural_revision: string | number;
 }
 
 export interface NativeHostDrainError {
@@ -22,6 +29,7 @@ export interface NativeHostDrainReport {
   readonly rearm: boolean;
   readonly attempted: number;
   readonly committed_hosts: readonly (string | number)[];
+  readonly commits?: readonly NativeHostCommit[];
   readonly errors: readonly NativeHostDrainError[];
   readonly wake_epoch: string | number;
 }
@@ -43,7 +51,7 @@ export interface RuntimeHostRegistration {
 interface HostEntry {
   readonly registration: RuntimeHostRegistrationImpl;
   readonly errorChannel: WeakRef<RuntimeErrorChannel>;
-  readonly onCommitted: () => void;
+  readonly onCommitted: (commit?: NativeHostCommit) => void;
 }
 
 const hostRegistrationFinalizer = new FinalizationRegistry<{
@@ -132,7 +140,7 @@ export class EnvironmentWakeBroker {
   register(
     native: NativeFrameHost,
     errorChannel: RuntimeErrorChannel,
-    onCommitted: () => void,
+    onCommitted: (commit?: NativeHostCommit) => void,
   ): RuntimeHostRegistration {
     const id = hostIdFor(native, this.hosts.size + 1);
     if (this.hosts.has(id)) throw new Error(`duplicate native host identity ${id}`);
@@ -325,14 +333,21 @@ export class EnvironmentWakeBroker {
       traceWake({ kind: "error", hostId: id, epoch: record.attemptedEpoch, diagnostic: record.diagnostic });
       this.hosts.get(id)?.errorChannel.deref()?.accept(record);
     }
-    for (const rawId of report.committed_hosts) {
-      const id = String(rawId);
+    const hasRevisionedCommits = report.commits !== undefined && report.commits.length > 0;
+    const commits: readonly {
+      host_id: string | number;
+      revisioned?: NativeHostCommit;
+    }[] = hasRevisionedCommits
+      ? report.commits!.map((revisioned) => ({ host_id: revisioned.host_id, revisioned }))
+      : report.committed_hosts.map((host_id) => ({ host_id }));
+    for (const { host_id, revisioned } of commits) {
+      const id = String(host_id);
       const entry = this.hosts.get(id);
       if (entry === undefined) continue;
       try {
         wakeCounters.frames_committed += 1;
         traceWake({ kind: "commit", hostId: id });
-        entry.onCommitted();
+        entry.onCommitted(revisioned);
         entry.errorChannel.deref()?.markCommitted(id);
         const native = entry.registration.nativeOrUndefined();
         if (native !== undefined && readEpochs(native) === undefined) {
@@ -504,5 +519,5 @@ function frameCode(value: string): RuntimeFrameErrorCode {
 }
 
 function emptyReport(): NativeHostDrainReport {
-  return { rearm: false, attempted: 0, committed_hosts: [], errors: [], wake_epoch: "0" };
+  return { rearm: false, attempted: 0, committed_hosts: [], commits: [], errors: [], wake_epoch: "0" };
 }

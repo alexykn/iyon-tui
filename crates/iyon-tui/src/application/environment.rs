@@ -12,6 +12,8 @@ use super::host::HostInner;
 pub(super) struct HostFlushOutcome {
     pub(super) committed: bool,
     pub(super) waiting_for_presentation: bool,
+    pub(super) committed_epoch: Option<u64>,
+    pub(super) visible_structural_revision: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -49,6 +51,7 @@ pub(super) fn host_attempt_error(
 pub struct HostEpochs {
     pub host_id: u64,
     pub desired_structural_revision: u64,
+    pub visible_structural_revision: u64,
     pub visible_frame_revision: u64,
     pub pending_epoch: u64,
     pub committed_epoch: u64,
@@ -66,10 +69,18 @@ pub struct HostFrameError {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostCommit {
+    pub host_id: u64,
+    pub committed_epoch: u64,
+    pub visible_structural_revision: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostDrainReport {
     pub rearm: bool,
     pub attempted: usize,
     pub committed_hosts: Vec<u64>,
+    pub commits: Vec<HostCommit>,
     pub errors: Vec<HostFrameError>,
     pub wake_epoch: u64,
 }
@@ -346,19 +357,28 @@ impl TuiEnvironment {
                 self.unregister_host(host_id);
                 continue;
             };
-            let mut attempted_epoch = 0;
-            let result = host
+            let mut host = host
                 .lock()
-                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))
-                .and_then(|mut host| {
-                    attempted_epoch = host.environment_pending_epoch();
-                    host.flush_for_environment()
-                });
+                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+            let queued_epoch = host.environment_pending_epoch()?;
+            let result = host.flush_for_environment(force_retry);
             match result {
                 Ok((outcome, pending_epoch, committed_epoch)) => {
                     if outcome.committed {
                         report.committed_hosts.push(host_id);
+                        if let (Some(committed_epoch), Some(visible_structural_revision)) =
+                            (outcome.committed_epoch, outcome.visible_structural_revision)
+                        {
+                            report.commits.push(HostCommit {
+                                host_id,
+                                committed_epoch,
+                                visible_structural_revision,
+                            });
+                        }
                     }
+                    // Keep the host lock held through the environment queue
+                    // update. A concurrent producer must not advance the host
+                    // epoch between the frame result and this reconciliation.
                     self.complete_host(
                         host_id,
                         pending_epoch,
@@ -367,26 +387,25 @@ impl TuiEnvironment {
                     )?;
                 }
                 Err(error) => {
-                    let host = host
-                        .lock()
-                        .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
                     let failure = error.downcast_ref::<HostAttemptError>();
-                    let (pending_epoch, desired_revision) = host.environment_error_epochs();
+                    let (attempted_epoch, desired_revision, pending_epoch) =
+                        host.environment_error_epochs();
                     report.errors.push(HostFrameError {
                         host_id,
-                        attempted_epoch: pending_epoch,
+                        attempted_epoch,
                         desired_revision,
-                        phase: failure
-                            .map_or_else(|| "frame".to_owned(), |failure| failure.phase.to_owned()),
+                        phase: failure.map_or_else(
+                            || "runtime".to_owned(),
+                            |failure| failure.phase.to_owned(),
+                        ),
                         code: failure.map_or_else(
-                            || "FRAME_PREPARATION_FAILED".to_owned(),
+                            || "INTERNAL_INVARIANT".to_owned(),
                             |failure| failure.code.to_owned(),
                         ),
-                        retryable: failure.is_none_or(|failure| failure.retryable),
+                        retryable: failure.is_some_and(|failure| failure.retryable),
                         diagnostic: error.to_string(),
                     });
-                    let has_new_epoch = pending_epoch != attempted_epoch;
-                    drop(host);
+                    let has_new_epoch = pending_epoch != queued_epoch;
                     if has_new_epoch {
                         self.requeue_after_new_epoch(host_id)?;
                     } else {
@@ -394,6 +413,7 @@ impl TuiEnvironment {
                     }
                 }
             }
+            drop(host);
         }
 
         let mut environment = self

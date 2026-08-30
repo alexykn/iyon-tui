@@ -16,6 +16,9 @@ pub(crate) struct ViewStateRecord {
     pub(crate) lifecycle: ViewStateLifecycle,
     pub(crate) desired_bound: bool,
     pub(crate) visible_bound: bool,
+    /// Keeps a prepared frame's attachment alive while its backend receipt is
+    /// outstanding, even if a newer desired revision supersedes it.
+    pub(crate) in_flight_bound: bool,
     pub(crate) presentation: PresentationOverrides,
     pub(crate) style_states: BTreeMap<String, String>,
     pub(crate) revision: u64,
@@ -34,6 +37,7 @@ impl ViewStateRecord {
             lifecycle: ViewStateLifecycle::Live,
             desired_bound: false,
             visible_bound: false,
+            in_flight_bound: false,
             presentation: PresentationOverrides::default(),
             style_states: BTreeMap::new(),
             revision: 0,

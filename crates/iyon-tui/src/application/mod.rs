@@ -27,7 +27,7 @@ pub use app::App;
 pub use context::AppCx;
 #[cfg(feature = "native-host")]
 pub use environment::{
-    HostDrainReport, HostEpochs, HostFrameError, TuiEnvironment, WakeDisposition,
+    HostCommit, HostDrainReport, HostEpochs, HostFrameError, TuiEnvironment, WakeDisposition,
 };
 pub use error::{RunError, RuntimeError};
 pub use handle::{AppClosed, AppHandle, AppSendError};

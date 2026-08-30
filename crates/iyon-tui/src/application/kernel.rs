@@ -476,6 +476,10 @@ where
         self.dirty = true;
     }
 
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     pub(crate) fn is_exiting(&self) -> bool {
         self.exit_requested
     }

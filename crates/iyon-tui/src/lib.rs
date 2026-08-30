@@ -183,9 +183,9 @@ pub use application::{
 
 #[cfg(feature = "native-host")]
 pub use application::{
-    HostCellStyle, HostDrainReport, HostEpochs, HostFrameError, HostHistory, HostScrollPane,
-    HostTextInput, HostTextStream, HostViewSlot, HostViewState, RoutedOutput, TextStreamAnnotation,
-    TextStreamPresentation, TuiEnvironment, TuiHost, WakeDisposition,
+    HostCellStyle, HostCommit, HostDrainReport, HostEpochs, HostFrameError, HostHistory,
+    HostScrollPane, HostTextInput, HostTextStream, HostViewSlot, HostViewState, RoutedOutput,
+    TextStreamAnnotation, TextStreamPresentation, TuiEnvironment, TuiHost, WakeDisposition,
 };
 
 pub use component::{Component, ComponentCx, ComponentHandle};

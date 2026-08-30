@@ -5,7 +5,7 @@
 //! the Rust application driver.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
@@ -129,19 +129,30 @@ enum HostBackend {
 pub(super) struct HostInner {
     running: HostRunning,
     backend: HostBackend,
+    /// The last complete logical frame. Readback and visible-state queries
+    /// always use this value; a candidate is kept separately until its
+    /// backend receipt succeeds.
     frame: PreparedSceneFrame,
+    candidate_frame: Option<PreparedSceneFrame>,
     presentation: Option<PresentReceipt>,
-    /// The latest prepared frame has not yet been handed to the terminal
-    /// worker. A real terminal presents asynchronously, so a burst of native
-    /// mutations may prepare several frames while one presentation is still
-    /// in flight; the newest one must remain pending instead of being lost.
+    /// True while a frame still needs to be handed to the terminal worker.
+    /// The initial bootstrap frame uses this flag without a candidate frame.
     frame_pending: bool,
+    /// Epoch/revision captured when `candidate_frame` was prepared. New work
+    /// accepted while its presentation is in flight must remain pending after
+    /// this exact frame commits.
+    candidate_epoch: Option<u64>,
+    candidate_structural_revision: Option<u64>,
+    /// Attempt metadata retained long enough for the environment to report a
+    /// failed in-flight candidate rather than a newer pending epoch.
+    failed_attempt: Option<(u64, u64)>,
     now: Instant,
     headless: bool,
     closed: bool,
     environment: TuiEnvironment,
     host_id: u64,
     desired_structural_revision: u64,
+    visible_structural_revision: u64,
     visible_frame_revision: u64,
     pending_epoch: u64,
     committed_epoch: u64,
@@ -2153,14 +2164,19 @@ impl TuiHost {
             running,
             backend,
             frame,
+            candidate_frame: None,
             presentation: None,
             frame_pending: true,
+            candidate_epoch: None,
+            candidate_structural_revision: None,
+            failed_attempt: None,
             now,
             headless,
             closed: false,
             environment: environment.clone(),
             host_id: 0,
             desired_structural_revision: 0,
+            visible_structural_revision: 0,
             visible_frame_revision: 0,
             pending_epoch: 0,
             committed_epoch: 0,
@@ -2214,14 +2230,20 @@ impl TuiHost {
         if inner.closed {
             return Err(anyhow::anyhow!("host is closed"));
         }
+        let mut unique_state_ids = HashSet::with_capacity(state_ids.len());
+        if state_ids.iter().any(|id| !unique_state_ids.insert(*id)) {
+            return Err(anyhow::anyhow!(
+                "DUPLICATE_VIEW_STATE_ATTACHMENT: duplicate state attachment"
+            ));
+        }
         inner.validate_state_ids(&state_ids)?;
         let next_revision = inner
             .desired_structural_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
+        inner.set_desired_state_bindings(&state_ids)?;
         inner.running.state.body = body.clone();
         inner.running.host_set_body(body);
-        inner.set_desired_state_bindings(&state_ids)?;
         inner.desired_structural_revision = next_revision;
         inner.mark_pending()
     }
@@ -2229,7 +2251,7 @@ impl TuiHost {
     /// Synchronously attempts the current host's pending frame. This is the
     /// explicit barrier used by compatibility callers and tests.
     pub fn flush_pending(&self) -> Result<()> {
-        self.lock_mut()?.flush_pending_frame().map(|_| ())
+        self.lock_mut()?.flush_for_environment(true).map(|_| ())
     }
 
     /// Clears desired/visible retained-state binding flags before wrapper
@@ -2723,17 +2745,29 @@ impl Drop for TuiHost {
 }
 
 impl HostInner {
-    pub(super) fn flush_for_environment(&mut self) -> Result<(HostFlushOutcome, u64, u64)> {
-        let outcome = self.flush_pending_frame()?;
+    pub(super) fn flush_for_environment(
+        &mut self,
+        wait_for_presentation: bool,
+    ) -> Result<(HostFlushOutcome, u64, u64)> {
+        let mut outcome = self.flush_pending_frame()?;
+        if wait_for_presentation && outcome.waiting_for_presentation {
+            outcome = self.finish_presentation_blocking()?;
+        }
         Ok((outcome, self.pending_epoch, self.committed_epoch))
     }
 
-    pub(super) fn environment_pending_epoch(&self) -> u64 {
-        self.pending_epoch
+    pub(super) fn environment_pending_epoch(&mut self) -> Result<u64> {
+        if self.pending_epoch == self.committed_epoch && self.running.is_dirty() {
+            self.ensure_pending()?;
+        }
+        Ok(self.pending_epoch)
     }
 
-    pub(super) fn environment_error_epochs(&self) -> (u64, u64) {
-        (self.pending_epoch, self.desired_structural_revision)
+    pub(super) fn environment_error_epochs(&self) -> (u64, u64, u64) {
+        let (attempted_epoch, desired_revision) = self
+            .failed_attempt
+            .unwrap_or((self.pending_epoch, self.desired_structural_revision));
+        (attempted_epoch, desired_revision, self.pending_epoch)
     }
 
     pub(super) fn is_closed(&self) -> bool {
@@ -2752,8 +2786,16 @@ impl HostInner {
         self.view_states.set_desired(ids)
     }
 
-    fn commit_visible_state_bindings(&mut self, ids: &[u64]) -> Result<()> {
-        self.view_states.set_visible(ids)
+    fn commit_visible_state_bindings(&mut self, ids: &[u64]) {
+        self.view_states.set_visible(ids);
+    }
+
+    fn set_in_flight_state_bindings(&mut self, ids: &[u64]) {
+        self.view_states.set_in_flight(ids);
+    }
+
+    fn clear_in_flight_state_bindings(&mut self) {
+        self.view_states.clear_in_flight();
     }
 
     pub(super) fn invalidate_state(&mut self, id: u64) -> Result<WakeDisposition> {
@@ -2788,7 +2830,7 @@ impl HostInner {
         if record.lifecycle == crate::retained_state::ViewStateLifecycle::Disposed {
             return Ok(());
         }
-        if record.desired_bound || record.visible_bound {
+        if record.desired_bound || record.visible_bound || record.in_flight_bound {
             return Err(anyhow::anyhow!("ViewState is still mounted"));
         }
         record.lifecycle = crate::retained_state::ViewStateLifecycle::Disposed;
@@ -2805,6 +2847,7 @@ impl HostInner {
         HostEpochs {
             host_id: self.host_id,
             desired_structural_revision: self.desired_structural_revision,
+            visible_structural_revision: self.visible_structural_revision,
             visible_frame_revision: self.visible_frame_revision,
             pending_epoch: self.pending_epoch,
             committed_epoch: self.committed_epoch,
@@ -2833,15 +2876,23 @@ impl HostInner {
             return Ok(HostFlushOutcome {
                 committed: false,
                 waiting_for_presentation: true,
+                ..HostFlushOutcome::default()
             });
         }
+        let target_epoch = self.pending_epoch;
+        let target_structural_revision = self.desired_structural_revision;
         let states = self.state_snapshots()?;
         let candidate = prepare_frame(&mut self.running, &mut self.backend, self.now, &states)?;
-        let previous = std::mem::replace(&mut self.frame, candidate);
+        self.set_in_flight_state_bindings(&candidate.state_bindings);
         let previous_pending = self.frame_pending;
+        debug_assert!(self.candidate_frame.is_none());
+        self.candidate_frame = Some(candidate);
+        self.candidate_epoch = Some(target_epoch);
+        self.candidate_structural_revision = Some(target_structural_revision);
         self.frame_pending = true;
         if let Err(error) = self.present_frame() {
-            self.frame = previous;
+            self.capture_failed_candidate();
+            self.discard_candidate_frame();
             self.frame_pending = previous_pending;
             // `prepare_frame` clears the kernel dirty bit before the backend
             // handoff. Restore the retry obligation when that handoff fails;
@@ -2850,17 +2901,14 @@ impl HostInner {
             self.running.invalidate_frame();
             return Err(error);
         }
-        if self.frame_pending {
+        if self.frame_pending || self.presentation.is_some() {
             return Ok(HostFlushOutcome {
                 committed: false,
                 waiting_for_presentation: true,
+                ..HostFlushOutcome::default()
             });
         }
-        self.commit_frame()?;
-        Ok(HostFlushOutcome {
-            committed: true,
-            waiting_for_presentation: false,
-        })
+        self.commit_frame()
     }
 
     fn present_frame(&mut self) -> Result<()> {
@@ -2891,8 +2939,9 @@ impl HostInner {
         if !self.frame_pending {
             return Ok(());
         }
+        let frame = self.candidate_frame.as_ref().unwrap_or(&self.frame);
         if let HostBackend::Real(backend) = &mut self.backend {
-            match backend.begin_frame(&self.frame) {
+            match backend.begin_frame(frame) {
                 Ok(receipt) => {
                     self.presentation = Some(receipt);
                     self.frame_pending = false;
@@ -2921,27 +2970,120 @@ impl HostInner {
         Ok(())
     }
 
-    fn commit_frame(&mut self) -> Result<()> {
+    fn commit_frame(&mut self) -> Result<HostFlushOutcome> {
+        let candidate = self
+            .candidate_frame
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing candidate frame"))?;
+        let candidate_epoch = self
+            .candidate_epoch
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing candidate frame epoch"))?;
+        let candidate_structural_revision = self
+            .candidate_structural_revision
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing candidate structural revision"))?;
+        let state_bindings = candidate.state_bindings.clone();
+        self.commit_visible_state_bindings(&state_bindings);
+        self.clear_in_flight_state_bindings();
+        self.frame = candidate;
+        self.frame_pending = false;
+        self.visible_structural_revision = candidate_structural_revision;
         self.visible_frame_revision = self
             .visible_frame_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
-        let state_bindings = self.frame.state_bindings.clone();
-        self.commit_visible_state_bindings(&state_bindings)?;
-        self.committed_epoch = self.pending_epoch;
+        self.committed_epoch = candidate_epoch;
         self.environment.complete_host(
             self.host_id,
             self.pending_epoch,
             self.committed_epoch,
             true,
         )?;
-        Ok(())
+        Ok(HostFlushOutcome {
+            committed: true,
+            waiting_for_presentation: false,
+            committed_epoch: Some(candidate_epoch),
+            visible_structural_revision: Some(candidate_structural_revision),
+        })
+    }
+
+    fn capture_failed_candidate(&mut self) {
+        if let (Some(epoch), Some(revision)) =
+            (self.candidate_epoch, self.candidate_structural_revision)
+        {
+            self.failed_attempt = Some((epoch, revision));
+        }
+    }
+
+    fn discard_candidate_frame(&mut self) {
+        self.candidate_frame = None;
+        self.candidate_epoch = None;
+        self.candidate_structural_revision = None;
+        self.frame_pending = false;
+        self.clear_in_flight_state_bindings();
+    }
+
+    fn poll_presentation(&mut self) -> Result<Option<HostFlushOutcome>> {
+        if self.presentation.is_none() {
+            return Ok(None);
+        }
+        if let Err(error) = self.present_frame() {
+            self.capture_failed_candidate();
+            self.discard_candidate_frame();
+            self.running.invalidate_frame();
+            if !self.closed {
+                self.ensure_pending()?;
+            }
+            return Err(error);
+        }
+        if self.presentation.is_some() {
+            return Ok(Some(HostFlushOutcome {
+                committed: false,
+                waiting_for_presentation: true,
+                ..HostFlushOutcome::default()
+            }));
+        }
+        if self.candidate_epoch.is_some() {
+            return self.commit_frame().map(Some);
+        }
+        Ok(Some(HostFlushOutcome::default()))
+    }
+
+    fn finish_presentation_blocking(&mut self) -> Result<HostFlushOutcome> {
+        loop {
+            let result = super::run::wait_for_present_blocking(&mut self.presentation);
+            if let Err(error) = result {
+                self.capture_failed_candidate();
+                self.discard_candidate_frame();
+                self.running.invalidate_frame();
+                if !self.closed {
+                    self.ensure_pending()?;
+                }
+                return Err(host_attempt_error(
+                    "backend",
+                    "BACKEND_IO_FAILED",
+                    true,
+                    format!("terminal presentation failed: {error}"),
+                ));
+            }
+            let outcome = if self.candidate_epoch.is_some() {
+                self.commit_frame()?
+            } else {
+                self.frame_pending = false;
+                self.flush_pending_frame()?
+            };
+            if !outcome.waiting_for_presentation {
+                return Ok(outcome);
+            }
+        }
     }
 
     fn flush_pending_frame(&mut self) -> Result<HostFlushOutcome> {
         if self.closed {
             return Err(anyhow::anyhow!("host is closed"));
         }
+        self.failed_attempt = None;
         #[cfg(test)]
         if let Some(diagnostic) = self.fail_next_frame.take() {
             return Err(host_attempt_error(
@@ -2961,52 +3103,55 @@ impl HostInner {
         })?;
         if status.dirty {
             self.ensure_pending()?;
-            // Do not prepare a newer candidate while the previously handed
-            // frame is still awaiting its backend receipt. The committed
-            // surface remains authoritative until that receipt is known.
-            // `frame_pending` is kept as an escape hatch for the initial
-            // bootstrap frame, which has no logical host epoch yet.
-            if self.presentation.is_some() && !self.frame_pending {
-                if let Err(error) = self.present_frame() {
-                    self.running.invalidate_frame();
-                    self.ensure_pending()?;
-                    return Err(error);
+        }
+
+        if self.presentation.is_some() && !self.frame_pending {
+            if let Some(outcome) = self.poll_presentation()? {
+                if outcome.committed || outcome.waiting_for_presentation {
+                    return Ok(outcome);
                 }
-                if self.presentation.is_some() {
-                    return Ok(HostFlushOutcome {
-                        committed: false,
-                        waiting_for_presentation: true,
-                    });
-                }
+                // The bootstrap frame completed. Continue below so a desired
+                // epoch accepted before that receipt is prepared now.
             }
+        }
+
+        if status.dirty {
             return self.render();
-        } else if self.frame_pending || self.presentation.is_some() {
-            // A previous call may have prepared a newer frame while the
-            // terminal worker was busy, or may have handed a frame to the
-            // worker whose receipt is still outstanding. Poll both cases even
-            // when the kernel itself is clean; otherwise a presentation error
-            // or pending frame can wait indefinitely for another mutation.
+        }
+
+        if self.frame_pending {
             if let Err(error) = self.present_frame() {
-                // A frame that was already handed to the backend may have
-                // partially affected the physical surface. Keep the logical
-                // frame conservative and force a retry/full preparation path
-                // rather than treating the receipt failure as a no-op.
+                self.capture_failed_candidate();
+                self.discard_candidate_frame();
                 self.running.invalidate_frame();
-                self.ensure_pending()?;
+                if !self.closed {
+                    self.ensure_pending()?;
+                }
                 return Err(error);
             }
-            return Ok(HostFlushOutcome {
-                committed: false,
-                waiting_for_presentation: self.frame_pending || self.presentation.is_some(),
-            });
-        } else if self.pending_epoch != self.committed_epoch {
+            if self.presentation.is_some() {
+                return Ok(HostFlushOutcome {
+                    committed: false,
+                    waiting_for_presentation: true,
+                    ..HostFlushOutcome::default()
+                });
+            }
+            if self.candidate_epoch.is_some() {
+                return self.commit_frame();
+            }
+        }
+
+        if self.pending_epoch != self.committed_epoch {
             // A desired publication with no effective visual delta still
             // completes its host epoch without manufacturing another frame.
+            let committed_epoch = self.pending_epoch;
+            let visible_structural_revision = self.desired_structural_revision;
+            self.visible_structural_revision = visible_structural_revision;
             self.visible_frame_revision = self
                 .visible_frame_revision
                 .checked_add(1)
                 .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
-            self.committed_epoch = self.pending_epoch;
+            self.committed_epoch = committed_epoch;
             self.environment.complete_host(
                 self.host_id,
                 self.pending_epoch,
@@ -3016,12 +3161,11 @@ impl HostInner {
             return Ok(HostFlushOutcome {
                 committed: true,
                 waiting_for_presentation: false,
+                committed_epoch: Some(committed_epoch),
+                visible_structural_revision: Some(visible_structural_revision),
             });
         }
-        Ok(HostFlushOutcome {
-            committed: false,
-            waiting_for_presentation: false,
-        })
+        Ok(HostFlushOutcome::default())
     }
 
     fn advance_and_render(&mut self) -> Result<()> {

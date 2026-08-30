@@ -185,6 +185,7 @@ impl ViewPainter {
             inherited.background = Some(background);
         }
         let node = tree.node(subtree_root);
+        let (offset_y, clip) = tree.incremental_paint_geometry(subtree_root);
         let painted = self.paint_node(
             compiler,
             tree,
@@ -194,8 +195,24 @@ impl ViewPainter {
             cache,
             false,
         );
-        surface.clear_rect_with_background(node.rect, inherited_background);
-        surface.composite(&painted, node.rect.x, node.rect.y);
+        let effective_y = i32::from(node.rect.y).saturating_add(offset_y);
+        let effective_bottom = effective_y.saturating_add(i32::from(node.rect.height));
+        let visible_top = effective_y.max(i32::from(clip.y));
+        let visible_bottom = effective_bottom.min(i32::from(clip.bottom()));
+        if visible_top < visible_bottom {
+            surface.clear_rect_with_background(
+                Rect::new(
+                    node.rect.x.max(clip.x),
+                    visible_top as u16,
+                    node.rect
+                        .width
+                        .min(clip.right().saturating_sub(node.rect.x.max(clip.x))),
+                    (visible_bottom - visible_top) as u16,
+                ),
+                inherited_background,
+            );
+        }
+        surface.composite_clipped(&painted, i32::from(node.rect.x), effective_y, clip);
         true
     }
 

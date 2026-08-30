@@ -129,7 +129,8 @@ pub(crate) struct PreparedSceneFrame {
     pub(crate) history_overlay: Option<crate::history::HistoryPhysicalOverlay>,
     pub(crate) damage: DamageRegion,
     /// State identities encountered in this fully prepared candidate tree.
-    /// Host binding promotion happens only after backend presentation succeeds.
+    /// The host holds an in-flight lifecycle pin for these IDs until backend
+    /// presentation succeeds; visible binding promotion happens at commit.
     pub(crate) state_bindings: Vec<u64>,
 }
 
@@ -1189,7 +1190,7 @@ impl SceneHost {
             self.incremental_paint_states
                 .iter()
                 .filter_map(|id| retained.layout.tree.state_roots.get(id).copied())
-                .map(|id| retained.layout.tree.node(id).rect),
+                .filter_map(|id| retained.layout.tree.incremental_paint_rect(id)),
             retained.layout.tree.size,
         );
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);

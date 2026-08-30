@@ -143,6 +143,60 @@ impl Surface {
         }
     }
 
+    /// Overlay `child` at a signed vertical offset while respecting an
+    /// additional physical clip. This is the incremental counterpart to the
+    /// full-tree RowViewport composition path.
+    pub(crate) fn composite_clipped(
+        &mut self,
+        child: &Self,
+        x: i32,
+        y: i32,
+        clip: crate::geometry::Rect,
+    ) {
+        if !child.physically_complete {
+            self.physically_complete = false;
+        }
+        let clip_left = i32::from(clip.x);
+        let clip_top = i32::from(clip.y);
+        let clip_right = clip_left.saturating_add(i32::from(clip.width));
+        let clip_bottom = clip_top.saturating_add(i32::from(clip.height));
+        for child_y in 0..child.height() {
+            let target_y = y.saturating_add(i32::from(child_y));
+            if target_y < clip_top
+                || target_y >= clip_bottom
+                || target_y < 0
+                || target_y >= i32::from(self.height())
+            {
+                continue;
+            }
+            let child_row = child.row_cells(child_y);
+            for glyph in glyphs(child_row) {
+                if !glyph.leader.painted {
+                    continue;
+                }
+                let dest_start = x.saturating_add(glyph.start as i32);
+                let dest_end = dest_start.saturating_add(glyph.width as i32);
+                if dest_start < clip_left
+                    || dest_end > clip_right
+                    || dest_start < 0
+                    || dest_end > i32::from(self.width())
+                {
+                    continue;
+                }
+                let dest_row = self.row_cells_mut(target_y as u16);
+                perf::add(Counter::SurfaceCellsComposited, glyph.width as u64);
+                write_glyph_span(
+                    dest_row,
+                    dest_start as usize,
+                    child_row,
+                    glyph.start,
+                    glyph.width,
+                );
+            }
+            debug_assert!(validate_cells(self.row_cells(target_y as u16)).is_ok());
+        }
+    }
+
     /// Crop to `width × height` without splitting a wide glyph on the right edge.
     #[allow(dead_code)]
     pub(crate) fn crop_to(&self, width: u16, height: u16) -> Self {

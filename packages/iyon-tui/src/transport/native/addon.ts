@@ -99,6 +99,7 @@ export interface NativeScrollPaneContract {
 export interface NativeHostEpochs {
   readonly host_id: string | number;
   readonly desired_structural_revision: string | number;
+  readonly visible_structural_revision?: string | number;
   readonly visible_frame_revision: string | number;
   readonly pending_epoch: string | number;
   readonly committed_epoch: string | number;
@@ -136,6 +137,11 @@ export interface NativeTuiHostContract {
     readonly rearm: boolean;
     readonly attempted: number;
     readonly committed_hosts: readonly (string | number)[];
+    readonly commits?: readonly {
+      readonly host_id: string | number;
+      readonly committed_epoch: string | number;
+      readonly visible_structural_revision: string | number;
+    }[];
     readonly errors: readonly {
       readonly host_id: string | number;
       readonly attempted_epoch: string | number;

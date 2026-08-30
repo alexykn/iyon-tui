@@ -7,6 +7,7 @@ import { RuntimeErrorChannel } from "./error-channel.ts";
 import {
   EnvironmentWakeBroker,
   type NativeFrameHost,
+  type NativeHostCommit,
   type RuntimeHostRegistration,
 } from "./wake-broker.ts";
 
@@ -17,7 +18,7 @@ export interface RuntimeEnvironment {
   registerHost(
     native: NativeFrameHost,
     errors: RuntimeErrorChannel,
-    onCommitted: () => void,
+    onCommitted: (commit?: NativeHostCommit) => void,
   ): RuntimeHostRegistration;
 }
 
@@ -29,7 +30,7 @@ class EnvironmentRuntime implements RuntimeEnvironment {
   registerHost(
     native: NativeFrameHost,
     errors: RuntimeErrorChannel,
-    onCommitted: () => void,
+    onCommitted: (commit?: NativeHostCommit) => void,
   ): RuntimeHostRegistration {
     return this.wakeBroker.register(native, errors, onCommitted);
   }

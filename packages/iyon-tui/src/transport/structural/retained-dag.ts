@@ -1460,12 +1460,38 @@ export interface RetainedRootBoundaryOptions {
   readonly deferHostCommit?: boolean;
 }
 
+interface DesiredRootRevision {
+  readonly revision: string;
+  readonly ref: number;
+  readonly node: SemanticViewNode;
+}
+
+function rootRevisionKey(value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError("native revision must be a non-negative safe integer");
+    return BigInt(value).toString();
+  }
+  if (!/^\d+$/u.test(value)) throw new TypeError("native revision must be a decimal integer string");
+  return BigInt(value).toString();
+}
+
+function compareRootRevisions(left: string, right: string): number {
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export class RetainedRootBoundary {
   private previousRef: number | undefined;
   private desiredRef: number | undefined;
   private visibleRef: number | undefined;
   private desiredNode: SemanticViewNode | undefined;
   private visibleNode: SemanticViewNode | undefined;
+  /** Desired roots retained until the corresponding frame is visible. */
+  private supersededDesired: DesiredRootRevision[] = [];
+  private desiredRevision: string | undefined;
+  private visibleRevision: string | undefined;
   private closed = false;
   private readonly deferHostCommit: boolean;
   /** NodeId allocator high-water at the last successful commit (§18). */
@@ -1508,10 +1534,13 @@ export class RetainedRootBoundary {
 
     const previousDesired = this.desiredRef;
     const previousVisible = this.visibleRef;
+    this.releaseSupersededDesired();
     this.desiredRef = reference;
     this.visibleRef = reference;
     this.desiredNode = semanticNodeOf(view);
     this.visibleNode = this.desiredNode;
+    this.desiredRevision = undefined;
+    this.visibleRevision = undefined;
     this.nativeLookupCeiling = viewNodeIdHighWater();
     if (previousDesired !== undefined && previousDesired !== reference && previousDesired !== previousVisible) {
       this.releaseReference(previousDesired);
@@ -1622,12 +1651,52 @@ export class RetainedRootBoundary {
    * host frame. No native call occurs here; the host already rendered the
    * desired ref during the frame transaction.
    */
-  commitVisible(): void {
+  commitVisible(revision?: string | number): void {
     if (!this.deferHostCommit || this.desiredRef === undefined) return;
+    const key = rootRevisionKey(revision);
+    if (key === undefined) {
+      this.releaseSupersededDesired();
+      const previous = this.visibleRef;
+      this.visibleRef = this.desiredRef;
+      this.visibleNode = this.desiredNode;
+      this.visibleRevision = undefined;
+      if (previous !== undefined && previous !== this.visibleRef) this.releaseReference(previous);
+      return;
+    }
+    if (this.visibleRevision !== undefined && compareRootRevisions(key, this.visibleRevision) <= 0) return;
+
+    const target = this.desiredRevision === key
+      ? { revision: key, ref: this.desiredRef, node: this.desiredNode }
+      : this.supersededDesired.find((entry) => entry.revision === key);
+    if (target === undefined || target.node === undefined) return;
+
     const previous = this.visibleRef;
-    this.visibleRef = this.desiredRef;
-    this.visibleNode = this.desiredNode;
-    if (previous !== undefined && previous !== this.visibleRef) this.releaseReference(previous);
+    const released = new Set<number>();
+    this.visibleRef = target.ref;
+    this.visibleNode = target.node;
+    this.visibleRevision = key;
+    if (previous !== undefined && previous !== this.visibleRef) {
+      this.releaseReference(previous);
+      released.add(previous);
+    }
+
+    const remaining: DesiredRootRevision[] = [];
+    for (const entry of this.supersededDesired) {
+      if (entry.ref === target.ref && entry.revision === target.revision) continue;
+      if (compareRootRevisions(entry.revision, key) <= 0) {
+        if (
+          entry.ref !== this.visibleRef
+          && entry.ref !== this.desiredRef
+          && !released.has(entry.ref)
+        ) {
+          this.releaseReference(entry.ref);
+          released.add(entry.ref);
+        }
+      } else {
+        remaining.push(entry);
+      }
+    }
+    this.supersededDesired = remaining;
   }
 
   /** Returns whether the boundary has a desired root awaiting visibility. */
@@ -1863,7 +1932,7 @@ export class RetainedRootBoundary {
         try {
           setDesired.call(host, rootRef);
           const duplicate = this.desiredRef === rootRef || this.visibleRef === rootRef;
-          this.transferDesiredRoot(rootRef, node);
+          this.transferDesiredRoot(rootRef, node, this.desiredRevisionForHost(host));
           installHint(node, this.session.abi.generation, rootRef);
           if (duplicate) this.releaseColdLease(rootRef);
         } catch (error) {
@@ -1895,13 +1964,14 @@ export class RetainedRootBoundary {
     }
     const sameVisible = this.visibleRef === prepared.rootRef;
     setDesired.call(host, prepared.rootRef);
+    const desiredRevision = this.desiredRevisionForHost(host);
     if (prepared.ownsTempLease) {
       if (sameVisible) prepared.tx.releaseAll();
       else prepared.tx.releaseAllExcept(prepared.rootRef);
     } else {
       prepared.tx.releaseAll();
     }
-    this.transferDesiredRoot(prepared.rootRef, prepared.node);
+    this.transferDesiredRoot(prepared.rootRef, prepared.node, desiredRevision);
     // A NodeId promotion is not tracked in the transaction lease list. When
     // it selected the already-visible ref, release that extra promotion lease
     // after the desired role has been switched to the existing visible lease.
@@ -2017,10 +2087,13 @@ export class RetainedRootBoundary {
     if (this.deferHostCommit) {
       const desired = this.desiredRef;
       const visible = this.visibleRef;
+      this.releaseSupersededDesired();
       this.desiredRef = undefined;
       this.visibleRef = undefined;
       this.desiredNode = undefined;
       this.visibleNode = undefined;
+      this.desiredRevision = undefined;
+      this.visibleRevision = undefined;
       if (desired !== undefined) this.releaseReference(desired);
       if (visible !== undefined && visible !== desired) this.releaseReference(visible);
       return;
@@ -2034,15 +2107,43 @@ export class RetainedRootBoundary {
     return this.deferHostCommit ? this.desiredRef : this.previousRef;
   }
 
-  private transferDesiredRoot(reference: number, node: SemanticViewNode): void {
+  private transferDesiredRoot(
+    reference: number,
+    node: SemanticViewNode,
+    revision?: string | number,
+  ): void {
+    const key = rootRevisionKey(revision);
     const previous = this.desiredRef;
     const visible = this.visibleRef;
+    if (key !== undefined && this.desiredRevision !== undefined) {
+      this.supersededDesired.push({
+        revision: this.desiredRevision,
+        ref: previous!,
+        node: this.desiredNode!,
+      });
+    } else {
+      this.releaseSupersededDesired();
+      if (previous !== undefined && previous !== reference && previous !== visible) {
+        this.releaseReference(previous);
+      }
+    }
     this.desiredRef = reference;
     this.desiredNode = node;
+    this.desiredRevision = key;
     this.nativeLookupCeiling = viewNodeIdHighWater();
-    if (previous !== undefined && previous !== reference && previous !== visible) {
-      this.releaseReference(previous);
+  }
+
+  private desiredRevisionForHost(host: NativeTuiHostContract): string | number | undefined {
+    return host.epochs?.().desired_structural_revision;
+  }
+
+  private releaseSupersededDesired(): void {
+    for (const entry of this.supersededDesired) {
+      if (entry.ref !== this.visibleRef && entry.ref !== this.desiredRef) {
+        this.releaseReference(entry.ref);
+      }
     }
+    this.supersededDesired = [];
   }
 
   private transferRoot(reference: number): void {

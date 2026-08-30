@@ -638,6 +638,7 @@ impl NativeTuiHost {
         Ok(serde_json::json!({
             "host_id": epochs.host_id.to_string(),
             "desired_structural_revision": epochs.desired_structural_revision.to_string(),
+            "visible_structural_revision": epochs.visible_structural_revision.to_string(),
             "visible_frame_revision": epochs.visible_frame_revision.to_string(),
             "pending_epoch": epochs.pending_epoch.to_string(),
             "committed_epoch": epochs.committed_epoch.to_string(),
@@ -708,10 +709,24 @@ impl NativeTuiHost {
                 })
             })
             .collect::<Vec<_>>();
+        let commits = report
+            .commits
+            .iter()
+            .map(|commit| {
+                serde_json::json!({
+                    "host_id": commit.host_id.to_string(),
+                    "committed_epoch": commit.committed_epoch.to_string(),
+                    "visible_structural_revision": commit
+                        .visible_structural_revision
+                        .to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(serde_json::json!({
             "rearm": report.rearm,
             "attempted": report.attempted,
             "committed_hosts": report.committed_hosts.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "commits": commits,
             "errors": errors,
             "wake_epoch": report.wake_epoch.to_string(),
         }))

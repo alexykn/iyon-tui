@@ -12,6 +12,7 @@ pub(crate) struct ViewStateRegistry {
     next_id: u64,
     desired: HashSet<u64>,
     visible: HashSet<u64>,
+    in_flight: HashSet<u64>,
 }
 
 impl ViewStateRegistry {
@@ -21,6 +22,7 @@ impl ViewStateRegistry {
             next_id: 1,
             desired: HashSet::new(),
             visible: HashSet::new(),
+            in_flight: HashSet::new(),
         }
     }
 
@@ -84,8 +86,8 @@ impl ViewStateRegistry {
         Ok(())
     }
 
-    pub(crate) fn set_visible(&mut self, ids: &[u64]) -> anyhow::Result<()> {
-        self.validate_ids(ids)?;
+    pub(crate) fn set_visible(&mut self, ids: &[u64]) {
+        debug_assert!(ids.iter().all(|id| self.records.contains_key(id)));
         let next = ids.iter().copied().collect::<HashSet<_>>();
         for id in self.visible.difference(&next) {
             self.set_bound(id, false, false);
@@ -94,7 +96,25 @@ impl ViewStateRegistry {
             self.set_bound(id, true, false);
         }
         self.visible = next;
-        Ok(())
+    }
+
+    pub(crate) fn set_in_flight(&mut self, ids: &[u64]) {
+        debug_assert!(ids.iter().all(|id| self.desired.contains(id)));
+        let next = ids.iter().copied().collect::<HashSet<_>>();
+        for id in self.in_flight.difference(&next) {
+            self.set_in_flight_bound(id, false);
+        }
+        for id in &next {
+            self.set_in_flight_bound(id, true);
+        }
+        self.in_flight = next;
+    }
+
+    pub(crate) fn clear_in_flight(&mut self) {
+        for id in self.in_flight.iter().copied().collect::<Vec<_>>() {
+            self.set_in_flight_bound(&id, false);
+        }
+        self.in_flight.clear();
     }
 
     pub(crate) fn is_bound(&self, id: u64) -> anyhow::Result<bool> {
@@ -107,12 +127,13 @@ impl ViewStateRegistry {
         if record.lifecycle == ViewStateLifecycle::Disposed {
             return Err(anyhow::anyhow!("ViewState is disposed: {id}"));
         }
-        Ok(record.desired_bound || record.visible_bound)
+        Ok(record.desired_bound || record.visible_bound || record.in_flight_bound)
     }
 
     pub(crate) fn remove(&mut self, id: u64) {
         self.desired.remove(&id);
         self.visible.remove(&id);
+        self.in_flight.remove(&id);
         self.records.remove(&id);
     }
 
@@ -129,6 +150,7 @@ impl ViewStateRegistry {
         }
         self.desired.clear();
         self.visible.clear();
+        self.clear_in_flight();
     }
 
     pub(crate) fn dispose_all(&mut self) {
@@ -150,6 +172,14 @@ impl ViewStateRegistry {
             } else {
                 record.visible_bound = bound;
             }
+        }
+    }
+
+    fn set_in_flight_bound(&self, id: &u64, bound: bool) {
+        if let Some(record) = self.records.get(id)
+            && let Ok(mut record) = record.lock()
+        {
+            record.in_flight_bound = bound;
         }
     }
 }

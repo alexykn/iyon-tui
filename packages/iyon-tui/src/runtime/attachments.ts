@@ -31,31 +31,124 @@ export interface PreparedAttachmentSet {
  * prepared resolver leases; semantic nodes remain backend-neutral and the
  * visible set is not changed until a frame commits.
  */
+interface DesiredAttachmentRevision {
+  readonly revision: string;
+  readonly leases: readonly PreparedResourceLease[];
+}
+
+function revisionKey(value: string | number | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError("native revision must be a non-negative safe integer");
+    return BigInt(value).toString();
+  }
+  if (!/^\d+$/u.test(value)) throw new TypeError("native revision must be a decimal integer string");
+  return BigInt(value).toString();
+}
+
+function compareRevisions(left: string, right: string): number {
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export class AttachmentBindingState {
   private desired: readonly PreparedResourceLease[] = [];
   private visible: readonly PreparedResourceLease[] = [];
+  /** Desired bindings retained for frames still in backend flight. */
+  private superseded: DesiredAttachmentRevision[] = [];
+  private desiredRevision: string | undefined;
+  private visibleRevision: string | undefined;
 
-  commitDesired(prepared: PreparedAttachmentSet): void {
-    for (const lease of this.desired) lease.releaseDesired();
+  commitDesired(prepared: PreparedAttachmentSet, revision?: string | number): void {
+    const key = revisionKey(revision);
+    if (key === undefined) {
+      for (const entry of this.superseded) {
+        for (const lease of entry.leases) lease.releaseDesired();
+      }
+      this.superseded = [];
+      for (const lease of this.desired) lease.releaseDesired();
+      prepared.commitDesired();
+      this.desired = prepared.leases;
+      this.desiredRevision = undefined;
+      return;
+    }
+
+    if (this.desiredRevision !== undefined) {
+      this.superseded.push({ revision: this.desiredRevision, leases: this.desired });
+    } else {
+      for (const lease of this.desired) lease.releaseDesired();
+    }
     prepared.commitDesired();
     this.desired = prepared.leases;
+    this.desiredRevision = key;
   }
 
-  commitVisible(): void {
-    for (const lease of this.visible) lease.releaseVisible();
-    for (const lease of this.desired) lease.commitVisible();
-    this.visible = this.desired;
+  commitVisible(revision?: string | number): void {
+    const key = revisionKey(revision);
+    if (key === undefined) {
+      this.releaseSuperseded();
+      this.releaseVisibleForReplacement(this.visible);
+      for (const lease of this.desired) lease.commitVisible();
+      this.visible = this.desired;
+      this.visibleRevision = undefined;
+      return;
+    }
+    if (this.visibleRevision !== undefined && compareRevisions(key, this.visibleRevision) <= 0) return;
+
+    let target = this.desiredRevision === key ? this.desired : undefined;
+    if (target === undefined) {
+      target = this.superseded.find((entry) => entry.revision === key)?.leases;
+    }
+    if (target === undefined) return;
+    if (target !== this.visible) this.releaseVisibleForReplacement(this.visible);
+    for (const lease of target) lease.commitVisible();
+    this.visible = target;
+    this.visibleRevision = key;
+
+    const remaining: DesiredAttachmentRevision[] = [];
+    for (const entry of this.superseded) {
+      if (entry.leases === target) continue;
+      if (compareRevisions(entry.revision, key) <= 0) {
+        for (const lease of entry.leases) lease.releaseDesired();
+      } else {
+        remaining.push(entry);
+      }
+    }
+    this.superseded = remaining;
   }
 
   dispose(): void {
-    for (const lease of this.desired) lease.releaseDesired();
-    for (const lease of this.visible) lease.releaseVisible();
+    const leases = new Set<PreparedResourceLease>([
+      ...this.desired,
+      ...this.visible,
+      ...this.superseded.flatMap((entry) => entry.leases),
+    ]);
+    for (const lease of leases) lease.releaseDesired();
+    for (const lease of leases) lease.releaseVisible();
     this.desired = [];
     this.visible = [];
+    this.superseded = [];
+    this.desiredRevision = undefined;
+    this.visibleRevision = undefined;
   }
 
   desiredCount(): number { return this.desired.length; }
   visibleCount(): number { return this.visible.length; }
+
+  private releaseSuperseded(): void {
+    for (const entry of this.superseded) {
+      for (const lease of entry.leases) lease.releaseDesired();
+    }
+    this.superseded = [];
+  }
+
+  private releaseVisibleForReplacement(leases: readonly PreparedResourceLease[]): void {
+    for (const lease of leases) lease.releaseVisible();
+    if (leases !== this.desired) {
+      for (const lease of leases) lease.releaseDesired();
+    }
+  }
 }
 
 /**

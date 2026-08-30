@@ -6,7 +6,15 @@ import {
   releaseNativeResource,
 } from "../transport/native/resources.ts";
 import { runtimeResourceRegistry } from "../transport/native/resource-registry.ts";
-import type { NativeResourceKind } from "./native-resource-registry.ts";
+import type {
+  NativeResourceKind,
+  ResourceOwner,
+} from "./native-resource-registry.ts";
+
+export interface FrameworkHandleResourceOptions {
+  readonly owner?: ResourceOwner;
+  readonly acceptedNodeKinds?: ReadonlySet<number>;
+}
 
 const handleIds = new WeakMap<object, HandleId>();
 const HANDLE_ID_COUNTER = Symbol.for("iyon:tui:private-handle-counter");
@@ -19,13 +27,21 @@ export function registerFrameworkHandle(
   handle: object,
   resource: object,
   kind: NativeResourceKind = "framework",
+  options: FrameworkHandleResourceOptions = {},
 ): HandleId {
   if (handleIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI framework handle identity exhausted");
   const id = handleIdCounter.next++ as HandleId;
   const resourceKind = kind === "component" || kind === "text-input" ? "component" : kind;
   try {
     handleIds.set(handle, id);
-    registerNativeResource(handle, resource, id, resourceKind);
+    registerNativeResource(
+      handle,
+      resource,
+      id,
+      resourceKind,
+      options.owner,
+      options.acceptedNodeKinds,
+    );
     return id;
   } catch (error) {
     handleIds.delete(handle);

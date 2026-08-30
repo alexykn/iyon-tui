@@ -6,6 +6,7 @@ use crate::{
     presentation::api::style::{StyleFacts, StyleStates},
     presentation::ir::{Decoration, TextView, ViewId},
     presentation::{OverflowIndicator, WidthRule},
+    retained_state::{OccurrenceBox, ViewStateSnapshot},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +42,7 @@ pub(crate) enum LayoutContent {
 pub(crate) struct LayoutNode {
     pub(crate) view_id: ViewId,
     pub(crate) paint_cacheable: bool,
+    pub(crate) occurrence: OccurrenceBox,
     pub(crate) rect: Rect,
     pub(crate) content_rect: Rect,
     pub(crate) clip_rect: Rect,
@@ -58,6 +60,7 @@ pub(crate) struct LayoutTree {
     pub(crate) physically_complete: bool,
     pub(crate) component_roots: HashMap<ComponentId, LayoutNodeId>,
     pub(crate) parents: Vec<Option<LayoutNodeId>>,
+    pub(crate) state_roots: HashMap<u64, LayoutNodeId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +165,7 @@ impl LayoutTree {
 
     pub(crate) fn index_component_roots(&mut self) {
         self.component_roots.clear();
+        self.state_roots.clear();
         self.parents = vec![None; self.nodes.len()];
         self.collect_component_roots(self.root, None);
     }
@@ -172,10 +176,28 @@ impl LayoutTree {
         if let Some(component) = node.component {
             self.component_roots.insert(component, id);
         }
+        if let Some(state) = node.occurrence.state_attachment {
+            self.state_roots.insert(state, id);
+        }
         let children = node.children.clone();
         for child in children {
             self.collect_component_roots(child, Some(id));
         }
+    }
+
+    pub(crate) fn apply_state_snapshot(
+        &mut self,
+        state_id: u64,
+        snapshot: &ViewStateSnapshot,
+    ) -> bool {
+        let Some(node_id) = self.state_roots.get(&state_id).copied() else {
+            return false;
+        };
+        let node = &mut self.nodes[node_id.0];
+        node.occurrence.apply_state(snapshot);
+        node.style.decoration = node.occurrence.effective_decoration.clone();
+        node.style.style_states = node.occurrence.effective_style_states.clone();
+        true
     }
 
     pub(crate) fn path_to_root(&self, id: LayoutNodeId) -> Vec<LayoutNodeId> {
@@ -237,6 +259,10 @@ impl LayoutTree {
             self.nodes[old_id.0] = patched;
         }
         self.physically_complete &= replacement.physically_complete;
+        // Same-shape component patches may move a retained state attachment
+        // between occurrences. Refresh both occurrence indexes before a later
+        // state-only paint can target the new owner.
+        self.index_component_roots();
         debug_assert!(self.validate(), "invalid patched layout tree: {self:?}");
         true
     }

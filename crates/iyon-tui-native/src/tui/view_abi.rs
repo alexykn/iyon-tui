@@ -1294,6 +1294,20 @@ impl NativeViewRuntime {
         // bounded path (they resolve to absent slots and cost nothing).
     }
 
+    fn release_one_lease(&mut self, reference: u32) -> Result<(), u32> {
+        let Some(slot) = self.slots.get_mut(&reference) else {
+            return Err(FAST_CACHE_MISS);
+        };
+        if slot.js_lease_count == 0 {
+            return Err(FAST_INVALID);
+        }
+        slot.js_lease_count -= 1;
+        if slot.js_lease_count == 0 {
+            slot.leased = None;
+        }
+        Ok(())
+    }
+
     fn release_many(&mut self, refs: *const u32, used_count: u32) -> Result<i32, i32> {
         self.release_batches = self.release_batches.saturating_add(1);
         self.released_refs = self.released_refs.saturating_add(u64::from(used_count));
@@ -1800,6 +1814,62 @@ pub unsafe extern "Rust" fn host_render_ref_impl(
         }
     };
     record_host_status(runtime, status)
+}
+
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
+pub unsafe extern "Rust" fn view_state_attach_impl(
+    runtime: *mut NativeViewRuntime,
+    base_ref: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    state_id_low: u32,
+    state_id_high: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    let state_id = (u64::from(state_id_high) << 32) | u64::from(state_id_low);
+    if state_id == 0 {
+        return FAST_INVALID;
+    }
+    let Ok((base, _)) = runtime.resolve_ref(base_ref) else {
+        return record_result(runtime, FAST_CACHE_MISS);
+    };
+    if !base.native_state_capable() {
+        return record_result(runtime, FAST_INVALID);
+    }
+    if base.native_state_attachment_id() == Some(state_id) {
+        return record_result(runtime, base_ref);
+    }
+    if runtime.node_refs.get(&node_id).copied() != Some(base_ref) {
+        return record_result(runtime, FAST_INVALID);
+    }
+    let attached = match base.clone().native_with_state_attachment(state_id) {
+        Ok(view) => view,
+        Err(_) => return record_result(runtime, FAST_INVALID),
+    };
+    let old_weak = runtime.nodes.remove(&node_id);
+    runtime.node_refs.remove(&node_id);
+    let result = runtime.publish(node_id, attached);
+    match result {
+        Ok(reference) => {
+            // The ordinary constructor's lease is consumed by this
+            // state-attachment replacement. The returned stateful ref owns
+            // the one lease the caller will transfer into its transaction.
+            let _ = runtime.release_one_lease(base_ref);
+            record_result(runtime, reference)
+        }
+        Err(error) => {
+            if let Some(weak) = old_weak {
+                runtime.nodes.insert(node_id, weak);
+            }
+            runtime.node_refs.insert(node_id, base_ref);
+            record_result(runtime, error)
+        }
+    }
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
@@ -3402,6 +3472,8 @@ pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
         Err(FAST_CACHE_MISS) => {}
         Err(error) => return record_result(runtime, error),
     }
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::perf::inc(iyon_tui::perf::Counter::LegacyDecoratedCompatibilityFrames);
     let word_slice = if used_word_count == 0 {
         &[]
     } else {

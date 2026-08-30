@@ -125,6 +125,7 @@ const PUBLIC_CONTRACT_PATHS = [
   "api/controls/text-input.ts",
   "api/controls/text-stream.ts",
   "api/controls/view-slot.ts",
+  "api/view/retained-state.ts",
   "api/content/stream-snapshot.ts",
   "api/content/text-content.ts",
   "api/content/text.ts",
@@ -414,6 +415,7 @@ function cut4RootCleanupGate(): void {
     ["api/controls/text-stream.ts", /export\s+interface\s+TextStream\b/u],
     ["api/controls/view-slot.ts", /export\s+interface\s+ViewSlot\b/u],
     ["api/controls/scroll-pane.ts", /export\s+interface\s+ScrollPane\b/u],
+    ["api/view/retained-state.ts", /export\s+class\s+ViewState\b/u],
     ["api/extensions/traits/component.ts", /export\s+interface\s+ComponentAdapter\b/u],
     ["runtime/events.ts", /export\s+type\s+TuiEvent\b/u],
     ["runtime/runtime.ts", /export\s+interface\s+TuiRuntime\b/u],
@@ -708,7 +710,6 @@ function cut5ModuleIdentityGate(): void {
 function cut5PackagePublicationGate(): void {
   const offenders: string[] = [];
   const futurePaths = [
-    "transport/state",
     "transport/content",
     "transport/abi/state",
     "transport/abi/content",
@@ -752,7 +753,7 @@ function cut5PackagePublicationGate(): void {
   if (offenders.length > 0) {
     fail("h2-cut5-package-publication", offenders.join("; "));
   } else {
-    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and future state/content planes remain unpublished");
+    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and content transport remains unpublished");
   }
 }
 
@@ -839,6 +840,7 @@ async function themeStyleSemanticGate(): Promise<void> {
     "transport/structural/cold-lowering.ts",
     "transport/structural/encoding.ts",
     "transport/structural/component-id.ts",
+    "transport/state/control.ts",
   ]);
   const offenders: string[] = [];
   for (const file of walk(FRAMEWORK_SRC)) {
@@ -1130,6 +1132,7 @@ function runtimeContractGate(): void {
   const runtimeBody = runtime.match(/export interface TuiRuntime\s*\{([\s\S]*?)\n\}/u)?.[1] ?? "";
   const candidates = [
     "createHistory",
+    "viewState",
     "createTextInput",
     "createViewSlot",
     "createScrollPane",
@@ -1172,6 +1175,7 @@ function contractParityGate(): void {
     ["api/controls/text-stream.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8")],
     ["api/controls/view-slot.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8")],
     ["api/controls/scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8")],
+    ["api/view/retained-state.ts", readFileSync(join(FRAMEWORK_SRC, "api/view/retained-state.ts"), "utf8")],
     ["testing/index.ts", readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8")],
     ["view.ts", readFileSync(join(FRAMEWORK_SRC, "api/view/view.ts"), "utf8")],
     ["style.ts", readFileSync(join(FRAMEWORK_SRC, "api/presentation/style.ts"), "utf8")],

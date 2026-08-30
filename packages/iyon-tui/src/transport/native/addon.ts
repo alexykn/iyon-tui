@@ -28,6 +28,19 @@ export interface NativeHistoryContract {
   sealStream(stream: object): void;
 }
 
+export interface NativeStateWake {
+  readonly schedule_environment_drain: boolean;
+}
+
+export interface NativeViewStateContract {
+  dispose(): void;
+  stateId(): number;
+  setPresentation(patch: object): NativeStateWake;
+  clearPresentation(properties?: readonly string[]): NativeStateWake;
+  setStyleState(key: string, value: string): NativeStateWake;
+  clearStyleState(key: string): NativeStateWake;
+}
+
 export interface NativeTextInputContract {
   dispose(): void;
   text(): string;
@@ -95,6 +108,7 @@ export interface NativeTuiHostContract {
   dispose(): void;
   exit(): void;
   history(): object;
+  viewState(): NativeViewStateContract;
   textInput(multiline?: boolean, border?: object): NativeTextInputContract;
   setTheme(theme: object): void;
   setHistory(history: object): void;
@@ -117,6 +131,7 @@ export interface NativeTuiHostContract {
     readonly host_id: string | number;
     readonly schedule_environment_drain: boolean;
   };
+  clearViewStateBindings?(): void;
   flushPendingHosts?(budget?: number, forceRetry?: boolean): {
     readonly rearm: boolean;
     readonly attempted: number;

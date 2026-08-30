@@ -312,6 +312,63 @@
         },
         {
           "buffer_length_of": null,
+          "lowering": "native_ref",
+          "name": "base",
+          "type": "ViewRef"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "state_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "state_id_high",
+          "type": "u32"
+        }
+      ],
+      "arity_specializations": [
+        1
+      ],
+      "benchmark_registration": "view.state_attach",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "structural_patch",
+      "hotness": "warm",
+      "implementation": "view_state_attach_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 1,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_state_attach",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
           "lowering": "u32",
           "name": "node_id_low",
           "type": "u32"
@@ -4029,7 +4086,7 @@
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "docs/history/perf/PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4",
+  "generator_blake3": "1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb",
   "handles": [
     {
       "kind": null,
@@ -4244,5 +4301,5 @@
       "size": 8
     }
   ],
-  "schema_blake3": "7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0"
+  "schema_blake3": "707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133"
 }

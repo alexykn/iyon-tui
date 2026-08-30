@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4
+// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
+// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
 export type GeneratedAbiBenchmarkCase = {
   name: string;
   family: string;
@@ -17,6 +17,7 @@ export const generatedAbiCases: readonly GeneratedAbiBenchmarkCase[] = [
   { name: "view_status_detail", family: "diagnostic", hotness: "cold", benchmarkRegistration: "diagnostic.status_detail", scalarArgs: 1, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 0 },
   { name: "view_render_ref", family: "render_ref", hotness: "critical", benchmarkRegistration: "view.render_ref", scalarArgs: 2, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
   { name: "host_render_ref", family: "render_ref", hotness: "critical", benchmarkRegistration: "view.host_render_ref", scalarArgs: 3, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
+  { name: "view_state_attach", family: "structural_patch", hotness: "warm", benchmarkRegistration: "view.state_attach", scalarArgs: 6, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
   { name: "view_spacer_create", family: "constructor", hotness: "warm", benchmarkRegistration: "view.spacer_create", scalarArgs: 4, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
   { name: "view_text_layout_patch_root", family: "scalar_patch", hotness: "critical", benchmarkRegistration: "view.text_layout_patch_root", scalarArgs: 6, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },
   { name: "view_common_patch_root", family: "scalar_patch", hotness: "critical", benchmarkRegistration: "view.common_patch_root", scalarArgs: 14, hasBuffer: false, maxBufferBytes: 0, maxInputCount: 1 },

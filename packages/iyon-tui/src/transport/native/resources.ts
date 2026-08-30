@@ -25,6 +25,8 @@ export function registerNativeResource(
   resource: object,
   handleId?: HandleId,
   kind: NativeResourceKind = "framework",
+  owner?: import("./resource-registry.ts").ResourceOwner,
+  acceptedNodeKinds?: ReadonlySet<number>,
 ): void {
   if (!isWeakReferenceable(handle) || !isWeakReferenceable(resource)) {
     throw tuiError("validation", "native resource registration requires object handles");
@@ -33,7 +35,14 @@ export function registerNativeResource(
     throw tuiError("runtime", "framework value already has a native resource");
   }
   if (handleId !== undefined) {
-    runtimeResourceRegistry().register({ handle, resource, handleId, kind });
+    runtimeResourceRegistry().register({
+      handle,
+      resource,
+      handleId,
+      kind,
+      owner,
+      acceptedNodeKinds,
+    });
   }
   // Some opaque control values, such as Output channels, intentionally have
   // no semantic HandleId. They still use the same handle-local native map;

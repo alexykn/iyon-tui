@@ -210,7 +210,7 @@ export interface BridgeGridRowNode {
   readonly cells: readonly BridgeGridCellNode[];
 }
 
-type BridgeViewNodeData =
+type BridgeViewNodeData = (
   | { readonly kind: typeof BRIDGE_VIEW_KIND.text; readonly spans: readonly TextSpanNode[]; readonly wrap: number; readonly align: number }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.diff; readonly hunks: readonly BridgeDiffHunkNode[] }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.spacer; readonly rows: number }
@@ -220,7 +220,11 @@ type BridgeViewNodeData =
   | { readonly kind: typeof BRIDGE_VIEW_KIND.container | typeof BRIDGE_VIEW_KIND.clamp; readonly child: BridgeViewNode; readonly maxRows?: number; readonly overflow?: BridgeOverflowIndicatorNode }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.contentMax; readonly child: BridgeViewNode; readonly maxRows: number }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.component; readonly handle: ComponentId }
-  | { readonly kind: typeof BRIDGE_VIEW_KIND.decorated; readonly child: BridgeViewNode; readonly decoration: DecorationNode };
+  | { readonly kind: typeof BRIDGE_VIEW_KIND.decorated; readonly child: BridgeViewNode; readonly decoration: DecorationNode }
+) & {
+  /** Native state identity in the derived cold transport only. */
+  readonly stateAttachment?: number;
+};
 
 export type BridgeViewNodeDraft = BridgeViewNodeData;
 export type BridgeViewNode = BridgeViewNodeData & {

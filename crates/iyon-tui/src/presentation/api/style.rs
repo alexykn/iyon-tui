@@ -603,6 +603,22 @@ impl StyleRef {
     pub(crate) fn overlay(&mut self, patch: &StyleSpec) {
         self.local.overlay(patch);
     }
+
+    pub(crate) fn is_themed(&self) -> bool {
+        self.theme.is_some()
+    }
+
+    pub(crate) fn set_foreground(&mut self, color: Option<ColorSpec>) {
+        self.local.foreground = color;
+    }
+
+    pub(crate) fn set_attribute(&mut self, attribute: TextAttribute, enabled: bool) {
+        self.local.set_attribute(attribute, enabled);
+    }
+
+    pub(crate) fn local_foreground(&self) -> Option<&ColorSpec> {
+        self.local.foreground.as_ref()
+    }
 }
 
 impl From<StyleSpec> for StyleRef {
@@ -926,6 +942,38 @@ impl BorderSpec {
 
     pub(crate) fn bottom_height(&self) -> u16 {
         u16::from(self.edges.bottom)
+    }
+
+    pub(crate) fn set_color(&mut self, color: Option<ColorSpec>) {
+        self.color = color;
+    }
+
+    pub(crate) fn set_style(&mut self, style: BorderStyle) {
+        let default_glyphs = match self.style {
+            BorderStyle::Plain => BorderGlyphs::plain(),
+            BorderStyle::Rounded => BorderGlyphs::rounded(),
+            BorderStyle::Double => BorderGlyphs::double(),
+        };
+        if self.glyphs == default_glyphs {
+            self.glyphs = match style {
+                BorderStyle::Plain => BorderGlyphs::plain(),
+                BorderStyle::Rounded => BorderGlyphs::rounded(),
+                BorderStyle::Double => BorderGlyphs::double(),
+            };
+        }
+        self.style = style;
+    }
+
+    pub(crate) fn set_glyphs(&mut self, glyphs: BorderGlyphs) {
+        self.glyphs = glyphs;
+    }
+
+    pub(crate) fn reset_glyphs_for_style(&mut self) {
+        self.glyphs = match self.style {
+            BorderStyle::Plain => BorderGlyphs::plain(),
+            BorderStyle::Rounded => BorderGlyphs::rounded(),
+            BorderStyle::Double => BorderGlyphs::double(),
+        };
     }
 }
 

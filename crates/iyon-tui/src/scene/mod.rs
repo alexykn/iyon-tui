@@ -18,7 +18,8 @@ pub use root::Scene;
 #[cfg(test)]
 pub(crate) use root::resolve_root_scene;
 pub(crate) use root::{
-    ResolvedRootScene, resolve_component_subtree, resolve_root_scene_with_anchor_and_cache,
+    ResolvedRootScene, resolve_component_subtree_with_states,
+    resolve_root_scene_with_anchor_and_cache_and_states,
 };
 
 #[cfg(test)]

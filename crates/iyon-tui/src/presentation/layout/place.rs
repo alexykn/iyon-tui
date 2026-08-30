@@ -8,6 +8,7 @@ use super::{
 use crate::{
     geometry::{Point, Rect},
     perf::{self, Counter},
+    retained_state::OccurrenceBox,
 };
 
 pub(super) fn emit_prepared(
@@ -58,6 +59,13 @@ pub(super) fn emit_prepared(
             .component_view
             .unwrap_or_else(|| prepared.measured.view.id()),
         paint_cacheable: prepared.measured.cacheable,
+        occurrence: OccurrenceBox::from_effective(
+            prepared.measured.view.state_attachment_id(),
+            prepared.measured.view.decoration().clone(),
+            prepared.measured.effective_decoration.clone(),
+            prepared.measured.view.view_style_states().clone(),
+            prepared.measured.effective_style_states.clone(),
+        ),
         rect,
         content_rect,
         clip_rect: node_clip,
@@ -65,9 +73,9 @@ pub(super) fn emit_prepared(
         children: Vec::new(),
         style: LayoutStyle {
             component_scope: prepared.measured.component_scope,
-            style_states: prepared.measured.view.view_style_states().clone(),
+            style_states: prepared.measured.effective_style_states.clone(),
             style_facts: prepared.measured.view.view_style_facts().clone(),
-            decoration: prepared.measured.view.decoration().clone(),
+            decoration: prepared.measured.effective_decoration.clone(),
         },
         content,
     });

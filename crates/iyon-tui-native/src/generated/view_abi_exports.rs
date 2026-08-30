@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4
+// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
+// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -20,6 +20,25 @@ pub mod generated_impls {
         base: u32,
     ) -> i32 {
         unsafe { super::super::host_render_ref_impl(runtime, host, base) }
+    }
+    pub(super) unsafe fn view_state_attach_impl(
+        runtime: *mut NativeViewRuntime,
+        base: u32,
+        node_id_low: u32,
+        node_id_high: u32,
+        state_id_low: u32,
+        state_id_high: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_state_attach_impl(
+                runtime,
+                base,
+                node_id_low,
+                node_id_high,
+                state_id_low,
+                state_id_high,
+            )
+        }
     }
     pub(super) unsafe fn view_spacer_create_impl(
         runtime: *mut NativeViewRuntime,
@@ -1361,6 +1380,59 @@ pub unsafe extern "C" fn iyon_host_render_ref_v1(
     base: u32,
 ) -> i32 {
     unsafe { invoke_iyon_host_render_ref_v1(runtime, host, base) }
+}
+
+pub(super) unsafe fn invoke_iyon_view_state_attach_v1(
+    runtime: *mut NativeViewRuntime,
+    base: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    state_id_low: u32,
+    state_id_high: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let base = generated_native_ref(base, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_state_attach_impl(
+                        runtime,
+                        base,
+                        node_id_low,
+                        node_id_high,
+                        state_id_low,
+                        state_id_high,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_state_attach_v1(
+    runtime: *mut NativeViewRuntime,
+    base: u32,
+    node_id_low: u32,
+    node_id_high: u32,
+    state_id_low: u32,
+    state_id_high: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_state_attach_v1(
+            runtime,
+            base,
+            node_id_low,
+            node_id_high,
+            state_id_low,
+            state_id_high,
+        )
+    }
 }
 
 pub(super) unsafe fn invoke_iyon_view_spacer_create_v1(

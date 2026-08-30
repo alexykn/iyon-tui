@@ -7,6 +7,8 @@
  */
 
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
+import { nativeResourceForHandleId } from "../native/resources.ts";
+import type { NativeViewStateContract } from "../native/addon.ts";
 import {
   SEMANTIC_VIEW_KIND,
   type SemanticColor,
@@ -85,7 +87,7 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
       for (const active of loweringStack) componentBearing.add(active);
     }
     coldCounters.cold_bridge_objects_allocated += 1;
-    const draft = semanticDraftFor(node);
+    const draft = statefulBridgeDraft(node, semanticDraftFor(node));
     const bridge = freezeBridgeNode({
       id: node.id,
       schema: VIEW_BRIDGE_SCHEMA_VERSION,
@@ -97,6 +99,24 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
     loweringStack.pop();
     lowering.delete(node);
   }
+}
+
+function statefulBridgeDraft(
+  node: SemanticViewNode,
+  draft: BridgeViewNodeDraft,
+): BridgeViewNodeDraft {
+  if (node.stateAttachment === undefined) return draft;
+  const resource = nativeResourceForHandleId<NativeViewStateContract>(node.stateAttachment, "state");
+  if (typeof (resource as { readonly stateId?: unknown }).stateId !== "function") {
+    // API-H3 internal fixtures use validation-only resources and do not have
+    // a native retained presentation identity to encode in the cold bridge.
+    return draft;
+  }
+  const stateId = resource.stateId();
+  if (!Number.isSafeInteger(stateId) || stateId <= 0) {
+    throw new RangeError("ViewState native identity must be a positive safe integer");
+  }
+  return { ...draft, stateAttachment: stateId };
 }
 
 function semanticDraftFor(node: SemanticViewNode): BridgeViewNodeDraft {

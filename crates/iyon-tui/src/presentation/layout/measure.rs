@@ -8,8 +8,8 @@ use crate::{
     perf::{self, Counter},
     presentation::{
         ir::{
-            ColumnView, GridView, HangingView, PersistentSeq, RowView, RowViewportView, TextView,
-            TrackSize, View, ViewKind, WidthRule,
+            ColumnView, Decoration, GridView, HangingView, PersistentSeq, RowView, RowViewportView,
+            TextView, TrackSize, View, ViewKind, WidthRule,
         },
         wrap::{TextFlowMetrics, text_flow_metrics},
     },
@@ -40,11 +40,12 @@ pub(super) struct DecorationMetrics {
 }
 
 pub(super) fn decoration_metrics(view: &View, width: u16) -> DecorationMetrics {
-    let (left_border, right_border, top_border, bottom_border) = view
-        .decoration()
-        .border
-        .as_ref()
-        .map_or((0, 0, 0, 0), |border| {
+    decoration_metrics_for(view.decoration(), width)
+}
+
+fn decoration_metrics_for(decoration: &Decoration, width: u16) -> DecorationMetrics {
+    let (left_border, right_border, top_border, bottom_border) =
+        decoration.border.as_ref().map_or((0, 0, 0, 0), |border| {
             (
                 border.left_width(),
                 border.right_width(),
@@ -54,21 +55,19 @@ pub(super) fn decoration_metrics(view: &View, width: u16) -> DecorationMetrics {
         });
     let border_width = left_border.saturating_add(right_border);
     let padding_capacity = width.saturating_sub(border_width);
-    let left_padding = view
-        .decoration()
+    let left_padding = decoration
         .padding
         .left
         .min(padding_capacity.saturating_sub(1));
-    let right_padding = view
-        .decoration()
+    let right_padding = decoration
         .padding
         .right
         .min(padding_capacity.saturating_sub(left_padding.saturating_add(1)));
     let horizontal = border_width
         .saturating_add(left_padding)
         .saturating_add(right_padding);
-    let top_padding = view.decoration().padding.top;
-    let bottom_padding = view.decoration().padding.bottom;
+    let top_padding = decoration.padding.top;
+    let bottom_padding = decoration.padding.bottom;
     let vertical = top_border
         .saturating_add(bottom_border)
         .saturating_add(top_padding)
@@ -97,6 +96,8 @@ pub(super) struct MeasuredNode {
     pub(super) component_scope: Option<ComponentId>,
     pub(super) width_capacity: u16,
     pub(super) decoration: DecorationMetrics,
+    pub(super) effective_decoration: Decoration,
+    pub(super) effective_style_states: crate::presentation::StyleStates,
     pub(super) size: Size,
     pub(super) core_size: Size,
     pub(super) kind: MeasuredKind,
@@ -183,7 +184,7 @@ pub(super) fn measure_node(
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
 ) -> Arc<MeasuredNode> {
-    let (key, cacheable) = match view.kind() {
+    let (mut key, cacheable) = match view.kind() {
         ViewKind::ComponentSlot(slot) => {
             let snapshot = overlay.component(slot.id);
             (
@@ -200,6 +201,10 @@ pub(super) fn measure_node(
             !view.contains_component_identity(),
         ),
     };
+    key.state_revision = view
+        .state_attachment_id()
+        .and_then(|id| overlay.state(id))
+        .map_or(0, |state| state.revision);
     if cacheable && let Some(measured) = cache.measured(key) {
         return measured;
     }
@@ -234,9 +239,16 @@ fn measure_node_uncached(
     perf::inc(Counter::MeasureNodeCalls);
     #[cfg(test)]
     super::record_measure_node();
-    let bounds = view.decoration().bounds;
+    let state = view.state_attachment_id().and_then(|id| overlay.state(id));
+    let effective_decoration = state
+        .map(|state| state.effective_decoration(view.decoration()))
+        .unwrap_or_else(|| view.decoration().clone());
+    let effective_style_states = state
+        .map(|state| state.effective_style_states(view.view_style_states()))
+        .unwrap_or_else(|| view.view_style_states().clone());
+    let bounds = effective_decoration.bounds;
     let width_capacity = width.min(bounds.width.normalized_max());
-    let decoration = decoration_metrics(view, width_capacity);
+    let decoration = decoration_metrics_for(&effective_decoration, width_capacity);
     let (component, child_scope) = match view.kind() {
         ViewKind::ComponentSlot(slot) => (Some(slot.id), Some(slot.id)),
         _ => (None, component_scope),
@@ -266,6 +278,8 @@ fn measure_node_uncached(
         component_scope: child_scope,
         width_capacity,
         decoration,
+        effective_decoration,
+        effective_style_states,
         size,
         core_size,
         kind,

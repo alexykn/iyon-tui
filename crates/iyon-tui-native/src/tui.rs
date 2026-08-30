@@ -28,6 +28,9 @@ mod generated_view_abi_conformance {
 }
 
 mod view_abi;
+mod view_state;
+
+use view_state::NativeViewState;
 
 type ViewBridgeCache = view_abi::NativeViewRuntime;
 type ViewRuntimeHandle = view_abi::ViewRuntimeHandle;
@@ -661,6 +664,14 @@ impl NativeTuiHost {
         }))
     }
 
+    #[napi(js_name = "clearViewStateBindings")]
+    pub fn clear_view_state_bindings(&self) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .clear_view_state_bindings()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
     /// Drains the native environment's fair pending-host queue. Automatic
     /// callers leave retry-blocked hosts blocked; explicit barriers force one
     /// retry and surface the returned error records synchronously.
@@ -780,6 +791,16 @@ impl NativeTuiHost {
             self.host.history(),
             self.view_runtime,
         ))
+    }
+
+    #[napi(js_name = "viewState")]
+    pub fn view_state(&self) -> Result<NativeViewState> {
+        ensure_alive(&self.alive)?;
+        let state = self
+            .host
+            .create_view_state()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(NativeViewState::from_host(state))
     }
 
     #[napi(js_name = "textInput")]
@@ -1879,7 +1900,13 @@ impl ViewDecoder {
         }
         let result = self.decode_miss(&value);
         self.active.remove(&node_id);
-        let view = result?;
+        let mut view = result?;
+        if value.get::<f64>("stateAttachment")?.is_some() {
+            let state_id = required_u64(&value, "stateAttachment")?;
+            view = view
+                .native_with_state_attachment(state_id)
+                .map_err(crate::NativeError::invalid_input)?;
+        }
 
         with_view_runtime(&self.cache, |cache| {
             cache.record_decoded_semantic_view(node_id, &view)
@@ -1949,6 +1976,7 @@ impl ViewDecoder {
                 value, "handle",
             )?)),
             VIEW_KIND_DECORATED => {
+                tui_perf_inc!(LegacyDecoratedCompatibilityFrames);
                 let child = self.decode(required_prop::<Object>(value, "child")?)?;
                 decode_decoration(child, &required_prop::<Object>(value, "decoration")?)
             }

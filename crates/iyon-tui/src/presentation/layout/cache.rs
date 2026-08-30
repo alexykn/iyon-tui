@@ -15,6 +15,7 @@ use super::{measure::MeasuredNode, prepare::PreparedNode};
 pub(super) struct MeasureKey {
     pub(super) view: ViewId,
     pub(super) component_view: Option<ViewId>,
+    pub(super) state_revision: u64,
     pub(super) width: u16,
     pub(super) intent: WidthIntent,
 }
@@ -109,6 +110,7 @@ impl MeasureKey {
         Self {
             view: view.id(),
             component_view: None,
+            state_revision: 0,
             width,
             intent,
         }
@@ -123,6 +125,7 @@ impl MeasureKey {
         Self {
             view: view.id(),
             component_view: Some(component_view),
+            state_revision: 0,
             width,
             intent,
         }

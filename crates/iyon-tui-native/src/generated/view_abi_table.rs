@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4
+// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
+// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
 #![allow(dead_code)]
 
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +80,21 @@ pub static FUNCTIONS: &[FunctionDescriptor] = &[
         max_buffer_bytes: 0,
         max_input_count: 1,
         benchmark_registration: "view.host_render_ref",
+    },
+    FunctionDescriptor {
+        name: "view_state_attach",
+        symbol: "iyon_view_state_attach_v1",
+        family: "structural_patch",
+        hotness: "warm",
+        fallback: "direct_decode",
+        ownership: "runtime_owned",
+        borrow_duration: "call",
+        thread_affinity: "owner_thread",
+        may_allocate_native_memory: true,
+        mutates_host_state: false,
+        max_buffer_bytes: 0,
+        max_input_count: 1,
+        benchmark_registration: "view.state_attach",
     },
     FunctionDescriptor {
         name: "view_spacer_create",

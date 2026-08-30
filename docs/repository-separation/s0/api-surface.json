@@ -526,7 +526,7 @@
     "currentPackage": "@iyon/tui",
     "currentSubpath": ".",
     "source": "packages/iyon-tui/src/index.ts",
-    "sourceSha256": "568c75a454a55725ed1cf74bce349209633e450c17992633c181823336c44048",
+    "sourceSha256": "2ef368c0d3c75101d0bc326eb93f9cf2cfcabe192c6622c5bd085b55626f61e3",
     "typeExports": [
       "AnsiColor",
       "BorderEdges",
@@ -601,6 +601,9 @@
       "ViewChildren",
       "ViewComponent",
       "ViewSlot",
+      "ViewStatePresentationPatch",
+      "ViewStatePresentationProperty",
+      "ViewStateTextAttributes",
       "WrapMode"
     ],
     "valueExports": [
@@ -637,6 +640,7 @@
       "Tui",
       "TuiError",
       "View",
+      "ViewState",
       "asTuiError",
       "defineView",
       "isTuiCancelledError",

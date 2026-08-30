@@ -308,17 +308,23 @@ export class NativeResourceRegistry {
       });
     }
     if (record.owner?.host !== undefined && record.owner.host !== targetHost) {
-      throw tuiError("invalid-handle", "framework attachment belongs to a different host", {
+      throw tuiError("invalid-handle", "WRONG_HOST: framework attachment belongs to a different host", {
         id: handleId,
       });
     }
     if (targetNodeKind !== undefined
       && record.acceptedNodeKinds !== undefined
       && !record.acceptedNodeKinds.has(targetNodeKind)) {
-      throw tuiError("validation", "framework attachment is unsupported on this node kind", {
-        id: handleId,
-        nodeKind: targetNodeKind,
-      });
+      throw tuiError(
+        "validation",
+        expectedKind === "state"
+          ? "UNSUPPORTED_STATE_ATTACHMENT: framework state attachment is unsupported on this node kind"
+          : "UNSUPPORTED_CONTENT_PORT_ATTACHMENT: framework content attachment is unsupported on this node kind",
+        {
+          id: handleId,
+          nodeKind: targetNodeKind,
+        },
+      );
     }
     record.preparedLeases += 1;
     return new PreparedResourceLease(this, record, handle, resource);
@@ -328,7 +334,13 @@ export class NativeResourceRegistry {
     const record = this.records.get(handleId);
     if (record === undefined || record.lifecycle === "disposed") return;
     if (record.preparedLeases > 0 || record.desiredLeases > 0 || record.visibleLeases > 0) {
-      throw tuiError("invalid-handle", "resource is still attached", { id: handleId });
+      throw tuiError(
+        "invalid-handle",
+        record.kind === "state"
+          ? "STATE_MOUNTED: ViewState is still attached"
+          : "resource is still attached",
+        { id: handleId },
+      );
     }
     record.lifecycle = "disposing";
   }

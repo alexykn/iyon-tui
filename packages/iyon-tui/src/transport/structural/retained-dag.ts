@@ -21,7 +21,7 @@
  */
 
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
-import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
+import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import {
   axisKind,
   axisTrackWord,
@@ -41,6 +41,8 @@ import {
 } from "./encoding.ts";
 import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
 import { componentIdForHandleId } from "./component-id.ts";
+import { nativeResourceForHandleId } from "../native/resources.ts";
+import type { NativeViewStateContract } from "../native/addon.ts";
 import { lowerSemanticView } from "./cold-lowering.ts";
 import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
 import type { NativeViewAbiSession } from "./native-view-abi.ts";
@@ -941,6 +943,48 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
 }
 
 /**
+ * Resolves a framework ViewState handle only at the native structural
+ * boundary. Semantic nodes retain the branded HandleId; the native View
+ * stores the host-local state identity needed by frame-time overlays.
+ */
+function attachStateIfPresent(
+  node: SemanticViewNode,
+  tx: MaterializeTx,
+  baseRef: number,
+): number {
+  if (node.stateAttachment === undefined) return baseRef;
+  try {
+    const resource = nativeResourceForHandleId<NativeViewStateContract>(node.stateAttachment, "state");
+    if (typeof (resource as { readonly stateId?: unknown }).stateId !== "function") {
+      // API-H3 internal fixtures may register a validation-only state
+      // attachment. It has no native presentation record to lower.
+      return baseRef;
+    }
+    const stateId = resource.stateId();
+    const stateWords = u64Words(stateId);
+    if (stateWords === undefined || stateId === 0) {
+      throw new RetainedFastFallbackError("ViewState native identity is not a safe positive integer");
+    }
+    const [nodeLow, nodeHigh] = splitNodeId(node.id);
+    return viewStateAttach(
+      tx.symbols,
+      tx.runtime,
+      baseRef,
+      nodeLow,
+      nodeHigh,
+      stateWords[0],
+      stateWords[1],
+    );
+  } catch (error) {
+    // The ordinary constructor returned a lease before the attachment
+    // replacement. It is not in tx.temporaryLeases yet, so release it here
+    // before propagating the prepare failure.
+    viewReleaseMany(tx.symbols, tx.runtime, Uint32Array.of(baseRef), 1);
+    throw error;
+  }
+}
+
+/**
  * Per-kind generated materializer dispatch (§22 children-first, §32 fixed
  * arities). T7 covers spacer plus row/column arities 0..=4; T10 adds Grid;
  * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane;
@@ -1059,6 +1103,7 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
       }
       reference = materializeWithRecovery(node, tx, materializer);
     }
+    reference = attachStateIfPresent(node, tx, reference);
     installHint(node, tx.generation, reference);
     tx.refs.set(node, reference);
     tx.temporaryLeases.push(reference);

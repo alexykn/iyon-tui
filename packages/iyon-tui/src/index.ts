@@ -64,6 +64,12 @@ export type { TerminalMetadata, TuiOpenOptions, TuiRuntime } from "./runtime/run
 export type { ViewComponent } from "./composition/define-view.ts";
 export type { ViewSlot } from "./api/controls/view-slot.ts";
 export type { ScrollPane } from "./api/controls/scroll-pane.ts";
+export type {
+  ViewStatePresentationPatch,
+  ViewStatePresentationProperty,
+  ViewStateTextAttributes,
+} from "./api/view/retained-state.ts";
+export { ViewState } from "./api/view/retained-state.ts";
 export { View, ChildrenBuilder, GridBuilder, GridRowBuilder } from "./api/view/view.ts";
 export type { OverflowIndicator } from "./api/view/view.ts";
 export { defineView } from "./composition/define-view.ts";

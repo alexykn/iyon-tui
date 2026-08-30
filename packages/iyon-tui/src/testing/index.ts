@@ -6,6 +6,7 @@ import type { History as HistoryContract } from "../api/controls/history.ts";
 import type { ScrollPane as ScrollPaneContract } from "../api/controls/scroll-pane.ts";
 import type { TextInput as TextInputContract, TextInputOptions } from "../api/controls/text-input.ts";
 import type { ViewSlot as ViewSlotContract } from "../api/controls/view-slot.ts";
+import type { ViewState as ViewStateContract } from "../api/view/retained-state.ts";
 import type { SceneProducer } from "../api/view/scene.ts";
 import type { View } from "../api/view/view.ts";
 import type { TuiEvent } from "../runtime/events.ts";
@@ -14,6 +15,7 @@ import type { Theme } from "../api/presentation/theme.ts";
 
 interface AppHarnessContract extends TuiRuntime {
   createHistory(): HistoryContract;
+  viewState(): ViewStateContract;
   createTextInput(options?: TextInputOptions): TextInputContract;
   createViewSlot(initial: View): ViewSlotContract;
   createScrollPane(initial: View): ScrollPaneContract;
@@ -55,6 +57,7 @@ export class AppHarness implements AppHarnessContract {
   }
 
   createHistory(): HistoryContract { return this.tui.createHistory(); }
+  viewState(): ViewStateContract { return this.tui.viewState(); }
   createTextInput(options: TextInputOptions = {}): TextInputContract { return this.tui.createTextInput(options); }
   createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }
   createScrollPane(initial: View): ScrollPaneContract { return this.tui.createScrollPane(initial); }

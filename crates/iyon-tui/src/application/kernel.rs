@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, marker::PhantomData, time::Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+    time::Instant,
+};
 
 use tokio::sync::mpsc::{Receiver, error::TryRecvError};
 
@@ -10,6 +14,7 @@ use crate::{
     component::ComponentRegistry,
     geometry::Size,
     output::OutputDispatchError,
+    retained_state::ViewStateSnapshot,
     scene::{PreparedSceneFrame, SceneHost, SceneHostError},
 };
 
@@ -145,6 +150,12 @@ where
         let id = crate::component::ComponentId::from_raw(id);
         self.components.invalidate(id);
         self.scene_host.invalidate_component(id);
+        self.invalidate_frame();
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_invalidate_state(&mut self, id: u64) {
+        self.scene_host.invalidate_state(id);
         self.invalidate_frame();
     }
 
@@ -417,7 +428,21 @@ where
         &mut self,
         now: Instant,
         sink: &mut S,
+        viewport: F,
+    ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
+    where
+        S: NativeHistorySink,
+        F: FnMut(&mut S) -> Result<Size>,
+    {
+        self.prepare_frame_with_states(now, sink, viewport, &HashMap::new())
+    }
+
+    pub(crate) fn prepare_frame_with_states<S, F>(
+        &mut self,
+        now: Instant,
+        sink: &mut S,
         mut viewport: F,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
         S: NativeHistorySink,
@@ -430,13 +455,14 @@ where
             }
             self.body_dirty = false;
         }
-        let frame = self.scene_host.render_at(
+        let frame = self.scene_host.render_at_with_states(
             now,
             &mut self.scene,
             &mut self.components,
             &self.theme,
             sink,
             &mut viewport,
+            states,
         )?;
         // Retirement is deferred until this successful reconciliation has
         // replaced the committed mount graph. A retired component that was

@@ -164,6 +164,7 @@ mod physical;
 mod presentation;
 /// Root-coordinate projection algebra and diagnostics.
 pub mod projection;
+mod retained_state;
 mod scene;
 mod scroll;
 mod scroll_command;
@@ -183,7 +184,7 @@ pub use application::{
 #[cfg(feature = "native-host")]
 pub use application::{
     HostCellStyle, HostDrainReport, HostEpochs, HostFrameError, HostHistory, HostScrollPane,
-    HostTextInput, HostTextStream, HostViewSlot, RoutedOutput, TextStreamAnnotation,
+    HostTextInput, HostTextStream, HostViewSlot, HostViewState, RoutedOutput, TextStreamAnnotation,
     TextStreamPresentation, TuiEnvironment, TuiHost, WakeDisposition,
 };
 
@@ -206,6 +207,11 @@ pub use history::{
 pub use interaction::{InteractionResult, Key, KeyStroke, MediaKey, ModifierKey, Modifiers};
 pub use output::{EventCx, Output, OutputRouter, RouteConflict};
 pub use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
+#[cfg(feature = "native-host")]
+#[doc(hidden)]
+pub use retained_state::{
+    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateTextAttributes,
+};
 pub use scene::Scene;
 pub use scroll::ScrollPane;
 pub use theme::Theme;

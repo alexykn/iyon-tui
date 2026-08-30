@@ -1,4 +1,7 @@
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use crate::{
     component::{ComponentId, ComponentRegistry, ComponentRevision, MountGraph, MountNode},
@@ -82,6 +85,13 @@ impl<'a> ResolveSession<'a> {
 
     pub(crate) fn overlay(&self) -> &ResolutionOverlay {
         &self.resolver.overlay
+    }
+
+    pub(crate) fn set_state_snapshots(
+        &mut self,
+        states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    ) {
+        self.resolver.overlay.states = states.clone();
     }
 
     #[cfg(test)]

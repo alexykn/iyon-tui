@@ -82,6 +82,7 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope(
         physically_complete: prepared.complete,
         component_roots: Default::default(),
         parents: Vec::new(),
+        state_roots: Default::default(),
     };
     tree.index_component_roots();
     if matches!(constraints.height, AxisConstraint::Unbounded) {

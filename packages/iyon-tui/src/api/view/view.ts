@@ -11,6 +11,7 @@ import type { BorderSpec, TextAttribute } from "../presentation/style.ts";
 import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
 import type { HandleId } from "../controls/framework-handle.ts";
+import type { ViewState } from "./retained-state.ts";
 import type { ColorSpec } from "../presentation/theme.ts";
 import { insets, Insets } from "./geometry.ts";
 import type { DiffHunk } from "../content/diff.ts";
@@ -90,6 +91,7 @@ import {
   composeSpacer,
   composeStyle,
   composeStyleState,
+  composeState,
   composeStyledText,
   composeText,
   composeTextAlign,
@@ -384,6 +386,15 @@ export class View {
     }, replacesStyle);
   }
 
+  /** Attaches one host-owned retained state identity to this occurrence. */
+  state(state: ViewState): View {
+    if (typeof state !== "object" || state === null || state.kind !== "state") {
+      throw new TypeError("View.state requires a live ViewState");
+    }
+    if (isRetainedConstruction()) return composeState(this, state);
+    return attachStateDirect(this, state.id, state);
+  }
+
   styleState(key: string | StyleStateKey, value: string | StyleStateValue): View {
     const stateKey = typeof key === "string" ? key : key.value;
     const stateValue = typeof value === "string" ? value : value.value;
@@ -398,6 +409,7 @@ export class View {
     return new View({
       kind: SEMANTIC_VIEW_KIND.decorated,
       child,
+      stateAttachment: decorated?.stateAttachment,
       decoration: {
         ...current,
         styleStates: { ...current.styleStates, [stateKey]: stateValue },
@@ -458,6 +470,7 @@ export class View {
     const derived = new View({
       kind: SEMANTIC_VIEW_KIND.decorated,
       child,
+      stateAttachment: decorated?.stateAttachment,
       decoration: semanticCloneDecoration(next),
     });
     // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
@@ -479,6 +492,7 @@ export class View {
         spans: node.spans,
         wrap: wrap ?? node.wrap,
         align: align ?? node.align,
+        stateAttachment: node.stateAttachment,
       });
       setSemanticDerivation(semanticNodeOf(derived), {
         kind: "textLayout",
@@ -500,6 +514,7 @@ export class View {
       const derived = new View({
         kind: SEMANTIC_VIEW_KIND.decorated,
         child,
+        stateAttachment: node.stateAttachment,
         decoration: node.decoration,
       });
       setSemanticDerivation(child, {
@@ -530,6 +545,24 @@ function createView(node: SemanticViewNode): View {
 /** @internal Re-wraps an already-owned semantic node at the API boundary. */
 export function createViewFromSemanticNode(node: SemanticViewNode): View {
   return createView(node);
+}
+
+/** @internal Adds a retained state attachment without changing topology. */
+function attachStateDirect(view: View, handleId: HandleId, reference: object): View {
+  const node = updateSemanticViewNode(semanticNodeOf(view), {
+    stateAttachment: handleId,
+  });
+  retainSemanticAttachmentReference(node, reference);
+  return createViewFromSemanticNode(node);
+}
+
+/** @internal Composition-only state attachment constructor. */
+export function attachStateForComposition(
+  view: View,
+  handleId: HandleId,
+  reference: object,
+): View {
+  return attachStateDirect(view, handleId, reference);
 }
 
 /** @internal Creates a semantic component occurrence from a local HandleId. */
@@ -701,6 +734,7 @@ export function gridSetCellForTransport(base: View, row: number, column: number,
     rows,
     columnGap: gridNode.columnGap,
     rowGap: gridNode.rowGap,
+    stateAttachment: gridNode.stateAttachment,
   });
   setSemanticDerivation(semanticNodeOf(derived), {
     kind: "gridCell",
@@ -839,6 +873,7 @@ function buildWideGridNode(
     id: nextNodeId(),
     kind: SEMANTIC_VIEW_KIND.grid,
     columns: baseNode.columns,
+    stateAttachment: baseNode.stateAttachment,
     get rows(): readonly SemanticGridRow[] {
       if (flatRows === undefined) {
         const rows: SemanticGridRow[] = [];
@@ -909,6 +944,7 @@ function buildWideAxisNode(
   const node = Object.freeze({
     id: nextNodeId(),
     kind: baseNode.kind,
+    stateAttachment: baseNode.stateAttachment,
     gap: baseNode.gap,
     get children(): readonly SemanticLayoutChild[] {
       if (flat === undefined) flat = Object.freeze(sequence.toArray().map((entry) => Object.freeze({ ...entry })));

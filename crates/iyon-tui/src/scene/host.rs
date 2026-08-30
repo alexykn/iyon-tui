@@ -4,7 +4,10 @@
 //! and native History pressure. Application code supplies only semantic Scene
 //! state and consumes routed outputs.
 
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 use anyhow::Result;
 
@@ -25,13 +28,14 @@ use crate::{
         layout::{LayoutCache, ViewCompiler, measure_view_with_overlay_and_cache},
         paint::{PaintCache, ViewPainter},
     },
+    retained_state::{DamageRegion, ViewStateSnapshot},
 };
 
 use super::root::merge_root_scene;
 use super::{
     LayoutSynchronizer, ResolveError, ResolveSession, ResolvedRootScene, ResolvedScene,
-    ResolvedSceneLayout, Scene, layout_resolved_scene_with_cache, resolve_component_subtree,
-    resolve_root_scene_with_anchor_and_cache,
+    ResolvedSceneLayout, Scene, layout_resolved_scene_with_cache,
+    resolve_component_subtree_with_states, resolve_root_scene_with_anchor_and_cache_and_states,
 };
 use crate::history::{HistoryViewportAnchor, project_into_session_for_host};
 
@@ -123,6 +127,10 @@ fn drain_native_pressure<S: NativeHistorySink>(
 pub(crate) struct PreparedSceneFrame {
     pub(crate) surface: Surface,
     pub(crate) history_overlay: Option<crate::history::HistoryPhysicalOverlay>,
+    pub(crate) damage: DamageRegion,
+    /// State identities encountered in this fully prepared candidate tree.
+    /// Host binding promotion happens only after backend presentation succeeds.
+    pub(crate) state_bindings: Vec<u64>,
 }
 
 impl PreparedSceneFrame {
@@ -172,10 +180,13 @@ pub(crate) struct SceneHost {
     retained: Option<StableScene>,
     last_surface: Option<Surface>,
     invalidated_components: HashSet<ComponentId>,
+    invalidated_states: HashSet<u64>,
     incremental_sync_components: Vec<ComponentId>,
     incremental_topology_changed: bool,
     incremental_requires_full_sync: bool,
     incremental_paint_components: Vec<ComponentId>,
+    incremental_paint_states: Vec<u64>,
+    state_only_refresh: bool,
     /// True when the retained History branch can be painted without walking
     /// the clean body branch.
     incremental_paint_history: bool,
@@ -223,10 +234,13 @@ impl Default for SceneHost {
             retained: None,
             last_surface: None,
             invalidated_components: HashSet::new(),
+            invalidated_states: HashSet::new(),
             incremental_sync_components: Vec::new(),
             incremental_topology_changed: false,
             incremental_requires_full_sync: false,
             incremental_paint_components: Vec::new(),
+            incremental_paint_states: Vec::new(),
+            state_only_refresh: false,
             incremental_paint_history: false,
             history_only_refresh: false,
             full_paint_pending: false,
@@ -248,10 +262,13 @@ impl SceneHost {
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();
+        self.invalidated_states.clear();
         self.incremental_sync_components.clear();
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_states.clear();
+        self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
         self.full_paint_pending = false;
@@ -264,15 +281,24 @@ impl SceneHost {
         self.invalidated_components.insert(id);
     }
 
+    /// Marks one retained presentation attachment dirty without rebuilding the
+    /// semantic scene. The next candidate refreshes and repaints its subtree.
+    pub(crate) fn invalidate_state(&mut self, id: u64) {
+        self.invalidated_states.insert(id);
+    }
+
     /// Invalidates the retained scene root for body/history/theme changes.
     pub(crate) fn invalidate_root(&mut self) {
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();
+        self.invalidated_states.clear();
         self.incremental_sync_components.clear();
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_states.clear();
+        self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
         self.full_paint_pending = false;
@@ -401,7 +427,15 @@ impl SceneHost {
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
-        self.render_at(Instant::now(), scene, registry, theme, sink, viewport)
+        self.render_at_with_states(
+            Instant::now(),
+            scene,
+            registry,
+            theme,
+            sink,
+            viewport,
+            &HashMap::new(),
+        )
     }
 
     pub(crate) fn render_at<S, F>(
@@ -411,7 +445,24 @@ impl SceneHost {
         registry: &mut ComponentRegistry,
         theme: &Theme,
         sink: &mut S,
+        viewport: F,
+    ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
+    where
+        S: NativeHistorySink,
+        F: FnMut(&mut S) -> Result<Size>,
+    {
+        self.render_at_with_states(now, scene, registry, theme, sink, viewport, &HashMap::new())
+    }
+
+    pub(crate) fn render_at_with_states<S, F>(
+        &mut self,
+        now: Instant,
+        scene: &mut Scene,
+        registry: &mut ComponentRegistry,
+        theme: &Theme,
+        sink: &mut S,
         mut viewport: F,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
         S: NativeHistorySink,
@@ -429,6 +480,7 @@ impl SceneHost {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
+                states,
             )?;
 
             if resolved.root.history_overflow_rows == 0 {
@@ -474,6 +526,7 @@ impl SceneHost {
                         size,
                         now,
                         HistoryViewportAnchor::NativeFrontier,
+                        states,
                     )?;
                     crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
                     return Ok(self.paint(pinned, theme));
@@ -506,6 +559,7 @@ impl SceneHost {
             size,
             now,
             HistoryViewportAnchor::FollowEnd,
+            &HashMap::new(),
         )
     }
 
@@ -516,19 +570,20 @@ impl SceneHost {
         size: Size,
         now: Instant,
         anchor: HistoryViewportAnchor,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<StableScene, SceneHostError<E>> {
         let mut force_full = false;
         let mut layout_epoch_started = false;
         for _ in 0..MAX_LAYOUT_PASSES {
             let resolved = if !force_full {
-                match self.try_incremental_stable(scene, registry, size, anchor) {
+                match self.try_incremental_stable(scene, registry, size, anchor, states) {
                     Ok(Some(resolved)) => resolved,
                     Ok(None) => {
                         if !layout_epoch_started {
                             self.layout_cache.begin_epoch();
                             layout_epoch_started = true;
                         }
-                        self.resolve_full_stable(scene, registry, size, anchor)?
+                        self.resolve_full_stable(scene, registry, size, anchor, states)?
                     }
                     Err(error) => return Err(SceneHostError::Resolve(error)),
                 }
@@ -537,9 +592,10 @@ impl SceneHost {
                     self.layout_cache.begin_epoch();
                     layout_epoch_started = true;
                 }
-                self.resolve_full_stable(scene, registry, size, anchor)?
+                self.resolve_full_stable(scene, registry, size, anchor, states)?
             };
-            let incremental_host = (self.history_only_refresh
+            let incremental_host = (self.state_only_refresh
+                || self.history_only_refresh
                 || !self.incremental_sync_components.is_empty())
                 && !self.incremental_topology_changed
                 && !self.incremental_requires_full_sync;
@@ -630,9 +686,11 @@ impl SceneHost {
                 continue;
             }
             self.invalidated_components.clear();
+            self.invalidated_states.clear();
             self.incremental_sync_components.clear();
             self.incremental_topology_changed = false;
             self.incremental_requires_full_sync = false;
+            self.state_only_refresh = false;
             self.history_only_refresh = false;
             #[cfg(test)]
             {
@@ -649,13 +707,15 @@ impl SceneHost {
         registry: &mut ComponentRegistry,
         size: Size,
         anchor: HistoryViewportAnchor,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<StableScene, SceneHostError<E>> {
-        let resolved = resolve_root_scene_with_anchor_and_cache(
+        let resolved = resolve_root_scene_with_anchor_and_cache_and_states(
             scene,
             registry,
             size,
             anchor,
             &mut self.layout_cache,
+            states,
         )
         .map_err(SceneHostError::Resolve)?;
         let layout =
@@ -664,6 +724,8 @@ impl SceneHost {
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_states.clear();
+        self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
         #[cfg(test)]
@@ -685,6 +747,7 @@ impl SceneHost {
         registry: &mut ComponentRegistry,
         size: Size,
         anchor: HistoryViewportAnchor,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<Option<StableScene>, ResolveError> {
         let history_revision = scene.history().map_or(0, crate::History::revision);
         let native_history_revision = scene.history().map_or(0, crate::History::native_revision);
@@ -706,6 +769,69 @@ impl SceneHost {
             retained_state.root.scene.mounts.contains(*component)
                 && !retained_state.root.history_components.contains(component)
         });
+        if !self.invalidated_states.is_empty()
+            && (!self.invalidated_components.is_empty()
+                || body_changed
+                || body_invalidated
+                || history_changed
+                || native_history_changed)
+        {
+            return Ok(None);
+        }
+        if !self.invalidated_states.is_empty()
+            && self.invalidated_components.is_empty()
+            && !body_changed
+            && !body_invalidated
+            && !history_changed
+            && !native_history_changed
+        {
+            let mut retained = self
+                .retained
+                .take()
+                .expect("retained state was checked above");
+            let state_ids = self.invalidated_states.iter().copied().collect::<Vec<_>>();
+            let mut paint_states = Vec::with_capacity(state_ids.len());
+            for state_id in state_ids {
+                let Some(snapshot) = states.get(&state_id) else {
+                    self.retained = Some(retained);
+                    return Ok(None);
+                };
+                if !retained
+                    .layout
+                    .tree
+                    .apply_state_snapshot(state_id, snapshot)
+                {
+                    self.retained = Some(retained);
+                    return Ok(None);
+                }
+                retained
+                    .root
+                    .scene
+                    .overlay
+                    .states
+                    .insert(state_id, snapshot.clone());
+                retained
+                    .root
+                    .body_scene
+                    .overlay
+                    .states
+                    .insert(state_id, snapshot.clone());
+                if let Some(history) = retained.root.history_scene.as_mut() {
+                    history.overlay.states.insert(state_id, snapshot.clone());
+                }
+                paint_states.push(state_id);
+            }
+            self.invalidated_states.clear();
+            self.state_only_refresh = true;
+            self.incremental_sync_components.clear();
+            self.incremental_topology_changed = false;
+            self.incremental_requires_full_sync = false;
+            self.incremental_paint_components.clear();
+            self.incremental_paint_states = paint_states;
+            self.incremental_paint_history = false;
+            self.history_only_refresh = false;
+            return Ok(Some(retained));
+        }
         if !body_changed
             && !body_invalidated
             && scene.history().is_some()
@@ -724,7 +850,7 @@ impl SceneHost {
                 .filter(|component| retained.root.history_components.contains(component))
                 .collect();
             return self.refresh_history_projection(
-                scene, registry, size, anchor, retained, affected, false,
+                scene, registry, size, anchor, retained, affected, false, states,
             );
         }
 
@@ -766,7 +892,7 @@ impl SceneHost {
 
         let mut updates = Vec::with_capacity(roots.len());
         for id in &roots {
-            match prepare_component_subtree_update(&retained, registry, *id) {
+            match prepare_component_subtree_update(&retained, registry, *id, states) {
                 Ok(update) => updates.push(update),
                 Err(error) => {
                     self.retained = Some(retained);
@@ -853,6 +979,7 @@ impl SceneHost {
                 retained,
                 roots.clone(),
                 topology_changed || body_geometry_changed || body_patch_failed,
+                states,
             );
         }
         if !patched || topology_changed {
@@ -894,6 +1021,7 @@ impl SceneHost {
         retained: StableScene,
         affected: Vec<ComponentId>,
         body_layout_changed: bool,
+        states: &HashMap<u64, ViewStateSnapshot>,
     ) -> Result<Option<StableScene>, ResolveError> {
         let Some(history) = scene.history() else {
             self.retained = Some(retained);
@@ -925,6 +1053,7 @@ impl SceneHost {
         let body_geometry_changed =
             body_layout_changed || retained.root.history_height != history_height;
         let mut session = ResolveSession::new(registry);
+        session.set_state_snapshots(states);
         let projection = match project_into_session_for_host(
             history,
             Size::new(size.width, history_height),
@@ -1049,9 +1178,25 @@ impl SceneHost {
     fn paint(&mut self, resolved: StableScene, theme: &Theme) -> PreparedSceneFrame {
         self.retained = Some(resolved);
         let retained = self.retained.as_ref().expect("retained frame installed");
+        let state_bindings = retained
+            .layout
+            .tree
+            .state_roots
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        let state_damage = DamageRegion::from_rects(
+            self.incremental_paint_states
+                .iter()
+                .filter_map(|id| retained.layout.tree.state_roots.get(id).copied())
+                .map(|id| retained.layout.tree.node(id).rect),
+            retained.layout.tree.size,
+        );
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
         if !self.full_paint_pending
-            && (self.incremental_paint_history || !self.incremental_paint_components.is_empty())
+            && (self.incremental_paint_history
+                || !self.incremental_paint_components.is_empty()
+                || !self.incremental_paint_states.is_empty())
         {
             if let Some(mut surface) = self.last_surface.take() {
                 let mut incremental = true;
@@ -1077,6 +1222,26 @@ impl SceneHost {
                     });
                 }
                 if incremental {
+                    for state_id in &self.incremental_paint_states {
+                        let Some(state_root) =
+                            retained.layout.tree.state_roots.get(state_id).copied()
+                        else {
+                            incremental = false;
+                            break;
+                        };
+                        if !ViewPainter.paint_subtree_into(
+                            &compiler,
+                            &retained.layout.tree,
+                            state_root,
+                            &mut surface,
+                            &mut incremental_cache,
+                        ) {
+                            incremental = false;
+                            break;
+                        }
+                    }
+                }
+                if incremental {
                     for component in self.incremental_paint_components.iter().copied() {
                         if !ViewPainter.paint_component_into(
                             &compiler,
@@ -1092,20 +1257,33 @@ impl SceneHost {
                 }
                 self.incremental_paint_history = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_states.clear();
+                self.state_only_refresh = false;
                 if incremental {
+                    crate::perf::inc(crate::perf::Counter::ViewStateIncrementalPaints);
                     let output = surface.clone();
                     self.last_surface = Some(surface);
                     return PreparedSceneFrame {
                         surface: output,
                         history_overlay: retained.root.history_overlay.clone(),
+                        damage: if state_damage.rects.is_empty() {
+                            DamageRegion::full(retained.layout.tree.size)
+                        } else {
+                            state_damage
+                        },
+                        state_bindings,
                     };
                 }
             }
             self.incremental_paint_history = false;
             self.incremental_paint_components.clear();
+            self.incremental_paint_states.clear();
+            self.state_only_refresh = false;
         }
         self.incremental_paint_history = false;
         self.incremental_paint_components.clear();
+        self.incremental_paint_states.clear();
+        self.state_only_refresh = false;
         #[cfg(test)]
         {
             self.full_paints += 1;
@@ -1122,6 +1300,8 @@ impl SceneHost {
         PreparedSceneFrame {
             surface: output,
             history_overlay: retained.root.history_overlay.clone(),
+            damage: DamageRegion::full(retained.layout.tree.size),
+            state_bindings,
         }
     }
 }
@@ -1138,11 +1318,12 @@ fn prepare_component_subtree_update(
     retained: &StableScene,
     registry: &ComponentRegistry,
     id: ComponentId,
+    states: &HashMap<u64, ViewStateSnapshot>,
 ) -> Result<PreparedComponentSubtree, ResolveError> {
     let snapshot = registry
         .resolution(id)
         .ok_or(ResolveError::MissingComponent { id })?;
-    let subtree = resolve_component_subtree(&snapshot.view, registry, id)?;
+    let subtree = resolve_component_subtree_with_states(&snapshot.view, registry, id, states)?;
     let graph = &retained.root.scene.mounts;
     let old_ids = graph.subtree_ids(id);
     if old_ids.is_empty() {

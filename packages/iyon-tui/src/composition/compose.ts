@@ -47,6 +47,7 @@ import {
   type SemanticViewNode,
 } from "../api/view/semantic-node.ts";
 import {
+  attachStateForComposition,
   ChildrenBuilder,
   componentViewForHandle,
   composedAxis,
@@ -66,7 +67,7 @@ import type { DiffHunk } from "../api/content/diff.ts";
 import type { StyleRef, StyleSpec, BorderSpec, TextAttribute } from "../api/presentation/style.ts";
 import type { ColorSpec } from "../api/presentation/theme.ts";
 import type { VerticalAlign } from "../api/view/view.ts";
-import type { ComponentHandle } from "../api/controls/framework-handle.ts";
+import type { ComponentHandle, HandleId } from "../api/controls/framework-handle.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -446,6 +447,39 @@ export function composeComponent(handle: ComponentHandle): View {
   const view = withoutRetainedComposition(() => componentViewForHandle(handleId, handle));
   stageFresh(slot, view);
   return view;
+}
+
+/** Constructs/reuses one retained state attachment without a wrapper node. */
+export function composeState(base: View, state: { readonly id: HandleId }): View {
+  const handleId = state.id;
+  const scope = executionContext.top;
+  if (scope === undefined) return attachStateForComposition(base, handleId, state);
+  const slot = scope.nextSemanticSlot();
+  const previous = slot.current;
+  if (previous !== undefined) {
+    const previousNode = semanticNodeOf(previous);
+    const baseNode = semanticNodeOf(base);
+    if (previousNode.stateAttachment === handleId && semanticNodeMatchesWithoutState(previousNode, baseNode)) {
+      stageReuse(slot, previous);
+      return previous;
+    }
+  }
+  const view = withoutRetainedComposition(() => attachStateForComposition(base, handleId, state));
+  stageFresh(slot, view);
+  return view;
+}
+
+/** State attachment is the only changed top-level semantic field. */
+function semanticNodeMatchesWithoutState(
+  left: SemanticViewNode,
+  right: SemanticViewNode,
+): boolean {
+  if (left.kind !== right.kind) return false;
+  for (const key of Object.keys(right) as (keyof SemanticViewNode)[]) {
+    if (key === "id" || key === "stateAttachment") continue;
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
 }
 
 /** Constructs/reuses View.hanging(prefix, continuation, body). */

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4
+// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
+// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 export type ViewAbiSymbols = NativeViewAbiHandle;
 
@@ -45,6 +45,11 @@ export function viewRenderRef(symbols: ViewAbiSymbols, runtime: NativeViewAbiHan
 export function hostRenderRef(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, host: NativeTuiHostContract, base: number): number {
   const result = runtime.hostRenderRef(host, base);
   return result;
+}
+
+export function viewStateAttach(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, base: number, node_id_low: number, node_id_high: number, state_id_low: number, state_id_high: number): number {
+  const result = runtime.viewStateAttach(base, node_id_low, node_id_high, state_id_low, state_id_high);
+  return checkedRef(symbols, runtime, result);
 }
 
 export function viewSpacerCreate(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, node_id_low: number, node_id_high: number, rows: number): number {

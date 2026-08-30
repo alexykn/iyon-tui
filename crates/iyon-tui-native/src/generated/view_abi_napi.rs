@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7744642c5744860d88cc80835f2ba3f5ae211dd70827c6cb8e25155146f8a7e0
-// generator_blake3 = d8b07239d7baebc853dd5c4315ddebb01838483c3b4c918574f9fa0c9abbf8a4
+// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
+// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
 // Generated safe N-API methods. The only unsafe operations are the
 // private calls from typed N-API values into the validated semantic wrappers.
 #[napi]
@@ -27,6 +27,12 @@ impl NativeViewAbiSession {
     pub fn host_render_ref(&self, host: &NativeTuiHost, base: u32) -> napi::Result<i32> {
         let runtime = self.runtime_ptr()?;
         Ok(unsafe { generated_exports::invoke_iyon_host_render_ref_v1(runtime, host as *const NativeTuiHost as *mut NativeHost, base) })
+    }
+
+#[napi(js_name = "viewStateAttach")]
+    pub fn view_state_attach(&self, base: u32, node_id_low: u32, node_id_high: u32, state_id_low: u32, state_id_high: u32) -> napi::Result<u32> {
+        let runtime = self.runtime_ptr()?;
+        Ok(unsafe { generated_exports::invoke_iyon_view_state_attach_v1(runtime, base, node_id_low, node_id_high, state_id_low, state_id_high) })
     }
 
 #[napi(js_name = "viewSpacerCreate")]

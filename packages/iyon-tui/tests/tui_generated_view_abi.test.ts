@@ -13,7 +13,7 @@ describe("PERF-11 generated vertical slice", () => {
   test("loads the generated N-API session and keeps its opaque handle stable", () => {
     const session = nativeViewAbiSession();
     if (session === undefined) return;
-    expect(session.abi.function_count).toBe(57);
+    expect(session.abi.function_count).toBe(58);
     const addon = native as unknown as Record<string, unknown>;
     expect(addon.tuiViewAbiBootstrap).toBeUndefined();
     expect(addon.tuiPerfAbiProbe).toBeUndefined();

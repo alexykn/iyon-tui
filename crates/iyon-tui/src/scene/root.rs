@@ -1,6 +1,9 @@
 //! Public semantic terminal-root composition.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::presentation::{StyleFacts, StyleStates};
 use crate::{History, IntoView, View};
@@ -165,7 +168,25 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
     anchor: HistoryViewportAnchor,
     cache: &mut LayoutCache,
 ) -> Result<ResolvedRootScene, ResolveError> {
-    let body_scene = resolve_branch(root.layout_body(), registry)?;
+    resolve_root_scene_with_anchor_and_cache_and_states(
+        root,
+        registry,
+        size,
+        anchor,
+        cache,
+        &HashMap::new(),
+    )
+}
+
+pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states(
+    root: &Scene,
+    registry: &ComponentRegistry,
+    size: Size,
+    anchor: HistoryViewportAnchor,
+    cache: &mut LayoutCache,
+    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+) -> Result<ResolvedRootScene, ResolveError> {
+    let body_scene = resolve_branch(root.layout_body(), registry, states)?;
     let body_height = measure_view_with_overlay_and_cache(
         &body_scene.view,
         size.width,
@@ -184,6 +205,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
         match root.history.as_ref() {
             Some(history) => {
                 let mut session = ResolveSession::new(registry);
+                session.set_state_snapshots(states);
                 let projection = project_into_session_for_host(
                     history,
                     Size::new(size.width, history_height),
@@ -223,8 +245,10 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
 fn resolve_branch(
     view: &View,
     registry: &ComponentRegistry,
+    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
 ) -> Result<ResolvedScene, ResolveError> {
     let mut session = ResolveSession::new(registry);
+    session.set_state_snapshots(states);
     let view = session.resolve_root(view)?;
     Ok(session.finish(view))
 }
@@ -237,7 +261,16 @@ pub(crate) fn resolve_component_subtree(
     registry: &ComponentRegistry,
     parent: ComponentId,
 ) -> Result<ResolvedScene, ResolveError> {
-    let mut resolved = resolve_branch(view, registry)?;
+    resolve_component_subtree_with_states(view, registry, parent, &HashMap::new())
+}
+
+pub(crate) fn resolve_component_subtree_with_states(
+    view: &View,
+    registry: &ComponentRegistry,
+    parent: ComponentId,
+    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+) -> Result<ResolvedScene, ResolveError> {
+    let mut resolved = resolve_branch(view, registry, states)?;
     resolved.mounts.reparent_roots(parent);
     Ok(resolved)
 }

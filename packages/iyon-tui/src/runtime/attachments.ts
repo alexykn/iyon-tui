@@ -112,7 +112,7 @@ export function prepareSemanticAttachments(
         addAttachment(
           node.stateAttachment,
           "state",
-          node.kind,
+          attachmentTargetNodeKind(node),
           path,
           stateUses,
         );
@@ -121,7 +121,7 @@ export function prepareSemanticAttachments(
         addAttachment(
           node.contentAttachment,
           "content",
-          node.kind,
+          attachmentTargetNodeKind(node),
           path,
           contentUses,
         );
@@ -143,7 +143,9 @@ export function prepareSemanticAttachments(
     if (previousPath !== undefined) {
       throw tuiError(
         "validation",
-        `duplicate ${expectedKind} attachment in semantic candidate`,
+        expectedKind === "state"
+          ? "DUPLICATE_VIEW_STATE_ATTACHMENT: duplicate state attachment (ViewState) in semantic candidate"
+          : "DUPLICATE_CONTENT_PORT_ATTACHMENT: duplicate content attachment in semantic candidate",
         { handleId, firstPath: previousPath, secondPath: path },
       );
     }
@@ -175,6 +177,12 @@ class PreparedAttachmentSetImpl implements PreparedAttachmentSet {
     this.finished = true;
     for (const lease of this.leases) lease.abort();
   }
+}
+
+function attachmentTargetNodeKind(node: SemanticViewNode): number {
+  let target = node;
+  while (target.kind === SEMANTIC_VIEW_KIND.decorated) target = target.child;
+  return target.kind;
 }
 
 function childrenOf(node: SemanticViewNode): ReadonlyArray<readonly [string, SemanticViewNode]> {

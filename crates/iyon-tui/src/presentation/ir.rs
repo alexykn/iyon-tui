@@ -11,6 +11,9 @@ use std::{
     },
 };
 
+#[cfg(feature = "native-host")]
+use std::collections::HashSet;
+
 use crate::{
     component::ComponentId,
     perf::{self, Counter},
@@ -48,13 +51,22 @@ pub(crate) struct ViewFlags(u8);
 
 impl ViewFlags {
     const CONTAINS_COMPONENT_SLOT: u8 = 1 << 0;
+    const CONTAINS_STATE_ATTACHMENT: u8 = 1 << 1;
 
     pub(crate) const fn contains_component_slot(self) -> bool {
         self.0 & Self::CONTAINS_COMPONENT_SLOT != 0
     }
 
+    const fn contains_state_attachment(self) -> bool {
+        self.0 & Self::CONTAINS_STATE_ATTACHMENT != 0
+    }
+
     const fn with_component_slot() -> Self {
         Self(Self::CONTAINS_COMPONENT_SLOT)
+    }
+
+    const fn with_state_attachment(self) -> Self {
+        Self(self.0 | Self::CONTAINS_STATE_ATTACHMENT)
     }
 }
 
@@ -675,6 +687,9 @@ impl std::panic::UnwindSafe for View {}
 pub(crate) struct ViewNode {
     id: ViewId,
     flags: ViewFlags,
+    /// Native retained state attachment. This is a physical preparation value,
+    /// never a public semantic/native pointer identity.
+    state_attachment: Option<u64>,
     pub(crate) width: WidthRule,
     pub(crate) height: HeightRule,
     pub(crate) decoration: Decoration,
@@ -708,6 +723,7 @@ impl View {
             inner: Arc::new(ViewNode {
                 id: next_view_id(),
                 flags: ViewNode::compute_flags(&parts.kind),
+                state_attachment: None,
                 width: parts.width,
                 height: parts.height,
                 decoration: parts.decoration,
@@ -742,6 +758,112 @@ impl View {
         &self.inner.style_facts
     }
 
+    pub(crate) fn state_attachment_id(&self) -> Option<u64> {
+        self.inner.state_attachment
+    }
+
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_state_attachment_id(&self) -> Option<u64> {
+        self.state_attachment_id()
+    }
+
+    /// Attaches a retained ViewState identity without introducing a wrapper
+    /// occurrence. Native structural transport calls this after constructing
+    /// the ordinary semantic value.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_with_state_attachment(self, state_id: u64) -> Result<Self, String> {
+        if state_id == 0 {
+            return Err("ViewState identity must be positive".to_owned());
+        }
+        if !self.native_state_capable() {
+            return Err("ViewState is unsupported on this node kind".to_owned());
+        }
+        if self.state_attachment_id() == Some(state_id) {
+            return Ok(self);
+        }
+        Ok(self.map_node(|node| node.state_attachment = Some(state_id)))
+    }
+
+    /// Exhaustive native capability classification for retained presentation
+    /// state. Component indirections have no independently addressable box;
+    /// their concrete component View owns presentation state instead.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_state_capable(&self) -> bool {
+        crate::retained_state::presentation_state_capable(self.kind())
+    }
+
+    /// Returns every retained state identity in this semantic value. The
+    /// native host uses this to establish desired binding before a frame.
+    #[cfg(feature = "native-host")]
+    pub fn native_state_attachment_ids(&self) -> Result<Vec<u64>, String> {
+        if !self.inner.flags.contains_state_attachment() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        let mut active = HashSet::new();
+        self.collect_state_attachment_ids(&mut ids, &mut active)?;
+        Ok(ids)
+    }
+
+    #[cfg(feature = "native-host")]
+    fn collect_state_attachment_ids(
+        &self,
+        ids: &mut Vec<u64>,
+        active: &mut HashSet<ViewId>,
+    ) -> Result<(), String> {
+        if !self.inner.flags.contains_state_attachment() {
+            return Ok(());
+        }
+        if !active.insert(self.id()) {
+            return Err("cyclic semantic View graph".to_owned());
+        }
+        if let Some(state_id) = self.state_attachment_id() {
+            if ids.contains(&state_id) {
+                return Err("duplicate ViewState attachment".to_owned());
+            }
+            ids.push(state_id);
+        }
+        match self.kind() {
+            ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => {}
+            ViewKind::Column(column) => {
+                for child in column.children.iter() {
+                    child.view.collect_state_attachment_ids(ids, active)?;
+                }
+            }
+            ViewKind::Row(row) => {
+                for child in row.children.iter() {
+                    child.view.collect_state_attachment_ids(ids, active)?;
+                }
+            }
+            ViewKind::Grid(grid) => {
+                for cell in grid.cells.iter() {
+                    cell.view.collect_state_attachment_ids(ids, active)?;
+                }
+            }
+            ViewKind::Hanging(hanging) => {
+                hanging.prefix.collect_state_attachment_ids(ids, active)?;
+                hanging
+                    .continuation_prefix
+                    .collect_state_attachment_ids(ids, active)?;
+                hanging.body.collect_state_attachment_ids(ids, active)?;
+            }
+            ViewKind::Container(container) => {
+                container.child.collect_state_attachment_ids(ids, active)?;
+            }
+            ViewKind::ClampRows(clamp) => {
+                clamp.child.collect_state_attachment_ids(ids, active)?;
+            }
+            ViewKind::RowViewport(viewport) => {
+                viewport.child.collect_state_attachment_ids(ids, active)?;
+            }
+        }
+        active.remove(&self.id());
+        Ok(())
+    }
+
     pub(crate) fn kind(&self) -> &ViewKind {
         &self.inner.kind
     }
@@ -759,6 +881,9 @@ impl View {
         let mut next = self.inner.shallow_clone();
         update(&mut next);
         next.flags = ViewNode::compute_flags(&next.kind);
+        if next.state_attachment.is_some() {
+            next.flags = next.flags.with_state_attachment();
+        }
         next.id = next_view_id();
         Self {
             inner: Arc::new(next),
@@ -1541,6 +1666,7 @@ impl ViewNode {
         Self {
             id: self.id,
             flags: self.flags,
+            state_attachment: self.state_attachment,
             width: self.width,
             height: self.height,
             decoration: self.decoration.clone(),
@@ -1556,6 +1682,7 @@ impl ViewNode {
             && self.decoration == other.decoration
             && self.style_states == other.style_states
             && self.style_facts == other.style_facts
+            && self.state_attachment == other.state_attachment
             && self.kind == other.kind
     }
 }

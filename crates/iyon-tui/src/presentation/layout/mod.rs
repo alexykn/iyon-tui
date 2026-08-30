@@ -76,14 +76,14 @@ pub(super) fn record_emitted_node() {
 }
 
 #[cfg(test)]
-pub(super) fn reset_layout_counters() {
+pub(crate) fn reset_layout_counters() {
     MEASURE_NODES.with(|count| count.set(0));
     PREPARE_NODES.with(|count| count.set(0));
     EMITTED_NODES.with(|count| count.set(0));
 }
 
 #[cfg(test)]
-pub(super) fn layout_counters() -> (usize, usize, usize) {
+pub(crate) fn layout_counters() -> (usize, usize, usize) {
     (
         MEASURE_NODES.with(Cell::get),
         PREPARE_NODES.with(Cell::get),

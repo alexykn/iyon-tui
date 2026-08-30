@@ -46,10 +46,18 @@ pub enum Counter {
     PersistentSeqBranchClones,
     PersistentSeqItemsIteratedDuringPatch,
     ComponentGeometryNodesVisited,
+    ViewStateMutationsAccepted,
+    ViewStateMutationsNoop,
+    ViewStatePresentationInvalidations,
+    ViewStateStyleStateInvalidations,
+    ViewStateIncrementalPaints,
+    ViewStateDamageRects,
+    ViewStateFullDamageFallbacks,
+    LegacyDecoratedCompatibilityFrames,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::ComponentGeometryNodesVisited as usize + 1;
+    pub const COUNT: usize = Self::LegacyDecoratedCompatibilityFrames as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -90,6 +98,14 @@ const NAMES: [&str; Counter::COUNT] = [
     "persistent_seq_branch_clones",
     "persistent_seq_items_iterated_during_patch",
     "component_geometry_nodes_visited",
+    "view_state_mutations_accepted",
+    "view_state_mutations_noop",
+    "view_state_presentation_invalidations",
+    "view_state_style_state_invalidations",
+    "view_state_incremental_paints",
+    "view_state_damage_rects",
+    "view_state_full_damage_fallbacks",
+    "legacy_decorated_compatibility_frames",
 ];
 
 #[cfg(feature = "perf-counters")]

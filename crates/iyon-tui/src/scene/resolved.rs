@@ -4,6 +4,7 @@ use crate::{
     component::{ComponentId, ComponentSnapshot, MountGraph},
     interaction::MountedCapabilities,
     presentation::View,
+    retained_state::ViewStateSnapshot,
 };
 
 /// Component snapshots and mount-time topology needed to interpret semantic
@@ -11,11 +12,18 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ResolutionOverlay {
     pub(crate) components: HashMap<ComponentId, ComponentSnapshot>,
+    /// Current immutable copies of host-owned retained presentation state,
+    /// keyed by the native attachment identity carried by a semantic View.
+    pub(crate) states: HashMap<u64, ViewStateSnapshot>,
 }
 
 impl ResolutionOverlay {
     pub(crate) fn component(&self, id: ComponentId) -> Option<&ComponentSnapshot> {
         self.components.get(&id)
+    }
+
+    pub(crate) fn state(&self, id: u64) -> Option<&ViewStateSnapshot> {
+        self.states.get(&id)
     }
 }
 

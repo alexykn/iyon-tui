@@ -21,9 +21,16 @@ export abstract class FrameworkHandle<K extends string = string> {
   readonly kind: K;
   private isDisposed = false;
 
-  protected constructor(kind: K, resource: never) {
+  protected constructor(
+    kind: K,
+    resource: never,
+    options: {
+      readonly owner?: { readonly environment: object; readonly host?: object };
+      readonly acceptedNodeKinds?: ReadonlySet<number>;
+    } = {},
+  ) {
     this.kind = kind;
-    this.id = registerFrameworkHandle(this, resource as unknown as object, kind);
+    this.id = registerFrameworkHandle(this, resource as unknown as object, kind, options);
   }
 
   protected nativeAs<T extends object>(): T {

@@ -20,6 +20,7 @@ import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/histor
 import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
 import { createViewSlot } from "../api/controls/view-slot.ts";
 import { createScrollPane } from "../api/controls/scroll-pane.ts";
+import { createViewState, type ViewState as ViewStateContract } from "../api/view/retained-state.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
@@ -80,6 +81,7 @@ export interface TuiRuntime {
   close(): void;
   exit(): void;
   createHistory(): HistoryContract;
+  viewState(): ViewStateContract;
   createTextInput(options?: TextInputOptions): TextInputContract;
   createViewSlot(initial: View): ViewSlotContract;
   createScrollPane(initial: View): ScrollPaneContract;
@@ -664,6 +666,31 @@ export class Tui implements TuiRuntime {
     }
   }
 
+  /** Creates a Tui-owned retained presentation state record. */
+  viewState(): ViewStateContract {
+    this.prepareMutation("tui.viewState");
+    const resource = this.host.viewState();
+    const registration = this.hostRegistration;
+    try {
+      return this.ownHandle(createViewState(
+        resource,
+        {
+          environment: this.runtimeEnvironment.token,
+          host: registration.token,
+        },
+        () => registration.markPending(),
+        assertViewStateMutationAllowed,
+      ));
+    } catch (error) {
+      try {
+        resource.dispose();
+      } catch (cleanupError) {
+        throw new AggregateError([asTuiError(error), asTuiError(cleanupError)], "ViewState creation cleanup failed");
+      }
+      throw asTuiError(error);
+    }
+  }
+
   /** Creates a Tui-owned, host-bound TextInput with all options applied. */
   createTextInput(options: TextInputOptions = {}): TextInputContract {
     this.prepareMutation("tui.createTextInput");
@@ -775,18 +802,31 @@ export class Tui implements TuiRuntime {
   }
 
   private disposeOwnedHandles(): void {
-    const handles = [...this.ownedHandles];
+    let pending = [...this.ownedHandles];
     this.ownedHandles.clear();
-    const errors: unknown[] = [];
-    for (const handle of handles) {
-      try {
-        handle.dispose();
-      } catch (error) {
-        errors.push(error);
+    let finalErrors: unknown[] = [];
+    // Controls can own attachment leases for ViewState values. Retry handles
+    // that were temporarily in use after dependent controls have had a chance
+    // to release their leases, while preserving every final error.
+    for (let pass = 0; pending.length > 0 && pass <= pending.length; pass += 1) {
+      const failed: OwnedHandle[] = [];
+      const passErrors: unknown[] = [];
+      for (const handle of pending) {
+        try {
+          handle.dispose();
+        } catch (error) {
+          failed.push(handle);
+          passErrors.push(error);
+        }
       }
+      if (failed.length === pending.length) {
+        finalErrors = passErrors;
+        break;
+      }
+      pending = failed;
     }
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) throw new AggregateError(errors, "TUI owned-handle cleanup failed");
+    if (finalErrors.length === 1) throw finalErrors[0];
+    if (finalErrors.length > 1) throw new AggregateError(finalErrors, "TUI owned-handle cleanup failed");
   }
 
   private commitVisibleAfterDrain(): void {
@@ -810,6 +850,7 @@ export class Tui implements TuiRuntime {
     this.runtimeErrorListener = undefined;
     this.runtimeErrors.setReporter(undefined);
     attempt(() => this.attachmentBindings.dispose());
+    attempt(() => this.host.clearViewStateBindings?.());
     attempt(() => this.runtimeEnvironment.resources.invalidateHost(this.hostRegistration.token));
     attempt(() => this.disposeOwnedHandles());
     attempt(() => this.disposeRootBuilder());
@@ -911,6 +952,12 @@ function waitForAbortableDelay(milliseconds: number, signal: AbortSignal): Promi
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function assertViewStateMutationAllowed(): void {
+  if ((protocolState.mutating && !protocolState.internalPublication) || activeExecutionScope() !== undefined) {
+    throw tuiError("terminal", "ViewState mutation during a retained protocol pass is forbidden");
+  }
 }
 
 function ensureSignal(signal: AbortSignal | undefined): void {

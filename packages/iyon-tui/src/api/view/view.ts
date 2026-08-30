@@ -34,6 +34,9 @@ import {
   peekSemanticSequenceOverride,
   SEMANTIC_VIEW_KIND,
   semanticNodeOf,
+  retainSemanticAttachmentReference,
+  semanticNodeHasAttachments,
+  setSemanticAttachmentPresence,
   setSemanticDerivation,
   setSemanticGridSequenceOverride,
   setSemanticSequenceOverride,
@@ -530,8 +533,22 @@ export function createViewFromSemanticNode(node: SemanticViewNode): View {
 }
 
 /** @internal Creates a semantic component occurrence from a local HandleId. */
-export function componentViewForHandle(handleId: HandleId): View {
-  return createSemanticView({ kind: SEMANTIC_VIEW_KIND.component, handleId });
+export function componentViewForHandle(handleId: HandleId, reference?: object): View {
+  const view = createSemanticView({ kind: SEMANTIC_VIEW_KIND.component, handleId });
+  if (reference !== undefined) retainSemanticAttachmentReference(semanticNodeOf(view), reference);
+  return view;
+}
+
+/** @internal Adds an H3 attachment without exposing the plane to public View APIs. */
+export function attachSemanticResourceForTesting(
+  view: View,
+  slot: "stateAttachment" | "contentAttachment",
+  handleId: HandleId,
+  reference: object,
+): View {
+  const node = updateSemanticViewNode(semanticNodeOf(view), { [slot]: handleId });
+  retainSemanticAttachmentReference(node, reference);
+  return createViewFromSemanticNode(node);
 }
 
 /** @internal Raw grid construction shared by public and retained composition paths. */
@@ -653,13 +670,18 @@ export function gridSetCellForTransport(base: View, row: number, column: number,
       view: childNode,
     });
     const derived = buildWideGridNode(gridNode, gridOverride, sequence);
-    setSemanticDerivation(semanticNodeOf(derived), {
+    const derivedNode = semanticNodeOf(derived);
+    setSemanticDerivation(derivedNode, {
       kind: "gridCell",
       base: gridNode,
       row,
       column,
       child: childNode,
     });
+    setSemanticAttachmentPresence(
+      derivedNode,
+      semanticNodeHasAttachments(gridNode) || semanticNodeHasAttachments(childNode),
+    );
     return derived;
   }
   const sequenceIndex = placement!.cellIndices[row]?.get(column);
@@ -841,6 +863,7 @@ function buildWideGridNode(
     rowTracks: override.rowTracks,
     cellIndices: override.cellIndices,
   });
+  setSemanticAttachmentPresence(node, semanticNodeHasAttachments(baseNode));
   return wrapFrozenSemanticNode(node);
 }
 
@@ -894,6 +917,10 @@ function buildWideAxisNode(
   }) as SemanticViewNode;
   setSemanticSequenceOverride(node, { baseNode, sequence, edit });
   setSemanticDerivation(node, derivation);
+  const insertedAttachments = derivation.kind === "axisSet"
+    ? semanticNodeHasAttachments(derivation.child)
+    : derivation.inserted.some((entry) => semanticNodeHasAttachments(entry.child));
+  setSemanticAttachmentPresence(node, semanticNodeHasAttachments(baseNode) || insertedAttachments);
   // The node is already frozen with its final identity; evaluating children
   // here would materialize the lazy wide sequence and defeat §34.
   return wrapFrozenSemanticNode(node);

@@ -83,6 +83,14 @@ export interface NativeScrollPaneContract {
   followEnd(): void;
 }
 
+export interface NativeHostEpochs {
+  readonly host_id: string | number;
+  readonly desired_structural_revision: string | number;
+  readonly visible_frame_revision: string | number;
+  readonly pending_epoch: string | number;
+  readonly committed_epoch: string | number;
+}
+
 export interface NativeTuiHostContract {
   dispose(): void;
   exit(): void;
@@ -104,6 +112,26 @@ export interface NativeTuiHostContract {
   waitForOutput(): Promise<{ route_id: string; payload?: string | null } | null>;
   screenRows(): string[];
   nativeHistoryRows(): string[];
+  epochs?(): NativeHostEpochs;
+  setDesiredViewRef?(viewRef: number): {
+    readonly host_id: string | number;
+    readonly schedule_environment_drain: boolean;
+  };
+  flushPendingHosts?(budget?: number, forceRetry?: boolean): {
+    readonly rearm: boolean;
+    readonly attempted: number;
+    readonly committed_hosts: readonly (string | number)[];
+    readonly errors: readonly {
+      readonly host_id: string | number;
+      readonly attempted_epoch: string | number;
+      readonly desired_revision: string | number;
+      readonly phase: string;
+      readonly code: string;
+      readonly retryable: boolean;
+      readonly diagnostic: string;
+    }[];
+    readonly wake_epoch: string | number;
+  };
   resize(width: number, height: number): void;
   advanceTime(milliseconds: number): void;
   createViewSlot(initial: object): object;

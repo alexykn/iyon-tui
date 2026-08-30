@@ -1387,6 +1387,8 @@ export function setRootColdMaterializer(
 export interface RootPublication {
   /** The prepared native root reference (held under lease until commit/abort). */
   readonly rootRef: number;
+  /** Diagnostic route selected during preparation. */
+  readonly route?: "retained" | "fallback";
   /** Publishes the prepared root. Infallible after successful preparation. */
   commit(): void;
   /** Discards the prepared root; no visible mutation ever occurred. */
@@ -1406,9 +1408,19 @@ interface PreparedRootInstall {
   acquiredBoundaryLease: boolean;
 }
 
+export interface RetainedRootBoundaryOptions {
+  /** H3 commit records desired structure; a later frame barrier presents it. */
+  readonly deferHostCommit?: boolean;
+}
+
 export class RetainedRootBoundary {
   private previousRef: number | undefined;
+  private desiredRef: number | undefined;
+  private visibleRef: number | undefined;
+  private desiredNode: SemanticViewNode | undefined;
+  private visibleNode: SemanticViewNode | undefined;
   private closed = false;
+  private readonly deferHostCommit: boolean;
   /** NodeId allocator high-water at the last successful commit (§18). */
   nativeLookupCeiling = 0;
 
@@ -1422,7 +1434,10 @@ export class RetainedRootBoundary {
      * false means the boundary change failed; the old root stays installed.
      */
     private readonly installRef?: (rootRef: number) => boolean,
-  ) {}
+    options: RetainedRootBoundaryOptions = {},
+  ) {
+    this.deferHostCommit = options.deferHostCommit ?? false;
+  }
 
   /**
    * Adopts a root that already exists natively as the boundary's first root:
@@ -1433,15 +1448,32 @@ export class RetainedRootBoundary {
     if (this.closed) throw new Error("boundary is closed");
     const reference = acquireKnownRoot(this.session, view);
     if (reference === undefined) return false;
-    const previous = this.previousRef;
-    this.transferRoot(reference);
-    // acquireKnownRoot always returns a new lease. If the adopted root is
-    // already this boundary's root, keep the existing boundary lease and
-    // release only the promotion lease rather than accumulating one per
-    // adoption/recovery.
-    if (previous === reference) {
-      viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(reference), 1);
+    if (!this.deferHostCommit) {
+      const previous = this.previousRef;
+      this.transferRoot(reference);
+      // acquireKnownRoot always returns a new lease. If the adopted root is
+      // already this boundary's root, keep the existing boundary lease and
+      // release only the promotion lease rather than accumulating one per
+      // adoption/recovery.
+      if (previous === reference) this.releaseReference(reference);
+      return true;
     }
+
+    const previousDesired = this.desiredRef;
+    const previousVisible = this.visibleRef;
+    this.desiredRef = reference;
+    this.visibleRef = reference;
+    this.desiredNode = semanticNodeOf(view);
+    this.visibleNode = this.desiredNode;
+    this.nativeLookupCeiling = viewNodeIdHighWater();
+    if (previousDesired !== undefined && previousDesired !== reference && previousDesired !== previousVisible) {
+      this.releaseReference(previousDesired);
+    }
+    if (previousVisible !== undefined && previousVisible !== reference) this.releaseReference(previousVisible);
+    // The promotion above is the one lease needed by the new desired/visible
+    // root. If an older role already held the same reference, discard only the
+    // extra promotion lease.
+    if (previousDesired === reference || previousVisible === reference) this.releaseReference(reference);
     return true;
   }
 
@@ -1486,6 +1518,7 @@ export class RetainedRootBoundary {
     let finished = false;
     return {
       rootRef: prepared.rootRef,
+      route: "retained",
       commit: (): void => {
         if (finished) throw new Error("root publication already finished");
         finished = true;
@@ -1502,6 +1535,57 @@ export class RetainedRootBoundary {
         this.unwindPrepared(prepared);
       },
     };
+  }
+
+  /**
+   * H3-only structural publication for the PERF-13 frame seam. Preparation
+   * materializes and validates the candidate; commit installs the desired
+   * native root but deliberately does not paint it. `commitVisible()` is
+   * called only after the later host frame transaction succeeds.
+   */
+  prepareDesiredInstall(view: View): RootPublication | undefined {
+    if (this.closed) throw new Error("boundary is closed");
+    if (!this.deferHostCommit) return this.prepareInstall(view);
+    const prepared = this.prepareFrom(view);
+    if (prepared === undefined) return undefined;
+    let finished = false;
+    return {
+      rootRef: prepared.rootRef,
+      route: "retained",
+      commit: (): void => {
+        if (finished) throw new Error("root publication already finished");
+        finished = true;
+        try {
+          this.publishDesiredPrepared(prepared);
+        } catch (error) {
+          this.unwindPrepared(prepared);
+          throw error;
+        }
+      },
+      abort: (): void => {
+        if (finished) return;
+        finished = true;
+        this.unwindPrepared(prepared);
+      },
+    };
+  }
+
+  /**
+   * Promotes the latest desired root into the visible role after a successful
+   * host frame. No native call occurs here; the host already rendered the
+   * desired ref during the frame transaction.
+   */
+  commitVisible(): void {
+    if (!this.deferHostCommit || this.desiredRef === undefined) return;
+    const previous = this.visibleRef;
+    this.visibleRef = this.desiredRef;
+    this.visibleNode = this.desiredNode;
+    if (previous !== undefined && previous !== this.visibleRef) this.releaseReference(previous);
+  }
+
+  /** Returns whether the boundary has a desired root awaiting visibility. */
+  hasDesiredRoot(): boolean {
+    return this.deferHostCommit ? this.desiredRef !== undefined : this.previousRef !== undefined;
   }
 
   /**
@@ -1550,7 +1634,7 @@ export class RetainedRootBoundary {
     // ref. Validate that hint before returning a prepared publication;
     // otherwise a scavenged slot would fail during commit, where the
     // transaction can no longer take the documented cold-fallback path.
-    if (hintedRoot?.generation === this.session.abi.generation && resolvedRef === this.previousRef) {
+    if (hintedRoot?.generation === this.session.abi.generation && resolvedRef === this.currentRootRef()) {
       try {
         viewRenderRef(this.session.symbols, this.session.runtime, resolvedRef);
       } catch (error) {
@@ -1580,10 +1664,10 @@ export class RetainedRootBoundary {
     // it in `releaseAllExcept` would leak one native lease on every such
     // recovery because transferRoot correctly sees the same root already
     // installed.
-    if (ownsTempLease && resolvedRef === this.previousRef) ownsTempLease = false;
+    if (ownsTempLease && resolvedRef === this.currentRootRef()) ownsTempLease = false;
     let rootRef = resolvedRef;
     let acquiredBoundaryLease = false;
-    if (!ownsTempLease && resolvedRef !== this.previousRef) {
+    if (!ownsTempLease && resolvedRef !== this.currentRootRef()) {
       counters.node_id_ref_promotion_attempts += 1;
       const [low, high] = splitNodeId(node.id);
       try {
@@ -1634,6 +1718,7 @@ export class RetainedRootBoundary {
    * PREPARE" (handoff §32.2.3 hard rule).
    */
   prepareColdInstall(view: View): RootPublication | undefined {
+    if (this.deferHostCommit) return this.prepareDesiredColdInstall(view);
     if (this.closed) throw new Error("boundary is closed");
     const node = semanticNodeOf(view);
     if (this.installRef === undefined && this.host() === undefined) return undefined;
@@ -1649,6 +1734,7 @@ export class RetainedRootBoundary {
     let finished = false;
     return {
       rootRef,
+      route: "fallback",
       commit: (): void => {
         if (finished) throw new Error("root publication already finished");
         finished = true;
@@ -1708,8 +1794,71 @@ export class RetainedRootBoundary {
     };
   }
 
+  private prepareDesiredColdInstall(view: View): RootPublication | undefined {
+    if (this.closed) throw new Error("boundary is closed");
+    const node = semanticNodeOf(view);
+    const materialize = COLD_ROOT_MATERIALIZER;
+    if (materialize === undefined) return undefined;
+    const rootRef = materialize(view);
+    if (rootRef === undefined) return undefined;
+    let finished = false;
+    return {
+      rootRef,
+      route: "fallback",
+      commit: (): void => {
+        if (finished) throw new Error("root publication already finished");
+        finished = true;
+        const host = this.host();
+        const setDesired = host?.setDesiredViewRef;
+        if (host === undefined || setDesired === undefined) {
+          throw new Error("TUI_ROOT_DESIRED_PUBLISH_UNAVAILABLE");
+        }
+        try {
+          setDesired.call(host, rootRef);
+          const duplicate = this.desiredRef === rootRef || this.visibleRef === rootRef;
+          this.transferDesiredRoot(rootRef, node);
+          installHint(node, this.session.abi.generation, rootRef);
+          if (duplicate) this.releaseColdLease(rootRef);
+        } catch (error) {
+          this.releaseColdLease(rootRef);
+          throw error;
+        }
+      },
+      abort: (): void => {
+        if (finished) return;
+        finished = true;
+        this.releaseColdLease(rootRef);
+      },
+    };
+  }
+
   private releaseColdLease(rootRef: number): void {
-    viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(rootRef), 1);
+    this.releaseReference(rootRef);
+  }
+
+  /**
+   * Commits a prepared root as desired structure. The native host receives the
+   * root but does not paint until the environment frame drain runs.
+   */
+  private publishDesiredPrepared(prepared: PreparedRootInstall): void {
+    const host = this.host();
+    const setDesired = host?.setDesiredViewRef;
+    if (host === undefined || setDesired === undefined) {
+      throw new Error("TUI_ROOT_DESIRED_PUBLISH_UNAVAILABLE");
+    }
+    const sameVisible = this.visibleRef === prepared.rootRef;
+    setDesired.call(host, prepared.rootRef);
+    if (prepared.ownsTempLease) {
+      if (sameVisible) prepared.tx.releaseAll();
+      else prepared.tx.releaseAllExcept(prepared.rootRef);
+    } else {
+      prepared.tx.releaseAll();
+    }
+    this.transferDesiredRoot(prepared.rootRef, prepared.node);
+    // A NodeId promotion is not tracked in the transaction lease list. When
+    // it selected the already-visible ref, release that extra promotion lease
+    // after the desired role has been switched to the existing visible lease.
+    if (prepared.acquiredBoundaryLease && sameVisible) this.releaseReference(prepared.rootRef);
   }
 
   /**
@@ -1782,9 +1931,8 @@ export class RetainedRootBoundary {
     acquiredBoundaryLease: boolean;
   }): void {
     prepared.tx.releaseAll();
-    if (prepared.acquiredBoundaryLease && prepared.rootRef !== this.previousRef) {
-      const batch = Uint32Array.of(prepared.rootRef);
-      viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+    if (prepared.acquiredBoundaryLease && prepared.rootRef !== this.currentRootRef()) {
+      this.releaseReference(prepared.rootRef);
       prepared.acquiredBoundaryLease = false;
     }
   }
@@ -1792,6 +1940,15 @@ export class RetainedRootBoundary {
   /** §20 exact-root fast path against the currently installed root hint. */
   renderExact(view: View): ExactRootRender {
     if (this.closed) throw new Error("boundary is closed");
+    if (this.deferHostCommit) {
+      if (this.desiredRef === undefined || this.desiredNode !== semanticNodeOf(view)) {
+        return { status: "no_root_ref" };
+      }
+      // The frame broker owns the actual host mutation in deferred mode. An
+      // identity hit therefore only confirms that the desired root is already
+      // known; it must not create a second desired revision.
+      return { status: "ok", rootRef: this.desiredRef, recovered: false };
+    }
     const host = this.host();
     if (host === undefined) return { status: "no_root_ref" };
     const result = renderExactRoot(this.session, host, view);
@@ -1801,9 +1958,7 @@ export class RetainedRootBoundary {
       // A defensive native implementation could return the same ref after a
       // stale-status retry. In that case transferRoot must keep the existing
       // root lease and release only the extra promotion lease.
-      if (previous === result.rootRef) {
-        viewReleaseMany(this.session.symbols, this.session.runtime, Uint32Array.of(result.rootRef), 1);
-      }
+      if (previous === result.rootRef) this.releaseReference(result.rootRef);
     }
     return result;
   }
@@ -1812,11 +1967,34 @@ export class RetainedRootBoundary {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.deferHostCommit) {
+      const desired = this.desiredRef;
+      const visible = this.visibleRef;
+      this.desiredRef = undefined;
+      this.visibleRef = undefined;
+      this.desiredNode = undefined;
+      this.visibleNode = undefined;
+      if (desired !== undefined) this.releaseReference(desired);
+      if (visible !== undefined && visible !== desired) this.releaseReference(visible);
+      return;
+    }
     const ref = this.previousRef;
     this.previousRef = undefined;
-    if (ref !== undefined && isValidNativeRef(ref)) {
-      const batch = Uint32Array.of(ref);
-      viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
+    if (ref !== undefined) this.releaseReference(ref);
+  }
+
+  private currentRootRef(): number | undefined {
+    return this.deferHostCommit ? this.desiredRef : this.previousRef;
+  }
+
+  private transferDesiredRoot(reference: number, node: SemanticViewNode): void {
+    const previous = this.desiredRef;
+    const visible = this.visibleRef;
+    this.desiredRef = reference;
+    this.desiredNode = node;
+    this.nativeLookupCeiling = viewNodeIdHighWater();
+    if (previous !== undefined && previous !== reference && previous !== visible) {
+      this.releaseReference(previous);
     }
   }
 
@@ -1824,10 +2002,13 @@ export class RetainedRootBoundary {
     const previous = this.previousRef;
     this.previousRef = reference;
     this.nativeLookupCeiling = viewNodeIdHighWater();
-    if (previous !== undefined && previous !== reference && isValidNativeRef(previous)) {
-      const batch = Uint32Array.of(previous);
-      viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
-    }
+    if (previous !== undefined && previous !== reference) this.releaseReference(previous);
+  }
+
+  private releaseReference(reference: number): void {
+    if (!isValidNativeRef(reference)) return;
+    const batch = Uint32Array.of(reference);
+    viewReleaseMany(this.session.symbols, this.session.runtime, batch, 1);
   }
 }
 

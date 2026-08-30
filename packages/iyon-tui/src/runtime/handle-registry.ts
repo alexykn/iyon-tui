@@ -5,17 +5,25 @@ import {
   registerNativeResource,
   releaseNativeResource,
 } from "../transport/native/resources.ts";
+import type { NativeResourceKind } from "./native-resource-registry.ts";
 
 const handleIds = new WeakMap<object, HandleId>();
-let nextHandleId = 1;
+const HANDLE_ID_COUNTER = Symbol.for("iyon:tui:private-handle-counter");
+type HandleGlobals = typeof globalThis & { [HANDLE_ID_COUNTER]?: { next: number } };
+const handleGlobals = globalThis as HandleGlobals;
+const handleIdCounter = handleGlobals[HANDLE_ID_COUNTER] ??= { next: 1 };
 
 /** Registers runtime-owned identity and delegates raw storage to transport. */
-export function registerFrameworkHandle(handle: object, resource: object): HandleId {
-  if (nextHandleId > Number.MAX_SAFE_INTEGER) throw new Error("TUI framework handle identity exhausted");
-  const id = nextHandleId++ as HandleId;
+export function registerFrameworkHandle(
+  handle: object,
+  resource: object,
+  kind: NativeResourceKind = "framework",
+): HandleId {
+  if (handleIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI framework handle identity exhausted");
+  const id = handleIdCounter.next++ as HandleId;
   try {
     handleIds.set(handle, id);
-    registerNativeResource(handle, resource, id);
+    registerNativeResource(handle, resource, id, kind);
     return id;
   } catch (error) {
     handleIds.delete(handle);

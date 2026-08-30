@@ -433,7 +433,7 @@ export function composeSpacer(rows: number): View {
 export function composeComponent(handle: ComponentHandle): View {
   const handleId = handle.id;
   const scope = executionContext.top;
-  if (scope === undefined) return componentViewForHandle(handleId);
+  if (scope === undefined) return componentViewForHandle(handleId, handle);
   const slot = scope.nextSemanticSlot();
   const previous = slot.current;
   if (previous !== undefined) {
@@ -443,7 +443,7 @@ export function composeComponent(handle: ComponentHandle): View {
       return previous;
     }
   }
-  const view = withoutRetainedComposition(() => componentViewForHandle(handleId));
+  const view = withoutRetainedComposition(() => componentViewForHandle(handleId, handle));
   stageFresh(slot, view);
   return view;
 }

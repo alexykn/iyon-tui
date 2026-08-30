@@ -1,9 +1,9 @@
 use napi::Env;
 use napi::bindgen_prelude::{Array, JsObjectValue, JsValue, Object, Result, Unknown, ValueType};
 use napi_derive::napi;
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use iyon_tui::projection::ProjectionBuilder;
@@ -15,7 +15,7 @@ use iyon_tui::{
     HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
     IntoView, Key, KeyStroke, MarkdownOptions, MarkdownProjector, Modifiers, Output, Projector,
     Renderer, StyleRef, StyleSpec, TextContent, TextInput, TextPart, TextRole, TextSelector,
-    TextSpan, TuiHost, VerticalAlign, View, WrapMode,
+    TextSpan, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -31,6 +31,33 @@ mod view_abi;
 
 type ViewBridgeCache = view_abi::NativeViewRuntime;
 type ViewRuntimeHandle = view_abi::ViewRuntimeHandle;
+
+static HOST_ENVIRONMENTS: OnceLock<Mutex<HashMap<usize, TuiEnvironment>>> = OnceLock::new();
+
+fn host_environments() -> &'static Mutex<HashMap<usize, TuiEnvironment>> {
+    HOST_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
+    let env_key = env.raw() as usize;
+    let mut environments = host_environments().lock().map_err(|_| {
+        crate::NativeError::internal("native host environment registry is poisoned")
+    })?;
+    if let Some(environment) = environments.get(&env_key) {
+        return Ok(environment.clone());
+    }
+    let environment = TuiEnvironment::new();
+    let cleanup_key = env_key ^ 0x484f_5354;
+    env.add_env_cleanup_hook(cleanup_key, move |_| {
+        if let Some(registry) = HOST_ENVIRONMENTS.get()
+            && let Ok(mut environments) = registry.lock()
+        {
+            environments.remove(&env_key);
+        }
+    })?;
+    environments.insert(env_key, environment.clone());
+    Ok(environment)
+}
 
 macro_rules! tui_perf_inc {
     ($counter:ident) => {
@@ -584,8 +611,9 @@ impl NativeTuiHost {
             .map_err(|_| crate::NativeError::invalid_input("width must fit in u16"))?;
         let height = u16::try_from(height)
             .map_err(|_| crate::NativeError::invalid_input("height must fit in u16"))?;
+        let environment = host_environment_for_env(&env)?;
         let host = Box::new(
-            TuiHost::open(width, height, headless.unwrap_or(false))
+            TuiHost::open_in_environment(width, height, headless.unwrap_or(false), environment)
                 .map_err(|error| crate::NativeError::internal(error.to_string()))?,
         );
         let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
@@ -594,6 +622,88 @@ impl NativeTuiHost {
             alive: AtomicBool::new(true),
             view_runtime,
         })
+    }
+
+    /// Returns desired/visible revisions and authoritative host epochs.
+    #[napi]
+    pub fn epochs(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let epochs = self
+            .host
+            .epochs()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(serde_json::json!({
+            "host_id": epochs.host_id.to_string(),
+            "desired_structural_revision": epochs.desired_structural_revision.to_string(),
+            "visible_frame_revision": epochs.visible_frame_revision.to_string(),
+            "pending_epoch": epochs.pending_epoch.to_string(),
+            "committed_epoch": epochs.committed_epoch.to_string(),
+        }))
+    }
+
+    /// Accepts a native retained root as desired structure without presenting
+    /// it. The next environment drain performs the frame transaction.
+    #[napi(js_name = "setDesiredViewRef")]
+    pub fn set_desired_view_ref(&self, view_ref: i64) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let view = resolve_native_view(self.view_runtime, view_ref)?;
+        let disposition = self
+            .host
+            .set_desired_view(view)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        let epochs = self
+            .host
+            .epochs()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(serde_json::json!({
+            "host_id": epochs.host_id.to_string(),
+            "schedule_environment_drain": disposition.schedule_environment_drain,
+        }))
+    }
+
+    /// Drains the native environment's fair pending-host queue. Automatic
+    /// callers leave retry-blocked hosts blocked; explicit barriers force one
+    /// retry and surface the returned error records synchronously.
+    #[napi(js_name = "flushPendingHosts")]
+    pub fn flush_pending_hosts(
+        &self,
+        budget: Option<i64>,
+        force_retry: Option<bool>,
+    ) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let budget = budget.unwrap_or(32);
+        let budget = usize::try_from(budget)
+            .ok()
+            .filter(|budget| (1..=1024).contains(budget))
+            .ok_or_else(|| {
+                crate::NativeError::invalid_input("host flush budget must be 1 through 1024")
+            })?;
+        let report = self
+            .host
+            .flush_pending_hosts(budget, force_retry.unwrap_or(false))
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        let errors = report
+            .errors
+            .iter()
+            .map(|error| {
+                serde_json::json!({
+                    "host_id": error.host_id.to_string(),
+                    "attempted_epoch": error.attempted_epoch.to_string(),
+                    "desired_revision": error.desired_revision.to_string(),
+                    "phase": error.phase,
+                    "code": error.code,
+                    "retryable": error.retryable,
+                    "diagnostic": error.diagnostic,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({
+            "rearm": report.rearm,
+            "attempted": report.attempted,
+            "committed_hosts": report.committed_hosts.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "errors": errors,
+            "wake_epoch": report.wake_epoch.to_string(),
+        }))
     }
 
     #[napi]

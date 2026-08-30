@@ -23,7 +23,7 @@ export abstract class FrameworkHandle<K extends string = string> {
 
   protected constructor(kind: K, resource: never) {
     this.kind = kind;
-    this.id = registerFrameworkHandle(this, resource as unknown as object);
+    this.id = registerFrameworkHandle(this, resource as unknown as object, kind);
   }
 
   protected nativeAs<T extends object>(): T {

@@ -25,8 +25,9 @@ pub use error::{RunError, RuntimeError};
 pub use handle::{AppClosed, AppHandle, AppSendError};
 #[cfg(feature = "native-host")]
 pub use host::{
-    HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
-    RoutedOutput, TextStreamAnnotation, TextStreamPresentation, TuiHost,
+    HostCellStyle, HostDrainReport, HostEpochs, HostFrameError, HostHistory, HostScrollPane,
+    HostTextInput, HostTextStream, HostViewSlot, RoutedOutput, TextStreamAnnotation,
+    TextStreamPresentation, TuiEnvironment, TuiHost, WakeDisposition,
 };
 #[cfg(feature = "test-util")]
 pub(crate) use kernel::{KernelError, RunningApp};

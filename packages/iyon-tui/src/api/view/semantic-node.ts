@@ -182,6 +182,10 @@ export type SemanticViewKind = (typeof SEMANTIC_VIEW_KIND)[keyof typeof SEMANTIC
 export interface SemanticNodeBase {
   readonly id: SemanticNodeId;
   readonly kind: SemanticViewKind;
+  /** Backend-neutral retained state identity; resolved only at H3 prepare. */
+  readonly stateAttachment?: HandleId;
+  /** Backend-neutral content identity; resolved only at H3 prepare. */
+  readonly contentAttachment?: HandleId;
 }
 
 export interface SemanticTextNode extends SemanticNodeBase {
@@ -279,16 +283,67 @@ export function createSemanticViewNode(id: SemanticNodeId, draft: SemanticViewNo
   // untyped/private caller smuggles an `id` field into the draft.
   const node = freezeSemanticViewNode({ ...draft, id } as SemanticViewNode);
   semanticNodeBrand.add(node);
+  semanticAttachmentPresence.set(node, attachmentPresenceFor(node));
   return node;
 }
 
 /** Private association used when H3-B makes semantic nodes View-authoritative. */
 const semanticNodes = new WeakMap<View, SemanticViewNode>();
 const semanticNodeBrand = new WeakSet<object>();
+/** True when this node or a known descendant carries an attachment. */
+const semanticAttachmentPresence = new WeakMap<SemanticViewNode, boolean>();
+/** Keeps a caller-owned attachment alive while its semantic node is reachable. */
+const semanticAttachmentReferences = new WeakMap<SemanticViewNode, object[]>();
 
 export function installSemanticNode(view: View, node: SemanticViewNode): void {
   semanticNodeBrand.add(node);
   semanticNodes.set(view, node);
+  // Nodes created through the normal identity factory already have a summary.
+  // Unusual lazy sidecar nodes remain conservatively unknown until their owner
+  // records a summary explicitly, avoiding a hidden wide-sequence flatten.
+  if (!semanticAttachmentPresence.has(node)) semanticAttachmentPresence.set(node, true);
+}
+
+/** @internal Returns the cached attachment summary without walking children. */
+export function semanticNodeHasAttachments(node: SemanticViewNode): boolean {
+  return semanticAttachmentPresence.get(node) ?? true;
+}
+
+/** @internal Records a summary for a lazy structural sidecar node. */
+export function setSemanticAttachmentPresence(node: SemanticViewNode, present: boolean): void {
+  semanticAttachmentPresence.set(node, present);
+}
+
+/** @internal Used by attachment constructors to satisfy semantic liveness. */
+export function retainSemanticAttachmentReference(node: SemanticViewNode, reference: object): void {
+  const references = semanticAttachmentReferences.get(node) ?? [];
+  references.push(reference);
+  semanticAttachmentReferences.set(node, references);
+}
+
+function attachmentPresenceFor(node: SemanticViewNode): boolean {
+  if (node.stateAttachment !== undefined || node.contentAttachment !== undefined) return true;
+  switch (node.kind) {
+    case SEMANTIC_VIEW_KIND.row:
+    case SEMANTIC_VIEW_KIND.column:
+      return node.children.some((child) => semanticNodeHasAttachments(child.child));
+    case SEMANTIC_VIEW_KIND.grid:
+      return node.rows.some((row) => row.cells.some((cell) => semanticNodeHasAttachments(cell.view)));
+    case SEMANTIC_VIEW_KIND.hanging:
+      return semanticNodeHasAttachments(node.prefix)
+        || semanticNodeHasAttachments(node.continuation)
+        || semanticNodeHasAttachments(node.body);
+    case SEMANTIC_VIEW_KIND.container:
+    case SEMANTIC_VIEW_KIND.clamp:
+    case SEMANTIC_VIEW_KIND.contentMax:
+    case SEMANTIC_VIEW_KIND.decorated:
+      return semanticNodeHasAttachments(node.child);
+    case SEMANTIC_VIEW_KIND.text:
+    case SEMANTIC_VIEW_KIND.diff:
+    case SEMANTIC_VIEW_KIND.spacer:
+    case SEMANTIC_VIEW_KIND.component:
+      return false;
+  }
 }
 
 export function semanticNodeOf(view: View): SemanticViewNode {

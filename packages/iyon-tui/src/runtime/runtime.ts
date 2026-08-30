@@ -3,9 +3,17 @@ import { nativeResourceOf } from "../transport/native/resources.ts";
 import { lowerColdView } from "../transport/structural/cold-lowering.ts";
 import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
 import { componentViewForHandle, View } from "../api/view/view.ts";
-import { semanticNodeOf } from "../api/view/semantic-node.ts";
+import { retainSemanticAttachmentReference, semanticNodeOf } from "../api/view/semantic-node.ts";
 import { asTuiError, tuiError } from "../api/errors.ts";
 import { registerRuntimeAccess } from "./access.ts";
+import { runtimeEnvironment } from "./environment.ts";
+import { RuntimeErrorChannel, type RuntimeErrorReporter } from "./error-channel.ts";
+import {
+  AttachmentBindingState,
+  prepareSemanticAttachments,
+  validateSemanticAttachments,
+} from "./attachments.ts";
+import type { RuntimeHostRegistration } from "./wake-broker.ts";
 import { Scene } from "../api/view/scene.ts";
 import { bindHistoryLifetime, createHistoryHandle } from "../api/controls/history.ts";
 import { createTextInput, textInputForOutput } from "../api/controls/text-input.ts";
@@ -59,6 +67,10 @@ export interface TuiRuntime {
    * root and remain subscribed to tracked state. These paths are distinct.
    */
   render(scene: SceneProducer, signal?: AbortSignal): void;
+  /** Flushes through the host epoch captured at the barrier entry. */
+  flush(): void;
+  /** Registers a host runtime-error listener; return value removes it. */
+  onRuntimeError(listener: RuntimeErrorReporter): () => void;
   resize(width: number, height: number): void;
   close(): void;
   exit(): void;
@@ -95,9 +107,8 @@ export class Tui implements TuiRuntime {
   private height: number;
   private currentScene?: Scene;
   /**
-   * PERF-12 T13 (§18/§49): the scene body's root-lease boundary. It owns
-   * exactly one lease on the currently installed root; previous roots stay
-   * leased until a replacement is fully materialized and committed.
+   * PERF-13-A root boundary: desired and visible roots keep independent leases
+   * during a failed or superseded frame transition.
    */
   private boundary?: RetainedRootBoundary;
 
@@ -107,6 +118,11 @@ export class Tui implements TuiRuntime {
    * single dirty queue / batch / R7 transaction protocol.
    */
   private readonly retainedRuntime: RetainedExecutionRuntime;
+  private readonly runtimeEnvironment = runtimeEnvironment();
+  private readonly runtimeErrors = new RuntimeErrorChannel();
+  private readonly hostRegistration: RuntimeHostRegistration;
+  private runtimeErrorListener: RuntimeErrorReporter | undefined;
+  private readonly attachmentBindings = new AttachmentBindingState();
   /** Root execution scope (created on first canonical render). */
   private rootBuilder?: OwnedBuilderRoot;
   private rootScopeCreated = false;
@@ -122,6 +138,14 @@ export class Tui implements TuiRuntime {
     this.host = host;
     this.width = width;
     this.height = height;
+    this.hostRegistration = this.runtimeEnvironment.registerHost(
+      host,
+      this.runtimeErrors,
+      () => {
+        this.boundary?.commitVisible();
+        this.attachmentBindings.commitVisible();
+      },
+    );
     // Bootstrap the boundary's COLD materializer (Direct decode w/o paint)
     // so prepareColdInstall can fulfill the SS32.2.3 no-paint-during-PREPARE
     // rule. Idempotent; last Tui wins (single active runtime per process is
@@ -147,6 +171,7 @@ export class Tui implements TuiRuntime {
         // the parent scope. User-facing control.view() calls compose through
         // the retained semantic slot; the internal projection must not.
         const view = componentViewForHandle(slot.id);
+        retainSemanticAttachmentReference(semanticNodeOf(view), slot);
         return {
           view,
           target: {
@@ -161,7 +186,7 @@ export class Tui implements TuiRuntime {
       },
     });
     registerRuntimeAccess(this, {
-      flush: () => this.drainExecution(),
+      flush: () => this.flush(),
       enqueue: (event) => {
         if (event.type === "key") this.host.dispatchKey(event.key, event.modifiers);
         if (event.type === "paste") this.host.dispatchPaste(event.text);
@@ -181,10 +206,11 @@ export class Tui implements TuiRuntime {
   }
 
   /**
-   * PERF-12 T13.1 R8 root publication target: retained prepare first; on
-   * refusal a COLD MATERIALIZE-ONLY fallback (never paints during PREPARE —
-   * the commit publishes via one hostRenderRef call). History sideband is
-   * validated here and swapped at commit.
+   * PERF-13-A root publication target: retained prepare first; on refusal a
+   * COLD MATERIALIZE-ONLY fallback (never paints during PREPARE). H3 commit
+   * installs desired structure; the environment frame barrier performs the
+   * visible host update. History sideband is validated here and swapped at
+   * desired commit.
    */
   private prepareRootPublication(
     session: NonNullable<ReturnType<typeof nativeViewAbiSession>> | undefined,
@@ -192,6 +218,12 @@ export class Tui implements TuiRuntime {
   ): RootPublication | undefined {
     const historyToBind = this.stagedHistory;
     const previousHistory = this.boundHistory;
+    const attachments = prepareSemanticAttachments(
+      semanticNodeOf(output),
+      this.runtimeEnvironment.resources,
+      this.runtimeEnvironment.token,
+      this.hostRegistration.token,
+    );
     if (session === undefined) {
       // The generated ABI is present in every supported artifact, but keep
       // the contract truthful if an older addon is loaded: builder roots can
@@ -199,35 +231,69 @@ export class Tui implements TuiRuntime {
       // that a retained ref exists.
       return {
         rootRef: 0,
+        route: "fallback",
         commit: (): void => {
-          this.commitHistoryBinding(historyToBind, previousHistory);
-          this.host.render(lowerColdView(output));
-          this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+          try {
+            this.commitHistoryBinding(historyToBind, previousHistory);
+            this.host.render(lowerColdView(output));
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+          } catch (error) {
+            attachments.abort();
+            throw error;
+          }
         },
-        abort(): void {},
+        abort(): void {
+          attachments.abort();
+        },
       };
     }
-    this.ensureBoundary(session);
-    let prepared: RootPublication | undefined = this.boundary!.prepareInstall(output);
-    if (prepared === undefined) {
-      // Cold materialize-only: decode WITHOUT painting (\u00a732.2.3 hard rule).
-      prepared = this.boundary!.prepareColdInstall(output);
+    let prepared: RootPublication | undefined;
+    try {
+      this.ensureBoundary(session);
+      prepared = this.boundary!.prepareDesiredInstall(output);
+      if (prepared === undefined) {
+        // Cold materialize-only: decode WITHOUT painting (\u00a732.2.3 hard rule).
+        prepared = this.boundary!.prepareColdInstall(output);
+      }
+    } catch (error) {
+      attachments.abort();
+      throw error;
     }
     // Both retained and cold routes can refuse (for example when the native
     // session has been torn down). Report a normal preparation refusal so the
     // enclosing transaction can abort without dereferencing an absent ref.
-    if (prepared === undefined) return undefined;
+    if (prepared === undefined) {
+      attachments.abort();
+      return undefined;
+    }
     // History sideband validation happens at prepare time via stageHistory;
-    // commit swaps the binding before the body publishes.
+    // commit swaps the binding before the body publishes. Structural commit
+    // installs only desired state; visibility is promoted by the frame drain.
     return {
-      rootRef: prepared!.rootRef,
+      rootRef: prepared.rootRef,
+      route: prepared.route,
       commit: (): void => {
-        this.commitHistoryBinding(historyToBind, previousHistory);
-        prepared!.commit();
-        this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+        try {
+          this.commitHistoryBinding(historyToBind, previousHistory);
+          prepared!.commit();
+          this.attachmentBindings.commitDesired(attachments);
+          if (this.hostRegistration.native.flushPendingHosts !== undefined) {
+            this.hostRegistration.markPending();
+          }
+          this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+        } catch (error) {
+          attachments.abort();
+          throw error;
+        }
       },
       abort(): void {
-        prepared!.abort();
+        try {
+          prepared!.abort();
+        } finally {
+          attachments.abort();
+        }
       },
     };
   }
@@ -364,6 +430,31 @@ export class Tui implements TuiRuntime {
     if (!this.closed) this.retainedRuntime.flush();
   }
 
+  /**
+   * Explicit read-your-writes barrier. H3 publication is accepted first;
+   * this second step asks the environment broker to commit the latest visible
+   * frame and surfaces any stored runtime failure synchronously.
+   */
+  flush(): void {
+    this.ensureOpen();
+    this.retainedRuntime.flush();
+    if (this.hostRegistration.native.flushPendingHosts !== undefined) {
+      this.hostRegistration.flush();
+    }
+  }
+
+  onRuntimeError(listener: RuntimeErrorReporter): () => void {
+    this.ensureOpen();
+    if (typeof listener !== "function") throw new TypeError("runtime error listener must be a function");
+    this.runtimeErrorListener = listener;
+    this.runtimeErrors.setReporter(listener);
+    return () => {
+      if (this.runtimeErrorListener !== listener) return;
+      this.runtimeErrorListener = undefined;
+      this.runtimeErrors.setReporter(undefined);
+    };
+  }
+
   private ensureOpen(): void {
     if (this.closed) throw tuiError("terminal", "TUI runtime is closed");
   }
@@ -402,15 +493,19 @@ export class Tui implements TuiRuntime {
       // succeeds. A failed first render must leave the Tui retryable rather
       // than making the next render dereference an absent root builder.
       const previousStagedHistory = this.stagedHistory;
+      let root: OwnedBuilderRoot;
       try {
-        const root = OwnedBuilderRoot.start(this.retainedRuntime, producer, rootTarget);
-        this.rootBuilder = root;
-        this.rootScopeCreated = true;
-        return;
+        root = OwnedBuilderRoot.start(this.retainedRuntime, producer, rootTarget);
       } catch (error) {
         this.stagedHistory = previousStagedHistory;
         throw error;
       }
+      this.rootBuilder = root;
+      this.rootScopeCreated = true;
+      // H3 commit has already accepted the desired root. A frame failure is a
+      // later visibility error and must not roll the desired sideband back.
+      this.flush();
+      return;
     }
     const previousStagedHistory = this.stagedHistory;
     try {
@@ -419,6 +514,9 @@ export class Tui implements TuiRuntime {
       this.stagedHistory = previousStagedHistory;
       throw error;
     }
+    // As above, only producer/evaluation failure restores staged sideband;
+    // frame failure leaves the newly accepted desired revision retryable.
+    this.flush();
   }
 
   private renderDirect(scene: SceneContract, signal?: AbortSignal): void {
@@ -429,113 +527,82 @@ export class Tui implements TuiRuntime {
     const normalized = Scene.from(scene);
     // Validate the semantic body before transferring an attach-once History;
     // malformed runtime input must not partially mutate the scene sideband.
-    // Do not cold-lower here: direct scenes still take the retained exact-root
-    // or semantic frontier path below.
     semanticNodeOf(normalized.body);
     const previousHistory = this.boundHistory;
     if (normalized.history !== undefined) {
-      // Validate the handle before the identity no-op below. A disposed
-      // History must never be accepted merely because the same object was
-      // present in the last scene.
       assertHistoryOwner(normalized.history, this);
       if (previousHistory !== undefined && previousHistory !== normalized.history) {
         throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
       }
       nativeResourceOf<NativeHistoryContract>(normalized.history);
     }
-    // An omitted history means "keep the existing sideband" for both direct
-    // and retained scene ownership modes. Compare and record that effective
-    // value rather than allowing currentScene to forget a bound History.
     const effectiveHistory = normalized.history ?? previousHistory;
     if (
       this.currentScene !== undefined
       && this.currentScene.body === normalized.body
       && this.currentScene.history === effectiveHistory
     ) {
+      validateSemanticAttachments(
+        semanticNodeOf(normalized.body),
+        this.runtimeEnvironment.resources,
+        this.runtimeEnvironment.token,
+        this.hostRegistration.token,
+      );
       recordNativeViewRoute("no_op");
-      // Direct takeover is SEMANTIC even when no pixel can change: the direct
-      // scene now owns this boundary, so the canonical builder root must be
-      // relinquished NOW. Leaving it subscribed lets its State subscriptions
-      // ghost-update the screen later — exactly the R8 ownership-mode ghost.
-      // Projected components freeze rather than vanish: their JS scopes die
-      // here while native retirement stays deferred until a successful frame
-      // proves them unmounted (post-R9 invariant §32.3).
       this.stagedHistory = effectiveHistory;
       this.disposeRootBuilder();
+      this.flush();
       return;
     }
-    const previousBody = this.currentScene?.body;
+
     const session = nativeViewAbiSession();
-    // The legacy no-session route still needs a complete preflight before a
-    // History transfer. Supported retained sessions intentionally defer this
-    // cold lowering until the retained/cold fallback actually needs it.
-    const legacyNormalizedNode = session === undefined ? lowerColdView(normalized.body) : undefined;
-    const historyChanges = normalized.history !== undefined && normalized.history !== previousHistory;
-    if (historyChanges && session !== undefined) {
-      // Prepare the body before transferring a detached History. The native
-      // history transition is attach-once, so a malformed body must not make
-      // an otherwise reusable History permanently bound to this Tui.
-      this.ensureBoundary(session);
-      const retainedPublication = this.boundary!.prepareInstall(normalized.body);
-      const publication = retainedPublication ?? this.boundary!.prepareColdInstall(normalized.body);
-      if (publication !== undefined) {
-        try {
-          this.commitHistoryBinding(normalized.history, previousHistory);
-          publication.commit();
-        } catch (error) {
-          // If history preparation failed before commit, release the root
-          // lease acquired for the body and leave the old scene authoritative.
-          publication.abort();
-          throw error;
-        }
-        recordNativeViewRoute(retainedPublication === undefined ? "fallback" : "retained");
-        this.currentScene = new Scene(normalized.body, effectiveHistory);
-        this.stagedHistory = effectiveHistory;
-        this.disposeRootBuilder();
-        return;
-      }
+    const previousStagedHistory = this.stagedHistory;
+    this.stagedHistory = effectiveHistory;
+    let publication: RootPublication | undefined;
+    try {
+      publication = this.prepareRootPublication(session, normalized.body);
+    } catch (error) {
+      this.stagedHistory = previousStagedHistory;
+      throw error;
     }
-    // If the retained/cold preflight was unavailable, keep the legacy direct
-    // fallback behavior. The supported addon always has a preflight path for
-    // valid public Views; this branch is only for an older/incomplete addon.
-    if (historyChanges) this.commitHistoryBinding(normalized.history, previousHistory);
-    // Exact-root fast path: identical body View, warm hint, one host call.
-    if (
-      session !== undefined
-      && previousBody !== undefined
-      && normalized.body === previousBody
-    ) {
-      this.ensureBoundary(session);
-      const exact = this.boundary!.renderExact(normalized.body);
-      if (exact.status === "ok") {
-        recordNativeViewRoute("render_ref");
-        this.currentScene = new Scene(normalized.body, effectiveHistory);
-        this.stagedHistory = effectiveHistory;
-        this.disposeRootBuilder();
-        return;
+    if (publication !== undefined) {
+      try {
+        publication.commit();
+      } catch (error) {
+        publication.abort();
+        this.stagedHistory = previousStagedHistory;
+        throw error;
       }
-      // Miss falls through to the full retained install (§47 recovery).
+      recordNativeViewRoute(publication.route ?? (session === undefined ? "fallback" : "retained"));
+      this.currentScene = new Scene(normalized.body, effectiveHistory);
+      this.stagedHistory = effectiveHistory;
+      this.disposeRootBuilder();
+      this.flush();
+      return;
     }
-    let installed = false;
-    if (session !== undefined) {
-      this.ensureBoundary(session);
-      const nextRef = this.boundary!.install(normalized.body);
-      if (nextRef !== undefined) {
-        recordNativeViewRoute("retained");
-        installed = true;
-      }
-      // A refused install keeps the old root rendered (§45); the caller-level
-      // fallback below re-renders authoritatively.
-    }
-    if (!installed) {
-      // Complete cold candidate (§49): Direct N-API decode of the whole tree.
-      // Nodes published by an aborted retained prefix stay valid cache entries
-      // that this decode consults NodeId-first, so wasted prefix work is not
-      // repeated — it shortens the fallback.
+
+    // A complete retained/cold preflight is unavailable only for an older or
+    // torn-down addon. Validate attachments again for the compatibility render
+    // and make them visible only after that render succeeds.
+    this.stagedHistory = previousStagedHistory;
+    if (normalized.history !== undefined) this.commitHistoryBinding(normalized.history, previousHistory);
+    const attachments = prepareSemanticAttachments(
+      semanticNodeOf(normalized.body),
+      this.runtimeEnvironment.resources,
+      this.runtimeEnvironment.token,
+      this.hostRegistration.token,
+    );
+    try {
       recordNativeViewRoute("fallback");
-      this.host.render(legacyNormalizedNode ?? lowerColdView(normalized.body));
-      // Adopt so future renders hit the exact-root fast path.
-      if (session !== undefined) this.boundary!.adopt(normalized.body);
+      this.host.render(lowerColdView(normalized.body));
+      if (session !== undefined) {
+        this.ensureBoundary(session).adopt(normalized.body);
+      }
+      this.attachmentBindings.commitDesired(attachments);
+      this.attachmentBindings.commitVisible();
+    } catch (error) {
+      attachments.abort();
+      throw error;
     }
     this.currentScene = new Scene(normalized.body, effectiveHistory);
     this.stagedHistory = effectiveHistory;
@@ -544,7 +611,14 @@ export class Tui implements TuiRuntime {
 
   private ensureBoundary(session: NonNullable<ReturnType<typeof nativeViewAbiSession>>): RetainedRootBoundary {
     if (this.boundary === undefined) {
-      this.boundary = new RetainedRootBoundary(session, () => this.host);
+      const deferred = this.host.setDesiredViewRef !== undefined
+        && this.host.flushPendingHosts !== undefined;
+      this.boundary = new RetainedRootBoundary(
+        session,
+        () => this.host,
+        undefined,
+        { deferHostCommit: deferred },
+      );
     }
     return this.boundary;
   }
@@ -669,11 +743,14 @@ export class Tui implements TuiRuntime {
   }
 
   private disposeRetainedExecution(): void {
-    // Scope projections and builder roots own native leases/handles. They must
-    // be retired while the host is still alive; otherwise State subscribers
-    // and scheduled microtasks can outlive the Tui and target disposed slots.
-    // Factory-created controls are disposed first while their native host and
-    // the shared retained runtime are still available.
+    // Scope projections, attachment bindings, and builder roots own native
+    // leases/handles. Retire them before the host so queued environment work
+    // cannot outlive the Tui and target disposed resources.
+    this.hostRegistration.dispose();
+    this.runtimeErrorListener = undefined;
+    this.runtimeErrors.setReporter(undefined);
+    this.attachmentBindings.dispose();
+    this.runtimeEnvironment.resources.invalidateHost(this.hostRegistration.token);
     this.disposeOwnedHandles();
     this.disposeRootBuilder();
     this.retainedRuntime.dispose();

@@ -5,7 +5,7 @@
 //! the Rust application driver.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, HashSet, VecDeque},
     ops::Range,
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
@@ -119,6 +119,293 @@ enum HostBackend {
     Real(TermwizBackend),
 }
 
+/// Monotonic host/frame state shared with the runtime wake broker.
+///
+/// Structural publication and visible frame publication are deliberately
+/// separate. The desired revision may advance while the previous prepared
+/// frame remains visible after a retryable frame failure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostEpochs {
+    pub host_id: u64,
+    pub desired_structural_revision: u64,
+    pub visible_frame_revision: u64,
+    pub pending_epoch: u64,
+    pub committed_epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostFrameError {
+    pub host_id: u64,
+    pub attempted_epoch: u64,
+    pub desired_revision: u64,
+    pub phase: String,
+    pub code: String,
+    pub retryable: bool,
+    pub diagnostic: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostDrainReport {
+    pub rearm: bool,
+    pub attempted: usize,
+    pub committed_hosts: Vec<u64>,
+    pub errors: Vec<HostFrameError>,
+    pub wake_epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WakeDisposition {
+    pub schedule_environment_drain: bool,
+}
+
+/// One native environment owns the pending-host set and wake latch shared by
+/// all hosts created in that environment. The queue stores IDs only; host
+/// state remains authoritative in each registered host.
+#[derive(Clone)]
+pub struct TuiEnvironment {
+    inner: Arc<Mutex<EnvironmentInner>>,
+}
+
+// The host runtime already exposes `TuiHost` as a serialized Send/Sync
+// boundary. Environment operations never access a host without taking its
+// mutex; the unsafe markers make the shared pending-host registry usable by
+// the same N-API boundary without moving component callbacks out of the host
+// lock's ownership model.
+unsafe impl Send for TuiEnvironment {}
+unsafe impl Sync for TuiEnvironment {}
+
+struct EnvironmentInner {
+    next_host_id: u64,
+    hosts: HashMap<u64, Weak<Mutex<HostInner>>>,
+    pending: VecDeque<u64>,
+    pending_set: HashSet<u64>,
+    queued: HashSet<u64>,
+    retry_blocked: HashSet<u64>,
+    wake_latched: bool,
+    wake_epoch: u64,
+}
+
+impl TuiEnvironment {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(EnvironmentInner {
+                next_host_id: 1,
+                hosts: HashMap::new(),
+                pending: VecDeque::new(),
+                pending_set: HashSet::new(),
+                queued: HashSet::new(),
+                retry_blocked: HashSet::new(),
+                wake_latched: false,
+                wake_epoch: 0,
+            })),
+        }
+    }
+
+    fn register_host(&self, host: &Arc<Mutex<HostInner>>) -> anyhow::Result<u64> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        let id = environment.next_host_id;
+        environment.next_host_id = environment
+            .next_host_id
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("host identity exhausted"))?;
+        environment.hosts.insert(id, Arc::downgrade(host));
+        Ok(id)
+    }
+
+    fn unregister_host(&self, host_id: u64) {
+        let Ok(mut environment) = self.inner.lock() else {
+            return;
+        };
+        environment.hosts.remove(&host_id);
+        environment.pending_set.remove(&host_id);
+        environment.retry_blocked.remove(&host_id);
+        environment.queued.remove(&host_id);
+        environment.pending.retain(|id| *id != host_id);
+        if environment.pending.is_empty() {
+            environment.wake_latched = false;
+        }
+    }
+
+    fn queue_host(environment: &mut EnvironmentInner, host_id: u64) {
+        if !environment.pending_set.contains(&host_id)
+            || environment.retry_blocked.contains(&host_id)
+            || !environment.queued.insert(host_id)
+        {
+            return;
+        }
+        environment.pending.push_back(host_id);
+    }
+
+    fn mark_host_pending(&self, host_id: u64) -> anyhow::Result<WakeDisposition> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        if !environment.hosts.contains_key(&host_id) {
+            return Ok(WakeDisposition::default());
+        }
+        let schedule = !environment.wake_latched;
+        environment.wake_latched = true;
+        if schedule {
+            environment.wake_epoch = environment
+                .wake_epoch
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("environment wake epoch exhausted"))?;
+        }
+        environment.retry_blocked.remove(&host_id);
+        environment.pending_set.insert(host_id);
+        Self::queue_host(&mut environment, host_id);
+        Ok(WakeDisposition {
+            schedule_environment_drain: schedule,
+        })
+    }
+
+    fn complete_host(
+        &self,
+        host_id: u64,
+        pending_epoch: u64,
+        committed_epoch: u64,
+    ) -> anyhow::Result<()> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        if pending_epoch == committed_epoch {
+            environment.pending_set.remove(&host_id);
+            environment.retry_blocked.remove(&host_id);
+            environment.queued.remove(&host_id);
+            environment.pending.retain(|id| *id != host_id);
+        } else {
+            environment.pending_set.insert(host_id);
+            Self::queue_host(&mut environment, host_id);
+        }
+        if environment.pending.is_empty() {
+            environment.wake_latched = false;
+        }
+        Ok(())
+    }
+
+    fn block_host(&self, host_id: u64) -> anyhow::Result<()> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        environment.pending_set.insert(host_id);
+        environment.retry_blocked.insert(host_id);
+        environment.queued.remove(&host_id);
+        if environment.pending.is_empty() {
+            environment.wake_latched = false;
+        }
+        Ok(())
+    }
+
+    /// Fairly drains pending hosts. Automatic drains leave failed hosts
+    /// retry-blocked; an explicit barrier passes `force_retry = true`.
+    pub fn drain_pending(
+        &self,
+        budget: usize,
+        force_retry: bool,
+    ) -> anyhow::Result<HostDrainReport> {
+        let mut report = HostDrainReport::default();
+        let budget = budget.max(1);
+        let mut candidates = Vec::new();
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        report.wake_epoch = environment.wake_epoch;
+        if force_retry {
+            let blocked = environment.retry_blocked.drain().collect::<Vec<_>>();
+            for host_id in blocked {
+                Self::queue_host(&mut environment, host_id);
+            }
+        }
+        while candidates.len() < budget {
+            let Some(host_id) = environment.pending.pop_front() else {
+                break;
+            };
+            environment.queued.remove(&host_id);
+            candidates.push(host_id);
+        }
+        drop(environment);
+
+        for host_id in candidates {
+            report.attempted += 1;
+            let weak = {
+                let environment = self
+                    .inner
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+                environment.hosts.get(&host_id).cloned()
+            };
+            let Some(weak) = weak else {
+                self.unregister_host(host_id);
+                continue;
+            };
+            let Some(host) = weak.upgrade() else {
+                self.unregister_host(host_id);
+                continue;
+            };
+            let result = host
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))
+                .and_then(|mut host| host.flush_pending_frame());
+            match result {
+                Ok(()) => {
+                    report.committed_hosts.push(host_id);
+                    let host = host
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+                    self.complete_host(host_id, host.pending_epoch, host.committed_epoch)?;
+                }
+                Err(error) => {
+                    let host = host
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+                    report.errors.push(HostFrameError {
+                        host_id,
+                        attempted_epoch: host.pending_epoch,
+                        desired_revision: host.desired_structural_revision,
+                        phase: "frame".to_owned(),
+                        code: "FRAME_PREPARATION_FAILED".to_owned(),
+                        retryable: true,
+                        diagnostic: error.to_string(),
+                    });
+                    drop(host);
+                    self.block_host(host_id)?;
+                }
+            }
+        }
+
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        report.rearm = !environment.pending.is_empty();
+        if !report.rearm {
+            // Recheck under the same lock used by mark_host_pending so a
+            // mutation cannot be lost between the empty check and latch
+            // clear. Blocked work remains discoverable but is not runnable.
+            environment.wake_latched = false;
+            report.rearm = !environment.pending.is_empty();
+            if report.rearm {
+                environment.wake_latched = true;
+            }
+        }
+        report.wake_epoch = environment.wake_epoch;
+        Ok(report)
+    }
+}
+
+impl Default for TuiEnvironment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct HostInner {
     running: HostRunning,
     backend: HostBackend,
@@ -132,6 +419,14 @@ struct HostInner {
     now: Instant,
     headless: bool,
     closed: bool,
+    environment: TuiEnvironment,
+    host_id: u64,
+    desired_structural_revision: u64,
+    visible_frame_revision: u64,
+    pending_epoch: u64,
+    committed_epoch: u64,
+    #[cfg(test)]
+    fail_next_frame: Option<String>,
 }
 
 /// A shared native TextInput value that can be mounted into one TuiHost.
@@ -2087,6 +2382,17 @@ unsafe impl Sync for TuiHost {}
 
 impl TuiHost {
     pub fn open(width: u16, height: u16, headless: bool) -> Result<Self> {
+        Self::open_in_environment(width, height, headless, TuiEnvironment::new())
+    }
+
+    /// Opens a host in an existing native environment. Hosts sharing this
+    /// environment share one pending-host queue and wake latch.
+    pub fn open_in_environment(
+        width: u16,
+        height: u16,
+        headless: bool,
+        environment: TuiEnvironment,
+    ) -> Result<Self> {
         if width == 0 || height == 0 {
             return Err(anyhow::anyhow!("terminal size must be positive"));
         }
@@ -2112,7 +2418,7 @@ impl TuiHost {
             .map_err(|error| anyhow::anyhow!("host init failed: {error:?}"))?;
         let mut backend = backend;
         let frame = prepare_frame(&mut running, &mut backend, now)?;
-        let mut inner = HostInner {
+        let inner = Arc::new(Mutex::new(HostInner {
             running,
             backend,
             frame,
@@ -2121,9 +2427,26 @@ impl TuiHost {
             now,
             headless,
             closed: false,
-        };
-        inner.present_frame()?;
-        let inner = Arc::new(Mutex::new(inner));
+            environment: environment.clone(),
+            host_id: 0,
+            desired_structural_revision: 0,
+            visible_frame_revision: 0,
+            pending_epoch: 0,
+            committed_epoch: 0,
+            #[cfg(test)]
+            fail_next_frame: None,
+        }));
+        let host_id = environment.register_host(&inner)?;
+        let mut host = inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        host.host_id = host_id;
+        if let Err(error) = host.present_frame() {
+            drop(host);
+            environment.unregister_host(host_id);
+            return Err(error);
+        }
+        drop(host);
         Ok(Self { inner })
     }
 
@@ -2131,6 +2454,47 @@ impl TuiHost {
         HostHistory {
             host: Arc::clone(&self.inner),
         }
+    }
+
+    /// Returns the authoritative desired/visible revisions and host epochs.
+    pub fn epochs(&self) -> Result<HostEpochs> {
+        Ok(self.lock()?.epochs())
+    }
+
+    /// Accepts a desired structural root without preparing or presenting a
+    /// frame. The returned wake disposition is an edge-trigger hint only; the
+    /// environment queue and host epochs remain authoritative.
+    pub fn set_desired_view(&self, body: View) -> Result<WakeDisposition> {
+        let mut inner = self.lock_mut()?;
+        if inner.closed {
+            return Err(anyhow::anyhow!("host is closed"));
+        }
+        let next_revision = inner
+            .desired_structural_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
+        inner.running.state.body = body.clone();
+        inner.running.host_set_body(body);
+        inner.desired_structural_revision = next_revision;
+        inner.mark_pending()
+    }
+
+    /// Synchronously attempts the current host's pending frame. This is the
+    /// explicit barrier used by compatibility callers and tests.
+    pub fn flush_pending(&self) -> Result<()> {
+        self.lock_mut()?.flush_pending_frame()
+    }
+
+    /// Fairly drains all pending hosts in this native environment. Automatic
+    /// callers use `force_retry = false`; explicit barriers force one retry of
+    /// retry-blocked hosts.
+    pub fn flush_pending_hosts(
+        &self,
+        budget: usize,
+        force_retry: bool,
+    ) -> anyhow::Result<HostDrainReport> {
+        let environment = self.lock()?.environment.clone();
+        environment.drain_pending(budget, force_retry)
     }
 
     pub fn create_text_input(&self, multiline: bool) -> Result<HostTextInput> {
@@ -2203,12 +2567,18 @@ impl TuiHost {
                 sink.history.extend(final_rows);
                 Ok(())
             }
-            HostBackend::Real(backend) => {
-                backend.position_after_final_frame()?;
-                ignore_terminal_shutdown_error(backend.restore())
-            }
+            HostBackend::Real(backend) => match backend.position_after_final_frame() {
+                Ok(()) => ignore_terminal_shutdown_error(backend.restore()),
+                Err(error) => Err(error),
+            },
         };
-        inner.closed = true;
+        if result.is_ok() {
+            let host_id = inner.host_id;
+            let environment = inner.environment.clone();
+            inner.closed = true;
+            drop(inner);
+            environment.unregister_host(host_id);
+        }
         result
     }
 
@@ -2286,10 +2656,8 @@ impl TuiHost {
     }
 
     pub fn render(&self, body: View) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        inner.running.state.body = body.clone();
-        inner.running.host_set_body(body);
-        inner.advance_and_render()
+        self.set_desired_view(body)?;
+        self.flush_pending()
     }
 
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
@@ -2507,10 +2875,22 @@ impl TuiHost {
         inner.running.host_set_body(View::spacer(0));
         inner.running.host_clear_retained_views();
         inner.closed = true;
-        if let HostBackend::Real(backend) = &mut inner.backend {
-            ignore_terminal_shutdown_error(backend.restore())?;
-        }
-        Ok(())
+        let result = if let HostBackend::Real(backend) = &mut inner.backend {
+            ignore_terminal_shutdown_error(backend.restore())
+        } else {
+            Ok(())
+        };
+        let host_id = inner.host_id;
+        let environment = inner.environment.clone();
+        drop(inner);
+        environment.unregister_host(host_id);
+        result
+    }
+
+    #[cfg(test)]
+    pub fn fail_next_frame_for_test(&self, diagnostic: impl Into<String>) -> Result<()> {
+        self.lock_mut()
+            .map(|mut inner| inner.fail_next_frame = Some(diagnostic.into()))
     }
 
     pub fn is_headless(&self) -> bool {
@@ -2554,10 +2934,44 @@ impl Drop for TuiHost {
 }
 
 impl HostInner {
+    fn epochs(&self) -> HostEpochs {
+        HostEpochs {
+            host_id: self.host_id,
+            desired_structural_revision: self.desired_structural_revision,
+            visible_frame_revision: self.visible_frame_revision,
+            pending_epoch: self.pending_epoch,
+            committed_epoch: self.committed_epoch,
+        }
+    }
+
+    fn mark_pending(&mut self) -> anyhow::Result<WakeDisposition> {
+        self.pending_epoch = self
+            .pending_epoch
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("host pending epoch exhausted"))?;
+        self.environment.mark_host_pending(self.host_id)
+    }
+
+    fn ensure_pending(&mut self) -> anyhow::Result<()> {
+        if self.pending_epoch == self.committed_epoch {
+            let _ = self.mark_pending()?;
+        } else {
+            let _ = self.environment.mark_host_pending(self.host_id)?;
+        }
+        Ok(())
+    }
+
     fn render(&mut self) -> Result<()> {
-        self.frame = prepare_frame(&mut self.running, &mut self.backend, self.now)?;
+        let candidate = prepare_frame(&mut self.running, &mut self.backend, self.now)?;
+        let previous = std::mem::replace(&mut self.frame, candidate);
+        let previous_pending = self.frame_pending;
         self.frame_pending = true;
-        self.present_frame()
+        if let Err(error) = self.present_frame() {
+            self.frame = previous;
+            self.frame_pending = previous_pending;
+            return Err(error);
+        }
+        self.commit_frame()
     }
 
     fn present_frame(&mut self) -> Result<()> {
@@ -2585,6 +2999,7 @@ impl HostInner {
                 }
                 Err(error) if error.to_string().contains("terminal worker stopped") => {
                     self.closed = true;
+                    return Err(error);
                 }
                 Err(error) => return Err(error),
             }
@@ -2594,12 +3009,31 @@ impl HostInner {
         Ok(())
     }
 
-    fn advance_and_render(&mut self) -> Result<()> {
+    fn commit_frame(&mut self) -> Result<()> {
+        self.visible_frame_revision = self
+            .visible_frame_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
+        self.committed_epoch = self.pending_epoch;
+        self.environment
+            .complete_host(self.host_id, self.pending_epoch, self.committed_epoch)?;
+        Ok(())
+    }
+
+    fn flush_pending_frame(&mut self) -> Result<()> {
+        if self.closed {
+            return Err(anyhow::anyhow!("host is closed"));
+        }
+        #[cfg(test)]
+        if let Some(diagnostic) = self.fail_next_frame.take() {
+            return Err(anyhow::anyhow!(diagnostic));
+        }
         let status = self
             .running
             .advance_ready(self.now)
             .map_err(|error| anyhow::anyhow!("host update failed: {error:?}"))?;
         if status.dirty {
+            self.ensure_pending()?;
             self.render()?;
         } else if self.frame_pending {
             // A previous call prepared a newer frame while the terminal worker
@@ -2607,8 +3041,25 @@ impl HostInner {
             // otherwise the pending frame waits indefinitely for another user
             // action or tick.
             self.present_frame()?;
+        } else if self.pending_epoch != self.committed_epoch {
+            // A desired publication with no effective visual delta still
+            // completes its host epoch without manufacturing another frame.
+            self.visible_frame_revision = self
+                .visible_frame_revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
+            self.committed_epoch = self.pending_epoch;
+            self.environment.complete_host(
+                self.host_id,
+                self.pending_epoch,
+                self.committed_epoch,
+            )?;
         }
         Ok(())
+    }
+
+    fn advance_and_render(&mut self) -> Result<()> {
+        self.flush_pending_frame()
     }
 
     fn sync_real_time(&mut self) {
@@ -2638,7 +3089,8 @@ fn prepare_frame(
 
 #[cfg(test)]
 mod tests {
-    use super::{HostTextStream, TuiHost};
+    use super::{HostTextStream, TuiEnvironment, TuiHost};
+    use crate::{IntoView, View};
 
     #[test]
     fn host_stream_keeps_append_chunks_as_source_spans() {
@@ -2664,5 +3116,87 @@ mod tests {
                 .unwrap_or_else(|error| panic!("append {character:?} failed: {error}"));
         }
         host.close().unwrap();
+    }
+
+    #[test]
+    fn desired_revision_waits_for_a_successful_frame_barrier() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let initial = host.epochs().unwrap();
+        assert_eq!(initial.desired_structural_revision, 0);
+        assert_eq!(initial.visible_frame_revision, 0);
+        assert_eq!(initial.pending_epoch, initial.committed_epoch);
+
+        host.set_desired_view(View::text("desired").into_view())
+            .unwrap();
+        let pending = host.epochs().unwrap();
+        assert_eq!(pending.desired_structural_revision, 1);
+        assert_eq!(pending.visible_frame_revision, 0);
+        assert_ne!(pending.pending_epoch, pending.committed_epoch);
+
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors, []);
+        let visible = host.epochs().unwrap();
+        assert_eq!(visible.visible_frame_revision, 1);
+        assert_eq!(visible.pending_epoch, visible.committed_epoch);
+        assert!(host.screen_rows().iter().any(|row| row.contains("desired")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn failed_frame_keeps_old_visible_state_and_explicit_retry_recovers() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_desired_view(View::text("old").into_view())
+            .unwrap();
+        host.flush_pending_hosts(8, false).unwrap();
+        let old_rows = host.screen_rows();
+
+        host.fail_next_frame_for_test("injected frame preparation failure")
+            .unwrap();
+        host.set_desired_view(View::text("new").into_view())
+            .unwrap();
+        let failed = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(failed.errors.len(), 1);
+        assert_eq!(host.screen_rows(), old_rows);
+        let pending = host.epochs().unwrap();
+        assert_eq!(pending.desired_structural_revision, 2);
+        assert_eq!(pending.visible_frame_revision, 1);
+        assert_ne!(pending.pending_epoch, pending.committed_epoch);
+
+        let retried = host.flush_pending_hosts(8, true).unwrap();
+        assert!(retried.errors.is_empty());
+        let visible = host.epochs().unwrap();
+        assert_eq!(visible.visible_frame_revision, 2);
+        assert_eq!(visible.pending_epoch, visible.committed_epoch);
+        assert!(host.screen_rows().iter().any(|row| row.contains("new")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn environment_drain_is_fair_and_shared_by_hosts() {
+        let environment = TuiEnvironment::new();
+        let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let second = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        first
+            .set_desired_view(View::text("first").into_view())
+            .unwrap();
+        second
+            .set_desired_view(View::text("second").into_view())
+            .unwrap();
+
+        let first_batch = first.flush_pending_hosts(1, false).unwrap();
+        assert_eq!(first_batch.attempted, 1);
+        assert!(first_batch.rearm);
+        let second_batch = first.flush_pending_hosts(1, false).unwrap();
+        assert_eq!(second_batch.attempted, 1);
+        assert!(!second_batch.rearm);
+        assert!(first.screen_rows().iter().any(|row| row.contains("first")));
+        assert!(
+            second
+                .screen_rows()
+                .iter()
+                .any(|row| row.contains("second"))
+        );
+        first.close().unwrap();
+        second.close().unwrap();
     }
 }

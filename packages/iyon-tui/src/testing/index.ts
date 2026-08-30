@@ -49,6 +49,11 @@ export class AppHarness implements AppHarnessContract {
     this.callTesting(() => runtimeAccess(this.tui).advance(0));
   }
 
+  flush(): void { this.tui.flush(); }
+  onRuntimeError(listener: Parameters<TuiRuntime["onRuntimeError"]>[0]): () => void {
+    return this.tui.onRuntimeError(listener);
+  }
+
   createHistory(): HistoryContract { return this.tui.createHistory(); }
   createTextInput(options: TextInputOptions = {}): TextInputContract { return this.tui.createTextInput(options); }
   createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }

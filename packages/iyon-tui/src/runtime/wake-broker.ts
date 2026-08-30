@@ -42,9 +42,14 @@ export interface RuntimeHostRegistration {
 
 interface HostEntry {
   readonly registration: RuntimeHostRegistrationImpl;
-  readonly errorChannel: RuntimeErrorChannel;
+  readonly errorChannel: WeakRef<RuntimeErrorChannel>;
   readonly onCommitted: () => void;
 }
+
+const hostRegistrationFinalizer = new FinalizationRegistry<{
+  readonly broker: WeakRef<EnvironmentWakeBroker>;
+  readonly id: string;
+}>(({ broker, id }) => broker.deref()?.unregisterId(id));
 
 const DEFAULT_FLUSH_BUDGET = 32;
 const MAX_EXPLICIT_DRAINS = 64;
@@ -130,8 +135,13 @@ export class EnvironmentWakeBroker {
     onCommitted: () => void,
   ): RuntimeHostRegistration {
     const id = hostIdFor(native, this.hosts.size + 1);
+    if (this.hosts.has(id)) throw new Error(`duplicate native host identity ${id}`);
     const registration = new RuntimeHostRegistrationImpl(this, id, native);
-    this.hosts.set(id, { registration, errorChannel, onCommitted });
+    this.hosts.set(id, {
+      registration,
+      errorChannel: new WeakRef(errorChannel),
+      onCommitted,
+    });
     return registration;
   }
 
@@ -148,8 +158,14 @@ export class EnvironmentWakeBroker {
   }
 
   unregister(registration: RuntimeHostRegistrationImpl): void {
-    this.pending.delete(registration.id);
-    this.hosts.delete(registration.id);
+    hostRegistrationFinalizer.unregister(registration);
+    this.unregisterId(registration.id);
+  }
+
+  /** @internal FinalizationRegistry callback for abandoned native hosts. */
+  unregisterId(id: string): void {
+    this.pending.delete(id);
+    this.hosts.delete(id);
     if (this.pending.size === 0) {
       this.microtaskQueued = false;
       this.microtaskGeneration += 1;
@@ -163,18 +179,27 @@ export class EnvironmentWakeBroker {
     this.pending.add(registration.id);
     const capturedEpoch = readEpochs(registration.native)?.pending;
     this.cancelQueuedMicrotask();
+    let lastReport = emptyReport();
     for (let attempt = 0; attempt < MAX_EXPLICIT_DRAINS; attempt += 1) {
       const report = this.drain(true, registration.id);
-      this.throwHostError(registration.id);
+      lastReport = report;
+      try {
+        this.throwHostError(registration.id);
+      } catch (error) {
+        this.scheduleRemainingAfterBarrier(report);
+        throw error;
+      }
       const epochs = readEpochs(registration.native);
       if (epochs === undefined
         || capturedEpoch === undefined
         || epochs.committed >= capturedEpoch) {
         this.pending.delete(registration.id);
+        this.scheduleRemainingAfterBarrier(report);
         return;
       }
       if (!report.rearm && report.attempted === 0) break;
     }
+    this.scheduleRemainingAfterBarrier(lastReport);
     const epochs = readEpochs(registration.native);
     const record = epochs === undefined
       ? fallbackError(registration.id, "unable to read native host epochs")
@@ -188,15 +213,19 @@ export class EnvironmentWakeBroker {
         diagnostic: "explicit frame barrier did not reach the requested host epoch",
       };
     const entry = this.hosts.get(registration.id);
-    entry?.errorChannel.accept(record);
+    entry?.errorChannel.deref()?.accept(record);
     try {
-      entry?.errorChannel.throwPending(registration.id);
+      entry?.errorChannel.deref()?.throwPending(registration.id);
     } catch (error) {
       wakeCounters.explicit_barrier_failures += 1;
       throw error;
     }
     wakeCounters.explicit_barrier_failures += 1;
     throw new Error(record.diagnostic);
+  }
+
+  private scheduleRemainingAfterBarrier(report: NativeHostDrainReport): void {
+    if (report.rearm && this.pending.size > 0) this.scheduleMicrotask();
   }
 
   private scheduleMicrotask(): void {
@@ -238,7 +267,7 @@ export class EnvironmentWakeBroker {
       if (hostId !== undefined) {
         const entry = this.hosts.get(hostId);
         const diagnostic = error instanceof Error ? error.message : String(error);
-        entry?.errorChannel.accept(fallbackError(hostId, diagnostic));
+        entry?.errorChannel.deref()?.accept(fallbackError(hostId, diagnostic));
       }
     }
   }
@@ -254,20 +283,25 @@ export class EnvironmentWakeBroker {
         this.pending.clear();
         return emptyReport();
       }
-      const flush = driver.native.flushPendingHosts;
+      const native = driver.nativeOrUndefined();
+      if (native === undefined) {
+        this.unregister(driver);
+        return { ...emptyReport(), rearm: this.pending.size > 0 };
+      }
+      const flush = native.flushPendingHosts;
       if (flush === undefined) {
         // Older addons use the compatibility synchronous host path. There is
         // no pending native epoch to broker in that mode, so avoid queuing an
         // unresolvable retry loop.
         this.pending.delete(driver.id);
-        return emptyReport();
+        return { ...emptyReport(), rearm: this.pending.size > 0 };
       }
       let report: NativeHostDrainReport;
       try {
-        report = flush.call(driver.native, this.budget, forceRetry);
+        report = flush.call(native, this.budget, forceRetry);
       } catch (error) {
         const record = fallbackError(driver.id, error instanceof Error ? error.message : String(error));
-        this.hosts.get(driver.id)?.errorChannel.accept(record);
+        this.hosts.get(driver.id)?.errorChannel.deref()?.accept(record);
         return { ...emptyReport(), errors: [toNativeError(record)] };
       }
       wakeCounters.hosts_attempted += report.attempted;
@@ -289,7 +323,7 @@ export class EnvironmentWakeBroker {
       if (automatic) wakeCounters.automatic_errors += 1;
       const record = fromNativeError(error);
       traceWake({ kind: "error", hostId: id, epoch: record.attemptedEpoch, diagnostic: record.diagnostic });
-      this.hosts.get(id)?.errorChannel.accept(record);
+      this.hosts.get(id)?.errorChannel.deref()?.accept(record);
     }
     for (const rawId of report.committed_hosts) {
       const id = String(rawId);
@@ -299,16 +333,20 @@ export class EnvironmentWakeBroker {
         wakeCounters.frames_committed += 1;
         traceWake({ kind: "commit", hostId: id });
         entry.onCommitted();
-        entry.errorChannel.markCommitted(id);
+        entry.errorChannel.deref()?.markCommitted(id);
+        const native = entry.registration.nativeOrUndefined();
+        if (native !== undefined && readEpochs(native) === undefined) {
+          this.pending.delete(id);
+        }
       } catch (error) {
-        entry.errorChannel.accept(fallbackError(id, error instanceof Error ? error.message : String(error)));
+        entry.errorChannel.deref()?.accept(fallbackError(id, error instanceof Error ? error.message : String(error)));
       }
     }
   }
 
   private throwHostError(hostId: string): void {
     try {
-      this.hosts.get(hostId)?.errorChannel.throwPending(hostId);
+      this.hosts.get(hostId)?.errorChannel.deref()?.throwPending(hostId);
     } catch (error) {
       wakeCounters.explicit_barrier_failures += 1;
       throw error;
@@ -322,7 +360,12 @@ export class EnvironmentWakeBroker {
         this.pending.delete(id);
         continue;
       }
-      const epochs = readEpochs(entry.registration.native);
+      const native = entry.registration.nativeOrUndefined();
+      if (native === undefined) {
+        this.unregister(entry.registration);
+        continue;
+      }
+      const epochs = readEpochs(native);
       if (epochs !== undefined && epochs.pending === epochs.committed) {
         this.pending.delete(id);
       }
@@ -346,13 +389,24 @@ export class EnvironmentWakeBroker {
 
 class RuntimeHostRegistrationImpl implements RuntimeHostRegistration {
   readonly token = {};
+  private readonly nativeRef: WeakRef<NativeFrameHost>;
 
   constructor(
     private readonly broker: EnvironmentWakeBroker,
     readonly id: string,
-    readonly native: NativeFrameHost,
-  ) {}
+    native: NativeFrameHost,
+  ) {
+    this.nativeRef = new WeakRef(native);
+    hostRegistrationFinalizer.register(native, { broker: new WeakRef(broker), id }, this);
+  }
 
+  get native(): NativeFrameHost {
+    const native = this.nativeRef.deref();
+    if (native === undefined) throw new Error("native host is no longer live");
+    return native;
+  }
+
+  nativeOrUndefined(): NativeFrameHost | undefined { return this.nativeRef.deref(); }
   markPending(): void { this.broker.markPending(this); }
   flush(): void { this.broker.flush(this); }
   dispose(): void { this.broker.unregister(this); }
@@ -371,22 +425,23 @@ function readEpochs(native: NativeFrameHost): {
   readonly committed: bigint;
 } | undefined {
   if (native.epochs === undefined) return undefined;
-  try {
-    const value = native.epochs();
-    return {
-      hostId: toBigInt(value.host_id),
-      desired: toBigInt(value.desired_structural_revision),
-      visible: toBigInt(value.visible_frame_revision),
-      pending: toBigInt(value.pending_epoch),
-      committed: toBigInt(value.committed_epoch),
-    };
-  } catch {
-    return undefined;
-  }
+  const value = native.epochs();
+  return {
+    hostId: toBigInt(value.host_id),
+    desired: toBigInt(value.desired_structural_revision),
+    visible: toBigInt(value.visible_frame_revision),
+    pending: toBigInt(value.pending_epoch),
+    committed: toBigInt(value.committed_epoch),
+  };
 }
 
 function toBigInt(value: string | number): bigint {
-  return typeof value === "number" ? BigInt(value) : BigInt(value);
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError("native epoch must be a non-negative safe integer");
+    return BigInt(value);
+  }
+  if (!/^\d+$/u.test(value)) throw new TypeError("native epoch must be a decimal integer string");
+  return BigInt(value);
 }
 
 function fallbackError(hostId: string, diagnostic: string): RuntimeFrameErrorRecord {
@@ -402,13 +457,14 @@ function fallbackError(hostId: string, diagnostic: string): RuntimeFrameErrorRec
 }
 
 function fromNativeError(error: NativeHostDrainError): RuntimeFrameErrorRecord {
+  const code = frameCode(error.code);
   return {
     hostId: String(error.host_id),
     attemptedEpoch: toBigInt(error.attempted_epoch),
     desiredRevision: toBigInt(error.desired_revision),
     phase: framePhase(error.phase),
-    code: frameCode(error.code),
-    retryable: error.retryable,
+    code,
+    retryable: code === "INTERNAL_INVARIANT" ? false : error.retryable,
     diagnostic: error.diagnostic,
   };
 }
@@ -441,7 +497,9 @@ function frameCode(value: string): RuntimeFrameErrorCode {
     case "FRAME_PREPARATION_FAILED":
       return value;
     default:
-      return "FRAME_PREPARATION_FAILED";
+      // A native report with an unknown code is a protocol/invariant failure;
+      // do not silently downgrade it to an ordinary retryable frame error.
+      return "INTERNAL_INVARIANT";
   }
 }
 

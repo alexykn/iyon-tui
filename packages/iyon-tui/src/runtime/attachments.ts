@@ -1,16 +1,24 @@
 import { tuiError } from "../api/errors.ts";
 import type { HandleId } from "../api/controls/framework-handle.ts";
+import type { View } from "../api/view/view.ts";
 import {
   peekSemanticGridSequenceOverride,
   peekSemanticSequenceOverride,
   semanticNodeHasAttachments,
+  semanticNodeOf,
   SEMANTIC_VIEW_KIND,
   type SemanticViewNode,
 } from "../api/view/semantic-node.ts";
-import {
+import type {
   NativeResourceRegistry,
   PreparedResourceLease,
 } from "./native-resource-registry.ts";
+
+export interface AttachmentRuntimeContext {
+  readonly registry: NativeResourceRegistry;
+  readonly environment: object;
+  readonly host: object;
+}
 
 export interface PreparedAttachmentSet {
   readonly leases: readonly PreparedResourceLease[];
@@ -62,6 +70,19 @@ export function validateSemanticAttachments(
   host: object,
 ): void {
   prepareSemanticAttachments(root, registry, environment, host).abort();
+}
+
+export function prepareAttachmentsForView(
+  view: View,
+  context: AttachmentRuntimeContext | undefined,
+): PreparedAttachmentSet {
+  if (context === undefined) return new PreparedAttachmentSetImpl([]);
+  return prepareSemanticAttachments(
+    semanticNodeOf(view),
+    context.registry,
+    context.environment,
+    context.host,
+  );
 }
 
 export function prepareSemanticAttachments(

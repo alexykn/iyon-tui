@@ -17,6 +17,11 @@ import { composeComponent } from "../../composition/compose.ts";
 import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
+import {
+  AttachmentBindingState,
+  prepareAttachmentsForView,
+  type AttachmentRuntimeContext,
+} from "../../runtime/attachments.ts";
 
 export interface ScrollPane extends ComponentHandle {
   readonly kind: "component";
@@ -38,7 +43,12 @@ type NativeScrollPaneHandle = {
 };
 
 /** T13: retained-first construction of the pane's initial content. */
-function buildPaneHandle(host: NativeTuiHostContract, initialView?: View): object {
+function buildPaneHandle(
+  host: NativeTuiHostContract,
+  initialView: View | undefined,
+  attachmentContext: AttachmentRuntimeContext | undefined,
+): object {
+  if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
   const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
   if (retained !== undefined) {
@@ -71,13 +81,17 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
   /** R8: shared Tui execution runtime (undefined for raw internal construction). */
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
+  private readonly attachmentContext: AttachmentRuntimeContext | undefined;
+  private readonly attachmentBindings = new AttachmentBindingState();
 
-  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof SCROLL_PANE_NATIVE_TOKEN) {
+  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof SCROLL_PANE_NATIVE_TOKEN, attachmentContext?: object) {
     if (token !== SCROLL_PANE_NATIVE_TOKEN) throw new TypeError("ScrollPane native construction is private");
     const nativeHost = host as unknown as NativeTuiHostContract;
     const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
-    super("component", buildPaneHandle(nativeHost, initialView) as never);
+    const runtimeAttachments = attachmentContext as AttachmentRuntimeContext | undefined;
+    super("component", buildPaneHandle(nativeHost, initialView, runtimeAttachments) as never);
     this.currentView = initialView;
+    this.attachmentContext = runtimeAttachments;
     this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
@@ -90,6 +104,11 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
         return true;
       });
       this.boundary.adopt(initialView);
+    }
+    if (initialView !== undefined) {
+      const attachments = prepareAttachmentsForView(initialView, this.attachmentContext);
+      this.attachmentBindings.commitDesired(attachments);
+      this.attachmentBindings.commitVisible();
     }
   }
 
@@ -132,31 +151,62 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
 
   private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
+    const attachments = prepareAttachmentsForView(output, this.attachmentContext);
     if (this.boundary === undefined) {
       // Older addons may not expose the retained ABI. Keep builder ownership
       // valid through a transactional native semantic publication.
       return {
         commit: (): void => {
-          this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(output));
-          this.currentView = output;
+          try {
+            this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(output));
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentView = output;
+          } catch (error) {
+            attachments.abort();
+            throw error;
+          }
         },
-        abort(): void {},
+        abort(): void {
+          attachments.abort();
+        },
       };
     }
     // Retained preparation may refuse on a bounded/unsupported path; use the
     // complete cold materializer transactionally before giving up.
-    const publication = this.boundary.prepareInstall(output) ?? this.boundary.prepareColdInstall(output);
-    if (publication === undefined) return undefined;
+    let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
+    try {
+      publication = this.boundary.prepareInstall(output) ?? this.boundary.prepareColdInstall(output);
+    } catch (error) {
+      attachments.abort();
+      throw error;
+    }
+    if (publication === undefined) {
+      attachments.abort();
+      return undefined;
+    }
     const setCurrent = (promoted: View): void => {
       this.currentView = promoted;
     };
+    const attachmentBindings = this.attachmentBindings;
     return {
       commit(): void {
-        publication.commit();
-        setCurrent(output);
+        try {
+          publication.commit();
+          attachmentBindings.commitDesired(attachments);
+          attachmentBindings.commitVisible();
+          setCurrent(output);
+        } catch (error) {
+          attachments.abort();
+          throw error;
+        }
       },
       abort(): void {
-        publication.abort();
+        try {
+          publication.abort();
+        } finally {
+          attachments.abort();
+        }
       },
     };
   }
@@ -166,30 +216,42 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
       throw new Error("TUI_EXECUTION_REENTRANT_MUTATION: pane mutation during a retained protocol pass");
     }
     this.call(() => {
-      // PERF-12 T13 retained path (§80): previous content stays leased until
-      // the replacement is fully materialized and committed.
-      if (this.boundary !== undefined) {
-        if (this.boundary.install(view) !== undefined) {
-          this.currentView = view;
-          return;
+      const attachments = prepareAttachmentsForView(view, this.attachmentContext);
+      try {
+        // PERF-12 T13 retained path (§80): previous content stays leased until
+        // the replacement is fully materialized and committed.
+        if (this.boundary !== undefined) {
+          if (this.boundary.install(view) !== undefined) {
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentView = view;
+            return;
+          }
         }
-      }
-      const ref = tryNativeMaterialize(view);
-      if (ref !== undefined) {
-        try {
-          this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
-          // The direct decoder returns a temporary lease, while the pane
-          // owns the installed content. Keep the boundary's root lease in
-          // sync before releasing that temporary lease.
-          this.boundary?.adopt(view);
-          this.currentView = view;
-          return;
-        } finally {
-          releaseNativeViewRef(nativeViewAbiSession(), ref);
+        const ref = tryNativeMaterialize(view);
+        if (ref !== undefined) {
+          try {
+            this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
+            // The direct decoder returns a temporary lease, while the pane
+            // owns the installed content. Keep the boundary's root lease in
+            // sync before releasing that temporary lease.
+            this.boundary?.adopt(view);
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentView = view;
+            return;
+          } finally {
+            releaseNativeViewRef(nativeViewAbiSession(), ref);
+          }
         }
+        this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(view));
+        this.attachmentBindings.commitDesired(attachments);
+        this.attachmentBindings.commitVisible();
+        this.currentView = view;
+      } catch (error) {
+        attachments.abort();
+        throw error;
       }
-      this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(view));
-      this.currentView = view;
     });
     // Transactional ownership transition (direct wins after successful
     // publication): dispose any owned builder root LAST.
@@ -221,6 +283,7 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
       } finally {
         this.boundary = undefined;
         this.currentView = undefined;
+        this.attachmentBindings.dispose();
       }
     }
     super.dispose();
@@ -232,7 +295,14 @@ export function createScrollPane(
   host: never,
   initialView: View,
   retainedRuntime?: never,
+  attachmentContext?: object,
 ): NativeScrollPane {
-  const Constructor = NativeScrollPane as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof SCROLL_PANE_NATIVE_TOKEN) => NativeScrollPane;
-  return new Constructor(host, initialView, retainedRuntime, SCROLL_PANE_NATIVE_TOKEN);
+  const Constructor = NativeScrollPane as unknown as new (
+    host: never,
+    initialView: View,
+    retainedRuntime?: never,
+    token?: typeof SCROLL_PANE_NATIVE_TOKEN,
+    attachmentContext?: object,
+  ) => NativeScrollPane;
+  return new Constructor(host, initialView, retainedRuntime, SCROLL_PANE_NATIVE_TOKEN, attachmentContext);
 }

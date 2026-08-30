@@ -1,6 +1,6 @@
 # PERF-13-A — H3/host transaction seam and runtime substrate
 
-**Status:** COMPLETE
+**Status:** SIGNED OFF AFTER HANDOFF AUDIT
 **Branch:** `perf-13`
 **Baseline:** `84b7d3b` (`main` after API-H3 merge)
 **Implementation:** the commit introducing this completion report (`feat: implement PERF-13-A runtime seam`)
@@ -29,6 +29,10 @@
   ViewState or content API was added in this tranche.
 - Preserved the existing synchronous visible behavior by routing compatibility
   renders through the new explicit frame barrier.
+- Post-handoff audit hardening fixed resource disposal ordering, lease/resource
+  GC pinning and finalization, host-registration cleanup, preferred-host barrier
+  progress, stale wake-queue entries, strict epoch parsing, backend retry
+  recovery, and attachment validation on retained slot/pane boundaries.
 
 ## Stop-gate evidence
 

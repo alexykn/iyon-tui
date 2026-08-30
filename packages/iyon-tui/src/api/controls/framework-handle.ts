@@ -34,8 +34,8 @@ export abstract class FrameworkHandle<K extends string = string> {
 
   dispose(): void {
     if (this.isDisposed) return;
-    this.isDisposed = true;
     disposeFrameworkResource(this);
+    this.isDisposed = true;
   }
 
   protected ensureOpen(): void {

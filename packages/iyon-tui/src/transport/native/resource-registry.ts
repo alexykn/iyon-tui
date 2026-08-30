@@ -46,29 +46,70 @@ interface ResourceRecord {
   visibleLeases: number;
 }
 
+interface LeaseFinalizerState {
+  phase: "prepared" | "desired" | "released";
+  visible: boolean;
+}
+
+interface LeaseFinalizerHeld {
+  readonly registry: NativeResourceRegistry;
+  readonly record: ResourceRecord;
+  readonly state: LeaseFinalizerState;
+}
+
+const leaseFinalizer = new FinalizationRegistry<LeaseFinalizerHeld>((held) => {
+  const { record, state } = held;
+  if (state.phase === "prepared") record.preparedLeases -= 1;
+  if (state.phase === "desired") record.desiredLeases -= 1;
+  if (state.visible) record.visibleLeases -= 1;
+  state.phase = "released";
+  state.visible = false;
+  held.registry.maybeFinalize(record);
+});
+
+function isWeakReferenceable(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
 /** One short-lived H3 prepare lease for an attachment identity. */
 export class PreparedResourceLease {
   private phase: "prepared" | "desired" | "released" = "prepared";
   private visible = false;
+  private readonly finalizerToken = {};
+  private readonly finalizerState: LeaseFinalizerState = {
+    phase: "prepared",
+    visible: false,
+  };
+
+  private readonly keepAlive: { readonly handle: object; readonly resource: object };
 
   constructor(
     private readonly registry: NativeResourceRegistry,
     private readonly record: ResourceRecord,
-  ) {}
+    handle: object,
+    resource: object,
+  ) {
+    // Lease counts protect registry state; these strong references protect the
+    // actual JS/native wrapper while a prepared, desired, or visible binding
+    // still depends on it.
+    this.keepAlive = { handle, resource };
+    leaseFinalizer.register(
+      this,
+      { registry, record, state: this.finalizerState },
+      this.finalizerToken,
+    );
+  }
 
   get handleId(): HandleId { return this.record.handleId; }
   get kind(): NativeResourceKind { return this.record.kind; }
-  get resource(): object {
-    const resource = this.record.resourceRef.deref();
-    if (resource === undefined) throw tuiError("disposed-handle", "framework resource is no longer live", { id: this.record.handleId });
-    return resource;
-  }
+  get resource(): object { return this.keepAlive.resource; }
   get generation(): number { return this.record.generation; }
 
   /** Commits the desired binding without making it visible yet. */
   commitDesired(): void {
     if (this.phase !== "prepared") return;
     this.phase = "desired";
+    this.finalizerState.phase = "desired";
     this.record.preparedLeases -= 1;
     this.record.desiredLeases += 1;
   }
@@ -78,6 +119,7 @@ export class PreparedResourceLease {
     if (this.phase === "prepared") this.commitDesired();
     if (this.phase !== "desired" || this.visible) return;
     this.visible = true;
+    this.finalizerState.visible = true;
     this.record.visibleLeases += 1;
   }
 
@@ -85,7 +127,9 @@ export class PreparedResourceLease {
   releaseDesired(): void {
     if (this.phase !== "desired") return;
     this.phase = "released";
+    this.finalizerState.phase = "released";
     this.record.desiredLeases -= 1;
+    if (!this.visible) this.unregisterFinalizer();
     this.registry.maybeFinalize(this.record);
   }
 
@@ -93,9 +137,12 @@ export class PreparedResourceLease {
   releaseVisible(): void {
     if (!this.visible) return;
     this.visible = false;
+    this.finalizerState.visible = false;
     this.record.visibleLeases -= 1;
     if (this.phase === "desired") return;
     this.phase = "released";
+    this.finalizerState.phase = "released";
+    this.unregisterFinalizer();
     this.registry.maybeFinalize(this.record);
   }
 
@@ -103,8 +150,14 @@ export class PreparedResourceLease {
   abort(): void {
     if (this.phase !== "prepared") return;
     this.phase = "released";
+    this.finalizerState.phase = "released";
     this.record.preparedLeases -= 1;
+    this.unregisterFinalizer();
     this.registry.maybeFinalize(this.record);
+  }
+
+  private unregisterFinalizer(): void {
+    leaseFinalizer.unregister(this.finalizerToken);
   }
 }
 
@@ -117,6 +170,9 @@ export class NativeResourceRegistry {
   /** Highest retired identity; framework IDs are monotonic and never reused. */
   private retiredThrough: HandleId = 0 as HandleId;
   private readonly handles = new WeakMap<object, HandleId>();
+  private readonly retiredHandles = new WeakSet<object>();
+  private readonly resources = new WeakMap<object, HandleId>();
+  private readonly retiredResources = new WeakSet<object>();
   private readonly finalizer = new FinalizationRegistry<HandleId>((handleId) => {
     this.finalizeUnowned(handleId);
   });
@@ -125,6 +181,9 @@ export class NativeResourceRegistry {
   constructor(readonly environment: object = {}) {}
 
   register(registration: ResourceRegistration): void {
+    if (!isWeakReferenceable(registration.handle) || !isWeakReferenceable(registration.resource)) {
+      throw tuiError("validation", "native resource registration requires object handles");
+    }
     if (!Number.isSafeInteger(registration.handleId) || registration.handleId < 1) {
       throw tuiError("validation", "framework handle identity must be a positive safe integer");
     }
@@ -133,8 +192,13 @@ export class NativeResourceRegistry {
         id: registration.handleId,
       });
     }
-    if (this.handles.has(registration.handle)) {
+    if (this.handles.has(registration.handle) || this.retiredHandles.has(registration.handle)) {
       throw tuiError("runtime", "framework value already has a native resource");
+    }
+    if (this.resources.has(registration.resource) || this.retiredResources.has(registration.resource)) {
+      throw tuiError("runtime", "native resource is already registered", {
+        id: registration.handleId,
+      });
     }
     const owner = registration.owner;
     if (owner !== undefined && owner.environment !== this.environment) {
@@ -142,13 +206,19 @@ export class NativeResourceRegistry {
         id: registration.handleId,
       });
     }
+    if (this.nextGeneration > Number.MAX_SAFE_INTEGER) {
+      throw tuiError("runtime", "native resource generation exhausted");
+    }
+    const acceptedNodeKinds = registration.acceptedNodeKinds === undefined
+      ? undefined
+      : new Set(registration.acceptedNodeKinds);
     const record: ResourceRecord = {
       handleId: registration.handleId,
       kind: registration.kind,
       handleRef: new WeakRef(registration.handle),
       resourceRef: new WeakRef(registration.resource),
       owner,
-      acceptedNodeKinds: registration.acceptedNodeKinds,
+      acceptedNodeKinds,
       environment: owner?.environment ?? this.environment,
       generation: this.nextGeneration++,
       lifecycle: "live",
@@ -158,6 +228,7 @@ export class NativeResourceRegistry {
     };
     this.records.set(record.handleId, record);
     this.handles.set(registration.handle, record.handleId);
+    this.resources.set(registration.resource, record.handleId);
     this.finalizer.register(registration.handle, record.handleId, registration.handle);
   }
 
@@ -167,13 +238,31 @@ export class NativeResourceRegistry {
     return this.resourceForHandleId(handleId);
   }
 
-  resourceForHandleId(handleId: HandleId): object {
+  /** @internal Returns the registry identity for lifecycle checks. */
+  handleIdFor(handle: object): HandleId | undefined {
+    return this.handles.get(handle);
+  }
+
+  /** @internal Distinguishes retired framework values from unregistered outputs. */
+  isRetiredHandle(handle: object): boolean {
+    return this.retiredHandles.has(handle);
+  }
+
+  resourceForHandleId(handleId: HandleId, expectedKind?: NativeResourceKind): object {
     const record = this.records.get(handleId);
     if (record === undefined || record.lifecycle !== "live") {
       throw tuiError("disposed-handle", "framework handle has no live native resource", { id: handleId });
     }
+    if (expectedKind !== undefined && record.kind !== expectedKind) {
+      throw tuiError("invalid-handle", `framework resource kind must be ${expectedKind}`, {
+        id: handleId,
+        expectedKind,
+        actualKind: record.kind,
+      });
+    }
+    const handle = record.handleRef.deref();
     const resource = record.resourceRef.deref();
-    if (resource === undefined) {
+    if (handle === undefined || resource === undefined) {
       this.retireRecord(record);
       throw tuiError("disposed-handle", "framework handle has no live native resource", { id: handleId });
     }
@@ -195,7 +284,14 @@ export class NativeResourceRegistry {
     if (record.lifecycle === "disposing") {
       throw tuiError("invalid-handle", "framework attachment is disposing", { id: handleId });
     }
-    if (record.handleRef.deref() === undefined || record.resourceRef.deref() === undefined) {
+    if (record.preparedLeases > 0) {
+      throw tuiError("validation", "framework attachment is already prepared for another candidate", {
+        id: handleId,
+      });
+    }
+    const handle = record.handleRef.deref();
+    const resource = record.resourceRef.deref();
+    if (handle === undefined || resource === undefined) {
       this.retireRecord(record);
       throw tuiError("disposed-handle", "framework attachment has no live owner/resource", { id: handleId });
     }
@@ -225,7 +321,7 @@ export class NativeResourceRegistry {
       });
     }
     record.preparedLeases += 1;
-    return new PreparedResourceLease(this, record);
+    return new PreparedResourceLease(this, record, handle, resource);
   }
 
   beginDisposal(handleId: HandleId): void {
@@ -300,7 +396,13 @@ export class NativeResourceRegistry {
     const handle = record.handleRef.deref();
     if (handle !== undefined) {
       this.handles.delete(handle);
+      this.retiredHandles.add(handle);
       this.finalizer.unregister(handle);
+    }
+    const resource = record.resourceRef.deref();
+    if (resource !== undefined && this.resources.get(resource) === record.handleId) {
+      this.resources.delete(resource);
+      this.retiredResources.add(resource);
     }
   }
 

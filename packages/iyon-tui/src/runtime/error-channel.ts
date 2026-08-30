@@ -117,7 +117,7 @@ export class RuntimeErrorChannel {
 }
 
 function errorKey(record: RuntimeFrameErrorRecord): string {
-  return `${record.hostId}:${record.attemptedEpoch.toString()}:${record.code}`;
+  return `${record.hostId}:${record.attemptedEpoch.toString()}:${record.desiredRevision.toString()}:${record.phase}:${record.code}`;
 }
 
 function toReportedError(record: RuntimeFrameErrorRecord): Error {

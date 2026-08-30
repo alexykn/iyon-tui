@@ -15,6 +15,10 @@ interface DisposableResource {
  */
 const nativeResources = new WeakMap<object, object>();
 
+function isWeakReferenceable(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
 /** Registers one resource in the shared environment resolver. */
 export function registerNativeResource(
   handle: object,
@@ -22,6 +26,12 @@ export function registerNativeResource(
   handleId?: HandleId,
   kind: NativeResourceKind = "framework",
 ): void {
+  if (!isWeakReferenceable(handle) || !isWeakReferenceable(resource)) {
+    throw tuiError("validation", "native resource registration requires object handles");
+  }
+  if (nativeResources.has(handle)) {
+    throw tuiError("runtime", "framework value already has a native resource");
+  }
   if (handleId !== undefined) {
     runtimeResourceRegistry().register({ handle, resource, handleId, kind });
   }
@@ -32,24 +42,35 @@ export function registerNativeResource(
 }
 
 /** Retrieves a raw native resource through its semantic framework identity. */
-export function nativeResourceForHandleId<T extends object>(handleId: HandleId): T {
-  return runtimeResourceRegistry().resourceForHandleId(handleId) as T;
+export function nativeResourceForHandleId<T extends object>(
+  handleId: HandleId,
+  expectedKind?: NativeResourceKind,
+): T {
+  return runtimeResourceRegistry().resourceForHandleId(handleId, expectedKind) as T;
 }
 
 /** Retrieves the raw native resource for a live framework value. */
 export function nativeResourceOf<T extends object>(handle: object): T {
   const resource = nativeResources.get(handle);
   if (resource === undefined) throw tuiError("disposed-handle", "framework value has no live native resource");
+  const registry = runtimeResourceRegistry();
+  if (registry.isRetiredHandle(handle)) {
+    throw tuiError("disposed-handle", "framework value has no live native resource");
+  }
+  const handleId = registry.handleIdFor(handle);
+  if (handleId !== undefined) registry.resourceForHandleId(handleId);
   return resource as T;
 }
 
 /** Removes a value's raw native association after native disposal. */
 export function releaseNativeResource(handle: object, handleId?: HandleId): void {
-  nativeResources.delete(handle);
   if (handleId !== undefined) runtimeResourceRegistry().release(handleId);
+  nativeResources.delete(handle);
 }
 
 /** Disposes the raw native resource owned by a framework value. */
 export function disposeNativeResource(handle: object): void {
-  nativeResourceOf<DisposableResource>(handle).dispose();
+  const resource = nativeResources.get(handle);
+  if (resource === undefined) throw tuiError("disposed-handle", "framework value has no live native resource");
+  (resource as DisposableResource).dispose();
 }

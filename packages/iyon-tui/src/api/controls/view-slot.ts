@@ -17,6 +17,11 @@ import { composeComponent } from "../../composition/compose.ts";
 import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
+import {
+  AttachmentBindingState,
+  prepareAttachmentsForView,
+  type AttachmentRuntimeContext,
+} from "../../runtime/attachments.ts";
 
 /**
  * PERF-12 T13: builds the native slot for the initial content. Retained
@@ -24,7 +29,12 @@ import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
  * cold decoder through the safe N-API bridge; the temporary lease always drains because
  * the slot natively retains its own strong copy.
  */
-function buildSlotHandle(host: NativeTuiHostContract, initialView?: View): object {
+function buildSlotHandle(
+  host: NativeTuiHostContract,
+  initialView: View | undefined,
+  attachmentContext: AttachmentRuntimeContext | undefined,
+): object {
+  if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
   const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
   if (retained !== undefined) {
@@ -111,13 +121,17 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   /** R8: shared Tui execution runtime (undefined for raw internal construction — builder mode unsupported there). */
   #retainedRuntime?: RetainedExecutionRuntime;
   private ownedBuilderRoot?: OwnedBuilderRoot;
+  private readonly attachmentContext: AttachmentRuntimeContext | undefined;
+  private readonly attachmentBindings = new AttachmentBindingState();
 
-  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) {
+  private constructor(host: never, initialView?: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN, attachmentContext?: object) {
     if (token !== VIEW_SLOT_NATIVE_TOKEN) throw new TypeError("ViewSlot native construction is private");
     const nativeHost = host as unknown as NativeTuiHostContract;
     const executionRuntime = retainedRuntime as unknown as RetainedExecutionRuntime | undefined;
-    super("component", buildSlotHandle(nativeHost, initialView) as never);
+    const runtimeAttachments = attachmentContext as AttachmentRuntimeContext | undefined;
+    super("component", buildSlotHandle(nativeHost, initialView, runtimeAttachments) as never);
     this.currentView = initialView;
+    this.attachmentContext = runtimeAttachments;
     this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
     if (session !== undefined && initialView !== undefined) {
@@ -131,6 +145,11 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
       });
       // Adopt the initial content so the boundary owns its root lease.
       this.boundary.adopt(initialView);
+    }
+    if (initialView !== undefined) {
+      const attachments = prepareAttachmentsForView(initialView, this.attachmentContext);
+      this.attachmentBindings.commitDesired(attachments);
+      this.attachmentBindings.commitVisible();
     }
   }
 
@@ -194,32 +213,44 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   private setViewDirect(view: View): void {
     this.assertUserMutationAllowed("slot mutation");
     this.call(() => {
-      // PERF-12 T13 retained path: identity-first install through the slot's
-      // own §18 boundary. Previous content stays leased until the replacement
-      // is fully materialized and committed; failure keeps the old content.
-      if (this.boundary !== undefined) {
-        if (this.boundary.install(view) !== undefined) {
-          this.currentView = view;
-          return;
+      const attachments = prepareAttachmentsForView(view, this.attachmentContext);
+      try {
+        // PERF-12 T13 retained path: identity-first install through the slot's
+        // own §18 boundary. Previous content stays leased until the replacement
+        // is fully materialized and committed; failure keeps the old content.
+        if (this.boundary !== undefined) {
+          if (this.boundary.install(view) !== undefined) {
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentView = view;
+            return;
+          }
+          // Refused → complete fallback below; old content still installed.
         }
-        // Refused → complete fallback below; old content still installed.
-      }
-      const ref = tryNativeMaterialize(view);
-      if (ref !== undefined) {
-        try {
-          this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
-          // The direct decoder returns a temporary lease, while the slot
-          // owns the installed content. Keep the boundary's root lease in
-          // sync before releasing that temporary lease.
-          this.boundary?.adopt(view);
-          this.currentView = view;
-          return;
-        } finally {
-          releaseNativeViewRef(nativeViewAbiSession(), ref);
+        const ref = tryNativeMaterialize(view);
+        if (ref !== undefined) {
+          try {
+            this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
+            // The direct decoder returns a temporary lease, while the slot
+            // owns the installed content. Keep the boundary's root lease in
+            // sync before releasing that temporary lease.
+            this.boundary?.adopt(view);
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentView = view;
+            return;
+          } finally {
+            releaseNativeViewRef(nativeViewAbiSession(), ref);
+          }
         }
+        this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
+        this.attachmentBindings.commitDesired(attachments);
+        this.attachmentBindings.commitVisible();
+        this.currentView = view;
+      } catch (error) {
+        attachments.abort();
+        throw error;
       }
-      this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
-      this.currentView = view;
     });
     // Transactional ownership transition (direct wins only after successful
     // publication): dispose any owned builder root LAST.
@@ -244,32 +275,63 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
    */
   prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
+    const attachments = prepareAttachmentsForView(view, this.attachmentContext);
     if (this.boundary === undefined) {
       // Older addons may not expose the retained ABI. Preserve builder
       // ownership through a transactional native semantic publication rather
       // than reporting a false builder-unsupported error.
       return {
         commit: (): void => {
-          this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
-          this.currentViewSet(view);
+          try {
+            this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
+            this.attachmentBindings.commitDesired(attachments);
+            this.attachmentBindings.commitVisible();
+            this.currentViewSet(view);
+          } catch (error) {
+            attachments.abort();
+            throw error;
+          }
         },
-        abort(): void {},
+        abort(): void {
+          attachments.abort();
+        },
       };
     }
     // A retained preparation can refuse for a budget/unsupported-kind
     // reason. Complete cold materialization is still a valid transactional
     // fallback, and must happen before publication rather than turning a
     // renderable update into an unnecessary abort.
-    const publication = this.boundary.prepareInstall(view) ?? this.boundary.prepareColdInstall(view);
-    if (publication === undefined) return undefined;
+    let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
+    try {
+      publication = this.boundary.prepareInstall(view) ?? this.boundary.prepareColdInstall(view);
+    } catch (error) {
+      attachments.abort();
+      throw error;
+    }
+    if (publication === undefined) {
+      attachments.abort();
+      return undefined;
+    }
     const setCurrentView = (promoted: View): void => this.currentViewSet(promoted);
+    const attachmentBindings = this.attachmentBindings;
     return {
       commit(): void {
-        publication.commit();
-        setCurrentView(view);
+        try {
+          publication.commit();
+          attachmentBindings.commitDesired(attachments);
+          attachmentBindings.commitVisible();
+          setCurrentView(view);
+        } catch (error) {
+          attachments.abort();
+          throw error;
+        }
       },
       abort(): void {
-        publication.abort();
+        try {
+          publication.abort();
+        } finally {
+          attachments.abort();
+        }
       },
     };
   }
@@ -284,6 +346,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     this.assertUserMutationAllowed("slot animation mutation");
     this.call(() => {
       if (frames.length === 0) throw new Error("native view slot animation requires at least one frame");
+      for (const frame of frames) prepareAttachmentsForView(frame, this.attachmentContext).abort();
       // Small animations can stay scalar. Large animations write acquired refs
       // directly into the reusable native buffer; do not stage a second JS
       // number[] copy of the frame list.
@@ -387,6 +450,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   stopAnimation(view: View): void {
     this.assertUserMutationAllowed("slot animation mutation");
     this.call(() => {
+      prepareAttachmentsForView(view, this.attachmentContext).abort();
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
       if (ref !== undefined) {
         try {
@@ -417,6 +481,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
       } finally {
         this.boundary = undefined;
         this.currentView = undefined;
+        this.attachmentBindings.dispose();
       }
     }
     super.dispose();
@@ -428,7 +493,14 @@ export function createViewSlot(
   host: never,
   initialView: View,
   retainedRuntime?: never,
+  attachmentContext?: object,
 ): ViewSlotImplementation {
-  const Constructor = ViewSlot as unknown as new (host: never, initialView: View, retainedRuntime?: never, token?: typeof VIEW_SLOT_NATIVE_TOKEN) => ViewSlotImplementation;
-  return new Constructor(host, initialView, retainedRuntime, VIEW_SLOT_NATIVE_TOKEN);
+  const Constructor = ViewSlot as unknown as new (
+    host: never,
+    initialView: View,
+    retainedRuntime?: never,
+    token?: typeof VIEW_SLOT_NATIVE_TOKEN,
+    attachmentContext?: object,
+  ) => ViewSlotImplementation;
+  return new Constructor(host, initialView, retainedRuntime, VIEW_SLOT_NATIVE_TOKEN, attachmentContext);
 }

@@ -1341,15 +1341,17 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * Root-lease protocol for one View-bearing boundary (§18).
  *
  * ```text
- * update:
+ * update (legacy/direct boundary):
  *   1. keep previousRef leased
  *   2. materialize next root (ensureNative)
  *   3. hostRenderRef(nextRef)
  *   4. success → release previousRef, transfer nextRef temp lease to
  *      boundary.previousRef, release every other temporary ref
  *      failure → keep previousRef, release every temporary ref
+ * update (H3 host boundary): install desiredRef first; release the old
+ *   visibleRef only from commitVisible() after the host frame succeeds
  * close:
- *   release previousRef exactly once
+ *   release every distinct desired/visible root exactly once
  * ```
  *
  * After each successful commit the private NodeId allocator high-water is
@@ -1712,10 +1714,10 @@ export class RetainedRootBoundary {
   /**
    * PERF-12 T13.1 R8: COLD transactional publication. Decodes the whole tree
    * via the injected cold materializer (Direct decode, NO painting) and
-   * returns a publication whose commit paints the prepared ref once
-   * (hostRenderRef) and transfers its lease into the boundary. Used when the
-   * retained path refuses — guarantees "cold fallback never paints during
-   * PREPARE" (handoff §32.2.3 hard rule).
+   * returns a publication whose commit either paints the prepared ref once
+   * for a legacy/direct boundary or installs it as desired structure for the
+   * H3 host boundary. Used when the retained path refuses — guarantees "cold
+   * fallback never paints during PREPARE" (handoff §32.2.3 hard rule).
    */
   prepareColdInstall(view: View): RootPublication | undefined {
     if (this.deferHostCommit) return this.prepareDesiredColdInstall(view);

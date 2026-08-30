@@ -402,10 +402,6 @@ where
         !self.actions.is_empty()
     }
 
-    pub(crate) fn is_dirty(&self) -> bool {
-        self.dirty || self.body_dirty
-    }
-
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         [
             self.timers.next_deadline(),

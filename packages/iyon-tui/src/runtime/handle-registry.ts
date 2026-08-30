@@ -5,6 +5,7 @@ import {
   registerNativeResource,
   releaseNativeResource,
 } from "../transport/native/resources.ts";
+import { runtimeResourceRegistry } from "../transport/native/resource-registry.ts";
 import type { NativeResourceKind } from "./native-resource-registry.ts";
 
 const handleIds = new WeakMap<object, HandleId>();
@@ -21,9 +22,10 @@ export function registerFrameworkHandle(
 ): HandleId {
   if (handleIdCounter.next > Number.MAX_SAFE_INTEGER) throw new Error("TUI framework handle identity exhausted");
   const id = handleIdCounter.next++ as HandleId;
+  const resourceKind = kind === "component" || kind === "text-input" ? "component" : kind;
   try {
     handleIds.set(handle, id);
-    registerNativeResource(handle, resource, id, kind);
+    registerNativeResource(handle, resource, id, resourceKind);
     return id;
   } catch (error) {
     handleIds.delete(handle);
@@ -47,11 +49,12 @@ export function releaseFrameworkHandle(handle: object): void {
 
 /** Shared lifecycle implementation for nominal framework-owned handles. */
 export function disposeFrameworkResource(handle: object): void {
+  const id = handleIdOf(handle);
+  runtimeResourceRegistry().beginDisposal(id);
   try {
     disposeNativeResource(handle);
+    releaseFrameworkHandle(handle);
   } catch (error) {
     throw asTuiError(error);
-  } finally {
-    releaseFrameworkHandle(handle);
   }
 }

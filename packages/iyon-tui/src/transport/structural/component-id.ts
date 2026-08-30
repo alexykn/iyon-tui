@@ -23,5 +23,5 @@ function componentIdOfResource(resource: NativeComponentResource): ComponentId {
 
 /** Resolves the semantic HandleId to the current physical component identity. */
 export function componentIdForHandleId(handleId: HandleId): ComponentId {
-  return componentIdOfResource(nativeResourceForHandleId<NativeComponentResource>(handleId));
+  return componentIdOfResource(nativeResourceForHandleId<NativeComponentResource>(handleId, "component"));
 }

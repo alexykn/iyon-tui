@@ -12,6 +12,7 @@ import {
   AttachmentBindingState,
   prepareSemanticAttachments,
   validateSemanticAttachments,
+  type AttachmentRuntimeContext,
 } from "./attachments.ts";
 import type { RuntimeHostRegistration } from "./wake-broker.ts";
 import { Scene } from "../api/view/scene.ts";
@@ -69,7 +70,11 @@ export interface TuiRuntime {
   render(scene: SceneProducer, signal?: AbortSignal): void;
   /** Flushes through the host epoch captured at the barrier entry. */
   flush(): void;
-  /** Registers a host runtime-error listener; return value removes it. */
+  /**
+   * Registers a host runtime-error listener; returning true consumes the
+   * record and suppresses the fallback reporter. The returned function removes
+   * the listener.
+   */
   onRuntimeError(listener: RuntimeErrorReporter): () => void;
   resize(width: number, height: number): void;
   close(): void;
@@ -121,6 +126,7 @@ export class Tui implements TuiRuntime {
   private readonly runtimeEnvironment = runtimeEnvironment();
   private readonly runtimeErrors = new RuntimeErrorChannel();
   private readonly hostRegistration: RuntimeHostRegistration;
+  private readonly attachmentContext: AttachmentRuntimeContext;
   private runtimeErrorListener: RuntimeErrorReporter | undefined;
   private readonly attachmentBindings = new AttachmentBindingState();
   /** Root execution scope (created on first canonical render). */
@@ -138,14 +144,17 @@ export class Tui implements TuiRuntime {
     this.host = host;
     this.width = width;
     this.height = height;
+    const owner = new WeakRef(this);
     this.hostRegistration = this.runtimeEnvironment.registerHost(
       host,
       this.runtimeErrors,
-      () => {
-        this.boundary?.commitVisible();
-        this.attachmentBindings.commitVisible();
-      },
+      () => owner.deref()?.commitVisibleAfterDrain(),
     );
+    this.attachmentContext = {
+      registry: this.runtimeEnvironment.resources,
+      environment: this.runtimeEnvironment.token,
+      host: this.hostRegistration.token,
+    };
     // Bootstrap the boundary's COLD materializer (Direct decode w/o paint)
     // so prepareColdInstall can fulfill the SS32.2.3 no-paint-during-PREPARE
     // rule. Idempotent; last Tui wins (single active runtime per process is
@@ -166,7 +175,12 @@ export class Tui implements TuiRuntime {
         // Component scopes project as native view slots (R6a machinery).
         // The seed is framework plumbing, not a user semantic construction;
         // do not consume a parent scope's semantic slot for it.
-        const slot = createViewSlot(hostRef as never, withoutRetainedComposition(() => View.spacer(0)), undefined);
+        const slot = createViewSlot(
+          hostRef as never,
+          withoutRetainedComposition(() => View.spacer(0)),
+          undefined,
+          this.attachmentContext,
+        );
         // This projection is framework plumbing, not a semantic operation in
         // the parent scope. User-facing control.view() calls compose through
         // the retained semantic slot; the internal projection must not.
@@ -224,6 +238,9 @@ export class Tui implements TuiRuntime {
       this.runtimeEnvironment.token,
       this.hostRegistration.token,
     );
+    // Allocate the desired scene record during prepare so H3 commit only
+    // promotes already-owned state and cannot fail on this bookkeeping step.
+    const nextScene = new Scene(output, historyToBind ?? previousHistory);
     if (session === undefined) {
       // The generated ABI is present in every supported artifact, but keep
       // the contract truthful if an older addon is loaded: builder roots can
@@ -238,7 +255,7 @@ export class Tui implements TuiRuntime {
             this.host.render(lowerColdView(output));
             this.attachmentBindings.commitDesired(attachments);
             this.attachmentBindings.commitVisible();
-            this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+            this.currentScene = nextScene;
           } catch (error) {
             attachments.abort();
             throw error;
@@ -279,10 +296,11 @@ export class Tui implements TuiRuntime {
           this.commitHistoryBinding(historyToBind, previousHistory);
           prepared!.commit();
           this.attachmentBindings.commitDesired(attachments);
-          if (this.hostRegistration.native.flushPendingHosts !== undefined) {
-            this.hostRegistration.markPending();
-          }
-          this.currentScene = new Scene(output, historyToBind ?? this.boundHistory);
+          const deferredFrame = this.host.setDesiredViewRef !== undefined
+            && this.host.flushPendingHosts !== undefined;
+          if (deferredFrame) this.hostRegistration.markPending();
+          else this.attachmentBindings.commitVisible();
+          this.currentScene = nextScene;
         } catch (error) {
           attachments.abort();
           throw error;
@@ -315,13 +333,6 @@ export class Tui implements TuiRuntime {
   }
 
   private stageHistoryBinding(history?: HistoryContract): void {
-    if (history !== undefined) {
-      assertHistoryOwner(history, this);
-      // Validate the handle on every producer pass, including when the
-      // sideband identity is unchanged; disposal must not silently turn the
-      // retained scene into a stale native reference.
-      nativeResourceOf<object>(history);
-    }
     if (
       history !== undefined &&
       this.boundHistory !== undefined &&
@@ -333,7 +344,15 @@ export class Tui implements TuiRuntime {
       // a deterministic API error, not a swappable pointer.
       throw tuiError("terminal", "TUI_HISTORY_ALREADY_BOUND: a different History instance is already attached to this Tui");
     }
-    this.stagedHistory = history ?? this.boundHistory;
+    const effectiveHistory = history ?? this.boundHistory;
+    if (effectiveHistory !== undefined) {
+      assertHistoryOwner(effectiveHistory, this);
+      // Validate the handle on every producer pass, including when the
+      // sideband identity is unchanged; disposal must not silently turn the
+      // retained scene into a stale native reference.
+      nativeResourceOf<object>(effectiveHistory);
+    }
+    this.stagedHistory = effectiveHistory;
   }
 
   static async open(options: TuiOpenOptions = {}): Promise<Tui> {
@@ -398,7 +417,8 @@ export class Tui implements TuiRuntime {
    * warm root hint            → §20 exact-root fast path (one host render)
    * otherwise                 → §18 boundary install: ensureNative walks the
    *                             changed semantic frontier, children-first, and
-   *                             commits once via hostRenderRef
+   *                             commits once through the root publication
+   *                             target
    * refused / over-budget     → complete cold path (Direct N-API decode), per
    *                             §49: constructors published before the budget
    *                             abort remain valid cache entries the decode
@@ -537,6 +557,7 @@ export class Tui implements TuiRuntime {
       nativeResourceOf<NativeHistoryContract>(normalized.history);
     }
     const effectiveHistory = normalized.history ?? previousHistory;
+    if (effectiveHistory !== undefined) nativeResourceOf<NativeHistoryContract>(effectiveHistory);
     if (
       this.currentScene !== undefined
       && this.currentScene.body === normalized.body
@@ -569,12 +590,19 @@ export class Tui implements TuiRuntime {
       try {
         publication.commit();
       } catch (error) {
-        publication.abort();
+        let cleanupError: unknown;
+        try {
+          publication.abort();
+        } catch (abortError) {
+          cleanupError = abortError;
+        }
         this.stagedHistory = previousStagedHistory;
+        if (cleanupError !== undefined) {
+          throw new AggregateError([error, cleanupError], "root publication cleanup failed");
+        }
         throw error;
       }
       recordNativeViewRoute(publication.route ?? (session === undefined ? "fallback" : "retained"));
-      this.currentScene = new Scene(normalized.body, effectiveHistory);
       this.stagedHistory = effectiveHistory;
       this.disposeRootBuilder();
       this.flush();
@@ -585,7 +613,6 @@ export class Tui implements TuiRuntime {
     // torn-down addon. Validate attachments again for the compatibility render
     // and make them visible only after that render succeeds.
     this.stagedHistory = previousStagedHistory;
-    if (normalized.history !== undefined) this.commitHistoryBinding(normalized.history, previousHistory);
     const attachments = prepareSemanticAttachments(
       semanticNodeOf(normalized.body),
       this.runtimeEnvironment.resources,
@@ -593,6 +620,7 @@ export class Tui implements TuiRuntime {
       this.hostRegistration.token,
     );
     try {
+      if (normalized.history !== undefined) this.commitHistoryBinding(normalized.history, previousHistory);
       recordNativeViewRoute("fallback");
       this.host.render(lowerColdView(normalized.body));
       if (session !== undefined) {
@@ -651,7 +679,12 @@ export class Tui implements TuiRuntime {
   createViewSlot(initialView: View): ViewSlotContract {
     this.prepareMutation("tui.createViewSlot");
     try {
-      return this.ownHandle(createViewSlot(this.host as never, initialView, this.retainedRuntime as never));
+      return this.ownHandle(createViewSlot(
+        this.host as never,
+        initialView,
+        this.retainedRuntime as never,
+        this.attachmentContext,
+      ));
     } catch (error) {
       throw asTuiError(error);
     }
@@ -661,7 +694,12 @@ export class Tui implements TuiRuntime {
   createScrollPane(initialView: View): ScrollPaneContract {
     this.prepareMutation("tui.createScrollPane");
     try {
-      return this.ownHandle(createScrollPane(this.host as never, initialView, this.retainedRuntime as never));
+      return this.ownHandle(createScrollPane(
+        this.host as never,
+        initialView,
+        this.retainedRuntime as never,
+        this.attachmentContext,
+      ));
     } catch (error) {
       throw asTuiError(error);
     }
@@ -739,23 +777,50 @@ export class Tui implements TuiRuntime {
   private disposeOwnedHandles(): void {
     const handles = [...this.ownedHandles];
     this.ownedHandles.clear();
-    for (const handle of handles) handle.dispose();
+    const errors: unknown[] = [];
+    for (const handle of handles) {
+      try {
+        handle.dispose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "TUI owned-handle cleanup failed");
+  }
+
+  private commitVisibleAfterDrain(): void {
+    this.boundary?.commitVisible();
+    this.attachmentBindings.commitVisible();
   }
 
   private disposeRetainedExecution(): void {
     // Scope projections, attachment bindings, and builder roots own native
     // leases/handles. Retire them before the host so queued environment work
     // cannot outlive the Tui and target disposed resources.
-    this.hostRegistration.dispose();
+    const errors: unknown[] = [];
+    const attempt = (cleanup: () => void): void => {
+      try {
+        cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    attempt(() => this.hostRegistration.dispose());
     this.runtimeErrorListener = undefined;
     this.runtimeErrors.setReporter(undefined);
-    this.attachmentBindings.dispose();
-    this.runtimeEnvironment.resources.invalidateHost(this.hostRegistration.token);
-    this.disposeOwnedHandles();
-    this.disposeRootBuilder();
-    this.retainedRuntime.dispose();
+    attempt(() => this.attachmentBindings.dispose());
+    attempt(() => this.runtimeEnvironment.resources.invalidateHost(this.hostRegistration.token));
+    attempt(() => this.disposeOwnedHandles());
+    attempt(() => this.disposeRootBuilder());
+    attempt(() => this.retainedRuntime.dispose());
+    const boundary = this.boundary;
+    this.boundary = undefined;
+    attempt(() => boundary?.close());
     this.stagedHistory = undefined;
     this.boundHistory = undefined;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "TUI retained-runtime cleanup failed");
   }
 
   /**
@@ -768,14 +833,20 @@ export class Tui implements TuiRuntime {
     this.assertNotMutating("tui.close");
     this.closed = true;
     this.historyLifetime.closed = true;
+    const errors: unknown[] = [];
     try {
       this.disposeRetainedExecution();
-      this.boundary?.close();
-    } finally {
-      this.boundary = undefined;
-      this.currentScene = undefined;
-      this.host.dispose();
+    } catch (error) {
+      errors.push(error);
     }
+    this.currentScene = undefined;
+    try {
+      this.host.dispose();
+    } catch (error) {
+      errors.push(asTuiError(error));
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "TUI close cleanup failed");
   }
 
   /** Same ownership/lifecycle semantics as close(), using terminal exit. */
@@ -783,22 +854,30 @@ export class Tui implements TuiRuntime {
     if (this.closed) return;
     this.assertNotMutating("tui.exit");
     this.historyLifetime.closed = true;
+    const errors: unknown[] = [];
     try {
       this.disposeRetainedExecution();
-      this.boundary?.close();
-    } finally {
-      this.boundary = undefined;
-      try {
-        this.host.exit();
-      } catch (error) {
-        throw asTuiError(error);
-      } finally {
-        // Exit is terminal even when terminal restoration reports an error;
-        // retained roots and caller-owned History liveness must not remain
-        // usable after the cleanup path has run.
-        this.closed = true;
-      }
+    } catch (error) {
+      errors.push(error);
     }
+    try {
+      this.host.exit();
+    } catch (error) {
+      errors.push(asTuiError(error));
+      try {
+        this.host.dispose();
+      } catch (cleanupError) {
+        errors.push(asTuiError(cleanupError));
+      }
+    } finally {
+      // Exit is terminal even when terminal restoration reports an error;
+      // retained roots and caller-owned History liveness must not remain
+      // usable after the cleanup path has run.
+      this.closed = true;
+      this.currentScene = undefined;
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "TUI exit cleanup failed");
   }
 
   setTheme(theme: Theme): void {

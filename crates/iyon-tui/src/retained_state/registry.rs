@@ -173,7 +173,7 @@ impl ViewStateRegistry {
         self.clear_bindings();
         for record in self.records.values() {
             if let Ok(mut record) = record.lock() {
-                record.lifecycle = ViewStateLifecycle::Disposed;
+                record.dispose();
             }
         }
         self.records.clear();

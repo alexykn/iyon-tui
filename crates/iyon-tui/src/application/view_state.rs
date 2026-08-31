@@ -87,7 +87,7 @@ impl HostViewState {
             self.record
                 .lock()
                 .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?
-                .lifecycle = ViewStateLifecycle::Disposed;
+                .dispose();
             return Ok(());
         };
         let mut host = host

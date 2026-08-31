@@ -4,7 +4,10 @@
 //! does not own semantic View structure, retained state, or terminal paint.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{
+    Arc, Mutex, Weak,
+    atomic::{AtomicU64, Ordering},
+};
 
 use super::host::HostInner;
 
@@ -106,8 +109,14 @@ pub struct TuiEnvironment {
 unsafe impl Send for TuiEnvironment {}
 unsafe impl Sync for TuiEnvironment {}
 
+// State IDs embed the host slot in their upper 21 bits. Allocate host slots
+// process-wide because independently-created TuiEnvironments may exchange a
+// detached native History before the TypeScript resolver sees its contents.
+const MAX_STATE_HOST_ID: u64 = 0x001f_ffff;
+
+static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(1);
+
 struct EnvironmentInner {
-    next_host_id: u64,
     hosts: HashMap<u64, Weak<Mutex<HostInner>>>,
     pending: VecDeque<u64>,
     pending_set: HashSet<u64>,
@@ -121,7 +130,6 @@ impl TuiEnvironment {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(EnvironmentInner {
-                next_host_id: 1,
                 hosts: HashMap::new(),
                 pending: VecDeque::new(),
                 pending_set: HashSet::new(),
@@ -138,11 +146,11 @@ impl TuiEnvironment {
             .inner
             .lock()
             .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
-        let id = environment.next_host_id;
-        environment.next_host_id = environment
-            .next_host_id
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("host identity exhausted"))?;
+        let id = NEXT_HOST_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current <= MAX_STATE_HOST_ID).then_some(current + 1)
+            })
+            .map_err(|_| anyhow::anyhow!("host identity exhausted"))?;
         environment.hosts.insert(id, Arc::downgrade(host));
         Ok(id)
     }

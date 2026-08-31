@@ -38,6 +38,55 @@ pub(crate) enum LayoutContent {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ChildDependency(u8);
+
+impl ChildDependency {
+    const PARENT_USES_CHILD_WIDTH: u8 = 1 << 0;
+    const PARENT_USES_CHILD_HEIGHT: u8 = 1 << 1;
+    const CHILD_WIDTH_DEPENDS_ON_PARENT: u8 = 1 << 2;
+    const CHILD_HEIGHT_DEPENDS_ON_PARENT: u8 = 1 << 3;
+
+    pub(crate) const fn all() -> Self {
+        Self(
+            Self::PARENT_USES_CHILD_WIDTH
+                | Self::PARENT_USES_CHILD_HEIGHT
+                | Self::CHILD_WIDTH_DEPENDS_ON_PARENT
+                | Self::CHILD_HEIGHT_DEPENDS_ON_PARENT,
+        )
+    }
+
+    pub(crate) const fn new(
+        parent_uses_child_width: bool,
+        parent_uses_child_height: bool,
+        child_width_depends_on_parent: bool,
+        child_height_depends_on_parent: bool,
+    ) -> Self {
+        let mut bits = 0;
+        if parent_uses_child_width {
+            bits |= Self::PARENT_USES_CHILD_WIDTH;
+        }
+        if parent_uses_child_height {
+            bits |= Self::PARENT_USES_CHILD_HEIGHT;
+        }
+        if child_width_depends_on_parent {
+            bits |= Self::CHILD_WIDTH_DEPENDS_ON_PARENT;
+        }
+        if child_height_depends_on_parent {
+            bits |= Self::CHILD_HEIGHT_DEPENDS_ON_PARENT;
+        }
+        Self(bits)
+    }
+
+    pub(crate) const fn parent_uses_child_width(self) -> bool {
+        self.0 & Self::PARENT_USES_CHILD_WIDTH != 0
+    }
+
+    pub(crate) const fn parent_uses_child_height(self) -> bool {
+        self.0 & Self::PARENT_USES_CHILD_HEIGHT != 0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutNode {
     pub(crate) view_id: ViewId,
@@ -48,6 +97,10 @@ pub(crate) struct LayoutNode {
     pub(crate) clip_rect: Rect,
     pub(crate) component: Option<ComponentId>,
     pub(crate) children: Vec<LayoutNodeId>,
+    /// Dependency metadata recorded by the layout algorithm for each child.
+    /// It is parallel to `children` and lets retained mutations stop at a
+    /// proven allocation boundary without re-inferring rules from node kinds.
+    pub(crate) child_dependencies: Vec<ChildDependency>,
     pub(crate) style: LayoutStyle,
     pub(crate) content: LayoutContent,
 }
@@ -161,6 +214,18 @@ fn contains(outer: Rect, inner: Rect) -> bool {
 impl LayoutTree {
     pub(crate) fn node(&self, id: LayoutNodeId) -> &LayoutNode {
         &self.nodes[id.0]
+    }
+
+    pub(crate) fn child_dependency(
+        &self,
+        parent: LayoutNodeId,
+        child: LayoutNodeId,
+    ) -> Option<ChildDependency> {
+        let node = self.node(parent);
+        node.children
+            .iter()
+            .position(|candidate| *candidate == child)
+            .and_then(|index| node.child_dependencies.get(index).copied())
     }
 
     pub(crate) fn index_component_roots(&mut self) {
@@ -286,12 +351,21 @@ impl LayoutTree {
             let old_node = &self.nodes[old_id.0];
             let new_node = &replacement.nodes[new_id.0];
             if old_node.children.len() != new_node.children.len()
+                || old_node.child_dependencies.len() != new_node.child_dependencies.len()
                 || old_node.view_id != new_node.view_id
                 || old_node.component != new_node.component
+                || old_node.occurrence.state_attachment != new_node.occurrence.state_attachment
                 || old_node.style.component_scope != new_node.style.component_scope
             {
                 return false;
             }
+        }
+        if !self.physically_complete && replacement.physically_complete {
+            // LayoutNode does not retain per-subtree completeness. A local
+            // patch cannot prove that this repaired subtree was the only
+            // incomplete part of the old tree, so rebuild the enclosing
+            // retained root instead of preserving stale incompleteness.
+            return false;
         }
         for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
             let old_node = &self.nodes[old_id.0];
@@ -311,7 +385,10 @@ impl LayoutTree {
             self.nodes[old_id.0] = patched;
         }
         self.physically_complete &= replacement.physically_complete;
-        self.index_component_roots();
+        // Geometry-only patches preserve child IDs, component ownership, and
+        // state attachments. Parents and occurrence indexes therefore remain
+        // valid; rebuilding them here would turn a local patch into a full
+        // layout-tree walk.
         debug_assert!(self.validate(), "invalid patched layout tree: {self:?}");
         true
     }
@@ -338,10 +415,16 @@ impl LayoutTree {
             let old_node = &self.nodes[old_id.0];
             let new_node = &replacement.nodes[new_id.0];
             if old_node.children.len() != new_node.children.len()
+                || old_node.child_dependencies.len() != new_node.child_dependencies.len()
                 || old_node.component != new_node.component
             {
                 return false;
             }
+        }
+        if !self.physically_complete && replacement.physically_complete {
+            // As above, do not claim that a local component patch repaired the
+            // entire tree's physical completeness without subtree metadata.
+            return false;
         }
         let replacement_root = &replacement.nodes[replacement.root.0];
         self.nodes[component_root.0].view_id = replacement_root.view_id;
@@ -382,6 +465,21 @@ impl LayoutTree {
         }
     }
 
+    pub(crate) fn component_ids_in_subtree(&self, root: LayoutNodeId) -> Vec<ComponentId> {
+        let mut ids = Vec::new();
+        self.collect_component_ids(root, &mut ids);
+        ids
+    }
+
+    fn collect_component_ids(&self, id: LayoutNodeId, ids: &mut Vec<ComponentId>) {
+        if let Some(component) = self.node(id).component {
+            ids.push(component);
+        }
+        for child in &self.node(id).children {
+            self.collect_component_ids(*child, ids);
+        }
+    }
+
     pub(crate) fn component_geometry(&self) -> ComponentGeometryMap {
         let mut entries = HashMap::new();
         let root = SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
@@ -403,7 +501,21 @@ impl LayoutTree {
         let Some(component_root) = self.component_roots.get(&component).copied() else {
             return false;
         };
-        let path = self.path_to_root(component_root);
+        self.patch_component_geometry_subtree(component_root, geometry)
+    }
+
+    /// Refreshes only component entries below an arbitrary topology-preserving
+    /// geometry patch root. Parent links and component roots are unchanged, so
+    /// this avoids recomputing geometry for clean siblings.
+    pub(crate) fn patch_component_geometry_subtree(
+        &self,
+        subtree_root: LayoutNodeId,
+        geometry: &mut ComponentGeometryMap,
+    ) -> bool {
+        if subtree_root.0 >= self.nodes.len() {
+            return false;
+        }
+        let path = self.path_to_root(subtree_root);
         let mut offset_y = 0;
         let mut inherited_clip =
             SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
@@ -427,7 +539,7 @@ impl LayoutTree {
             inherited_clip = clip;
         }
         self.collect_component_geometry(
-            component_root,
+            subtree_root,
             offset_y,
             inherited_clip,
             &mut geometry.entries,
@@ -491,7 +603,8 @@ impl LayoutTree {
             }
         }
         if !self.nodes.iter().enumerate().all(|(index, node)| {
-            node.children.iter().all(|child| child.0 < self.nodes.len())
+            node.children.len() == node.child_dependencies.len()
+                && node.children.iter().all(|child| child.0 < self.nodes.len())
                 && contains(node.rect, node.content_rect)
                 && (contains(root_rect, node.clip_rect)
                     || self.has_viewport_ancestor(LayoutNodeId(index), &parents))

@@ -31,6 +31,12 @@ publishing a new structural root for state mutations.
   normalization is observable through retained/native counters.
 - Paint-cache keys include retained text alignment and width intent so geometry
   changes cannot reuse stale text surfaces.
+- Audit hardening validates state attachments in resolved component/History
+  views, reconciles component state remounts before frame preparation, and
+  preserves rejected detached-History attachments.
+- Local dependency metadata, path-scoped layout/paint cache invalidation,
+  deterministic state paint ordering, and candidate-cache discard prevent
+  stale derived state from crossing a failed frame boundary.
 
 ## Verification
 

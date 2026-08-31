@@ -71,6 +71,10 @@ export function disposeFrameworkResource(handle: object): void {
     disposeNativeResource(handle);
     releaseFrameworkHandle(handle);
   } catch (error) {
+    // Native disposal can reject a mounted/in-use resource after the shared
+    // registry has tentatively blocked new prepares. Restore liveness when no
+    // native release completed so a later post-unmount dispose can succeed.
+    runtimeResourceRegistry().cancelDisposal(id);
     throw asTuiError(error);
   }
 }

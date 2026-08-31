@@ -21,6 +21,8 @@ impl StateEffects {
     pub(crate) const DAMAGE_OLD: Self = Self(1 << 10);
     pub(crate) const DAMAGE_NEW: Self = Self(1 << 11);
     pub(crate) const PROJECT_CONTENT: Self = Self(1 << 12);
+    pub(crate) const INTRINSIC_WIDTH: Self = Self(1 << 13);
+    pub(crate) const INTRINSIC_HEIGHT: Self = Self(1 << 14);
 
     pub(crate) fn is_empty(self) -> bool {
         self.0 == 0
@@ -36,6 +38,14 @@ impl StateEffects {
 
     pub(crate) fn geometry(self) -> bool {
         self.contains(Self::GEOMETRY)
+    }
+
+    pub(crate) fn intrinsic_width(self) -> bool {
+        self.contains(Self::INTRINSIC_WIDTH)
+    }
+
+    pub(crate) fn intrinsic_height(self) -> bool {
+        self.contains(Self::INTRINSIC_HEIGHT)
     }
 }
 

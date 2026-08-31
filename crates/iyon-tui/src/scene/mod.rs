@@ -12,6 +12,8 @@ pub(crate) use layout::{
 };
 #[cfg(test)]
 pub(crate) use resolve::resolve_scene;
+#[cfg(feature = "native-host")]
+pub(crate) use resolve::state_attachment_targets;
 pub(crate) use resolve::{ResolveError, ResolveSession};
 pub(crate) use resolved::{ResolutionOverlay, ResolvedScene};
 pub use root::Scene;

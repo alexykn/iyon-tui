@@ -57,7 +57,7 @@ impl ViewFlags {
         self.0 & Self::CONTAINS_COMPONENT_SLOT != 0
     }
 
-    const fn contains_state_attachment(self) -> bool {
+    pub(crate) const fn contains_state_attachment(self) -> bool {
         self.0 & Self::CONTAINS_STATE_ATTACHMENT != 0
     }
 

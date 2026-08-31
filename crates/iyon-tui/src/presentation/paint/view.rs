@@ -149,6 +149,18 @@ pub(crate) struct PaintCache {
 }
 
 impl PaintCache {
+    pub(crate) fn clear(&mut self) {
+        self.current.clear();
+        self.previous.clear();
+    }
+
+    pub(crate) fn invalidate_view_ids(&mut self, view_ids: &std::collections::HashSet<ViewId>) {
+        self.current
+            .retain(|key, _| !view_ids.contains(&key.view_id));
+        self.previous
+            .retain(|key, _| !view_ids.contains(&key.view_id));
+    }
+
     pub(crate) fn begin_epoch(&mut self, theme: &Theme) {
         if self.theme.as_ref() != Some(theme) {
             self.current.clear();

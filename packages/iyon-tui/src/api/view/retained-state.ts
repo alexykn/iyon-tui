@@ -57,8 +57,9 @@ export interface ViewStateBorderEdges {
   readonly left: boolean;
 }
 
-/** Alignment owned by a physical node. String forms cover the existing
- * horizontal/vertical vocabularies; object form can state one or both axes. */
+/** Alignment owned by a physical node. `start`/`center`/`end` are the
+ * shorthand horizontal forms; `top`/`bottom` are vertical forms. Use the
+ * object form for a vertical `center` or to name both axes explicitly. */
 export type ViewStateAlignment =
   | "start"
   | "center"
@@ -185,9 +186,7 @@ export class ViewState extends FrameworkHandle<"state"> {
     this.assertMutationAllowed();
     const requested = properties.length === 0
       ? undefined
-      : properties.length === 1 && Array.isArray(properties[0])
-        ? properties[0]
-        : properties as readonly ViewStatePresentationProperty[];
+      : properties.flatMap((property) => Array.isArray(property) ? [...property] : [property]) as readonly ViewStatePresentationProperty[];
     const normalized = normalizeClearProperties(requested);
     this.mutate((native) => normalized === undefined
       ? native.clearPresentation()

@@ -359,6 +359,22 @@ export class NativeResourceRegistry {
     this.retireRecord(record);
   }
 
+  /**
+   * Rolls back a tentative disposal when the native owner rejects it before
+   * release. This preserves a mounted resource's liveness for the eventual
+   * post-unmount disposal rather than leaving the shared resolver stuck in
+   * `disposing`.
+   */
+  cancelDisposal(handleId: HandleId): void {
+    const record = this.records.get(handleId);
+    if (record === undefined || record.lifecycle !== "disposing") return;
+    if (record.preparedLeases === 0
+      && record.desiredLeases === 0
+      && record.visibleLeases === 0) {
+      record.lifecycle = "live";
+    }
+  }
+
   /** Invalidates all host-owned resources during owner teardown. */
   invalidateHost(host: object): void {
     for (const record of [...this.records.values()]) {

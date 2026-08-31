@@ -163,6 +163,112 @@ where
         self.invalidate_frame();
     }
 
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_has_invalidated_components(&self) -> bool {
+        self.scene_host.has_invalidated_components()
+    }
+
+    /// Materializes component snapshots without running layout so H3 can
+    /// validate retained-state attachments in the complete desired scene, not
+    /// only on the root View's direct semantic nodes.
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_state_attachment_targets(
+        &self,
+        body: &View,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        let history_views = self
+            .scene
+            .history()
+            .map_or_else(Vec::new, crate::History::state_views);
+        self.host_state_attachment_targets_from_history_views(body, history_views)
+    }
+
+    /// Collects state attachments from a prospective History view in addition
+    /// to the currently retained body/History. This is used before History
+    /// mutation so unsupported state geometry fails before the unit changes.
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_state_attachment_targets_with_history_view(
+        &self,
+        body: &View,
+        history_view: &View,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        let mut history_views = self
+            .scene
+            .history()
+            .map_or_else(Vec::new, crate::History::state_views);
+        history_views.push(history_view.clone());
+        self.host_state_attachment_targets_from_history_views(body, history_views)
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_state_attachment_targets_for_history(
+        &self,
+        body: &View,
+        history: &crate::History,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        self.host_state_attachment_targets_from_history_views(body, history.state_views())
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_state_attachment_targets_for_history_views(
+        &self,
+        body: &View,
+        history_views: Vec<View>,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        self.host_state_attachment_targets_from_history_views(body, history_views)
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_current_state_attachment_targets(
+        &self,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        self.host_state_attachment_targets(self.scene.body())
+    }
+
+    #[cfg(feature = "native-host")]
+    fn host_state_attachment_targets_from_history_views(
+        &self,
+        body: &View,
+        history_views: Vec<View>,
+    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
+        let mut session = crate::scene::ResolveSession::new(&self.components);
+        let mut targets = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        let mut append_view = |view: &View| -> anyhow::Result<()> {
+            let resolved = session
+                .resolve_root(view)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let overlay = session.overlay().clone();
+            for (id, kind) in crate::scene::state_attachment_targets(&resolved, &overlay)
+                .map_err(anyhow::Error::msg)?
+            {
+                if !seen.insert(id) {
+                    return Err(anyhow::anyhow!(
+                        "DUPLICATE_VIEW_STATE_ATTACHMENT: state {id} occurs more than once in the candidate"
+                    ));
+                }
+                targets.push((id, kind));
+            }
+            Ok(())
+        };
+
+        append_view(body)?;
+        for view in history_views {
+            append_view(&view)?;
+        }
+        Ok(targets)
+    }
+
+    /// Discards an unpresented Scene candidate after a backend failure. The
+    /// logical HostInner frame remains authoritative, so the next retry must
+    /// rebuild the derived scene instead of treating the rejected candidate as
+    /// committed.
+    pub(crate) fn host_discard_candidate(&mut self) {
+        self.scene_host.discard_candidate();
+        self.invalidate_frame();
+    }
+
     pub(crate) fn host_clear_retained_views(&mut self) {
         self.scene_host.clear_retained_views();
     }
@@ -213,6 +319,10 @@ where
         self.exit_requested = true;
         self.close_ingress();
         self.dirty = true;
+    }
+
+    pub(crate) fn scene_body(&self) -> &View {
+        self.scene.body()
     }
 
     pub(crate) fn scene_history(&self) -> Option<&crate::History> {

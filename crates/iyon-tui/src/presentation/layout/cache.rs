@@ -58,14 +58,32 @@ impl LayoutCache {
     /// ViewIds are supplied by the committed layout dependency frontier; clean
     /// siblings remain reusable in the next candidate.
     pub(crate) fn invalidate_view_ids(&mut self, view_ids: &std::collections::HashSet<ViewId>) {
-        self.current_measure
-            .retain(|key, _| !view_ids.contains(&key.view));
-        self.previous_measure
-            .retain(|key, _| !view_ids.contains(&key.view));
-        self.current_prepare
-            .retain(|key, _| !view_ids.contains(&key.measured.view));
-        self.previous_prepare
-            .retain(|key, _| !view_ids.contains(&key.measured.view));
+        self.current_measure.retain(|key, _| {
+            !view_ids.contains(&key.view)
+                && !key
+                    .component_view
+                    .is_some_and(|component_view| view_ids.contains(&component_view))
+        });
+        self.previous_measure.retain(|key, _| {
+            !view_ids.contains(&key.view)
+                && !key
+                    .component_view
+                    .is_some_and(|component_view| view_ids.contains(&component_view))
+        });
+        self.current_prepare.retain(|key, _| {
+            !view_ids.contains(&key.measured.view)
+                && !key
+                    .measured
+                    .component_view
+                    .is_some_and(|component_view| view_ids.contains(&component_view))
+        });
+        self.previous_prepare.retain(|key, _| {
+            !view_ids.contains(&key.measured.view)
+                && !key
+                    .measured
+                    .component_view
+                    .is_some_and(|component_view| view_ids.contains(&component_view))
+        });
     }
 
     pub(crate) fn begin_epoch(&mut self) {

@@ -162,6 +162,18 @@ impl ViewStateRecord {
         self.presentation_revision = self.presentation_revision.saturating_add(1);
         presentation_effects(true)
     }
+
+    pub(crate) fn dispose(&mut self) {
+        self.lifecycle = ViewStateLifecycle::Disposed;
+        self.desired_bound = false;
+        self.desired_kind = None;
+        self.visible_bound = false;
+        self.visible_kind = None;
+        self.in_flight_bound = false;
+        self.geometry = GeometryOverrides::default();
+        self.presentation = PresentationOverrides::default();
+        self.style_states.clear();
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 use super::{
     measure::MeasuredKind,
     prepare::{PreparedChild, PreparedKind, PreparedNode},
-    tree::{LayoutContent, LayoutNode, LayoutNodeId, LayoutStyle},
+    tree::{ChildDependency, LayoutContent, LayoutNode, LayoutNodeId, LayoutStyle},
 };
 use crate::{
     geometry::{Point, Rect},
@@ -82,6 +82,7 @@ pub(super) fn emit_prepared(
         clip_rect: node_clip,
         component: prepared.measured.component,
         children: Vec::new(),
+        child_dependencies: Vec::new(),
         style: LayoutStyle {
             component_scope: prepared.measured.component_scope,
             style_states: prepared.measured.effective_style_states.clone(),
@@ -101,7 +102,50 @@ pub(super) fn emit_prepared(
         }
     };
     nodes[id.0].children = children;
+    let child_count = nodes[id.0].children.len();
+    nodes[id.0].child_dependencies = child_dependencies(&prepared.measured.kind, child_count);
+    debug_assert_eq!(
+        nodes[id.0].children.len(),
+        nodes[id.0].child_dependencies.len()
+    );
     id
+}
+
+fn child_dependencies(kind: &MeasuredKind, child_count: usize) -> Vec<ChildDependency> {
+    match kind {
+        MeasuredKind::Container { .. }
+        | MeasuredKind::ClampRows { .. }
+        | MeasuredKind::Hanging { .. }
+        | MeasuredKind::Grid { .. } => vec![ChildDependency::all(); child_count],
+        MeasuredKind::Column { children, .. } => children
+            .iter()
+            .map(|child| {
+                ChildDependency::new(
+                    true,
+                    !matches!(child.track, crate::presentation::ir::TrackSize::Fixed(_)),
+                    true,
+                    !matches!(child.track, crate::presentation::ir::TrackSize::Fixed(_)),
+                )
+            })
+            .collect(),
+        MeasuredKind::Row { children, .. } => {
+            // Row content allocation probes child intrinsic widths during
+            // measurement even when the eventual child rule is Fill. Keep
+            // the dependency conservative until the track metadata is
+            // carried into this retained record.
+            vec![ChildDependency::all(); children.len()]
+        }
+        MeasuredKind::RowViewport {
+            intrinsic_content_height,
+            ..
+        } => vec![ChildDependency::new(
+            false,
+            *intrinsic_content_height,
+            true,
+            true,
+        )],
+        MeasuredKind::Text { .. } | MeasuredKind::Spacer { .. } => Vec::new(),
+    }
 }
 
 fn emit_children(

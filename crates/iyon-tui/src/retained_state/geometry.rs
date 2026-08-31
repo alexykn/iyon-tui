@@ -306,6 +306,7 @@ fn geometry_effects(property: GeometryProperty) -> StateEffects {
         }
         GeometryProperty::Gap => {
             effects = effects
+                .union(StateEffects::MEASURE_SELF)
                 .union(StateEffects::MEASURE_ANCESTORS)
                 .union(StateEffects::PLACE_DESCENDANTS);
         }
@@ -315,5 +316,19 @@ fn geometry_effects(property: GeometryProperty) -> StateEffects {
                 .union(StateEffects::PLACE_DESCENDANTS);
         }
     }
-    effects
+    let intrinsic = match property {
+        GeometryProperty::Width | GeometryProperty::MinWidth | GeometryProperty::MaxWidth => {
+            // Width changes can alter descendant wrapping and therefore
+            // height as well as the immediate intrinsic width.
+            StateEffects::INTRINSIC_WIDTH.union(StateEffects::INTRINSIC_HEIGHT)
+        }
+        GeometryProperty::Height | GeometryProperty::MinHeight | GeometryProperty::MaxHeight => {
+            StateEffects::INTRINSIC_HEIGHT
+        }
+        GeometryProperty::Padding | GeometryProperty::Gap | GeometryProperty::BorderEdges => {
+            StateEffects::INTRINSIC_WIDTH.union(StateEffects::INTRINSIC_HEIGHT)
+        }
+        GeometryProperty::Alignment => StateEffects::NONE,
+    };
+    effects.union(intrinsic)
 }

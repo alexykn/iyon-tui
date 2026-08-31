@@ -10,7 +10,7 @@ use std::{
 use crate::{
     id::next_nonzero_id,
     perf::{self, Counter},
-    presentation::IntoView,
+    presentation::{IntoView, View},
     stream::StreamingSource,
 };
 
@@ -277,6 +277,65 @@ impl History {
 
     pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
         self.units.iter()
+    }
+
+    /// Returns semantic History views that can carry retained state. Stream
+    /// units produce their own projection views and never carry a host-owned
+    /// ViewState attachment.
+    pub(crate) fn state_views(&self) -> Vec<View> {
+        self.units
+            .iter()
+            .filter_map(|unit| match &unit.content {
+                HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
+                    if view.flags().contains_state_attachment()
+                        || view.contains_component_identity() =>
+                {
+                    Some(view.clone())
+                }
+                HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
+                HistoryUnitContent::Stream(_) => None,
+            })
+            .collect()
+    }
+
+    /// Returns the state-bearing History views after replacing one live unit
+    /// with its prospective final view. The replacement is validated using the
+    /// same unit rules as `freeze` before any History mutation occurs.
+    pub(crate) fn state_views_with_replacement(
+        &self,
+        unit: HistoryUnitId,
+        replacement: &View,
+    ) -> Result<Vec<View>, HistoryError> {
+        let index = self.index_of(unit)?;
+        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
+            return Err(HistoryError::UnitNotLive { unit });
+        }
+        if replacement.contains_component_identity() {
+            return Err(HistoryError::FinalViewContainsComponent { unit });
+        }
+        Ok(self
+            .units
+            .iter()
+            .enumerate()
+            .filter_map(|(current, entry)| {
+                if current == index {
+                    (replacement.flags().contains_state_attachment()
+                        || replacement.contains_component_identity())
+                    .then(|| replacement.clone())
+                } else {
+                    match &entry.content {
+                        HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
+                            if view.flags().contains_state_attachment()
+                                || view.contains_component_identity() =>
+                        {
+                            Some(view.clone())
+                        }
+                        HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
+                        HistoryUnitContent::Stream(_) => None,
+                    }
+                }
+            })
+            .collect())
     }
 
     pub fn layout(&self) -> HistoryLayout {

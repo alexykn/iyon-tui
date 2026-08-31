@@ -2032,12 +2032,18 @@ impl HostHistory {
 
     pub fn push(&self, view: View) -> Result<HistoryUnitId> {
         let mut inner = self.lock_mut()?;
+        let body = inner.running.scene_body().clone();
+        let state_targets = inner
+            .running
+            .host_state_attachment_targets_with_history_view(&body, &view)?;
+        inner.validate_state_targets(&state_targets)?;
         let unit = inner
             .running
             .scene_history_mut()
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
             .push(view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        inner.set_desired_state_bindings(&state_targets)?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
         Ok(unit)
@@ -2047,12 +2053,24 @@ impl HostHistory {
         let unit = HistoryUnitId::from_value(unit)
             .ok_or_else(|| anyhow::anyhow!("history unit id must be non-zero"))?;
         let mut inner = self.lock_mut()?;
+        let body = inner.running.scene_body().clone();
+        let history_views = inner
+            .running
+            .scene_history()
+            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
+            .state_views_with_replacement(unit, &view)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let state_targets = inner
+            .running
+            .host_state_attachment_targets_for_history_views(&body, history_views)?;
+        inner.validate_state_targets(&state_targets)?;
         inner
             .running
             .scene_history_mut()
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
             .freeze(unit, view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        inner.set_desired_state_bindings(&state_targets)?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
         Ok(())
@@ -2068,6 +2086,7 @@ impl HostHistory {
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
             .discard_live(unit)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        inner.refresh_desired_state_bindings()?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
         Ok(())
@@ -2223,14 +2242,12 @@ impl TuiHost {
     /// frame. The returned wake disposition is an edge-trigger hint only; the
     /// environment queue and host epochs remain authoritative.
     pub fn set_desired_view(&self, body: View) -> Result<WakeDisposition> {
-        let state_targets = body
-            .native_state_attachment_targets()
-            .map_err(|error| anyhow::anyhow!(error))?;
-        let state_ids = state_targets.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let mut inner = self.lock_mut()?;
         if inner.closed {
             return Err(anyhow::anyhow!("host is closed"));
         }
+        let state_targets = inner.running.host_state_attachment_targets(&body)?;
+        let state_ids = state_targets.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let mut unique_state_ids = HashSet::with_capacity(state_ids.len());
         if state_ids.iter().any(|id| !unique_state_ids.insert(*id)) {
             return Err(anyhow::anyhow!(
@@ -2452,9 +2469,27 @@ impl TuiHost {
         inner.advance_and_render()
     }
 
+    pub fn validate_history(&self, history: &History) -> Result<()> {
+        let inner = self.lock()?;
+        if inner.closed {
+            return Err(anyhow::anyhow!("host is closed"));
+        }
+        let body = inner.running.scene_body().clone();
+        let state_targets = inner
+            .running
+            .host_state_attachment_targets_for_history(&body, history)?;
+        inner.validate_state_targets(&state_targets)
+    }
+
     pub fn set_history(&self, history: History) -> Result<()> {
         let mut inner = self.lock_mut()?;
+        let body = inner.running.scene_body().clone();
+        let state_targets = inner
+            .running
+            .host_state_attachment_targets_for_history(&body, &history)?;
+        inner.validate_state_targets(&state_targets)?;
         inner.running.host_set_history(history);
+        inner.set_desired_state_bindings(&state_targets)?;
         Ok(())
     }
 
@@ -2787,6 +2822,11 @@ impl HostInner {
         self.view_states.set_desired(targets)
     }
 
+    fn refresh_desired_state_bindings(&mut self) -> Result<()> {
+        let targets = self.running.host_current_state_attachment_targets()?;
+        self.set_desired_state_bindings(&targets)
+    }
+
     fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) {
         self.view_states.set_visible(targets);
     }
@@ -2836,9 +2876,11 @@ impl HostInner {
             return Ok(());
         }
         if record.desired_bound || record.visible_bound || record.in_flight_bound {
-            return Err(anyhow::anyhow!("ViewState is still mounted"));
+            return Err(anyhow::anyhow!(
+                "STATE_MOUNTED: ViewState is still attached"
+            ));
         }
-        record.lifecycle = crate::retained_state::ViewStateLifecycle::Disposed;
+        record.dispose();
         drop(record);
         self.view_states.remove(id);
         Ok(())
@@ -2887,7 +2929,18 @@ impl HostInner {
         let target_epoch = self.pending_epoch;
         let target_structural_revision = self.desired_structural_revision;
         let states = self.state_snapshots()?;
-        let candidate = prepare_frame(&mut self.running, &mut self.backend, self.now, &states)?;
+        let candidate = match prepare_frame(&mut self.running, &mut self.backend, self.now, &states)
+        {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                // SceneHost may have staged derived layout/surface state before
+                // a late preparation error. Keep the HostInner frame as the
+                // sole visible authority and rebuild the candidate on retry.
+                self.failed_attempt = Some((target_epoch, target_structural_revision));
+                self.running.host_discard_candidate();
+                return Err(error);
+            }
+        };
         let state_ids = candidate
             .state_bindings
             .iter()
@@ -2908,7 +2961,7 @@ impl HostInner {
             // handoff. Restore the retry obligation when that handoff fails;
             // otherwise the next flush could mistake the unchanged epoch for
             // a successful no-op and silently lose the desired frame.
-            self.running.invalidate_frame();
+            self.running.host_discard_candidate();
             return Err(error);
         }
         if self.frame_pending || self.presentation.is_some() {
@@ -3041,7 +3094,7 @@ impl HostInner {
         if let Err(error) = self.present_frame() {
             self.capture_failed_candidate();
             self.discard_candidate_frame();
-            self.running.invalidate_frame();
+            self.running.host_discard_candidate();
             if !self.closed {
                 self.ensure_pending()?;
             }
@@ -3066,7 +3119,7 @@ impl HostInner {
             if let Err(error) = result {
                 self.capture_failed_candidate();
                 self.discard_candidate_frame();
-                self.running.invalidate_frame();
+                self.running.host_discard_candidate();
                 if !self.closed {
                     self.ensure_pending()?;
                 }
@@ -3111,6 +3164,9 @@ impl HostInner {
                 format!("host update failed: {error:?}"),
             )
         })?;
+        if status.dirty && self.running.host_has_invalidated_components() {
+            self.refresh_desired_state_bindings()?;
+        }
         if status.dirty {
             self.ensure_pending()?;
         }
@@ -3133,7 +3189,7 @@ impl HostInner {
             if let Err(error) = self.present_frame() {
                 self.capture_failed_candidate();
                 self.discard_candidate_frame();
-                self.running.invalidate_frame();
+                self.running.host_discard_candidate();
                 if !self.closed {
                     self.ensure_pending()?;
                 }

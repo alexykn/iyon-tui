@@ -298,27 +298,31 @@ fn parse_alignment(value: &Value) -> Result<GeometryAlignment> {
             )));
         }
     }
-    let horizontal = match object.get("horizontal").and_then(Value::as_str) {
+    let horizontal = match object.get("horizontal") {
         None => None,
-        Some("start") => Some(HorizontalAlign::Start),
-        Some("center") => Some(HorizontalAlign::Center),
-        Some("end") => Some(HorizontalAlign::End),
-        Some(_) => {
-            return Err(crate::NativeError::invalid_input(
-                "ViewState horizontal alignment is invalid",
-            ));
-        }
+        Some(value) => match value.as_str() {
+            Some("start") => Some(HorizontalAlign::Start),
+            Some("center") => Some(HorizontalAlign::Center),
+            Some("end") => Some(HorizontalAlign::End),
+            Some(_) | None => {
+                return Err(crate::NativeError::invalid_input(
+                    "ViewState horizontal alignment is invalid",
+                ));
+            }
+        },
     };
-    let vertical = match object.get("vertical").and_then(Value::as_str) {
+    let vertical = match object.get("vertical") {
         None => None,
-        Some("top") => Some(VerticalAlign::Top),
-        Some("center") => Some(VerticalAlign::Center),
-        Some("bottom") => Some(VerticalAlign::Bottom),
-        Some(_) => {
-            return Err(crate::NativeError::invalid_input(
-                "ViewState vertical alignment is invalid",
-            ));
-        }
+        Some(value) => match value.as_str() {
+            Some("top") => Some(VerticalAlign::Top),
+            Some("center") => Some(VerticalAlign::Center),
+            Some("bottom") => Some(VerticalAlign::Bottom),
+            Some(_) | None => {
+                return Err(crate::NativeError::invalid_input(
+                    "ViewState vertical alignment is invalid",
+                ));
+            }
+        },
     };
     if horizontal.is_none() && vertical.is_none() {
         return Err(crate::NativeError::invalid_input(
@@ -413,6 +417,23 @@ fn parse_nullable_border_glyphs(value: &Value) -> Result<Option<BorderGlyphs>> {
     let object = value.as_object().ok_or_else(|| {
         crate::NativeError::invalid_input("ViewState borderGlyphs must be an object or null")
     })?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "top"
+                | "right"
+                | "bottom"
+                | "left"
+                | "topLeft"
+                | "topRight"
+                | "bottomLeft"
+                | "bottomRight"
+        ) {
+            return Err(crate::NativeError::invalid_input(format!(
+                "unknown ViewState border glyph `{key}`"
+            )));
+        }
+    }
     let field = |name: &str| {
         object.get(name).and_then(Value::as_str).ok_or_else(|| {
             crate::NativeError::invalid_input(format!(

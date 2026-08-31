@@ -233,6 +233,12 @@ function normalizeBorderGlyphs(value: unknown): object {
     "bottomLeft",
     "bottomRight",
   ];
+  const fieldSet = new Set<string>(fields);
+  for (const key of Object.keys(glyphs)) {
+    if (!fieldSet.has(key)) {
+      throw new TypeError(`unknown ViewState border glyph ${JSON.stringify(key)}`);
+    }
+  }
   for (const field of fields) {
     if (typeof glyphs[field] !== "string") {
       throw new TypeError(`ViewState border glyph ${JSON.stringify(field)} must be a string`);

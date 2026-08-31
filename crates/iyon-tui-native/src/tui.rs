@@ -768,6 +768,19 @@ impl NativeTuiHost {
     #[napi(js_name = "setHistory")]
     pub fn set_history(&self, history: &mut NativeHistory) -> Result<()> {
         ensure_alive(&self.alive)?;
+        if history.host.is_some() {
+            return Err(crate::NativeError::invalid_input(
+                "history is already attached to a native host",
+            ));
+        }
+        let state = history
+            .state
+            .lock()
+            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?;
+        self.host
+            .validate_history(&state)
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        drop(state);
         let detached = history.take_for_host()?;
         self.host
             .set_history(detached)

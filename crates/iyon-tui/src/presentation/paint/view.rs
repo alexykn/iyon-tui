@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use crate::{
     Theme,
@@ -53,6 +57,81 @@ struct PaintKey {
     resolved_style: PhysicalStyle,
     node_context: StyleContextKey,
     descendant_context: StyleContextKey,
+    /// Text alignment/width intent are retained-state geometry inputs that do
+    /// not necessarily change the immutable semantic ViewId or rectangle.
+    text_layout: Option<(u8, u8)>,
+    /// Border/background glyph data can change without changing a rect or
+    /// resolved text style. Keep it in the retained paint key as a compact
+    /// fingerprint rather than reusing stale decoration output.
+    box_fingerprint: u64,
+}
+
+fn text_layout_key(content: &LayoutContent) -> Option<(u8, u8)> {
+    match content {
+        LayoutContent::Text { text, width_rule } => Some((
+            match text.align {
+                crate::presentation::HorizontalAlign::Start => 0,
+                crate::presentation::HorizontalAlign::Center => 1,
+                crate::presentation::HorizontalAlign::End => 2,
+            },
+            match width_rule {
+                WidthRule::Fit => 0,
+                WidthRule::Fill => 1,
+            },
+        )),
+        LayoutContent::Spacer { .. }
+        | LayoutContent::Children
+        | LayoutContent::Clamp { .. }
+        | LayoutContent::RowViewport { .. } => None,
+    }
+}
+
+fn box_paint_key(
+    compiler: &ViewCompiler,
+    decoration: &crate::presentation::ir::Decoration,
+    inherited: &PhysicalStyle,
+    context: &StyleContext,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    decoration
+        .surface_background
+        .as_ref()
+        .map(|color| compiler.theme.resolve_color(color, context))
+        .hash(&mut hasher);
+    if let Some(border) = &decoration.border {
+        match border.style {
+            crate::presentation::BorderStyle::Plain => 0u8,
+            crate::presentation::BorderStyle::Rounded => 1,
+            crate::presentation::BorderStyle::Double => 2,
+        }
+        .hash(&mut hasher);
+        border.edges.top.hash(&mut hasher);
+        border.edges.right.hash(&mut hasher);
+        border.edges.bottom.hash(&mut hasher);
+        border.edges.left.hash(&mut hasher);
+        for glyph in [
+            &border.glyphs.top,
+            &border.glyphs.right,
+            &border.glyphs.bottom,
+            &border.glyphs.left,
+            &border.glyphs.top_left,
+            &border.glyphs.top_right,
+            &border.glyphs.bottom_left,
+            &border.glyphs.bottom_right,
+        ] {
+            glyph.hash(&mut hasher);
+        }
+        border
+            .color
+            .as_ref()
+            .map(|color| compiler.theme.resolve_color(color, context))
+            .or(inherited.foreground)
+            .hash(&mut hasher);
+        border.top_label.hash(&mut hasher);
+    } else {
+        0u8.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// A bounded two-generation cache for retained physical subtree surfaces.
@@ -281,6 +360,13 @@ impl ViewPainter {
             resolved_style: resolved,
             node_context: StyleContextKey::from(&node_context),
             descendant_context: StyleContextKey::from(&descendant_context),
+            text_layout: text_layout_key(&node.content),
+            box_fingerprint: box_paint_key(
+                compiler,
+                &node.style.decoration,
+                &inherited,
+                &node_context,
+            ),
         };
         if can_cache && let Some(surface) = cache.surface(&key) {
             return surface;

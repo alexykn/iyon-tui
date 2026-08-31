@@ -13,6 +13,7 @@ use crate::{
         },
         wrap::{TextFlowMetrics, text_flow_metrics},
     },
+    retained_state::{EffectiveGeometry, GeometryAlignment},
     scene::ResolutionOverlay,
 };
 
@@ -95,6 +96,12 @@ pub(super) struct MeasuredNode {
     pub(super) component: Option<ComponentId>,
     pub(super) component_scope: Option<ComponentId>,
     pub(super) width_capacity: u16,
+    pub(super) width: WidthRule,
+    pub(super) height: crate::presentation::ir::HeightRule,
+    pub(super) base_gap: Option<u16>,
+    pub(super) effective_gap: Option<u16>,
+    pub(super) base_alignment: GeometryAlignment,
+    pub(super) effective_alignment: GeometryAlignment,
     pub(super) decoration: DecorationMetrics,
     pub(super) effective_decoration: Decoration,
     pub(super) effective_style_states: crate::presentation::StyleStates,
@@ -201,10 +208,10 @@ pub(super) fn measure_node(
             !view.contains_component_identity(),
         ),
     };
-    key.state_revision = view
-        .state_attachment_id()
-        .and_then(|id| overlay.state(id))
-        .map_or(0, |state| state.revision);
+    if let Some(state) = view.state_attachment_id().and_then(|id| overlay.state(id)) {
+        key.geometry_revision = state.geometry_revision;
+        key.presentation_revision = state.presentation_revision;
+    }
     if cacheable && let Some(measured) = cache.measured(key) {
         return measured;
     }
@@ -240,9 +247,54 @@ fn measure_node_uncached(
     #[cfg(test)]
     super::record_measure_node();
     let state = view.state_attachment_id().and_then(|id| overlay.state(id));
-    let effective_decoration = state
-        .map(|state| state.effective_decoration(view.decoration()))
-        .unwrap_or_else(|| view.decoration().clone());
+    let base_gap = match view.kind() {
+        ViewKind::Column(column) => Some(column.gap),
+        ViewKind::Row(row) => Some(row.gap),
+        ViewKind::Grid(_)
+        | ViewKind::Text(_)
+        | ViewKind::Spacer { .. }
+        | ViewKind::Container(_)
+        | ViewKind::Hanging(_)
+        | ViewKind::ClampRows(_)
+        | ViewKind::RowViewport(_)
+        | ViewKind::ComponentSlot(_) => None,
+    };
+    let base_alignment = match view.kind() {
+        ViewKind::Text(text) => GeometryAlignment {
+            horizontal: Some(text.align),
+            vertical: None,
+        },
+        ViewKind::Row(row) => GeometryAlignment {
+            horizontal: None,
+            vertical: Some(row.vertical_align),
+        },
+        ViewKind::Grid(_)
+        | ViewKind::Spacer { .. }
+        | ViewKind::Container(_)
+        | ViewKind::Hanging(_)
+        | ViewKind::ClampRows(_)
+        | ViewKind::RowViewport(_)
+        | ViewKind::ComponentSlot(_)
+        | ViewKind::Column(_) => GeometryAlignment::default(),
+    };
+    let geometry = state
+        .map(|state| {
+            state.effective_geometry(
+                view.width(),
+                view.height(),
+                view.decoration(),
+                base_gap,
+                base_alignment,
+            )
+        })
+        .unwrap_or_else(|| EffectiveGeometry {
+            width: view.width(),
+            height: view.height(),
+            decoration: view.decoration().clone(),
+            gap: base_gap,
+            alignment: base_alignment,
+        });
+    let effective_decoration = geometry.decoration.clone();
     let effective_style_states = state
         .map(|state| state.effective_style_states(view.view_style_states()))
         .unwrap_or_else(|| view.view_style_states().clone());
@@ -253,9 +305,16 @@ fn measure_node_uncached(
         ViewKind::ComponentSlot(slot) => (Some(slot.id), Some(slot.id)),
         _ => (None, component_scope),
     };
-    let kind = measure_kind(view, decoration.inner_width, overlay, child_scope, cache);
+    let kind = measure_kind(
+        view,
+        decoration.inner_width,
+        overlay,
+        child_scope,
+        cache,
+        &geometry,
+    );
     let core_size = kind.intrinsic_size();
-    let core_width = match (intent, view.width()) {
+    let core_width = match (intent, geometry.width) {
         (WidthIntent::ForceFit, _) | (_, WidthRule::Fit) => core_size.width,
         (_, WidthRule::Fill) => decoration.inner_width,
     };
@@ -277,6 +336,12 @@ fn measure_node_uncached(
         component,
         component_scope: child_scope,
         width_capacity,
+        width: geometry.width,
+        height: geometry.height,
+        base_gap,
+        effective_gap: geometry.gap,
+        base_alignment,
+        effective_alignment: geometry.alignment,
         decoration,
         effective_decoration,
         effective_style_states,
@@ -292,14 +357,21 @@ fn measure_kind(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    geometry: &EffectiveGeometry,
 ) -> MeasuredKind {
     match view.kind() {
         ViewKind::Text(text) => {
-            let metrics = text_flow_metrics(text, width);
-            MeasuredKind::Text {
-                text: Arc::clone(text),
-                metrics,
-            }
+            let text = if let Some(align) = geometry.alignment.horizontal
+                && align != text.align
+            {
+                let mut text = (**text).clone();
+                text.align = align;
+                Arc::new(text)
+            } else {
+                Arc::clone(text)
+            };
+            let metrics = text_flow_metrics(&text, width);
+            MeasuredKind::Text { text, metrics }
         }
         ViewKind::Spacer { rows } => MeasuredKind::Spacer { rows: *rows },
         ViewKind::Container(container) => MeasuredKind::Container {
@@ -333,9 +405,26 @@ fn measure_kind(
         ViewKind::RowViewport(viewport) => {
             measure_viewport(viewport, width, overlay, component_scope, cache)
         }
-        ViewKind::Column(column) => measure_column(column, width, overlay, component_scope, cache),
-        ViewKind::Row(row) => measure_row(row, width, overlay, component_scope, cache),
-        ViewKind::Grid(grid) => measure_grid(grid, width, overlay, component_scope, cache),
+        ViewKind::Column(column) => measure_column(
+            column,
+            width,
+            overlay,
+            component_scope,
+            cache,
+            geometry.gap.unwrap_or(column.gap),
+        ),
+        ViewKind::Row(row) => measure_row(
+            row,
+            width,
+            overlay,
+            component_scope,
+            cache,
+            geometry.gap.unwrap_or(row.gap),
+            geometry.alignment.vertical.unwrap_or(row.vertical_align),
+        ),
+        ViewKind::Grid(grid) => {
+            measure_grid(grid, width, overlay, component_scope, cache, geometry.gap)
+        }
         ViewKind::ComponentSlot(slot) => {
             let snapshot = overlay
                 .component(slot.id)
@@ -401,6 +490,7 @@ fn measure_column(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    gap: u16,
 ) -> MeasuredKind {
     let children = column
         .children
@@ -417,10 +507,7 @@ fn measure_column(
             ),
         })
         .collect::<Vec<_>>();
-    MeasuredKind::Column {
-        children,
-        gap: column.gap,
-    }
+    MeasuredKind::Column { children, gap }
 }
 
 fn measure_row(
@@ -429,13 +516,15 @@ fn measure_row(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    gap: u16,
+    vertical_align: crate::presentation::VerticalAlign,
 ) -> MeasuredKind {
     let tracks = row
         .children
         .iter()
         .map(|child| child.track)
         .collect::<Vec<_>>();
-    let allocation = allocate_tracks(width, row.gap, &tracks, |index, remaining| {
+    let allocation = allocate_tracks(width, gap, &tracks, |index, remaining| {
         measure_node(
             &row.children[index].view,
             remaining,
@@ -469,8 +558,8 @@ fn measure_row(
     MeasuredKind::Row {
         allocation,
         children,
-        gap: row.gap,
-        vertical_align: row.vertical_align,
+        gap,
+        vertical_align,
     }
 }
 
@@ -480,6 +569,7 @@ fn measure_grid(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    gap: Option<u16>,
 ) -> MeasuredKind {
     let column_requirements = grid
         .cells
@@ -499,9 +589,11 @@ fn measure_grid(
             .width,
         })
         .collect::<Vec<_>>();
+    let column_gap = gap.unwrap_or(grid.column_gap);
+    let row_gap = gap.unwrap_or(grid.row_gap);
     let columns = allocate_grid_tracks(
         width,
-        grid.column_gap,
+        column_gap,
         &grid.columns,
         &column_requirements,
         FlexMode::Fill,
@@ -539,7 +631,7 @@ fn measure_grid(
         .collect::<Vec<_>>();
     let intrinsic_rows = allocate_grid_tracks(
         u16::MAX,
-        grid.row_gap,
+        row_gap,
         &grid.rows,
         &row_requirements,
         FlexMode::Intrinsic,
@@ -549,7 +641,7 @@ fn measure_grid(
         row_tracks: grid.rows.clone(),
         intrinsic_rows,
         cells,
-        row_gap: grid.row_gap,
+        row_gap,
     }
 }
 

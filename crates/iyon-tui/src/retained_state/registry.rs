@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use super::capabilities::{StateNodeKind, validate_geometry_for_kind};
 use super::presentation::ViewStateSnapshot;
 use super::record::{ViewStateLifecycle, ViewStateRecord};
 
@@ -73,27 +74,42 @@ impl ViewStateRegistry {
         Ok(())
     }
 
-    pub(crate) fn set_desired(&mut self, ids: &[u64]) -> anyhow::Result<()> {
-        self.validate_ids(ids)?;
-        let next = ids.iter().copied().collect::<HashSet<_>>();
-        for id in self.desired.difference(&next) {
-            self.set_bound(id, false, true);
+    pub(crate) fn validate_targets(&self, targets: &[(u64, StateNodeKind)]) -> anyhow::Result<()> {
+        let ids = targets.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        self.validate_ids(&ids)?;
+        for (id, kind) in targets {
+            let record = self
+                .records
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("ViewState identity is unavailable: {id}"))?
+                .lock()
+                .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?;
+            validate_geometry_for_kind(*kind, &record.geometry)?;
         }
-        for id in &next {
-            self.set_bound(id, true, true);
+        Ok(())
+    }
+
+    pub(crate) fn set_desired(&mut self, targets: &[(u64, StateNodeKind)]) -> anyhow::Result<()> {
+        self.validate_targets(targets)?;
+        let next = targets.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        for id in self.desired.difference(&next) {
+            self.set_bound(id, false, true, None);
+        }
+        for (id, kind) in targets {
+            self.set_bound(id, true, true, Some(*kind));
         }
         self.desired = next;
         Ok(())
     }
 
-    pub(crate) fn set_visible(&mut self, ids: &[u64]) {
-        debug_assert!(ids.iter().all(|id| self.records.contains_key(id)));
-        let next = ids.iter().copied().collect::<HashSet<_>>();
+    pub(crate) fn set_visible(&mut self, targets: &[(u64, StateNodeKind)]) {
+        debug_assert!(targets.iter().all(|(id, _)| self.records.contains_key(id)));
+        let next = targets.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
         for id in self.visible.difference(&next) {
-            self.set_bound(id, false, false);
+            self.set_bound(id, false, false, None);
         }
-        for id in &next {
-            self.set_bound(id, true, false);
+        for (id, kind) in targets {
+            self.set_bound(id, true, false, Some(*kind));
         }
         self.visible = next;
     }
@@ -145,8 +161,8 @@ impl ViewStateRegistry {
             .copied()
             .collect::<HashSet<_>>()
         {
-            self.set_bound(&id, false, true);
-            self.set_bound(&id, false, false);
+            self.set_bound(&id, false, true, None);
+            self.set_bound(&id, false, false, None);
         }
         self.desired.clear();
         self.visible.clear();
@@ -163,14 +179,16 @@ impl ViewStateRegistry {
         self.records.clear();
     }
 
-    fn set_bound(&self, id: &u64, bound: bool, desired: bool) {
+    fn set_bound(&self, id: &u64, bound: bool, desired: bool, kind: Option<StateNodeKind>) {
         if let Some(record) = self.records.get(id)
             && let Ok(mut record) = record.lock()
         {
             if desired {
                 record.desired_bound = bound;
+                record.desired_kind = if bound { kind } else { None };
             } else {
                 record.visible_bound = bound;
+                record.visible_kind = if bound { kind } else { None };
             }
         }
     }

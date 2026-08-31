@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use super::capabilities::{StateNodeKind, validate_geometry_for_kind};
 use super::effects::{StateEffects, presentation_effects};
+use super::geometry::{GeometryOverrides, ViewStateGeometryPatch, ViewStateGeometryProperty};
 use super::presentation::{
     PresentationOverrides, ViewStatePresentationPatch, ViewStatePresentationProperty,
     ViewStateSnapshot,
@@ -15,13 +17,18 @@ pub(crate) struct ViewStateRecord {
     pub(crate) id: u64,
     pub(crate) lifecycle: ViewStateLifecycle,
     pub(crate) desired_bound: bool,
+    pub(crate) desired_kind: Option<StateNodeKind>,
     pub(crate) visible_bound: bool,
+    pub(crate) visible_kind: Option<StateNodeKind>,
     /// Keeps a prepared frame's attachment alive while its backend receipt is
     /// outstanding, even if a newer desired revision supersedes it.
     pub(crate) in_flight_bound: bool,
+    pub(crate) geometry: GeometryOverrides,
     pub(crate) presentation: PresentationOverrides,
     pub(crate) style_states: BTreeMap<String, String>,
     pub(crate) revision: u64,
+    pub(crate) geometry_revision: u64,
+    pub(crate) presentation_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,21 +43,71 @@ impl ViewStateRecord {
             id,
             lifecycle: ViewStateLifecycle::Live,
             desired_bound: false,
+            desired_kind: None,
             visible_bound: false,
+            visible_kind: None,
             in_flight_bound: false,
+            geometry: GeometryOverrides::default(),
             presentation: PresentationOverrides::default(),
             style_states: BTreeMap::new(),
             revision: 0,
+            geometry_revision: 0,
+            presentation_revision: 0,
         }
     }
 
     pub(crate) fn snapshot(&self) -> ViewStateSnapshot {
         ViewStateSnapshot {
             id: self.id,
+            geometry: self.geometry.clone(),
             presentation: self.presentation.clone(),
             style_states: self.style_states.clone(),
             revision: self.revision,
+            geometry_revision: self.geometry_revision,
+            presentation_revision: self.presentation_revision,
         }
+    }
+
+    pub(crate) fn apply_geometry(
+        &mut self,
+        patch: &ViewStateGeometryPatch,
+    ) -> anyhow::Result<StateEffects> {
+        let mut next = self.geometry.clone();
+        let effects = next.apply_patch(patch);
+        if effects.is_empty() {
+            crate::perf::inc(crate::perf::Counter::ViewStateMutationsNoop);
+            return Ok(StateEffects::NONE);
+        }
+        if let Some(kind) = self.desired_kind.or(self.visible_kind) {
+            validate_geometry_for_kind(kind, &next)?;
+        }
+        self.geometry = next;
+        crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
+        crate::perf::inc(crate::perf::Counter::ViewStateGeometryInvalidations);
+        self.revision = self.revision.saturating_add(1);
+        self.geometry_revision = self.geometry_revision.saturating_add(1);
+        Ok(effects)
+    }
+
+    pub(crate) fn clear_geometry(
+        &mut self,
+        properties: Option<&[ViewStateGeometryProperty]>,
+    ) -> anyhow::Result<StateEffects> {
+        let mut next = self.geometry.clone();
+        let effects = next.clear(properties);
+        if effects.is_empty() {
+            crate::perf::inc(crate::perf::Counter::ViewStateMutationsNoop);
+            return Ok(StateEffects::NONE);
+        }
+        if let Some(kind) = self.desired_kind.or(self.visible_kind) {
+            validate_geometry_for_kind(kind, &next)?;
+        }
+        self.geometry = next;
+        crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
+        crate::perf::inc(crate::perf::Counter::ViewStateGeometryInvalidations);
+        self.revision = self.revision.saturating_add(1);
+        self.geometry_revision = self.geometry_revision.saturating_add(1);
+        Ok(effects)
     }
 
     pub(crate) fn apply_presentation(
@@ -64,6 +121,7 @@ impl ViewStateRecord {
         }
         crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
         self.revision = self.revision.saturating_add(1);
+        self.presentation_revision = self.presentation_revision.saturating_add(1);
         presentation_effects(false)
     }
 
@@ -78,6 +136,7 @@ impl ViewStateRecord {
         }
         crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
         self.revision = self.revision.saturating_add(1);
+        self.presentation_revision = self.presentation_revision.saturating_add(1);
         presentation_effects(false)
     }
 
@@ -89,6 +148,7 @@ impl ViewStateRecord {
         crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
         self.style_states.insert(key, value);
         self.revision = self.revision.saturating_add(1);
+        self.presentation_revision = self.presentation_revision.saturating_add(1);
         presentation_effects(true)
     }
 
@@ -99,6 +159,7 @@ impl ViewStateRecord {
         }
         crate::perf::inc(crate::perf::Counter::ViewStateMutationsAccepted);
         self.revision = self.revision.saturating_add(1);
+        self.presentation_revision = self.presentation_revision.saturating_add(1);
         presentation_effects(true)
     }
 }

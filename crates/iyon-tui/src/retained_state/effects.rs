@@ -12,6 +12,15 @@ impl StateEffects {
     pub(crate) const PAINT_SELF: Self = Self(1 << 1);
     pub(crate) const PAINT_SUBTREE: Self = Self(1 << 2);
     pub(crate) const DAMAGE: Self = Self(1 << 3);
+    pub(crate) const GEOMETRY: Self = Self(1 << 4);
+    pub(crate) const MEASURE_SELF: Self = Self(1 << 5);
+    pub(crate) const MEASURE_ANCESTORS: Self = Self(1 << 6);
+    pub(crate) const PLACE_SELF: Self = Self(1 << 7);
+    pub(crate) const PLACE_DESCENDANTS: Self = Self(1 << 8);
+    pub(crate) const UPDATE_CLIP: Self = Self(1 << 9);
+    pub(crate) const DAMAGE_OLD: Self = Self(1 << 10);
+    pub(crate) const DAMAGE_NEW: Self = Self(1 << 11);
+    pub(crate) const PROJECT_CONTENT: Self = Self(1 << 12);
 
     pub(crate) fn is_empty(self) -> bool {
         self.0 == 0
@@ -23,6 +32,10 @@ impl StateEffects {
 
     pub(crate) fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+
+    pub(crate) fn geometry(self) -> bool {
+        self.contains(Self::GEOMETRY)
     }
 }
 

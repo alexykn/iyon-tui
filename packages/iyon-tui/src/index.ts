@@ -65,6 +65,10 @@ export type { ViewComponent } from "./composition/define-view.ts";
 export type { ViewSlot } from "./api/controls/view-slot.ts";
 export type { ScrollPane } from "./api/controls/scroll-pane.ts";
 export type {
+  ViewStateAlignment,
+  ViewStateBorderEdges,
+  ViewStateGeometryPatch,
+  ViewStateGeometryProperty,
   ViewStatePresentationPatch,
   ViewStatePresentationProperty,
   ViewStateTextAttributes,

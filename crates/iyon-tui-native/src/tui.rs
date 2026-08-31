@@ -1992,6 +1992,7 @@ impl ViewDecoder {
             )?)),
             VIEW_KIND_DECORATED => {
                 tui_perf_inc!(LegacyDecoratedCompatibilityFrames);
+                tui_perf_inc!(DecoratedNormalizedNodes);
                 let child = self.decode(required_prop::<Object>(value, "child")?)?;
                 decode_decoration(child, &required_prop::<Object>(value, "decoration")?)
             }

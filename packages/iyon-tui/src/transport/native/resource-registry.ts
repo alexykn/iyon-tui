@@ -326,6 +326,11 @@ export class NativeResourceRegistry {
         },
       );
     }
+    if (targetNodeKind !== undefined) {
+      const validator = (resource as { readonly validateNodeKind?: (nodeKind: number) => void })
+        .validateNodeKind;
+      validator?.call(resource, targetNodeKind);
+    }
     record.preparedLeases += 1;
     return new PreparedResourceLease(this, record, handle, resource);
   }

@@ -388,7 +388,7 @@ export class View {
 
   /** Attaches one host-owned retained state identity to this occurrence. */
   state(state: ViewState): View {
-    if (typeof state !== "object" || state === null || state.kind !== "state") {
+    if (typeof state !== "object" || state === null || state.kind !== "state" || state.disposed) {
       throw new TypeError("View.state requires a live ViewState");
     }
     if (isRetainedConstruction()) return composeState(this, state);

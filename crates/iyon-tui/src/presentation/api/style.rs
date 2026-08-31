@@ -948,6 +948,10 @@ impl BorderSpec {
         self.color = color;
     }
 
+    pub(crate) fn set_edges(&mut self, edges: BorderEdges) {
+        self.edges = edges;
+    }
+
     pub(crate) fn set_style(&mut self, style: BorderStyle) {
         let default_glyphs = match self.style {
             BorderStyle::Plain => BorderGlyphs::plain(),

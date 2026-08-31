@@ -15,7 +15,8 @@ use super::{measure::MeasuredNode, prepare::PreparedNode};
 pub(super) struct MeasureKey {
     pub(super) view: ViewId,
     pub(super) component_view: Option<ViewId>,
-    pub(super) state_revision: u64,
+    pub(super) geometry_revision: u64,
+    pub(super) presentation_revision: u64,
     pub(super) width: u16,
     pub(super) intent: WidthIntent,
 }
@@ -46,6 +47,27 @@ pub(crate) struct LayoutCache {
 }
 
 impl LayoutCache {
+    pub(crate) fn clear(&mut self) {
+        self.current_measure.clear();
+        self.previous_measure.clear();
+        self.current_prepare.clear();
+        self.previous_prepare.clear();
+    }
+
+    /// Drops only entries whose semantic occurrence may have changed. Parent
+    /// ViewIds are supplied by the committed layout dependency frontier; clean
+    /// siblings remain reusable in the next candidate.
+    pub(crate) fn invalidate_view_ids(&mut self, view_ids: &std::collections::HashSet<ViewId>) {
+        self.current_measure
+            .retain(|key, _| !view_ids.contains(&key.view));
+        self.previous_measure
+            .retain(|key, _| !view_ids.contains(&key.view));
+        self.current_prepare
+            .retain(|key, _| !view_ids.contains(&key.measured.view));
+        self.previous_prepare
+            .retain(|key, _| !view_ids.contains(&key.measured.view));
+    }
+
     pub(crate) fn begin_epoch(&mut self) {
         std::mem::swap(&mut self.current_measure, &mut self.previous_measure);
         self.current_measure.clear();
@@ -110,7 +132,8 @@ impl MeasureKey {
         Self {
             view: view.id(),
             component_view: None,
-            state_revision: 0,
+            geometry_revision: 0,
+            presentation_revision: 0,
             width,
             intent,
         }
@@ -125,7 +148,8 @@ impl MeasureKey {
         Self {
             view: view.id(),
             component_view: Some(component_view),
-            state_revision: 0,
+            geometry_revision: 0,
+            presentation_revision: 0,
             width,
             intent,
         }

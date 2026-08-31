@@ -185,6 +185,20 @@ impl LayoutTree {
         }
     }
 
+    pub(crate) fn state_bindings(&self) -> Vec<(u64, crate::retained_state::StateNodeKind)> {
+        let mut bindings = self
+            .state_roots
+            .iter()
+            .filter_map(|(id, node)| {
+                self.nodes
+                    .get(node.0)
+                    .map(|node| (*id, node.occurrence.node_kind))
+            })
+            .collect::<Vec<_>>();
+        bindings.sort_unstable_by_key(|(id, _)| *id);
+        bindings
+    }
+
     pub(crate) fn apply_state_snapshot(
         &mut self,
         state_id: u64,
@@ -256,9 +270,52 @@ impl LayoutTree {
             .and_then(SignedRect::to_rect_opt)
     }
 
-    /// Replaces a component's content subtree in place when its layout shape
-    /// and geometry remain unchanged. Parent and sibling node ids stay stable,
-    /// so the paint cache can reuse every clean sibling surface.
+    /// Replaces one topology-preserving physical occurrence subtree with a
+    /// freshly laid-out candidate. The caller has already proved that the
+    /// target's outer allocation remains fixed; parent and sibling IDs stay
+    /// stable while changed descendants receive their new box geometry.
+    pub(crate) fn patch_subtree(&mut self, target: LayoutNodeId, replacement: &LayoutTree) -> bool {
+        let old_ids = self.preorder_ids(target);
+        let new_ids = replacement.preorder_ids(replacement.root);
+        if old_ids.len() != new_ids.len() {
+            return false;
+        }
+        let old_origin = self.nodes[target.0].rect;
+        let old_clip = self.nodes[target.0].clip_rect;
+        for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
+            let old_node = &self.nodes[old_id.0];
+            let new_node = &replacement.nodes[new_id.0];
+            if old_node.children.len() != new_node.children.len()
+                || old_node.view_id != new_node.view_id
+                || old_node.component != new_node.component
+                || old_node.style.component_scope != new_node.style.component_scope
+            {
+                return false;
+            }
+        }
+        for (old_id, new_id) in old_ids.iter().zip(new_ids.iter()) {
+            let old_node = &self.nodes[old_id.0];
+            let new_node = &replacement.nodes[new_id.0];
+            let mut patched = new_node.clone();
+            patched.rect = translate_rect(patched.rect, old_origin.x.into(), old_origin.y.into());
+            patched.content_rect = translate_rect(
+                patched.content_rect,
+                old_origin.x.into(),
+                old_origin.y.into(),
+            );
+            patched.clip_rect =
+                translate_rect(patched.clip_rect, old_origin.x.into(), old_origin.y.into())
+                    .intersection(old_clip)
+                    .unwrap_or(Rect::new(old_clip.x, old_clip.y, 0, 0));
+            patched.children = old_node.children.clone();
+            self.nodes[old_id.0] = patched;
+        }
+        self.physically_complete &= replacement.physically_complete;
+        self.index_component_roots();
+        debug_assert!(self.validate(), "invalid patched layout tree: {self:?}");
+        true
+    }
+
     pub(crate) fn patch_component_subtree(
         &mut self,
         component: ComponentId,

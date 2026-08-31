@@ -39,7 +39,7 @@ use crate::{
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
-    retained_state::{ViewStateRecord, ViewStateRegistry, ViewStateSnapshot},
+    retained_state::{StateNodeKind, ViewStateRecord, ViewStateRegistry, ViewStateSnapshot},
     scene::{PreparedSceneFrame, SceneHostError},
     terminal::{PresentReceipt, TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };
@@ -2223,9 +2223,10 @@ impl TuiHost {
     /// frame. The returned wake disposition is an edge-trigger hint only; the
     /// environment queue and host epochs remain authoritative.
     pub fn set_desired_view(&self, body: View) -> Result<WakeDisposition> {
-        let state_ids = body
-            .native_state_attachment_ids()
+        let state_targets = body
+            .native_state_attachment_targets()
             .map_err(|error| anyhow::anyhow!(error))?;
+        let state_ids = state_targets.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let mut inner = self.lock_mut()?;
         if inner.closed {
             return Err(anyhow::anyhow!("host is closed"));
@@ -2236,12 +2237,12 @@ impl TuiHost {
                 "DUPLICATE_VIEW_STATE_ATTACHMENT: duplicate state attachment"
             ));
         }
-        inner.validate_state_ids(&state_ids)?;
+        inner.validate_state_targets(&state_targets)?;
         let next_revision = inner
             .desired_structural_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
-        inner.set_desired_state_bindings(&state_ids)?;
+        inner.set_desired_state_bindings(&state_targets)?;
         inner.running.state.body = body.clone();
         inner.running.host_set_body(body);
         inner.desired_structural_revision = next_revision;
@@ -2778,16 +2779,16 @@ impl HostInner {
         self.view_states.snapshots()
     }
 
-    fn validate_state_ids(&self, ids: &[u64]) -> Result<()> {
-        self.view_states.validate_ids(ids)
+    fn validate_state_targets(&self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
+        self.view_states.validate_targets(targets)
     }
 
-    fn set_desired_state_bindings(&mut self, ids: &[u64]) -> Result<()> {
-        self.view_states.set_desired(ids)
+    fn set_desired_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
+        self.view_states.set_desired(targets)
     }
 
-    fn commit_visible_state_bindings(&mut self, ids: &[u64]) {
-        self.view_states.set_visible(ids);
+    fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) {
+        self.view_states.set_visible(targets);
     }
 
     fn set_in_flight_state_bindings(&mut self, ids: &[u64]) {
@@ -2798,11 +2799,15 @@ impl HostInner {
         self.view_states.clear_in_flight();
     }
 
-    pub(super) fn invalidate_state(&mut self, id: u64) -> Result<WakeDisposition> {
+    pub(super) fn invalidate_state(
+        &mut self,
+        id: u64,
+        effects: crate::retained_state::StateEffects,
+    ) -> Result<WakeDisposition> {
         if !self.view_states.is_bound(id)? {
             return Ok(WakeDisposition::default());
         }
-        self.running.host_invalidate_state(id);
+        self.running.host_invalidate_state(id, effects);
         self.mark_pending()
     }
 
@@ -2883,7 +2888,12 @@ impl HostInner {
         let target_structural_revision = self.desired_structural_revision;
         let states = self.state_snapshots()?;
         let candidate = prepare_frame(&mut self.running, &mut self.backend, self.now, &states)?;
-        self.set_in_flight_state_bindings(&candidate.state_bindings);
+        let state_ids = candidate
+            .state_bindings
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        self.set_in_flight_state_bindings(&state_ids);
         let previous_pending = self.frame_pending;
         debug_assert!(self.candidate_frame.is_none());
         self.candidate_frame = Some(candidate);

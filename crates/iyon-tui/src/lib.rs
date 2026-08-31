@@ -210,7 +210,9 @@ pub use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
 #[cfg(feature = "native-host")]
 #[doc(hidden)]
 pub use retained_state::{
-    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateTextAttributes,
+    GeometryAlignment, ViewStateGeometryPatch, ViewStateGeometryProperty,
+    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
+    ViewStateTextAttributes,
 };
 pub use scene::Scene;
 pub use scroll::ScrollPane;

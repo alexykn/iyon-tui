@@ -8,7 +8,7 @@ use super::{
 use crate::{
     geometry::{Point, Rect},
     perf::{self, Counter},
-    retained_state::OccurrenceBox,
+    retained_state::{OccurrenceBox, state_node_kind},
 };
 
 pub(super) fn emit_prepared(
@@ -61,8 +61,19 @@ pub(super) fn emit_prepared(
         paint_cacheable: prepared.measured.cacheable,
         occurrence: OccurrenceBox::from_effective(
             prepared.measured.view.state_attachment_id(),
+            state_node_kind(prepared.measured.view.kind()),
+            prepared.measured.view.width(),
+            prepared.measured.view.height(),
+            prepared.measured.base_gap,
+            prepared.measured.base_alignment,
             prepared.measured.view.decoration().clone(),
-            prepared.measured.effective_decoration.clone(),
+            crate::retained_state::EffectiveGeometry {
+                width: prepared.measured.width,
+                height: prepared.measured.height,
+                decoration: prepared.measured.effective_decoration.clone(),
+                gap: prepared.measured.effective_gap,
+                alignment: prepared.measured.effective_alignment,
+            },
             prepared.measured.view.view_style_states().clone(),
             prepared.measured.effective_style_states.clone(),
         ),
@@ -136,7 +147,7 @@ fn layout_content(prepared: &PreparedNode) -> LayoutContent {
     match (&prepared.measured.kind, &prepared.kind) {
         (MeasuredKind::Text { text, .. }, _) => LayoutContent::Text {
             text: (**text).clone(),
-            width_rule: prepared.measured.view.width(),
+            width_rule: prepared.measured.width,
         },
         (MeasuredKind::Spacer { rows }, _) => LayoutContent::Spacer { rows: *rows },
         (MeasuredKind::ClampRows { overflow, .. }, PreparedKind::Clamp { .. }) => {

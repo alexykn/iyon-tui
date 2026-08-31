@@ -53,6 +53,12 @@ pub enum Counter {
     ViewStateIncrementalPaints,
     ViewStateDamageRects,
     ViewStateFullDamageFallbacks,
+    ViewStateGeometryInvalidations,
+    ViewStateGeometryRelayouts,
+    ViewStateGeometryLocalPatches,
+    ViewStateGeometryFullFallbacks,
+    ViewStateDirtyPropagationNodes,
+    DecoratedNormalizedNodes,
     LegacyDecoratedCompatibilityFrames,
 }
 
@@ -105,6 +111,12 @@ const NAMES: [&str; Counter::COUNT] = [
     "view_state_incremental_paints",
     "view_state_damage_rects",
     "view_state_full_damage_fallbacks",
+    "view_state_geometry_invalidations",
+    "view_state_geometry_relayouts",
+    "view_state_geometry_local_patches",
+    "view_state_geometry_full_fallbacks",
+    "view_state_dirty_propagation_nodes",
+    "decorated_normalized_nodes",
     "legacy_decorated_compatibility_frames",
 ];
 

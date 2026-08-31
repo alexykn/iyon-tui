@@ -154,8 +154,12 @@ where
     }
 
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_invalidate_state(&mut self, id: u64) {
-        self.scene_host.invalidate_state(id);
+    pub(crate) fn host_invalidate_state(
+        &mut self,
+        id: u64,
+        effects: crate::retained_state::StateEffects,
+    ) {
+        self.scene_host.invalidate_state(id, effects);
         self.invalidate_frame();
     }
 

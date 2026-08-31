@@ -799,19 +799,33 @@ impl View {
     /// native host uses this to establish desired binding before a frame.
     #[cfg(feature = "native-host")]
     pub fn native_state_attachment_ids(&self) -> Result<Vec<u64>, String> {
+        Ok(self
+            .native_state_attachment_targets()?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// Returns each state attachment with the concrete physical kind that owns
+    /// it. H3 uses this target table to validate stored geometry overrides
+    /// before installing a new desired root.
+    #[cfg(feature = "native-host")]
+    pub(crate) fn native_state_attachment_targets(
+        &self,
+    ) -> Result<Vec<(u64, crate::retained_state::StateNodeKind)>, String> {
         if !self.inner.flags.contains_state_attachment() {
             return Ok(Vec::new());
         }
-        let mut ids = Vec::new();
+        let mut targets = Vec::new();
         let mut active = HashSet::new();
-        self.collect_state_attachment_ids(&mut ids, &mut active)?;
-        Ok(ids)
+        self.collect_state_attachment_targets(&mut targets, &mut active)?;
+        Ok(targets)
     }
 
     #[cfg(feature = "native-host")]
-    fn collect_state_attachment_ids(
+    fn collect_state_attachment_targets(
         &self,
-        ids: &mut Vec<u64>,
+        targets: &mut Vec<(u64, crate::retained_state::StateNodeKind)>,
         active: &mut HashSet<ViewId>,
     ) -> Result<(), String> {
         if !self.inner.flags.contains_state_attachment() {
@@ -821,43 +835,61 @@ impl View {
             return Err("cyclic semantic View graph".to_owned());
         }
         if let Some(state_id) = self.state_attachment_id() {
-            if ids.contains(&state_id) {
+            if targets.iter().any(|(id, _)| *id == state_id) {
                 return Err("duplicate ViewState attachment".to_owned());
             }
-            ids.push(state_id);
+            targets.push((
+                state_id,
+                crate::retained_state::state_node_kind(self.kind()),
+            ));
         }
         match self.kind() {
             ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => {}
             ViewKind::Column(column) => {
                 for child in column.children.iter() {
-                    child.view.collect_state_attachment_ids(ids, active)?;
+                    child
+                        .view
+                        .collect_state_attachment_targets(targets, active)?;
                 }
             }
             ViewKind::Row(row) => {
                 for child in row.children.iter() {
-                    child.view.collect_state_attachment_ids(ids, active)?;
+                    child
+                        .view
+                        .collect_state_attachment_targets(targets, active)?;
                 }
             }
             ViewKind::Grid(grid) => {
                 for cell in grid.cells.iter() {
-                    cell.view.collect_state_attachment_ids(ids, active)?;
+                    cell.view
+                        .collect_state_attachment_targets(targets, active)?;
                 }
             }
             ViewKind::Hanging(hanging) => {
-                hanging.prefix.collect_state_attachment_ids(ids, active)?;
+                hanging
+                    .prefix
+                    .collect_state_attachment_targets(targets, active)?;
                 hanging
                     .continuation_prefix
-                    .collect_state_attachment_ids(ids, active)?;
-                hanging.body.collect_state_attachment_ids(ids, active)?;
+                    .collect_state_attachment_targets(targets, active)?;
+                hanging
+                    .body
+                    .collect_state_attachment_targets(targets, active)?;
             }
             ViewKind::Container(container) => {
-                container.child.collect_state_attachment_ids(ids, active)?;
+                container
+                    .child
+                    .collect_state_attachment_targets(targets, active)?;
             }
             ViewKind::ClampRows(clamp) => {
-                clamp.child.collect_state_attachment_ids(ids, active)?;
+                clamp
+                    .child
+                    .collect_state_attachment_targets(targets, active)?;
             }
             ViewKind::RowViewport(viewport) => {
-                viewport.child.collect_state_attachment_ids(ids, active)?;
+                viewport
+                    .child
+                    .collect_state_attachment_targets(targets, active)?;
             }
         }
         active.remove(&self.id());

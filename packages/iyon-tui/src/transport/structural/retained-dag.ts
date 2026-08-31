@@ -130,6 +130,7 @@ export interface RetainedIdentityCounters {
   transport_scratch_reuses: number;
   stale_ref_retries: number;
   cold_fallbacks: number;
+  decorated_normalized_nodes: number;
   host_mutations: number;
 }
 
@@ -148,6 +149,7 @@ const counters: RetainedIdentityCounters = {
   transport_scratch_reuses: 0,
   stale_ref_retries: 0,
   cold_fallbacks: 0,
+  decorated_normalized_nodes: 0,
   host_mutations: 0,
 };
 
@@ -871,6 +873,10 @@ function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): nu
 function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
+  // Semantic Decorated is compatibility input only: the native parser applies
+  // its property-only values directly to the child View, so no extra physical
+  // occurrence owns padding, bounds, or border geometry.
+  counters.decorated_normalized_nodes += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   const decoration = node.decoration;
   if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {

@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::presentation::ir::Decoration;
+use crate::presentation::ir::{Decoration, HeightRule, WidthRule};
+
+use super::geometry::{EffectiveGeometry, GeometryAlignment, GeometryOverrides};
 use crate::presentation::{
     BorderGlyphs, BorderStyle, ColorSpec, StyleRef, StyleSpec, StyleStates, TextAttribute,
 };
@@ -143,16 +145,36 @@ fn apply_attribute_patch(target: &mut ViewStateTextAttributes, patch: &ViewState
     }
 }
 
-/// Immutable frame-time copy of one retained state record.
+/// Immutable frame-time copy of one retained state record. Geometry and
+/// presentation revisions remain separate for effect classification and
+/// cache validation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ViewStateSnapshot {
     pub(crate) id: u64,
+    pub(crate) geometry: GeometryOverrides,
     pub(crate) presentation: PresentationOverrides,
     pub(crate) style_states: BTreeMap<String, String>,
     pub(crate) revision: u64,
+    pub(crate) geometry_revision: u64,
+    pub(crate) presentation_revision: u64,
 }
 
 impl ViewStateSnapshot {
+    pub(crate) fn effective_geometry(
+        &self,
+        width: WidthRule,
+        height: HeightRule,
+        decoration: &Decoration,
+        gap: Option<u16>,
+        alignment: GeometryAlignment,
+    ) -> EffectiveGeometry {
+        let mut effective = self
+            .geometry
+            .effective(width, height, decoration, gap, alignment);
+        effective.decoration = self.effective_decoration(&effective.decoration);
+        effective
+    }
+
     pub(crate) fn effective_decoration(&self, base: &Decoration) -> Decoration {
         let mut decoration = base.clone();
         if let Some(style) = &self.presentation.style {

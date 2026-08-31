@@ -3307,10 +3307,12 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 }
 
 /// PERF-12 T13 (§76): parses the framed words+bytes payload describing one
-/// decorated node and applies the decoration in exactly the Direct decoder's
-/// order (padding, background, foreground, border, style, style states,
-/// width, height, min/max). Colors arrive as style atoms; custom border
-/// glyphs are not expressible on this lane.
+/// decorated node and applies the property-only decoration in exactly the
+/// Direct decoder's order (padding, background, foreground, border, style,
+/// style states, width, height, min/max). The result is a canonical base View;
+/// no extra physical occurrence is retained for the compatibility wrapper.
+/// Colors arrive as style atoms; custom border glyphs are not expressible on
+/// this lane.
 fn parse_and_build_decorated(
     runtime: &NativeViewRuntime,
     child: View,
@@ -3474,6 +3476,8 @@ pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
     }
     #[cfg(feature = "perf-counters")]
     iyon_tui::perf::inc(iyon_tui::perf::Counter::LegacyDecoratedCompatibilityFrames);
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::perf::inc(iyon_tui::perf::Counter::DecoratedNormalizedNodes);
     let word_slice = if used_word_count == 0 {
         &[]
     } else {

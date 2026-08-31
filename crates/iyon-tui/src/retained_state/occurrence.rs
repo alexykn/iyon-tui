@@ -5,13 +5,22 @@
 //! values; it never creates a structural wrapper node.
 
 use crate::presentation::api::StyleStates;
-use crate::presentation::ir::Decoration;
+use crate::presentation::ir::{Decoration, HeightRule, WidthRule};
 
-use super::ViewStateSnapshot;
+use super::{EffectiveGeometry, GeometryAlignment, StateNodeKind, ViewStateSnapshot};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OccurrenceBox {
     pub(crate) state_attachment: Option<u64>,
+    pub(crate) node_kind: StateNodeKind,
+    pub(crate) base_width: WidthRule,
+    pub(crate) base_height: HeightRule,
+    pub(crate) effective_width: WidthRule,
+    pub(crate) effective_height: HeightRule,
+    pub(crate) base_gap: Option<u16>,
+    pub(crate) effective_gap: Option<u16>,
+    pub(crate) base_alignment: GeometryAlignment,
+    pub(crate) effective_alignment: GeometryAlignment,
     pub(crate) base_decoration: Decoration,
     pub(crate) effective_decoration: Decoration,
     pub(crate) base_style_states: StyleStates,
@@ -19,46 +28,50 @@ pub(crate) struct OccurrenceBox {
 }
 
 impl OccurrenceBox {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_effective(
         state_attachment: Option<u64>,
+        node_kind: StateNodeKind,
+        base_width: WidthRule,
+        base_height: HeightRule,
+        base_gap: Option<u16>,
+        base_alignment: GeometryAlignment,
         base_decoration: Decoration,
-        effective_decoration: Decoration,
+        effective: EffectiveGeometry,
         base_style_states: StyleStates,
         effective_style_states: StyleStates,
     ) -> Self {
         Self {
             state_attachment,
+            node_kind,
+            base_width,
+            base_height,
+            effective_width: effective.width,
+            effective_height: effective.height,
+            base_gap,
+            effective_gap: effective.gap,
+            base_alignment,
+            effective_alignment: effective.alignment,
             base_decoration,
-            effective_decoration,
+            effective_decoration: effective.decoration,
             base_style_states,
             effective_style_states,
         }
     }
 
-    pub(crate) fn new(
-        state_attachment: Option<u64>,
-        base_decoration: Decoration,
-        base_style_states: StyleStates,
-        state: Option<&ViewStateSnapshot>,
-    ) -> Self {
-        let (effective_decoration, effective_style_states) = match state {
-            Some(state) => (
-                state.effective_decoration(&base_decoration),
-                state.effective_style_states(&base_style_states),
-            ),
-            None => (base_decoration.clone(), base_style_states.clone()),
-        };
-        Self::from_effective(
-            state_attachment,
-            base_decoration,
-            effective_decoration,
-            base_style_states,
-            effective_style_states,
-        )
-    }
-
     pub(crate) fn apply_state(&mut self, state: &ViewStateSnapshot) {
-        self.effective_decoration = state.effective_decoration(&self.base_decoration);
+        let effective = state.effective_geometry(
+            self.base_width,
+            self.base_height,
+            &self.base_decoration,
+            self.base_gap,
+            self.base_alignment,
+        );
+        self.effective_width = effective.width;
+        self.effective_height = effective.height;
+        self.effective_gap = effective.gap;
+        self.effective_alignment = effective.alignment;
+        self.effective_decoration = effective.decoration;
         self.effective_style_states = state.effective_style_states(&self.base_style_states);
     }
 }

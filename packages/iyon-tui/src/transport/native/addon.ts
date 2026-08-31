@@ -35,6 +35,9 @@ export interface NativeStateWake {
 export interface NativeViewStateContract {
   dispose(): void;
   stateId(): number;
+  validateNodeKind(targetNodeKind: number): void;
+  setGeometry(patch: object): NativeStateWake;
+  clearGeometry(properties?: readonly string[]): NativeStateWake;
   setPresentation(patch: object): NativeStateWake;
   clearPresentation(properties?: readonly string[]): NativeStateWake;
   setStyleState(key: string, value: string): NativeStateWake;

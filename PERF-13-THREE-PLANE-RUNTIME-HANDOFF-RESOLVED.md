@@ -3122,6 +3122,7 @@ The index is intentionally a navigation list rather than copied implementation s
 **Document type:** normative architecture and implementation handoff  
 **Audience:** implementation agent with competent Rust/TypeScript skills but no assumed prior knowledge of retained UI internals  
 **Delivery model:** stacked, individually reviewable merge requests; do not merge any tranche to the protected integration branch until every PERF-13 tranche is complete and the final gates pass
+**Benchmark policy:** PERF-12 is complete. PERF-13 tranches MUST run the relevant PERF-12 tests, but MUST NOT run the full PERF-12 benchmark suite; that suite takes roughly four hours. Any PERF-13 benchmarks MUST be focused and explicitly scoped rather than a full-suite rerun.
 
 ---
 

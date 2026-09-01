@@ -627,7 +627,109 @@ A derived projection may allocate rows/compiled text proportional to the active
 projection. A Source snapshot must not duplicate the entire raw Source solely
 for revision inspection, and a cache hit must not recompile.
 
-### 6.3 Add a real plain-text projection
+### 6.3 Content-folder findings: reuse semantic text infrastructure
+
+The generic content layer under `crates/iyon-tui/src/content/` is important to
+F and to the post-PERF-13 v5 direction. It is not just a legacy renderer.
+
+`content/mod.rs` defines immutable semantic content models and the generic
+`Renderer` boundary. Its contract is geometry-independent: a Renderer converts
+semantic content into a generic `View`; it does not receive terminal geometry,
+parser state, clocks, or stream lifecycle.
+
+`content/text/` currently provides:
+
+- `TextContent`, a closed generic text value with `Raw(RawText)` and `Block(Block)`
+  variants;
+- `RawText`, immutable `Arc<str>` text with exact source-slice support;
+- text blocks, paragraphs, headings, lists, quotes, code blocks, tables, breaks,
+  inline content, links, marks, origins, provenance, and semantic annotations;
+- `TextRun` with `Exact`, `Derived`, or `Synthetic` provenance and UTF-8-aware
+  splitting;
+- `PlainTextProjector`, which turns contiguous raw domains into paragraph/block
+  semantics while preserving source ranges and a stable prefix;
+- `MarkdownProjector` and `MarkdownOptions` for incremental/streaming semantic
+  transformation;
+- `TextRenderer`, which lowers semantic text to generic Views for the existing
+  geometry-independent path;
+- visitor/rewriter/projector utilities and validation for semantic text IR.
+
+The current `PlainTextProjector` is a useful semantic reference, but it builds
+`RawText`/`Block` values and ultimately the existing Renderer lowers to Views.
+Do not call it in a way that materializes a complete Source string or rebuilds
+semantic Views for every Source append. For F, reuse its newline/provenance/
+validation semantics where useful, but keep Source bytes authoritative and put
+width-specific derived rows/cache state on the Connector. A future optimized
+adapter may expose chunk-backed semantic text without changing these public
+semantic concepts.
+
+`stream/projected.rs` and `stream/compile/*` complement `content/text/`:
+`ProjectedText` is a width-independent, provenance-aware intermediate; the
+compiler turns it into width-specific `PhysicalRow`s with anchors and transfer
+metadata. `ViewCompiler::compile_projected_text_with_metadata_and_context()`
+can resolve styles against a host/theme context. This is a good foundation for
+F's plain Connector projector, provided physical rows are not cached without
+including all style/context dependencies.
+
+F should establish a clean direction for later Funnels:
+
+```text
+Source accepted bytes/semantic values
+    → input decoding/adaptation
+    → semantic transformation (plain/Markdown/diff/ANSI/etc.)
+    → semantic delivery (immediate or future Smooth)
+    → width/host/viewport projection
+    → TUI layout and paint
+```
+
+Do not model Funnel and Connector as two serial mutable stages. The Funnel is
+an immutable normalized specification; the Connector is the execution identity
+for one `(Source, Funnel, ContentPort)` binding. A Funnel may describe input
+family, semantic transform, wrap/projection settings, capability requirements,
+and a fingerprint. It must not own a parser cursor, consumed revision,
+smoothing frontier, width cache, or active status.
+
+The v5 design makes the next-step implications explicit:
+
+- `TextContent`/semantic text IR must remain backend-neutral, width-independent,
+  revisioned, source-coordinate aware, incrementally replaceable, restylable,
+  and free of terminal cells, GPUI glyph data, Taffy geometry, and host-native
+  Style IDs;
+- Markdown, unified diff, and safe ANSI should become semantic transforms whose
+  roles/styles are resolved later by host/theme, not terminal byte passthrough;
+- Markdown streaming needs a stable semantic prefix plus replaceable unstable
+  tail, with Source seal finalizing the tail; malformed/incomplete input should
+  normally remain a deterministic semantic diagnostic/fallback, not a frame
+  failure;
+- diff should retain semantic additions/removals/context/hunk metadata so it
+  can be restyled or selected after ingestion;
+- ANSI SGR/OSC 8 may become semantic style/link intent, while unsafe cursor,
+  window, or control operations must be stripped/diagnosed;
+- Smooth belongs after semantic parsing and before physical projection. It is a
+  Connector-local Rust-clock delivery frontier, not React animation, Source
+  backpressure, or raw Markdown token pacing;
+- the future Connector may own accepted/semantic/visible frontiers, parser
+  checkpoints, smoothing state, and width/viewport caches independently for
+  each display of one shared Source;
+- a future v5 Surface contains ordered component occurrences and owns scrolling,
+  follow-end, anchoring, culling, and derived residency. It must not own
+  Markdown/diff parsing, Source bytes, or a global smoothing policy;
+- v5 replaces irreversible live/completed/frozen presentation lifetimes with
+  dependency-keyed cache validity and reversible residency. Completion/seal
+  affects ingestion/semantic finalization, never whether an old visible
+  occurrence responds to theme, effort, Host Environment, selection, editing,
+  or resize;
+- v5 eventually uses React + TypeScript as the public composition model,
+  Taffy for general Flexbox/Grid on terminal and GPUI, a first-class Rust Host
+  Environment, and one component-only ScrollSurface instead of a privileged
+  mixed text/component History renderer.
+
+Do not implement all of v5 in F. F must make the current plain content path
+correct and leave the explicit Source/Funnel/Connector/Port and semantic IR
+boundaries usable for the later Markdown, diff, ANSI, Smooth, Surface, and
+Taffy migrations.
+
+### 6.4 Add a real plain-text projection
 
 For a `HostContentFunnel::plain(wrap)` and a `HostContentSourceSnapshot`:
 
@@ -650,7 +752,7 @@ plain visual output if the current F schema has no visual interpretation;
 future G must be able to resolve them per host/theme without changing Source
 storage.
 
-### 6.4 Projection caching
+### 6.5 Projection caching
 
 Use a clear key and separate committed/candidate ownership. The key should
 contain all output-affecting values, at least:
@@ -685,7 +787,7 @@ projection. Source revision/content-generation changes invalidate Source-derived
 projection. Theme/style changes invalidate only style-dependent projection or
 paint data.
 
-### 6.5 Candidate Connector preparation
+### 6.6 Candidate Connector preparation
 
 Extend `ContentHostRegistry` with an operation conceptually like:
 
@@ -715,7 +817,7 @@ A Source mutation during preparation may leave the candidate representing the
 captured revision. The later Source wake/epoch must make the Connector dirty
 for a follow-up frame; never read half of two revisions.
 
-### 6.6 Integrate projection with measure/place convergence
+### 6.7 Integrate projection with measure/place convergence
 
 Current layout only sees `ContentHost` as zero. Change the candidate flow so
 ContentHost receives the current candidate projection's intrinsic metrics.
@@ -746,7 +848,7 @@ The next pass must reproject if actual allocated width differs. Avoid
 unconditional full-tree work after dependency metadata proves that a fixed
 ContentHost's intrinsic change cannot escape its allocation.
 
-### 6.7 ContentHost measurement rules
+### 6.8 ContentHost measurement rules
 
 - Empty/no active Connector: content intrinsic `0 × 0`; decoration/bounds still
   contribute.
@@ -760,7 +862,7 @@ ContentHost's intrinsic change cannot escape its allocation.
 - A candidate switch uses candidate metrics for candidate layout; old committed
   metrics remain visible until the complete candidate commits.
 
-### 6.8 Paint and clip rules
+### 6.9 Paint and clip rules
 
 Content rows must be painted inside the ContentHost content rectangle after
 border/padding, then intersected with the effective ancestor/node clip. The
@@ -774,7 +876,7 @@ If physical rows are cached, the cache key must include resolved style context
 or the row representation must remain semantic until paint. Do not reuse a row
 compiled under one theme/context for another host.
 
-### 6.9 Viewport integration
+### 6.10 Viewport integration
 
 The connector receives a read-only viewport context. The controller applies:
 
@@ -792,7 +894,7 @@ be in unscrolled coordinates, while paint applies the viewport translation and
 clip. Scroll-only updates should avoid width rewrap/reparse and only repaint
 visible rows.
 
-### 6.10 Commit/abort
+### 6.11 Commit/abort
 
 Candidate content state must follow the existing HostInner transaction:
 

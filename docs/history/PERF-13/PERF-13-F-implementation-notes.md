@@ -724,12 +724,56 @@ The v5 design makes the next-step implications explicit:
   Environment, and one component-only ScrollSurface instead of a privileged
   mixed text/component History renderer.
 
+### 6.4 Smoothing interpretation for F
+
+The v5 document confirms that the existing stream smoother should become a
+**Funnel delivery-policy value**, but not that the mutable smoother itself
+belongs on Funnel. The split is:
+
+```text
+Funnel specification:
+    immutable delivery policy, e.g. Immediate or Smooth(config)
+
+Connector execution:
+    mutable semantic-ready/visible frontiers
+    Rust clock/timer and reveal progress
+    lag/catch-up state
+```
+
+The existing `HostTextPipeline` in `application/host.rs` already uses the
+generic `Smooth` projector for the old `HostTextStream`/History path. That is
+legacy consumer plumbing, not the retained Source/Connector implementation.
+Do not copy its mutable `Smooth` instance into `HostContentFunnel`, Source, or
+ContentPort. Do not make F silently migrate the old History pipeline.
+
+PERF-13-F's handoff explicitly requires the plain-text Funnel/projection path,
+not the complete Markdown/Smooth migration. F should therefore keep the current
+public `TextFunnel.plain({ wrap })` immediate/plain behavior correct while
+shaping the native Funnel/Connector boundary so an immutable delivery policy
+can be added without changing Source ownership or projection cache keys.
+The later v5/V5-F smoothing work should add the policy and Connector-local
+clock/frontier state, with this stage order:
+
+```text
+Source bytes
+    → plain/Markdown/diff/ANSI semantic transformation
+    → Smooth delivery frontier (when selected)
+    → width/host/viewport projection
+    → Taffy/layout/paint
+```
+
+A future Smooth policy must not pace raw Markdown delimiters, call JavaScript
+per tick, or force React updates. It must suspend when a Connector is cold and
+catch up according to policy when demand resumes. F may expose an internal
+`Immediate` delivery default or a placeholder delivery-policy field, but must
+not invent full smoothing semantics as an unrequested F feature.
+
 Do not implement all of v5 in F. F must make the current plain content path
 correct and leave the explicit Source/Funnel/Connector/Port and semantic IR
 boundaries usable for the later Markdown, diff, ANSI, Smooth, Surface, and
 Taffy migrations.
 
-### 6.4 Add a real plain-text projection
+### 6.5 Add a real plain-text projection
 
 For a `HostContentFunnel::plain(wrap)` and a `HostContentSourceSnapshot`:
 
@@ -752,7 +796,7 @@ plain visual output if the current F schema has no visual interpretation;
 future G must be able to resolve them per host/theme without changing Source
 storage.
 
-### 6.5 Projection caching
+### 6.6 Projection caching
 
 Use a clear key and separate committed/candidate ownership. The key should
 contain all output-affecting values, at least:
@@ -787,7 +831,7 @@ projection. Source revision/content-generation changes invalidate Source-derived
 projection. Theme/style changes invalidate only style-dependent projection or
 paint data.
 
-### 6.6 Candidate Connector preparation
+### 6.7 Candidate Connector preparation
 
 Extend `ContentHostRegistry` with an operation conceptually like:
 
@@ -817,7 +861,7 @@ A Source mutation during preparation may leave the candidate representing the
 captured revision. The later Source wake/epoch must make the Connector dirty
 for a follow-up frame; never read half of two revisions.
 
-### 6.7 Integrate projection with measure/place convergence
+### 6.8 Integrate projection with measure/place convergence
 
 Current layout only sees `ContentHost` as zero. Change the candidate flow so
 ContentHost receives the current candidate projection's intrinsic metrics.
@@ -848,7 +892,7 @@ The next pass must reproject if actual allocated width differs. Avoid
 unconditional full-tree work after dependency metadata proves that a fixed
 ContentHost's intrinsic change cannot escape its allocation.
 
-### 6.8 ContentHost measurement rules
+### 6.9 ContentHost measurement rules
 
 - Empty/no active Connector: content intrinsic `0 × 0`; decoration/bounds still
   contribute.
@@ -862,7 +906,7 @@ ContentHost's intrinsic change cannot escape its allocation.
 - A candidate switch uses candidate metrics for candidate layout; old committed
   metrics remain visible until the complete candidate commits.
 
-### 6.9 Paint and clip rules
+### 6.10 Paint and clip rules
 
 Content rows must be painted inside the ContentHost content rectangle after
 border/padding, then intersected with the effective ancestor/node clip. The
@@ -876,7 +920,7 @@ If physical rows are cached, the cache key must include resolved style context
 or the row representation must remain semantic until paint. Do not reuse a row
 compiled under one theme/context for another host.
 
-### 6.10 Viewport integration
+### 6.11 Viewport integration
 
 The connector receives a read-only viewport context. The controller applies:
 
@@ -894,7 +938,7 @@ be in unscrolled coordinates, while paint applies the viewport translation and
 clip. Scroll-only updates should avoid width rewrap/reparse and only repaint
 visible rows.
 
-### 6.11 Commit/abort
+### 6.12 Commit/abort
 
 Candidate content state must follow the existing HostInner transaction:
 

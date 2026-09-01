@@ -655,7 +655,7 @@ impl NativeTuiHost {
         let disposition = self
             .host
             .set_desired_view(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+            .map_err(|error| crate::NativeError::content(error.to_string()))?;
         let epochs = self
             .host
             .epochs()
@@ -725,6 +725,7 @@ impl NativeTuiHost {
             .collect::<Vec<_>>();
         Ok(serde_json::json!({
             "rearm": report.rearm,
+            "waiting_for_presentation": report.waiting_for_presentation,
             "attempted": report.attempted,
             "committed_hosts": report.committed_hosts.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "commits": commits,
@@ -1211,7 +1212,8 @@ pub struct NativeTextSource {
 #[napi]
 impl NativeTextSource {
     #[napi(constructor)]
-    pub fn new(env: Env, kind: Option<String>, _options: Option<Value>) -> Result<Self> {
+    pub fn new(env: Env, kind: Option<String>, options: Option<Value>) -> Result<Self> {
+        let retention = parse_text_source_options(options)?;
         let kind = match kind.as_deref().unwrap_or("stream") {
             "stream" => TextSourceKind::Stream,
             "block" => TextSourceKind::Block,
@@ -1225,6 +1227,17 @@ impl NativeTextSource {
         let source = environment
             .create_content_source(kind)
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        if let Some(retention) = retention
+            && let Err(error) = source.configure_retention(
+                retention.max_bytes,
+                retention.max_lines,
+                retention.drop_oldest,
+            )
+        {
+            let diagnostic = crate::NativeError::content(error.to_string());
+            let _ = source.dispose();
+            return Err(diagnostic);
+        }
         Ok(Self {
             source,
             alive: AtomicBool::new(true),
@@ -1236,9 +1249,7 @@ impl NativeTextSource {
         if !self.alive.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.source
-            .dispose()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        self.source.dispose().map_err(crate::NativeError::content)?;
         self.alive.store(false, Ordering::Release);
         Ok(())
     }
@@ -1275,9 +1286,7 @@ impl NativeContentPort {
         if !self.alive.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.port
-            .dispose()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        self.port.dispose().map_err(crate::NativeError::content)?;
         self.alive.store(false, Ordering::Release);
         Ok(())
     }
@@ -1311,7 +1320,7 @@ impl NativeContentPort {
         let wake = self
             .port
             .deactivate()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            .map_err(crate::NativeError::content)?;
         Ok(serde_json::json!({
             "schedule_environment_drain": wake.schedule_environment_drain,
         }))
@@ -1329,7 +1338,7 @@ impl NativeContentPort {
         let connector = self
             .port
             .connect(&source.source, funnel)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            .map_err(crate::NativeError::content)?;
         Ok(NativeContentConnector {
             connector,
             alive: AtomicBool::new(true),
@@ -1366,7 +1375,7 @@ impl NativeContentConnector {
         let wake = self
             .connector
             .activate()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            .map_err(crate::NativeError::content)?;
         Ok(serde_json::json!({
             "schedule_environment_drain": wake.schedule_environment_drain,
         }))
@@ -1378,7 +1387,7 @@ impl NativeContentConnector {
         let wake = self
             .connector
             .deactivate()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            .map_err(crate::NativeError::content)?;
         Ok(serde_json::json!({
             "schedule_environment_drain": wake.schedule_environment_drain,
         }))
@@ -1395,7 +1404,7 @@ impl NativeContentConnector {
         let wake = self
             .connector
             .dispose()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            .map_err(crate::NativeError::content)?;
         Ok(serde_json::json!({
             "schedule_environment_drain": wake.schedule_environment_drain,
         }))
@@ -1408,7 +1417,7 @@ impl NativeContentConnector {
         ensure_alive(&self.alive)?;
         self.connector
             .fail_next_activation(diagnostic)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+            .map_err(crate::NativeError::content)
     }
 
     #[napi]
@@ -1428,6 +1437,79 @@ impl NativeContentConnector {
             })),
         }))
     }
+}
+
+struct TextSourceRetentionConfig {
+    max_bytes: Option<u64>,
+    max_lines: Option<u64>,
+    drop_oldest: bool,
+}
+
+fn parse_text_source_options(value: Option<Value>) -> Result<Option<TextSourceRetentionConfig>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let object = value.as_object().ok_or_else(|| {
+        crate::NativeError::invalid_input("text Source options must be an object")
+    })?;
+    for key in object.keys() {
+        if key != "retention" {
+            return Err(crate::NativeError::invalid_input(format!(
+                "unknown text Source option `{key}`"
+            )));
+        }
+    }
+    let Some(retention) = object.get("retention") else {
+        return Ok(None);
+    };
+    let retention = retention.as_object().ok_or_else(|| {
+        crate::NativeError::invalid_input("text Source retention must be an object")
+    })?;
+    for key in retention.keys() {
+        if !matches!(key.as_str(), "maxBytes" | "maxLines" | "overflow") {
+            return Err(crate::NativeError::invalid_input(format!(
+                "unknown text Source retention option `{key}`"
+            )));
+        }
+    }
+    let max_bytes = optional_positive_safe_u64(retention, "maxBytes")?;
+    let max_lines = optional_positive_safe_u64(retention, "maxLines")?;
+    if max_bytes.is_none() && max_lines.is_none() {
+        return Err(crate::NativeError::invalid_input(
+            "text Source retention requires maxBytes or maxLines",
+        ));
+    }
+    let overflow = match retention.get("overflow").and_then(Value::as_str) {
+        Some("drop-oldest") => true,
+        Some("error") => false,
+        Some(_) | None => {
+            return Err(crate::NativeError::invalid_input(
+                "text Source retention overflow must be drop-oldest or error",
+            ));
+        }
+    };
+    Ok(Some(TextSourceRetentionConfig {
+        max_bytes,
+        max_lines,
+        drop_oldest: overflow,
+    }))
+}
+
+fn optional_positive_safe_u64(object: &Map<String, Value>, field: &str) -> Result<Option<u64>> {
+    let Some(value) = object.get(field) else {
+        return Ok(None);
+    };
+    let value = value.as_u64().ok_or_else(|| {
+        crate::NativeError::invalid_input(format!(
+            "text Source retention {field} must be a positive safe integer"
+        ))
+    })?;
+    if value == 0 || value > 9_007_199_254_740_991 {
+        return Err(crate::NativeError::invalid_input(format!(
+            "text Source retention {field} must be a positive safe integer"
+        )));
+    }
+    Ok(Some(value))
 }
 
 fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {

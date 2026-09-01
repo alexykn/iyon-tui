@@ -1,4 +1,4 @@
-import { tuiError } from "../../api/errors.ts";
+import { TuiError, tuiError } from "../../api/errors.ts";
 import type { HandleId } from "../../api/controls/framework-handle.ts";
 
 /**
@@ -341,13 +341,17 @@ export class NativeResourceRegistry {
     const record = this.records.get(handleId);
     if (record === undefined || record.lifecycle === "disposed") return;
     if (record.preparedLeases > 0 || record.desiredLeases > 0 || record.visibleLeases > 0) {
+      if (record.kind === "content-port") {
+        throw new TuiError(
+          "invalid-handle",
+          "PORT_MOUNTED: ContentPort is still attached",
+          "ION_PORT_MOUNTED",
+          { id: handleId },
+        );
+      }
       throw tuiError(
         "invalid-handle",
-        record.kind === "state"
-          ? "STATE_MOUNTED: ViewState is still attached"
-          : record.kind === "content-port"
-            ? "PORT_MOUNTED: ContentPort is still attached"
-            : "resource is still attached",
+        record.kind === "state" ? "STATE_MOUNTED: ViewState is still attached" : "resource is still attached",
         { id: handleId },
       );
     }

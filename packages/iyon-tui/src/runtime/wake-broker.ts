@@ -27,6 +27,7 @@ export interface NativeHostDrainError {
 
 export interface NativeHostDrainReport {
   readonly rearm: boolean;
+  readonly waiting_for_presentation?: boolean;
   readonly attempted: number;
   readonly committed_hosts: readonly (string | number)[];
   readonly commits?: readonly NativeHostCommit[];
@@ -132,6 +133,8 @@ export class EnvironmentWakeBroker {
   private pendingGeneration = 0;
   private draining = false;
   private fairCursor = 0;
+  /** Polls an asynchronous terminal receipt without spinning microtasks. */
+  private presentationPollTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly budget = DEFAULT_FLUSH_BUDGET,
@@ -175,6 +178,7 @@ export class EnvironmentWakeBroker {
     this.pending.delete(id);
     this.hosts.delete(id);
     if (this.pending.size === 0) {
+      this.cancelPresentationPoll();
       this.microtaskQueued = false;
       this.microtaskGeneration += 1;
     }
@@ -266,6 +270,12 @@ export class EnvironmentWakeBroker {
       const report = this.drain(false);
       if ((report.rearm || this.pendingGeneration !== generation) && this.pending.size > 0) {
         this.scheduleMicrotask();
+      } else if (report.waiting_for_presentation === true) {
+        // A real terminal backend acknowledges a submitted frame through an
+        // asynchronous receipt. It is pending work, but not runnable work;
+        // polling it with another microtask would create a busy loop. Yield to
+        // the event loop and ask the broker to poll once the receipt can settle.
+        this.schedulePresentationPoll();
       }
     } catch (error) {
       // The automatic boundary is deliberately non-throwing. Preserve the
@@ -366,6 +376,20 @@ export class EnvironmentWakeBroker {
       wakeCounters.explicit_barrier_failures += 1;
       throw error;
     }
+  }
+
+  private schedulePresentationPoll(): void {
+    if (this.presentationPollTimer !== undefined) return;
+    this.presentationPollTimer = setTimeout(() => {
+      this.presentationPollTimer = undefined;
+      if (this.pending.size > 0) this.scheduleMicrotask();
+    }, 1);
+  }
+
+  private cancelPresentationPoll(): void {
+    if (this.presentationPollTimer === undefined) return;
+    clearTimeout(this.presentationPollTimer);
+    this.presentationPollTimer = undefined;
   }
 
   private refreshPendingHints(): void {
@@ -519,5 +543,13 @@ function frameCode(value: string): RuntimeFrameErrorCode {
 }
 
 function emptyReport(): NativeHostDrainReport {
-  return { rearm: false, attempted: 0, committed_hosts: [], commits: [], errors: [], wake_epoch: "0" };
+  return {
+    rearm: false,
+    waiting_for_presentation: false,
+    attempted: 0,
+    committed_hosts: [],
+    commits: [],
+    errors: [],
+    wake_epoch: "0",
+  };
 }

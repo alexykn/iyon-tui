@@ -82,6 +82,7 @@ pub struct HostCommit {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostDrainReport {
     pub rearm: bool,
+    pub waiting_for_presentation: bool,
     pub attempted: usize,
     pub committed_hosts: Vec<u64>,
     pub commits: Vec<HostCommit>,
@@ -123,6 +124,7 @@ struct EnvironmentInner {
     pending_set: HashSet<u64>,
     queued: HashSet<u64>,
     retry_blocked: HashSet<u64>,
+    waiting_for_presentation: HashSet<u64>,
     wake_latched: bool,
     wake_epoch: u64,
     content_sources: ContentSourceRegistry,
@@ -137,6 +139,7 @@ impl TuiEnvironment {
                 pending_set: HashSet::new(),
                 queued: HashSet::new(),
                 retry_blocked: HashSet::new(),
+                waiting_for_presentation: HashSet::new(),
                 wake_latched: false,
                 wake_epoch: 0,
                 content_sources: ContentSourceRegistry::new(),
@@ -182,6 +185,7 @@ impl TuiEnvironment {
         environment.hosts.remove(&host_id);
         environment.pending_set.remove(&host_id);
         environment.retry_blocked.remove(&host_id);
+        environment.waiting_for_presentation.remove(&host_id);
         environment.queued.remove(&host_id);
         environment.pending.retain(|id| *id != host_id);
         if environment.pending.is_empty() {
@@ -235,6 +239,7 @@ impl TuiEnvironment {
             environment.wake_epoch = next_wake_epoch;
         }
         environment.retry_blocked.remove(&host_id);
+        environment.waiting_for_presentation.remove(&host_id);
         environment.pending_set.insert(host_id);
         Self::queue_host(&mut environment, host_id);
         Ok(WakeDisposition {
@@ -248,6 +253,7 @@ impl TuiEnvironment {
         pending_epoch: u64,
         committed_epoch: u64,
         requeue_if_pending: bool,
+        waiting_for_presentation: bool,
     ) -> anyhow::Result<()> {
         let mut environment = self
             .inner
@@ -259,13 +265,19 @@ impl TuiEnvironment {
         if pending_epoch == committed_epoch {
             environment.pending_set.remove(&host_id);
             environment.retry_blocked.remove(&host_id);
+            environment.waiting_for_presentation.remove(&host_id);
             environment.queued.remove(&host_id);
+            environment.pending.retain(|id| *id != host_id);
+        } else if waiting_for_presentation && !environment.queued.contains(&host_id) {
+            environment.pending_set.insert(host_id);
+            environment.waiting_for_presentation.insert(host_id);
             environment.pending.retain(|id| *id != host_id);
         } else {
             environment.pending_set.insert(host_id);
+            environment.waiting_for_presentation.remove(&host_id);
             if requeue_if_pending {
                 Self::queue_host(&mut environment, host_id);
-            } else {
+            } else if !environment.queued.contains(&host_id) {
                 environment.queued.remove(&host_id);
                 environment.pending.retain(|id| *id != host_id);
             }
@@ -286,6 +298,7 @@ impl TuiEnvironment {
         }
         environment.pending_set.insert(host_id);
         environment.retry_blocked.insert(host_id);
+        environment.waiting_for_presentation.remove(&host_id);
         environment.queued.remove(&host_id);
         environment.pending.retain(|id| *id != host_id);
         if environment.pending.is_empty() {
@@ -304,6 +317,7 @@ impl TuiEnvironment {
         }
         environment.pending_set.insert(host_id);
         environment.retry_blocked.remove(&host_id);
+        environment.waiting_for_presentation.remove(&host_id);
         environment.queued.remove(&host_id);
         environment.pending.retain(|id| *id != host_id);
         environment.wake_latched = true;
@@ -335,6 +349,13 @@ impl TuiEnvironment {
             .lock()
             .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
         report.wake_epoch = environment.wake_epoch;
+        let presentations = environment
+            .waiting_for_presentation
+            .drain()
+            .collect::<Vec<_>>();
+        for host_id in presentations {
+            Self::queue_host(&mut environment, host_id);
+        }
         if force_retry {
             let blocked = environment.retry_blocked.drain().collect::<Vec<_>>();
             for host_id in blocked {
@@ -392,6 +413,7 @@ impl TuiEnvironment {
             let result = host.flush_for_environment(force_retry);
             match result {
                 Ok((outcome, pending_epoch, committed_epoch)) => {
+                    report.waiting_for_presentation |= outcome.waiting_for_presentation;
                     if outcome.committed {
                         report.committed_hosts.push(host_id);
                         if let (Some(committed_epoch), Some(visible_structural_revision)) =
@@ -412,6 +434,7 @@ impl TuiEnvironment {
                         pending_epoch,
                         committed_epoch,
                         !outcome.waiting_for_presentation,
+                        outcome.waiting_for_presentation,
                     )?;
                 }
                 Err(error) => {

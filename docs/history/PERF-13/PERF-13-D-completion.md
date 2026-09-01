@@ -29,13 +29,17 @@
   records while environment Sources survive.
 - Existing Source payload mutation and projection remain intentionally outside
   this tranche and are reserved for PERF-13-E/F.
+- Audit hardening keeps ContentPort IDs globally unique, scopes Source
+  subscriptions by host, protects in-flight candidate Connectors, performs
+  synthetic failure at candidate preparation, and polls asynchronous frame
+  receipts without retry-spin.
 
 ## Verification
 
 Focused lifecycle, attachment, source-sharing, retained-composition, failed
 switch, and ContentHost/ViewState smoke checks passed. The API-H3,
-PERF-13-A/B, and native harness Bun tests passed (28 tests, 171 expectations).
-Constrained Rust host/scene/layout/native/ABI-generator tests passed, along
-with formatting, clippy, no-default-features checks, TypeScript/declaration
-checks, ABI generation, ownership checks, native staging, and `git diff
---check`.
+PERF-13-A/B/D, and native harness Bun tests passed (33 tests, 191
+expectations). Constrained Rust content/host/scene/layout/native/ABI-generator
+tests passed, along with formatting, clippy, no-default-features checks,
+TypeScript/declaration checks, ABI generation, ownership checks, native
+staging, and `git diff --check`.

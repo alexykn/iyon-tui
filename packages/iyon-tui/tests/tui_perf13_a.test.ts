@@ -205,6 +205,57 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
   registration.dispose();
 });
 
+test(`${PERF13A} polls asynchronous presentation receipts without a microtask spin`, async () => {
+  let ready = false;
+  let calls = 0;
+  let commits = 0;
+  const nativeHost = {
+    epochs: () => ({
+      host_id: "1",
+      desired_structural_revision: "1",
+      visible_frame_revision: ready ? "1" : "0",
+      pending_epoch: "1",
+      committed_epoch: ready ? "1" : "0",
+    }),
+    flushPendingHosts: () => {
+      calls += 1;
+      return ready
+        ? {
+          rearm: false,
+          waiting_for_presentation: false,
+          attempted: 1,
+          committed_hosts: ["1"],
+          commits: [{ host_id: "1", committed_epoch: "1", visible_structural_revision: "1" }],
+          errors: [],
+          wake_epoch: "1",
+        }
+        : {
+          rearm: false,
+          waiting_for_presentation: true,
+          attempted: 1,
+          committed_hosts: [],
+          commits: [],
+          errors: [],
+          wake_epoch: "1",
+        };
+    },
+  };
+  const broker = new EnvironmentWakeBroker(1);
+  const registration = broker.register(nativeHost, new RuntimeErrorChannel(() => true), () => {
+    commits += 1;
+  });
+  registration.markPending();
+  await Promise.resolve();
+  expect(calls).toBe(1);
+  expect(commits).toBe(0);
+
+  ready = true;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(calls).toBe(2);
+  expect(commits).toBe(1);
+  registration.dispose();
+});
+
 test(`${PERF13A} separates desired structural publication from visible frame commit`, () => {
   const session = nativeViewAbiSession();
   const Host = native.NativeTuiHost;

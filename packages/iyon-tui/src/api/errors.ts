@@ -58,8 +58,33 @@ function categoryForNativeCode(code: string | undefined): TuiErrorCategory {
     case "ION_DISPOSED_HANDLE":
       return "disposed-handle";
     case "ION_INVALID_INPUT":
+    case "ION_INVALID_ARGUMENT":
       return "validation";
+    case "ION_WRONG_ENVIRONMENT":
+    case "ION_WRONG_HOST":
+    case "ION_STALE_HANDLE":
+    case "ION_PORT_MOUNTED":
+    case "ION_PORT_DISPOSED":
+    case "ION_CONNECTOR_DISPOSING":
+    case "ION_CONNECTOR_DISPOSED":
+      return "invalid-handle";
+    case "ION_SOURCE_IN_USE":
+    case "ION_SOURCE_DISPOSED":
+    case "ION_PORT_IN_USE":
+    case "ION_CONTENT_FAMILY_MISMATCH":
+    case "ION_DUPLICATE_CONTENT_PORT_ATTACHMENT":
+    case "ION_UNSUPPORTED_CONTENT_PORT_ATTACHMENT":
+    case "ION_INVALID_FUNNEL":
+    case "ION_CONNECTOR_NOT_MEMBER":
+      return "validation";
+    case "ION_PROJECTION_FAILED":
+      return "projection";
+    case "ION_HOST_DISPOSED":
+      return "terminal";
+    case "ION_INTERNAL_INVARIANT":
+      return "runtime";
     case "ION_CANCELLED":
+
       return "cancelled";
     case "ION_CLOSED":
       return "terminal";

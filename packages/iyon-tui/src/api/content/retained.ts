@@ -193,10 +193,10 @@ export class TextFunnel implements Funnel<TextContent> {
     return new TextFunnel(options);
   }
 
-  /** @internal Lowers only immutable control/configuration data. */
-  toNative(): object {
-    return { family: this.family, kind: this.mode, wrap: this.wrap };
-  }
+}
+
+function textFunnelNative(funnel: TextFunnel): object {
+  return { family: funnel.family, kind: funnel.mode, wrap: funnel.wrap };
 }
 
 /** Host-owned structural ContentPort. It owns Connector membership, not data. */
@@ -242,7 +242,7 @@ export class ContentPort<TContent = TextContent> extends FrameworkHandle<"conten
       }
       const sourceResource = nativeResourceOf<NativeTextSourceContract>(source, "source");
       const portResource = this.nativeAs<NativeContentPortContract>();
-      const connectorResource = connectContent(portResource, sourceResource, funnel.toNative());
+      const connectorResource = connectContent(portResource, sourceResource, textFunnelNative(funnel));
       const connector = ContentConnector.create(
         connectorResource,
         this.owner,

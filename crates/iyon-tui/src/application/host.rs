@@ -2896,7 +2896,7 @@ impl HostInner {
         self.content.set_desired(&content_targets)
     }
 
-    fn candidate_content_bindings(&self) -> Result<Vec<ContentBinding>> {
+    fn candidate_content_bindings(&mut self) -> Result<Vec<ContentBinding>> {
         let targets = self.running.host_current_content_attachment_targets()?;
         self.content.candidate_bindings(&targets)
     }
@@ -3032,6 +3032,11 @@ impl HostInner {
         self.candidate_epoch = Some(target_epoch);
         self.candidate_structural_revision = Some(target_structural_revision);
         self.candidate_content_bindings = Some(content_bindings);
+        self.content.begin_candidate(
+            self.candidate_content_bindings
+                .as_deref()
+                .unwrap_or_default(),
+        );
         self.frame_pending = true;
         if let Err(error) = self.present_frame() {
             self.capture_failed_candidate();
@@ -3133,6 +3138,7 @@ impl HostInner {
         let state_bindings = candidate.state_bindings.clone();
         self.commit_visible_state_bindings(&state_bindings);
         self.content.commit_visible(&content_bindings);
+        self.content.end_candidate();
         self.clear_in_flight_state_bindings();
         self.frame = candidate;
         self.frame_pending = false;
@@ -3147,6 +3153,7 @@ impl HostInner {
             self.pending_epoch,
             self.committed_epoch,
             true,
+            false,
         )?;
         Ok(HostFlushOutcome {
             committed: true,
@@ -3165,6 +3172,7 @@ impl HostInner {
     }
 
     fn discard_candidate_frame(&mut self) {
+        self.content.abort_candidate();
         self.candidate_frame = None;
         self.candidate_epoch = None;
         self.candidate_structural_revision = None;
@@ -3315,6 +3323,7 @@ impl HostInner {
                 self.pending_epoch,
                 self.committed_epoch,
                 true,
+                false,
             )?;
             return Ok(HostFlushOutcome {
                 committed: true,
@@ -3384,6 +3393,10 @@ fn prepare_frame(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use tokio::sync::oneshot;
+
     use super::super::environment::TuiEnvironment;
     use super::{HostTextStream, TuiHost};
     use crate::{ColorSpec, IntoView, View, ViewStatePresentationPatch};
@@ -3498,6 +3511,53 @@ mod tests {
                 .as_deref()
                 == Some("ansi:6")
         }));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn environment_requeues_in_flight_presentation_receipts() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_desired_view(View::text("receipt").into_view())
+            .unwrap();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame(running, backend, *now, &HashMap::new()).unwrap()
+            };
+            let state_ids = candidate
+                .state_bindings
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>();
+            let content_bindings = inner.candidate_content_bindings().unwrap();
+            inner.set_in_flight_state_bindings(&state_ids);
+            inner.content.begin_candidate(&content_bindings);
+            inner.candidate_frame = Some(candidate);
+            inner.candidate_epoch = Some(inner.pending_epoch);
+            inner.candidate_structural_revision = Some(inner.desired_structural_revision);
+            inner.candidate_content_bindings = Some(content_bindings);
+            inner.frame_pending = false;
+            inner.presentation = Some(receiver);
+        }
+
+        let waiting = host.flush_pending_hosts(8, false).unwrap();
+        assert!(waiting.waiting_for_presentation);
+        assert!(!waiting.rearm);
+        sender.send(Ok(())).unwrap();
+        let committed = host.flush_pending_hosts(8, false).unwrap();
+        assert!(
+            committed
+                .committed_hosts
+                .contains(&host.epochs().unwrap().host_id)
+        );
+        assert!(host.epochs().unwrap().pending_epoch == host.epochs().unwrap().committed_epoch);
         host.close().unwrap();
     }
 

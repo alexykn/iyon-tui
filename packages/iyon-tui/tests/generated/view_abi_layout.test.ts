@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
-// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
+// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
+// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
 import { expect, test } from "bun:test";
 import manifest from "../../src/transport/abi/structural/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {
-  expect(manifest.schema_blake3).toBe("707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133");
+  expect(manifest.schema_blake3).toBe("2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e");
   expect(manifest.abi.version).toBe(1);
   expect(manifest.functions.map((item) => item.name)).toEqual([
     "runtime_noop",
@@ -13,6 +13,7 @@ test("generated ABI manifest is pinned and ordered", () => {
     "view_render_ref",
     "host_render_ref",
     "view_state_attach",
+    "view_content_host_create",
     "view_spacer_create",
     "view_text_layout_patch_root",
     "view_common_patch_root",
@@ -108,6 +109,7 @@ test("generated ABI signatures and POD layouts are pinned", () => {
     ["runtime_ptr", "native_ref"],
     ["runtime_ptr", "host_ptr", "native_ref"],
     ["runtime_ptr", "native_ref", "u32", "u32", "u32", "u32"],
+    ["runtime_ptr", "u32", "u32", "u32", "u32"],
     ["runtime_ptr", "u32", "u32", "u32"],
     ["runtime_ptr", "native_ref", "u32", "u32", "u32", "u32"],
     ["runtime_ptr", "native_ref", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32", "u32"],

@@ -50,6 +50,7 @@ export function bridgeViewKind(kind: SemanticViewKind): number {
     case SEMANTIC_VIEW_KIND.contentMax: return BRIDGE_VIEW_KIND.contentMax;
     case SEMANTIC_VIEW_KIND.component: return BRIDGE_VIEW_KIND.component;
     case SEMANTIC_VIEW_KIND.decorated: return BRIDGE_VIEW_KIND.decorated;
+    case SEMANTIC_VIEW_KIND.contentHost: return BRIDGE_VIEW_KIND.contentHost;
   }
 }
 

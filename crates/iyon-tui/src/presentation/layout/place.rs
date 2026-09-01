@@ -144,7 +144,9 @@ fn child_dependencies(kind: &MeasuredKind, child_count: usize) -> Vec<ChildDepen
             true,
             true,
         )],
-        MeasuredKind::Text { .. } | MeasuredKind::Spacer { .. } => Vec::new(),
+        MeasuredKind::Text { .. } | MeasuredKind::Spacer { .. } | MeasuredKind::ContentHost => {
+            Vec::new()
+        }
     }
 }
 
@@ -194,6 +196,7 @@ fn layout_content(prepared: &PreparedNode) -> LayoutContent {
             width_rule: prepared.measured.width,
         },
         (MeasuredKind::Spacer { rows }, _) => LayoutContent::Spacer { rows: *rows },
+        (MeasuredKind::ContentHost, _) => LayoutContent::ContentHost,
         (MeasuredKind::ClampRows { overflow, .. }, PreparedKind::Clamp { .. }) => {
             LayoutContent::Clamp {
                 overflow: (*overflow).clone(),

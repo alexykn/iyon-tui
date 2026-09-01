@@ -119,6 +119,7 @@ pub(super) enum MeasuredKind {
     Spacer {
         rows: u16,
     },
+    ContentHost,
     Container {
         child: Arc<MeasuredNode>,
     },
@@ -257,7 +258,8 @@ fn measure_node_uncached(
         | ViewKind::Hanging(_)
         | ViewKind::ClampRows(_)
         | ViewKind::RowViewport(_)
-        | ViewKind::ComponentSlot(_) => None,
+        | ViewKind::ComponentSlot(_)
+        | ViewKind::ContentHost => None,
     };
     let base_alignment = match view.kind() {
         ViewKind::Text(text) => GeometryAlignment {
@@ -275,6 +277,7 @@ fn measure_node_uncached(
         | ViewKind::ClampRows(_)
         | ViewKind::RowViewport(_)
         | ViewKind::ComponentSlot(_)
+        | ViewKind::ContentHost
         | ViewKind::Column(_) => GeometryAlignment::default(),
     };
     let geometry = state
@@ -374,6 +377,7 @@ fn measure_kind(
             MeasuredKind::Text { text, metrics }
         }
         ViewKind::Spacer { rows } => MeasuredKind::Spacer { rows: *rows },
+        ViewKind::ContentHost => MeasuredKind::ContentHost,
         ViewKind::Container(container) => MeasuredKind::Container {
             child: measure_node(
                 &container.child,
@@ -675,6 +679,7 @@ impl MeasuredKind {
         match self {
             Self::Text { metrics, .. } => Size::new(metrics.width, metrics.row_count),
             Self::Spacer { rows } => Size::new(0, *rows),
+            Self::ContentHost => Size::new(0, 0),
             Self::Container { child } => child.size,
             Self::Hanging {
                 prefix_width, body, ..

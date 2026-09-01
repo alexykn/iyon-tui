@@ -20,6 +20,7 @@ pub(crate) enum StateNodeKind {
     Container,
     ClampRows,
     RowViewport,
+    ContentHost,
     ComponentSlot,
 }
 
@@ -36,6 +37,7 @@ pub(crate) fn state_node_kind(kind: &ViewKind) -> StateNodeKind {
         ViewKind::Container(_) => StateNodeKind::Container,
         ViewKind::ClampRows(_) => StateNodeKind::ClampRows,
         ViewKind::RowViewport(_) => StateNodeKind::RowViewport,
+        ViewKind::ContentHost => StateNodeKind::ContentHost,
         ViewKind::ComponentSlot(_) => StateNodeKind::ComponentSlot,
     }
 }
@@ -54,7 +56,8 @@ pub(crate) fn presentation_state_capable(kind: &ViewKind) -> bool {
         | StateNodeKind::Hanging
         | StateNodeKind::Container
         | StateNodeKind::ClampRows
-        | StateNodeKind::RowViewport => true,
+        | StateNodeKind::RowViewport
+        | StateNodeKind::ContentHost => true,
         StateNodeKind::ComponentSlot => false,
     }
 }

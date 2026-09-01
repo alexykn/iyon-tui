@@ -127,6 +127,7 @@ export const VIEW_STATE_NODE_KINDS: ReadonlySet<number> = new Set([
   SEMANTIC_VIEW_KIND.clamp,
   SEMANTIC_VIEW_KIND.contentMax,
   SEMANTIC_VIEW_KIND.decorated,
+  SEMANTIC_VIEW_KIND.contentHost,
 ]);
 
 interface ViewStateOptions {

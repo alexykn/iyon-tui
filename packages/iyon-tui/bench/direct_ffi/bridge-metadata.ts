@@ -172,6 +172,7 @@ function semanticChildren(node: SemanticViewNode): SemanticViewNode[] {
     case SEMANTIC_VIEW_KIND.diff:
     case SEMANTIC_VIEW_KIND.spacer:
     case SEMANTIC_VIEW_KIND.component:
+    case SEMANTIC_VIEW_KIND.contentHost:
       return [];
   }
 }

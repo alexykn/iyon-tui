@@ -6,6 +6,8 @@
 //! routed into the application's action queue.
 
 mod app;
+#[cfg(feature = "native-host")]
+mod content;
 mod context;
 #[cfg(feature = "native-host")]
 mod environment;
@@ -24,6 +26,11 @@ mod view_state;
 mod tests;
 
 pub use app::App;
+#[cfg(feature = "native-host")]
+pub use content::{
+    ContentFamily, HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
+    TextFunnelKind, TextSourceKind, TextWrapMode,
+};
 pub use context::AppCx;
 #[cfg(feature = "native-host")]
 pub use environment::{

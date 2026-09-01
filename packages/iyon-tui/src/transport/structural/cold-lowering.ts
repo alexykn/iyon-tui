@@ -8,7 +8,7 @@
 
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import { nativeResourceForHandleId } from "../native/resources.ts";
-import type { NativeViewStateContract } from "../native/addon.ts";
+import type { NativeStructuralAttachmentContract, NativeViewStateContract } from "../native/addon.ts";
 import {
   SEMANTIC_VIEW_KIND,
   type SemanticColor,
@@ -49,6 +49,9 @@ const semanticToBridge = new WeakMap<SemanticViewNode, BridgeViewNode>();
  * every cold lowering so HandleId resolution cannot become stale in a cached
  * bridge artifact. */
 const componentBearing = new WeakSet<SemanticViewNode>();
+/** Content-bearing bridge nodes must be rebuilt so disposed Port generations
+ * cannot be revived from a cached native port identity. */
+const contentBearing = new WeakSet<SemanticViewNode>();
 const lowering = new WeakSet<SemanticViewNode>();
 const loweringStack: SemanticViewNode[] = [];
 const coldCounters = { cold_bridge_objects_allocated: 0 };
@@ -78,13 +81,16 @@ export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
   // on every later cold request. Component-free subtrees retain the normal
   // weak cache without a preflight tree walk.
   const cached = semanticToBridge.get(node);
-  if (cached !== undefined && !componentBearing.has(node)) return cached;
+  if (cached !== undefined && !componentBearing.has(node) && !contentBearing.has(node)) return cached;
   if (lowering.has(node)) throw new TypeError("semantic View graph contains a cycle");
   lowering.add(node);
   loweringStack.push(node);
   try {
     if (node.kind === SEMANTIC_VIEW_KIND.component) {
       for (const active of loweringStack) componentBearing.add(active);
+    }
+    if (node.contentAttachment !== undefined) {
+      for (const active of loweringStack) contentBearing.add(active);
     }
     coldCounters.cold_bridge_objects_allocated += 1;
     const draft = statefulBridgeDraft(node, semanticDraftFor(node));
@@ -199,6 +205,17 @@ function semanticDraftFor(node: SemanticViewNode): BridgeViewNodeDraft {
         kind: BRIDGE_VIEW_KIND.component,
         handle: componentIdForHandleId(node.handleId),
       };
+    case SEMANTIC_VIEW_KIND.contentHost: {
+      if (node.contentAttachment === undefined) {
+        throw new TypeError("ContentHost is missing its ContentPort attachment");
+      }
+      const resource = nativeResourceForHandleId<NativeStructuralAttachmentContract>(node.contentAttachment, "content-port");
+      const portId = resource.attachmentId();
+      if (!Number.isSafeInteger(portId) || portId <= 0) {
+        throw new RangeError("ContentPort native identity must be a positive safe integer");
+      }
+      return { kind: BRIDGE_VIEW_KIND.contentHost, contentPortId: portId };
+    }
     case SEMANTIC_VIEW_KIND.decorated:
       return {
         kind: BRIDGE_VIEW_KIND.decorated,
@@ -367,6 +384,7 @@ function freezeBridgeNode(node: BridgeViewNode): BridgeViewNode {
     case BRIDGE_VIEW_KIND.container:
     case BRIDGE_VIEW_KIND.contentMax:
     case BRIDGE_VIEW_KIND.component:
+    case BRIDGE_VIEW_KIND.contentHost:
       break;
   }
   return Object.freeze(node);

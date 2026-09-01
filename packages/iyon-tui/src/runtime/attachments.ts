@@ -213,7 +213,7 @@ export function prepareSemanticAttachments(
       if (node.contentAttachment !== undefined) {
         addAttachment(
           node.contentAttachment,
-          "content",
+          "content-port",
           attachmentTargetNodeKind(node),
           path,
           contentUses,
@@ -227,7 +227,7 @@ export function prepareSemanticAttachments(
 
   function addAttachment(
     handleId: number,
-    expectedKind: "state" | "content",
+    expectedKind: "state" | "content-port",
     nodeKind: number,
     path: string,
     uses: Map<number, string>,
@@ -307,6 +307,7 @@ function childrenOf(node: SemanticViewNode): ReadonlyArray<readonly [string, Sem
     case SEMANTIC_VIEW_KIND.diff:
     case SEMANTIC_VIEW_KIND.spacer:
     case SEMANTIC_VIEW_KIND.component:
+    case SEMANTIC_VIEW_KIND.contentHost:
       return [];
   }
 }

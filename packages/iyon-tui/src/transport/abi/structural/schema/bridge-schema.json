@@ -12,6 +12,7 @@
   "viewContentMax": 10,
   "viewComponent": 11,
   "viewDecorated": 12,
+  "viewContentHost": 13,
   "layoutNormal": 1,
   "layoutFixed": 2,
   "layoutFlex": 3,

@@ -136,6 +136,7 @@ fn semantic_state_node_kind(node_kind: u32) -> Result<StateNodeKind> {
         7 => Ok(StateNodeKind::Container),
         8 | 9 => Ok(StateNodeKind::ClampRows),
         10 => Ok(StateNodeKind::ComponentSlot),
+        12 => Ok(StateNodeKind::ContentHost),
         _ => Err(anyhow::anyhow!(
             "unknown semantic ViewState node kind: {node_kind}"
         )),

@@ -298,6 +298,60 @@ impl History {
             .collect()
     }
 
+    /// Returns semantic History views that can carry a retained ContentPort.
+    /// Stream units remain on the legacy stream path until the content-plane
+    /// projection tranche; static/live units are still validated at H3.
+    pub(crate) fn content_views(&self) -> Vec<View> {
+        self.units
+            .iter()
+            .filter_map(|unit| match &unit.content {
+                HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
+                    if view.contains_content_identity() || view.contains_component_identity() =>
+                {
+                    Some(view.clone())
+                }
+                HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
+                HistoryUnitContent::Stream(_) => None,
+            })
+            .collect()
+    }
+
+    /// Returns ContentPort-bearing History views after replacing one live
+    /// unit, allowing host attachment validation before mutation.
+    pub(crate) fn content_views_with_replacement(
+        &self,
+        unit: HistoryUnitId,
+        replacement: &View,
+    ) -> Result<Vec<View>, HistoryError> {
+        let index = self.index_of(unit)?;
+        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
+            return Err(HistoryError::UnitNotLive { unit });
+        }
+        Ok(self
+            .units
+            .iter()
+            .enumerate()
+            .filter_map(|(current, entry)| {
+                if current == index {
+                    (replacement.contains_content_identity()
+                        || replacement.contains_component_identity())
+                    .then(|| replacement.clone())
+                } else {
+                    match &entry.content {
+                        HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
+                            if view.contains_content_identity()
+                                || view.contains_component_identity() =>
+                        {
+                            Some(view.clone())
+                        }
+                        HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
+                        HistoryUnitContent::Stream(_) => None,
+                    }
+                }
+            })
+            .collect())
+    }
+
     /// Returns the state-bearing History views after replacing one live unit
     /// with its prospective final view. The replacement is validated using the
     /// same unit rules as `freeze` before any History mutation occurs.

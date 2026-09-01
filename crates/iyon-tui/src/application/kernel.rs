@@ -225,6 +225,88 @@ where
         self.host_state_attachment_targets(self.scene.body())
     }
 
+    /// Collects ContentPort attachments from the prospective body and current
+    /// static/live History views. Stream units remain on their legacy path
+    /// until the later content projection tranche.
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_content_attachment_targets(&self, body: &View) -> anyhow::Result<Vec<u64>> {
+        let history_views = self
+            .scene
+            .history()
+            .map_or_else(Vec::new, crate::History::content_views);
+        self.host_content_attachment_targets_from_history_views(body, history_views)
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_current_content_attachment_targets(&self) -> anyhow::Result<Vec<u64>> {
+        self.host_content_attachment_targets(self.scene.body())
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_content_attachment_targets_for_history(
+        &self,
+        body: &View,
+        history: &crate::History,
+    ) -> anyhow::Result<Vec<u64>> {
+        self.host_content_attachment_targets_from_history_views(body, history.content_views())
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_content_attachment_targets_with_history_view(
+        &self,
+        body: &View,
+        history_view: &View,
+    ) -> anyhow::Result<Vec<u64>> {
+        let mut history_views = self
+            .scene
+            .history()
+            .map_or_else(Vec::new, crate::History::content_views);
+        history_views.push(history_view.clone());
+        self.host_content_attachment_targets_from_history_views(body, history_views)
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_content_attachment_targets_for_history_views(
+        &self,
+        body: &View,
+        history_views: Vec<View>,
+    ) -> anyhow::Result<Vec<u64>> {
+        self.host_content_attachment_targets_from_history_views(body, history_views)
+    }
+
+    #[cfg(feature = "native-host")]
+    fn host_content_attachment_targets_from_history_views(
+        &self,
+        body: &View,
+        history_views: Vec<View>,
+    ) -> anyhow::Result<Vec<u64>> {
+        let mut session = crate::scene::ResolveSession::new(&self.components);
+        let mut targets = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut append_view = |view: &View| -> anyhow::Result<()> {
+            let resolved = session
+                .resolve_root(view)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let overlay = session.overlay().clone();
+            for id in crate::scene::content_attachment_targets(&resolved, &overlay)
+                .map_err(anyhow::Error::msg)?
+            {
+                if !seen.insert(id) {
+                    return Err(anyhow::anyhow!(
+                        "DUPLICATE_CONTENT_PORT_ATTACHMENT: ContentPort {id} occurs more than once in the candidate"
+                    ));
+                }
+                targets.push(id);
+            }
+            Ok(())
+        };
+        append_view(body)?;
+        for view in history_views {
+            append_view(&view)?;
+        }
+        Ok(targets)
+    }
+
     #[cfg(feature = "native-host")]
     fn host_state_attachment_targets_from_history_views(
         &self,

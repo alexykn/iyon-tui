@@ -709,12 +709,18 @@ function cut5ModuleIdentityGate(): void {
 
 function cut5PackagePublicationGate(): void {
   const offenders: string[] = [];
-  const futurePaths = [
-    "transport/content",
-    "transport/abi/state",
-    "transport/abi/content",
-  ];
-  for (const path of futurePaths) {
+  // PERF-13-D owns the private content control seam. Payload/projection
+  // transports remain future tranches, and no additional content transport
+  // module may appear before those tranches establish its owner.
+  const contentTransport = join(FRAMEWORK_SRC, "transport/content");
+  if (existsSync(contentTransport)) {
+    for (const file of walk(contentTransport)) {
+      if (relative(contentTransport, file).replaceAll("\\", "/") !== "control.ts") {
+        offenders.push(`future PERF-13 ownership slot is prematurely implemented or published: ${relative(FRAMEWORK_SRC, file)}`);
+      }
+    }
+  }
+  for (const path of ["transport/abi/state", "transport/abi/content"]) {
     if (existsSync(join(FRAMEWORK_SRC, path))) offenders.push(`future PERF-13 ownership slot is prematurely implemented or published: ${path}`);
   }
 
@@ -753,7 +759,7 @@ function cut5PackagePublicationGate(): void {
   if (offenders.length > 0) {
     fail("h2-cut5-package-publication", offenders.join("; "));
   } else {
-    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and content transport remains unpublished");
+    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and private content control remains unpublished");
   }
 }
 

@@ -65,6 +65,20 @@ export type { ViewComponent } from "./composition/define-view.ts";
 export type { ViewSlot } from "./api/controls/view-slot.ts";
 export type { ScrollPane } from "./api/controls/scroll-pane.ts";
 export type {
+  ContentConnectorError,
+  ContentConnectorPhase,
+  ContentConnectorStatus,
+  ContentFamily,
+  ContentPortOptions,
+  ContentSource,
+  Funnel,
+  Source,
+  TextFunnelOptions,
+  TextFunnelWrap,
+  TextRetentionPolicy,
+  TextSourceOptions,
+} from "./api/content/retained.ts";
+export type {
   ViewStateAlignment,
   ViewStateBorderEdges,
   ViewStateGeometryPatch,
@@ -93,6 +107,13 @@ export { History } from "./api/controls/history.ts";
 export { TextInput } from "./api/controls/text-input.ts";
 export { TextStream } from "./api/controls/text-stream.ts";
 export { TextContent, RawText } from "./api/content/text-content.ts";
+export {
+  ContentConnector,
+  ContentPort,
+  TextBlockSource,
+  TextFunnel,
+  TextStreamSource,
+} from "./api/content/retained.ts";
 export { Annotations } from "./api/content/annotations.ts";
 export { Projection, ProjectionBuilder, Smooth } from "./api/content/projection.ts";
 export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./api/content/diff.ts";

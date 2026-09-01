@@ -2327,6 +2327,40 @@ pub unsafe extern "Rust" fn edit_txn_abort_impl(
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
+pub unsafe extern "Rust" fn view_content_host_create_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    content_port_id_low: u32,
+    content_port_id_high: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    let content_port_id = (u64::from(content_port_id_high) << 32) | u64::from(content_port_id_low);
+    if content_port_id == 0 {
+        return FAST_INVALID;
+    }
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    let view = match View::native_content_host(content_port_id) {
+        Ok(view) => view,
+        Err(_) => return record_result(runtime, FAST_INVALID),
+    };
+    let result = match runtime.publish(node_id, view) {
+        Ok(reference) => reference,
+        Err(error) => error,
+    };
+    record_result(runtime, result)
+}
+
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
 pub unsafe extern "Rust" fn view_spacer_create_impl(
     runtime: *mut NativeViewRuntime,
     node_id_low: u32,

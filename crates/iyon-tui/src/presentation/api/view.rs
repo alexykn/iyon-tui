@@ -214,6 +214,15 @@ impl View {
         Self::new_kind(ViewKind::Spacer { rows })
     }
 
+    /// Creates the native side of a retained ContentHost attachment. The
+    /// public TypeScript semantic node carries a backend-neutral HandleId;
+    /// structural decoding resolves it to this host-local identity.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_content_host(port_id: u64) -> Result<Self, String> {
+        View::new_kind(ViewKind::ContentHost).native_with_content_attachment(port_id)
+    }
+
     /// Assigns one application-owned semantic styling dimension to this View
     /// subtree. Appearance is resolved later during painting.
     pub fn style_state(

@@ -32,7 +32,11 @@ export interface NativeStateWake {
   readonly schedule_environment_drain: boolean;
 }
 
-export interface NativeViewStateContract {
+export interface NativeStructuralAttachmentContract {
+  attachmentId(): number;
+}
+
+export interface NativeViewStateContract extends NativeStructuralAttachmentContract {
   dispose(): void;
   stateId(): number;
   validateNodeKind(targetNodeKind: number): void;
@@ -62,6 +66,30 @@ export interface NativeTextStreamContract {
   append(text: string, annotations?: readonly object[]): void;
   seal(): void;
   snapshot(): object;
+}
+
+export interface NativeTextSourceContract {
+  dispose(): void;
+  sourceId(): number;
+  sourceGeneration(): number;
+  family(): string;
+}
+
+export interface NativeContentConnectorContract {
+  activate(): NativeStateWake;
+  deactivate(): NativeStateWake;
+  dispose(): NativeStateWake;
+  status(): object;
+}
+
+export interface NativeContentPortContract extends NativeStructuralAttachmentContract {
+  dispose(): void;
+  portId(): number;
+  portGeneration(): number;
+  family(): string;
+  deactivate(): NativeStateWake;
+  connect(source: NativeTextSourceContract, funnel: object): NativeContentConnectorContract;
+  mounted(): boolean;
 }
 
 export interface NativeProjectorContract {
@@ -113,6 +141,8 @@ export interface NativeTuiHostContract {
   exit(): void;
   history(): object;
   viewState(): NativeViewStateContract;
+  contentPort(family?: string): NativeContentPortContract;
+  disposeContentResources?(): void;
   textInput(multiline?: boolean, border?: object): NativeTextInputContract;
   setTheme(theme: object): void;
   setHistory(history: object): void;
@@ -210,6 +240,7 @@ export interface NativeTuiAddon {
   NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => NativeTuiHostContract;
   NativeTuiOutput?: new () => NativeTuiOutputContract;
   NativeTextStream?: new (options?: "markdown" | { readonly projector?: "markdown"; readonly presentation?: object; readonly pacing?: object }) => NativeTextStreamContract;
+  NativeTextSource?: new (kind?: "block" | "stream", options?: object) => NativeTextSourceContract;
   NativeMarkdownProjector?: new () => NativeProjectorContract;
   NativePlainProjector?: new () => NativeProjectorContract;
   NativeViewSlot?: new (initial: object) => NativeViewSlotContract;

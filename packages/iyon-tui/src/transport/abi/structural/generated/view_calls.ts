@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
-// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
+// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
+// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 export type ViewAbiSymbols = NativeViewAbiHandle;
 
@@ -49,6 +49,11 @@ export function hostRenderRef(symbols: ViewAbiSymbols, runtime: NativeViewAbiHan
 
 export function viewStateAttach(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, base: number, node_id_low: number, node_id_high: number, state_id_low: number, state_id_high: number): number {
   const result = runtime.viewStateAttach(base, node_id_low, node_id_high, state_id_low, state_id_high);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewContentHostCreate(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, node_id_low: number, node_id_high: number, content_port_id_low: number, content_port_id_high: number): number {
+  const result = runtime.viewContentHostCreate(node_id_low, node_id_high, content_port_id_low, content_port_id_high);
   return checkedRef(symbols, runtime, result);
 }
 

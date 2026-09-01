@@ -1633,7 +1633,7 @@ fn state_view_path(scene: &ResolvedScene, state_id: u64) -> Option<Vec<View>> {
             return Some(vec![view.clone()]);
         }
         let child_path = match view.kind() {
-            ViewKind::Text(_) | ViewKind::Spacer { .. } => None,
+            ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ContentHost => None,
             ViewKind::ComponentSlot(slot) => overlay
                 .component(slot.id)
                 .and_then(|snapshot| visit(&snapshot.view, overlay, state_id)),

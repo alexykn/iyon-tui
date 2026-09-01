@@ -15,6 +15,7 @@ type BridgeSchema = {
   readonly viewContentMax: 10;
   readonly viewComponent: 11;
   readonly viewDecorated: 12;
+  readonly viewContentHost: 13;
   readonly layoutNormal: 1;
   readonly layoutFixed: 2;
   readonly layoutFlex: 3;
@@ -62,6 +63,7 @@ export const BRIDGE_VIEW_KIND = {
   contentMax: schema.viewContentMax,
   component: schema.viewComponent,
   decorated: schema.viewDecorated,
+  contentHost: schema.viewContentHost,
 } as const;
 
 export const BRIDGE_LAYOUT_CHILD_KIND = {
@@ -221,6 +223,7 @@ type BridgeViewNodeData = (
   | { readonly kind: typeof BRIDGE_VIEW_KIND.contentMax; readonly child: BridgeViewNode; readonly maxRows: number }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.component; readonly handle: ComponentId }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.decorated; readonly child: BridgeViewNode; readonly decoration: DecorationNode }
+  | { readonly kind: typeof BRIDGE_VIEW_KIND.contentHost; readonly contentPortId: number }
 ) & {
   /** Native state identity in the derived cold transport only. */
   readonly stateAttachment?: number;

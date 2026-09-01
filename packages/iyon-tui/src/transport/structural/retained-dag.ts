@@ -21,7 +21,7 @@
  */
 
 import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
-import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
+import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContentHostCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import {
   axisKind,
   axisTrackWord,
@@ -42,7 +42,7 @@ import {
 import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
 import { componentIdForHandleId } from "./component-id.ts";
 import { nativeResourceForHandleId } from "../native/resources.ts";
-import type { NativeViewStateContract } from "../native/addon.ts";
+import type { NativeStructuralAttachmentContract, NativeViewStateContract } from "../native/addon.ts";
 import { lowerSemanticView } from "./cold-lowering.ts";
 import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
 import type { NativeViewAbiSession } from "./native-view-abi.ts";
@@ -494,6 +494,28 @@ function materializeSpacerNode(node: SemanticViewNode, tx: MaterializeTx): numbe
   counters.bridge_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("spacer", () => viewSpacerCreate(tx.symbols, tx.runtime, low, high, node.rows));
+}
+
+function materializeContentHostNode(node: SemanticViewNode, tx: MaterializeTx): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.contentHost || node.contentAttachment === undefined) {
+    throw new RetainedFastFallbackError("ContentHost is missing its ContentPort attachment");
+  }
+  counters.bridge_semantic_nodes_inspected += 1;
+  const resource = nativeResourceForHandleId<NativeStructuralAttachmentContract>(node.contentAttachment, "content-port");
+  const portId = resource.attachmentId();
+  const words = u64Words(portId);
+  if (words === undefined || portId === 0) {
+    throw new RetainedFastFallbackError("ContentPort native identity is not a safe positive integer");
+  }
+  const [low, high] = splitNodeId(node.id);
+  return runMaterializer("contentHost", () => viewContentHostCreate(
+    tx.symbols,
+    tx.runtime,
+    low,
+    high,
+    words[0],
+    words[1],
+  ));
 }
 
 type SemanticAxisNode = Extract<SemanticViewNode, { kind: typeof SEMANTIC_VIEW_KIND.row | typeof SEMANTIC_VIEW_KIND.column }>;
@@ -1000,6 +1022,7 @@ function attachStateIfPresent(
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [SEMANTIC_VIEW_KIND.spacer, materializeSpacerNode],
+  [SEMANTIC_VIEW_KIND.contentHost, materializeContentHostNode],
   [SEMANTIC_VIEW_KIND.row, materializeRowNode],
   [SEMANTIC_VIEW_KIND.column, materializeColumnNode],
   [SEMANTIC_VIEW_KIND.grid, materializeGridNode],

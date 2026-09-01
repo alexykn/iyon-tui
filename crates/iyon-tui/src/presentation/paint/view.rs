@@ -80,6 +80,7 @@ fn text_layout_key(content: &LayoutContent) -> Option<(u8, u8)> {
             },
         )),
         LayoutContent::Spacer { .. }
+        | LayoutContent::ContentHost
         | LayoutContent::Children
         | LayoutContent::Clamp { .. }
         | LayoutContent::RowViewport { .. } => None,
@@ -414,6 +415,7 @@ impl ViewPainter {
                 let y = node.content_rect.y.saturating_sub(node.rect.y);
                 output.composite(&painted, x, y);
             }
+            LayoutContent::ContentHost => {}
             LayoutContent::Children | LayoutContent::Clamp { .. } => {
                 self.paint_children(
                     compiler,

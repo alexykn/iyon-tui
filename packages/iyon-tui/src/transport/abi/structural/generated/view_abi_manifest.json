@@ -382,6 +382,57 @@
         {
           "buffer_length_of": null,
           "lowering": "u32",
+          "name": "content_port_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "content_port_id_high",
+          "type": "u32"
+        }
+      ],
+      "arity_specializations": [
+        1
+      ],
+      "benchmark_registration": "view.content_host_create",
+      "borrow_duration": "call",
+      "fallback": "direct_decode",
+      "family": "constructor",
+      "hotness": "warm",
+      "implementation": "view_content_host_create_impl",
+      "max_buffer_bytes": 0,
+      "max_input_count": 1,
+      "may_allocate_native_memory": true,
+      "mutates_host_state": false,
+      "name": "view_content_host_create",
+      "ownership": "runtime_owned",
+      "return": "ViewRefResult",
+      "thread_affinity": "owner_thread"
+    },
+    {
+      "args": [
+        {
+          "buffer_length_of": null,
+          "lowering": "runtime_ptr",
+          "name": "runtime",
+          "type": "RuntimePtr"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_low",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
+          "name": "node_id_high",
+          "type": "u32"
+        },
+        {
+          "buffer_length_of": null,
+          "lowering": "u32",
           "name": "rows",
           "type": "u32"
         }
@@ -4086,7 +4137,7 @@
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "docs/history/perf/PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb",
+  "generator_blake3": "2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f",
   "handles": [
     {
       "kind": null,
@@ -4301,5 +4352,5 @@
       "size": 8
     }
   ],
-  "schema_blake3": "707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133"
+  "schema_blake3": "2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e"
 }

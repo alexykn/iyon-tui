@@ -68,6 +68,7 @@ import type { StyleRef, StyleSpec, BorderSpec, TextAttribute } from "../api/pres
 import type { ColorSpec } from "../api/presentation/theme.ts";
 import type { VerticalAlign } from "../api/view/view.ts";
 import type { ComponentHandle, HandleId } from "../api/controls/framework-handle.ts";
+import type { ContentPort } from "../api/content/retained.ts";
 
 // --- Slot staging ------------------------------------------------------------
 
@@ -445,6 +446,25 @@ export function composeComponent(handle: ComponentHandle): View {
     }
   }
   const view = withoutRetainedComposition(() => componentViewForHandle(handleId, handle));
+  stageFresh(slot, view);
+  return view;
+}
+
+/** Constructs/reuses one retained ContentPort attachment. */
+export function composeContent(port: ContentPort): View {
+  const handleId = port.id;
+  const scope = executionContext.top;
+  if (scope === undefined) return View.content(port);
+  const slot = scope.nextSemanticSlot();
+  const previous = slot.current;
+  if (previous !== undefined) {
+    const node = semanticNodeOf(previous);
+    if (node.kind === SEMANTIC_VIEW_KIND.contentHost && node.contentAttachment === handleId) {
+      stageReuse(slot, previous);
+      return previous;
+    }
+  }
+  const view = withoutRetainedComposition(() => View.content(port));
   stageFresh(slot, view);
   return view;
 }

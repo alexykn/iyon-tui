@@ -29,6 +29,7 @@ pub(crate) enum LayoutContent {
     Spacer {
         rows: u16,
     },
+    ContentHost,
     Children,
     Clamp {
         overflow: OverflowIndicator,

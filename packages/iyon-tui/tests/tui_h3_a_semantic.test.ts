@@ -199,6 +199,12 @@ function semanticFromBridge(root: BridgeViewNode): SemanticViewNode {
           decoration: semanticDecorationFromBridge(node.decoration),
         };
         break;
+      case BRIDGE_VIEW_KIND.contentHost:
+        draft = {
+          kind: SEMANTIC_VIEW_KIND.contentHost,
+          contentAttachment: node.contentPortId as unknown as HandleId,
+        };
+        break;
       default:
         return unexpectedBridgeKind(node);
     }

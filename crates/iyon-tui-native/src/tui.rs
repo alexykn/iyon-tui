@@ -11,11 +11,12 @@ use iyon_tui::stream::{StreamOffset, StreamRange};
 use iyon_tui::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
 use iyon_tui::text::{TextRun, TextVisitor};
 use iyon_tui::{
-    BorderEdges, BorderGlyphs, BorderSpec, GridCellSpec, GridTrack, History, HorizontalAlign,
-    HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
+    BorderEdges, BorderGlyphs, BorderSpec, ContentFamily, GridCellSpec, GridTrack, History,
+    HorizontalAlign, HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort,
+    HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
     IntoView, Key, KeyStroke, MarkdownOptions, MarkdownProjector, Modifiers, Output, Projector,
     Renderer, StyleRef, StyleSpec, TextContent, TextInput, TextPart, TextRole, TextSelector,
-    TextSpan, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
+    TextSourceKind, TextSpan, TextWrapMode, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -743,6 +744,14 @@ impl NativeTuiHost {
         Ok(())
     }
 
+    #[napi(js_name = "disposeContentResources")]
+    pub fn dispose_content_resources(&self) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .dispose_content_resources()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
     #[napi]
     pub fn exit(&self) -> Result<()> {
         ensure_alive(&self.alive)?;
@@ -829,6 +838,22 @@ impl NativeTuiHost {
             .create_view_state()
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
         Ok(NativeViewState::from_host(state))
+    }
+
+    #[napi(js_name = "contentPort")]
+    pub fn content_port(&self, family: Option<String>) -> Result<NativeContentPort> {
+        ensure_alive(&self.alive)?;
+        let family = family.unwrap_or_else(|| "text".to_owned());
+        if family != "text" {
+            return Err(crate::NativeError::invalid_input(
+                "unsupported ContentPort family",
+            ));
+        }
+        let port = self
+            .host
+            .create_content_port(ContentFamily::Text)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(NativeContentPort::from_host(port))
     }
 
     #[napi(js_name = "textInput")]
@@ -1175,6 +1200,276 @@ impl NativeTextStream {
         }
         Ok(snapshot)
     }
+}
+
+#[napi]
+pub struct NativeTextSource {
+    source: HostContentSource,
+    alive: AtomicBool,
+}
+
+#[napi]
+impl NativeTextSource {
+    #[napi(constructor)]
+    pub fn new(env: Env, kind: Option<String>, _options: Option<Value>) -> Result<Self> {
+        let kind = match kind.as_deref().unwrap_or("stream") {
+            "stream" => TextSourceKind::Stream,
+            "block" => TextSourceKind::Block,
+            other => {
+                return Err(crate::NativeError::invalid_input(format!(
+                    "unknown text Source kind `{other}`"
+                )));
+            }
+        };
+        let environment = host_environment_for_env(&env)?;
+        let source = environment
+            .create_content_source(kind)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(Self {
+            source,
+            alive: AtomicBool::new(true),
+        })
+    }
+
+    #[napi]
+    pub fn dispose(&self) -> Result<()> {
+        if !self.alive.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.source
+            .dispose()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        self.alive.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    #[napi(js_name = "sourceId")]
+    pub fn source_id(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(self.source.id() as i64)
+    }
+
+    #[napi(js_name = "sourceGeneration")]
+    pub fn source_generation(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(i64::from(self.source.generation()))
+    }
+
+    #[napi]
+    pub fn family(&self) -> Result<String> {
+        ensure_alive(&self.alive)?;
+        Ok("text".to_owned())
+    }
+}
+
+#[napi]
+pub struct NativeContentPort {
+    port: HostContentPort,
+    alive: AtomicBool,
+}
+
+#[napi]
+impl NativeContentPort {
+    #[napi]
+    pub fn dispose(&self) -> Result<()> {
+        if !self.alive.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.port
+            .dispose()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        self.alive.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    #[napi(js_name = "portId")]
+    pub fn port_id(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(self.port.id() as i64)
+    }
+
+    #[napi(js_name = "attachmentId")]
+    pub fn attachment_id(&self) -> Result<i64> {
+        self.port_id()
+    }
+
+    #[napi(js_name = "portGeneration")]
+    pub fn port_generation(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(i64::from(self.port.generation()))
+    }
+
+    #[napi]
+    pub fn family(&self) -> Result<String> {
+        ensure_alive(&self.alive)?;
+        Ok("text".to_owned())
+    }
+
+    #[napi]
+    pub fn deactivate(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let wake = self
+            .port
+            .deactivate()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        Ok(serde_json::json!({
+            "schedule_environment_drain": wake.schedule_environment_drain,
+        }))
+    }
+
+    #[napi]
+    pub fn connect(
+        &self,
+        source: &NativeTextSource,
+        funnel: Value,
+    ) -> Result<NativeContentConnector> {
+        ensure_alive(&self.alive)?;
+        ensure_alive(&source.alive)?;
+        let funnel = parse_content_funnel(funnel)?;
+        let connector = self
+            .port
+            .connect(&source.source, funnel)
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        Ok(NativeContentConnector {
+            connector,
+            alive: AtomicBool::new(true),
+        })
+    }
+
+    #[napi]
+    pub fn mounted(&self) -> Result<bool> {
+        ensure_alive(&self.alive)?;
+        self.port
+            .is_mounted()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
+    fn from_host(port: HostContentPort) -> Self {
+        Self {
+            port,
+            alive: AtomicBool::new(true),
+        }
+    }
+}
+
+#[napi]
+pub struct NativeContentConnector {
+    connector: HostContentConnector,
+    alive: AtomicBool,
+}
+
+#[napi]
+impl NativeContentConnector {
+    #[napi]
+    pub fn activate(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let wake = self
+            .connector
+            .activate()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        Ok(serde_json::json!({
+            "schedule_environment_drain": wake.schedule_environment_drain,
+        }))
+    }
+
+    #[napi]
+    pub fn deactivate(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let wake = self
+            .connector
+            .deactivate()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        Ok(serde_json::json!({
+            "schedule_environment_drain": wake.schedule_environment_drain,
+        }))
+    }
+
+    #[napi]
+    pub fn dispose(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        if self.connector.is_disposed() {
+            return Ok(serde_json::json!({
+                "schedule_environment_drain": false,
+            }));
+        }
+        let wake = self
+            .connector
+            .dispose()
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        Ok(serde_json::json!({
+            "schedule_environment_drain": wake.schedule_environment_drain,
+        }))
+    }
+
+    /// Native/unit-only failure injection for validating switch fallback. The
+    /// public TypeScript Connector intentionally does not expose this hook.
+    #[napi(js_name = "failNextActivation")]
+    pub fn fail_next_activation(&self, diagnostic: String) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.connector
+            .fail_next_activation(diagnostic)
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+    }
+
+    #[napi]
+    pub fn status(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let status = self
+            .connector
+            .status()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(serde_json::json!({
+            "phase": status.phase,
+            "requested": status.requested,
+            "visible": status.visible,
+            "error": status.error.map(|error| serde_json::json!({
+                "code": error.code,
+                "diagnostic": error.diagnostic,
+            })),
+        }))
+    }
+}
+
+fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel must be an object"))?;
+    for key in object.keys() {
+        if !matches!(key.as_str(), "family" | "kind" | "wrap") {
+            return Err(crate::NativeError::invalid_input(format!(
+                "INVALID_FUNNEL: unknown Funnel field `{key}`"
+            )));
+        }
+    }
+    let family = object
+        .get("family")
+        .and_then(Value::as_str)
+        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel family is required"))?;
+    if family != "text" {
+        return Err(crate::NativeError::invalid_input(
+            "CONTENT_FAMILY_MISMATCH: Funnel family must be text",
+        ));
+    }
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel kind is required"))?;
+    if kind != "plain" {
+        return Err(crate::NativeError::invalid_input(
+            "INVALID_FUNNEL: only the plain text Funnel is available",
+        ));
+    }
+    let wrap = match object.get("wrap").and_then(Value::as_str).unwrap_or("word") {
+        "word" => TextWrapMode::Word,
+        "grapheme" => TextWrapMode::Grapheme,
+        "noWrap" => TextWrapMode::NoWrap,
+        other => {
+            return Err(crate::NativeError::invalid_input(format!(
+                "INVALID_FUNNEL: unknown text wrap mode `{other}`"
+            )));
+        }
+    };
+    Ok(HostContentFunnel::plain(wrap))
 }
 
 fn parse_stream_options(
@@ -1799,6 +2094,7 @@ fn is_known_view_kind(kind: u32) -> bool {
             | VIEW_KIND_CONTENT_MAX
             | VIEW_KIND_COMPONENT
             | VIEW_KIND_DECORATED
+            | VIEW_KIND_CONTENT_HOST
     )
 }
 
@@ -1814,6 +2110,7 @@ fn has_cached_node_payload(value: &Object<'_>) -> Result<bool> {
         "continuation",
         "body",
         "handle",
+        "contentPortId",
         "decoration",
     ]
     .into_iter()
@@ -1880,6 +2177,9 @@ fn validate_cached_node_header(value: &Object<'_>, kind: u32) -> Result<()> {
         }
         VIEW_KIND_COMPONENT => {
             required_positive_u64(value, "handle")?;
+        }
+        VIEW_KIND_CONTENT_HOST => {
+            required_positive_u64(value, "contentPortId")?;
         }
         VIEW_KIND_DECORATED => {
             required_prop::<Object>(value, "child")?;
@@ -2003,6 +2303,11 @@ impl ViewDecoder {
             VIEW_KIND_COMPONENT => Ok(View::native_component(required_positive_u64(
                 value, "handle",
             )?)),
+            VIEW_KIND_CONTENT_HOST => Ok(View::native_content_host(required_positive_u64(
+                value,
+                "contentPortId",
+            )?)
+            .map_err(crate::NativeError::invalid_input)?),
             VIEW_KIND_DECORATED => {
                 tui_perf_inc!(LegacyDecoratedCompatibilityFrames);
                 tui_perf_inc!(DecoratedNormalizedNodes);

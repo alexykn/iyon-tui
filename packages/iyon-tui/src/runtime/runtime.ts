@@ -21,6 +21,9 @@ import { createTextInput, textInputForOutput } from "../api/controls/text-input.
 import { createViewSlot } from "../api/controls/view-slot.ts";
 import { createScrollPane } from "../api/controls/scroll-pane.ts";
 import { createViewState, type ViewState as ViewStateContract } from "../api/view/retained-state.ts";
+import { createContentPort as createContentPortHandle, type ContentPort as ContentPortContract, type ContentPortOptions } from "../api/content/retained.ts";
+import { createContentPort as createContentPortResource } from "../transport/content/control.ts";
+import { TextContent } from "../api/content/text-content.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
@@ -82,6 +85,7 @@ export interface TuiRuntime {
   exit(): void;
   createHistory(): HistoryContract;
   viewState(): ViewStateContract;
+  contentPort(options?: ContentPortOptions | typeof TextContent): ContentPortContract;
   createTextInput(options?: TextInputOptions): TextInputContract;
   createViewSlot(initial: View): ViewSlotContract;
   createScrollPane(initial: View): ScrollPaneContract;
@@ -694,6 +698,37 @@ export class Tui implements TuiRuntime {
     }
   }
 
+  /** Creates a Tui-owned, host-bound ContentPort. */
+  contentPort(
+    options: ContentPortOptions | typeof TextContent = {},
+  ): ContentPortContract {
+    this.prepareMutation("tui.contentPort");
+    const family = options === TextContent
+      ? "text"
+      : options !== null && typeof options === "object"
+        ? options.family ?? "text"
+        : undefined;
+    if (options !== TextContent && options !== null && typeof options === "object") {
+      for (const key of Object.keys(options)) {
+        if (key !== "family") throw tuiError("validation", `unknown ContentPort option ${JSON.stringify(key)}`);
+      }
+    }
+    if (family !== "text") throw tuiError("validation", "unsupported ContentPort family");
+    try {
+      return this.ownHandle(createContentPortHandle(
+        createContentPortResource(this.host, family),
+        {
+          environment: this.runtimeEnvironment.token,
+          host: this.hostRegistration.token,
+        },
+        () => this.hostRegistration.markPending(),
+        () => this.assertNotMutating("content control"),
+      ));
+    } catch (error) {
+      throw asTuiError(error);
+    }
+  }
+
   /** Creates a Tui-owned, host-bound TextInput with all options applied. */
   createTextInput(options: TextInputOptions = {}): TextInputContract {
     this.prepareMutation("tui.createTextInput");
@@ -836,6 +871,14 @@ export class Tui implements TuiRuntime {
     const revision = commit?.visible_structural_revision;
     this.boundary?.commitVisible(revision);
     this.attachmentBindings.commitVisible(revision);
+    for (const handle of this.ownedHandles) {
+      const owned = handle as OwnedHandle & {
+        syncNativeLifecycle?: () => void;
+        syncNativeLifecycles?: () => void;
+      };
+      owned.syncNativeLifecycle?.();
+      owned.syncNativeLifecycles?.();
+    }
   }
 
   private disposeRetainedExecution(): void {
@@ -851,6 +894,9 @@ export class Tui implements TuiRuntime {
       }
     };
     attempt(() => this.hostRegistration.dispose());
+    // Owner death is the only content-plane cascade. It releases host-owned
+    // Port/Connector native records before individual wrapper disposal runs.
+    attempt(() => this.host.disposeContentResources?.());
     this.runtimeErrorListener = undefined;
     this.runtimeErrors.setReporter(undefined);
     attempt(() => this.attachmentBindings.dispose());

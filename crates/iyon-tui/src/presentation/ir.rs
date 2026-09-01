@@ -52,6 +52,7 @@ pub(crate) struct ViewFlags(u8);
 impl ViewFlags {
     const CONTAINS_COMPONENT_SLOT: u8 = 1 << 0;
     const CONTAINS_STATE_ATTACHMENT: u8 = 1 << 1;
+    const CONTAINS_CONTENT_ATTACHMENT: u8 = 1 << 2;
 
     pub(crate) const fn contains_component_slot(self) -> bool {
         self.0 & Self::CONTAINS_COMPONENT_SLOT != 0
@@ -61,12 +62,20 @@ impl ViewFlags {
         self.0 & Self::CONTAINS_STATE_ATTACHMENT != 0
     }
 
+    pub(crate) const fn contains_content_attachment(self) -> bool {
+        self.0 & Self::CONTAINS_CONTENT_ATTACHMENT != 0
+    }
+
     const fn with_component_slot() -> Self {
         Self(Self::CONTAINS_COMPONENT_SLOT)
     }
 
     const fn with_state_attachment(self) -> Self {
         Self(self.0 | Self::CONTAINS_STATE_ATTACHMENT)
+    }
+
+    const fn with_content_attachment(self) -> Self {
+        Self(self.0 | Self::CONTAINS_CONTENT_ATTACHMENT)
     }
 }
 
@@ -690,6 +699,9 @@ pub(crate) struct ViewNode {
     /// Native retained state attachment. This is a physical preparation value,
     /// never a public semantic/native pointer identity.
     state_attachment: Option<u64>,
+    /// Native retained content attachment. This is resolved only at the
+    /// structural boundary and is never a semantic/native pointer identity.
+    content_attachment: Option<u64>,
     pub(crate) width: WidthRule,
     pub(crate) height: HeightRule,
     pub(crate) decoration: Decoration,
@@ -724,6 +736,7 @@ impl View {
                 id: next_view_id(),
                 flags: ViewNode::compute_flags(&parts.kind),
                 state_attachment: None,
+                content_attachment: None,
                 width: parts.width,
                 height: parts.height,
                 decoration: parts.decoration,
@@ -762,6 +775,10 @@ impl View {
         self.inner.state_attachment
     }
 
+    pub(crate) fn content_attachment_id(&self) -> Option<u64> {
+        self.inner.content_attachment
+    }
+
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
     pub fn native_state_attachment_id(&self) -> Option<u64> {
@@ -784,6 +801,23 @@ impl View {
             return Ok(self);
         }
         Ok(self.map_node(|node| node.state_attachment = Some(state_id)))
+    }
+
+    /// Attaches the native ContentPort identity to a ContentHost occurrence.
+    /// The public semantic node carries only the backend-neutral HandleId.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_with_content_attachment(self, port_id: u64) -> Result<Self, String> {
+        if port_id == 0 {
+            return Err("ContentPort identity must be positive".to_owned());
+        }
+        if !matches!(self.kind(), ViewKind::ContentHost) {
+            return Err("ContentPort is unsupported on this node kind".to_owned());
+        }
+        if self.content_attachment_id() == Some(port_id) {
+            return Ok(self);
+        }
+        Ok(self.map_node(|node| node.content_attachment = Some(port_id)))
     }
 
     /// Exhaustive native capability classification for retained presentation
@@ -844,7 +878,10 @@ impl View {
             ));
         }
         match self.kind() {
-            ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => {}
+            ViewKind::Text(_)
+            | ViewKind::Spacer { .. }
+            | ViewKind::ComponentSlot(_)
+            | ViewKind::ContentHost => {}
             ViewKind::Column(column) => {
                 for child in column.children.iter() {
                     child
@@ -916,6 +953,9 @@ impl View {
         if next.state_attachment.is_some() {
             next.flags = next.flags.with_state_attachment();
         }
+        if next.content_attachment.is_some() {
+            next.flags = next.flags.with_content_attachment();
+        }
         next.id = next_view_id();
         Self {
             inner: Arc::new(next),
@@ -934,6 +974,10 @@ impl View {
 
     pub(crate) fn contains_component_identity(&self) -> bool {
         self.flags().contains_component_slot()
+    }
+
+    pub(crate) fn contains_content_identity(&self) -> bool {
+        self.flags().contains_content_attachment()
     }
 
     /// Constructs an axis from scalar track words and already-materialized
@@ -1665,7 +1709,7 @@ fn view_kind_tag(kind: &ViewKind) -> u32 {
         ViewKind::Container(_) => PATH_VIEW_CONTAINER,
         ViewKind::ClampRows(_) => PATH_VIEW_CLAMP_ROWS,
         ViewKind::RowViewport(_) => PATH_VIEW_ROW_VIEWPORT,
-        ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => 0,
+        ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) | ViewKind::ContentHost => 0,
     }
 }
 
@@ -1679,6 +1723,7 @@ impl ViewNode {
     fn compute_flags(kind: &ViewKind) -> ViewFlags {
         match kind {
             ViewKind::ComponentSlot(_) => ViewFlags::with_component_slot(),
+            ViewKind::ContentHost => ViewFlags::default(),
             ViewKind::Text(_) | ViewKind::Spacer { .. } => ViewFlags::default(),
             ViewKind::Container(container) => container.child.flags(),
             ViewKind::Hanging(hanging) => ViewFlags(
@@ -1699,6 +1744,7 @@ impl ViewNode {
             id: self.id,
             flags: self.flags,
             state_attachment: self.state_attachment,
+            content_attachment: self.content_attachment,
             width: self.width,
             height: self.height,
             decoration: self.decoration.clone(),
@@ -1715,6 +1761,7 @@ impl ViewNode {
             && self.style_states == other.style_states
             && self.style_facts == other.style_facts
             && self.state_attachment == other.state_attachment
+            && self.content_attachment == other.content_attachment
             && self.kind == other.kind
     }
 }
@@ -1741,10 +1788,15 @@ pub(crate) enum ViewKind {
     Grid(Arc<GridView>),
     Hanging(Arc<HangingView>),
     Container(Arc<ContainerNode>),
-    Spacer { rows: u16 },
+    Spacer {
+        rows: u16,
+    },
     ClampRows(Arc<ClampRowsView>),
     RowViewport(Arc<RowViewportView>),
     ComponentSlot(ComponentSlotNode),
+    /// A structural receiving region for a retained ContentPort. Its content
+    /// is empty until a later content projection tranche supplies rows.
+    ContentHost,
 }
 
 /// RETAINED SEMANTIC IR. Deferred placement of a retained component.

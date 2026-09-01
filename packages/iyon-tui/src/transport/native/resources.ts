@@ -59,7 +59,10 @@ export function nativeResourceForHandleId<T extends object>(
 }
 
 /** Retrieves the raw native resource for a live framework value. */
-export function nativeResourceOf<T extends object>(handle: object): T {
+export function nativeResourceOf<T extends object>(
+  handle: object,
+  expectedKind?: NativeResourceKind,
+): T {
   const resource = nativeResources.get(handle);
   if (resource === undefined) throw tuiError("disposed-handle", "framework value has no live native resource");
   const registry = runtimeResourceRegistry();
@@ -67,7 +70,7 @@ export function nativeResourceOf<T extends object>(handle: object): T {
     throw tuiError("disposed-handle", "framework value has no live native resource");
   }
   const handleId = registry.handleIdFor(handle);
-  if (handleId !== undefined) registry.resourceForHandleId(handleId);
+  if (handleId !== undefined) registry.resourceForHandleId(handleId, expectedKind);
   return resource as T;
 }
 

@@ -12,6 +12,7 @@ import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
 import type { HandleId } from "../controls/framework-handle.ts";
 import type { ViewState } from "./retained-state.ts";
+import type { ContentPort } from "../content/retained.ts";
 import type { ColorSpec } from "../presentation/theme.ts";
 import { insets, Insets } from "./geometry.ts";
 import type { DiffHunk } from "../content/diff.ts";
@@ -29,6 +30,7 @@ import {
   semanticTextSpanFor,
 } from "../presentation/semantic-style.ts";
 import {
+  copySemanticAttachmentReferences,
   createSemanticViewNode,
   installSemanticNode,
   peekSemanticGridSequenceOverride,
@@ -73,6 +75,7 @@ import {
   composeClampRows,
   composeComponent,
   composeContainer,
+  composeContent,
   composeContentMax,
   composeDiff,
   composeFillHeight,
@@ -229,7 +232,9 @@ function withSemanticIdentity(node: SemanticViewNode | SemanticViewNodeDraft): S
 
 /** Applies a same-kind semantic replacement after the caller has narrowed it. */
 function withSemanticUpdate(node: SemanticViewNode, update: object): SemanticViewNode {
-  return withSemanticIdentity({ ...semanticDraftOf(node), ...update } as SemanticViewNodeDraft);
+  const next = withSemanticIdentity({ ...semanticDraftOf(node), ...update } as SemanticViewNodeDraft);
+  copySemanticAttachmentReferences(node, next);
+  return next;
 }
 
 /** @internal Creates a new semantic node with a fresh View identity. */
@@ -275,6 +280,20 @@ export class View {
   static diff(hunks: readonly DiffHunk[]): View {
     if (isRetainedConstruction()) return composeDiff(hunks);
     return new View({ kind: SEMANTIC_VIEW_KIND.diff, hunks: hunks.map(toSemanticHunk) });
+  }
+
+  /** Creates the structural ContentHost occurrence for one host-owned Port. */
+  static content(port: ContentPort): View {
+    if (typeof port !== "object" || port === null || port.kind !== "content-port" || port.disposed) {
+      throw new TypeError("View.content requires a live ContentPort");
+    }
+    if (isRetainedConstruction()) return composeContent(port);
+    const view = createSemanticView({
+      kind: SEMANTIC_VIEW_KIND.contentHost,
+      contentAttachment: port.id,
+    });
+    retainSemanticAttachmentReference(semanticNodeOf(view), port);
+    return view;
   }
 
   static text(value: string): View {
@@ -406,7 +425,7 @@ export class View {
     const decorated = this.decoratedNode();
     const current = decorated === undefined ? semanticDecorationFor() : semanticCloneDecoration(decorated.decoration);
     const child = decorated?.child ?? semanticNodeOf(this);
-    return new View({
+    const derived = new View({
       kind: SEMANTIC_VIEW_KIND.decorated,
       child,
       stateAttachment: decorated?.stateAttachment,
@@ -415,6 +434,10 @@ export class View {
         styleStates: { ...current.styleStates, [stateKey]: stateValue },
       },
     });
+    if (decorated !== undefined) {
+      copySemanticAttachmentReferences(decorated, semanticNodeOf(derived));
+    }
+    return derived;
   }
 
   container(): View {
@@ -473,6 +496,9 @@ export class View {
       stateAttachment: decorated?.stateAttachment,
       decoration: semanticCloneDecoration(next),
     });
+    if (decorated !== undefined) {
+      copySemanticAttachmentReferences(decorated, semanticNodeOf(derived));
+    }
     // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
     // `base + masked modifiers`, which the retained common patch expresses
     // without re-materializing the base subtree. Mixed decorations stay
@@ -494,6 +520,7 @@ export class View {
         align: align ?? node.align,
         stateAttachment: node.stateAttachment,
       });
+      copySemanticAttachmentReferences(node, semanticNodeOf(derived));
       setSemanticDerivation(semanticNodeOf(derived), {
         kind: "textLayout",
         base: node,
@@ -517,6 +544,7 @@ export class View {
         stateAttachment: node.stateAttachment,
         decoration: node.decoration,
       });
+      copySemanticAttachmentReferences(node, semanticNodeOf(derived));
       setSemanticDerivation(child, {
         kind: "textLayout",
         base: baseText,
@@ -736,6 +764,7 @@ export function gridSetCellForTransport(base: View, row: number, column: number,
     rowGap: gridNode.rowGap,
     stateAttachment: gridNode.stateAttachment,
   });
+  copySemanticAttachmentReferences(gridNode, semanticNodeOf(derived));
   setSemanticDerivation(semanticNodeOf(derived), {
     kind: "gridCell",
     base: gridNode,
@@ -898,6 +927,7 @@ function buildWideGridNode(
     rowTracks: override.rowTracks,
     cellIndices: override.cellIndices,
   });
+  copySemanticAttachmentReferences(baseNode, node);
   setSemanticAttachmentPresence(node, semanticNodeHasAttachments(baseNode));
   return wrapFrozenSemanticNode(node);
 }
@@ -952,6 +982,7 @@ function buildWideAxisNode(
     },
   }) as SemanticViewNode;
   setSemanticSequenceOverride(node, { baseNode, sequence, edit });
+  copySemanticAttachmentReferences(baseNode, node);
   setSemanticDerivation(node, derivation);
   const insertedAttachments = derivation.kind === "axisSet"
     ? semanticNodeHasAttachments(derivation.child)
@@ -1016,7 +1047,8 @@ function rows(node: SemanticViewNode): string[] {
     case SEMANTIC_VIEW_KIND.container: return rows(node.child);
     case SEMANTIC_VIEW_KIND.clamp: return rows(node.child).slice(0, node.maxRows);
     case SEMANTIC_VIEW_KIND.contentMax: return rows(node.child).slice(0, node.maxRows);
-    case SEMANTIC_VIEW_KIND.component: return [""];
+    case SEMANTIC_VIEW_KIND.component:
+    case SEMANTIC_VIEW_KIND.contentHost: return [""];
     case SEMANTIC_VIEW_KIND.decorated: return rows(node.child);
   }
 }

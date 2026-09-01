@@ -45,6 +45,11 @@ impl NativeViewState {
             .map_err(|_| crate::NativeError::internal("ViewState identity exceeds i64"))
     }
 
+    #[napi(js_name = "attachmentId")]
+    pub fn attachment_id(&self) -> Result<i64> {
+        self.state_id()
+    }
+
     #[napi(js_name = "validateNodeKind")]
     pub fn validate_node_kind(&self, target_node_kind: i64) -> Result<()> {
         ensure_alive(&self.alive)?;

@@ -138,6 +138,7 @@ fn prepare_kind(
             Size::new(0, (*rows).min(requested_core_height)),
             true,
         ),
+        MeasuredKind::ContentHost => (PreparedKind::Leaf, Size::new(0, 0), true),
         MeasuredKind::Container { child } => {
             let prepared = prepare_node(child, Some(requested_core_height), cache);
             let size = prepared.size;

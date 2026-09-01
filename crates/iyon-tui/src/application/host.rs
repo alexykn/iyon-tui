@@ -16,6 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::controls::text_input::command::TextInputCommand;
 
+use super::content::{ContentBinding, ContentFamily, ContentHostRegistry, HostContentPort};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
@@ -143,6 +144,10 @@ pub(super) struct HostInner {
     /// this exact frame commits.
     candidate_epoch: Option<u64>,
     candidate_structural_revision: Option<u64>,
+    /// Candidate content bindings are captured with the candidate frame so a
+    /// control mutation accepted while presentation is in flight cannot be
+    /// promoted into that older frame by accident.
+    candidate_content_bindings: Option<Vec<ContentBinding>>,
     /// Attempt metadata retained long enough for the environment to report a
     /// failed in-flight candidate rather than a newer pending epoch.
     failed_attempt: Option<(u64, u64)>,
@@ -159,14 +164,18 @@ pub(super) struct HostInner {
     #[cfg(test)]
     fail_next_frame: Option<String>,
     view_states: ViewStateRegistry,
+    pub(super) content: ContentHostRegistry,
 }
 
 impl Drop for HostInner {
     fn drop(&mut self) {
         // Host-bound handles such as History can keep the inner Arc alive
-        // after the public TuiHost wrapper is dropped. Always unregister at
-        // the final owner boundary so weak environment entries cannot leave a
-        // stale pending host or latched wake behind.
+        // after the public TuiHost wrapper is dropped. Release content
+        // memberships before unregistering the host so environment-owned
+        // Sources cannot retain stale Connector leases.
+        self.content.dispose_all();
+        // Always unregister at the final owner boundary so weak environment
+        // entries cannot leave a stale pending host or latched wake behind.
         self.environment.unregister_host(self.host_id);
     }
 }
@@ -2037,6 +2046,10 @@ impl HostHistory {
             .running
             .host_state_attachment_targets_with_history_view(&body, &view)?;
         inner.validate_state_targets(&state_targets)?;
+        let content_targets = inner
+            .running
+            .host_content_attachment_targets_with_history_view(&body, &view)?;
+        inner.content.validate_targets(&content_targets)?;
         let unit = inner
             .running
             .scene_history_mut()
@@ -2044,6 +2057,7 @@ impl HostHistory {
             .push(view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         inner.set_desired_state_bindings(&state_targets)?;
+        inner.content.set_desired(&content_targets)?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
         Ok(unit)
@@ -2064,6 +2078,16 @@ impl HostHistory {
             .running
             .host_state_attachment_targets_for_history_views(&body, history_views)?;
         inner.validate_state_targets(&state_targets)?;
+        let content_views = inner
+            .running
+            .scene_history()
+            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
+            .content_views_with_replacement(unit, &view)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let content_targets = inner
+            .running
+            .host_content_attachment_targets_for_history_views(&body, content_views)?;
+        inner.content.validate_targets(&content_targets)?;
         inner
             .running
             .scene_history_mut()
@@ -2071,6 +2095,7 @@ impl HostHistory {
             .freeze(unit, view)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         inner.set_desired_state_bindings(&state_targets)?;
+        inner.content.set_desired(&content_targets)?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
         Ok(())
@@ -2179,30 +2204,35 @@ impl TuiHost {
             .map_err(|error| anyhow::anyhow!("host init failed: {error:?}"))?;
         let mut backend = backend;
         let frame = prepare_frame(&mut running, &mut backend, now, &HashMap::new())?;
-        let inner = Arc::new(Mutex::new(HostInner {
-            running,
-            backend,
-            frame,
-            candidate_frame: None,
-            presentation: None,
-            frame_pending: true,
-            candidate_epoch: None,
-            candidate_structural_revision: None,
-            failed_attempt: None,
-            now,
-            headless,
-            closed: false,
-            environment: environment.clone(),
-            host_id: 0,
-            desired_structural_revision: 0,
-            visible_structural_revision: 0,
-            visible_frame_revision: 0,
-            pending_epoch: 0,
-            committed_epoch: 0,
-            #[cfg(test)]
-            fail_next_frame: None,
-            view_states: ViewStateRegistry::new(),
-        }));
+        let inner =
+            Arc::new(Mutex::new(HostInner {
+                running,
+                backend,
+                frame,
+                candidate_frame: None,
+                presentation: None,
+                frame_pending: true,
+                candidate_epoch: None,
+                candidate_structural_revision: None,
+                candidate_content_bindings: None,
+                failed_attempt: None,
+                now,
+                headless,
+                closed: false,
+                environment: environment.clone(),
+                host_id: 0,
+                desired_structural_revision: 0,
+                visible_structural_revision: 0,
+                visible_frame_revision: 0,
+                pending_epoch: 0,
+                committed_epoch: 0,
+                #[cfg(test)]
+                fail_next_frame: None,
+                view_states: ViewStateRegistry::new(),
+                content: ContentHostRegistry::new(environment.content_source_registry().map_err(
+                    |error| anyhow::anyhow!("content environment setup failed: {error}"),
+                )?),
+            }));
         let host_id = environment.register_host(&inner)?;
         let mut host = inner
             .lock()
@@ -2233,6 +2263,28 @@ impl TuiHost {
         Ok(HostViewState::new(record, &self.inner))
     }
 
+    /// Creates a host-owned ContentPort. Source/Funnel identity remains
+    /// separate from the structural attachment and no content is projected in
+    /// PERF-13-D.
+    pub fn create_content_port(&self, family: ContentFamily) -> Result<HostContentPort> {
+        let mut inner = self.lock_mut()?;
+        if inner.closed {
+            return Err(anyhow::anyhow!("HOST_DISPOSED: host is closed"));
+        }
+        inner
+            .content
+            .create_port(Arc::downgrade(&self.inner), family)
+    }
+
+    /// Invalidates all host-owned content identities during owner teardown.
+    /// This is the explicit owner-death cascade; individual dispose methods
+    /// remain strict while the host is live.
+    pub fn dispose_content_resources(&self) -> Result<()> {
+        let mut inner = self.lock_mut()?;
+        inner.content.dispose_all();
+        Ok(())
+    }
+
     /// Returns the authoritative desired/visible revisions and host epochs.
     pub fn epochs(&self) -> Result<HostEpochs> {
         Ok(self.lock()?.epochs())
@@ -2255,11 +2307,14 @@ impl TuiHost {
             ));
         }
         inner.validate_state_targets(&state_targets)?;
+        let content_targets = inner.running.host_content_attachment_targets(&body)?;
+        inner.content.validate_targets(&content_targets)?;
         let next_revision = inner
             .desired_structural_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
         inner.set_desired_state_bindings(&state_targets)?;
+        inner.content.set_desired(&content_targets)?;
         inner.running.state.body = body.clone();
         inner.running.host_set_body(body);
         inner.desired_structural_revision = next_revision;
@@ -2378,6 +2433,7 @@ impl TuiHost {
             let host_id = inner.host_id;
             let environment = inner.environment.clone();
             inner.dispose_view_states();
+            inner.content.dispose_all();
             inner.closed = true;
             drop(inner);
             environment.unregister_host(host_id);
@@ -2478,7 +2534,11 @@ impl TuiHost {
         let state_targets = inner
             .running
             .host_state_attachment_targets_for_history(&body, history)?;
-        inner.validate_state_targets(&state_targets)
+        inner.validate_state_targets(&state_targets)?;
+        let content_targets = inner
+            .running
+            .host_content_attachment_targets_for_history(&body, history)?;
+        inner.content.validate_targets(&content_targets)
     }
 
     pub fn set_history(&self, history: History) -> Result<()> {
@@ -2488,8 +2548,13 @@ impl TuiHost {
             .running
             .host_state_attachment_targets_for_history(&body, &history)?;
         inner.validate_state_targets(&state_targets)?;
+        let content_targets = inner
+            .running
+            .host_content_attachment_targets_for_history(&body, &history)?;
+        inner.content.validate_targets(&content_targets)?;
         inner.running.host_set_history(history);
         inner.set_desired_state_bindings(&state_targets)?;
+        inner.content.set_desired(&content_targets)?;
         Ok(())
     }
 
@@ -2699,6 +2764,7 @@ impl TuiHost {
             let host_id = inner.host_id;
             let environment = inner.environment.clone();
             inner.dispose_view_states();
+            inner.content.dispose_all();
             inner.closed = true;
             let restore = if let HostBackend::Real(backend) = &mut inner.backend {
                 ignore_terminal_shutdown_error(backend.restore())
@@ -2721,6 +2787,7 @@ impl TuiHost {
         inner.running.host_set_body(View::spacer(0));
         inner.running.host_clear_retained_views();
         inner.dispose_view_states();
+        inner.content.dispose_all();
         inner.closed = true;
         let result = if let HostBackend::Real(backend) = &mut inner.backend {
             ignore_terminal_shutdown_error(backend.restore())
@@ -2824,7 +2891,14 @@ impl HostInner {
 
     fn refresh_desired_state_bindings(&mut self) -> Result<()> {
         let targets = self.running.host_current_state_attachment_targets()?;
-        self.set_desired_state_bindings(&targets)
+        self.set_desired_state_bindings(&targets)?;
+        let content_targets = self.running.host_current_content_attachment_targets()?;
+        self.content.set_desired(&content_targets)
+    }
+
+    fn candidate_content_bindings(&self) -> Result<Vec<ContentBinding>> {
+        let targets = self.running.host_current_content_attachment_targets()?;
+        self.content.candidate_bindings(&targets)
     }
 
     fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) {
@@ -2837,6 +2911,10 @@ impl HostInner {
 
     fn clear_in_flight_state_bindings(&mut self) {
         self.view_states.clear_in_flight();
+    }
+
+    pub(super) fn content_port_is_mounted(&self, id: u64) -> Result<bool> {
+        self.content.port_status(id)
     }
 
     pub(super) fn invalidate_state(
@@ -2901,7 +2979,7 @@ impl HostInner {
         }
     }
 
-    fn mark_pending(&mut self) -> anyhow::Result<WakeDisposition> {
+    pub(super) fn mark_pending(&mut self) -> anyhow::Result<WakeDisposition> {
         self.pending_epoch = self
             .pending_epoch
             .checked_add(1)
@@ -2928,6 +3006,7 @@ impl HostInner {
         }
         let target_epoch = self.pending_epoch;
         let target_structural_revision = self.desired_structural_revision;
+        let content_bindings = self.candidate_content_bindings()?;
         let states = self.state_snapshots()?;
         let candidate = match prepare_frame(&mut self.running, &mut self.backend, self.now, &states)
         {
@@ -2952,6 +3031,7 @@ impl HostInner {
         self.candidate_frame = Some(candidate);
         self.candidate_epoch = Some(target_epoch);
         self.candidate_structural_revision = Some(target_structural_revision);
+        self.candidate_content_bindings = Some(content_bindings);
         self.frame_pending = true;
         if let Err(error) = self.present_frame() {
             self.capture_failed_candidate();
@@ -3038,6 +3118,10 @@ impl HostInner {
             .candidate_frame
             .take()
             .ok_or_else(|| anyhow::anyhow!("missing candidate frame"))?;
+        let content_bindings = self
+            .candidate_content_bindings
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("missing candidate content bindings"))?;
         let candidate_epoch = self
             .candidate_epoch
             .take()
@@ -3048,6 +3132,7 @@ impl HostInner {
             .ok_or_else(|| anyhow::anyhow!("missing candidate structural revision"))?;
         let state_bindings = candidate.state_bindings.clone();
         self.commit_visible_state_bindings(&state_bindings);
+        self.content.commit_visible(&content_bindings);
         self.clear_in_flight_state_bindings();
         self.frame = candidate;
         self.frame_pending = false;
@@ -3083,6 +3168,7 @@ impl HostInner {
         self.candidate_frame = None;
         self.candidate_epoch = None;
         self.candidate_structural_revision = None;
+        self.candidate_content_bindings = None;
         self.frame_pending = false;
         self.clear_in_flight_state_bindings();
     }
@@ -3208,6 +3294,12 @@ impl HostInner {
         }
 
         if self.pending_epoch != self.committed_epoch {
+            // A control-only content transition still has to commit its
+            // requested/visible Connector state even when PERF-13-D has no
+            // projection work that would produce a visual surface delta.
+            let content_targets = self.running.host_current_content_attachment_targets()?;
+            let content_bindings = self.content.candidate_bindings(&content_targets)?;
+            self.content.commit_visible(&content_bindings);
             // A desired publication with no effective visual delta still
             // completes its host epoch without manufacturing another frame.
             let committed_epoch = self.pending_epoch;

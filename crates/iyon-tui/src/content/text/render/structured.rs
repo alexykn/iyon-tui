@@ -107,7 +107,10 @@ fn walk_views(view: &View, visit: &mut impl FnMut(&View)) {
         ViewKind::Container(container) => walk_views(&container.child, visit),
         ViewKind::ClampRows(clamp) => walk_views(&clamp.child, visit),
         ViewKind::RowViewport(viewport) => walk_views(&viewport.child, visit),
-        ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => {}
+        ViewKind::Text(_)
+        | ViewKind::Spacer { .. }
+        | ViewKind::ComponentSlot(_)
+        | ViewKind::ContentHost => {}
     }
 }
 
@@ -135,7 +138,10 @@ fn find_grid_view_opt(view: &View) -> Option<&View> {
         ViewKind::Container(container) => find_grid_view_opt(&container.child),
         ViewKind::ClampRows(clamp) => find_grid_view_opt(&clamp.child),
         ViewKind::RowViewport(viewport) => find_grid_view_opt(&viewport.child),
-        ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ComponentSlot(_) => None,
+        ViewKind::Text(_)
+        | ViewKind::Spacer { .. }
+        | ViewKind::ComponentSlot(_)
+        | ViewKind::ContentHost => None,
     }
 }
 

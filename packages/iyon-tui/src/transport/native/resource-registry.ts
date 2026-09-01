@@ -295,7 +295,9 @@ export class NativeResourceRegistry {
       this.retireRecord(record);
       throw tuiError("disposed-handle", "framework attachment has no live owner/resource", { id: handleId });
     }
-    if (record.kind !== expectedKind) {
+    const kindMatches = record.kind === expectedKind
+      || (expectedKind === "content-port" && record.kind === "content");
+    if (!kindMatches) {
       throw tuiError("invalid-handle", `framework attachment kind must be ${expectedKind}`, {
         id: handleId,
         expectedKind,
@@ -343,7 +345,9 @@ export class NativeResourceRegistry {
         "invalid-handle",
         record.kind === "state"
           ? "STATE_MOUNTED: ViewState is still attached"
-          : "resource is still attached",
+          : record.kind === "content-port"
+            ? "PORT_MOUNTED: ContentPort is still attached"
+            : "resource is still attached",
         { id: handleId },
       );
     }

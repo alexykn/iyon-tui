@@ -9,6 +9,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use super::content::{ContentSourceRegistry, HostContentSource, TextSourceKind};
 use super::host::HostInner;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -124,6 +125,7 @@ struct EnvironmentInner {
     retry_blocked: HashSet<u64>,
     wake_latched: bool,
     wake_epoch: u64,
+    content_sources: ContentSourceRegistry,
 }
 
 impl TuiEnvironment {
@@ -137,8 +139,26 @@ impl TuiEnvironment {
                 retry_blocked: HashSet::new(),
                 wake_latched: false,
                 wake_epoch: 0,
+                content_sources: ContentSourceRegistry::new(),
             })),
         }
+    }
+
+    pub fn create_content_source(&self, kind: TextSourceKind) -> anyhow::Result<HostContentSource> {
+        self.inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?
+            .content_sources
+            .create(kind)
+    }
+
+    pub(super) fn content_source_registry(&self) -> anyhow::Result<ContentSourceRegistry> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?
+            .content_sources
+            .clone())
     }
 
     pub(super) fn register_host(&self, host: &Arc<Mutex<HostInner>>) -> anyhow::Result<u64> {

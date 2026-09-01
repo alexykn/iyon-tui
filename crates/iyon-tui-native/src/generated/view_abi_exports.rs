@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 707d723a3379bdcf971335ed498183c99d006afb19d093689fdfbd1c73a78133
-// generator_blake3 = 1a84425c710955eb2a5434ced0cecff0aedeeff637919bb7a72f803a51e6b6eb
+// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
+// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -37,6 +37,23 @@ pub mod generated_impls {
                 node_id_high,
                 state_id_low,
                 state_id_high,
+            )
+        }
+    }
+    pub(super) unsafe fn view_content_host_create_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        content_port_id_low: u32,
+        content_port_id_high: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_content_host_create_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                content_port_id_low,
+                content_port_id_high,
             )
         }
     }
@@ -1431,6 +1448,54 @@ pub unsafe extern "C" fn iyon_view_state_attach_v1(
             node_id_high,
             state_id_low,
             state_id_high,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_content_host_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    content_port_id_low: u32,
+    content_port_id_high: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_content_host_create_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        content_port_id_low,
+                        content_port_id_high,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_content_host_create_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    content_port_id_low: u32,
+    content_port_id_high: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_content_host_create_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            content_port_id_low,
+            content_port_id_high,
         )
     }
 }

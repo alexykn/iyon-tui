@@ -17,6 +17,7 @@ const FIELDS: &[(&str, &str)] = &[
     ("viewContentMax", "VIEW_KIND_CONTENT_MAX"),
     ("viewComponent", "VIEW_KIND_COMPONENT"),
     ("viewDecorated", "VIEW_KIND_DECORATED"),
+    ("viewContentHost", "VIEW_KIND_CONTENT_HOST"),
     ("layoutNormal", "LAYOUT_CHILD_NORMAL"),
     ("layoutFixed", "LAYOUT_CHILD_FIXED"),
     ("layoutFlex", "LAYOUT_CHILD_FLEX"),

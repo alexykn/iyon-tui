@@ -175,6 +175,7 @@ export const SEMANTIC_VIEW_KIND = Object.freeze({
   contentMax: 9,
   component: 10,
   decorated: 11,
+  contentHost: 12,
 } as const);
 
 export type SemanticViewKind = (typeof SEMANTIC_VIEW_KIND)[keyof typeof SEMANTIC_VIEW_KIND];
@@ -250,6 +251,10 @@ export interface SemanticComponentNode extends SemanticNodeBase {
   readonly handleId: HandleId;
 }
 
+export interface SemanticContentHostNode extends SemanticNodeBase {
+  readonly kind: typeof SEMANTIC_VIEW_KIND.contentHost;
+}
+
 export interface SemanticDecoratedNode extends SemanticNodeBase {
   readonly kind: typeof SEMANTIC_VIEW_KIND.decorated;
   readonly child: SemanticViewNode;
@@ -267,6 +272,7 @@ export type SemanticViewNode =
   | SemanticClampNode
   | SemanticContentMaxNode
   | SemanticComponentNode
+  | SemanticContentHostNode
   | SemanticDecoratedNode;
 
 type WithoutId<T> = T extends SemanticViewNode ? Omit<T, "id"> : never;
@@ -321,6 +327,15 @@ export function retainSemanticAttachmentReference(node: SemanticViewNode, refere
   semanticAttachmentReferences.set(node, references);
 }
 
+/** @internal Copies strong attachment references across immutable derivations. */
+export function copySemanticAttachmentReferences(
+  from: SemanticViewNode,
+  to: SemanticViewNode,
+): void {
+  const references = semanticAttachmentReferences.get(from);
+  if (references !== undefined) semanticAttachmentReferences.set(to, [...references]);
+}
+
 function attachmentPresenceFor(node: SemanticViewNode): boolean {
   if (node.stateAttachment !== undefined || node.contentAttachment !== undefined) return true;
   switch (node.kind) {
@@ -342,6 +357,7 @@ function attachmentPresenceFor(node: SemanticViewNode): boolean {
     case SEMANTIC_VIEW_KIND.diff:
     case SEMANTIC_VIEW_KIND.spacer:
     case SEMANTIC_VIEW_KIND.component:
+    case SEMANTIC_VIEW_KIND.contentHost:
       return false;
   }
 }
@@ -404,6 +420,7 @@ export function freezeSemanticViewNode<T extends SemanticViewNode>(node: T): T {
     case SEMANTIC_VIEW_KIND.contentMax:
     case SEMANTIC_VIEW_KIND.spacer:
     case SEMANTIC_VIEW_KIND.component:
+    case SEMANTIC_VIEW_KIND.contentHost:
       break;
   }
   return Object.freeze(node);

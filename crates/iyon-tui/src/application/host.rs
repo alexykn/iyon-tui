@@ -2987,6 +2987,10 @@ impl HostInner {
         self.environment.mark_host_pending(self.host_id)
     }
 
+    pub(super) fn environment_wake_epoch(&self) -> u64 {
+        self.environment.wake_epoch()
+    }
+
     fn ensure_pending(&mut self) -> anyhow::Result<()> {
         if self.pending_epoch == self.committed_epoch {
             let _ = self.mark_pending()?;

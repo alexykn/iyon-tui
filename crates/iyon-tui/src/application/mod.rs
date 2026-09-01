@@ -28,8 +28,10 @@ mod tests;
 pub use app::App;
 #[cfg(feature = "native-host")]
 pub use content::{
-    ContentFamily, HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
-    TextFunnelKind, TextSourceKind, TextWrapMode,
+    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentFamily, ContentMutationResult,
+    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
+    HostContentSourceSnapshot, HostContentSourceStats, TextFunnelKind, TextSourceKind,
+    TextWrapMode,
 };
 pub use context::AppCx;
 #[cfg(feature = "native-host")]

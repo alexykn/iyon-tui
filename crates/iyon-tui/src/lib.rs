@@ -183,11 +183,13 @@ pub use application::{
 
 #[cfg(feature = "native-host")]
 pub use application::{
-    ContentFamily, HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel,
-    HostContentPort, HostContentSource, HostDrainReport, HostEpochs, HostFrameError, HostHistory,
-    HostScrollPane, HostTextInput, HostTextStream, HostViewSlot, HostViewState, RoutedOutput,
-    TextFunnelKind, TextSourceKind, TextStreamAnnotation, TextStreamPresentation, TextWrapMode,
-    TuiEnvironment, TuiHost, WakeDisposition,
+    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentFamily, ContentMutationResult,
+    HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel, HostContentPort,
+    HostContentSource, HostContentSourceSnapshot, HostContentSourceStats, HostDrainReport,
+    HostEpochs, HostFrameError, HostHistory, HostScrollPane, HostTextInput, HostTextStream,
+    HostViewSlot, HostViewState, RoutedOutput, TextFunnelKind, TextSourceKind,
+    TextStreamAnnotation, TextStreamPresentation, TextWrapMode, TuiEnvironment, TuiHost,
+    WakeDisposition,
 };
 
 pub use component::{Component, ComponentCx, ComponentHandle};

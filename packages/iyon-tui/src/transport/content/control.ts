@@ -3,7 +3,7 @@
  *
  * This module owns the small N-API control calls for Source, Port, and
  * Connector identities. It does not lower semantic Views or implement Source
- * payload/projection work; bulk data belongs to the later content data plane.
+ * payload/projection work; bulk Source data belongs to the content data plane.
  */
 
 import type {

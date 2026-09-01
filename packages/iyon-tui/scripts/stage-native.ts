@@ -1,4 +1,7 @@
+import { realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+
+import { nativeArtifactName } from "../src/transport/native/artifact.ts";
 
 const packageDirectory = new URL("../", import.meta.url);
 const repositoryDirectory = new URL("../../", packageDirectory);
@@ -6,18 +9,7 @@ const nativeDirectory = new URL("native/", packageDirectory);
 const stagedAddon = new URL("iyon-tui-native.node", nativeDirectory);
 
 const targetKey = `${process.platform}-${process.arch}`;
-const artifactByTarget: Record<string, string> = {
-  "darwin-arm64": "libiyon_tui_native.dylib",
-  "darwin-x64": "libiyon_tui_native.dylib",
-  "linux-x64": "libiyon_tui_native.so",
-  "linux-arm64": "libiyon_tui_native.so",
-  "win32-x64": "iyon_tui_native.dll",
-};
-const artifactName = artifactByTarget[targetKey];
-
-if (artifactName === undefined) {
-  throw new Error(`unsupported iyon-tui-native staging target: ${targetKey}`);
-}
+const artifactName = nativeArtifactName(process.platform, process.arch);
 
 const nativeFeatures = process.env.ION_NATIVE_FEATURES?.split(",").map((feature) => feature.trim()).filter(Boolean) ?? [];
 const targetSuffix = nativeFeatures.length === 0 ? "" : `-${[...nativeFeatures].sort().join("-")}`;
@@ -61,10 +53,23 @@ const addon = require(stagedAddon.pathname) as Record<string, unknown> & {
 if (addon.nativeVersion?.() !== "iyon-tui-native/s6" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
   throw new Error(`staged addon failed the Bun load probe: ${stagedAddon.pathname}`);
 }
+const contentAbi = await import("../src/transport/content/ffi.ts");
+const contentMetadata = contentAbi.contentFfiMetadata();
+if (contentMetadata.artifactPath !== realpathSync(stagedAddon.pathname)) {
+  throw new Error(`content ABI resolved a different artifact: ${contentMetadata.artifactPath}`);
+}
 const directQualificationExports = [
   "tuiViewAbiBootstrap",
   "tuiPerfAbiProbe",
   "tuiPerfAbiConformanceProbe",
+];
+const contentAbiSymbols = [
+  "iyon_tui_perf13_abi_metadata_v1",
+  "iyon_tui_source_append_utf8_v1",
+  "iyon_tui_source_replace_utf8_v1",
+  "iyon_tui_source_clear_v1",
+  "iyon_tui_source_seal_v1",
+  "iyon_tui_source_head_truncate_v1",
 ];
 const directFeature = nativeFeatures.includes("direct-ffi");
 if (process.platform !== "win32") {
@@ -73,15 +78,20 @@ if (process.platform !== "win32") {
     stdout: "pipe",
     stderr: "pipe",
   });
-  if (nm.exitCode === 0) {
-    const symbols = new TextDecoder().decode(nm.stdout);
-    const directSymbols = symbols.match(/(?:^|[\\s_])_?iyon_(?:abi_(?:probe|conformance)_|(?:runtime|view|host|axis|path|edit|style)_.*_v1)\\b/g) ?? [];
-    if (directFeature && (!symbols.includes("iyon_abi_probe_noop") || !symbols.includes("iyon_runtime_noop_v1"))) {
-      throw new Error("direct-ffi staged addon is missing its qualification symbol surface");
-    }
-    if (!directFeature && directSymbols.length > 0) {
-      throw new Error(`default staged addon exposes direct-ffi symbols: ${directSymbols.slice(0, 8).join(", ")}`);
-    }
+  if (nm.exitCode !== 0) {
+    throw new Error(`unable to inspect staged addon symbols with nm: ${new TextDecoder().decode(nm.stderr)}`);
+  }
+  const symbols = new TextDecoder().decode(nm.stdout);
+  const missingContentSymbols = contentAbiSymbols.filter((symbol) => !symbols.includes(symbol));
+  if (missingContentSymbols.length > 0) {
+    throw new Error(`staged addon is missing content ABI symbols: ${missingContentSymbols.join(", ")}`);
+  }
+  const directSymbols = symbols.match(/(?:^|[\s_])_?iyon_(?:abi_(?:probe|conformance)_|(?:runtime|view|host|axis|path|edit|style)_.*_v1)\b/g) ?? [];
+  if (directFeature && (!symbols.includes("iyon_abi_probe_noop") || !symbols.includes("iyon_runtime_noop_v1"))) {
+    throw new Error("direct-ffi staged addon is missing its qualification symbol surface");
+  }
+  if (!directFeature && directSymbols.length > 0) {
+    throw new Error(`default staged addon exposes direct-ffi symbols: ${directSymbols.slice(0, 8).join(", ")}`);
   }
 }
 if (directFeature) {

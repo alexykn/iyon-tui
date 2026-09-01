@@ -355,7 +355,7 @@ function cut3OwnershipGate(): void {
   if (/new\s+WeakMap<object,\s*object>\(\)/u.test(runtimeRegistry)) {
     offenders.push("runtime/handle-registry.ts: raw native resources remain in runtime ownership");
   }
-  if (!/require\("\.\.\/\.\.\/\.\.\/native\/iyon-tui-native\.node"\)/u.test(addon)) {
+  if (!/require\([^)]*nativeArtifact\.absolutePath[^)]*\)/u.test(addon)) {
     offenders.push("transport/native/addon.ts: addon loading is not owned by transport/native");
   }
   if (/\b(?:transport\/native|transport\/structural|runtime\/handle-registry)\//u.test(index)) {
@@ -709,13 +709,14 @@ function cut5ModuleIdentityGate(): void {
 
 function cut5PackagePublicationGate(): void {
   const offenders: string[] = [];
-  // PERF-13-D owns the private content control seam. Payload/projection
-  // transports remain future tranches, and no additional content transport
-  // module may appear before those tranches establish its owner.
+  // PERF-13-E owns the private content data ABI seam. Projection remains a
+  // later tranche, but Source payload transport is now an explicit owner.
   const contentTransport = join(FRAMEWORK_SRC, "transport/content");
+  const ownedContentTransport = new Set(["control.ts", "abi.ts", "ffi.ts"]);
   if (existsSync(contentTransport)) {
     for (const file of walk(contentTransport)) {
-      if (relative(contentTransport, file).replaceAll("\\", "/") !== "control.ts") {
+      const relativePath = relative(contentTransport, file).replaceAll("\\", "/");
+      if (!ownedContentTransport.has(relativePath)) {
         offenders.push(`future PERF-13 ownership slot is prematurely implemented or published: ${relative(FRAMEWORK_SRC, file)}`);
       }
     }
@@ -759,7 +760,7 @@ function cut5PackagePublicationGate(): void {
   if (offenders.length > 0) {
     fail("h2-cut5-package-publication", offenders.join("; "));
   } else {
-    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and private content control remains unpublished");
+    pass("h2-cut5-package-publication", "package exports are limited to documented entrypoints and private content transports remain unpublished");
   }
 }
 
@@ -770,7 +771,9 @@ function cut5PackagePublicationGate(): void {
 function napiTransportGate(): void {
   const files = walk(FRAMEWORK_SRC);
   const forbidden = /bun:ffi|linkSymbols|NativeAbiPointers|tuiViewAbiBootstrap|runtime_ptr|host_ptr/u;
+  const unsafeContentFfi = relative(FRAMEWORK_SRC, join(FRAMEWORK_SRC, "transport/content/ffi.ts"));
   const offenders = files
+    .filter((file) => relative(FRAMEWORK_SRC, file) !== unsafeContentFfi)
     .filter((file) => forbidden.test(readFileSync(file, "utf8")))
     .map((file) => relative(ROOT, file));
   const nativeContract = readFileSync(NATIVE_CONTRACT, "utf8");

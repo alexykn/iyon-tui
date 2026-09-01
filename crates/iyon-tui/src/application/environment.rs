@@ -95,6 +95,30 @@ pub struct WakeDisposition {
     pub schedule_environment_drain: bool,
 }
 
+/// Stable process-local identity used by Source direct-FFI calls. The
+/// generation is intentionally explicit even though v1 does not recycle slots.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentIdentity {
+    pub slot: u32,
+    pub generation: u32,
+}
+
+static NEXT_ENVIRONMENT_SLOT: AtomicU64 = AtomicU64::new(1);
+
+impl EnvironmentIdentity {
+    pub(crate) fn allocate() -> Self {
+        let slot = NEXT_ENVIRONMENT_SLOT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current <= u64::from(u32::MAX)).then_some(current + 1)
+            })
+            .unwrap_or_else(|_| panic!("environment identity exhausted"));
+        Self {
+            slot: u32::try_from(slot).expect("environment identity fits u32"),
+            generation: 1,
+        }
+    }
+}
+
 /// One native environment owns the pending-host set and wake latch shared by
 /// all hosts created in that environment. The queue stores IDs only; host
 /// state remains authoritative in each registered host.
@@ -119,6 +143,7 @@ const MAX_STATE_HOST_ID: u64 = 0x001f_ffff;
 static NEXT_HOST_ID: AtomicU64 = AtomicU64::new(1);
 
 struct EnvironmentInner {
+    identity: EnvironmentIdentity,
     hosts: HashMap<u64, Weak<Mutex<HostInner>>>,
     pending: VecDeque<u64>,
     pending_set: HashSet<u64>,
@@ -132,19 +157,51 @@ struct EnvironmentInner {
 
 impl TuiEnvironment {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(EnvironmentInner {
-                hosts: HashMap::new(),
-                pending: VecDeque::new(),
-                pending_set: HashSet::new(),
-                queued: HashSet::new(),
-                retry_blocked: HashSet::new(),
-                waiting_for_presentation: HashSet::new(),
-                wake_latched: false,
-                wake_epoch: 0,
-                content_sources: ContentSourceRegistry::new(),
-            })),
-        }
+        let identity = EnvironmentIdentity::allocate();
+        let inner = Arc::new(Mutex::new(EnvironmentInner {
+            identity,
+            hosts: HashMap::new(),
+            pending: VecDeque::new(),
+            pending_set: HashSet::new(),
+            queued: HashSet::new(),
+            retry_blocked: HashSet::new(),
+            waiting_for_presentation: HashSet::new(),
+            wake_latched: false,
+            wake_epoch: 0,
+            content_sources: ContentSourceRegistry::with_identity(identity),
+        }));
+        Self { inner }
+    }
+
+    pub(crate) fn identity(&self) -> EnvironmentIdentity {
+        self.inner
+            .lock()
+            .map(|environment| environment.identity)
+            .unwrap_or_default()
+    }
+
+    pub fn environment_slot(&self) -> u32 {
+        self.identity().slot
+    }
+
+    pub fn environment_generation(&self) -> u32 {
+        self.identity().generation
+    }
+
+    pub fn lookup_content_source(
+        &self,
+        source_slot: u64,
+        source_generation: u32,
+    ) -> anyhow::Result<HostContentSource> {
+        self.content_source_registry()?
+            .lookup(source_slot, source_generation)
+    }
+
+    pub(super) fn wake_epoch(&self) -> u64 {
+        self.inner
+            .lock()
+            .map(|environment| environment.wake_epoch)
+            .unwrap_or(0)
     }
 
     pub fn create_content_source(&self, kind: TextSourceKind) -> anyhow::Result<HostContentSource> {

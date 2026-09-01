@@ -5,6 +5,14 @@ import { releaseFrameworkHandle } from "../../runtime/handle-registry.ts";
 import {
   runtimeResourceRegistry,
 } from "../../transport/native/resource-registry.ts";
+import { runtimeEnvironment } from "../../runtime/environment.ts";
+import {
+  appendTextSource,
+  clearTextSource,
+  replaceTextSource,
+  sealTextSource,
+  truncateTextSource,
+} from "../../transport/content/ffi.ts";
 import { nativeResourceOf } from "../../transport/native/resources.ts";
 import {
   activateContent,
@@ -33,6 +41,61 @@ export interface TextRetentionPolicy {
 
 export interface TextSourceOptions {
   readonly retention?: TextRetentionPolicy;
+}
+
+export type TextSourceAnnotationKind = "tag" | "style" | "atomic" | "point";
+
+/** Fixed-envelope Source annotation input. Ranges are operation-local UTF-8 bytes. */
+export interface TextSourceAnnotation {
+  readonly kind?: TextSourceAnnotationKind;
+  readonly startByte?: number;
+  readonly endByte?: number;
+  readonly namespace?: string;
+  readonly name?: string;
+  readonly payload?: Uint8Array;
+}
+
+export interface TextSourceMutation {
+  readonly revision: bigint;
+  readonly environmentWakeEpoch: bigint;
+  readonly scheduleEnvironmentDrain: boolean;
+}
+
+export interface TextSourceAnnotationSnapshot {
+  readonly kind: number;
+  readonly flags: number;
+  readonly startByte: bigint;
+  readonly endByte: bigint;
+  readonly payload: Uint8Array;
+  readonly aux0: number;
+  readonly aux1: number;
+}
+
+export interface TextSourceSnapshot {
+  readonly sourceId: bigint;
+  readonly sourceGeneration: number;
+  readonly contentGeneration: bigint;
+  readonly revision: bigint;
+  readonly sourceBase: bigint;
+  readonly sourceEnd: bigint;
+  readonly sealed: boolean;
+  readonly headPartial: boolean;
+  readonly text: string;
+  readonly annotations: readonly TextSourceAnnotationSnapshot[];
+}
+
+export interface TextSourceStats {
+  readonly revision: bigint;
+  readonly sourceBase: bigint;
+  readonly sourceEnd: bigint;
+  readonly retainedBytes: bigint;
+  readonly retainedLines: bigint;
+  readonly chunkCount: number;
+  readonly sealed: boolean;
+  readonly headPartial: boolean;
+  readonly acceptedBytes: bigint;
+  readonly copiedBytes: bigint;
+  readonly droppedHeadBytes: bigint;
 }
 
 export interface ContentPortOptions {
@@ -122,6 +185,128 @@ function nativeWake(wake: NativeStateWake, requestWake: () => void): void {
   if (wake.schedule_environment_drain) requestWake();
 }
 
+function sourceWake(): void {
+  runtimeEnvironment().wakeBroker.markEnvironmentPending();
+}
+
+function validateSourceMutation(text: string, annotations: readonly TextSourceAnnotation[]): void {
+  if (typeof text !== "string") throw new TypeError("Source text must be a string");
+  if (!Array.isArray(annotations)) throw new TypeError("Source annotations must be an array");
+}
+
+const MAX_SOURCE_U64 = 0xffff_ffff_ffff_ffffn;
+
+function sourceBigInt(value: unknown, name: string): bigint {
+  let normalized: bigint;
+  if (typeof value === "bigint") {
+    normalized = value;
+  } else if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw tuiError("runtime", `native Source ${name} is not a valid u64`);
+    }
+    normalized = BigInt(value);
+  } else if (typeof value === "string" && /^\d+$/u.test(value)) {
+    normalized = BigInt(value);
+  } else {
+    throw tuiError("runtime", `native Source ${name} is not a valid u64`);
+  }
+  if (normalized < 0n || normalized > MAX_SOURCE_U64) {
+    throw tuiError("runtime", `native Source ${name} is not a valid u64`);
+  }
+  return normalized;
+}
+
+interface NativeSourceSnapshot {
+  readonly sourceId: string | number;
+  readonly sourceGeneration: number;
+  readonly contentGeneration: string | number;
+  readonly revision: string | number;
+  readonly sourceBase: string | number;
+  readonly sourceEnd: string | number;
+  readonly sealed: boolean;
+  readonly headPartial: boolean;
+  readonly text: string;
+  readonly annotations: readonly {
+    readonly kind: number;
+    readonly flags: number;
+    readonly startByte: string | number;
+    readonly endByte: string | number;
+    readonly payload?: readonly number[];
+    readonly aux0: number;
+    readonly aux1: number;
+  }[];
+}
+
+interface NativeSourceStats {
+  readonly revision: string | number;
+  readonly sourceBase: string | number;
+  readonly sourceEnd: string | number;
+  readonly retainedBytes: string | number;
+  readonly retainedLines: string | number;
+  readonly chunkCount: number;
+  readonly sealed: boolean;
+  readonly headPartial: boolean;
+  readonly acceptedBytes: string | number;
+  readonly copiedBytes: string | number;
+  readonly droppedHeadBytes: string | number;
+}
+
+function sourceSnapshot(resource: NativeTextSourceContract): TextSourceSnapshot {
+  const native = resource.snapshot() as NativeSourceSnapshot;
+  return {
+    sourceId: sourceBigInt(native.sourceId, "source id"),
+    sourceGeneration: sourceGenerationValue(native.sourceGeneration),
+    contentGeneration: sourceBigInt(native.contentGeneration, "content generation"),
+    revision: sourceBigInt(native.revision, "revision"),
+    sourceBase: sourceBigInt(native.sourceBase, "source base"),
+    sourceEnd: sourceBigInt(native.sourceEnd, "source end"),
+    sealed: native.sealed,
+    headPartial: native.headPartial,
+    text: native.text,
+    annotations: native.annotations.map((annotation) => ({
+      kind: annotation.kind,
+      flags: annotation.flags,
+      startByte: sourceBigInt(annotation.startByte, "annotation start"),
+      endByte: sourceBigInt(annotation.endByte, "annotation end"),
+      payload: Uint8Array.from(annotation.payload ?? []),
+      aux0: annotation.aux0,
+      aux1: annotation.aux1,
+    })),
+  };
+}
+
+function sourceStats(resource: NativeTextSourceContract): TextSourceStats {
+  const native = resource.stats() as NativeSourceStats;
+  return {
+    revision: sourceBigInt(native.revision, "revision"),
+    sourceBase: sourceBigInt(native.sourceBase, "source base"),
+    sourceEnd: sourceBigInt(native.sourceEnd, "source end"),
+    retainedBytes: sourceBigInt(native.retainedBytes, "retained bytes"),
+    retainedLines: sourceBigInt(native.retainedLines, "retained lines"),
+    chunkCount: native.chunkCount,
+    sealed: native.sealed,
+    headPartial: native.headPartial,
+    acceptedBytes: sourceBigInt(native.acceptedBytes, "accepted bytes"),
+    copiedBytes: sourceBigInt(native.copiedBytes, "copied bytes"),
+    droppedHeadBytes: sourceBigInt(native.droppedHeadBytes, "dropped head bytes"),
+  };
+}
+
+function sourceId(resource: NativeTextSourceContract): bigint {
+  return sourceBigInt(resource.sourceId(), "source id");
+}
+
+function sourceGenerationValue(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw tuiError("runtime", "native Source generation is invalid");
+  }
+  return value;
+}
+
+function sourceGeneration(resource: NativeTextSourceContract): number {
+  return sourceGenerationValue(resource.sourceGeneration());
+}
+
 /** Environment-owned text Source identity. Payload mutation arrives in E. */
 export class TextStreamSource extends FrameworkHandle<"source"> {
   private constructor(resource: object, owner: SourceOwner) {
@@ -142,6 +327,56 @@ export class TextStreamSource extends FrameworkHandle<"source"> {
     return new TextStreamSource(createTextSource("stream", options), {
       environment: runtimeResourceRegistry().environment,
     });
+  }
+
+  sourceId(): bigint { return this.call(() => sourceId(this.nativeAs<NativeTextSourceContract>())); }
+  sourceGeneration(): number {
+    return this.call(() => sourceGeneration(this.nativeAs<NativeTextSourceContract>()));
+  }
+  environmentSlot(): number {
+    return this.call(() => this.nativeAs<NativeTextSourceContract>().environmentSlot());
+  }
+  environmentGeneration(): number {
+    return this.call(() => this.nativeAs<NativeTextSourceContract>().environmentGeneration());
+  }
+  contentGeneration(): bigint {
+    return this.call(() => sourceBigInt(
+      this.nativeAs<NativeTextSourceContract>().contentGeneration(),
+      "content generation",
+    ));
+  }
+  snapshot(): TextSourceSnapshot {
+    return this.call(() => sourceSnapshot(this.nativeAs<NativeTextSourceContract>()));
+  }
+  stats(): TextSourceStats {
+    return this.call(() => sourceStats(this.nativeAs<NativeTextSourceContract>()));
+  }
+  append(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.call(() => {
+      validateSourceMutation(text, annotations);
+      return appendTextSource(this.nativeAs<NativeTextSourceContract>(), text, annotations, sourceWake);
+    });
+  }
+  appendUtf8(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.append(text, annotations);
+  }
+  replace(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.call(() => {
+      validateSourceMutation(text, annotations);
+      return replaceTextSource(this.nativeAs<NativeTextSourceContract>(), text, annotations, sourceWake);
+    });
+  }
+  replaceUtf8(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.replace(text, annotations);
+  }
+  clear(): TextSourceMutation {
+    return this.call(() => clearTextSource(this.nativeAs<NativeTextSourceContract>(), sourceWake));
+  }
+  seal(): TextSourceMutation {
+    return this.call(() => sealTextSource(this.nativeAs<NativeTextSourceContract>(), sourceWake));
+  }
+  truncateHead(offset: bigint | number): TextSourceMutation {
+    return this.call(() => truncateTextSource(this.nativeAs<NativeTextSourceContract>(), offset, sourceWake));
   }
 }
 
@@ -165,6 +400,44 @@ export class TextBlockSource extends FrameworkHandle<"source"> {
     return new TextBlockSource(createTextSource("block", options), {
       environment: runtimeResourceRegistry().environment,
     });
+  }
+
+  sourceId(): bigint { return this.call(() => sourceId(this.nativeAs<NativeTextSourceContract>())); }
+  sourceGeneration(): number {
+    return this.call(() => sourceGeneration(this.nativeAs<NativeTextSourceContract>()));
+  }
+  environmentSlot(): number {
+    return this.call(() => this.nativeAs<NativeTextSourceContract>().environmentSlot());
+  }
+  environmentGeneration(): number {
+    return this.call(() => this.nativeAs<NativeTextSourceContract>().environmentGeneration());
+  }
+  contentGeneration(): bigint {
+    return this.call(() => sourceBigInt(
+      this.nativeAs<NativeTextSourceContract>().contentGeneration(),
+      "content generation",
+    ));
+  }
+  snapshot(): TextSourceSnapshot {
+    return this.call(() => sourceSnapshot(this.nativeAs<NativeTextSourceContract>()));
+  }
+  stats(): TextSourceStats {
+    return this.call(() => sourceStats(this.nativeAs<NativeTextSourceContract>()));
+  }
+  replace(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.call(() => {
+      validateSourceMutation(text, annotations);
+      return replaceTextSource(this.nativeAs<NativeTextSourceContract>(), text, annotations, sourceWake);
+    });
+  }
+  replaceUtf8(text: string, annotations: readonly TextSourceAnnotation[] = []): TextSourceMutation {
+    return this.replace(text, annotations);
+  }
+  clear(): TextSourceMutation {
+    return this.call(() => clearTextSource(this.nativeAs<NativeTextSourceContract>(), sourceWake));
+  }
+  truncateHead(offset: bigint | number): TextSourceMutation {
+    return this.call(() => truncateTextSource(this.nativeAs<NativeTextSourceContract>(), offset, sourceWake));
   }
 }
 

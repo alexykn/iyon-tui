@@ -5,6 +5,7 @@
 //! Application/session bindings live in the application repository. This
 //! crate exports only the generic TUI bridge and its framework load probe.
 
+mod content_ffi;
 mod error;
 mod sync;
 mod tui;

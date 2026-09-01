@@ -156,6 +156,29 @@ export class EnvironmentWakeBroker {
     return registration;
   }
 
+  /**
+   * Queues one broker driver after an environment-owned mutation. Native
+   * environment state already contains the complete affected-host set; one
+   * driver is enough to drain it without mirroring subscriptions in JS.
+   */
+  markEnvironmentPending(): void {
+    const entries = [...this.hosts.values()];
+    for (let offset = 0; offset < entries.length; offset += 1) {
+      const entry = entries[(this.fairCursor + offset) % entries.length]!;
+      const native = entry.registration.nativeOrUndefined();
+      if (native === undefined) {
+        this.unregister(entry.registration);
+        continue;
+      }
+      // Source data wakes the shared native environment queue. A legacy
+      // host without the environment drain surface cannot drive that queue;
+      // prefer a current host when an environment contains both surfaces.
+      if (native.flushPendingHosts === undefined) continue;
+      entry.registration.markPending();
+      return;
+    }
+  }
+
   markPending(registration: RuntimeHostRegistrationImpl): void {
     if (!this.hosts.has(registration.id)) return;
     wakeCounters.pending_marks += 1;
@@ -328,7 +351,7 @@ export class EnvironmentWakeBroker {
         traceWake({ kind: "rearm" });
       }
       this.consumeReport(report, !forceRetry);
-      this.refreshPendingHints();
+      this.refreshPendingHints(report.rearm ? driver.id : undefined);
       return report;
     } finally {
       this.draining = false;
@@ -392,8 +415,9 @@ export class EnvironmentWakeBroker {
     this.presentationPollTimer = undefined;
   }
 
-  private refreshPendingHints(): void {
+  private refreshPendingHints(retainedDriverId?: string): void {
     for (const id of [...this.pending]) {
+      if (id === retainedDriverId) continue;
       const entry = this.hosts.get(id);
       if (entry === undefined) {
         this.pending.delete(id);

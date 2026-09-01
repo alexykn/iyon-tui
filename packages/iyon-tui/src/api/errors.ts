@@ -70,6 +70,16 @@ function categoryForNativeCode(code: string | undefined): TuiErrorCategory {
       return "invalid-handle";
     case "ION_SOURCE_IN_USE":
     case "ION_SOURCE_DISPOSED":
+    case "ION_SOURCE_SEALED":
+    case "ION_SOURCE_ALREADY_SEALED":
+    case "ION_STALE_SOURCE":
+    case "ION_INVALID_UTF8":
+    case "ION_INVALID_RANGE":
+    case "ION_UNKNOWN_ANNOTATION_KIND":
+    case "ION_INVALID_ANNOTATION_PAYLOAD":
+    case "ION_LIMIT_EXCEEDED":
+    case "ION_PAYLOAD_TOO_LARGE":
+    case "ION_SOURCE_RETENTION_OVERFLOW":
     case "ION_PORT_IN_USE":
     case "ION_CONTENT_FAMILY_MISMATCH":
     case "ION_DUPLICATE_CONTENT_PORT_ATTACHMENT":
@@ -82,6 +92,8 @@ function categoryForNativeCode(code: string | undefined): TuiErrorCategory {
     case "ION_HOST_DISPOSED":
       return "terminal";
     case "ION_INTERNAL_INVARIANT":
+    case "ION_RUNTIME_POISONED":
+    case "ION_INTERNAL_PANIC":
       return "runtime";
     case "ION_CANCELLED":
 

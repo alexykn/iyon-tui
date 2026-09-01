@@ -11,8 +11,8 @@ crate-type = ["cdylib", "rlib"]
 [features]
 perf-counters = ["iyon-tui/perf-counters"]
 fast-view-abi = []
-# S6 keeps the generated C/FFI symbols available only for isolated
-# qualification; the default addon exposes the safe N-API transport.
+# Structural qualification symbols remain feature-gated. PERF-13-E content-data
+# ABI v1 symbols are part of the default artifact alongside the N-API surface.
 direct-ffi = []
 
 [dependencies]

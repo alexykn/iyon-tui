@@ -37,9 +37,48 @@ type ViewBridgeCache = view_abi::NativeViewRuntime;
 type ViewRuntimeHandle = view_abi::ViewRuntimeHandle;
 
 static HOST_ENVIRONMENTS: OnceLock<Mutex<HashMap<usize, TuiEnvironment>>> = OnceLock::new();
+static CONTENT_ENVIRONMENTS: OnceLock<Mutex<HashMap<u32, TuiEnvironment>>> = OnceLock::new();
 
 fn host_environments() -> &'static Mutex<HashMap<usize, TuiEnvironment>> {
     HOST_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn content_environments() -> &'static Mutex<HashMap<u32, TuiEnvironment>> {
+    CONTENT_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_content_environment(environment: &TuiEnvironment) -> Result<()> {
+    content_environments()
+        .lock()
+        .map_err(|_| {
+            crate::NativeError::internal("native content environment registry is poisoned")
+        })?
+        .insert(environment.environment_slot(), environment.clone());
+    Ok(())
+}
+
+fn remove_content_environment(slot: u32) {
+    if let Ok(mut environments) = content_environments().lock() {
+        environments.remove(&slot);
+    }
+}
+
+pub(crate) fn content_environment_for_identity(
+    slot: u32,
+    generation: u32,
+) -> std::result::Result<TuiEnvironment, String> {
+    let environment = content_environments()
+        .lock()
+        .map_err(|_| "native content environment registry is poisoned".to_owned())?
+        .get(&slot)
+        .cloned()
+        .ok_or_else(|| format!("STALE_ENVIRONMENT: environment {slot} is unavailable"))?;
+    if environment.environment_generation() != generation {
+        return Err(format!(
+            "STALE_ENVIRONMENT: environment {slot} generation is stale"
+        ));
+    }
+    Ok(environment)
 }
 
 fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
@@ -51,14 +90,20 @@ fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
         return Ok(environment.clone());
     }
     let environment = TuiEnvironment::new();
+    let environment_slot = environment.environment_slot();
+    register_content_environment(&environment)?;
     let cleanup_key = env_key ^ 0x484f_5354;
-    env.add_env_cleanup_hook(cleanup_key, move |_| {
+    if let Err(error) = env.add_env_cleanup_hook(cleanup_key, move |_| {
         if let Some(registry) = HOST_ENVIRONMENTS.get()
             && let Ok(mut environments) = registry.lock()
         {
             environments.remove(&env_key);
         }
-    })?;
+        remove_content_environment(environment_slot);
+    }) {
+        remove_content_environment(environment_slot);
+        return Err(error);
+    }
     environments.insert(env_key, environment.clone());
     Ok(environment)
 }
@@ -1235,8 +1280,12 @@ impl NativeTextSource {
             )
         {
             let diagnostic = crate::NativeError::content(error.to_string());
-            let _ = source.dispose();
-            return Err(diagnostic);
+            return match source.dispose() {
+                Ok(()) => Err(diagnostic),
+                Err(cleanup) => Err(crate::NativeError::internal(format!(
+                    "{diagnostic}; Source cleanup failed: {cleanup}"
+                ))),
+            };
         }
         Ok(Self {
             source,
@@ -1264,6 +1313,83 @@ impl NativeTextSource {
     pub fn source_generation(&self) -> Result<i64> {
         ensure_alive(&self.alive)?;
         Ok(i64::from(self.source.generation()))
+    }
+
+    #[napi(js_name = "environmentSlot")]
+    pub fn environment_slot(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(i64::from(self.source.environment_slot()))
+    }
+
+    #[napi(js_name = "environmentGeneration")]
+    pub fn environment_generation(&self) -> Result<i64> {
+        ensure_alive(&self.alive)?;
+        Ok(i64::from(self.source.environment_generation()))
+    }
+
+    #[napi(js_name = "contentGeneration")]
+    pub fn content_generation(&self) -> Result<String> {
+        ensure_alive(&self.alive)?;
+        Ok(self
+            .source
+            .content_generation()
+            .map_err(crate::NativeError::content)?
+            .to_string())
+    }
+
+    #[napi]
+    pub fn snapshot(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let snapshot = self
+            .source
+            .snapshot()
+            .map_err(crate::NativeError::content)?;
+        let annotations = snapshot
+            .annotations()
+            .into_iter()
+            .map(|annotation| {
+                serde_json::json!({
+                    "kind": annotation.kind,
+                    "flags": annotation.flags,
+                    "startByte": annotation.start_byte.to_string(),
+                    "endByte": annotation.end_byte.to_string(),
+                    "payload": annotation.payload,
+                    "aux0": annotation.aux0,
+                    "aux1": annotation.aux1,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(serde_json::json!({
+            "sourceId": snapshot.source_id.to_string(),
+            "sourceGeneration": snapshot.source_generation,
+            "contentGeneration": snapshot.content_generation.to_string(),
+            "revision": snapshot.revision.to_string(),
+            "sourceBase": snapshot.source_base.to_string(),
+            "sourceEnd": snapshot.source_end.to_string(),
+            "sealed": snapshot.sealed,
+            "headPartial": snapshot.head_partial,
+            "text": snapshot.text(),
+            "annotations": annotations,
+        }))
+    }
+
+    #[napi]
+    pub fn stats(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let stats = self.source.stats().map_err(crate::NativeError::content)?;
+        Ok(serde_json::json!({
+            "revision": stats.revision.to_string(),
+            "sourceBase": stats.source_base.to_string(),
+            "sourceEnd": stats.source_end.to_string(),
+            "retainedBytes": stats.retained_bytes.to_string(),
+            "retainedLines": stats.retained_lines.to_string(),
+            "chunkCount": stats.chunk_count,
+            "sealed": stats.sealed,
+            "headPartial": stats.head_partial,
+            "acceptedBytes": stats.accepted_bytes.to_string(),
+            "copiedBytes": stats.copied_bytes.to_string(),
+            "droppedHeadBytes": stats.dropped_head_bytes.to_string(),
+        }))
     }
 
     #[napi]

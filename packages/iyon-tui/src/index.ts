@@ -76,7 +76,13 @@ export type {
   TextFunnelOptions,
   TextFunnelWrap,
   TextRetentionPolicy,
+  TextSourceAnnotation,
+  TextSourceAnnotationKind,
+  TextSourceAnnotationSnapshot,
+  TextSourceMutation,
   TextSourceOptions,
+  TextSourceSnapshot,
+  TextSourceStats,
 } from "./api/content/retained.ts";
 export type {
   ViewStateAlignment,

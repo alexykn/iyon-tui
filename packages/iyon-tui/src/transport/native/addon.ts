@@ -8,6 +8,7 @@
 
 import { tuiError } from "../../api/errors.ts";
 import type { NativeViewAbiHandle } from "../abi/structural/generated/view_abi.ts";
+import { resolveNativeArtifact } from "./artifact.ts";
 export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {
@@ -72,6 +73,11 @@ export interface NativeTextSourceContract {
   dispose(): void;
   sourceId(): number;
   sourceGeneration(): number;
+  environmentSlot(): number;
+  environmentGeneration(): number;
+  contentGeneration(): string | number;
+  snapshot(): object;
+  stats(): object;
   family(): string;
 }
 
@@ -247,8 +253,13 @@ export interface NativeTuiAddon {
   NativeScrollPane?: new (initial: object) => NativeScrollPaneContract;
 }
 
-// The package owns this loader and its staged `iyon-tui-native.node` artifact.
-export const native = require("../../../native/iyon-tui-native.node") as NativeTuiAddon;
+// The Node-API and direct loaders resolve this same canonical artifact path.
+export const nativeArtifact = resolveNativeArtifact(import.meta.url);
+const loadedNative = require(nativeArtifact.absolutePath) as NativeTuiAddon;
+if (loadedNative.nativeVersion?.() !== nativeArtifact.packageBuildId) {
+  throw new Error(`iyon-tui-native build identity mismatch at ${nativeArtifact.absolutePath}`);
+}
+export const native = loadedNative;
 
 /** Requires a native constructor without exposing addon details to callers. */
 export function requireNativeClass<T>(factory: T | undefined, name: string): T {

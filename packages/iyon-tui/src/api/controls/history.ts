@@ -1,4 +1,3 @@
-import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { tuiError } from "../errors.ts";
 import type { View } from "../view/view.ts";
 import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "../../transport/structural/native-view-abi.ts";
@@ -6,8 +5,6 @@ import { nativeResourceOf } from "../../transport/native/resources.ts";
 import { FrameworkHandle } from "./framework-handle.ts";
 import { nativeTui } from "../../transport/native/factories.ts";
 import type { NativeHistoryContract } from "../../transport/native/addon.ts";
-import { textStreamControlFor } from "./text-stream.ts";
-import type { TextStream as TextStreamContract } from "./text-stream.ts";
 
 export interface History extends FrameworkHandle<"history"> {
   readonly kind: "history";
@@ -15,8 +12,6 @@ export interface History extends FrameworkHandle<"history"> {
   push(view: View): number;
   freeze(unit: number, view: View): void;
   discardLive(unit: number): void;
-  pushStream(stream: TextStreamContract): void;
-  sealStream(stream: TextStreamContract): void;
   setLayout(layout: HistoryLayout): void;
 }
 
@@ -27,33 +22,15 @@ export interface HistoryLayout {
   readonly gap: number;
 }
 
-const streamOwners = new WeakMap<object, WeakRef<HistoryContract>>();
-const historyStreams = new WeakMap<object, Set<WeakRef<object>>>();
-const streamLifetimes = new WeakMap<object, { readonly closed: boolean }>();
 const historyLifetimes = new WeakMap<object, { readonly closed: boolean }>();
 const HISTORY_NATIVE_TOKEN = Symbol("history-native-construction");
-
-function streamOwnerOf(stream: object): HistoryContract | undefined {
-  const owner = streamOwners.get(stream)?.deref();
-  if (owner === undefined || owner.disposed) {
-    streamOwners.delete(stream);
-    return undefined;
-  }
-  return owner;
-}
-
-function assertStreamCanAttach(stream: object): void {
-  if (streamOwnerOf(stream) !== undefined) {
-    throw tuiError("stream", "TUI_STREAM_ALREADY_ATTACHED: a TextStream instance already has a History attachment");
-  }
-}
 
 /**
  * Ordered scrollback handle with an explicit detached mode.
  *
  * Lifecycle:
  * - `new History()` creates caller-owned detached storage that can be used for
- *   layout, pushes, and stream attachment without a Tui.
+ *   layout and pushes without a Tui.
  * - `Tui.createHistory()` creates a Tui-owned history already attached to that
  *   Tui; the Tui closes factory-created histories during `close()`/`exit()`.
  *   A detached history transfers to one Tui when rendered and remains
@@ -83,24 +60,20 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   /**
-   * PERF-12 T13 (§78): unit import is identity-first. Retained hints reuse
-   * any subtree already materialized through any boundary (content blocks, chrome,
-   * earlier units) with zero payload re-reads; a refused retained path falls
-   * back to the cold graph and finally the N-API bridge. The temporary lease
-   * drains after the push because History retains its own strong state.
+   * Unit import is identity-first. Retained hints reuse any subtree already
+   * materialized through a framework boundary; a capacity miss uses the
+   * canonical cold materializer. The temporary lease drains after the push
+   * because History retains its own strong state.
    */
   push(view: View): number {
     return History.callHost(this, () => {
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
-      if (ref !== undefined) {
-        try {
-          const nativeHandle = this.nativeAs<NativeHistoryContract>();
-          return nativeHandle.pushRef(ref);
-        } finally {
-          releaseNativeViewRef(nativeViewAbiSession(), ref);
-        }
+      if (ref === undefined) throw new Error("HISTORY_PUSH_FAILED: View could not be materialized");
+      try {
+        return this.nativeAs<NativeHistoryContract>().pushRef(ref);
+      } finally {
+        releaseNativeViewRef(nativeViewAbiSession(), ref);
       }
-      return this.nativeAs<NativeHistoryContract>().push(lowerColdView(view));
     });
   }
 
@@ -110,16 +83,12 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
       // T13 (§78): same retained-first rule as push — freezing a live card
       // reuses its already-materialized nodes through their hints.
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
-      if (ref !== undefined) {
-        try {
-          const nativeHandle = this.nativeAs<NativeHistoryContract>();
-          nativeHandle.freezeRef(unit, ref);
-          return;
-        } finally {
-          releaseNativeViewRef(nativeViewAbiSession(), ref);
-        }
+      if (ref === undefined) throw new Error("HISTORY_FREEZE_FAILED: View could not be materialized");
+      try {
+        this.nativeAs<NativeHistoryContract>().freezeRef(unit, ref);
+      } finally {
+        releaseNativeViewRef(nativeViewAbiSession(), ref);
       }
-      this.nativeAs<NativeHistoryContract>().freeze(unit, lowerColdView(view));
     });
   }
 
@@ -127,48 +96,6 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
     History.callHost(this, () => {
       validateHistoryUnit(unit);
       this.nativeAs<NativeHistoryContract>().discardLive(unit);
-    });
-  }
-
-  pushStream(stream: TextStreamContract): void {
-    History.callHost(this, () => {
-      const streamResource = nativeResourceOf<object>(stream);
-      assertStreamCanAttach(stream);
-      const controls = textStreamControlFor(stream);
-      this.nativeAs<NativeHistoryContract>().pushStream(
-        streamResource,
-        controls.projector,
-        "word",
-        controls.smooth,
-        controls.tickIntervalMs,
-        controls.spring,
-        controls.minUnitsPerSecond,
-        controls.maxUnitsPerSecond,
-        controls.insets.top,
-        controls.insets.right,
-        controls.insets.bottom,
-        controls.insets.left,
-      );
-      streamOwners.set(stream, new WeakRef(this));
-      let streams = historyStreams.get(this);
-      if (streams === undefined) {
-        streams = new Set();
-        historyStreams.set(this, streams);
-      }
-      streams.add(new WeakRef(stream));
-      const lifetime = historyLifetimes.get(this);
-      if (lifetime === undefined) streamLifetimes.delete(stream);
-      else streamLifetimes.set(stream, lifetime);
-    });
-  }
-
-  sealStream(stream: TextStreamContract): void {
-    History.callHost(this, () => {
-      if (streamOwnerOf(stream) !== this) {
-        throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
-      }
-      if (stream.snapshot().sealed) return;
-      this.nativeAs<NativeHistoryContract>().sealStream(nativeResourceOf<object>(stream));
     });
   }
 
@@ -196,20 +123,6 @@ export function createHistoryHandle(resource: never): HistoryContract {
 /** @internal Marks a caller-owned History as unavailable after its host closes. */
 export function bindHistoryLifetime(history: HistoryContract, lifetime: { readonly closed: boolean }): void {
   historyLifetimes.set(history, lifetime);
-  const streams = historyStreams.get(history);
-  if (streams === undefined) return;
-  for (const reference of streams) {
-    const stream = reference.deref();
-    if (stream === undefined) streams.delete(reference);
-    else streamLifetimes.set(stream, lifetime);
-  }
-}
-
-/** @internal Rejects mutations through a stream whose host runtime has closed. */
-export function assertTextStreamUsable(stream: object): void {
-  if (streamLifetimes.get(stream)?.closed === true) {
-    throw tuiError("terminal", "TextStream is attached to a closed Tui runtime");
-  }
 }
 
 function validateHistoryUnit(unit: number): void {

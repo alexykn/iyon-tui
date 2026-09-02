@@ -123,17 +123,14 @@ const PUBLIC_CONTRACT_PATHS = [
   "api/controls/output.ts",
   "api/controls/scroll-pane.ts",
   "api/controls/text-input.ts",
-  "api/controls/text-stream.ts",
   "api/controls/view-slot.ts",
   "api/view/retained-state.ts",
-  "api/content/stream-snapshot.ts",
   "api/content/text-content.ts",
   "api/content/text.ts",
   "api/errors.ts",
   "api/extensions/traits/component.ts",
   "api/extensions/traits/projector.ts",
   "api/extensions/traits/renderer.ts",
-  "api/extensions/traits/streaming-source.ts",
   "api/extensions/traits/text-rewriter.ts",
   "api/extensions/traits/text-visitor.ts",
   "api/presentation/style.ts",
@@ -285,7 +282,6 @@ function cut3OwnershipGate(): void {
     "api/controls/history.ts",
     "api/controls/scroll-pane.ts",
     "api/controls/text-input.ts",
-    "api/controls/text-stream.ts",
     "api/controls/view-slot.ts",
     "runtime/handle-registry.ts",
     "runtime/runtime.ts",
@@ -412,7 +408,6 @@ function cut4RootCleanupGate(): void {
     ["api/view/scene.ts", /export\s+type\s+SceneProducer\b/u],
     ["api/controls/history.ts", /export\s+interface\s+History\b/u],
     ["api/controls/text-input.ts", /export\s+interface\s+TextInput\b/u],
-    ["api/controls/text-stream.ts", /export\s+interface\s+TextStream\b/u],
     ["api/controls/view-slot.ts", /export\s+interface\s+ViewSlot\b/u],
     ["api/controls/scroll-pane.ts", /export\s+interface\s+ScrollPane\b/u],
     ["api/view/retained-state.ts", /export\s+class\s+ViewState\b/u],
@@ -1062,17 +1057,22 @@ function typedOutputEventGate(): void {
 // ---------------------------------------------------------------------------
 
 function falseAliasGate(): void {
-  const stream = readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8");
   const runtime = readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8");
   const testing = readFileSync(join(FRAMEWORK_SRC, "testing/index.ts"), "utf8");
   const native = readFileSync(join(FRAMEWORK_SRC, "transport/native/addon.ts"), "utf8");
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
+  const nativeTui = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
+  const rustContent = readFileSync(join(ROOT, "crates/iyon-tui/src/application/content.rs"), "utf8");
+  const rustHistory = readFileSync(join(ROOT, "crates/iyon-tui/src/history/model.rs"), "utf8");
+  const rustKernel = readFileSync(join(ROOT, "crates/iyon-tui/src/application/kernel.rs"), "utf8");
   const tests = join(ROOT, "packages/iyon-tui/tests");
   const stage = readFileSync(join(ROOT, "packages/iyon-tui/scripts/stage-native.ts"), "utf8");
-  const publicSources = stream + runtime + testing + index;
+  const publicSources = runtime + testing + native + index;
   const offenders: string[] = [];
 
-  if (/\bStreamPane\b/u.test(publicSources)) offenders.push("StreamPane remains a TypeScript TextStream alias");
+  if (/\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot)\b/u.test(publicSources)) {
+    offenders.push("superseded stream facade remains in the public TypeScript surface");
+  }
   if (/\b(?:TuiOperation|TuiFailure)\b/u.test(publicSources)) offenders.push("no-op TuiOperation/TuiFailure aliases remain public");
   if (/\bnextAction\b/u.test(runtime + testing)) offenders.push("nextAction remains in the public runtime or harness facade");
   if (walk(tests).some((file) => /\bnextAction\b/u.test(readFileSync(file, "utf8")))) offenders.push("framework tests still use nextAction");
@@ -1080,8 +1080,12 @@ function falseAliasGate(): void {
   if (/\b(?:next_action|wait_for_action)\s*\(/u.test(readFileSync(join(ROOT, "crates/iyon-tui/src/application/host.rs"), "utf8"))) {
     offenders.push("Rust host still exposes compatibility action aliases");
   }
-  if (/\b(?:next_action|wait_for_action)\s*\(/u.test(readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8"))) {
-    offenders.push("native binding still exposes compatibility action aliases");
+  if (/\b(?:next_action|wait_for_action)\s*\(/u.test(nativeTui)) offenders.push("native binding still exposes compatibility action aliases");
+  if (native.includes("pushStream") || native.includes("sealStream") || native.includes("requestDisposeWhenUnused")) {
+    offenders.push("native binding still exposes superseded stream lifecycle methods");
+  }
+  if (rustContent.includes("request_dispose_when_unused") || rustHistory.includes("push_stream") || rustKernel.includes("advance_streams")) {
+    offenders.push("Rust content/history scheduler still contains the superseded stream architecture");
   }
   if (/\b(?:export\s+const\s+tuiSmoke|export\s*\{[^}]*\btuiSmoke\b)/u.test(index)) offenders.push("application-facing tuiSmoke remains a root export");
   if (!/addon\.tuiSmoke\?\.\(\)/u.test(stage)) offenders.push("native staging smoke probe was removed with the root marker");
@@ -1089,12 +1093,53 @@ function falseAliasGate(): void {
   if (offenders.length > 0) {
     fail("h1g-false-aliases", offenders.join("; "));
   } else {
-    pass("h1g-false-aliases", "false aliases and compatibility action/smoke exports are removed while native staging remains probed");
+    pass("h1g-false-aliases", "superseded stream facades, lifecycle shims, and compatibility action aliases are deleted");
   }
 }
 
 // ---------------------------------------------------------------------------
-// Gate 14: H1H root and testing-subpath hygiene guard
+// Gate 14: PERF-13-H deletion and production-path audit
+// ---------------------------------------------------------------------------
+
+function perf13CleanupGate(): void {
+  const removedPaths = [
+    "packages/iyon-tui/src/api/controls/text-stream.ts",
+    "packages/iyon-tui/src/api/content/stream-snapshot.ts",
+    "packages/iyon-tui/src/api/content/projectors.ts",
+    "packages/iyon-tui/src/api/extensions/traits/streaming-source.ts",
+    "crates/iyon-tui/src/history/stream.rs",
+    "crates/iyon-tui/src/stream/pane",
+    "crates/iyon-tui/src/stream/model.rs",
+    "crates/iyon-tui/src/stream/projected.rs",
+    "crates/iyon-tui/src/stream/snapshot.rs",
+    "crates/iyon-tui/src/stream/source.rs",
+  ];
+  const stalePaths = removedPaths.filter((path) => existsSync(join(ROOT, path)));
+  const forbidden = /\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector)\b/u;
+  const forbiddenNativeBinding = /(?:pub fn (?:render|create_view_slot|scroll_pane|set_view|set_content|set_animation|stop_animation)\b|js_name = "(?:render|createViewSlot|scrollPane|setView|setContent|setAnimation|stopAnimation)")/u;
+  const productionRoots = [
+    join(ROOT, "packages/iyon-tui/src"),
+    join(ROOT, "crates/iyon-tui/src"),
+    join(ROOT, "crates/iyon-tui-native/src"),
+  ];
+  const hits: string[] = [];
+  for (const root of productionRoots) {
+    const files = root.endsWith("/src") && root.includes("packages")
+      ? walk(root)
+      : Array.from(new Bun.Glob("**/*.{rs,ts}").scanSync({ cwd: root })).map((file) => join(root, file));
+    for (const file of files) {
+      if (forbidden.test(readFileSync(file, "utf8"))) hits.push(relative(ROOT, file));
+    }
+  }
+  const nativeBinding = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
+  if (forbiddenNativeBinding.test(nativeBinding)) hits.push("crates/iyon-tui-native/src/tui.rs: superseded object binding");
+  if (stalePaths.length > 0) hits.push(`deleted paths still exist: ${stalePaths.join(", ")}`);
+  if (hits.length > 0) fail("perf13h-deletion", `superseded production paths remain: ${hits.join("; ")}`);
+  else pass("perf13h-deletion", "superseded stream facades, registries, schedulers, and lifecycle shims are absent from production sources");
+}
+
+// ---------------------------------------------------------------------------
+// Gate 15: H1H root and testing-subpath hygiene guard
 // ---------------------------------------------------------------------------
 
 function rootAndTestingSurfaceGate(): void {
@@ -1181,7 +1226,6 @@ function contractParityGate(): void {
     ["runtime/runtime.ts", readFileSync(join(FRAMEWORK_SRC, "runtime/runtime.ts"), "utf8")],
     ["api/controls/history.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/history.ts"), "utf8")],
     ["api/controls/text-input.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-input.ts"), "utf8")],
-    ["api/controls/text-stream.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/text-stream.ts"), "utf8")],
     ["api/controls/view-slot.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/view-slot.ts"), "utf8")],
     ["api/controls/scroll-pane.ts", readFileSync(join(FRAMEWORK_SRC, "api/controls/scroll-pane.ts"), "utf8")],
     ["api/view/retained-state.ts", readFileSync(join(FRAMEWORK_SRC, "api/view/retained-state.ts"), "utf8")],
@@ -1203,7 +1247,7 @@ function contractParityGate(): void {
   const view = sources.get("view.ts")!;
   const style = sources.get("style.ts")!;
   const text = sources.get("text.ts")!;
-  const textStream = sources.get("api/controls/text-stream.ts")!;
+  const contentRetained = readFileSync(join(FRAMEWORK_SRC, "api/content/retained.ts"), "utf8");
   const styleInternals = sources.get("style-lowering.ts")!;
   const nativeViewAbi = sources.get("native-view-abi.ts")!;
   const kernel = readFileSync(join(ROOT, "crates/iyon-tui/src/application/kernel.rs"), "utf8");
@@ -1213,7 +1257,6 @@ function contractParityGate(): void {
     ["runtime/runtime.ts", /export\s+class\s+Tui\s+implements\s+TuiRuntime\b/u],
     ["api/controls/history.ts", /export\s+class\s+History[\s\S]*implements\s+HistoryContract\b/u],
     ["api/controls/text-input.ts", /export\s+class\s+TextInput[\s\S]*implements\s+TextInputContract\b/u],
-    ["api/controls/text-stream.ts", /export\s+class\s+TextStream[\s\S]*implements\s+TextStreamContract\b/u],
     ["api/controls/view-slot.ts", /export\s+class\s+ViewSlot[\s\S]*implements\s+ViewSlotContract\b/u],
     ["api/controls/scroll-pane.ts", /export\s+class\s+NativeScrollPane[\s\S]*implements\s+ScrollPaneContract\b/u],
     ["testing/index.ts", /export\s+class\s+AppHarness\s+implements\s+AppHarnessContract\b/u],
@@ -1256,13 +1299,14 @@ function contractParityGate(): void {
   if (!/function\s+styleAttributesFor[\s\S]*validateTextAttribute\(name\)/u.test(styleInternals)) {
     offenders.push("style lowering does not validate the closed native text-attribute vocabulary");
   }
-  if (!textStream.includes("appendTextSource")
-    || !textStream.includes("replaceTextSource")
-    || !textStream.includes("sealTextSource")
-    || !textStream.includes("textStreamControlFor")
-    || !native.includes("pub fn push_stream")
-    || !native.includes("projector: String")) {
-    offenders.push("TextStream compatibility must terminate in Source FFI and typed History control");
+  if (!contentRetained.includes("TextStreamSource")
+    || !contentRetained.includes("TextBlockSource")
+    || !contentRetained.includes("TextFunnel")
+    || !contentRetained.includes("ContentPort")
+    || native.includes("pushStream")
+    || native.includes("sealStream")
+    || native.includes("requestDisposeWhenUnused")) {
+    offenders.push("content facade still exposes a superseded stream lifecycle or omits canonical Source/Funnel/Port types");
   }
   if (!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(native)) {
     offenders.push("NativeTextInput disposal does not request deferred component retirement");
@@ -1442,6 +1486,7 @@ napiTransportGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();
 opaqueHandleGate();
+perf13CleanupGate();
 controlLifecycleGate();
 componentFacadeGate();
 typedOutputEventGate();

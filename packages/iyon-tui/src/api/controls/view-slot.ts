@@ -14,7 +14,6 @@ import {
 } from "../../composition/execution.ts";
 import { activeExecutionScope, protocolState } from "../../composition/execution-context.ts";
 import { composeComponent } from "../../composition/compose.ts";
-import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
 import {
@@ -37,14 +36,14 @@ function buildSlotHandle(
   if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
   const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
-  if (retained !== undefined) {
-    try {
-      return host.createViewSlotRef(retained);
-    } finally {
-      releaseNativeViewRef(nativeViewAbiSession(), retained);
-    }
+  if (retained === undefined) {
+    throw new Error("TUI_VIEW_SLOT_INITIALIZATION_FAILED: structural content could not be materialized");
   }
-  return host.createViewSlot(lowerColdView(seed));
+  try {
+    return host.createViewSlotRef(retained);
+  } finally {
+    releaseNativeViewRef(nativeViewAbiSession(), retained);
+  }
 }
 
 const ANIMATION_REF_SCRATCH = new WeakMap<object, Uint32Array>();
@@ -71,21 +70,17 @@ type NativeViewSlotHandle = {
   dispose(): void;
   revision(): number;
   componentId(): number | null;
-  setView(view: object): void;
   setViewRef(viewRef: number): void;
-  setAnimation(frames: object[], intervalMs: number): void;
-  setAnimationAtCycleBoundary(frames: object[], intervalMs: number): void;
-  setAnimationRef1?(ref0: number, intervalMs: number): void;
-  setAnimationRef2?(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3?(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4?(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
-  setAnimationRef1AtCycleBoundary?(ref0: number, intervalMs: number): void;
-  setAnimationRef2AtCycleBoundary?(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3AtCycleBoundary?(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4AtCycleBoundary?(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
+  setAnimationRef1(ref0: number, intervalMs: number): void;
+  setAnimationRef2(ref0: number, ref1: number, intervalMs: number): void;
+  setAnimationRef3(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
+  setAnimationRef4(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
+  setAnimationRef1AtCycleBoundary(ref0: number, intervalMs: number): void;
+  setAnimationRef2AtCycleBoundary(ref0: number, ref1: number, intervalMs: number): void;
+  setAnimationRef3AtCycleBoundary(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
+  setAnimationRef4AtCycleBoundary(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
   setAnimationRefs(refs: Uint32Array, usedCount: number, intervalMs: number): void;
   setAnimationRefsAtCycleBoundary(refs: Uint32Array, usedCount: number, intervalMs: number): void;
-  stopAnimation(view: object): void;
   stopAnimationRef(viewRef: number): void;
 };
 
@@ -134,18 +129,16 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     this.attachmentContext = runtimeAttachments;
     this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
-    if (session !== undefined && initialView !== undefined) {
-      this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
-        if (this.disposed) return false;
-        // A native exception is not an ordinary retained-path refusal. Let it
-        // cross the boundary so the transaction reports the real failure
-        // instead of silently converting a broken handle into a fallback.
-        this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
-        return true;
-      });
-      // Adopt the initial content so the boundary owns its root lease.
-      this.boundary.adopt(initialView);
-    }
+    const seed = initialView ?? View.spacer(0);
+    this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
+      if (this.disposed) return false;
+      // Native exceptions remain visible to the retained transaction rather
+      // than being converted into an unrelated fallback.
+      this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
+      return true;
+    });
+    // Adopt the initial content so the boundary owns its root lease.
+    this.boundary.adopt(seed);
     if (initialView !== undefined) {
       const attachments = prepareAttachmentsForView(initialView, this.attachmentContext);
       this.attachmentBindings.commitDesired(attachments);
@@ -216,34 +209,15 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
       const attachments = prepareAttachmentsForView(view, this.attachmentContext);
       try {
         // PERF-12 T13 retained path: identity-first install through the slot's
-        // own §18 boundary. Previous content stays leased until the replacement
-        // is fully materialized and committed; failure keeps the old content.
-        if (this.boundary !== undefined) {
-          if (this.boundary.install(view) !== undefined) {
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentView = view;
-            return;
-          }
-          // Refused → complete fallback below; old content still installed.
+        // own §18 boundary. Capacity misses use the canonical cold
+        // materialization transaction; the previous content remains leased
+        // until the replacement commits.
+        const publication = this.boundary!.prepareInstall(view)
+          ?? this.boundary!.prepareColdInstall(view);
+        if (publication === undefined) {
+          throw new Error("TUI_VIEW_SLOT_UPDATE_FAILED: structural content could not be materialized");
         }
-        const ref = tryNativeMaterialize(view);
-        if (ref !== undefined) {
-          try {
-            this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
-            // The direct decoder returns a temporary lease, while the slot
-            // owns the installed content. Keep the boundary's root lease in
-            // sync before releasing that temporary lease.
-            this.boundary?.adopt(view);
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentView = view;
-            return;
-          } finally {
-            releaseNativeViewRef(nativeViewAbiSession(), ref);
-          }
-        }
-        this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
+        publication.commit();
         this.attachmentBindings.commitDesired(attachments);
         this.attachmentBindings.commitVisible();
         this.currentView = view;
@@ -267,43 +241,19 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   /**
    * PERF-12 T13.1 R7: transactional variant of {@link setView}. Delegates to
    * the slot's own RetainedRootBoundary — ownership stays inside the boundary
-   * (no split-brain). On an addon without the retained ABI it returns a
-   * transactional native semantic publication; otherwise it returns a
-   * retained publication
-   * whose commit publishes the prepared root and whose abort leaves the old
-   * content installed and leased.
+   * (no split-brain). Capacity misses use a canonical cold publication;
+   * the returned publication's commit installs the prepared root and its
+   * abort leaves the old content installed and leased.
    */
   prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
     const attachments = prepareAttachmentsForView(view, this.attachmentContext);
-    if (this.boundary === undefined) {
-      // Older addons may not expose the retained ABI. Preserve builder
-      // ownership through a transactional native semantic publication rather
-      // than reporting a false builder-unsupported error.
-      return {
-        commit: (): void => {
-          try {
-            this.nativeAs<NativeViewSlotHandle>().setView(lowerColdView(view));
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentViewSet(view);
-          } catch (error) {
-            attachments.abort();
-            throw error;
-          }
-        },
-        abort(): void {
-          attachments.abort();
-        },
-      };
-    }
     // A retained preparation can refuse for a budget/unsupported-kind
-    // reason. Complete cold materialization is still a valid transactional
-    // fallback, and must happen before publication rather than turning a
-    // renderable update into an unnecessary abort.
+    // reason. Complete cold materialization is the canonical transactional
+    // publication before installation.
     let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
     try {
-      publication = this.boundary.prepareInstall(view) ?? this.boundary.prepareColdInstall(view);
+      publication = this.boundary!.prepareInstall(view) ?? this.boundary!.prepareColdInstall(view);
     } catch (error) {
       attachments.abort();
       throw error;
@@ -362,8 +312,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
           // View objects hit their hints on every cycle instead of rebuilding.
           const ref = tryRetainedMaterializeRef(frame) ?? tryNativeMaterialize(frame);
           if (ref === undefined) {
-            this.setAnimationBridge(frames, intervalMs, atCycleBoundary);
-            return;
+            throw new Error("TUI_VIEW_SLOT_ANIMATION_UPDATE_FAILED: structural content could not be materialized");
           }
           if (scratch !== undefined) scratch[index] = ref;
           else scalarRefs!.push(ref);
@@ -398,52 +347,23 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     }
     return scratch;
   }
-  private setAnimationBridge(frames: readonly View[], intervalMs: number, atCycleBoundary: boolean): void {
-    if (atCycleBoundary) this.nativeAs<NativeViewSlotHandle>().setAnimationAtCycleBoundary(frames.map(lowerColdView), intervalMs);
-    else this.nativeAs<NativeViewSlotHandle>().setAnimation(frames.map(lowerColdView), intervalMs);
-  }
-
   private setFixedAnimationRefs(refs: readonly number[], intervalMs: number, atCycleBoundary: boolean): boolean {
+    const native = this.nativeAs<NativeViewSlotHandle>();
     if (atCycleBoundary) {
       switch (refs.length) {
-        case 1:
-          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef1AtCycleBoundary === undefined) return false;
-          this.nativeAs<NativeViewSlotHandle>().setAnimationRef1AtCycleBoundary!(refs[0]!, intervalMs);
-          return true;
-        case 2:
-          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef2AtCycleBoundary === undefined) return false;
-          this.nativeAs<NativeViewSlotHandle>().setAnimationRef2AtCycleBoundary!(refs[0]!, refs[1]!, intervalMs);
-          return true;
-        case 3:
-          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef3AtCycleBoundary === undefined) return false;
-          this.nativeAs<NativeViewSlotHandle>().setAnimationRef3AtCycleBoundary!(refs[0]!, refs[1]!, refs[2]!, intervalMs);
-          return true;
-        case 4:
-          if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef4AtCycleBoundary === undefined) return false;
-          this.nativeAs<NativeViewSlotHandle>().setAnimationRef4AtCycleBoundary!(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
-          return true;
+        case 1: native.setAnimationRef1AtCycleBoundary(refs[0]!, intervalMs); return true;
+        case 2: native.setAnimationRef2AtCycleBoundary(refs[0]!, refs[1]!, intervalMs); return true;
+        case 3: native.setAnimationRef3AtCycleBoundary(refs[0]!, refs[1]!, refs[2]!, intervalMs); return true;
+        case 4: native.setAnimationRef4AtCycleBoundary(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs); return true;
+        default: return false;
       }
-      return false;
     }
     switch (refs.length) {
-      case 1:
-        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef1 === undefined) return false;
-        this.nativeAs<NativeViewSlotHandle>().setAnimationRef1!(refs[0]!, intervalMs);
-        return true;
-      case 2:
-        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef2 === undefined) return false;
-        this.nativeAs<NativeViewSlotHandle>().setAnimationRef2!(refs[0]!, refs[1]!, intervalMs);
-        return true;
-      case 3:
-        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef3 === undefined) return false;
-        this.nativeAs<NativeViewSlotHandle>().setAnimationRef3!(refs[0]!, refs[1]!, refs[2]!, intervalMs);
-        return true;
-      case 4:
-        if (this.nativeAs<NativeViewSlotHandle>().setAnimationRef4 === undefined) return false;
-        this.nativeAs<NativeViewSlotHandle>().setAnimationRef4!(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs);
-        return true;
-      default:
-        return false;
+      case 1: native.setAnimationRef1(refs[0]!, intervalMs); return true;
+      case 2: native.setAnimationRef2(refs[0]!, refs[1]!, intervalMs); return true;
+      case 3: native.setAnimationRef3(refs[0]!, refs[1]!, refs[2]!, intervalMs); return true;
+      case 4: native.setAnimationRef4(refs[0]!, refs[1]!, refs[2]!, refs[3]!, intervalMs); return true;
+      default: return false;
     }
   }
 
@@ -452,15 +372,14 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     this.call(() => {
       prepareAttachmentsForView(view, this.attachmentContext).abort();
       const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
-      if (ref !== undefined) {
-        try {
-          this.nativeAs<NativeViewSlotHandle>().stopAnimationRef(ref);
-          return;
-        } finally {
-          releaseNativeViewRef(nativeViewAbiSession(), ref);
-        }
+      if (ref === undefined) {
+        throw new Error("TUI_VIEW_SLOT_ANIMATION_UPDATE_FAILED: structural content could not be materialized");
       }
-      this.nativeAs<NativeViewSlotHandle>().stopAnimation(lowerColdView(view));
+      try {
+        this.nativeAs<NativeViewSlotHandle>().stopAnimationRef(ref);
+      } finally {
+        releaseNativeViewRef(nativeViewAbiSession(), ref);
+      }
     });
     this.disposeOwnedBuilder();
   }

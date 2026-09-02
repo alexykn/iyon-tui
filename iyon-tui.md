@@ -6,13 +6,13 @@ Complete public API inventory for crates/iyon-tui, starting at lib.rs and follow
 
 - iyon_tui::prelude — public module [definition]; curated re-export set for common imports.
 - iyon_tui::projection — public module [definition]; root-coordinate projection algebra and diagnostics.
-- iyon_tui::stream — public module [definition]; streaming-source protocol, snapshots, provenance, and local stream panes.
+- iyon_tui::stream — public module [definition]; source-rooted coordinates used by semantic content projections.
 - iyon_tui::text — public module [definition]; semantic text IR, traversal, projectors, and renderers.
 - iyon_tui::testing — public module [definition; feature test-util]; deterministic headless application driving and painted-view inspection.
 
 ## Prelude re-exports
 
-iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, EventCx, History, HistoryLayout, Inline, InlineContent, IntoView, MarkdownProjector, Output, PlainTextProjector, Projection, Projector, ProjectorExt, Renderer, Scene, ScrollPane, Smooth, StreamPane, TextContent, TextInput, TextOrigin, TextRenderPolicy, TextRenderer, TextSelector, TextStream, Theme, and View.
+iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, EventCx, History, HistoryLayout, Inline, InlineContent, IntoView, MarkdownProjector, Output, PlainTextProjector, Projection, Projector, ProjectorExt, Renderer, Scene, ScrollPane, Smooth, TextContent, TextInput, TextOrigin, TextRenderPolicy, TextRenderer, TextSelector, Theme, and View.
 
 ## Root iyon_tui paths
 
@@ -78,10 +78,10 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 - Variant paths: `iyon_tui::FlowBoundary::Default`, `iyon_tui::FlowBoundary::AttachToPrevious`.
 
 #### `iyon_tui::HistoryError` — enum [re-export]
-- Signature: `#[non_exhaustive] pub enum HistoryError { OpenStreamMustRemainTail { stream: HistoryUnitId , }, UnitNotFound { unit: HistoryUnitId , }, UnitNotLive { unit: HistoryUnitId , }, LiveMustRemainTail { unit: HistoryUnitId , }, UnitNotStream { unit: HistoryUnitId , }, FinalViewContainsComponent { unit: HistoryUnitId , }, StreamTypeMismatch { unit: HistoryUnitId , }, StreamAlreadySealed { unit: HistoryUnitId , }, SealedStreamChanged { unit: HistoryUnitId , }, Stream( StreamError ), }`
-- Purpose: Therefore, when matching against variants of non-exhaustive enums, an extra wildcard arm must be added to account for any future variants.
-- Variants and fields: `OpenStreamMustRemainTail { stream: HistoryUnitId , }, UnitNotFound { unit: HistoryUnitId , }, UnitNotLive { unit: HistoryUnitId , }, LiveMustRemainTail { unit: HistoryUnitId , }, UnitNotStream { unit: HistoryUnitId , }, FinalViewContainsComponent { unit: HistoryUnitId , }, StreamTypeMismatch { unit: HistoryUnitId , }, StreamAlreadySealed { unit: HistoryUnitId , }, SealedStreamChanged { unit: HistoryUnitId , }, Stream( StreamError ),`
-- Variant paths: `iyon_tui::HistoryError::OpenStreamMustRemainTail`, `iyon_tui::HistoryError::UnitNotFound`, `iyon_tui::HistoryError::UnitNotLive`, `iyon_tui::HistoryError::LiveMustRemainTail`, `iyon_tui::HistoryError::UnitNotStream`, `iyon_tui::HistoryError::FinalViewContainsComponent`, `iyon_tui::HistoryError::StreamTypeMismatch`, `iyon_tui::HistoryError::StreamAlreadySealed`, `iyon_tui::HistoryError::SealedStreamChanged`, `iyon_tui::HistoryError::Stream`.
+- Signature: `#[non_exhaustive] pub enum HistoryError { UnitNotFound { unit: HistoryUnitId , }, UnitNotLive { unit: HistoryUnitId , }, LiveMustRemainTail { unit: HistoryUnitId , }, FinalViewContainsComponent { unit: HistoryUnitId , }, }`
+- Purpose: Invariant-preserving diagnostics for ordered static/live History units.
+- Variants and fields: `UnitNotFound { unit: HistoryUnitId , }, UnitNotLive { unit: HistoryUnitId , }, LiveMustRemainTail { unit: HistoryUnitId , }, FinalViewContainsComponent { unit: HistoryUnitId , },`
+- Variant paths: `iyon_tui::HistoryError::UnitNotFound`, `iyon_tui::HistoryError::UnitNotLive`, `iyon_tui::HistoryError::LiveMustRemainTail`, `iyon_tui::HistoryError::FinalViewContainsComponent`.
 
 #### `iyon_tui::HorizontalAlign` — enum [re-export]
 - Signature: `pub enum HorizontalAlign { Start, Center, End, }`
@@ -420,17 +420,12 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 
 #### `iyon_tui::History` — struct [re-export]
 - Signature: `pub struct History { /* private fields */ }`
-- Purpose: An ordered root-level historical, live, or streaming semantic flow.
+- Purpose: An ordered root-level historical/live semantic flow.
 - `iyon_tui::History::new` — inherent method; `pub fn new () -> Self` — Constructs a value.
 - `iyon_tui::History::push` — inherent method; `pub fn push ( &mut self, view: impl IntoView , ) -> Result < HistoryUnitId , HistoryError >` — Provides the public `push` operation.
 - `iyon_tui::History::push_with_boundary` — inherent method; `pub fn push_with_boundary ( &mut self, view: impl IntoView , boundary: FlowBoundary , ) -> Result < HistoryUnitId , HistoryError >` — Provides the public `push_with_boundary` operation.
-- `iyon_tui::History::replace_live_with_stream` — inherent method; `pub fn replace_live_with_stream <S: StreamingSource >( &mut self, unit: HistoryUnitId , source: S, ) -> Result < HistoryStreamHandle <S>, HistoryError >` — Provides the public `replace_live_with_stream` operation.
 - `iyon_tui::History::discard_live` — inherent method; `pub fn discard_live (&mut self, unit: HistoryUnitId ) -> Result < () , HistoryError >` — Provides the public `discard_live` operation.
 - `iyon_tui::History::freeze` — inherent method; `pub fn freeze ( &mut self, unit: HistoryUnitId , final_view: impl IntoView , ) -> Result < () , HistoryError >` — Provides the public `freeze` operation.
-- `iyon_tui::History::push_stream` — inherent method; `pub fn push_stream <S: StreamingSource >( &mut self, source: S, ) -> Result < HistoryStreamHandle <S>, HistoryError >` — Provides the public `push_stream` operation.
-- `iyon_tui::History::push_stream_with_boundary` — inherent method; `pub fn push_stream_with_boundary <S: StreamingSource >( &mut self, source: S, boundary: FlowBoundary , ) -> Result < HistoryStreamHandle <S>, HistoryError >` — Provides the public `push_stream_with_boundary` operation.
-- `iyon_tui::History::update_stream` — inherent method; `pub fn update_stream <S: StreamingSource , R>( &mut self, handle: HistoryStreamHandle <S>, update: impl FnOnce ( &mut S ) -> R, ) -> Result <R, HistoryError >` — Provides the public `update_stream` operation.
-- `iyon_tui::History::seal_stream` — inherent method; `pub fn seal_stream <S: StreamingSource >( &mut self, handle: HistoryStreamHandle <S>, ) -> Result < () , HistoryError >` — Provides the public `seal_stream` operation.
 - `iyon_tui::History::layout` — inherent method; `pub fn layout (&self) -> HistoryLayout` — Provides the public `layout` operation.
 - `iyon_tui::History::set_layout` — inherent method; `pub fn set_layout (&mut self, layout: HistoryLayout )` — Sets `layout` and returns the previous value when applicable.
 - `iyon_tui::History::with_layout` — inherent method; `pub fn with_layout (self, layout: HistoryLayout ) -> Self` — Returns this value with `layout` configured.
@@ -444,11 +439,6 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 - `iyon_tui::HistoryLayout::with_gap` — inherent method; `pub const fn with_gap (self, gap: u16 ) -> Self` — Returns this value with `gap` configured.
 - `iyon_tui::HistoryLayout::padding` — inherent method; `pub const fn padding (self) -> Insets` — Provides the public `padding` operation.
 - `iyon_tui::HistoryLayout::gap` — inherent method; `pub const fn gap (self) -> u16` — Provides the public `gap` operation.
-
-#### `iyon_tui::HistoryStreamHandle` — struct [re-export]
-- Signature: `pub struct HistoryStreamHandle<S: StreamingSource > { /* private fields */ }`
-- Purpose: Typed, non-owning identity for a History stream unit.
-- `iyon_tui::HistoryStreamHandle::unit` — inherent method; `pub const fn unit (self) -> HistoryUnitId` — Provides the public `unit` operation.
 
 #### `iyon_tui::HistoryUnitId` — struct [re-export]
 - Signature: `pub struct HistoryUnitId( /* private fields */ );`
@@ -1019,50 +1009,6 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 - Variants and fields: `InvalidContentRange, InvalidHangingPrefix, NonContiguousRun, EmptyRun, RunBeyondContent, InvalidVisibleRange, VisibleLengthMismatch, IncompleteSourceCoverage, HangingWidthMismatch,`
 - Variant paths: `iyon_tui::stream::ProjectedValidationError::InvalidContentRange`, `iyon_tui::stream::ProjectedValidationError::InvalidHangingPrefix`, `iyon_tui::stream::ProjectedValidationError::NonContiguousRun`, `iyon_tui::stream::ProjectedValidationError::EmptyRun`, `iyon_tui::stream::ProjectedValidationError::RunBeyondContent`, `iyon_tui::stream::ProjectedValidationError::InvalidVisibleRange`, `iyon_tui::stream::ProjectedValidationError::VisibleLengthMismatch`, `iyon_tui::stream::ProjectedValidationError::IncompleteSourceCoverage`, `iyon_tui::stream::ProjectedValidationError::HangingWidthMismatch`.
 
-#### `iyon_tui::stream::StreamError` — enum [re-export]
-- Signature: `#[non_exhaustive] pub enum StreamError { Validation( StreamValidationError ), RevisionRegressed, SourceBaseRegressed, SourceEndRegressed, StabilityRegressed, ChangedWithoutRevision, SourceBeforeResident, CompactionChangedCoordinates, CompactionChangedSemanticSuffix, SourceNotSealed, UnstableAfterSeal, }`
-- Purpose: Therefore, when matching against variants of non-exhaustive enums, an extra wildcard arm must be added to account for any future variants.
-- Variants and fields: `Validation( StreamValidationError ), RevisionRegressed, SourceBaseRegressed, SourceEndRegressed, StabilityRegressed, ChangedWithoutRevision, SourceBeforeResident, CompactionChangedCoordinates, CompactionChangedSemanticSuffix, SourceNotSealed, UnstableAfterSeal,`
-- Variant paths: `iyon_tui::stream::StreamError::Validation`, `iyon_tui::stream::StreamError::RevisionRegressed`, `iyon_tui::stream::StreamError::SourceBaseRegressed`, `iyon_tui::stream::StreamError::SourceEndRegressed`, `iyon_tui::stream::StreamError::StabilityRegressed`, `iyon_tui::stream::StreamError::ChangedWithoutRevision`, `iyon_tui::stream::StreamError::SourceBeforeResident`, `iyon_tui::stream::StreamError::CompactionChangedCoordinates`, `iyon_tui::stream::StreamError::CompactionChangedSemanticSuffix`, `iyon_tui::stream::StreamError::SourceNotSealed`, `iyon_tui::stream::StreamError::UnstableAfterSeal`.
-
-#### `iyon_tui::stream::StreamValidationError` — enum [re-export]
-- Signature: `#[non_exhaustive] pub enum StreamValidationError { InvalidFrontier, FirstNodeDoesNotStartAtBase, GapOrOverlap, NodeBeyondSourceEnd, TrailingUncoveredSource, Projected( ProjectedValidationError ), AtomicContainsComponent, }`
-- Purpose: Public validation failures for externally constructed stream snapshots.
-- Variants and fields: `InvalidFrontier, FirstNodeDoesNotStartAtBase, GapOrOverlap, NodeBeyondSourceEnd, TrailingUncoveredSource, Projected( ProjectedValidationError ), AtomicContainsComponent,`
-- Variant paths: `iyon_tui::stream::StreamValidationError::InvalidFrontier`, `iyon_tui::stream::StreamValidationError::FirstNodeDoesNotStartAtBase`, `iyon_tui::stream::StreamValidationError::GapOrOverlap`, `iyon_tui::stream::StreamValidationError::NodeBeyondSourceEnd`, `iyon_tui::stream::StreamValidationError::TrailingUncoveredSource`, `iyon_tui::stream::StreamValidationError::Projected`, `iyon_tui::stream::StreamValidationError::AtomicContainsComponent`.
-
-#### `iyon_tui::stream::ProjectedHanging` — struct [re-export]
-- Signature: `pub struct ProjectedHanging { /* private fields */ }`
-- Purpose: Typed configuration for a projected hanging prefix.
-- `iyon_tui::stream::ProjectedHanging::new` — inherent method; `pub fn new ( body_column: u16 , prefix_source: StreamRange , prefix: impl Into < String >, ) -> Self` — Constructs a value.
-- `iyon_tui::stream::ProjectedHanging::with_style` — inherent method; `pub fn with_style (self, style: impl Into < StyleRef >) -> Self` — Returns this value with `style` configured.
-- `iyon_tui::stream::ProjectedHanging::with_prefix_visible` — inherent method; `pub fn with_prefix_visible (self, visible: bool ) -> Self` — Returns this value with `prefix_visible` configured.
-
-#### `iyon_tui::stream::ProjectedText` — struct [re-export]
-- Signature: `pub struct ProjectedText { /* private fields */ }`
-- Purpose: Public struct `ProjectedText`.
-- `iyon_tui::stream::ProjectedText::builder` — inherent method; `pub fn builder (content_range: StreamRange ) -> ProjectedTextBuilder` — Provides the public `builder` operation.
-- `iyon_tui::stream::ProjectedText::content_range` — inherent method; `pub fn content_range (&self) -> StreamRange` — Provides the public `content_range` operation.
-- `iyon_tui::stream::ProjectedText::owned_range` — inherent method; `pub fn owned_range (&self) -> StreamRange` — Provides the public `owned_range` operation.
-
-#### `iyon_tui::stream::ProjectedTextBuilder` — struct [re-export]
-- Signature: `pub struct ProjectedTextBuilder { /* private fields */ }`
-- Purpose: Builder for the canonical projected-text representation.
-- `iyon_tui::stream::ProjectedTextBuilder::new` — inherent method; `pub fn new (content_range: StreamRange ) -> Self` — Constructs a value.
-- `iyon_tui::stream::ProjectedTextBuilder::run` — inherent method; `pub fn run ( self, display: impl Into < String >, owned: StreamRange , exact_visible: Option < StreamRange >, style: impl Into < StyleRef >, ) -> Self` — Performs the requested application operation.
-- `iyon_tui::stream::ProjectedTextBuilder::exact_styled` — inherent method; `pub fn exact_styled ( self, range: StreamRange , display: impl Into < String >, style: impl Into < StyleRef >, ) -> Self` — Provides the public `exact_styled` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::exact` — inherent method; `pub fn exact (self, range: StreamRange , display: impl Into < String >) -> Self` — Provides the public `exact` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::replacement_styled` — inherent method; `pub fn replacement_styled ( self, range: StreamRange , display: impl Into < String >, style: impl Into < StyleRef >, ) -> Self` — Provides the public `replacement_styled` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::replacement` — inherent method; `pub fn replacement (self, range: StreamRange , display: impl Into < String >) -> Self` — Provides the public `replacement` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::hard_newline` — inherent method; `pub fn hard_newline (self) -> Self` — Provides the public `hard_newline` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::fit_width` — inherent method; `pub fn fit_width (self) -> Self` — Provides the public `fit_width` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::fill_width` — inherent method; `pub fn fill_width (self) -> Self` — Provides the public `fill_width` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::wrap` — inherent method; `pub fn wrap (self, wrap: WrapMode ) -> Self` — Provides the public `wrap` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::align` — inherent method; `pub fn align (self, align: HorizontalAlign ) -> Self` — Provides the public `align` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::with_hanging` — inherent method; `pub fn with_hanging (self, hanging: ProjectedHanging ) -> Self` — Returns this value with `hanging` configured.
-- `iyon_tui::stream::ProjectedTextBuilder::hanging` — inherent method; `pub fn hanging ( self, body_column: u16 , prefix: impl Into < String >, prefix_style: impl Into < StyleRef >, prefix_source: StreamRange , show_prefix: bool , ) -> Self` — Provides the public `hanging` operation.
-- `iyon_tui::stream::ProjectedTextBuilder::finish` — inherent method; `pub fn finish (self) -> Result < ProjectedText , ProjectedValidationError >` — Builds or validates the requested projection.
-
 #### `iyon_tui::stream::StreamOffset` — struct [re-export]
 - Signature: `pub struct StreamOffset( /* private fields */ );`
 - Purpose: Opaque monotonic coordinate within one stream’s root source space.
@@ -1071,22 +1017,6 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 - `iyon_tui::stream::StreamOffset::as_u64` — inherent method; `pub const fn as_u64 (self) -> u64` — Converts or exposes this value.
 - `iyon_tui::stream::StreamOffset::checked_add` — inherent method; `pub const fn checked_add (self, rhs: u64 ) -> Option <Self>` — Performs bounded arithmetic.
 - `iyon_tui::stream::StreamOffset::saturating_add` — inherent method; `pub const fn saturating_add (self, rhs: u64 ) -> Self` — Performs bounded arithmetic.
-
-#### `iyon_tui::stream::StreamPane` — struct [re-export]
-- Signature: `pub struct StreamPane<S: StreamingSource > { /* private fields */ }`
-- Purpose: A generic mounted local semantic stream viewport.
-- `iyon_tui::stream::StreamPane::new` — inherent method; `pub fn new (source: S) -> Result <Self, StreamError >` — Constructs a value.
-- `iyon_tui::stream::StreamPane::update_source` — inherent method; `pub fn update_source <R>( &mut self, update: impl FnOnce ( &mut S ) -> R, ) -> Result <R, StreamError >` — Provides the public `update_source` operation.
-- `iyon_tui::stream::StreamPane::refresh` — inherent method; `pub fn refresh (&mut self) -> Result < () , StreamError >` — Provides the public `refresh` operation.
-- `iyon_tui::stream::StreamPane::seal` — inherent method; `pub fn seal (&mut self) -> Result < () , StreamError >` — Provides the public `seal` operation.
-- `iyon_tui::stream::StreamPane::is_sealed` — inherent method; `pub fn is_sealed (&self) -> bool` — Reports whether `sealed` holds.
-- `iyon_tui::stream::StreamPane::scroll_up` — inherent method; `pub fn scroll_up (&mut self, rows: usize ) -> bool` — Provides the public `scroll_up` operation.
-- `iyon_tui::stream::StreamPane::scroll_down` — inherent method; `pub fn scroll_down (&mut self, rows: usize ) -> bool` — Provides the public `scroll_down` operation.
-- `iyon_tui::stream::StreamPane::page_up` — inherent method; `pub fn page_up (&mut self) -> bool` — Provides the public `page_up` operation.
-- `iyon_tui::stream::StreamPane::page_down` — inherent method; `pub fn page_down (&mut self) -> bool` — Provides the public `page_down` operation.
-- `iyon_tui::stream::StreamPane::scroll_to_start` — inherent method; `pub fn scroll_to_start (&mut self)` — Provides the public `scroll_to_start` operation.
-- `iyon_tui::stream::StreamPane::follow_end` — inherent method; `pub fn follow_end (&mut self)` — Provides the public `follow_end` operation.
-- `iyon_tui::stream::StreamPane::is_following_end` — inherent method; `pub fn is_following_end (&self) -> bool` — Reports whether `following_end` holds.
 
 #### `iyon_tui::stream::StreamRange` — struct [re-export]
 - Signature: `pub struct StreamRange { /* private fields */ }`
@@ -1098,61 +1028,6 @@ iyon_tui::prelude re-exports: App, AppCx, Block, Component, ComponentCx, DiffHun
 - `iyon_tui::stream::StreamRange::is_empty` — inherent method; `pub fn is_empty (&self) -> bool` — Reports whether `empty` holds.
 - `iyon_tui::stream::StreamRange::len` — inherent method; `pub fn len (&self) -> u64` — Returns the number of contained items.
 - `iyon_tui::stream::StreamRange::contains_offset` — inherent method; `pub fn contains_offset (&self, offset: StreamOffset ) -> bool` — Reports whether the value contains the requested item.
-
-#### `iyon_tui::stream::StreamRevision` — struct [re-export]
-- Signature: `pub struct StreamRevision( /* private fields */ );`
-- Purpose: Monotonic revision counter for stream snapshots.
-- `iyon_tui::stream::StreamRevision::ZERO` — associated const; `pub const ZERO : Self` — Provides the public `ZERO` operation.
-- `iyon_tui::stream::StreamRevision::new` — inherent method; `pub const fn new (rev: u64 ) -> Self` — Constructs a value.
-- `iyon_tui::stream::StreamRevision::as_u64` — inherent method; `pub const fn as_u64 (self) -> u64` — Converts or exposes this value.
-- `iyon_tui::stream::StreamRevision::checked_next` — inherent method; `pub const fn checked_next (self) -> Option <Self>` — Performs bounded arithmetic.
-- `iyon_tui::stream::StreamRevision::next` — inherent method; `pub fn next (self) -> Self` — Provides the public `next` operation.
-
-#### `iyon_tui::stream::StreamSnapshot` — struct [re-export]
-- Signature: `pub struct StreamSnapshot { /* private fields */ }`
-- Purpose: Width-independent snapshot of the current source-owned semantic stream.
-- `iyon_tui::stream::StreamSnapshot::builder` — inherent method; `pub fn builder ( revision: StreamRevision , range: StreamRange , ) -> StreamSnapshotBuilder` — Provides the public `builder` operation.
-- `iyon_tui::stream::StreamSnapshot::revision` — inherent method; `pub fn revision (&self) -> StreamRevision` — Provides the public `revision` operation.
-- `iyon_tui::stream::StreamSnapshot::source_base` — inherent method; `pub fn source_base (&self) -> StreamOffset` — Returns `source_base`.
-- `iyon_tui::stream::StreamSnapshot::source_end` — inherent method; `pub fn source_end (&self) -> StreamOffset` — Returns `source_end`.
-- `iyon_tui::stream::StreamSnapshot::stable_through` — inherent method; `pub fn stable_through (&self) -> StreamOffset` — Returns `stable_through`.
-- `iyon_tui::stream::StreamSnapshot::view_for_test` — inherent method [feature `test-util`; doc-hidden]; `pub fn view_for_test (&self) -> View` — Returns the snapshot view for test inspection.
-
-#### `iyon_tui::stream::StreamSnapshotBuilder` — struct [re-export]
-- Signature: `pub struct StreamSnapshotBuilder { /* private fields */ }`
-- Purpose: Validated construction boundary for source snapshots.
-- `iyon_tui::stream::StreamSnapshotBuilder::from_range` — inherent method; `pub fn from_range (revision: StreamRevision , range: StreamRange ) -> Self` — Provides the public `from_range` operation.
-- `iyon_tui::stream::StreamSnapshotBuilder::stable_through` — inherent method; `pub fn stable_through (self, offset: StreamOffset ) -> Self` — Returns `stable_through`.
-- `iyon_tui::stream::StreamSnapshotBuilder::fully_stable` — inherent method; `pub fn fully_stable (self) -> Self` — Provides the public `fully_stable` operation.
-- `iyon_tui::stream::StreamSnapshotBuilder::new` — inherent method; `pub fn new ( revision: StreamRevision , source_base: StreamOffset , stable_through: StreamOffset , source_end: StreamOffset , ) -> Self` — Constructs a value.
-- `iyon_tui::stream::StreamSnapshotBuilder::exact_text` — inherent method; `pub fn exact_text ( self, range: StreamRange , spans: impl IntoIterator <Item = TextSpan >, ) -> Self` — Provides the public `exact_text` operation.
-- `iyon_tui::stream::StreamSnapshotBuilder::exact_line` — inherent method; `pub fn exact_line ( self, range: StreamRange , spans: impl IntoIterator <Item = TextSpan >, ) -> Self` — Provides the public `exact_line` operation.
-- `iyon_tui::stream::StreamSnapshotBuilder::projected_text` — inherent method; `pub fn projected_text (self, text: ProjectedText ) -> Self` — Projects the input value.
-- `iyon_tui::stream::StreamSnapshotBuilder::atomic` — inherent method; `pub fn atomic ( self, range: StreamRange , view: View , ) -> Result <Self, StreamValidationError >` — Provides the public `atomic` operation.
-- `iyon_tui::stream::StreamSnapshotBuilder::finish` — inherent method; `pub fn finish (self) -> Result < StreamSnapshot , StreamValidationError >` — Builds or validates the requested projection.
-
-#### `iyon_tui::stream::TextStream` — struct [re-export]
-- Signature: `pub struct TextStream { /* private fields */ }`
-- Purpose: A small append-only UTF-8 source for ordinary History text streams.
-- `iyon_tui::stream::TextStream::new` — inherent method; `pub fn new () -> Self` — Constructs a value.
-- `iyon_tui::stream::TextStream::from_text` — inherent method; `pub fn from_text (text: impl Into < String >) -> Self` — Provides the public `from_text` operation.
-- `iyon_tui::stream::TextStream::push` — inherent method; `pub fn push (&mut self, text: impl AsRef < str >)` — Provides the public `push` operation.
-- `iyon_tui::stream::TextStream::retained_text` — inherent method; `pub fn retained_text (&self) -> & str` — Provides the public `retained_text` operation.
-- `iyon_tui::stream::TextStream::source_base` — inherent method; `pub fn source_base (&self) -> StreamOffset` — Returns `source_base`.
-- `iyon_tui::stream::TextStream::source_end` — inherent method; `pub fn source_end (&self) -> StreamOffset` — Returns `source_end`.
-- `iyon_tui::stream::TextStream::revision` — inherent method; `pub fn revision (&self) -> StreamRevision` — Provides the public `revision` operation.
-
-#### `iyon_tui::stream::StreamingSource` — trait [re-export]
-- Signature: `pub trait StreamingSource: 'static { // Required methods fn snapshot (&self) -> StreamSnapshot ; fn seal (&mut self); fn is_sealed (&self) -> bool ; // Provided methods fn compact_before (&mut self, _offset: StreamOffset ) { ... } fn next_wakeup (&self) -> Option < Instant > { ... } fn advance (&mut self, _now: Instant ) -> bool { ... } }`
-- Purpose: Trait for synchronous append-only streaming content.
-- `iyon_tui::stream::StreamingSource::snapshot` — required method; `fn snapshot (&self) -> StreamSnapshot` — Provides the public `snapshot` operation.
-- `iyon_tui::stream::StreamingSource::seal` — required method; `fn seal (&mut self)` — Provides the public `seal` operation.
-- `iyon_tui::stream::StreamingSource::is_sealed` — required method; `fn is_sealed (&self) -> bool` — Reports whether `sealed` holds.
-- `iyon_tui::stream::StreamingSource::compact_before` — provided method; `fn compact_before (&mut self, _offset: StreamOffset )` — Provides the public `compact_before` operation.
-- `iyon_tui::stream::StreamingSource::next_wakeup` — provided method; `fn next_wakeup (&self) -> Option < Instant >` — Advances state or returns a temporal coordinate.
-- `iyon_tui::stream::StreamingSource::advance` — provided method; `fn advance (&mut self, _now: Instant ) -> bool` — Advances state or returns a temporal coordinate.
-
-## iyon_tui::text
 
 #### `iyon_tui::text::Alignment` — enum [re-export]
 - Signature: `pub enum Alignment { Default, Start, Center, End, }`

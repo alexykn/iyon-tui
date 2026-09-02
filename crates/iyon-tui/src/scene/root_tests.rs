@@ -5,16 +5,12 @@ use std::sync::{
 };
 
 use crate::{
-    History, HistoryLayout, Insets, IntoView, TextSpan, View,
+    History, HistoryLayout, Insets, IntoView, View,
     backend::NativeHistorySink,
     component::{Component, ComponentCx, ComponentRegistry},
     geometry::Size,
     history::transfer_native_prefix,
     physical::PhysicalRow,
-    stream::{
-        StreamOffset, StreamRange, StreamRevision, StreamSnapshot, StreamSnapshotBuilder,
-        StreamingSource,
-    },
 };
 
 #[derive(Debug)]
@@ -52,58 +48,6 @@ impl NativeHistorySink for RootSink {
         let accepted = self.accepted.min(rows.len());
         self.rows.extend(rows[..accepted].iter().cloned());
         Ok(accepted)
-    }
-}
-
-struct RootSource {
-    count: usize,
-    revision: u64,
-    sealed: bool,
-}
-
-impl RootSource {
-    fn new(count: usize) -> Self {
-        Self {
-            count,
-            revision: 0,
-            sealed: false,
-        }
-    }
-
-    fn set_count(&mut self, count: usize) {
-        self.count = count;
-        self.revision = self.revision.saturating_add(1);
-    }
-}
-
-impl StreamingSource for RootSource {
-    fn snapshot(&self) -> StreamSnapshot {
-        let text = (1..=self.count)
-            .map(|row| format!("S{row}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let end = text.len() as u64;
-        StreamSnapshotBuilder::new(
-            StreamRevision::new(self.revision),
-            StreamOffset::ZERO,
-            StreamOffset::new(end),
-            StreamOffset::new(end),
-        )
-        .exact_text(
-            StreamRange::new(StreamOffset::ZERO, StreamOffset::new(end)),
-            [TextSpan::plain(text)],
-        )
-        .finish()
-        .unwrap()
-    }
-
-    fn seal(&mut self) {
-        self.sealed = true;
-        self.revision = self.revision.saturating_add(1);
-    }
-
-    fn is_sealed(&self) -> bool {
-        self.sealed
     }
 }
 
@@ -262,64 +206,6 @@ fn root_mount_order_is_history_then_body() {
     assert_eq!(
         resolved.scene.mounts.ids().collect::<Vec<_>>(),
         [a.id(), b.id(), c.id()]
-    );
-}
-
-#[test]
-fn multi_live_stream_capacity_keeps_one_root_mount_order() {
-    let mut registry = ComponentRegistry::new();
-    let a = registry.register(RootComponent("A1\nA2"));
-    let b = registry.register(RootComponent("B1\nB2"));
-    let c = registry.register(RootComponent("C1\nC2"));
-    let mut history = History::new();
-    history.push(View::component(a)).unwrap();
-    history.push(View::component(b)).unwrap();
-    let stream = history.push_stream(RootSource::new(20)).unwrap();
-    let scene = Scene::with_history(history, View::component(c));
-
-    let mut resolved = resolve_root_scene(&scene, &registry, Size::new(10, 10)).unwrap();
-    assert_eq!(resolved.history_height, 8);
-    assert_eq!(
-        resolved.scene.mounts.ids().collect::<Vec<_>>(),
-        [a.id(), b.id(), c.id()]
-    );
-    let rows = crate::presentation::layout::compile_bounded_view_with_overlay(
-        &resolved.scene.view,
-        Size::new(10, 10),
-        &resolved.scene.overlay,
-    )
-    .rows
-    .into_iter()
-    .map(|row| row.plain_text())
-    .collect::<Vec<_>>();
-    assert_eq!(
-        rows,
-        [
-            "A1", "A2", "B1", "B2", "S17", "S18", "S19", "S20", "C1", "C2"
-        ]
-    );
-
-    let mut updated = scene;
-    updated
-        .history_mut()
-        .unwrap()
-        .update_stream(stream, |source| source.set_count(21))
-        .unwrap();
-    resolved = resolve_root_scene(&updated, &registry, Size::new(10, 10)).unwrap();
-    let rows = crate::presentation::layout::compile_bounded_view_with_overlay(
-        &resolved.scene.view,
-        Size::new(10, 10),
-        &resolved.scene.overlay,
-    )
-    .rows
-    .into_iter()
-    .map(|row| row.plain_text())
-    .collect::<Vec<_>>();
-    assert_eq!(
-        rows,
-        [
-            "A1", "A2", "B1", "B2", "S18", "S19", "S20", "S21", "C1", "C2"
-        ]
     );
 }
 

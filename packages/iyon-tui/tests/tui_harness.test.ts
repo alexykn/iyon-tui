@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { TextStream, View } from "../src/index.ts";
+import { View } from "../src/index.ts";
 import { AppHarness } from "../src/testing/index.ts";
 
 describe("native headless harness", () => {
@@ -24,19 +24,6 @@ describe("native headless harness", () => {
     expect(harness.now()).toBe(25);
     harness.close();
     expect(harness.exited()).toBe(true);
-  });
-
-  test("streams update the mounted native History", async () => {
-    const harness = await AppHarness.open({ width: 24, height: 6 });
-    const history = harness.createHistory();
-    const stream = new TextStream();
-    await harness.render({ body: View.text("footer"), history });
-    await history.pushStream(stream);
-    await stream.update("streamed text");
-    expect(harness.screenRows().some((row) => row.includes("streamed text"))).toBe(true);
-    stream.seal();
-    expect(() => stream.update("late")).toThrow();
-    harness.close();
   });
 
   test("animates a generic native view slot", async () => {

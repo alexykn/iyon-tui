@@ -56,7 +56,6 @@ pub(crate) fn trace_projection(
     physical_rows_inserted: u64,
     last_native_unit: Option<u64>,
     resident_unit_count: usize,
-    committed_through: Option<u64>,
     total_flow_height: usize,
     overflow_rows: usize,
     slack: usize,
@@ -74,7 +73,6 @@ pub(crate) fn trace_projection(
         physical_rows_inserted = physical_rows_inserted,
         last_native_unit = last_native_unit,
         resident_unit_count = resident_unit_count,
-        committed_through = committed_through,
         total_flow_height = total_flow_height,
         overflow_rows = overflow_rows,
         slack = slack,
@@ -130,7 +128,7 @@ mod tests {
         // must return false. In a normal test run the env var is absent.
         // We cannot safely set it here because OnceLock is process-global.
         // The test simply calls the tracer helpers and asserts no panic.
-        super::trace_projection(40, 12, 4, 8, "FollowEnd", 0, None, 3, None, 10, 2, 0);
+        super::trace_projection(40, 12, 4, 8, "FollowEnd", 0, None, 3, 10, 2, 0);
         super::trace_transfer(5, 3, 3, "Progress", 0, 3);
         super::trace_resolve_pressure(2, 1, 1);
     }

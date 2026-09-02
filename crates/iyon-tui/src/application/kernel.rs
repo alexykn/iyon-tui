@@ -33,7 +33,6 @@ const ACTION_BATCH_BUDGET: usize = 128;
 pub(crate) enum KernelError<Error> {
     Application(Error),
     Output(OutputDispatchError),
-    Stream(crate::HistoryError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -601,14 +600,6 @@ where
             }
         }
 
-        if !self.exit_requested {
-            let stream_changed = self
-                .scene
-                .advance_streams(now)
-                .map_err(|error| KernelError::Stream(error))?;
-            self.dirty |= stream_changed;
-        }
-
         Ok(self.status(!self.actions.is_empty()))
     }
 
@@ -620,7 +611,6 @@ where
         [
             self.timers.next_deadline(),
             self.scene_host.next_tick_deadline(),
-            self.scene.next_stream_wakeup(),
         ]
         .into_iter()
         .flatten()

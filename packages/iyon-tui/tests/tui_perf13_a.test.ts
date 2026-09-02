@@ -152,6 +152,7 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
     epochs: () => ({
       host_id: "1",
       desired_structural_revision: desired.toString(),
+      visible_structural_revision: committed.toString(),
       visible_frame_revision: committed.toString(),
       pending_epoch: desired.toString(),
       committed_epoch: committed.toString(),
@@ -161,8 +162,9 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
       if (fail && !forceRetry) {
         return {
           rearm: false,
+          waiting_for_presentation: false,
           attempted: 1,
-          committed_hosts: [],
+          commits: [],
           errors: [{
             host_id: "1",
             attempted_epoch: desired.toString(),
@@ -178,8 +180,9 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
       committed = desired;
       return {
         rearm: false,
+        waiting_for_presentation: false,
         attempted: 1,
-        committed_hosts: ["1"],
+        commits: [{ host_id: "1", committed_epoch: "1", visible_structural_revision: "1" }],
         errors: [],
         wake_epoch: "1",
       };
@@ -213,6 +216,7 @@ test(`${PERF13A} polls asynchronous presentation receipts without a microtask sp
     epochs: () => ({
       host_id: "1",
       desired_structural_revision: "1",
+      visible_structural_revision: ready ? "1" : "0",
       visible_frame_revision: ready ? "1" : "0",
       pending_epoch: "1",
       committed_epoch: ready ? "1" : "0",
@@ -224,7 +228,6 @@ test(`${PERF13A} polls asynchronous presentation receipts without a microtask sp
           rearm: false,
           waiting_for_presentation: false,
           attempted: 1,
-          committed_hosts: ["1"],
           commits: [{ host_id: "1", committed_epoch: "1", visible_structural_revision: "1" }],
           errors: [],
           wake_epoch: "1",
@@ -233,7 +236,6 @@ test(`${PERF13A} polls asynchronous presentation receipts without a microtask sp
           rearm: false,
           waiting_for_presentation: true,
           attempted: 1,
-          committed_hosts: [],
           commits: [],
           errors: [],
           wake_epoch: "1",

@@ -1,9 +1,24 @@
-use crate::{
-    physical::PhysicalRow,
-    stream::{FrozenPhysicalRows, StreamOffset, StreamPartialTransfer},
-};
+use crate::physical::PhysicalRow;
 
 use super::super::HistoryUnitId;
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FrozenPhysicalRows(pub(crate) Vec<PhysicalRow>);
+
+impl FrozenPhysicalRows {
+    pub(crate) fn new(rows: Vec<PhysicalRow>) -> Self {
+        debug_assert!(rows.iter().all(|row| row.validate_cell_geometry().is_ok()));
+        Self(rows)
+    }
+
+    pub(crate) fn as_slice(&self) -> &[PhysicalRow] {
+        &self.0
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SpacingTransferState {
@@ -36,13 +51,6 @@ pub(crate) struct FrozenContentRemainder {
     pub(crate) trailing_padding: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct StreamFrontierState {
-    pub(crate) unit: HistoryUnitId,
-    pub(crate) committed_through: StreamOffset,
-    pub(crate) partial: Option<StreamPartialTransfer>,
-}
-
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct NativeFrontier {
     pub(crate) physical_rows_inserted: u64,
@@ -51,7 +59,6 @@ pub(crate) struct NativeFrontier {
     pub(crate) leading_gap: Option<SpacingTransferState>,
     pub(crate) frozen_static: Option<FrozenStaticRemainder>,
     pub(crate) frozen_content: Option<FrozenContentRemainder>,
-    pub(crate) stream: Option<StreamFrontierState>,
 }
 
 impl NativeFrontier {
@@ -67,7 +74,6 @@ impl NativeFrontier {
         self.leading_gap = None;
         self.frozen_static = None;
         self.frozen_content = None;
-        self.stream = None;
     }
 
     pub(super) fn blank_rows(width: u16, count: usize) -> Vec<PhysicalRow> {

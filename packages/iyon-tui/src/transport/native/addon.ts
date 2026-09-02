@@ -20,26 +20,9 @@ export interface NativeHistoryContract {
   layout(): object;
   setLayout(layout: object): void;
   isDetached(): boolean;
-  push(view: object): number;
   pushRef(viewRef: number): number;
-  freeze(unit: number, view: object): void;
   freezeRef(unit: number, viewRef: number): void;
   discardLive(unit: number): void;
-  pushStream(
-    stream: object,
-    projector: "plain" | "markdown",
-    wrap: "word",
-    smooth: boolean,
-    tickIntervalMs: number,
-    spring: number,
-    minUnitsPerSecond: number,
-    maxUnitsPerSecond: number,
-    top: number,
-    right: number,
-    bottom: number,
-    left: number,
-  ): void;
-  sealStream(stream: object): void;
 }
 
 export interface NativeStateWake {
@@ -76,7 +59,6 @@ export interface NativeTextInputContract {
 
 export interface NativeTextSourceContract {
   dispose(): void;
-  requestDisposeWhenUnused(): void;
   sourceId(): number;
   sourceGeneration(): number;
   environmentSlot(): number;
@@ -114,27 +96,19 @@ export interface NativeContentPortContract extends NativeStructuralAttachmentCon
   mounted(): boolean;
 }
 
-export interface NativeProjectorContract {
-  dispose(): void;
-  project(text: string, sealed?: boolean): object;
-}
-
 export interface NativeViewSlotContract {
   dispose(): void;
   revision(): number;
   componentId(): number | null;
-  setView(view: object): void;
   setViewRef(viewRef: number): void;
-  setAnimation(frames: object[], intervalMs: number): void;
-  setAnimationAtCycleBoundary(frames: object[], intervalMs: number): void;
-  setAnimationRef1?(ref0: number, intervalMs: number): void;
-  setAnimationRef2?(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3?(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4?(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
-  setAnimationRef1AtCycleBoundary?(ref0: number, intervalMs: number): void;
-  setAnimationRef2AtCycleBoundary?(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3AtCycleBoundary?(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4AtCycleBoundary?(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
+  setAnimationRef1(ref0: number, intervalMs: number): void;
+  setAnimationRef2(ref0: number, ref1: number, intervalMs: number): void;
+  setAnimationRef3(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
+  setAnimationRef4(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
+  setAnimationRef1AtCycleBoundary(ref0: number, intervalMs: number): void;
+  setAnimationRef2AtCycleBoundary(ref0: number, ref1: number, intervalMs: number): void;
+  setAnimationRef3AtCycleBoundary(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
+  setAnimationRef4AtCycleBoundary(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
   setAnimationRefs(refs: Uint32Array, usedCount: number, intervalMs: number): void;
   setAnimationRefsAtCycleBoundary(refs: Uint32Array, usedCount: number, intervalMs: number): void;
   stopAnimation(view: object): void;
@@ -144,7 +118,6 @@ export interface NativeViewSlotContract {
 export interface NativeScrollPaneContract {
   dispose(): void;
   componentId(): number | null;
-  setContent(view: object): void;
   setContentRef(viewRef: number): void;
   followEnd(): void;
 }
@@ -152,7 +125,7 @@ export interface NativeScrollPaneContract {
 export interface NativeHostEpochs {
   readonly host_id: string | number;
   readonly desired_structural_revision: string | number;
-  readonly visible_structural_revision?: string | number;
+  readonly visible_structural_revision: string | number;
   readonly visible_frame_revision: string | number;
   readonly pending_epoch: string | number;
   readonly committed_epoch: string | number;
@@ -164,7 +137,7 @@ export interface NativeTuiHostContract {
   history(): object;
   viewState(): NativeViewStateContract;
   contentPort(family?: string): NativeContentPortContract;
-  disposeContentResources?(): void;
+  disposeContentResources(): void;
   textInput(multiline?: boolean, border?: object): NativeTextInputContract;
   setTheme(theme: object): void;
   setHistory(history: object): void;
@@ -172,7 +145,6 @@ export interface NativeTuiHostContract {
   bindKey(key: string, modifiers: readonly string[] | undefined, routeId: string): void;
   route(output: NativeTuiOutputContract, routeId: string): void;
   interceptPaste(input: object, routeId: string): void;
-  render(view: object): void;
   dispatchKey(key: string, modifiers?: readonly string[]): void;
   dispatchPaste(text: string): void;
   forwardPaste(text: string): void;
@@ -182,17 +154,17 @@ export interface NativeTuiHostContract {
   waitForOutput(): Promise<{ route_id: string; payload?: string | null } | null>;
   screenRows(): string[];
   nativeHistoryRows(): string[];
-  epochs?(): NativeHostEpochs;
-  setDesiredViewRef?(viewRef: number): {
+  epochs(): NativeHostEpochs;
+  setDesiredViewRef(viewRef: number): {
     readonly host_id: string | number;
     readonly schedule_environment_drain: boolean;
   };
-  clearViewStateBindings?(): void;
-  flushPendingHosts?(budget?: number, forceRetry?: boolean): {
+  clearViewStateBindings(): void;
+  flushPendingHosts(budget?: number, forceRetry?: boolean): {
     readonly rearm: boolean;
+    readonly waiting_for_presentation: boolean;
     readonly attempted: number;
-    readonly committed_hosts: readonly (string | number)[];
-    readonly commits?: readonly {
+    readonly commits: readonly {
       readonly host_id: string | number;
       readonly committed_epoch: string | number;
       readonly visible_structural_revision: string | number;
@@ -210,9 +182,7 @@ export interface NativeTuiHostContract {
   };
   resize(width: number, height: number): void;
   advanceTime(milliseconds: number): void;
-  createViewSlot(initial: object): object;
   createViewSlotRef(viewRef: number): object;
-  scrollPane(initial: object): object;
   scrollPaneRef(viewRef: number): object;
   styleAt(row: number, column: number): object | null;
   cellXOfText(row: number, text: string): number | null;
@@ -254,18 +224,14 @@ export interface NativeTuiAddon {
     generation: number;
     alive: boolean;
   };
-  tuiViewAbiSession?: () => NativeViewAbiHandle;
-  tuiViewAbiDecodeRef?: (view: object) => number;
+  tuiViewAbiSession: () => NativeViewAbiHandle;
+  tuiViewAbiDecodeRef: (view: object) => number;
   tuiViewBridgeEnvironmentCount(): number;
   NativeHistory?: new () => NativeHistoryContract;
   NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
   NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => NativeTuiHostContract;
   NativeTuiOutput?: new () => NativeTuiOutputContract;
   NativeTextSource?: new (kind?: "block" | "stream", options?: object) => NativeTextSourceContract;
-  NativeMarkdownProjector?: new () => NativeProjectorContract;
-  NativePlainProjector?: new () => NativeProjectorContract;
-  NativeViewSlot?: new (initial: object) => NativeViewSlotContract;
-  NativeScrollPane?: new (initial: object) => NativeScrollPaneContract;
 }
 
 // The Node-API and direct loaders resolve this same canonical artifact path.

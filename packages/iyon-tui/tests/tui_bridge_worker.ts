@@ -1,10 +1,10 @@
 import { native } from "../src/transport/native/addon.ts";
+import { viewReleaseMany } from "../src/transport/abi/structural/generated/view_calls.ts";
 import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import { View } from "../src/api/view/view.ts";
 
-const Host = native.NativeTuiHost;
-if (Host === undefined) throw new Error("native TUI host is unavailable");
-const host = new Host(12, 2, true);
-host.render(lowerColdView(View.text("worker")));
-host.dispose();
+const reference = native.tuiViewAbiDecodeRef(lowerColdView(View.text("worker")));
+const session = nativeViewAbiSession();
+viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
 postMessage("decoded");

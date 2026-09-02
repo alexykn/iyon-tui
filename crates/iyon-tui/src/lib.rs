@@ -89,10 +89,6 @@
 //! # let _ = (theme, markdown, renderer);
 //! ```
 //!
-//! A basic History stream uses [`TextStream`] and the lifecycle
-//! `push_stream -> update_stream -> seal_stream`; an open stream must remain
-//! the History tail. History does not know Markdown or other text formats.
-//!
 //! Semantic plain text uses the same shape with [`PlainTextProjector`]. Custom
 //! semantic transformations can be composed through [`ProjectorExt`], while
 //! [`text::TextRewriter::into_projector`] is the
@@ -168,7 +164,7 @@ mod retained_state;
 mod scene;
 mod scroll;
 mod scroll_command;
-/// StreamingSource protocol, snapshots, and provenance-aware stream values.
+/// Source-rooted coordinates shared by semantic content projections.
 pub mod stream;
 mod terminal;
 #[cfg(feature = "test-util")]
@@ -205,9 +201,7 @@ pub use content::text::{
     TextTaskState,
 };
 pub use controls::{TextChange, TextInput};
-pub use history::{
-    FlowBoundary, History, HistoryError, HistoryLayout, HistoryStreamHandle, HistoryUnitId,
-};
+pub use history::{FlowBoundary, History, HistoryError, HistoryLayout, HistoryUnitId};
 pub use interaction::{InteractionResult, Key, KeyStroke, MediaKey, ModifierKey, Modifiers};
 pub use output::{EventCx, Output, OutputRouter, RouteConflict};
 pub use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
@@ -235,10 +229,8 @@ pub use presentation::ir::RetainedPathStep;
 
 #[cfg(feature = "native-host")]
 pub use presentation::ir::WeakView;
-pub use stream::{StreamPane, TextStream};
-
-// Internal modules and unit tests may use the short names without making
-// protocol/compiler machinery part of the external crate-root vocabulary.
+// Internal modules may use the short names without making implementation
+// machinery part of the external crate-root vocabulary.
 #[allow(unused_imports)]
 pub(crate) use content::text::{
     Alignment, Annotations, BlockKind, BreakKind, CodeBlock, FormatId, Image, InlineKind,
@@ -255,12 +247,6 @@ pub(crate) use projection::{
     ProjectionValidationError, SmoothConfigError, Then, ThenError, validate_projection_relation,
     validate_projection_transition,
 };
-#[allow(unused_imports)]
-pub(crate) use stream::{
-    ProjectedText, ProjectedTextBuilder, ProjectedValidationError, StreamError, StreamOffset,
-    StreamRange, StreamRevision, StreamSnapshot, StreamSnapshotBuilder, StreamValidationError,
-    StreamingSource,
-};
 
 /// Small, application-oriented import set.
 pub mod prelude {
@@ -269,7 +255,7 @@ pub mod prelude {
         DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, EventCx,
         History, HistoryLayout, Inline, InlineContent, IntoView, MarkdownProjector, Output,
         PlainTextProjector, Projection, Projector, ProjectorExt, Renderer, Scene, ScrollPane,
-        Smooth, StreamPane, TextContent, TextInput, TextOrigin, TextRenderPolicy, TextRenderer,
-        TextSelector, TextStream, Theme, View,
+        Smooth, TextContent, TextInput, TextOrigin, TextRenderPolicy, TextRenderer, TextSelector,
+        Theme, View,
     };
 }

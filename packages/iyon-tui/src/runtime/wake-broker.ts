@@ -3,7 +3,7 @@ import { RuntimeErrorChannel, type FramePhase, type RuntimeFrameErrorCode, type 
 export interface NativeHostEpochs {
   readonly host_id: string | number;
   readonly desired_structural_revision: string | number;
-  readonly visible_structural_revision?: string | number;
+  readonly visible_structural_revision: string | number;
   readonly visible_frame_revision: string | number;
   readonly pending_epoch: string | number;
   readonly committed_epoch: string | number;
@@ -27,17 +27,16 @@ export interface NativeHostDrainError {
 
 export interface NativeHostDrainReport {
   readonly rearm: boolean;
-  readonly waiting_for_presentation?: boolean;
+  readonly waiting_for_presentation: boolean;
   readonly attempted: number;
-  readonly committed_hosts: readonly (string | number)[];
-  readonly commits?: readonly NativeHostCommit[];
+  readonly commits: readonly NativeHostCommit[];
   readonly errors: readonly NativeHostDrainError[];
   readonly wake_epoch: string | number;
 }
 
 export interface NativeFrameHost {
-  readonly epochs?: () => NativeHostEpochs;
-  readonly flushPendingHosts?: (budget?: number, forceRetry?: boolean) => NativeHostDrainReport;
+  readonly epochs: () => NativeHostEpochs;
+  readonly flushPendingHosts: (budget?: number, forceRetry?: boolean) => NativeHostDrainReport;
 }
 
 export interface RuntimeHostRegistration {
@@ -145,7 +144,7 @@ export class EnvironmentWakeBroker {
     errorChannel: RuntimeErrorChannel,
     onCommitted: (commit?: NativeHostCommit) => void,
   ): RuntimeHostRegistration {
-    const id = hostIdFor(native, this.hosts.size + 1);
+    const id = hostIdFor(native);
     if (this.hosts.has(id)) throw new Error(`duplicate native host identity ${id}`);
     const registration = new RuntimeHostRegistrationImpl(this, id, native);
     this.hosts.set(id, {
@@ -170,10 +169,6 @@ export class EnvironmentWakeBroker {
         this.unregister(entry.registration);
         continue;
       }
-      // Source data wakes the shared native environment queue. A legacy
-      // host without the environment drain surface cannot drive that queue;
-      // prefer a current host when an environment contains both surfaces.
-      if (native.flushPendingHosts === undefined) continue;
       entry.registration.markPending();
       return;
     }
@@ -212,7 +207,7 @@ export class EnvironmentWakeBroker {
     if (!this.hosts.has(registration.id)) return;
     wakeCounters.explicit_barriers += 1;
     this.pending.add(registration.id);
-    const capturedEpoch = readEpochs(registration.native)?.pending;
+    const capturedEpoch = readEpochs(registration.native).pending;
     this.cancelQueuedMicrotask();
     let lastReport = emptyReport();
     for (let attempt = 0; attempt < MAX_EXPLICIT_DRAINS; attempt += 1) {
@@ -225,9 +220,7 @@ export class EnvironmentWakeBroker {
         throw error;
       }
       const epochs = readEpochs(registration.native);
-      if (epochs === undefined
-        || capturedEpoch === undefined
-        || epochs.committed >= capturedEpoch) {
+      if (epochs.committed >= capturedEpoch) {
         this.pending.delete(registration.id);
         this.scheduleRemainingAfterBarrier(report);
         return;
@@ -236,17 +229,15 @@ export class EnvironmentWakeBroker {
     }
     this.scheduleRemainingAfterBarrier(lastReport);
     const epochs = readEpochs(registration.native);
-    const record = epochs === undefined
-      ? fallbackError(registration.id, "unable to read native host epochs")
-      : {
-        hostId: registration.id,
-        attemptedEpoch: epochs.pending,
-        desiredRevision: epochs.desired,
-        phase: "frame" as const,
-        code: "FRAME_PREPARATION_FAILED" as const,
-        retryable: true,
-        diagnostic: "explicit frame barrier did not reach the requested host epoch",
-      };
+    const record = {
+      hostId: registration.id,
+      attemptedEpoch: epochs.pending,
+      desiredRevision: epochs.desired,
+      phase: "frame" as const,
+      code: "FRAME_PREPARATION_FAILED" as const,
+      retryable: true,
+      diagnostic: "explicit frame barrier did not reach the requested host epoch",
+    };
     const entry = this.hosts.get(registration.id);
     entry?.errorChannel.deref()?.accept(record);
     try {
@@ -329,17 +320,9 @@ export class EnvironmentWakeBroker {
         this.unregister(driver);
         return { ...emptyReport(), rearm: this.pending.size > 0 };
       }
-      const flush = native.flushPendingHosts;
-      if (flush === undefined) {
-        // Older addons use the compatibility synchronous host path. There is
-        // no pending native epoch to broker in that mode, so avoid queuing an
-        // unresolvable retry loop.
-        this.pending.delete(driver.id);
-        return { ...emptyReport(), rearm: this.pending.size > 0 };
-      }
       let report: NativeHostDrainReport;
       try {
-        report = flush.call(native, this.budget, forceRetry);
+        report = native.flushPendingHosts(this.budget, forceRetry);
       } catch (error) {
         const record = fallbackError(driver.id, error instanceof Error ? error.message : String(error));
         this.hosts.get(driver.id)?.errorChannel.deref()?.accept(record);
@@ -366,14 +349,8 @@ export class EnvironmentWakeBroker {
       traceWake({ kind: "error", hostId: id, epoch: record.attemptedEpoch, diagnostic: record.diagnostic });
       this.hosts.get(id)?.errorChannel.deref()?.accept(record);
     }
-    const hasRevisionedCommits = report.commits !== undefined && report.commits.length > 0;
-    const commits: readonly {
-      host_id: string | number;
-      revisioned?: NativeHostCommit;
-    }[] = hasRevisionedCommits
-      ? report.commits!.map((revisioned) => ({ host_id: revisioned.host_id, revisioned }))
-      : report.committed_hosts.map((host_id) => ({ host_id }));
-    for (const { host_id, revisioned } of commits) {
+    for (const revisioned of report.commits) {
+      const { host_id } = revisioned;
       const id = String(host_id);
       const entry = this.hosts.get(id);
       if (entry === undefined) continue;
@@ -382,10 +359,7 @@ export class EnvironmentWakeBroker {
         traceWake({ kind: "commit", hostId: id });
         entry.onCommitted(revisioned);
         entry.errorChannel.deref()?.markCommitted(id);
-        const native = entry.registration.nativeOrUndefined();
-        if (native !== undefined && readEpochs(native) === undefined) {
-          this.pending.delete(id);
-        }
+        this.pending.delete(id);
       } catch (error) {
         entry.errorChannel.deref()?.accept(fallbackError(id, error instanceof Error ? error.message : String(error)));
       }
@@ -429,7 +403,7 @@ export class EnvironmentWakeBroker {
         continue;
       }
       const epochs = readEpochs(native);
-      if (epochs !== undefined && epochs.pending === epochs.committed) {
+      if (epochs.pending === epochs.committed) {
         this.pending.delete(id);
       }
     }
@@ -475,9 +449,8 @@ class RuntimeHostRegistrationImpl implements RuntimeHostRegistration {
   dispose(): void { this.broker.unregister(this); }
 }
 
-function hostIdFor(native: NativeFrameHost, fallback: number): string {
-  const epochs = readEpochs(native);
-  return epochs?.hostId.toString() ?? `js-${fallback}`;
+function hostIdFor(native: NativeFrameHost): string {
+  return readEpochs(native).hostId.toString();
 }
 
 function readEpochs(native: NativeFrameHost): {
@@ -486,8 +459,7 @@ function readEpochs(native: NativeFrameHost): {
   readonly visible: bigint;
   readonly pending: bigint;
   readonly committed: bigint;
-} | undefined {
-  if (native.epochs === undefined) return undefined;
+} {
   const value = native.epochs();
   return {
     hostId: toBigInt(value.host_id),
@@ -571,7 +543,6 @@ function emptyReport(): NativeHostDrainReport {
     rearm: false,
     waiting_for_presentation: false,
     attempted: 0,
-    committed_hosts: [],
     commits: [],
     errors: [],
     wake_epoch: "0",

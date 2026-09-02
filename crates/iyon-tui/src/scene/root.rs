@@ -90,19 +90,6 @@ impl Scene {
     pub(crate) fn set_history(&mut self, history: History) {
         self.history = Some(history);
     }
-
-    pub(crate) fn next_stream_wakeup(&self) -> Option<std::time::Instant> {
-        self.history.as_ref().and_then(History::next_stream_wakeup)
-    }
-
-    pub(crate) fn advance_streams(
-        &mut self,
-        now: std::time::Instant,
-    ) -> Result<bool, crate::HistoryError> {
-        self.history
-            .as_mut()
-            .map_or(Ok(false), |history| history.advance_streams(now))
-    }
 }
 
 use crate::{

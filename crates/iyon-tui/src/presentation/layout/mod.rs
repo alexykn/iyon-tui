@@ -52,8 +52,6 @@ use crate::geometry::Size;
 
 use super::paint::{StyleContext, ThemeResolver, ViewPainter};
 
-pub(crate) use super::paint::{CompiledTextRow, row_from_graphemes, row_from_string};
-
 #[cfg(test)]
 use std::cell::Cell;
 

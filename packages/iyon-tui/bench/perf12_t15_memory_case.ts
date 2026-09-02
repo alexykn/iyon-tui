@@ -1,5 +1,4 @@
 import { View } from "../src/index.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
 const direct = transport === "feature_gated_direct_ffi";
@@ -12,11 +11,9 @@ if (!Number.isSafeInteger(operations) || operations <= 0 || !Number.isSafeIntege
 interface NativeCaseModule {
   readonly native: {
     readonly NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => {
-      render(view: object): void;
       screenRows(): string[];
       dispose(): void;
       tuiViewAbiHostPointer?(): number;
-      [key: string]: unknown;
     };
     readonly tuiViewAbiMaintain?: (full?: boolean) => unknown;
     readonly tuiViewRuntimeMemorySnapshot?: (countLive?: boolean) => unknown;
@@ -25,6 +22,7 @@ interface NativeCaseModule {
 
 interface AbiCaseModule {
   nativeViewAbiSession(): unknown;
+  renderColdRef(host: unknown, view: View): void;
   tryNativeMaterialize(view: View): number | undefined;
 }
 
@@ -65,7 +63,7 @@ function render(view: View): void {
     publication.commit();
     return;
   }
-  host.render(lowerColdView(view));
+  abi.renderColdRef(host, view);
   if (!boundary.adopt(view)) throw new Error("memory case failed to adopt root");
 }
 

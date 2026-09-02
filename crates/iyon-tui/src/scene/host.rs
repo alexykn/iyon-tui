@@ -1983,15 +1983,9 @@ mod tests {
     use super::*;
     use crate::{
         BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult,
-        IntoView, Key, KeyStroke, Scene, ScrollPane, StyleSelector, TextSpan, ThemeColor, View,
-        backend::NativeHistorySink,
-        component::ComponentRegistry,
-        geometry::Size,
+        IntoView, Key, KeyStroke, Scene, ScrollPane, StyleSelector, ThemeColor, View,
+        backend::NativeHistorySink, component::ComponentRegistry, geometry::Size,
         physical::PhysicalRow,
-        stream::{
-            StreamOffset, StreamRange, StreamRevision, StreamSnapshot, StreamSnapshotBuilder,
-            StreamingSource,
-        },
     };
 
     #[derive(Debug)]
@@ -2020,32 +2014,6 @@ mod tests {
             if self.calls == 1 {
                 self.changed = true;
             }
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct EmptySealedSource;
-
-    impl StreamingSource for EmptySealedSource {
-        fn snapshot(&self) -> StreamSnapshot {
-            StreamSnapshotBuilder::new(
-                StreamRevision::new(0),
-                StreamOffset::ZERO,
-                StreamOffset::ZERO,
-                StreamOffset::ZERO,
-            )
-            .exact_text(
-                StreamRange::new(StreamOffset::ZERO, StreamOffset::ZERO),
-                [TextSpan::plain("")],
-            )
-            .finish()
-            .unwrap()
-        }
-
-        fn seal(&mut self) {}
-
-        fn is_sealed(&self) -> bool {
-            true
         }
     }
 
@@ -2470,121 +2438,6 @@ mod tests {
     }
 
     #[test]
-    fn history_stream_refresh_paints_only_the_history_branch() {
-        let mut history = crate::History::new();
-        let stream = history
-            .push_stream(BlockableStreamSource::new("old\nstale", 0, false))
-            .unwrap();
-        let body = View::vertical(|column| {
-            for row in 0..100 {
-                column.child(View::text(format!("body-{row}")));
-            }
-        });
-        let mut scene = Scene::with_history(history, body);
-        let mut registry = ComponentRegistry::new();
-        let size = Size::new(20, 120);
-        let mut host = SceneHost::default();
-        let initial = host
-            .resolve_stable::<()>(&scene, &mut registry, size)
-            .unwrap();
-        let _ = host.paint(initial, &Theme::default());
-        host.full_paints = 0;
-
-        scene
-            .history_mut()
-            .unwrap()
-            .update_stream(stream, |source| {
-                source.text = "new\n      ".to_owned();
-                source.revision += 1;
-            })
-            .unwrap();
-        let updated = host
-            .resolve_stable::<()>(&scene, &mut registry, size)
-            .unwrap();
-        let mut cold_host = SceneHost::default();
-        let cold = cold_host
-            .resolve_stable::<()>(&scene, &mut registry, size)
-            .unwrap();
-        let cold_frame = cold_host.paint(cold, &Theme::default());
-
-        #[cfg(feature = "perf-counters")]
-        let _perf_lock = crate::perf::test_lock();
-        #[cfg(feature = "perf-counters")]
-        crate::perf::reset();
-        let frame = host.paint(updated, &Theme::default());
-        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
-        assert_eq!(host.full_paints, 0);
-        assert!(
-            frame
-                .screen_lines()
-                .iter()
-                .any(|line| line.starts_with("new"))
-        );
-        #[cfg(feature = "perf-counters")]
-        {
-            let counters = crate::perf::snapshot();
-            assert!(
-                counters.value(crate::perf::Counter::PaintNodesVisited) < 10,
-                "History refresh should not repaint the clean body: {:?}",
-                counters.value(crate::perf::Counter::PaintNodesVisited)
-            );
-        }
-    }
-
-    #[test]
-    fn stream_refresh_and_animation_tick_repaint_independent_targets() {
-        let mut history = crate::History::new();
-        let stream = history
-            .push_stream(BlockableStreamSource::new("old", 0, false))
-            .unwrap();
-        let mut registry = ComponentRegistry::new();
-        let ticking = registry.register(TickingLeaf { frame: 0 });
-        let mut scene = Scene::with_history(history, View::component(ticking));
-        let size = Size::new(20, 4);
-        let now = Instant::now();
-        let mut host = SceneHost::default();
-        let initial = host
-            .resolve_stable_at::<()>(&scene, &mut registry, size, now)
-            .unwrap();
-        let _ = host.paint(initial, &Theme::default());
-        host.full_paints = 0;
-
-        scene
-            .history_mut()
-            .unwrap()
-            .update_stream(stream, |source| {
-                source.text = "new".to_owned();
-                source.revision += 1;
-            })
-            .unwrap();
-        let tick = host.tick_due(now + std::time::Duration::from_millis(80), &mut registry);
-        assert_eq!(tick.changed_components, vec![ticking.id()]);
-        let updated = host
-            .resolve_stable_at::<()>(
-                &scene,
-                &mut registry,
-                size,
-                now + std::time::Duration::from_millis(80),
-            )
-            .unwrap();
-        let frame = host.paint(updated, &Theme::default());
-
-        assert_eq!(host.full_paints, 0);
-        assert!(
-            frame
-                .screen_lines()
-                .iter()
-                .any(|line| line.starts_with("new"))
-        );
-        assert!(
-            frame
-                .screen_lines()
-                .iter()
-                .any(|line| line.starts_with("tick-1"))
-        );
-    }
-
-    #[test]
     fn routes_scroll_pane_locally_and_preserves_detachment_on_content_update() {
         let content = |count: usize| {
             View::text(
@@ -2887,29 +2740,6 @@ mod tests {
         assert_eq!(frame.surface.get(0, 1).grapheme.as_deref(), Some("r"));
     }
 
-    #[test]
-    fn render_continues_after_zero_row_stream_retirement() {
-        let mut history = crate::History::new();
-        let stream = history.push_stream(EmptySealedSource).unwrap();
-        history.seal_stream(stream).unwrap();
-        history.push("S1\nS2\nS3").unwrap();
-        let mut scene = Scene::with_history(history, "body");
-        let mut registry = ComponentRegistry::new();
-        let mut host = SceneHost::default();
-        let mut sink = TestSink::default();
-
-        host.render(
-            &mut scene,
-            &mut registry,
-            &crate::Theme::default(),
-            &mut sink,
-            |_| Ok(Size::new(10, 3)),
-        )
-        .unwrap();
-
-        assert!(sink.rows.iter().any(|row| row.plain_text() == "S1"));
-    }
-
     struct LiveBlocker;
 
     impl Component for LiveBlocker {
@@ -2918,57 +2748,6 @@ mod tests {
         }
 
         fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>) {}
-    }
-
-    #[derive(Clone)]
-    struct BlockableStreamSource {
-        text: String,
-        stable_through: u64,
-        revision: u64,
-        sealed: bool,
-    }
-
-    impl BlockableStreamSource {
-        fn new(text: &str, stable_through: u64, sealed: bool) -> Self {
-            Self {
-                text: text.to_string(),
-                stable_through,
-                revision: 0,
-                sealed,
-            }
-        }
-
-        fn set_stable_through(&mut self, stable_through: u64) {
-            self.stable_through = stable_through;
-            self.revision += 1;
-        }
-    }
-
-    impl StreamingSource for BlockableStreamSource {
-        fn snapshot(&self) -> StreamSnapshot {
-            let end = self.text.len() as u64;
-            StreamSnapshotBuilder::new(
-                StreamRevision::new(self.revision),
-                StreamOffset::ZERO,
-                StreamOffset::new(self.stable_through.min(end)),
-                StreamOffset::new(end),
-            )
-            .exact_text(
-                StreamRange::new(StreamOffset::ZERO, StreamOffset::new(end)),
-                [TextSpan::plain(self.text.clone())],
-            )
-            .finish()
-            .unwrap()
-        }
-
-        fn seal(&mut self) {
-            self.sealed = true;
-            self.revision += 1;
-        }
-
-        fn is_sealed(&self) -> bool {
-            self.sealed
-        }
     }
 
     #[test]
@@ -3011,74 +2790,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(rendered, ["B1", "B2", "B3", "body"]);
-    }
-
-    #[test]
-    fn blocked_then_stable_stream_preserves_contiguous_flow() {
-        let mut history = crate::History::new();
-        let source = BlockableStreamSource::new("S1\nS2\nS3\nS4\nS5\nS6", 0, false);
-        let stream = history.push_stream(source).unwrap();
-
-        let mut scene = Scene::with_history(history, "body");
-        let mut registry = ComponentRegistry::new();
-        let mut host = SceneHost::default();
-        let mut sink = TestSink::default();
-
-        let frame = host
-            .render(
-                &mut scene,
-                &mut registry,
-                &crate::Theme::default(),
-                &mut sink,
-                |_| Ok(Size::new(10, 4)),
-            )
-            .unwrap();
-
-        let rendered = (0..4)
-            .map(|y| {
-                (0..10)
-                    .map(|x| frame.surface.get(x, y).grapheme.as_deref().unwrap_or(" "))
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(rendered, ["S1", "S2", "S3", "body"]);
-        assert_eq!(sink.rows.len(), 0);
-
-        let full_text = "S1\nS2\nS3\nS4\nS5\nS6";
-        scene
-            .history_mut()
-            .unwrap()
-            .update_stream(stream, |source| {
-                source.set_stable_through(full_text.len() as u64);
-            })
-            .unwrap();
-
-        let frame = host
-            .render(
-                &mut scene,
-                &mut registry,
-                &crate::Theme::default(),
-                &mut sink,
-                |_| Ok(Size::new(10, 4)),
-            )
-            .unwrap();
-
-        let rendered = (0..4)
-            .map(|y| {
-                (0..10)
-                    .map(|x| frame.surface.get(x, y).grapheme.as_deref().unwrap_or(" "))
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(rendered, ["S4", "S5", "S6", "body"]);
-        assert_eq!(sink.rows.len(), 3);
-        assert_eq!(sink.rows[0].plain_text(), "S1");
-        assert_eq!(sink.rows[1].plain_text(), "S2");
-        assert_eq!(sink.rows[2].plain_text(), "S3");
     }
 
     // -----------------------------------------------------------------------
@@ -3250,64 +2961,6 @@ mod tests {
         assert!(
             host.resolve_count >= 2,
             "Expected at least 2 resolves (FollowEnd + NativeFrontier), got {}",
-            host.resolve_count
-        );
-    }
-
-    /// Stable-stream stress: 1000 stable lines, ingested in one chunk.
-    ///
-    /// After a single Host render call, the drain loop must have transferred
-    /// the overflow budget (981 rows) in one pass — not one resolve per row.
-    ///
-    /// Liveness assertion: the stream was either retired entirely (units empty)
-    /// or a large number of physical rows were inserted.
-    ///
-    /// No wall-clock timing assertions.
-    #[test]
-    fn stable_stream_stress_native_pressure_batches_transfer() {
-        // Build a stable sealed stream with 1000 single-char lines ("L\n" × 1000
-        // = 2000 bytes). All content is stable_through = source_end.
-        let line = "L\n";
-        let total_lines: u32 = 1000;
-        let content: String = line.repeat(total_lines as usize);
-        let total_bytes = content.len() as u64;
-
-        let source = BlockableStreamSource::new(&content, total_bytes, true);
-
-        let mut history = crate::History::new();
-        let _handle = history.push_stream(source).unwrap();
-
-        let mut scene = Scene::with_history(history, "body");
-        let mut registry = ComponentRegistry::new();
-        let mut host = SceneHost::default();
-        let mut sink = TestSink::default();
-
-        // Viewport 80 × 20: body "body" is 1 row → history gets 19 rows.
-        // overflow = 1000 - 19 = 981 rows.
-        host.render(
-            &mut scene,
-            &mut registry,
-            &crate::Theme::default(),
-            &mut sink,
-            |_| Ok(Size::new(80, 20)),
-        )
-        .unwrap();
-
-        // Primary liveness: the overflow rows must have been physically inserted.
-        // Content is "L\n" × 1000: the trailing \n produces a final empty row,
-        // giving 1001 rendered rows. History height = 19, overflow = 1001 - 19 = 982.
-        assert_eq!(
-            sink.rows.len(),
-            982,
-            "Expected 982 native rows inserted (1001 lines - 19 history capacity), got {}",
-            sink.rows.len()
-        );
-
-        // Resolve count must be small (not O(N) = not O(1000)).
-        // Expect: 1 initial FollowEnd, 1 after drain, ≤ 1 more for layout.
-        assert!(
-            host.resolve_count <= 5,
-            "resolve_count {} should be small (not O(N units))",
             host.resolve_count
         );
     }

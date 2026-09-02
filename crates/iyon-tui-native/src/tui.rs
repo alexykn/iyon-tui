@@ -6,18 +6,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use iyon_tui::projection::ProjectionBuilder;
-use iyon_tui::stream::{StreamOffset, StreamRange};
 use iyon_tui::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
-use iyon_tui::text::{TextRun, TextVisitor};
 use iyon_tui::{
     BorderEdges, BorderGlyphs, BorderSpec, ContentDelivery, ContentFamily, GridCellSpec, GridTrack,
-    History, HistoryUnitId, HorizontalAlign, HostCellStyle, HostContentConnector,
-    HostContentFunnel, HostContentPort, HostContentSource, HostHistory, HostScrollPane,
-    HostTextInput, HostViewSlot, Insets, IntoView, Key, KeyStroke, MarkdownOptions,
-    MarkdownProjector, Modifiers, Output, Projector, Renderer, SmoothConfig, StyleRef, StyleSpec,
-    TextContent, TextFunnelKind, TextInput, TextPart, TextRole, TextSelector, TextSourceKind,
-    TextSpan, TextWrapMode, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
+    History, HorizontalAlign, HostCellStyle, HostContentConnector, HostContentFunnel,
+    HostContentPort, HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot,
+    IntoView, Key, KeyStroke, Modifiers, Output, Renderer, SmoothConfig, StyleRef, StyleSpec,
+    TextFunnelKind, TextInput, TextPart, TextRole, TextSelector, TextSourceKind, TextSpan,
+    TextWrapMode, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -293,11 +289,6 @@ fn resolve_native_view(runtime: usize, view_ref: i64) -> Result<View> {
 pub struct NativeHistory {
     state: Mutex<History>,
     host: Option<HostHistory>,
-    /// Detached histories defer Source-backed content units until the History
-    /// is transferred to a host. No legacy stream store is created.
-    pending_content_streams:
-        Mutex<Vec<(HostContentSource, HostContentFunnel, Insets, HistoryUnitId)>>,
-    attached_content_sources: Mutex<Vec<HostContentSource>>,
     alive: AtomicBool,
     view_runtime: usize,
 }
@@ -309,8 +300,6 @@ impl NativeHistory {
         Ok(Self {
             state: Mutex::new(History::new()),
             host: None,
-            pending_content_streams: Mutex::new(Vec::new()),
-            attached_content_sources: Mutex::new(Vec::new()),
             alive: AtomicBool::new(true),
             view_runtime: view_abi::runtime_ptr_for_env(&env)? as usize,
         })
@@ -320,24 +309,6 @@ impl NativeHistory {
     pub fn dispose(&self) -> Result<()> {
         if !self.alive.swap(false, Ordering::AcqRel) {
             return Ok(());
-        }
-        let _pending = self
-            .pending_content_streams
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
-            .drain(..)
-            .collect::<Vec<_>>();
-        let attached = self
-            .attached_content_sources
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history attached stream lock is poisoned"))?
-            .drain(..)
-            .collect::<Vec<_>>();
-        if let Some(host) = &self.host {
-            for source in attached {
-                host.detach_content_source(&source)
-                    .map_err(|error| crate::NativeError::content(error.to_string()))?;
-            }
         }
         Ok(())
     }
@@ -401,12 +372,6 @@ impl NativeHistory {
         Ok(())
     }
 
-    #[napi]
-    pub fn push(&self, view: Object) -> Result<i64> {
-        ensure_alive(&self.alive)?;
-        self.push_view(decode_view(&view)?)
-    }
-
     #[napi(js_name = "pushRef")]
     pub fn push_ref(&self, view_ref: i64) -> Result<i64> {
         ensure_alive(&self.alive)?;
@@ -426,12 +391,6 @@ impl NativeHistory {
             .push(view)
             .map(|unit| unit.value() as i64)
             .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn freeze(&self, unit: i64, view: Object) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.freeze_view(unit, decode_view(&view)?)
     }
 
     #[napi(js_name = "freezeRef")]
@@ -472,95 +431,9 @@ impl NativeHistory {
         Self {
             state: Mutex::new(History::new()),
             host: Some(host),
-            pending_content_streams: Mutex::new(Vec::new()),
-            attached_content_sources: Mutex::new(Vec::new()),
             alive: AtomicBool::new(true),
             view_runtime,
         }
-    }
-
-    #[napi(js_name = "pushStream")]
-    pub fn push_stream(
-        &self,
-        stream: &NativeTextSource,
-        projector: String,
-        wrap: String,
-        smooth: bool,
-        tick_interval_ms: u32,
-        spring: f64,
-        min_units_per_second: f64,
-        max_units_per_second: f64,
-        top: u16,
-        right: u16,
-        bottom: u16,
-        left: u16,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        ensure_alive(&stream.alive)?;
-        let (funnel, insets) = parse_text_stream_control(
-            &projector,
-            &wrap,
-            smooth,
-            u64::from(tick_interval_ms),
-            spring,
-            min_units_per_second,
-            max_units_per_second,
-            top,
-            right,
-            bottom,
-            left,
-        )?;
-        if let Some(host) = &self.host {
-            host.push_content_stream(&stream.source, funnel, insets)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-            self.attached_content_sources
-                .lock()
-                .map_err(|_| {
-                    crate::NativeError::internal("history attached stream lock is poisoned")
-                })?
-                .push(stream.source.clone());
-            return Ok(());
-        }
-        let unit = self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?
-            .push(iyon_tui::View::spacer(0))
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        self.pending_content_streams
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
-            .push((stream.source.clone(), funnel, insets, unit));
-        Ok(())
-    }
-
-    #[napi(js_name = "sealStream")]
-    pub fn seal_stream(&self, stream: &NativeTextSource) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            return host
-                .seal_content_stream(&stream.source)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
-        }
-        let attached = self
-            .pending_content_streams
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
-            .iter()
-            .any(|(source, _, _, _)| {
-                source.id() == stream.source.id()
-                    && source.generation() == stream.source.generation()
-            });
-        if !attached {
-            return Err(crate::NativeError::invalid_input(
-                "stream is not attached to this History",
-            ));
-        }
-        stream
-            .source
-            .seal()
-            .map(|_| ())
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
     }
 }
 
@@ -851,7 +724,6 @@ impl NativeTuiHost {
             "rearm": report.rearm,
             "waiting_for_presentation": report.waiting_for_presentation,
             "attempted": report.attempted,
-            "committed_hosts": report.committed_hosts.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "commits": commits,
             "errors": errors,
             "wake_epoch": report.wake_epoch.to_string(),
@@ -919,26 +791,7 @@ impl NativeTuiHost {
         self.host
             .set_history(detached)
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        let pending = history
-            .pending_content_streams
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
-            .drain(..)
-            .collect::<Vec<_>>();
         history.host = Some(self.host.history());
-        for (source, funnel, insets, unit) in pending {
-            self.host
-                .history()
-                .replace_content_stream(unit.value(), &source, funnel, insets)
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-            history
-                .attached_content_sources
-                .lock()
-                .map_err(|_| {
-                    crate::NativeError::internal("history attached stream lock is poisoned")
-                })?
-                .push(source);
-        }
         Ok(())
     }
 
@@ -1023,17 +876,6 @@ impl NativeTuiHost {
         Ok(NativeTextInput::from_host(input))
     }
 
-    #[napi(js_name = "createViewSlot")]
-    pub fn create_view_slot(&self, initial: Object) -> Result<NativeViewSlot> {
-        ensure_alive(&self.alive)?;
-        let initial = decode_view(&initial)?;
-        let slot = self
-            .host
-            .create_view_slot(initial)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(NativeViewSlot::from_host(slot, self.view_runtime))
-    }
-
     #[napi(js_name = "createViewSlotRef")]
     pub fn create_view_slot_ref(&self, view_ref: i64) -> Result<NativeViewSlot> {
         ensure_alive(&self.alive)?;
@@ -1042,17 +884,6 @@ impl NativeTuiHost {
             .create_view_slot(resolve_native_view(self.view_runtime, view_ref)?)
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
         Ok(NativeViewSlot::from_host(slot, self.view_runtime))
-    }
-
-    #[napi(js_name = "scrollPane")]
-    pub fn scroll_pane(&self, initial: Object) -> Result<NativeScrollPane> {
-        ensure_alive(&self.alive)?;
-        let initial = decode_view(&initial)?;
-        let pane = self
-            .host
-            .create_scroll_pane(initial)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(NativeScrollPane::from_host(pane, self.view_runtime))
     }
 
     #[napi(js_name = "scrollPaneRef")]
@@ -1096,14 +927,6 @@ impl NativeTuiHost {
         self.host
             .intercept_paste(host_input, route_id)
             .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn render(&self, view: Object) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.host
-            .render(decode_view(&view)?)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     #[napi(js_name = "dispatchKey")]
@@ -1305,16 +1128,6 @@ impl NativeTextSource {
             return Ok(());
         }
         self.source.dispose().map_err(crate::NativeError::content)?;
-        self.alive.store(false, Ordering::Release);
-        Ok(())
-    }
-
-    #[napi(js_name = "requestDisposeWhenUnused")]
-    pub fn request_dispose_when_unused(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.source
-            .request_dispose_when_unused()
-            .map_err(crate::NativeError::content)?;
         self.alive.store(false, Ordering::Release);
         Ok(())
     }
@@ -1731,144 +1544,6 @@ fn parse_text_funnel_control(
     Ok(HostContentFunnel::new(kind, wrap, hyperlinks, delivery))
 }
 
-fn parse_text_stream_control(
-    projector: &str,
-    wrap: &str,
-    smooth: bool,
-    tick_interval_ms: u64,
-    spring: f64,
-    minimum: f64,
-    maximum: f64,
-    top: u16,
-    right: u16,
-    bottom: u16,
-    left: u16,
-) -> Result<(HostContentFunnel, Insets)> {
-    Ok((
-        parse_text_funnel_control(
-            projector,
-            wrap,
-            true,
-            smooth,
-            tick_interval_ms,
-            spring,
-            minimum,
-            maximum,
-        )?,
-        Insets::new(top, right, bottom, left),
-    ))
-}
-
-#[napi]
-pub struct NativeMarkdownProjector {
-    projector: Mutex<MarkdownProjector>,
-    alive: AtomicBool,
-}
-
-#[napi]
-pub struct NativePlainProjector {
-    alive: AtomicBool,
-}
-
-#[napi]
-impl NativePlainProjector {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self {
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    #[napi]
-    pub fn dispose(&self) {
-        self.alive.store(false, Ordering::Release);
-    }
-
-    #[napi]
-    pub fn project(&self, text: String) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        let length = text.len() as u64;
-        Ok(serde_json::json!({
-            "spans": [{"sourceStart": 0, "sourceEnd": length, "text": text}],
-        }))
-    }
-}
-
-#[napi]
-impl NativeMarkdownProjector {
-    #[napi(constructor)]
-    pub fn new() -> Self {
-        Self {
-            projector: Mutex::new(MarkdownProjector::new(MarkdownOptions::commonmark())),
-            alive: AtomicBool::new(true),
-        }
-    }
-
-    #[napi]
-    pub fn dispose(&self) {
-        self.alive.store(false, Ordering::Release);
-    }
-
-    #[napi]
-    pub fn project(&self, text: String, sealed: Option<bool>) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        let sealed = sealed.unwrap_or(true);
-        let end = StreamOffset::new(text.len() as u64);
-        let input = ProjectionBuilder::new(
-            StreamOffset::ZERO,
-            if sealed { end } else { StreamOffset::ZERO },
-            end,
-            sealed,
-        )
-        .emit(
-            StreamRange::new(StreamOffset::ZERO, end),
-            TextContent::raw(text),
-        )
-        .finish()
-        .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        let projection = self
-            .projector
-            .lock()
-            .map_err(|_| crate::NativeError::internal("markdown projector lock is poisoned"))?
-            .project(&input)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        let spans = projection
-            .spans()
-            .iter()
-            .map(|span| {
-                let mut output = String::new();
-                for value in span.values() {
-                    let mut visitor = PlainTextVisitor {
-                        output: String::new(),
-                    };
-                    visitor.visit_content(value);
-                    output.push_str(&visitor.output);
-                }
-                serde_json::json!({
-                    "sourceStart": span.source().start().as_u64(),
-                    "sourceEnd": span.source().end().as_u64(),
-                    "text": output,
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(serde_json::json!({"spans": spans}))
-    }
-}
-
-struct PlainTextVisitor {
-    output: String,
-}
-
-impl TextVisitor for PlainTextVisitor {
-    fn visit_raw(&mut self, raw: &iyon_tui::RawText) {
-        self.output.push_str(raw.text());
-    }
-
-    fn visit_text_run(&mut self, run: &TextRun) {
-        self.output.push_str(run.text());
-    }
-}
-
 #[napi]
 pub struct NativeViewSlot {
     slot: HostViewSlot,
@@ -1885,15 +1560,6 @@ pub struct NativeScrollPane {
 
 #[napi]
 impl NativeScrollPane {
-    #[napi(constructor)]
-    pub fn new(env: Env, initial: Object) -> Result<Self> {
-        Ok(Self {
-            pane: HostScrollPane::new(decode_view(&initial)?),
-            alive: AtomicBool::new(true),
-            view_runtime: view_abi::runtime_ptr_for_env(&env)? as usize,
-        })
-    }
-
     #[napi]
     pub fn dispose(&self) {
         // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
@@ -1909,12 +1575,6 @@ impl NativeScrollPane {
     pub fn component_id(&self) -> Result<Option<i64>> {
         ensure_alive(&self.alive)?;
         Ok(self.pane.component_id().map(|id| id as i64))
-    }
-
-    #[napi(js_name = "setContent")]
-    pub fn set_content(&self, view: Object) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_content_view(decode_view(&view)?)
     }
 
     #[napi(js_name = "setContentRef")]
@@ -1948,15 +1608,6 @@ impl NativeScrollPane {
 
 #[napi]
 impl NativeViewSlot {
-    #[napi(constructor)]
-    pub fn new(env: Env, initial: Object) -> Result<Self> {
-        Ok(Self {
-            slot: HostViewSlot::new(decode_view(&initial)?),
-            alive: AtomicBool::new(true),
-            view_runtime: view_abi::runtime_ptr_for_env(&env)? as usize,
-        })
-    }
-
     #[napi]
     pub fn dispose(&self) {
         // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
@@ -1980,12 +1631,6 @@ impl NativeViewSlot {
         Ok(self.slot.component_id().map(|id| id as i64))
     }
 
-    #[napi(js_name = "setView")]
-    pub fn set_view(&self, view: Object) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_view_value(decode_view(&view)?)
-    }
-
     #[napi(js_name = "setViewRef")]
     pub fn set_view_ref(&self, view_ref: i64) -> Result<()> {
         ensure_alive(&self.alive)?;
@@ -1996,34 +1641,6 @@ impl NativeViewSlot {
         self.slot
             .set_view(view)
             .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "setAnimation")]
-    pub fn set_animation(&self, frames: Vec<Object>, interval_ms: i64) -> Result<()> {
-        self.set_animation_with_mode(
-            frames
-                .into_iter()
-                .map(|frame| decode_view(&frame))
-                .collect::<Result<Vec<_>>>()?,
-            interval_ms,
-            false,
-        )
-    }
-
-    #[napi(js_name = "setAnimationAtCycleBoundary")]
-    pub fn set_animation_at_cycle_boundary(
-        &self,
-        frames: Vec<Object>,
-        interval_ms: i64,
-    ) -> Result<()> {
-        self.set_animation_with_mode(
-            frames
-                .into_iter()
-                .map(|frame| decode_view(&frame))
-                .collect::<Result<Vec<_>>>()?,
-            interval_ms,
-            true,
-        )
     }
 
     #[napi(js_name = "setAnimationRefs")]
@@ -2196,12 +1813,6 @@ impl NativeViewSlot {
             self.slot.set_animation(frames, interval)
         };
         result.map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "stopAnimation")]
-    pub fn stop_animation(&self, view: Object) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.stop_animation_view(decode_view(&view)?)
     }
 
     #[napi(js_name = "stopAnimationRef")]
@@ -2481,7 +2092,6 @@ impl ViewDecoder {
             )?)
             .map_err(crate::NativeError::invalid_input)?),
             VIEW_KIND_DECORATED => {
-                tui_perf_inc!(LegacyDecoratedCompatibilityFrames);
                 tui_perf_inc!(DecoratedNormalizedNodes);
                 let child = self.decode(required_prop::<Object>(value, "child")?)?;
                 decode_decoration(child, &required_prop::<Object>(value, "decoration")?)

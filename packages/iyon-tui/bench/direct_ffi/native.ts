@@ -16,7 +16,6 @@ export interface NativeViewAbiBootstrap {
 
 export interface DirectNativeTuiHost {
   tuiViewAbiHostPointer(): Pointer;
-  render(view: object): void;
   screenRows(): string[];
   dispose(): void;
 }

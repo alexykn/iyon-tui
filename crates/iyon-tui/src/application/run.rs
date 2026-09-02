@@ -391,6 +391,5 @@ fn map_kernel_error<Error>(error: KernelError<Error>) -> RunError<Error> {
     match error {
         KernelError::Application(error) => RunError::Application(error),
         KernelError::Output(error) => RunError::Runtime(runtime_error(error)),
-        KernelError::Stream(error) => RunError::Runtime(runtime_error(error)),
     }
 }

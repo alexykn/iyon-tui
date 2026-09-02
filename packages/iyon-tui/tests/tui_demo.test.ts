@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { runTuiDemo } from "./fixtures/tui_demo.ts";
 
 describe("T5 TS-only TUI framework demo", () => {
-  test("runs composer, history, stream, focus, and Scene through public APIs", async () => {
+  test("runs composer, content, focus, and Scene through public APIs", async () => {
     const result = await runTuiDemo();
     expect(result.input).toBe("compose");
     expect(result.stream).toBe("streaming text");

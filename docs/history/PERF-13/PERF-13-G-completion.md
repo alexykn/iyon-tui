@@ -20,13 +20,14 @@ Status: complete for the available framework and consumer fixtures.
 - Passed the host Theme into content projection. Theme/StyleRef changes
   invalidate content presentation without structural publication or stale
   cached paint.
-- Migrated native TypeScript `TextStream` storage and mutation to
-  `TextStreamSource` plus the direct Source data ABI. `TextStream.update()` is
-  a pure Source.replace adapter. History control uses typed scalar Funnel and
-  delivery arguments; there is no compatibility Funnel JSON descriptor.
-- Removed the native `NativeTextStream` and host `HostTextStream` production
-  route. History-backed content is a ContentHost occurrence using the same
-  Port/Connector provider as body content.
+- Migrated native TypeScript streaming storage and mutation to
+  `TextStreamSource` plus the direct Source data ABI. History control uses
+  typed scalar Funnel and delivery arguments; there is no compatibility Funnel
+  JSON descriptor.
+- Removed the native `NativeTextStream`/`HostTextStream` production route.
+  History-backed content is a ContentHost occurrence using the same
+  Port/Connector provider as body content; PERF-13-H removes the former stream
+  compatibility surface entirely.
 - Integrated History content measurement, follow-end selection, stable-prefix
   native row transfer for open plain streams, sealed-content transfer for all
   modes, and Connector teardown. Content transfer preserves ContentHost

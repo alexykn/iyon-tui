@@ -13,14 +13,10 @@ import {
   NATIVE_PATH_VIEW_KIND,
   nativePathChildLineage,
 } from "../src/transport/structural/retained-path.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
-type HostContract = {
-  render(view: object): void;
-  screenRows(): string[];
-  tuiViewAbiHostPointer(): number;
-  dispose(): void;
-};
+type HostContract = NativeTuiHostContract;
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => HostContract) | undefined;
 
@@ -42,7 +38,7 @@ describe("PERF-11.6 native edit transactions", () => {
       column.child(changedRight);
     });
     try {
-      host.render(lowerColdView(base));
+      renderCold(host, base);
       const baseRef = nativeViewRefForNodeId(base);
       if (baseRef === undefined) return;
       const leftLineage = nativePathChildLineage(base, undefined, {
@@ -60,7 +56,7 @@ describe("PERF-11.6 native edit transactions", () => {
         { lineage: rightLineage, nodeIds: [viewNodeId(changedRight), viewNodeId(changed)], wrap: 2, align: 2 },
       ]);
       expect(result).toBeGreaterThan(0);
-      oracle.render(lowerColdView(changed));
+      renderCold(oracle, changed);
       expect(host.screenRows()).toEqual(oracle.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {

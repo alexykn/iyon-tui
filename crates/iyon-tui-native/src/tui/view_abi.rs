@@ -3344,7 +3344,7 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 /// decorated node and applies the property-only decoration in exactly the
 /// Direct decoder's order (padding, background, foreground, border, style,
 /// style states, width, height, min/max). The result is a canonical base View;
-/// no extra physical occurrence is retained for the compatibility wrapper.
+/// no extra physical occurrence is retained for the decoration record.
 /// Colors arrive as style atoms; custom border glyphs are not expressible on
 /// this lane.
 fn parse_and_build_decorated(
@@ -3508,8 +3508,6 @@ pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
         Err(FAST_CACHE_MISS) => {}
         Err(error) => return record_result(runtime, error),
     }
-    #[cfg(feature = "perf-counters")]
-    iyon_tui::perf::inc(iyon_tui::perf::Counter::LegacyDecoratedCompatibilityFrames);
     #[cfg(feature = "perf-counters")]
     iyon_tui::perf::inc(iyon_tui::perf::Counter::DecoratedNormalizedNodes);
     let word_slice = if used_word_count == 0 {

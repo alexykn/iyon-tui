@@ -6,8 +6,7 @@
  * numeric tags, and native packing). H3-A gives semantic View construction a
  * copied, frozen representation independent of that bridge. Retained
  * structural transport now consumes these semantic styles directly; structural
- * style-lowering remains for public/native boundary and cold compatibility
- * paths.
+ * style-lowering remains only at the canonical native boundary.
  */
 
 import type { OverflowIndicator } from "../view/view.ts";

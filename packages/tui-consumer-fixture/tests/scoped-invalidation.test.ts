@@ -8,12 +8,10 @@
  *   - a state write executes exactly the reading scope (§31.1 gate);
  *   - keyed reorder preserves identity AND skips bodies;
  *   - direct/builder ownership transitions never ghost;
- *   - 10k stream appends cause zero scope executions (isolation gate
- *     §32.2.6).
  */
 
 import { describe, expect, test } from "bun:test";
-import { defineView, Scene, state, TextStream, View } from "@iyon/tui";
+import { defineView, Scene, state, View } from "@iyon/tui";
 import { AppHarness } from "@iyon/tui/testing";
 import {
   buildScopedConsumer,
@@ -192,46 +190,4 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
     }
   });
 
-  test("isolation gate: 10k stream appends ⇒ zero scope executions", async () => {
-    const session = await openConsumerSession();
-    try {
-      const consumer = buildScopedConsumer(session.tui);
-      consumer.renderApp();
-      await drain();
-      const baselineHeader = consumer.headerExecutions();
-      const baselineA = consumer.cardExecutions("a");
-
-      const stream = new TextStream();
-      const history = session.history;
-      const before = stream.snapshot();
-      history.pushStream(stream);
-
-      for (let index = 0; index < 10_000; index += 1) {
-        stream.append(`line ${index}\n`);
-      }
-      await drain();
-
-      // Zero scope executions: no body ran because of stream appends.
-      expect(consumer.headerExecutions()).toBe(baselineHeader);
-      expect(consumer.cardExecutions("a")).toBe(baselineA);
-      expect(consumer.cardExecutions("b")).toBe(1);
-      const after = stream.snapshot();
-      expect(after.revision).toBeGreaterThan(before.revision);
-      expect(after.sealed).toBe(false);
-      // Promotion may compact the stream's resident source text; the native
-      // History plus visible tail are the authoritative retained content.
-      const observedRows = [...session.tui.nativeHistoryRows(), ...session.tui.screenRows()]
-        .map((row) => row.trim())
-        .filter((row) => /^line \d+$/u.test(row));
-      expect(observedRows).toEqual(
-        Array.from({ length: 10_000 }, (_, index) => `line ${index}`),
-      );
-
-      stream.seal();
-      history.sealStream(stream);
-      expect(stream.snapshot().sealed).toBe(true);
-    } finally {
-      session.close();
-    }
-  });
 });

@@ -14,11 +14,11 @@ Source snapshot
     -> ContentHost layout/paint
 ```
 
-The production path has no compatibility Funnel JSON descriptor and no native
-`TextStream` renderer. `TextStream` is retained only as a typed compatibility
-facade whose `update`, `append`, and `seal` operations terminate in the
-Source direct-data ABI. Its History attachment sends scalar control values
-(projector, delivery, pacing, and insets) through the control ABI.
+The production path had no compatibility Funnel JSON descriptor and no native
+`TextStream` renderer. PERF-13-H removes the former `TextStream` facade and its
+History attachment; all production streaming uses `TextStreamSource`, an
+immutable `TextFunnel`, and explicit ContentPort/Connector control. Source
+payloads still cross only through the direct data ABI.
 
 ## Content features
 

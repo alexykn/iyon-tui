@@ -1,9 +1,9 @@
 //! Optional ordered semantic history capability.
 //!
 //! History is deliberately independent from ordinary View-based applications.
-//! It owns ordered semantic lifetime, semantic layout, and the private native
-//! durability frontier for callers that explicitly use native history. It does
-//! not own terminal/backend implementation details or terminal writes.
+//! It owns ordered semantic lifetime and layout, while the native durability
+//! frontier consumes committed static/ContentHost rows. It does not own
+//! terminal/backend implementation details or terminal writes.
 
 mod boundary;
 mod error;
@@ -12,12 +12,8 @@ mod layout;
 mod model;
 mod native;
 mod projection;
-mod stream;
 pub(crate) mod trace;
 mod unit;
-
-#[cfg(test)]
-mod tests;
 
 pub use boundary::FlowBoundary;
 pub use error::HistoryError;
@@ -26,10 +22,8 @@ pub use layout::HistoryLayout;
 pub use model::History;
 #[cfg(test)]
 pub(crate) use native::transfer_native_prefix;
-#[allow(unused_imports)]
 pub(crate) use native::{
-    NativeTransferError, NativeTransferStatus, transfer_native_prefix_with_theme,
-    transfer_native_prefix_with_theme_and_content,
+    NativeTransferError, NativeTransferStatus, transfer_native_prefix_with_theme_and_content,
 };
 #[allow(unused_imports)]
 pub(crate) use projection::{
@@ -37,8 +31,4 @@ pub(crate) use projection::{
     project_into_session_for_host_with_content,
 };
 
-#[cfg(test)]
-pub(crate) use projection::project_with_anchor;
-pub(crate) use stream::ErasedHistoryStream;
-pub use stream::HistoryStreamHandle;
 pub(crate) use unit::{HistoryUnit, HistoryUnitContent};

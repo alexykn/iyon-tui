@@ -53,11 +53,8 @@ export type { OutputEvent, TerminateEvent, TuiEvent } from "./runtime/events.ts"
 export type { Projector } from "./api/extensions/traits/projector.ts";
 export type { RenderContext, Renderer } from "./api/extensions/traits/renderer.ts";
 export type { SceneProducer } from "./api/view/scene.ts";
-export type { StreamAnnotation, StreamSegmentSnapshot, StreamSnapshot } from "./api/content/stream-snapshot.ts";
-export type { TextPart, TextRole, TextSelectorValue, TextSpanValue } from "./api/content/text.ts";
+export type { TextAnnotation, TextPart, TextRole, TextSelectorValue, TextSpanValue } from "./api/content/text.ts";
 export type { TextInputOptions } from "./api/controls/text-input.ts";
-export type { TextStreamOptions, TextStreamPacing, TextStreamPresentation } from "./api/controls/text-stream.ts";
-export type { StreamingSource } from "./api/extensions/traits/streaming-source.ts";
 export type { TextRewriter } from "./api/extensions/traits/text-rewriter.ts";
 export type { TextVisitor } from "./api/extensions/traits/text-visitor.ts";
 export type { TerminalMetadata, TuiOpenOptions, TuiRuntime } from "./runtime/runtime.ts";
@@ -114,7 +111,6 @@ export {
 export { TextSelector, TextSpan } from "./api/content/text.ts";
 export { History } from "./api/controls/history.ts";
 export { TextInput } from "./api/controls/text-input.ts";
-export { TextStream } from "./api/controls/text-stream.ts";
 export { TextContent, RawText } from "./api/content/text-content.ts";
 export {
   ContentConnector,
@@ -132,6 +128,5 @@ export type { ProjectionSpan } from "./api/content/projection.ts";
 export type { SemanticTag, SemanticTextStyle, SemanticValue } from "./api/content/annotations.ts";
 export { TEXT_SOURCE_ANNOTATION_SCHEMA } from "./api/content/annotations.ts";
 export type { TextFormat, TextOrigin } from "./api/content/text-content.ts";
-export { PlainTextProjector, MarkdownProjector } from "./api/content/projectors.ts";
 export { Scene } from "./api/view/scene.ts";
 export { Tui } from "./runtime/runtime.ts";

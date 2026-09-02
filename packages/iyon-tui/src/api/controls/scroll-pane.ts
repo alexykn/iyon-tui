@@ -14,7 +14,6 @@ import {
 } from "../../composition/execution.ts";
 import { activeExecutionScope, protocolState } from "../../composition/execution-context.ts";
 import { composeComponent } from "../../composition/compose.ts";
-import { lowerColdView } from "../../transport/structural/cold-lowering.ts";
 import { View } from "../view/view.ts";
 import type { NativeTuiHostContract } from "../../transport/native/addon.ts";
 import {
@@ -37,7 +36,6 @@ const SCROLL_PANE_NATIVE_TOKEN = Symbol("scroll-pane-native-construction");
 type NativeScrollPaneHandle = {
   dispose(): void;
   componentId(): number | null;
-  setContent(view: object): void;
   setContentRef(viewRef: number): void;
   followEnd(): void;
 };
@@ -51,14 +49,14 @@ function buildPaneHandle(
   if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
   const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
-  if (retained !== undefined) {
-    try {
-      return host.scrollPaneRef(retained);
-    } finally {
-      releaseNativeViewRef(nativeViewAbiSession(), retained);
-    }
+  if (retained === undefined) {
+    throw new Error("TUI_SCROLL_PANE_INITIALIZATION_FAILED: structural content could not be materialized");
   }
-  return host.scrollPane(lowerColdView(seed));
+  try {
+    return host.scrollPaneRef(retained);
+  } finally {
+    releaseNativeViewRef(nativeViewAbiSession(), retained);
+  }
 }
 
 /**
@@ -94,17 +92,15 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
     this.attachmentContext = runtimeAttachments;
     this.#retainedRuntime = executionRuntime;
     const session = nativeViewAbiSession();
-    if (session !== undefined && initialView !== undefined) {
-      this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
-        if (this.disposed) return false;
-        // Native failures must remain visible to the retained transaction;
-        // returning false here would silently turn a broken pane into a
-        // fallback/refusal and hide the original error.
-        this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
-        return true;
-      });
-      this.boundary.adopt(initialView);
-    }
+    const seed = initialView ?? View.spacer(0);
+    this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
+      if (this.disposed) return false;
+      // Native failures must remain visible to the retained transaction;
+      // returning false here would hide a broken pane installation.
+      this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
+      return true;
+    });
+    this.boundary.adopt(seed);
     if (initialView !== undefined) {
       const attachments = prepareAttachmentsForView(initialView, this.attachmentContext);
       this.attachmentBindings.commitDesired(attachments);
@@ -152,31 +148,11 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
   private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
     const attachments = prepareAttachmentsForView(output, this.attachmentContext);
-    if (this.boundary === undefined) {
-      // Older addons may not expose the retained ABI. Keep builder ownership
-      // valid through a transactional native semantic publication.
-      return {
-        commit: (): void => {
-          try {
-            this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(output));
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentView = output;
-          } catch (error) {
-            attachments.abort();
-            throw error;
-          }
-        },
-        abort(): void {
-          attachments.abort();
-        },
-      };
-    }
     // Retained preparation may refuse on a bounded/unsupported path; use the
-    // complete cold materializer transactionally before giving up.
+    // complete cold materializer transactionally before reporting failure.
     let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
     try {
-      publication = this.boundary.prepareInstall(output) ?? this.boundary.prepareColdInstall(output);
+      publication = this.boundary!.prepareInstall(output) ?? this.boundary!.prepareColdInstall(output);
     } catch (error) {
       attachments.abort();
       throw error;
@@ -219,32 +195,15 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
       const attachments = prepareAttachmentsForView(view, this.attachmentContext);
       try {
         // PERF-12 T13 retained path (§80): previous content stays leased until
-        // the replacement is fully materialized and committed.
-        if (this.boundary !== undefined) {
-          if (this.boundary.install(view) !== undefined) {
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentView = view;
-            return;
-          }
+        // the replacement is fully materialized and committed. Capacity misses
+        // use the canonical cold materialization transaction; there is no
+        // parallel native-view mutation route.
+        const publication = this.boundary!.prepareInstall(view)
+          ?? this.boundary!.prepareColdInstall(view);
+        if (publication === undefined) {
+          throw new Error("TUI_SCROLL_PANE_UPDATE_FAILED: structural content could not be materialized");
         }
-        const ref = tryNativeMaterialize(view);
-        if (ref !== undefined) {
-          try {
-            this.nativeAs<NativeScrollPaneHandle>().setContentRef(ref);
-            // The direct decoder returns a temporary lease, while the pane
-            // owns the installed content. Keep the boundary's root lease in
-            // sync before releasing that temporary lease.
-            this.boundary?.adopt(view);
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentView = view;
-            return;
-          } finally {
-            releaseNativeViewRef(nativeViewAbiSession(), ref);
-          }
-        }
-        this.nativeAs<NativeScrollPaneHandle>().setContent(lowerColdView(view));
+        publication.commit();
         this.attachmentBindings.commitDesired(attachments);
         this.attachmentBindings.commitVisible();
         this.currentView = view;

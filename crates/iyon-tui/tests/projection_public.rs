@@ -193,23 +193,3 @@ fn smooth_has_deterministic_deadlines_and_sealed_identity() {
     assert_eq!(smooth.project(&sealed).unwrap(), sealed);
     assert_eq!(smooth.next_wakeup(), None);
 }
-
-#[test]
-fn arbitrary_coordinate_replacement_is_not_byte_sliced() {
-    let range = StreamRange::new(StreamOffset::new(10), StreamOffset::new(11));
-    let snapshot = iyon_tui::stream::StreamSnapshotBuilder::new(
-        iyon_tui::stream::StreamRevision::ZERO,
-        range.start(),
-        range.end(),
-        range.end(),
-    )
-    .projected_text(
-        iyon_tui::stream::ProjectedText::builder(range)
-            .replacement_styled(range, "event 10 finished", iyon_tui::StyleSpec::new())
-            .finish()
-            .unwrap(),
-    )
-    .finish()
-    .unwrap();
-    assert_eq!(snapshot.source_end(), StreamOffset::new(11));
-}

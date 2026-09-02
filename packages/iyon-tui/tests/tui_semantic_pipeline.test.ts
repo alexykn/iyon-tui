@@ -4,7 +4,6 @@ import {
   DiffHunk,
   DiffLine,
   DiffRange,
-  MarkdownProjector,
   ProjectionBuilder,
   TextContent,
   Theme,
@@ -15,8 +14,7 @@ import {
 describe("T5 semantic text pipeline", () => {
   test("preserves origins through projection and rewrite", () => {
     const content = TextContent.markdown("**hello**").withOrigin({ format: "markdown", source: "fixture" });
-    const projection = new MarkdownProjector().project(content);
-    expect(projection.text()).toBe("hello");
+    expect(content.text()).toBe("**hello**");
     expect(content.rewrite((text) => text.toUpperCase()).origin.source).toBe("fixture");
   });
 

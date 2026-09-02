@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { History, TextStream, Tui, View } from "../src/index.ts";
+import { History, TextStreamSource, Tui, View } from "../src/index.ts";
 
 describe("T5 native TUI handles", () => {
   test("synchronous native mutations do not allocate Promise wrappers", () => {
-    const stream = new TextStream();
-    expect(stream.update("direct")).toBeUndefined();
-    expect(stream.snapshot()).toMatchObject({ text: "direct", revision: 1 });
+    const source = TextStreamSource.create();
+    expect(source.replace("direct")).toMatchObject({ revision: 1n });
+    expect(source.snapshot()).toMatchObject({ text: "direct", revision: 1n });
     const history = new History();
     expect(history.push(View.text("direct"))).toBeGreaterThanOrEqual(0);
     expect(history.layout()).toEqual({ padding: 0, gap: 0 });
-    stream.dispose();
+    source.dispose();
     history.dispose();
   });
 
@@ -30,15 +30,15 @@ describe("T5 native TUI handles", () => {
     await tui.close();
   });
 
-  test("preserves stream revision and sealed-state errors", async () => {
-    const stream = new TextStream();
-    await stream.update("first");
-    expect(await stream.snapshot()).toEqual({ text: "first", revision: 1, sealed: false });
-    stream.seal();
-    expect(stream.snapshot().sealed).toBe(true);
-    expect(() => stream.update("late")).toThrow(/sealed/);
+  test("preserves Source revision and sealed-state errors", () => {
+    const source = TextStreamSource.create();
+    source.append("first");
+    expect(source.snapshot()).toMatchObject({ text: "first", revision: 1n, sealed: false });
+    source.seal();
+    expect(source.snapshot().sealed).toBe(true);
+    expect(() => source.append("late")).toThrow(/sealed/);
+    source.dispose();
   });
-
   test("history accepts a retained view and component handles are shared", async () => {
     const tui = await Tui.open({ headless: true });
     const history = new History();

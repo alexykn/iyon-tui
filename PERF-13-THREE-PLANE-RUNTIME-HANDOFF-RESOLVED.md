@@ -27,6 +27,12 @@ environment-owned Sources plus host-owned Ports and Connectors
 
 The content connector model in PERF-13 is **cold**. Buffered/hot fan-out, arbitration, background producer threads, and speculative preprojection are not part of this change.
 
+> **PERF-13-H finalization:** the implementation has now deleted the transitional
+> compatibility facades and legacy History/stream paths described in the
+> integrated baseline below. Those historical migration clauses are superseded
+> by `docs/history/PERF-13/PERF-13-H-completion.md`; the Source/Funnel/Port/
+> Connector architecture and canonical retained ABI remain authoritative.
+
 ---
 
 ## 0. How to use this handoff

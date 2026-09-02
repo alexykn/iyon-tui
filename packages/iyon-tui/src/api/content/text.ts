@@ -1,7 +1,5 @@
 import { StyleRef, StyleSpec, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
 import type { HorizontalAlign, WrapMode } from "../view/view.ts";
-import type { StreamAnnotation } from "./stream-snapshot.ts";
-
 export type TextRole =
   | "paragraph"
   | "heading"
@@ -36,13 +34,18 @@ export type TextPart =
   | "thematicRule"
   | "imageFallback";
 
+export interface TextAnnotation {
+  readonly namespace: string;
+  readonly name: string;
+}
+
 export interface TextSelectorValue {
   readonly focused?: boolean;
   readonly focusWithin?: boolean;
   readonly states?: Readonly<Record<string, string>>;
   readonly roles?: readonly TextRole[];
   readonly parts?: readonly TextPart[];
-  readonly annotations?: readonly StreamAnnotation[];
+  readonly annotations?: readonly TextAnnotation[];
   readonly language?: string;
   readonly origin?: string;
   readonly format?: string;

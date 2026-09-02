@@ -7,25 +7,21 @@ import {
   tryNativeAxisSpliceRender,
   tryNativeGridSetCellRender,
 } from "../src/transport/structural/native-view-abi.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { View } from "../src/api/view/view.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
-type StructuralHost = {
-  render(view: object): void;
-  screenRows(): string[];
-  tuiViewAbiHostPointer(): number;
-  dispose(): void;
-};
+type StructuralHost = NativeTuiHostContract;
 
 const Host = native.NativeTuiHost as unknown as
   (new (width: number, height: number, headless: boolean) => StructuralHost) | undefined;
 
 function seed(host: StructuralHost, base: View, ...children: View[]): number {
   for (const child of children) {
-    host.render(lowerColdView(child));
+    renderCold(host, child);
     if (nativeViewRefForNodeId(child) === undefined) throw new Error("native child ref unavailable");
   }
-  host.render(lowerColdView(base));
+  renderCold(host, base);
   const reference = nativeViewRefForNodeId(base);
   if (reference === undefined) throw new Error("native base ref unavailable");
   return reference;
@@ -61,7 +57,7 @@ test("native axis replace/insert/remove preserves wide host parity", () => {
       const baseRef = seed(host, base, ...children);
       const nextRef = op(host, baseRef);
       expect(nextRef).toBeDefined();
-      oracle.render(lowerColdView(next));
+      renderCold(oracle, next);
       expect(host.screenRows()).toEqual(oracle.screenRows());
     } finally {
       host.dispose();
@@ -97,7 +93,7 @@ test("native grid cell path copy preserves placement and parity", () => {
     const baseRef = seed(host, base, replacement);
     const nextRef = tryNativeGridSetCellRender(host, base, baseRef, next, 31, 0, replacement);
     expect(nextRef).toBeDefined();
-    oracle.render(lowerColdView(next));
+    renderCold(oracle, next);
     expect(host.screenRows()).toEqual(oracle.screenRows());
   } finally {
     host.dispose();

@@ -1,12 +1,9 @@
 use iyon_tui::projection::{ProjectionBuilder, validate_projection_relation};
-use iyon_tui::stream::{
-    ProjectedHanging, StreamOffset, StreamRange, StreamRevision, StreamSnapshot, StreamingSource,
-    TextStream,
-};
+use iyon_tui::stream::{StreamOffset, StreamRange};
 use iyon_tui::text::{
     BlockKind, CodeBlock, HeadingLevel, InlineKind, LanguageId, List, ListItem, Mark, TextRun,
 };
-use iyon_tui::{Block, History, HistoryLayout, Inline, InlineContent, Insets, SmoothConfig};
+use iyon_tui::{Block, HistoryLayout, Inline, InlineContent, Insets, SmoothConfig};
 
 #[test]
 fn ordinary_text_construction_matches_explicit_ir() {
@@ -59,103 +56,4 @@ fn smooth_and_history_configuration_are_default_first() {
             .with_gap(2),
         HistoryLayout::from_parts(Insets::all(1), 2)
     );
-}
-
-#[test]
-fn text_stream_reuses_append_only_frontier_and_history_lifecycle() {
-    let mut stream = TextStream::new();
-    assert_eq!(stream.snapshot().source_end(), StreamOffset::ZERO);
-    stream.push("a");
-    stream.push("\u{301}");
-    let snapshot = stream.snapshot();
-    assert_eq!(snapshot.stable_through(), StreamOffset::ZERO);
-    assert_eq!(stream.revision(), StreamRevision::new(2));
-
-    let mut history = History::new();
-    let handle = history.push_stream(TextStream::new()).unwrap();
-    history
-        .update_stream(handle, |source| source.push("hello"))
-        .unwrap();
-    history
-        .update_stream(handle, |source| source.push(" world"))
-        .unwrap();
-    history.seal_stream(handle).unwrap();
-    history.push("done").unwrap();
-
-    let mut compacted = TextStream::from_text("éx");
-    compacted.seal();
-    compacted.compact_before(StreamOffset::new(2));
-    assert_eq!(compacted.source_base(), StreamOffset::new(2));
-    assert_eq!(compacted.retained_text(), "x");
-}
-
-#[test]
-fn text_stream_sealing_and_frontiers_are_conservative() {
-    let cases = [
-        ("ascii", "ab", 1),
-        ("multibyte", "éx", 2),
-        ("combining", "e\u{301}", 0),
-        ("emoji", "🌍x", 4),
-        ("zwj", "👩\u{200d}💻x", "👩\u{200d}💻".len()),
-    ];
-    for (name, text, stable) in cases {
-        let stream = TextStream::from_text(text);
-        assert_eq!(
-            stream.snapshot().stable_through(),
-            StreamOffset::new(stable as u64),
-            "{name}"
-        );
-    }
-
-    let mut stream = TextStream::new();
-    let mut previous = stream.snapshot().stable_through();
-    for chunk in ["a", "b", "\u{301}", "x"] {
-        stream.push(chunk);
-        let current = stream.snapshot().stable_through();
-        assert!(current >= previous);
-        previous = current;
-    }
-
-    stream.seal();
-    let revision = stream.revision();
-    let snapshot = stream.snapshot();
-    assert_eq!(snapshot.stable_through(), snapshot.source_end());
-    stream.seal();
-    assert_eq!(stream.revision(), revision);
-
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| stream.push("x")));
-    assert!(panic.is_err());
-}
-
-#[test]
-fn typed_hanging_configuration_is_the_canonical_path() {
-    let range = StreamRange::new(StreamOffset::ZERO, StreamOffset::new(6));
-    let projected = iyon_tui::stream::ProjectedText::builder(range)
-        .with_hanging(
-            ProjectedHanging::new(
-                2,
-                StreamRange::new(StreamOffset::ZERO, StreamOffset::new(2)),
-                "> ",
-            )
-            .with_prefix_visible(true),
-        )
-        .exact(
-            StreamRange::new(StreamOffset::new(2), StreamOffset::new(6)),
-            "body",
-        )
-        .finish()
-        .unwrap();
-    assert_eq!(projected.content_range(), range);
-}
-
-#[test]
-fn canonical_snapshot_builder_uses_a_range_and_fluent_stability() {
-    let range = StreamRange::new(StreamOffset::new(4), StreamOffset::new(5));
-    let snapshot = StreamSnapshot::builder(StreamRevision::ZERO, range)
-        .fully_stable()
-        .exact_text(range, [iyon_tui::TextSpan::plain("x")])
-        .finish()
-        .unwrap();
-    assert_eq!(snapshot.source_base(), range.start());
-    assert_eq!(snapshot.stable_through(), range.end());
 }

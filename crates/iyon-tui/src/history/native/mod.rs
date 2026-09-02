@@ -1,9 +1,6 @@
-//! Private monotonic native-history ownership for generic History.
+//! Private native scrollback ownership for generic History.
 
 pub(super) mod frontier;
-
-#[cfg(test)]
-mod tests;
 
 use crate::{
     backend::NativeHistorySink,
@@ -11,22 +8,17 @@ use crate::{
     presentation::{
         ContentProvider, EmptyContentProvider, HistoryContentRows, layout::compile_view_with_theme,
     },
-    stream::{
-        CompiledStream, FrozenPhysicalRows, StreamPartialTransfer, StreamTransferPayload,
-        plan_stream_transfer,
-    },
 };
 
 use super::{FlowBoundary, History, HistoryUnitContent, HistoryUnitId};
 pub(super) use frontier::NativeFrontier;
 use frontier::{
-    FrozenContentRemainder, FrozenStaticRemainder, SpacingTransferState, StreamFrontierState,
+    FrozenContentRemainder, FrozenPhysicalRows, FrozenStaticRemainder, SpacingTransferState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NativeBlockReason {
     Live,
-    StreamBlocked,
     ContentHost,
 }
 
@@ -217,9 +209,6 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
                 );
             }
             transfer_static(history, sink, rows, max_rows)
-        }
-        HistoryUnitContent::Stream(_) => {
-            transfer_stream(history, sink, width, max_rows, theme, content)
         }
     }
 }
@@ -494,150 +483,6 @@ fn transfer_frozen_static<S: NativeHistorySink>(
     ))
 }
 
-fn transfer_stream<S: NativeHistorySink>(
-    history: &mut History,
-    sink: &mut S,
-    width: u16,
-    max_rows: usize,
-    theme: &crate::Theme,
-    content: &mut dyn ContentProvider,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let unit = history.units.front().expect("stream unit");
-    let unit_id = unit.id;
-    let (starting_cursor, starting_partial) = history
-        .native
-        .stream
-        .as_ref()
-        .map_or((stream_semantic_base(history, unit_id), None), |state| {
-            (state.committed_through, state.partial.clone())
-        });
-    let start = match starting_partial.as_ref() {
-        Some(StreamPartialTransfer::FrozenAtomic { source_end, .. }) => *source_end,
-        None => starting_cursor,
-    };
-    let (mut compiled, sealed, source_end) = {
-        let stream = match &unit.content {
-            HistoryUnitContent::Stream(stream) => stream,
-            _ => unreachable!("stream frontier must match stream unit"),
-        };
-        (
-            stream.compile_from(
-                start,
-                width.saturating_sub(
-                    history
-                        .layout()
-                        .padding
-                        .left
-                        .saturating_add(history.layout().padding.right),
-                ),
-                theme,
-            ),
-            stream.is_sealed(),
-            stream.source_end(),
-        )
-    };
-    place_stream_rows(&mut compiled, width, history.layout());
-    if starting_partial.is_none()
-        && compiled
-            .zero_row_prefix
-            .is_some_and(|offset| offset > starting_cursor)
-    {
-        let next = compiled.zero_row_prefix.expect("checked zero-row prefix");
-        cross_zero_spacing(history);
-        let HistoryUnitContent::Stream(stream) = &mut history.units.front_mut().unwrap().content
-        else {
-            unreachable!("stream frontier must match stream unit")
-        };
-        stream.release_resident_through(next);
-        let state = history.native.stream.get_or_insert(StreamFrontierState {
-            unit: unit_id,
-            committed_through: starting_cursor,
-            partial: None,
-        });
-        state.committed_through = next;
-        // The recursive call may ultimately report SemanticBlocked with zero
-        // physical rows, so the outer transfer status cannot carry this
-        // semantic frontier transition on its own.
-        history.bump_native_revision();
-        return transfer_native_prefix_inner(history, sink, width, max_rows, theme, content);
-    }
-    let plan = plan_stream_transfer(
-        &compiled,
-        max_rows,
-        starting_partial.as_ref(),
-        starting_cursor,
-    );
-    let rows = payload_rows(&compiled, &plan.payload);
-    if rows.is_empty() {
-        if sealed && starting_partial.is_none() && starting_cursor >= source_end {
-            retire_front(history);
-            return Ok(outcome(0, 0, NativeTransferStatus::Progress));
-        }
-        return Ok(outcome(
-            0,
-            0,
-            NativeTransferStatus::SemanticBlocked {
-                unit: unit_id,
-                reason: NativeBlockReason::StreamBlocked,
-            },
-        ));
-    }
-
-    let ack = insert_prefix(sink, &rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-
-    let accepted_plan = plan_stream_transfer(
-        &compiled,
-        ack.accepted,
-        starting_partial.as_ref(),
-        starting_cursor,
-    );
-    let new_cursor = accepted_plan.next_committed_through;
-    let new_partial = accepted_plan.next_partial;
-    if new_cursor > starting_cursor {
-        let HistoryUnitContent::Stream(stream) = &mut history.units.front_mut().unwrap().content
-        else {
-            unreachable!("stream frontier must match stream unit")
-        };
-        stream.release_resident_through(new_cursor);
-    }
-    cross_zero_spacing(history);
-    let state = history.native.stream.get_or_insert(StreamFrontierState {
-        unit: unit_id,
-        committed_through: starting_cursor,
-        partial: starting_partial,
-    });
-    state.committed_through = new_cursor;
-    state.partial = new_partial;
-    if sealed && state.partial.is_none() && new_cursor >= source_end {
-        retire_front(history);
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
-}
-
-fn payload_rows(compiled: &CompiledStream, payload: &StreamTransferPayload) -> Vec<PhysicalRow> {
-    match payload {
-        StreamTransferPayload::Compiled { start, len } => compiled.rows
-            [*start..start.saturating_add(*len)]
-            .iter()
-            .map(|row| row.physical.clone())
-            .collect(),
-        StreamTransferPayload::Frozen { rows } => rows.as_slice().to_vec(),
-    }
-}
-
-fn place_stream_rows(compiled: &mut CompiledStream, width: u16, layout: super::HistoryLayout) {
-    for row in &mut compiled.rows {
-        row.physical = row.physical.placed(width, layout.padding.left);
-    }
-}
-
 fn static_rows(
     view: &crate::presentation::View,
     width: u16,
@@ -651,15 +496,6 @@ fn static_rows(
         .into_iter()
         .map(|row| row.placed(width, layout.padding.left))
         .collect()
-}
-
-fn stream_semantic_base(history: &History, unit: HistoryUnitId) -> crate::stream::StreamOffset {
-    match &history.units.front().expect("stream unit").content {
-        HistoryUnitContent::Stream(stream) if history.units.front().unwrap().id == unit => {
-            stream.semantic_base()
-        }
-        _ => unreachable!("stream frontier must match stream unit"),
-    }
 }
 
 fn cross_zero_spacing(history: &mut History) {

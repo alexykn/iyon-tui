@@ -234,33 +234,18 @@ pub enum RunError<ApplicationError> {
 
 ### History
 
-Ordered scrollback with frozen units, live streams, and flow boundaries.
+Ordered scrollback with static units, live component-backed units, and flow
+boundaries. Streaming content is a normal ContentPort/Connector occurrence;
+History does not own a second stream runtime.
 
 ```rust
-use iyon_tui::{History, HistoryLayout, FlowBoundary, Insets, HistoryStreamHandle, TextStream};
+use iyon_tui::{FlowBoundary, History, HistoryLayout, Insets, View};
 
 let mut history = History::new();
 history.set_layout(HistoryLayout::from_parts(Insets::new(0, 0, 1, 0), 1));
-
-// Push a frozen view
-let id: HistoryUnitId = history.push(View::text("hello").fill_width())?;
-
-// Push a live stream
-let stream = TextStream::new();
-let handle: HistoryStreamHandle<TextStream> = history.push_stream(stream)?;
-history.update_stream(handle, |s| s.push("first "))?;
-history.update_stream(handle, |s| s.push("streaming "))?;
-history.update_stream(handle, |s| s.push("here"))?;
-history.seal_stream(handle)?;
-
-// Push with flow boundary (attach to previous unit)
-history.push_with_boundary(view, FlowBoundary::AttachToPrevious)?;
-
-// Replace a frozen unit's view
-history.freeze(unit_id, updated_view)?;
+history.push(View::text("hello").fill_width())?;
+history.push_with_boundary(View::text("continued"), FlowBoundary::AttachToPrevious)?;
 ```
-
-A stream must be the History tail while open. Once sealed, new units can follow.
 
 ---
 
@@ -460,51 +445,6 @@ impl TextRewriter for MyRewriter {
 let projector = MyRewriter.into_projector();
 ```
 
----
-
-### StreamPane
-
-Connects a live streaming source to scrollback with incremental compilation, viewport anchoring, and seamless transitions between live and frozen content.
-
-```rust
-use iyon_tui::{StreamPane, TextStream, View};
-
-let stream = TextStream::new();
-let pane = StreamPane::new(stream);
-View::component(pane).fill();
-```
-
-Custom streaming sources implement `StreamingSource`:
-
-```rust
-use iyon_tui::stream::{
-    StreamingSource, StreamSnapshot, StreamSnapshotBuilder,
-    StreamOffset, StreamRevision,
-};
-
-struct MySource { /* ... */ }
-
-impl StreamingSource for MySource {
-    fn snapshot(&self) -> StreamSnapshot { /* ... */ }
-    fn compact_before(&mut self, offset: StreamOffset) { /* ... */ }
-    fn seal(&mut self) { /* ... */ }
-    fn is_sealed(&self) -> bool { /* ... */ }
-}
-```
-
-Stream coordinates (`StreamOffset`, `StreamRange`, `StreamRevision`) are source-rooted, not terminal positions.
-
-`TextStream` is the simplest source — append-only UTF-8:
-
-```rust
-let mut stream = TextStream::new();
-stream.push("hello ");
-stream.push("world");
-stream.seal();
-assert!(stream.is_sealed());
-```
-
----
 
 ### TextInput control
 
@@ -755,9 +695,9 @@ use iyon_tui::prelude::*;
 // History, HistoryLayout, Inline, InlineContent,
 // IntoView, MarkdownProjector, Output, PlainTextProjector,
 // Projection, Projector, ProjectorExt, Renderer, Scene,
-// ScrollPane, Smooth, StreamPane, TextContent, TextInput,
+// ScrollPane, Smooth, TextContent, TextInput,
 // TextOrigin, TextRenderPolicy, TextRenderer, TextSelector,
-// TextStream, Theme, View
+// Theme, View
 ```
 
 ---
@@ -782,9 +722,9 @@ use iyon_tui::prelude::*;
 
 **Projection** — `Projection<T>`, `ProjectionBuilder<T>`, `ProjectionSpan<T>`, `Projector` trait, `ProjectorExt`, `Then<A, B>`, `ThenError<A, B>`, `Smooth`, `SmoothConfig`, `SmoothConfigError`, `ProjectionRelationError`, `ProjectionTransitionError`, `ProjectionValidationError`, `validate_projection_relation`, `validate_projection_transition`
 
-**Stream** — `StreamPane<S>`, `TextStream`, `StreamingSource` trait, `StreamOffset`, `StreamRange`, `StreamRevision`, `StreamError`, `StreamValidationError`, `ProjectedValidationError`, `StreamSnapshot`, `StreamSnapshotBuilder`, `ProjectedText`, `ProjectedTextBuilder`, `ProjectedHanging`
+**Coordinates** — `stream::StreamOffset`, `stream::StreamRange`
 
-**History** — `History`, `HistoryLayout`, `HistoryStreamHandle<S>`, `HistoryUnitId`, `HistoryError`, `FlowBoundary`
+**History** — `History`, `HistoryLayout`, `HistoryUnitId`, `HistoryError`, `FlowBoundary`
 
 **Controls** — `TextInput`, `TextChange`
 

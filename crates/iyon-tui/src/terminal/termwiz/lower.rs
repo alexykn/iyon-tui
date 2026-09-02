@@ -350,8 +350,7 @@ mod tests {
             "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
         ];
         for sample in samples {
-            let row =
-                crate::presentation::layout::row_from_string(sample, PhysicalStyle::default());
+            let row = crate::presentation::paint::row_from_string(sample, PhysicalStyle::default());
             assert!(
                 row.validate_cell_geometry().is_ok(),
                 "{sample:?}: {:?}",

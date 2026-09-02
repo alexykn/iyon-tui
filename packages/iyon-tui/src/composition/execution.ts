@@ -171,7 +171,7 @@ export class RetainedExecutionScope<P = unknown> implements OwnsChildren {
     return this.table.next();
   }
 
-  /** Committed UNKEYED children (compat view over the child-owner state). */
+  /** Committed unkeyed children owned by the child table. */
   get children(): ChildRecord[] {
     return this.owner.committedChildren;
   }

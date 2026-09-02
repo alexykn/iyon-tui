@@ -84,7 +84,6 @@ pub struct HostDrainReport {
     pub rearm: bool,
     pub waiting_for_presentation: bool,
     pub attempted: usize,
-    pub committed_hosts: Vec<u64>,
     pub commits: Vec<HostCommit>,
     pub errors: Vec<HostFrameError>,
     pub wake_epoch: u64,
@@ -472,7 +471,6 @@ impl TuiEnvironment {
                 Ok((outcome, pending_epoch, committed_epoch)) => {
                     report.waiting_for_presentation |= outcome.waiting_for_presentation;
                     if outcome.committed {
-                        report.committed_hosts.push(host_id);
                         if let (Some(committed_epoch), Some(visible_structural_revision)) =
                             (outcome.committed_epoch, outcome.visible_structural_revision)
                         {

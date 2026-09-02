@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { DiffHunk, DiffLine, DiffRange, DiffRenderer, View } from "../src/index.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { native } from "../src/transport/native/addon.ts";
+import { viewReleaseMany } from "../src/transport/abi/structural/generated/view_calls.ts";
+import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
 describe("retained TUI semantic values", () => {
   test("fluent operations return new semantic values", () => {
@@ -22,7 +25,7 @@ describe("retained TUI semantic values", () => {
     const Host = native.NativeTuiHost;
     if (Host === undefined) throw new Error("native TUI host is unavailable");
     const host = new Host(20, 4, true);
-    host.render(lowerColdView(view));
+    renderCold(host, view);
     host.dispose();
   });
 
@@ -33,20 +36,17 @@ describe("retained TUI semantic values", () => {
     const diff = new DiffRenderer().render(new DiffHunk(new DiffRange(0, 1), new DiffRange(0, 1), [
       new DiffLine("context", "same"),
     ]));
-    host.render(lowerColdView(diff));
+    renderCold(host, diff);
     expect(host.screenRows().some((row) => row.includes("@@ -1 +1 @@"))).toBe(true);
     expect(host.screenRows().some((row) => row.includes(" same"))).toBe(true);
     host.dispose();
   });
 
   test("native validation rejects malformed private nodes", () => {
-    const Host = native.NativeTuiHost;
-    if (Host === undefined) throw new Error("native TUI host is unavailable");
-    const host = new Host(20, 4, true);
-    expect(() => host.render({ id: 1, schema: 99, kind: 1 })).toThrow(/unsupported TUI View bridge schema/);
-    expect(() => host.render({ id: 1, schema: 1, kind: 999 })).toThrow(/unknown numeric TUI View node kind/);
-    expect(() => host.render({ id: 2, schema: 1, kind: 11, handle: 0 })).toThrow(/handle must be positive/);
-    expect(() => host.render({
+    expect(() => native.tuiViewAbiDecodeRef({ id: 1, schema: 99, kind: 1 })).toThrow(/unsupported TUI View bridge schema/);
+    expect(() => native.tuiViewAbiDecodeRef({ id: 1, schema: 1, kind: 999 })).toThrow(/unknown numeric TUI View node kind/);
+    expect(() => native.tuiViewAbiDecodeRef({ id: 2, schema: 1, kind: 11, handle: 0 })).toThrow(/handle must be positive/);
+    expect(() => native.tuiViewAbiDecodeRef({
       id: 3,
       schema: 1,
       kind: 7,
@@ -55,28 +55,26 @@ describe("retained TUI semantic values", () => {
       columnGap: 0,
       rowGap: 0,
     })).toThrow(/columnSpan must be positive/);
-    host.dispose();
   });
 
   test("cache hits stop before reading the retained node payload", () => {
-    const Host = native.NativeTuiHost;
-    if (Host === undefined) throw new Error("native TUI host is unavailable");
-    const host = new Host(20, 4, true);
     const node = lowerColdView(View.text("cached"));
     expect(Object.isFrozen(node)).toBe(true);
-    host.render(node);
+    const reference = native.tuiViewAbiDecodeRef(node);
     const malformed = { ...node, kind: 999 } as unknown as typeof node;
-    expect(() => host.render(malformed)).not.toThrow();
-    host.dispose();
+    const cachedReference = native.tuiViewAbiDecodeRef(malformed);
+    expect(cachedReference).toBeGreaterThan(0);
+    const session = nativeViewAbiSession();
+    viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference, cachedReference]), 2);
   });
 
-  test("direct decoding preserves Unicode text and arbitrary replacement", () => {
+  test("generated host-ref rendering preserves Unicode text and arbitrary replacement", () => {
     const Host = native.NativeTuiHost;
     if (Host === undefined) throw new Error("native TUI host is unavailable");
     const host = new Host(20, 4, true);
-    host.render(lowerColdView(View.text("κ🙂")));
+    renderCold(host, View.text("κ🙂"));
     expect(host.screenRows().some((row) => row.includes("κ🙂"))).toBe(true);
-    host.render(lowerColdView(View.text("replacement")));
+    renderCold(host, View.text("replacement"));
     expect(host.screenRows().some((row) => row.includes("replacement"))).toBe(true);
     host.dispose();
   });

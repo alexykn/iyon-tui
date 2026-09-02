@@ -1,6 +1,5 @@
 import { View } from "../src/index.ts";
 import { viewNodeIdHighWater } from "../src/api/view/view.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
@@ -11,6 +10,7 @@ import {
 } from "./direct_ffi/retained_dag.ts";
 import {
   nativeViewAbiSession,
+  renderColdRef,
   tryNativeMaterialize,
 } from "./direct_ffi/native_view_abi.ts";
 import { native } from "./direct_ffi/native.ts";
@@ -56,7 +56,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(lowerColdView(view));
+  renderColdRef(host, view);
   if (!boundary.adopt(view)) throw new Error("direct-ffi cold fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });

@@ -26,6 +26,8 @@
     "rust:clippy": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
     "rust:test": "cargo test --workspace",
     "native:stage": "bun run packages/iyon-tui/scripts/stage-native.ts",
+    "native:smoke": "bun run packages/iyon-tui/scripts/smoke-native.ts",
+    "perf:content": "bun run packages/iyon-tui/bench/perf13_h_content.ts",
     "build:tui-native": "bun run packages/iyon-tui/scripts/stage-native.ts",
     "test": "bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests",
     "check:ownership": "bun run tools/ownership/check.ts"

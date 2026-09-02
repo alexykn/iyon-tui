@@ -14,7 +14,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Counter {
     ViewNodesConstructedRust,
-    ViewNodesDeepCopied,
     ViewCloneCalls,
     NapiViewNodesSeen,
     NapiViewCacheHits,
@@ -35,16 +34,9 @@ pub enum Counter {
     HistoryUnitsExamined,
     HistoryUnitsMeasured,
     HistoryCachedHeightHits,
-    StreamSourceNodesExamined,
-    StreamRowsReindexed,
-    StreamStableRowsReused,
-    StreamSemanticRestartOffset,
-    StreamVisualRestartOffset,
-    PersistentSeqFlattenCalls,
     PersistentSeqNodesAllocated,
     PersistentSeqLeafClones,
     PersistentSeqBranchClones,
-    PersistentSeqItemsIteratedDuringPatch,
     ComponentGeometryNodesVisited,
     ViewStateMutationsAccepted,
     ViewStateMutationsNoop,
@@ -59,11 +51,10 @@ pub enum Counter {
     ViewStateGeometryFullFallbacks,
     ViewStateDirtyPropagationNodes,
     DecoratedNormalizedNodes,
-    LegacyDecoratedCompatibilityFrames,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::LegacyDecoratedCompatibilityFrames as usize + 1;
+    pub const COUNT: usize = Self::DecoratedNormalizedNodes as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -72,7 +63,6 @@ impl Counter {
 
 const NAMES: [&str; Counter::COUNT] = [
     "view_nodes_constructed_rust",
-    "view_nodes_deep_copied",
     "view_clone_calls",
     "napi_view_nodes_seen",
     "napi_view_cache_hits",
@@ -93,16 +83,9 @@ const NAMES: [&str; Counter::COUNT] = [
     "history_units_examined",
     "history_units_measured",
     "history_cached_height_hits",
-    "stream_source_nodes_examined",
-    "stream_rows_reindexed",
-    "stream_stable_rows_reused",
-    "stream_semantic_restart_offset",
-    "stream_visual_restart_offset",
-    "persistent_seq_flatten_calls",
     "persistent_seq_nodes_allocated",
     "persistent_seq_leaf_clones",
     "persistent_seq_branch_clones",
-    "persistent_seq_items_iterated_during_patch",
     "component_geometry_nodes_visited",
     "view_state_mutations_accepted",
     "view_state_mutations_noop",
@@ -117,7 +100,6 @@ const NAMES: [&str; Counter::COUNT] = [
     "view_state_geometry_full_fallbacks",
     "view_state_dirty_propagation_nodes",
     "decorated_normalized_nodes",
-    "legacy_decorated_compatibility_frames",
 ];
 
 #[cfg(feature = "perf-counters")]

@@ -54,7 +54,7 @@ export interface NativeViewAbiSession {
 }
 
 export interface NativeViewRenderHost {
-  readonly tuiViewAbiHostPointer?: () => number;
+  readonly tuiViewAbiHostPointer?: () => Pointer;
   /** Native-ref installation for generic View-bearing controls. */
   readonly tuiViewAbiInstallRef?: (viewRef: number) => void;
 }
@@ -367,6 +367,23 @@ export function tryNativeMaterialize(next: View): number | undefined {
   return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
     ? reference
     : undefined;
+}
+
+/** Installs a canonical cold root through the direct host-ref ABI. */
+export function renderColdRef(host: NativeViewRenderHost, view: View): void {
+  const session = nativeViewAbiSession();
+  if (session === undefined) throw new Error("direct-ffi View ABI is unavailable");
+  const reference = tryNativeMaterialize(view);
+  if (reference === undefined) throw new Error("direct-ffi cold root could not be materialized");
+  try {
+    const hostPointer = host.tuiViewAbiHostPointer?.();
+    if (hostPointer === undefined) throw new Error("direct-ffi host pointer is unavailable");
+    if (hostRenderRef(session.symbols, session.runtime, hostPointer, reference) !== 0) {
+      throw new Error("direct-ffi host-ref render failed");
+    }
+  } finally {
+    viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
+  }
 }
 
 /**

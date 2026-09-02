@@ -1,5 +1,5 @@
 import { native } from "../src/transport/native/addon.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import { nativeViewAbiSession, renderColdRef, tryNativeMaterialize } from "../src/transport/structural/native-view-abi.ts";
 import { viewNodeIdHighWater, type View } from "../src/api/view/view.ts";
 import {
   RetainedRootBoundary,
@@ -9,7 +9,6 @@ import {
   setRootColdMaterializer,
   type RetainedPhaseSample,
 } from "../src/transport/structural/retained-dag.ts";
-import { nativeViewAbiSession, tryNativeMaterialize } from "../src/transport/structural/native-view-abi.ts";
 import { makeT15Scenario } from "./perf12_t15_workload.ts";
 
 const workload = process.env.T15_WORKLOAD ?? "plain_text";
@@ -51,7 +50,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(lowerColdView(view));
+  renderColdRef(host, view);
   if (!boundary.adopt(view)) throw new Error("cold fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });

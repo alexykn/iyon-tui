@@ -29,8 +29,8 @@ proptest.workspace = true
 insta.workspace = true
 trybuild.workspace = true
 
-# The framework intentionally retains owner-thread handles, compatibility
-# paths, and measurement helpers whose shapes are not Clippy's defaults.
+# The framework intentionally retains owner-thread handles and measurement
+# helpers whose shapes are not Clippy's defaults.
 [lints.rust]
 dead_code = "allow"
 

@@ -14,10 +14,7 @@ use anyhow::Result;
 
 use crate::controls::text_input::command::TextInputCommand;
 
-use super::content::{
-    ContentBinding, ContentFamily, ContentHostRegistry, HostContentFunnel, HostContentPort,
-    HostContentSource,
-};
+use super::content::{ContentBinding, ContentFamily, ContentHostRegistry, HostContentPort};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
@@ -923,105 +920,6 @@ impl HostHistory {
         Ok(())
     }
 
-    /// Adds a Source-backed ContentHost unit to History. The unit is an
-    /// ordinary static History occurrence; all changing bytes and delivery
-    /// state remain in the content plane and are measured through the same
-    /// provider used by body ContentHosts.
-    pub fn push_content_stream(
-        &self,
-        source: &HostContentSource,
-        funnel: HostContentFunnel,
-        insets: crate::Insets,
-    ) -> Result<HistoryUnitId> {
-        self.attach_content_stream(source, funnel, insets, None)
-    }
-
-    pub fn replace_content_stream(
-        &self,
-        unit: u64,
-        source: &HostContentSource,
-        funnel: HostContentFunnel,
-        insets: crate::Insets,
-    ) -> Result<()> {
-        let unit = HistoryUnitId::from_value(unit)
-            .ok_or_else(|| anyhow::anyhow!("history unit id must be non-zero"))?;
-        self.attach_content_stream(source, funnel, insets, Some(unit))
-            .map(|_| ())
-    }
-
-    fn attach_content_stream(
-        &self,
-        source: &HostContentSource,
-        funnel: HostContentFunnel,
-        insets: crate::Insets,
-        existing_unit: Option<HistoryUnitId>,
-    ) -> Result<HistoryUnitId> {
-        let port = {
-            let mut inner = self.lock_mut()?;
-            inner
-                .content
-                .create_port(Arc::downgrade(&self.host), ContentFamily::Text)?
-        };
-        // HostContentPort::connect takes the host mutex itself, so do not
-        // call it while the setup lock above is held.
-        let connector = port.connect(source, funnel)?;
-        let unit = {
-            let mut inner = self.lock_mut()?;
-            let view = View::native_content_host(port.id())
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                .fill_width()
-                .padding(insets);
-            let unit = match existing_unit {
-                Some(unit) => inner
-                    .running
-                    .scene_history_mut()
-                    .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-                    .replace_static_content(unit, view)
-                    .map(|_| unit)
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-                None => inner
-                    .running
-                    .scene_history_mut()
-                    .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-                    .push(view)
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
-            };
-            inner.content.clear_history_unit(unit.value());
-            inner
-                .content
-                .set_history_unit(port.id(), unit.value(), insets)?;
-            inner.refresh_desired_state_bindings()?;
-            inner.running.invalidate_frame();
-            unit
-        };
-        // Activation must happen after releasing the host mutex: the control
-        // call takes the same host lock to record the requested selection.
-        connector.activate()?;
-        self.lock_mut()?.advance_and_render()?;
-        Ok(unit)
-    }
-
-    pub fn seal_content_stream(&self, source: &HostContentSource) -> Result<()> {
-        source
-            .seal()
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(())
-    }
-
-    /// Removes ContentHost connectors for one Source while leaving unrelated
-    /// content resources mounted on the host intact.
-    pub fn detach_content_source(&self, source: &HostContentSource) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        let changed = inner
-            .content
-            .detach_source(source.id(), source.generation());
-        if !changed {
-            return Ok(());
-        }
-        inner.running.invalidate_frame();
-        inner.advance_and_render()
-    }
-
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HostInner>> {
         self.host
             .lock()
@@ -1202,7 +1100,7 @@ impl TuiHost {
     }
 
     /// Synchronously attempts the current host's pending frame. This is the
-    /// explicit barrier used by compatibility callers and tests.
+    /// explicit host visibility barrier.
     pub fn flush_pending(&self) -> Result<()> {
         self.lock_mut()?.flush_for_environment(true).map(|_| ())
     }
@@ -2441,8 +2339,9 @@ mod tests {
         let committed = host.flush_pending_hosts(8, false).unwrap();
         assert!(
             committed
-                .committed_hosts
-                .contains(&host.epochs().unwrap().host_id)
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
         );
         assert!(host.epochs().unwrap().pending_epoch == host.epochs().unwrap().committed_epoch);
         host.close().unwrap();

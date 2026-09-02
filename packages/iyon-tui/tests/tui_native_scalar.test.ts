@@ -8,13 +8,10 @@ import {
   NATIVE_PATH_VIEW_KIND,
   textLayoutAtNativePathForTransport,
 } from "../src/transport/structural/retained-path.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
-type OracleHost = {
-  render(view: object): void;
-  screenRows(): string[];
-  dispose(): void;
-};
+type OracleHost = NativeTuiHostContract;
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => OracleHost) | undefined;
 
@@ -32,7 +29,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
       expect(tui.screenRows()).toEqual(first);
 
       tui.render({ body: changed });
-      oracle.render(lowerColdView(changed));
+      renderCold(oracle, changed);
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();
@@ -54,7 +51,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      oracle.render(lowerColdView(changed));
+      renderCold(oracle, changed);
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();
@@ -81,7 +78,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
         const changed = textLayoutAtNativePathForTransport(base, steps, "noWrap", "center");
         tui.render({ body: base });
         tui.render({ body: changed });
-        oracle.render(lowerColdView(changed));
+        renderCold(oracle, changed);
         expect(tui.screenRows()).toEqual(oracle.screenRows());
       }
     } finally {
@@ -99,7 +96,7 @@ describe("PERF-11.3 generated scalar retained route", () => {
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      oracle.render(lowerColdView(changed));
+      renderCold(oracle, changed);
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();

@@ -8,15 +8,11 @@ import {
   tryNativeAxisCreateRender,
 } from "../src/transport/structural/native-view-abi.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { View } from "../src/api/view/view.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
-type HostContract = {
-  render(view: object): void;
-  screenRows(): string[];
-  tuiViewAbiHostPointer(): number;
-  dispose(): void;
-};
+type HostContract = NativeTuiHostContract;
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => HostContract) | undefined;
 
@@ -32,9 +28,9 @@ describe("PERF-11.8 native builders and small constructors", () => {
       column.flex(right);
     });
     try {
-      host.render(lowerColdView(left));
+      renderCold(host, left);
       const leftRef = nativeViewRefForNodeId(left);
-      host.render(lowerColdView(right));
+      renderCold(host, right);
       const rightRef = nativeViewRefForNodeId(right);
       expect(leftRef).toBeGreaterThan(0);
       expect(rightRef).toBeGreaterThan(0);
@@ -45,7 +41,7 @@ describe("PERF-11.8 native builders and small constructors", () => {
       expect(result).toBeGreaterThan(0);
       releaseNativeViewRef(nativeViewAbiSession(), leftRef!);
       releaseNativeViewRef(nativeViewAbiSession(), rightRef!);
-      oracle.render(lowerColdView(next));
+      renderCold(oracle, next);
       expect(host.screenRows()).toEqual(oracle.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {
@@ -62,12 +58,12 @@ describe("PERF-11.8 native builders and small constructors", () => {
     const next = View.vertical(spacers);
     try {
       tui.render({ body: next });
-      oracle.render(lowerColdView(next));
+      renderCold(oracle, next);
       expect(tui.screenRows()).toEqual(oracle.screenRows());
 
       const textFallback = View.vertical([View.text("unsupported"), View.spacer(1)]);
       tui.render({ body: textFallback });
-      oracle.render(lowerColdView(textFallback));
+      renderCold(oracle, textFallback);
       expect(tui.screenRows()).toEqual(oracle.screenRows());
     } finally {
       tui.close();

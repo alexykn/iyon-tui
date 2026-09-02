@@ -16,13 +16,11 @@ use super::{
 };
 use crate::{
     BorderSpec, Component, ComponentCx, ComponentHandle, EventCx, History, HistoryError,
-    InteractionResult, IntoView, Key, KeyStroke, Modifiers, Output, RouteConflict, TextInput,
-    TextSpan, View,
+    InteractionResult, IntoView, Key, KeyStroke, Modifiers, Output, RouteConflict, TextInput, View,
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
     scene::PreparedSceneFrame,
-    stream::{StreamOffset, StreamRange, StreamRevision, StreamSnapshotBuilder, StreamingSource},
     terminal::{PresentReceipt, TerminalBackend, TerminalEvent},
 };
 
@@ -725,139 +723,6 @@ fn timers_are_ordered_cancelable_and_non_dirty_before_delivery() {
 }
 
 struct NonClone(&'static str);
-
-#[derive(Clone)]
-struct ScheduledStream {
-    state: Rc<RefCell<ScheduledStreamState>>,
-}
-
-struct ScheduledStreamState {
-    value: u8,
-    deadline: Option<Instant>,
-    sealed: bool,
-}
-
-impl ScheduledStream {
-    fn new(now: Instant, delay: Duration) -> Self {
-        Self {
-            state: Rc::new(RefCell::new(ScheduledStreamState {
-                value: 1,
-                deadline: Some(now + delay),
-                sealed: false,
-            })),
-        }
-    }
-}
-
-impl StreamingSource for ScheduledStream {
-    fn snapshot(&self) -> crate::stream::StreamSnapshot {
-        let state = self.state.borrow();
-        let end = StreamOffset::new(u64::from(state.value));
-        StreamSnapshotBuilder::new(
-            StreamRevision::new(u64::from(state.value)),
-            StreamOffset::ZERO,
-            end,
-            end,
-        )
-        .exact_text(
-            StreamRange::new(StreamOffset::ZERO, end),
-            [TextSpan::plain("x".repeat(usize::from(state.value)))],
-        )
-        .finish()
-        .unwrap()
-    }
-
-    fn seal(&mut self) {
-        let mut state = self.state.borrow_mut();
-        state.sealed = true;
-        state.deadline = None;
-    }
-
-    fn is_sealed(&self) -> bool {
-        self.state.borrow().sealed
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        self.state.borrow().deadline
-    }
-
-    fn advance(&mut self, now: Instant) -> bool {
-        let mut state = self.state.borrow_mut();
-        if state.deadline.is_some_and(|deadline| deadline <= now) {
-            state.value = state.value.saturating_add(1);
-            state.deadline = None;
-            return true;
-        }
-        false
-    }
-}
-
-#[test]
-fn deadline_arbitration_includes_timer_component_tick_and_stream() {
-    let now = Instant::now();
-    let stream = ScheduledStream::new(now, Duration::from_millis(16));
-    let stream_state = Rc::clone(&stream.state);
-    let mut history = History::new();
-    history.push_stream(stream).unwrap();
-    let app = App::new(
-        |cx: &mut AppCx<'_, Action>| -> Result<State, TestError> {
-            let ticking = cx.register(Ticking::new());
-            cx.schedule_after(Duration::from_millis(30), Action::Timer);
-            Ok(State {
-                input: cx.register(TextInput::new()),
-                submitted: Vec::new(),
-                count: 0,
-                removed: false,
-                ticking: Some(ticking),
-            })
-        },
-        |_state, _action, _cx| Ok(()),
-        body,
-    )
-    .with_history(history);
-    let mut app = start(app, now);
-    prepare(&mut app, now);
-
-    assert_eq!(app.next_deadline(), Some(now + Duration::from_millis(16)));
-    assert_eq!(stream_state.borrow().value, 1);
-}
-
-#[test]
-fn temporal_wake_marks_app_dirty_without_running_application_update() {
-    let now = Instant::now();
-    let stream = ScheduledStream::new(now, Duration::from_millis(16));
-    let stream_state = Rc::clone(&stream.state);
-    let mut history = History::new();
-    history.push_stream(stream).unwrap();
-    let updates = Rc::new(Cell::new(0));
-    let app = App::new(
-        |cx: &mut AppCx<'_, Action>| -> Result<State, TestError> {
-            Ok(State {
-                input: cx.register(TextInput::new()),
-                submitted: Vec::new(),
-                count: 0,
-                removed: false,
-                ticking: None,
-            })
-        },
-        {
-            let updates = Rc::clone(&updates);
-            move |_state, _action, _cx| {
-                updates.set(updates.get() + 1);
-                Ok(())
-            }
-        },
-        body,
-    )
-    .with_history(history);
-    let mut app = start(app, now);
-    prepare(&mut app, now);
-
-    let status = app.advance_ready(now + Duration::from_millis(16)).unwrap();
-    assert!(status.dirty);
-    assert_eq!(updates.get(), 0);
-    assert_eq!(stream_state.borrow().value, 2);
-}
 
 #[derive(Debug)]
 struct Ticking {

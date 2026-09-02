@@ -2,18 +2,14 @@ use iyon_tui::{
     Block, CodeBlockLabelPolicy, Component, GridCellSpec, GridTrack, HeadingLevel, History, Inline,
     MarkdownOptions, MarkdownProjector, Projector, Renderer, Smooth, SoftBreakPolicy,
     TableColumnSizing, TaskListMarkerPolicy, TextContent, TextOrigin, TextPart, TextRenderPolicy,
-    TextRenderer, TextRole, TextSelector, TextStream, View, WrapMode,
+    TextRenderer, TextRole, TextSelector, View, WrapMode,
 };
 use iyon_tui::projection::{ProjectionBuilder, ProjectionTransitionError, validate_projection_transition};
-use iyon_tui::stream::{
-    ProjectedHanging, ProjectedText, StreamOffset, StreamRange, StreamSnapshotBuilder,
-    StreamingSource,
-};
+use iyon_tui::stream::{StreamOffset, StreamRange};
 use iyon_tui::text::{BlockKind, LiteralText, Mark, TextRun, TextVisitor};
 
 fn root_vocabulary() {
     let _: fn() -> History = History::new;
-    let _: fn() -> TextStream = TextStream::new;
     let _: fn() -> MarkdownProjector = MarkdownProjector::default;
     let _: fn() -> Smooth = Smooth::default;
     let _ = TextRenderer::default().render(&TextContent::raw("x"));
@@ -48,9 +44,6 @@ fn advanced_namespaces() {
     let _ = validate_projection_transition::<u8>;
     let _ = StreamOffset::ZERO;
     let _ = StreamRange::default();
-    let _ = StreamSnapshotBuilder::new;
-    let _ = ProjectedHanging::new(0, StreamRange::default(), "");
-    let _ = ProjectedText::builder;
     let _ = BlockKind::ThematicBreak;
     let _ = LiteralText::from("x");
     let _ = TextRun::from("x");
@@ -63,4 +56,3 @@ fn main() {
 }
 
 fn _trait_names<C: Component, P: Projector<TextContent>, R: Renderer<TextContent>, V: TextVisitor>() {}
-fn _source_method<S: StreamingSource>(source: &S) { let _ = source.snapshot(); }

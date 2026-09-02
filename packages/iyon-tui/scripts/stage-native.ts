@@ -50,6 +50,23 @@ const addon = require(stagedAddon.pathname) as Record<string, unknown> & {
   nativeVersion?: () => string;
   tuiSmoke?: () => string;
 };
+const removedNativeClasses = ["NativeMarkdownProjector", "NativePlainProjector"];
+const removedNativeMethods: Readonly<Record<string, readonly string[]>> = {
+  NativeHistory: ["push", "freeze", "pushStream", "sealStream"],
+  NativeTuiHost: ["render", "createViewSlot", "scrollPane"],
+  NativeViewSlot: ["setView", "setAnimation", "setAnimationAtCycleBoundary", "stopAnimation"],
+  NativeScrollPane: ["setContent"],
+};
+const nativeSurfaceOffenders: string[] = removedNativeClasses.filter((name) => addon[name] !== undefined);
+for (const [className, methods] of Object.entries(removedNativeMethods)) {
+  const candidate = addon[className] as { prototype?: object } | undefined;
+  if (candidate?.prototype === undefined) continue;
+  const prototypeNames = new Set(Object.getOwnPropertyNames(candidate.prototype));
+  for (const method of methods) if (prototypeNames.has(method)) nativeSurfaceOffenders.push(`${className}.${method}`);
+}
+if (nativeSurfaceOffenders.length > 0) {
+  throw new Error(`staged addon exposes removed native surface: ${nativeSurfaceOffenders.join(", ")}`);
+}
 if (addon.nativeVersion?.() !== "iyon-tui-native/s6" || addon.tuiSmoke?.() !== "iyon-tui/t1") {
   throw new Error(`staged addon failed the Bun load probe: ${stagedAddon.pathname}`);
 }

@@ -1,6 +1,5 @@
 import { native, requireNativeClass } from "../transport/native/addon.ts";
 import { nativeResourceOf } from "../transport/native/resources.ts";
-import { lowerColdView } from "../transport/structural/cold-lowering.ts";
 import { borderNodeFor, materializeTheme } from "../transport/structural/style-lowering.ts";
 import { componentViewForHandle, View } from "../api/view/view.ts";
 import { retainSemanticAttachmentReference, semanticNodeOf } from "../api/view/semantic-node.ts";
@@ -167,9 +166,9 @@ export class Tui implements TuiRuntime {
     // the supported model).
     setRootColdMaterializer((view) => tryNativeMaterialize(view));
     const hostRef = host;
-    // autoFlush stays ENABLED: tracked-state writes drain on the next
-    // microtask (R5 scheduler semantics). render() additionally drains
-    // pending work first so legacy/direct callers see a coherent frame.
+    // autoFlush stays enabled: tracked-state writes drain on the next
+    // microtask (retained scheduler semantics). render() additionally drains
+    // pending work first so callers see a coherent frame.
     this.retainedRuntime = new RetainedExecutionRuntime({
       // Scene sideband state is WIP alongside the root output. A failed
       // evaluation/preparation must not leave a history staged for a future
@@ -233,9 +232,9 @@ export class Tui implements TuiRuntime {
    * desired commit.
    */
   private prepareRootPublication(
-    session: NonNullable<ReturnType<typeof nativeViewAbiSession>> | undefined,
+    session: ReturnType<typeof nativeViewAbiSession>,
     output: View,
-  ): RootPublication | undefined {
+  ): RootPublication {
     const historyToBind = this.stagedHistory;
     const previousHistory = this.boundHistory;
     const attachments = prepareSemanticAttachments(
@@ -247,49 +246,22 @@ export class Tui implements TuiRuntime {
     // Allocate the desired scene record during prepare so H3 commit only
     // promotes already-owned state and cannot fail on this bookkeeping step.
     const nextScene = new Scene(output, historyToBind ?? previousHistory);
-    if (session === undefined) {
-      // The generated ABI is present in every supported artifact, but keep
-      // the contract truthful if an older addon is loaded: builder roots can
-      // still publish through the ordinary host renderer without pretending
-      // that a retained ref exists.
-      return {
-        rootRef: 0,
-        route: "fallback",
-        commit: (): void => {
-          try {
-            this.commitHistoryBinding(historyToBind, previousHistory);
-            this.host.render(lowerColdView(output));
-            this.attachmentBindings.commitDesired(attachments);
-            this.attachmentBindings.commitVisible();
-            this.currentScene = nextScene;
-          } catch (error) {
-            attachments.abort();
-            throw error;
-          }
-        },
-        abort(): void {
-          attachments.abort();
-        },
-      };
-    }
     let prepared: RootPublication | undefined;
     try {
       this.ensureBoundary(session);
       prepared = this.boundary!.prepareDesiredInstall(output);
       if (prepared === undefined) {
-        // Cold materialize-only: decode WITHOUT painting (\u00a732.2.3 hard rule).
+        // Cold materialize-only: decode without painting before the desired
+        // structural publication. This is the canonical capacity fallback.
         prepared = this.boundary!.prepareColdInstall(output);
       }
     } catch (error) {
       attachments.abort();
       throw error;
     }
-    // Both retained and cold routes can refuse (for example when the native
-    // session has been torn down). Report a normal preparation refusal so the
-    // enclosing transaction can abort without dereferencing an absent ref.
     if (prepared === undefined) {
       attachments.abort();
-      return undefined;
+      throw new Error("TUI_ROOT_PREPARATION_FAILED: no structural publication was prepared");
     }
     // History sideband validation happens at prepare time via stageHistory;
     // commit swaps the binding before the body publishes. Structural commit
@@ -301,14 +273,9 @@ export class Tui implements TuiRuntime {
         try {
           this.commitHistoryBinding(historyToBind, previousHistory);
           prepared!.commit();
-          const deferredFrame = this.host.setDesiredViewRef !== undefined
-            && this.host.flushPendingHosts !== undefined;
-          const desiredRevision = deferredFrame
-            ? this.host.epochs?.().desired_structural_revision
-            : undefined;
+          const desiredRevision = this.host.epochs().desired_structural_revision;
           this.attachmentBindings.commitDesired(attachments, desiredRevision);
-          if (deferredFrame) this.hostRegistration.markPending();
-          else this.attachmentBindings.commitVisible();
+          this.hostRegistration.markPending();
           this.currentScene = nextScene;
         } catch (error) {
           attachments.abort();
@@ -467,9 +434,7 @@ export class Tui implements TuiRuntime {
   flush(): void {
     this.ensureOpen();
     this.retainedRuntime.flush();
-    if (this.hostRegistration.native.flushPendingHosts !== undefined) {
-      this.hostRegistration.flush();
-    }
+    this.hostRegistration.flush();
   }
 
   onRuntimeError(listener: RuntimeErrorReporter): () => void {
@@ -588,73 +553,27 @@ export class Tui implements TuiRuntime {
     const session = nativeViewAbiSession();
     const previousStagedHistory = this.stagedHistory;
     this.stagedHistory = effectiveHistory;
-    let publication: RootPublication | undefined;
+    let publication: RootPublication;
     try {
       publication = this.prepareRootPublication(session, normalized.body);
+      publication.commit();
     } catch (error) {
       this.stagedHistory = previousStagedHistory;
       throw error;
     }
-    if (publication !== undefined) {
-      try {
-        publication.commit();
-      } catch (error) {
-        let cleanupError: unknown;
-        try {
-          publication.abort();
-        } catch (abortError) {
-          cleanupError = abortError;
-        }
-        this.stagedHistory = previousStagedHistory;
-        if (cleanupError !== undefined) {
-          throw new AggregateError([error, cleanupError], "root publication cleanup failed");
-        }
-        throw error;
-      }
-      recordNativeViewRoute(publication.route ?? (session === undefined ? "fallback" : "retained"));
-      this.stagedHistory = effectiveHistory;
-      this.disposeRootBuilder();
-      this.flush();
-      return;
-    }
-
-    // A complete retained/cold preflight is unavailable only for an older or
-    // torn-down addon. Validate attachments again for the compatibility render
-    // and make them visible only after that render succeeds.
-    this.stagedHistory = previousStagedHistory;
-    const attachments = prepareSemanticAttachments(
-      semanticNodeOf(normalized.body),
-      this.runtimeEnvironment.resources,
-      this.runtimeEnvironment.token,
-      this.hostRegistration.token,
-    );
-    try {
-      if (normalized.history !== undefined) this.commitHistoryBinding(normalized.history, previousHistory);
-      recordNativeViewRoute("fallback");
-      this.host.render(lowerColdView(normalized.body));
-      if (session !== undefined) {
-        this.ensureBoundary(session).adopt(normalized.body);
-      }
-      this.attachmentBindings.commitDesired(attachments);
-      this.attachmentBindings.commitVisible();
-    } catch (error) {
-      attachments.abort();
-      throw error;
-    }
-    this.currentScene = new Scene(normalized.body, effectiveHistory);
+    recordNativeViewRoute(publication.route ?? "retained");
     this.stagedHistory = effectiveHistory;
     this.disposeRootBuilder();
+    this.flush();
   }
 
-  private ensureBoundary(session: NonNullable<ReturnType<typeof nativeViewAbiSession>>): RetainedRootBoundary {
+  private ensureBoundary(session: ReturnType<typeof nativeViewAbiSession>): RetainedRootBoundary {
     if (this.boundary === undefined) {
-      const deferred = this.host.setDesiredViewRef !== undefined
-        && this.host.flushPendingHosts !== undefined;
       this.boundary = new RetainedRootBoundary(
         session,
         () => this.host,
         undefined,
-        { deferHostCommit: deferred },
+        { deferHostCommit: true },
       );
     }
     return this.boundary;
@@ -896,11 +815,11 @@ export class Tui implements TuiRuntime {
     attempt(() => this.hostRegistration.dispose());
     // Owner death is the only content-plane cascade. It releases host-owned
     // Port/Connector native records before individual wrapper disposal runs.
-    attempt(() => this.host.disposeContentResources?.());
+    attempt(() => this.host.disposeContentResources());
     this.runtimeErrorListener = undefined;
     this.runtimeErrors.setReporter(undefined);
     attempt(() => this.attachmentBindings.dispose());
-    attempt(() => this.host.clearViewStateBindings?.());
+    attempt(() => this.host.clearViewStateBindings());
     attempt(() => this.runtimeEnvironment.resources.invalidateHost(this.hostRegistration.token));
     attempt(() => this.disposeOwnedHandles());
     attempt(() => this.disposeRootBuilder());
@@ -916,7 +835,7 @@ export class Tui implements TuiRuntime {
 
   /**
    * Closes the host and disposes every handle created through this Tui's
-   * factories. Detached History and direct TextStream values remain caller
+   * factories. Detached History and environment-owned Sources remain caller
    * owned; host-bound values must not be used after this call.
    */
   close(): void {

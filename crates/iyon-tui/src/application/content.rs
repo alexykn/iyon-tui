@@ -1214,7 +1214,6 @@ struct ContentSourceRecord {
     dropped_head_bytes: u64,
     accepted_bytes: u64,
     connector_count: usize,
-    dispose_when_unused: bool,
     subscribers: Vec<SourceSubscription>,
 }
 
@@ -1288,7 +1287,6 @@ impl ContentSourceRegistry {
             dropped_head_bytes: 0,
             accepted_bytes: 0,
             connector_count: 0,
-            dispose_when_unused: false,
             subscribers: Vec::new(),
         }));
         registry.sources.insert(id, Arc::clone(&record));
@@ -1661,6 +1659,29 @@ fn retention_head(storage: &SourceStorage, retention: Option<SourceRetentionPoli
     head
 }
 
+fn retention_would_overflow(
+    storage: &SourceStorage,
+    retention: Option<SourceRetentionPolicy>,
+    appended_bytes: usize,
+    appended_newlines: usize,
+) -> bool {
+    let Some(policy) = retention else {
+        return false;
+    };
+    (!policy.drop_oldest
+        && policy.max_bytes.is_some_and(|limit| {
+            storage
+                .source_end
+                .saturating_sub(storage.source_base)
+                .saturating_add(appended_bytes as u64)
+                > limit
+        }))
+        || (!policy.drop_oldest
+            && policy.max_lines.is_some_and(|limit| {
+                (storage.line_count() as u64).saturating_add(appended_newlines as u64) > limit
+            }))
+}
+
 fn apply_retention(
     storage: &mut SourceStorage,
     retention: Option<SourceRetentionPolicy>,
@@ -1818,12 +1839,23 @@ impl HostContentSource {
                     ..ContentMutationResult::default()
                 });
             }
-            let mut next = (*record.storage).clone();
+            let appended_newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
+            if retention_would_overflow(
+                &record.storage,
+                record.retention,
+                bytes.len(),
+                appended_newlines,
+            ) {
+                return Err(anyhow!(
+                    "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
+                ));
+            }
+            let retention = record.retention;
+            let next = Arc::make_mut(&mut record.storage);
             next.append_bytes(bytes)?;
             next.annotations.extend(parsed);
-            let (dropped, copied) = apply_retention(&mut next, record.retention)?;
+            let (dropped, copied) = apply_retention(next, retention)?;
             let revision = next_revision(record.revision)?;
-            record.storage = Arc::new(next);
             record.revision = revision;
             record.copied_bytes = record
                 .copied_bytes
@@ -1922,10 +1954,9 @@ impl HostContentSource {
             if record.storage.sealed {
                 return Err(anyhow!("SOURCE_ALREADY_SEALED: Source is already sealed"));
             }
-            let mut next = (*record.storage).clone();
+            let next = Arc::make_mut(&mut record.storage);
             next.sealed = true;
             let revision = next_revision(record.revision)?;
-            record.storage = Arc::new(next);
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
@@ -1956,10 +1987,9 @@ impl HostContentSource {
                     ..ContentMutationResult::default()
                 });
             }
-            let mut next = (*record.storage).clone();
+            let next = Arc::make_mut(&mut record.storage);
             let (dropped, copied) = next.truncate_head(offset);
             let revision = next_revision(record.revision)?;
-            record.storage = Arc::new(next);
             record.revision = revision;
             record.copied_bytes = record.copied_bytes.saturating_add(copied);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
@@ -2119,61 +2149,12 @@ impl HostContentSource {
     }
 
     fn release_connector(&self) {
-        let dispose = self.record.lock().ok().and_then(|mut record| {
+        if let Ok(mut record) = self.record.lock() {
             record.connector_count = record.connector_count.saturating_sub(1);
             if record.connector_count == 0 {
                 record.subscribers.clear();
             }
-            if record.connector_count == 0 && record.dispose_when_unused {
-                record.dispose_when_unused = false;
-                record.lifecycle = SourceLifecycle::Disposed;
-                Some(record.id)
-            } else {
-                None
-            }
-        });
-        if let Some(source_id) = dispose
-            && let Ok(mut registry) = self.registry.inner.lock()
-            && registry
-                .sources
-                .get(&source_id)
-                .is_some_and(|candidate| Arc::ptr_eq(candidate, &self.record))
-        {
-            registry.sources.remove(&source_id);
         }
-    }
-
-    /// Compatibility adapters may request disposal while a History-owned
-    /// Connector still exists. The Source becomes disposed as soon as its
-    /// final Connector membership is released; ordinary Source.dispose()
-    /// remains strict and reports SOURCE_IN_USE.
-    pub fn request_dispose_when_unused(&self) -> Result<()> {
-        let dispose_now = {
-            let mut record = self
-                .record
-                .lock()
-                .map_err(|_| anyhow!("content Source lock is poisoned"))?;
-            if record.lifecycle == SourceLifecycle::Disposed {
-                return Ok(());
-            }
-            if record.connector_count == 0 {
-                record.lifecycle = SourceLifecycle::Disposed;
-                Some(record.id)
-            } else {
-                record.dispose_when_unused = true;
-                None
-            }
-        };
-        if let Some(source_id) = dispose_now
-            && let Ok(mut registry) = self.registry.inner.lock()
-            && registry
-                .sources
-                .get(&source_id)
-                .is_some_and(|candidate| Arc::ptr_eq(candidate, &self.record))
-        {
-            registry.sources.remove(&source_id);
-        }
-        Ok(())
     }
 
     fn subscribe(
@@ -3727,22 +3708,6 @@ impl ContentHostRegistry {
         if !visible {
             self.unsubscribe_connector(&source, connector_id, generation);
         }
-    }
-
-    pub(crate) fn detach_source(&mut self, source_id: u64, source_generation: u32) -> bool {
-        let connector_ids = self
-            .connectors
-            .iter()
-            .filter_map(|(id, connector)| {
-                let state = connector.lock().ok()?;
-                (state.source.id() == source_id && state.source.generation() == source_generation)
-                    .then_some(*id)
-            })
-            .collect::<Vec<_>>();
-        for connector_id in connector_ids.iter().copied() {
-            self.remove_connector(connector_id);
-        }
-        !connector_ids.is_empty()
     }
 
     fn remove_connector(&mut self, connector_id: u64) {

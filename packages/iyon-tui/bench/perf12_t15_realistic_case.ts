@@ -1,5 +1,4 @@
 import { View } from "../src/index.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import type { RetainedPhaseSample } from "../src/transport/structural/retained-dag.ts";
 
 const transport = process.env.T15_TRANSPORT ?? "generated_safe_napi";
@@ -8,11 +7,9 @@ const warmup = Number(process.env.T15_WARMUP ?? 50);
 const measured = Number(process.env.T15_MEASURED ?? 1_000);
 
 interface HostContract {
-  render(view: object): void;
   screenRows(): string[];
   dispose(): void;
   tuiViewAbiHostPointer?(): number;
-  [key: string]: unknown;
 }
 
 interface NativeModule {
@@ -23,6 +20,7 @@ interface NativeModule {
 
 interface AbiModule {
   nativeViewAbiSession(): unknown;
+  renderColdRef(host: unknown, view: View): void;
   tryNativeMaterialize(view: View): number | undefined;
 }
 
@@ -92,7 +90,7 @@ function render(view: View): void {
     return;
   }
   const fallbackStart = Bun.nanoseconds();
-  host.render(lowerColdView(view));
+  abi.renderColdRef(host, view);
   if (!boundary.adopt(view)) throw new Error("realistic trace fallback could not adopt root");
   const fallbackEnd = Bun.nanoseconds();
   phaseSamples?.push({ transport_prepare_ns: 0, native_materialize_ns: 0, host_commit_ns: fallbackEnd - fallbackStart });

@@ -112,14 +112,6 @@
         "optional": true
       },
       {
-        "name": "NativeMarkdownProjector",
-        "optional": true
-      },
-      {
-        "name": "NativePlainProjector",
-        "optional": true
-      },
-      {
         "name": "NativeViewSlot",
         "optional": true
       },
@@ -218,31 +210,11 @@
         "prototype": [
           "discardLive",
           "dispose",
-          "freeze",
           "freezeRef",
           "isDetached",
           "layout",
-          "push",
           "pushRef",
-          "pushStream",
-          "sealStream",
           "setLayout"
-        ]
-      },
-      {
-        "kind": "function",
-        "name": "NativeMarkdownProjector",
-        "prototype": [
-          "dispose",
-          "project"
-        ]
-      },
-      {
-        "kind": "function",
-        "name": "NativePlainProjector",
-        "prototype": [
-          "dispose",
-          "project"
         ]
       },
       {
@@ -252,7 +224,6 @@
           "componentId",
           "dispose",
           "followEnd",
-          "setContent",
           "setContentRef"
         ]
       },
@@ -278,7 +249,6 @@
           "advanceTime",
           "bindKey",
           "cellXOfText",
-          "createViewSlot",
           "createViewSlotRef",
           "dispatchKey",
           "dispatchPaste",
@@ -292,11 +262,9 @@
           "nextOutput",
           "nextWakeMs",
           "pollTerminal",
-          "render",
           "resize",
           "route",
           "screenRows",
-          "scrollPane",
           "scrollPaneRef",
           "setHistory",
           "setTheme",
@@ -318,8 +286,6 @@
           "componentId",
           "dispose",
           "revision",
-          "setAnimation",
-          "setAnimationAtCycleBoundary",
           "setAnimationRef1",
           "setAnimationRef1AtCycleBoundary",
           "setAnimationRef2",
@@ -330,9 +296,7 @@
           "setAnimationRef4AtCycleBoundary",
           "setAnimationRefs",
           "setAnimationRefsAtCycleBoundary",
-          "setView",
           "setViewRef",
-          "stopAnimation",
           "stopAnimationRef"
         ]
       },
@@ -511,7 +475,7 @@
     "currentPackage": "@iyon/tui",
     "currentSubpath": ".",
     "source": "packages/iyon-tui/src/index.ts",
-    "sourceSha256": "18e10f0812474a0c5602f851d0bfb07718f5c3c12012a166a1b37ebe7221376d",
+    "sourceSha256": "c9261a049fbd371d880a03d55d1d12a11afe608daf39255473eb2f84686bbe02",
     "typeExports": [
       "AnsiColor",
       "BorderEdges",
@@ -561,10 +525,7 @@
       "SemanticTextStyle",
       "SemanticValue",
       "State",
-      "StreamAnnotation",
-      "StreamSegmentSnapshot",
-      "StreamSnapshot",
-      "StreamingSource",
+      "TextAnnotation",
       "StyleSelectorValue",
       "StyleSpecValue",
       "TerminalMetadata",
@@ -591,9 +552,6 @@
       "TextSelectorValue",
       "TextSpanValue",
       "TextSourceOptions",
-      "TextStreamOptions",
-      "TextStreamPacing",
-      "TextStreamPresentation",
       "TextVisitor",
       "ThemeColor",
       "ThemeColorDefault",
@@ -630,8 +588,6 @@
       "GridRowBuilder",
       "History",
       "Insets",
-      "MarkdownProjector",
-      "PlainTextProjector",
       "Projection",
       "ProjectionBuilder",
       "RawText",
@@ -650,7 +606,6 @@
       "TextInput",
       "TextSelector",
       "TextSpan",
-      "TextStream",
       "TextStreamSource",
       "Theme",
       "ThemeKey",

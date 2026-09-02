@@ -1,16 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
-import { viewRenderRef } from "../src/transport/abi/structural/generated/view_calls.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
+import { viewReleaseMany, viewRenderRef } from "../src/transport/abi/structural/generated/view_calls.ts";
 import { View } from "../src/api/view/view.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
 const Host = native.NativeTuiHost as unknown as
-  (new (width: number, height: number, headless: boolean) => {
-    render(view: object): void;
-    screenRows(): string[];
-    dispose(): void;
-  }) | undefined;
+  (new (width: number, height: number, headless: boolean) => NativeTuiHostContract) | undefined;
 
 function malformed(seed: number): object {
   const cycle: Record<string, unknown> = { id: seed, kind: seed % 32 };
@@ -32,11 +29,12 @@ describe("PERF-12 T14 malformed-boundary properties", () => {
     if (session === undefined) return;
     const host = new Host(12, 4, true);
     try {
-      host.render(lowerColdView(View.text("stable")));
+      renderCold(host, View.text("stable"));
       const baseline = host.screenRows();
       for (let seed = 1; seed <= 100; seed++) {
         try {
-          host.render(malformed(seed));
+          const reference = native.tuiViewAbiDecodeRef(malformed(seed));
+          viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
         } catch {
           // Invalid input is expected; the host must remain authoritative.
         }

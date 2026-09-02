@@ -17,8 +17,8 @@ enum ScrollMode {
 /// A focusable retained viewport for arbitrary semantic content.
 ///
 /// The pane receives its width and height from framework layout. It keeps a
-/// visual-row position only; unlike [`crate::StreamPane`], it does not claim
-/// semantic source anchoring across content changes.
+/// visual-row position only; semantic content anchoring belongs to the content
+/// and Surface owners rather than this generic viewport.
 pub struct ScrollPane {
     content: View,
     mode: ScrollMode,

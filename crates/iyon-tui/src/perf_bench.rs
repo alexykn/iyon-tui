@@ -7,7 +7,7 @@
 use std::{process::Command, time::Instant};
 
 use crate::{
-    Component, History, IntoView, TextSpan, TextStream, Theme, View,
+    Component, History, IntoView, TextSpan, Theme, View,
     component::{ComponentRegistry, MountGraph},
     geometry::{LayoutConstraints, Size},
     history::{HistoryViewportAnchor, project_into_session_for_host},
@@ -555,131 +555,11 @@ fn run_history_case(sha: &str) {
     );
 }
 
-const STREAM_CHUNK: &str = "stream chunk: deterministic generic text output.\n";
-
-fn stream_chunk() -> String {
-    let mut chunk = String::with_capacity(256);
-    while chunk.len() < 256 {
-        chunk.push_str(STREAM_CHUNK);
-    }
-    chunk.truncate(256);
-    if !chunk.ends_with('\n') {
-        chunk.pop();
-        chunk.push('\n');
-    }
-    chunk
-}
-
-fn stream_source(target: usize, chunk: &str) -> String {
-    let mut source = String::with_capacity(target);
-    while source.len() < target {
-        source.push_str(chunk);
-    }
-    source.truncate(target);
-    if !source.ends_with('\n') {
-        source.pop();
-        source.push('\n');
-    }
-    source
-}
-
-fn stream_targets() -> Vec<usize> {
-    std::env::var("PERF_STREAM_TARGETS")
-        .ok()
-        .map(|value| {
-            value
-                .split(',')
-                .map(|target| {
-                    target
-                        .parse()
-                        .expect("PERF_STREAM_TARGETS must be integers")
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| vec![1_024, 10_240, 51_200, 102_400, 512_000])
-}
-
-fn run_stream_case(target: usize, sha: &str) {
-    let chunk = stream_chunk();
-    let mut history = History::new();
-    let handle = history
-        .push_stream(TextStream::from_text(stream_source(target, &chunk)))
-        .expect("stream fixture append");
-
-    let iterations = std::env::var("PERF_STREAM_ITERATIONS")
-        .ok()
-        .map(|value| {
-            value
-                .parse()
-                .expect("PERF_STREAM_ITERATIONS must be an integer")
-        })
-        .unwrap_or(20);
-    let mut samples = Vec::with_capacity(iterations);
-    perf::reset();
-    for _ in 0..iterations {
-        let start = Instant::now();
-        history
-            .update_stream(handle, |stream| stream.push(&chunk))
-            .expect("stream append");
-        std::hint::black_box(());
-        samples.push(start.elapsed().as_nanos());
-    }
-    print_record(
-        &format!("stream_{target}B_next_256B"),
-        "baseline",
-        0,
-        target,
-        iterations,
-        &samples,
-        perf::snapshot(),
-        sha,
-    );
-
-    {
-        let registry = ComponentRegistry::new();
-        let _ = render_history(&history, &registry);
-        let layout_iterations = std::env::var("PERF_STREAM_LAYOUT_ITERATIONS")
-            .ok()
-            .map(|value| {
-                value
-                    .parse()
-                    .expect("PERF_STREAM_LAYOUT_ITERATIONS must be an integer")
-            })
-            .unwrap_or(5);
-        let mut layout_samples = Vec::with_capacity(layout_iterations);
-        perf::reset();
-        for _ in 0..layout_iterations {
-            let start = Instant::now();
-            history
-                .update_stream(handle, |stream| stream.push(&chunk))
-                .expect("stream layout append");
-            std::hint::black_box(render_history(&history, &registry));
-            layout_samples.push(start.elapsed().as_nanos());
-        }
-        print_record(
-            &format!("stream_layout_{target}B_next_256B"),
-            "baseline",
-            0,
-            target,
-            layout_iterations,
-            &layout_samples,
-            perf::snapshot(),
-            sha,
-        );
-    }
-}
-
 /// Runs the complete first-tranche oracle and emits one JSON object per line.
 pub fn run() {
     let sha = git_sha();
     if std::env::var_os("PERF_ONLY_PAINT_GATE").is_some() {
         run_paint_gate(&sha);
-        return;
-    }
-    if std::env::var_os("PERF_ONLY_STREAM").is_some() {
-        for target in stream_targets() {
-            run_stream_case(target, &sha);
-        }
         return;
     }
     run_view_clone_case(&sha);
@@ -696,7 +576,4 @@ pub fn run() {
         }
     }
     run_history_case(&sha);
-    for target in stream_targets() {
-        run_stream_case(target, &sha);
-    }
 }

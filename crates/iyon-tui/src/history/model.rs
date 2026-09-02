@@ -4,25 +4,22 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     sync::atomic::AtomicU64,
-    time::Instant,
 };
 
 use crate::{
     id::next_nonzero_id,
     perf::{self, Counter},
     presentation::{IntoView, View},
-    stream::StreamingSource,
 };
 
 use super::{
-    ErasedHistoryStream, FlowBoundary, HistoryError, HistoryLayout, HistoryStreamHandle,
-    HistoryUnit, HistoryUnitContent, HistoryUnitId,
+    FlowBoundary, HistoryError, HistoryLayout, HistoryUnit, HistoryUnitContent, HistoryUnitId,
     unit::{HistoryUnitLayout, HistoryUnitLayoutKey},
 };
 
 static NEXT_HISTORY_ID: AtomicU64 = AtomicU64::new(1);
 
-/// An ordered root-level historical, live, or streaming semantic flow.
+/// An ordered root-level historical/live semantic flow.
 ///
 /// History owns unit order, semantic lifetime, and semantic layout. Native
 /// durability remains private behind the host-owned native sink seam.
@@ -92,7 +89,6 @@ impl History {
         view: impl IntoView,
         boundary: FlowBoundary,
     ) -> Result<HistoryUnitId, HistoryError> {
-        self.ensure_append_allowed()?;
         let view = view.into_view();
         let content = if view.contains_component_identity() {
             HistoryUnitContent::Live(view)
@@ -112,27 +108,6 @@ impl History {
         Ok(id)
     }
 
-    /// Replaces a tail Live unit with a typed open Stream without changing its
-    /// identity or flow boundary.
-    pub fn replace_live_with_stream<S: StreamingSource>(
-        &mut self,
-        unit: HistoryUnitId,
-        source: S,
-    ) -> Result<HistoryStreamHandle<S>, HistoryError> {
-        let index = self.index_of(unit)?;
-        if index + 1 != self.units.len() {
-            return Err(HistoryError::LiveMustRemainTail { unit });
-        }
-        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
-        }
-        let stream = ErasedHistoryStream::new(source).map_err(HistoryError::Stream)?;
-        self.units[index].content = HistoryUnitContent::Stream(stream);
-        self.invalidate_unit_layout(index);
-        self.bump_revision();
-        Ok(HistoryStreamHandle::new(unit))
-    }
-
     /// Discards a transient tail Live unit without creating spacing or native
     /// history rows.
     pub fn discard_live(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
@@ -146,21 +121,6 @@ impl History {
         self.units.remove(index);
         self.cached_total_height.set(None);
         self.stale_cached_heights.set(0);
-        self.bump_revision();
-        Ok(())
-    }
-
-    pub(crate) fn replace_static_content(
-        &mut self,
-        unit: HistoryUnitId,
-        view: View,
-    ) -> Result<(), HistoryError> {
-        let index = self.index_of(unit)?;
-        if !matches!(self.units[index].content, HistoryUnitContent::Static(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
-        }
-        self.units[index].content = HistoryUnitContent::Static(view);
-        self.invalidate_unit_layout(index);
         self.bump_revision();
         Ok(())
     }
@@ -184,120 +144,6 @@ impl History {
         Ok(())
     }
 
-    /// Attaches one typed semantic Stream as the History tail.
-    ///
-    /// ```text
-    /// let stream = history.push_stream(source)?;
-    /// history.update_stream(stream, |source| { /* mutate source */ })?;
-    /// history.seal_stream(stream)?;
-    /// history.push("next unit")?;
-    /// ```
-    pub fn push_stream<S: StreamingSource>(
-        &mut self,
-        source: S,
-    ) -> Result<HistoryStreamHandle<S>, HistoryError> {
-        self.push_stream_with_boundary(source, FlowBoundary::Default)
-    }
-
-    pub fn push_stream_with_boundary<S: StreamingSource>(
-        &mut self,
-        source: S,
-        boundary: FlowBoundary,
-    ) -> Result<HistoryStreamHandle<S>, HistoryError> {
-        self.ensure_append_allowed()?;
-        let stream = ErasedHistoryStream::new(source).map_err(HistoryError::Stream)?;
-        let id = HistoryUnitId::allocate();
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        self.units.push_back(HistoryUnit {
-            id,
-            boundary,
-            content: HistoryUnitContent::Stream(stream),
-            layout: RefCell::new(HistoryUnitLayout::default()),
-        });
-        self.bump_revision();
-        Ok(HistoryStreamHandle::new(id))
-    }
-
-    pub fn update_stream<S: StreamingSource, R>(
-        &mut self,
-        handle: HistoryStreamHandle<S>,
-        update: impl FnOnce(&mut S) -> R,
-    ) -> Result<R, HistoryError> {
-        let index = self.index_of(handle.unit())?;
-        let history_unit = &mut self.units[index];
-        let HistoryUnitContent::Stream(stream) = &mut history_unit.content else {
-            return Err(HistoryError::UnitNotStream {
-                unit: handle.unit(),
-            });
-        };
-        let result = stream.update(handle.unit(), update);
-        if result.is_ok() {
-            self.bump_revision();
-        }
-        result
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn refresh_stream<S: StreamingSource>(
-        &mut self,
-        handle: HistoryStreamHandle<S>,
-    ) -> Result<(), HistoryError> {
-        let index = self.index_of(handle.unit())?;
-        let history_unit = &mut self.units[index];
-        let HistoryUnitContent::Stream(stream) = &mut history_unit.content else {
-            return Err(HistoryError::UnitNotStream {
-                unit: handle.unit(),
-            });
-        };
-        let result = stream.refresh::<S>(handle.unit());
-        if result.is_ok() {
-            self.bump_revision();
-        }
-        result
-    }
-
-    pub(crate) fn next_stream_wakeup(&self) -> Option<Instant> {
-        self.units
-            .iter()
-            .filter_map(|unit| match &unit.content {
-                HistoryUnitContent::Stream(stream) => stream.next_wakeup(),
-                _ => None,
-            })
-            .min()
-    }
-
-    pub(crate) fn advance_streams(&mut self, now: Instant) -> Result<bool, HistoryError> {
-        let mut changed = false;
-        for unit in &mut self.units {
-            if let HistoryUnitContent::Stream(stream) = &mut unit.content {
-                changed |= stream.advance(now)?;
-            }
-        }
-        if changed {
-            self.bump_revision();
-        }
-        Ok(changed)
-    }
-
-    pub fn seal_stream<S: StreamingSource>(
-        &mut self,
-        handle: HistoryStreamHandle<S>,
-    ) -> Result<(), HistoryError> {
-        let index = self.index_of(handle.unit())?;
-        let history_unit = &mut self.units[index];
-        let HistoryUnitContent::Stream(stream) = &mut history_unit.content else {
-            return Err(HistoryError::UnitNotStream {
-                unit: handle.unit(),
-            });
-        };
-        let result = stream.seal::<S>(handle.unit());
-        if result.is_ok() {
-            self.bump_revision();
-        }
-        result
-    }
-
     pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
         self.units.iter()
     }
@@ -309,15 +155,11 @@ impl History {
             {
                 Some(view.content_attachment_id().unwrap_or(0))
             }
-            Some(HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_))
-            | Some(HistoryUnitContent::Stream(_))
-            | None => None,
+            Some(HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_)) | None => None,
         }
     }
 
-    /// Returns semantic History views that can carry retained state. Stream
-    /// units produce their own projection views and never carry a host-owned
-    /// ViewState attachment.
+    /// Returns semantic History views that can carry retained state.
     pub(crate) fn state_views(&self) -> Vec<View> {
         self.units
             .iter()
@@ -329,14 +171,11 @@ impl History {
                     Some(view.clone())
                 }
                 HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-                HistoryUnitContent::Stream(_) => None,
             })
             .collect()
     }
 
     /// Returns semantic History views that can carry a retained ContentPort.
-    /// Source-backed streams are represented by ordinary ContentHost views;
-    /// static/live units are still validated at H3.
     pub(crate) fn content_views(&self) -> Vec<View> {
         self.units
             .iter()
@@ -347,7 +186,6 @@ impl History {
                     Some(view.clone())
                 }
                 HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-                HistoryUnitContent::Stream(_) => None,
             })
             .collect()
     }
@@ -381,7 +219,6 @@ impl History {
                             Some(view.clone())
                         }
                         HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-                        HistoryUnitContent::Stream(_) => None,
                     }
                 }
             })
@@ -421,7 +258,6 @@ impl History {
                             Some(view.clone())
                         }
                         HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-                        HistoryUnitContent::Stream(_) => None,
                     }
                 }
             })
@@ -565,18 +401,6 @@ impl History {
         for unit in &self.units {
             *unit.layout.borrow_mut() = HistoryUnitLayout::default();
         }
-    }
-
-    fn ensure_append_allowed(&self) -> Result<(), HistoryError> {
-        let Some(last) = self.units.back() else {
-            return Ok(());
-        };
-        if let HistoryUnitContent::Stream(stream) = &last.content {
-            if !stream.is_sealed() {
-                return Err(HistoryError::OpenStreamMustRemainTail { stream: last.id });
-            }
-        }
-        Ok(())
     }
 
     fn index_of(&self, id: HistoryUnitId) -> Result<usize, HistoryError> {

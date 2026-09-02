@@ -3,15 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
 import { StyleSpec, View, TextSpan } from "../src/index.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
+import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
+import { renderCold } from "./fixtures/native-host.ts";
 
-type HostContract = {
-  tuiViewAbiHostPointer(): number;
-  render(view: object): void;
-  screenRows(): string[];
-  dispose(): void;
-};
+type HostContract = NativeTuiHostContract;
 
 const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => HostContract) | undefined;
 
@@ -35,13 +31,11 @@ describe("PERF-11.9 native strings and style atoms", () => {
       ]),
     ];
     try {
-      // PERF-12 T4 note: the old pre-materialization via the native
-      // single-text builder route is gone with the pending backing; every
-      // value now renders through the production router and must still match
-      // the Direct oracle exactly.
+      // Every value renders through the production semantic router and must
+      // match the generated host-ref oracle exactly.
       for (const value of values) {
         tui.render({ body: value });
-        oracle.render(lowerColdView(value));
+        renderCold(oracle, value);
         expect(tui.screenRows()).toEqual(oracle.screenRows());
       }
     } finally {

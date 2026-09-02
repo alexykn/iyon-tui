@@ -14,6 +14,8 @@
   },
   "scripts": {
     "native:stage": "bun run scripts/stage-native.ts",
+    "native:smoke": "bun run scripts/smoke-native.ts",
+    "perf:content": "bun run bench/perf13_h_content.ts",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test tests"
   },

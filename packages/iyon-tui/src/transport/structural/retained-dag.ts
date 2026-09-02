@@ -895,9 +895,8 @@ function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): nu
 function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
-  // Semantic Decorated is compatibility input only: the native parser applies
-  // its property-only values directly to the child View, so no extra physical
-  // occurrence owns padding, bounds, or border geometry.
+  // Decoration values apply directly to the child View's canonical physical
+  // box; no extra physical occurrence owns padding, bounds, or border geometry.
   counters.decorated_normalized_nodes += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   const decoration = node.decoration;
@@ -1415,7 +1414,7 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * Root-lease protocol for one View-bearing boundary (§18).
  *
  * ```text
- * update (legacy/direct boundary):
+ * update (direct boundary):
  *   1. keep previousRef leased
  *   2. materialize next root (ensureNative)
  *   3. hostRenderRef(nextRef)
@@ -1858,7 +1857,7 @@ export class RetainedRootBoundary {
    * PERF-12 T13.1 R8: COLD transactional publication. Decodes the whole tree
    * via the injected cold materializer (Direct decode, NO painting) and
    * returns a publication whose commit either paints the prepared ref once
-   * for a legacy/direct boundary or installs it as desired structure for the
+   * for a direct boundary or installs it as desired structure for the
    * H3 host boundary. Used when the retained path refuses — guarantees "cold
    * fallback never paints during PREPARE" (handoff §32.2.3 hard rule).
    */
@@ -2163,7 +2162,7 @@ export class RetainedRootBoundary {
   }
 
   private desiredRevisionForHost(host: NativeTuiHostContract): string | number | undefined {
-    return host.epochs?.().desired_structural_revision;
+    return host.epochs().desired_structural_revision;
   }
 
   private releaseSupersededDesired(): void {

@@ -71,7 +71,8 @@ export interface NativeViewAbiSession {
 }
 
 export interface NativeViewRenderHost {
-  readonly [key: string]: unknown;
+  /** Native hosts expose epochs; component handles expose an install hook. */
+  readonly epochs?: NativeTuiHostContract["epochs"];
   /** Opaque N-API host object for host-mutating retained calls. */
   readonly tuiViewAbiHost?: NativeTuiHostContract;
   /** Native-ref installation for generic View-bearing controls. */
@@ -135,10 +136,9 @@ const SINGLE_REF_RELEASE = new Uint32Array(1);
  * The Rust runtime and host are opaque class-owned handles; callers must not
  * retain the session after addon teardown.
  */
-export function nativeViewAbiSession(): NativeViewAbiSession | undefined {
+export function nativeViewAbiSession(): NativeViewAbiSession {
   if (cachedSession !== undefined) return cachedSession;
-  const runtime = native.tuiViewAbiSession?.();
-  if (runtime === undefined) return undefined;
+  const runtime = native.tuiViewAbiSession();
   const abi = runtime.metadata();
   if (
     abi.abi_name !== "iyon_tui_view"
@@ -167,7 +167,6 @@ export function nativeViewAbiSession(): NativeViewAbiSession | undefined {
  */
 export function nativeViewRefForNodeId(view: View): number | undefined {
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
   return viewRefForNodeId(session.symbols, session.runtime, nodeIdLow, nodeIdHigh);
 }
@@ -191,7 +190,6 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
  */
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   const node = semanticNodeOf(next);
   const tx = new MaterializeTx(session.symbols, session.runtime, session.abi.generation, 0);
   try {
@@ -227,9 +225,22 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
  * the complete cold materialization path for retained-cap misses (large text,
  * custom borders, and other shapes outside the fast families).
  */
+/** Benchmark-only cold installation through the canonical generated host-ref ABI. */
+export function renderColdRef(host: NativeTuiHostContract, view: View): void {
+  const session = nativeViewAbiSession();
+  const reference = tryNativeMaterialize(view);
+  if (reference === undefined) throw new Error("native cold root could not be materialized");
+  try {
+    if (hostRenderRef(session.symbols, session.runtime, host, reference) !== 0) {
+      throw new Error("native host-ref render failed");
+    }
+  } finally {
+    viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
+  }
+}
+
 export function tryNativeMaterialize(next: View): number | undefined {
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   try {
     const [low, high] = nodeIdPair(next);
     return viewRefForNodeId(session.symbols, session.runtime, low, high);
@@ -237,7 +248,6 @@ export function tryNativeMaterialize(next: View): number | undefined {
     if (!isExpectedNativeStatus(error)) throw error;
   }
   const decodeRef = native.tuiViewAbiDecodeRef;
-  if (decodeRef === undefined) return undefined;
   // Only construct the complete bridge after the NodeId promotion misses.
   // Existing native roots are a physical fast path and do not need semantic
   // payload lowering merely to discover that they are already retained.
@@ -265,7 +275,6 @@ export function tryNativeAxisCreate(
     || children.length > NATIVE_BUILDER_MAX_CHILDREN
   ) return undefined;
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   const refs: number[] = [];
   try {
     for (const child of children) {
@@ -296,7 +305,6 @@ export function tryNativeAxisCreateRender(
 ): number | undefined {
   if (!canInstallNativeRef(host)) return undefined;
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   const nextRef = tryNativeAxisCreate(next, horizontal, gap, children);
   if (nextRef === undefined) return undefined;
   try {
@@ -388,7 +396,7 @@ export function tryNativeAxisSetChildRender(
 ): number | undefined {
   if (!Number.isInteger(childIndex) || childIndex < 0 || !isValidNativeRef(previousRef)) return undefined;
   const session = nativeViewAbiSession();
-  if (!canInstallNativeRef(host) || session === undefined) return undefined;
+  if (!canInstallNativeRef(host)) return undefined;
   let childRef: number | undefined;
   let nextRef: number | undefined;
   try {
@@ -428,7 +436,7 @@ export function tryNativeAxisSpliceRender(
 ): number | undefined {
   if (!Number.isInteger(index) || index < 0 || !Number.isInteger(removeCount) || removeCount < 0 || !isValidNativeRef(previousRef)) return undefined;
   const session = nativeViewAbiSession();
-  if (!canInstallNativeRef(host) || session === undefined) return undefined;
+  if (!canInstallNativeRef(host)) return undefined;
   // Bun's checked buffer lowering still requires a non-null aligned pointer
   // when the used count is zero; the spare pair is ignored by native code.
   const refs = new Uint32Array(Math.max(children.length * 2, 2));
@@ -474,7 +482,7 @@ export function tryNativeGridSetCellRender(
 ): number | undefined {
   if (!Number.isInteger(row) || row < 0 || !Number.isInteger(column) || column < 0 || !isValidNativeRef(previousRef)) return undefined;
   const session = nativeViewAbiSession();
-  if (!canInstallNativeRef(host) || session === undefined) return undefined;
+  if (!canInstallNativeRef(host)) return undefined;
   let childRef: number | undefined;
   let nextRef: number | undefined;
   try {
@@ -513,7 +521,6 @@ export function tryNativeEditTransactionRender(
   const hostObject = resolveNativeHost(host);
   if (hostObject === undefined) return undefined;
   const session = nativeViewAbiSession();
-  if (session === undefined) return undefined;
   let txnRef: number | undefined;
   try {
     txnRef = editTxnBegin(session.symbols, session.runtime, previousRef, edits.length);
@@ -668,8 +675,8 @@ function installNativeRef(
   return 0;
 }
 
-export function releaseNativeViewRef(session: NativeViewAbiSession | undefined, ref: number): void {
-  if (session === undefined || !isValidNativeRef(ref)) return;
+export function releaseNativeViewRef(session: NativeViewAbiSession, ref: number): void {
+  if (!isValidNativeRef(ref)) return;
   SINGLE_REF_RELEASE[0] = ref;
   viewReleaseMany(session.symbols, session.runtime, SINGLE_REF_RELEASE, 1);
 }
@@ -677,9 +684,9 @@ export function releaseNativeViewRef(session: NativeViewAbiSession | undefined, 
 function resolveNativeHost(target: NativeViewRenderHost): NativeTuiHostContract | undefined {
   if (target.tuiViewAbiHost !== undefined) return target.tuiViewAbiHost;
   const candidate = target as Partial<NativeTuiHostContract>;
-  return typeof candidate.history === "function"
-    && typeof candidate.createViewSlot === "function"
-    && typeof candidate.scrollPane === "function"
+  return typeof candidate.epochs === "function"
+    && typeof candidate.setDesiredViewRef === "function"
+    && typeof candidate.flushPendingHosts === "function"
     ? target as unknown as NativeTuiHostContract
     : undefined;
 }

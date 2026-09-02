@@ -5,10 +5,9 @@ use std::cell::RefCell;
 use crate::{
     component::{ComponentId, ComponentRevision},
     presentation::{View, ir::ViewId},
-    stream::{StreamOffset, StreamRevision},
 };
 
-use super::{ErasedHistoryStream, FlowBoundary, HistoryUnitId};
+use super::{FlowBoundary, HistoryUnitId};
 
 /// Dependency key for one unit's cached presentation height.
 ///
@@ -26,14 +25,6 @@ pub(super) enum HistoryUnitLayoutKey {
     Live {
         view: ViewId,
         dependencies: Vec<(ComponentId, ComponentRevision)>,
-    },
-    /// Streaming unit: semantic revision and source coordinates for its row index.
-    Stream {
-        revision: StreamRevision,
-        base: StreamOffset,
-        source_end: StreamOffset,
-        indexed_from: StreamOffset,
-        prefix_rows: usize,
     },
 }
 
@@ -54,5 +45,4 @@ pub(crate) struct HistoryUnit {
 pub(crate) enum HistoryUnitContent {
     Static(View),
     Live(View),
-    Stream(ErasedHistoryStream),
 }

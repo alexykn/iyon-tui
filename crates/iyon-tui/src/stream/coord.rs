@@ -31,33 +31,6 @@ impl StreamOffset {
     }
 }
 
-/// Monotonic revision counter for stream snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct StreamRevision(pub(crate) u64);
-
-impl StreamRevision {
-    pub const ZERO: Self = Self(0);
-
-    pub const fn new(rev: u64) -> Self {
-        Self(rev)
-    }
-
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-
-    pub const fn checked_next(self) -> Option<Self> {
-        match self.0.checked_add(1) {
-            Some(value) => Some(Self(value)),
-            None => None,
-        }
-    }
-
-    pub fn next(self) -> Self {
-        self.checked_next().expect("stream revision exhausted")
-    }
-}
-
 /// A half-open range `[start, end)` in one stream's root coordinate space.
 /// For text-specific APIs this range is a UTF-8 byte range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

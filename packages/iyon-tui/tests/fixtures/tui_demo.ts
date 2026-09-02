@@ -1,4 +1,4 @@
-import { History, Scene, TextStream, View } from "../../src/index.ts";
+import { History, Scene, TextFunnel, TextStreamSource, View } from "../../src/index.ts";
 import { AppHarness } from "../../src/testing/index.ts";
 
 export async function runTuiDemo(): Promise<{
@@ -11,17 +11,19 @@ export async function runTuiDemo(): Promise<{
   const harness = await AppHarness.open({ width: 16, height: 3 });
   const history = new History();
   const input = harness.createTextInput();
-  const stream = new TextStream();
+  const source = TextStreamSource.create();
+  const port = harness.contentPort();
+  const connector = port.connect(source, TextFunnel.plain());
   const slot = harness.createViewSlot(View.spacer(0));
 
   await input.setText("compose");
   await history.push(View.text("completed history"));
-  await stream.update("streaming text");
-  await history.pushStream(stream);
+  connector.activate();
+  source.append("streaming text");
   const body = View.vertical([
     View.text("composer").bold(),
     await input.view(),
-    View.text((await stream.snapshot()).text),
+    View.content(port),
     await slot.view(),
   ]);
   await harness.render(new Scene(body, history));
@@ -29,12 +31,12 @@ export async function runTuiDemo(): Promise<{
 
   const screenRows = harness.screenRows();
   const nativeHistoryRows = harness.nativeHistoryRows();
-  await stream.seal();
+  source.seal();
   await slot.dispose();
   await input.dispose();
   await history.dispose();
-  await stream.dispose();
   await harness.close();
+  source.dispose();
   return {
     screenRows,
     nativeHistoryRows,

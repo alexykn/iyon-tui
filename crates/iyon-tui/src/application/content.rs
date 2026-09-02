@@ -712,14 +712,14 @@ fn render_semantic_surface(
     theme: &Theme,
     offered_width: u16,
     reveal_units: Option<usize>,
-) -> Result<(Size, Surface)> {
+) -> Result<(Size, Surface, usize)> {
     let values = semantic
         .spans()
         .iter()
         .flat_map(|span| span.values().iter().cloned())
         .collect::<Vec<_>>();
     if values.is_empty() {
-        return Ok((Size::new(0, 0), Surface::new(0, 0)));
+        return Ok((Size::new(0, 0), Surface::new(0, 0), 0));
     }
     let renderer = content_text_renderer();
     let view = <TextRenderer as crate::content::Renderer<[TextContent]>>::render(
@@ -747,11 +747,12 @@ fn render_semantic_surface(
         }
     }
     if let Some(reveal_units) = reveal_units {
-        let revealed = reveal_surface(&surface, reveal_units);
+        let (revealed, fully_revealed) = reveal_surface(&surface, reveal_units);
         let size = Size::new(revealed.width(), revealed.height());
-        return Ok((size, revealed));
+        return Ok((size, revealed, fully_revealed));
     }
-    Ok((Size::new(width, height), surface))
+    let full_height = usize::from(height);
+    Ok((Size::new(width, height), surface, full_height))
 }
 
 fn surface_suffix(surface: &Surface, start: usize) -> Surface {
@@ -767,13 +768,14 @@ fn surface_suffix(surface: &Surface, start: usize) -> Surface {
     suffix
 }
 
-fn reveal_surface(surface: &Surface, mut units: usize) -> Surface {
+fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
     if units == 0 || surface.width() == 0 || surface.height() == 0 {
-        return Surface::new(surface.width(), 0);
+        return (Surface::new(surface.width(), 0), 0);
     }
     let mut revealed = surface.clone();
     let mut last_row = 0u16;
     let mut saw_glyph = false;
+    let mut fully_revealed = 0usize;
     for row in 0..surface.height() {
         let mut cut = None;
         for column in 0..surface.width() {
@@ -801,11 +803,15 @@ fn reveal_surface(surface: &Surface, mut units: usize) -> Surface {
             }
             break;
         }
+        fully_revealed = usize::from(row) + 1;
     }
     if !saw_glyph {
-        return Surface::new(surface.width(), 0);
+        return (Surface::new(surface.width(), 0), 0);
     }
-    revealed.crop_to(surface.width(), last_row.saturating_add(1))
+    (
+        revealed.crop_to(surface.width(), last_row.saturating_add(1)),
+        fully_revealed,
+    )
 }
 
 fn project_text_snapshot(
@@ -864,25 +870,29 @@ fn project_text_snapshot(
     } else {
         None
     };
-    let (intrinsic_size, surface) =
+    let (intrinsic_size, surface, fully_revealed_rows) =
         render_semantic_surface(&semantic, theme, offered_width, reveal_units)?;
     let stable_rows = if snapshot.sealed {
         surface.height() as usize
-    } else if funnel.kind == TextFunnelKind::Plain && funnel.smooth_config().is_none() {
-        snapshot
+    } else {
+        let stable_prefix_rows = snapshot
             .stable_prefix()
             .and_then(|prefix| {
-                project_semantic_snapshot(&prefix, funnel, execution)
+                let mut prefix_exec = ConnectorExecution::new(&funnel);
+                project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
                     .ok()
-                    .and_then(|semantic| {
-                        render_semantic_surface(&semantic, theme, offered_width, None)
+                    .and_then(|prefix_semantic| {
+                        render_semantic_surface(&prefix_semantic, theme, offered_width, None)
                             .ok()
-                            .map(|(_, surface)| usize::from(surface.height()))
+                            .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
                     })
             })
-            .unwrap_or(0)
-    } else {
-        0
+            .unwrap_or(0);
+        if reveal_units.is_some() {
+            stable_prefix_rows.min(fully_revealed_rows)
+        } else {
+            stable_prefix_rows.min(surface.height() as usize)
+        }
     };
     Ok(HostContentProjection {
         key,
@@ -4798,12 +4808,13 @@ mod tests {
             *surface.get_mut(column, 1) = cell;
         }
         // Exactly 3 units -> reveals only the 3 cells in row 0
-        let revealed = reveal_surface(&surface, 3);
+        let (revealed, fully_revealed) = reveal_surface(&surface, 3);
         assert_eq!(
             revealed.height(),
             1,
             "revealed surface should only have 1 row when all cells of row 1 are unrevealed"
         );
+        assert_eq!(fully_revealed, 1);
     }
 
     #[test]
@@ -4956,5 +4967,231 @@ mod tests {
             !registry.ports.contains_key(&port_id),
             "retired History unit port must be cleaned up from ContentHostRegistry"
         );
+    }
+
+    #[test]
+    fn history_rows_transfer_unsealed_markdown_stream_with_smoothing() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(
+                b"# Header\n\nParagraph line 1\nParagraph line 2\n\nMore text\n",
+                &[],
+                &[],
+            )
+            .unwrap();
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        let mut history = crate::History::new();
+        let view = View::native_content_host(port_id).unwrap();
+        let unit_id = history.push(view.clone()).unwrap();
+        registry
+            .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Seed smoother with initial measurement
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+
+        // Advance smoother enough to reveal all rows
+        let t0 = std::time::Instant::now();
+        registry.advance(t0);
+        let t1 = t0 + std::time::Duration::from_secs(2);
+        registry.advance(t1);
+
+        let measurement =
+            registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        assert!(measurement.intrinsic_size.height > 0);
+
+        // While open: transfer stable prefix
+        let mut sink = LocalSink::default();
+        let theme = crate::Theme::new();
+        let outcome = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            40,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            outcome.inserted > 0,
+            "open Markdown stream with completed paragraphs must have stable transferable rows"
+        );
+
+        // Now seal the stream and finish transfer
+        source.seal().unwrap();
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let outcome = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            40,
+            20,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                outcome.status,
+                crate::history::NativeTransferStatus::Progress
+                    | crate::history::NativeTransferStatus::Idle
+            ) || outcome.inserted > 0
+        );
+        assert!(
+            history.is_empty(),
+            "sealed Markdown History unit must be retired"
+        );
+    }
+
+    #[test]
+    fn history_transfer_tool_and_unsealed_markdown_stream_does_not_block() {
+        let mut history = crate::History::new();
+        // Unit 1: A completed/frozen tool call unit
+        let tool_view = View::text("Tool: execute_command -> success");
+        let _ = history.push(tool_view).unwrap();
+
+        // Unit 2: An unsealed Markdown assistant stream
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(
+                b"Assistant response line 1\nAssistant response line 2\n",
+                &[],
+                &[],
+            )
+            .unwrap();
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        let stream_view = View::native_content_host(port_id).unwrap();
+        let unit_id = history.push(stream_view).unwrap();
+        registry
+            .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Advance smoother
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let t0 = std::time::Instant::now();
+        registry.advance(t0);
+        let t1 = t0 + std::time::Duration::from_secs(2);
+        registry.advance(t1);
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+
+        let mut sink = LocalSink::default();
+        let theme = crate::Theme::new();
+
+        // First transfer: transfers the tool call!
+        let outcome1 = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            40,
+            1,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            outcome1.inserted > 0,
+            "tool call unit must transfer to native scrollback"
+        );
+        assert_eq!(
+            history.len(),
+            1,
+            "tool call unit retired; stream unit remains"
+        );
+
+        // Second transfer: transfers the stable rows of the unsealed stream!
+        let outcome2 = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            40,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            outcome2.inserted > 0,
+            "open stream stable prefix must transfer without blocking"
+        );
+
+        // Seal and complete
+        source.seal().unwrap();
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let outcome3 = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            40,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                outcome3.status,
+                crate::history::NativeTransferStatus::Progress
+                    | crate::history::NativeTransferStatus::Idle
+            ) || outcome3.inserted > 0
+        );
+        assert!(history.is_empty(), "history completely drained");
     }
 }

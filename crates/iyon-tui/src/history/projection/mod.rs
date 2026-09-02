@@ -324,7 +324,9 @@ fn project_into_session_with_mode(
                     &mut selected_items,
                     overlay,
                 );
-            } else if let Some((blocker, stream)) = protected_stream_bounds(&units) {
+            } else if let Some((blocker, stream)) =
+                protected_stream_bounds(&units, content, content_width)
+            {
                 // An open Stream tail follows its semantic end, but resident blockers
                 // before it form a protected band. Reserve that real flow geometry first;
                 // only the remaining capacity belongs to the Stream suffix. If the band
@@ -561,12 +563,24 @@ fn project_into_session_with_mode(
     })
 }
 
-fn protected_stream_bounds(units: &[&super::HistoryUnit]) -> Option<(usize, usize)> {
+fn protected_stream_bounds(
+    units: &[&super::HistoryUnit],
+    content: &dyn ContentProvider,
+    content_width: u16,
+) -> Option<(usize, usize)> {
     let stream = units.len().checked_sub(1)?;
-    let HistoryUnitContent::Stream(stream_content) = &units[stream].content else {
-        return None;
+    let is_open_stream = match &units[stream].content {
+        HistoryUnitContent::Stream(stream_content) => !stream_content.is_sealed(),
+        HistoryUnitContent::Static(view) if view.contains_content_identity() => {
+            view.content_attachment_id().is_some_and(|port_id| {
+                content
+                    .history_rows(port_id, content_width)
+                    .is_some_and(|rows| !rows.complete)
+            })
+        }
+        _ => false,
     };
-    if stream_content.is_sealed() {
+    if !is_open_stream {
         return None;
     }
     let blocker =

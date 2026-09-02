@@ -765,3 +765,25 @@ fn projector_may_be_non_send() {
     projector.project(&input).unwrap();
     assert_eq!(*counter.borrow(), 1);
 }
+
+#[test]
+fn smooth_handles_unstable_tail_replacement_and_span_merges_without_panicking() {
+    let mut smooth = Smooth::default();
+
+    // Snapshot 1: a 1-byte span is published immediately.
+    let input1 = smooth_input(1, 1, false, &[1]);
+    let out1 = smooth.project(&input1).unwrap();
+    assert_eq!(out1.source_end(), StreamOffset::new(1));
+
+    // Snapshot 2: the tail span is merged into a longer 3-byte span (e.g. combining character).
+    let input2 = smooth_input(3, 3, false, &[3]);
+    let out2 = smooth.project(&input2).unwrap();
+    // out2 does not panic and yields up to the last whole span that fits.
+    assert!(out2.source_end() <= StreamOffset::new(3));
+
+    // After advancing, the new merged span is released.
+    let now = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    smooth.advance(now);
+    let out3 = smooth.project(&input2).unwrap();
+    assert_eq!(out3.source_end(), StreamOffset::new(3));
+}

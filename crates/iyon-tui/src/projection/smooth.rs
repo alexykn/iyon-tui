@@ -284,17 +284,11 @@ impl Smooth {
         if metadata_unchanged && self.input_sealed == input.is_sealed() {
             return;
         }
-        let reset_queue = self.input_base != Some(input.source_base())
-            || input.source_base() > self.queued_through;
-        if reset_queue {
-            self.pending.clear();
-            self.pending_units = 0;
-            self.queued_through = input.source_base().max(self.published_end);
-        }
+        self.pending.clear();
+        self.pending_units = 0;
         let mut added_units: usize = 0;
-        for span in input.spans_from(self.queued_through) {
-            if span.source().start() < self.queued_through
-                || span.source().end() <= self.published_end
+        for span in input.spans_from(self.published_end) {
+            if span.source().end() <= self.published_end
                 || span.source().end() > input.stable_through()
             {
                 continue;
@@ -303,15 +297,14 @@ impl Smooth {
                 source: span.source(),
                 weight: span.values().len(),
             };
-            self.queued_through = pending.source.end();
             added_units = added_units.saturating_add(pending.weight);
             self.pending.push_back(pending);
         }
-        if reset_queue {
-            self.pending_units = added_units;
-        } else {
-            self.pending_units = self.pending_units.saturating_add(added_units);
-        }
+        self.pending_units = added_units;
+        self.queued_through = self
+            .pending
+            .back()
+            .map_or(self.published_end, |p| p.source.end());
         self.input_base = Some(input.source_base());
         self.input_stable = input.stable_through();
         self.input_end = input.source_end();
@@ -333,13 +326,18 @@ impl Smooth {
         {
             return self.output(input);
         }
+        let eligible = spans
+            .iter()
+            .take_while(|span| span.source.end() <= end)
+            .collect::<Vec<_>>();
+        let effective_end = eligible.last().map_or(from, |span| span.source.end());
         let mut builder = ProjectionBuilder::new(
             from,
-            end,
-            end,
-            input.is_sealed() && end == input.source_end(),
+            effective_end,
+            effective_end,
+            input.is_sealed() && effective_end == input.source_end(),
         );
-        for span in spans.iter().take_while(|span| span.source.end() <= end) {
+        for span in eligible {
             builder = builder.emit_many(span.source, span.values.iter().cloned());
         }
         builder

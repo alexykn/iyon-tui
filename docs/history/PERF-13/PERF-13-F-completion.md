@@ -87,3 +87,32 @@ runtime checks passed:
 No full benchmark suite was run because the PERF-13 handoff benchmark policy
 limits PERF-13 tranches to relevant tests and explicitly scoped measurements;
 the full PERF-12 benchmark run takes roughly four hours.
+
+## Post-implementation audit hardening
+
+A follow-up audit against the resolved handoff and v5 ownership model found and
+corrected several edge cases:
+
+- CRLF was being treated as one grapheme by the projected-text compiler, so a
+  retained plain Source could collapse `"a\\r\\nb"` into one physical line.
+  The projected compiler now preserves the existing LF hard-line semantics.
+- A candidate activation failure could be retried by a second measurement pass
+  in the same frame, especially when the fallback used a different Source.
+  Failure keys now include the attempted width/Source input, and final binding
+  selection never performs a second arbitrary-width activation attempt.
+- Deactivating or disposing a failed requested Connector did not schedule the
+  removal of the old visible fallback Connector. The Port now advances a frame
+  for that transition.
+- Layout measurement keys now include the selected Connector, exact offered
+  width, projection readiness, and mount/error state. This prevents stale
+  measured content from being committed when a Connector cache entry was
+  evicted or a cold candidate had no derived projection.
+- Content-only frames without the legacy History sideband reuse the retained
+  resolved semantic scene and rebuild only derived layout/paint products.
+- Content projections now retain only their widest painted row rather than an
+  offered-width cell buffer for every row, reject impossible terminal-row or
+  logical-line materialization before compilation, and report an explicit
+  `LIMIT_EXCEEDED` Connector diagnostic instead of risking allocator-fatal
+  derived-row growth.
+- ContentHost physical completeness now records vertical clipping when content
+  is placed in a bounded non-viewport allocation.

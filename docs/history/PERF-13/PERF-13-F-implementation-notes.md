@@ -1,15 +1,15 @@
-# PERF-13-F implementation notes
+# PERF-13-F implementation and audit notes
 
-> This is an implementation handoff for the next context window, not a completion
-> report. It records the current repository shape, the resolved PERF-13-F
-> contract, and the work still required after PERF-13-A through E.
+> This is the implementation/audit handoff for PERF-13-F. It records the
+> repository shape, the resolved PERF-13-F contract, and the audit decisions
+> retained alongside the completion report.
 
 ## 1. Current task and boundaries
 
-The active user request is to re-read and implement **PERF-13-F — Connector
-projection, unified convergence, and viewport integration** end to end.
-PERF-13-A through E are complete and committed. PERF-13-G and PERF-13-H are
-not part of this task.
+PERF-13-F — Connector projection, unified convergence, and viewport
+integration — is implemented and committed. This file remains the detailed
+contract/audit guide for F. PERF-13-A through E are complete and committed;
+PERF-13-G and PERF-13-H are not part of this tranche.
 
 PERF-13-F must make retained content visible through the existing host frame
 transaction. It must not add a second renderer, second scheduler, or a new
@@ -127,11 +127,12 @@ Connector. ContentPort owns only structural mount, allocation, and clipping.
 - PERF-13-E commits:
   - `89a4c76 feat: implement PERF-13-E retained content data`
   - `e1c2b7a docs: clarify PERF-13 benchmark policy`
-- The PERF-13-F implementation is complete in the worktree. It contains a
-  generic presentation `ContentProvider`, plain Connector projection and cache
-  entries, ContentHost layout/paint integration, content-aware cache
-  invalidation, and ScrollPane content-extent synchronization. See
-  `PERF-13-F-completion.md` for the sign-off summary.
+- The PERF-13-F implementation is complete and committed in `c214c2c`. The
+  post-implementation audit additionally hardens CRLF projection, candidate
+  failure retry boundaries, failed-fallback deactivation/disposal, projection
+  readiness cache keys, retained content-only refresh, bounded derived
+  materialization, and ContentHost clipping. See `PERF-13-F-completion.md` for
+  the sign-off summary.
 - The repository was clean before this notes file was created.
 - The current Pi process is `openai-codex/gpt-5.6-luna`.
 - `~/.pi/agent/models.json` was updated during this session so the
@@ -141,8 +142,9 @@ Connector. ContentPort owns only structural mount, allocation, and clipping.
 Existing verification for A–E passed before starting this audit, including
 focused Rust/Bun tests, native tests/clippy, TypeScript typecheck, package
 build, ownership, declaration closure, ABI checks, direct-FFI probes, default
-and direct-FFI staging, and C-header layout assertions. Do not assume F passes
-those checks until rerun after implementation.
+and direct-FFI staging, and C-header layout assertions. F and its audit
+hardening were rerun against the same focused checks; the full PERF-12
+benchmark suite remains intentionally excluded.
 
 ## 4. Existing Rust architecture and exact F seams
 
@@ -629,8 +631,11 @@ Potential safe properties:
 - no Source mutex is held while consuming the adapter.
 
 A derived projection may allocate rows/compiled text proportional to the active
-projection. A Source snapshot must not duplicate the entire raw Source solely
-for revision inspection, and a cache hit must not recompile.
+projection. The current terminal layout tree has `u16` physical row/line
+coordinates, so F rejects a plain projection that would exceed that bound
+before compiling it; this is an explicit derived-materialization guard, not
+Source retention/truncation. A Source snapshot must not duplicate the entire
+raw Source solely for revision inspection, and a cache hit must not recompile.
 
 ### 6.3 Content-folder findings: reuse semantic text infrastructure
 
@@ -1122,9 +1127,10 @@ At the time of writing:
 - Todo #47 (audit existing F seams): completed.
 - Todo #48 (implement PERF-13-F): completed.
 - Todo #49 (verify PERF-13-F): completed.
-- Todo #50 (document and commit PERF-13-F): in progress.
+- Todo #50 (document and commit PERF-13-F): completed.
+- Todo #51 (audit PERF-13-F implementation): in progress.
 
 After compaction, read this file first, inspect the current git status, and
-continue with documentation/commit bookkeeping if needed. PERF-13-F is plain
+continue the active audit/verification/commit bookkeeping. PERF-13-F is plain
 text only; do not pull v5 Markdown/diff/ANSI/Smooth/Surface/Taffy work into F.
 Keep exactly one todo in progress.

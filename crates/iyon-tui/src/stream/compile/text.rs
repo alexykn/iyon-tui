@@ -153,7 +153,23 @@ fn projected_hard_lines(
                     ..(atom.owned.end.as_u64() - text.content_range.start.as_u64()) as usize,
             ),
         };
-        if atom.display == "\n" {
+        if atom.display == "\r\n" {
+            // unicode-segmentation treats CRLF as one grapheme cluster, while
+            // the text IR's hard-line contract treats LF as the line break and
+            // CR as a zero-width carriage-return control. Split the cluster so
+            // projected content matches ordinary TextView newline semantics.
+            let mut carriage_return = mapped.clone();
+            carriage_return.text = Cow::Owned("\r".to_owned());
+            carriage_return.width = 0;
+            let source_start = atom.owned.start.as_u64() - text.content_range.start.as_u64();
+            carriage_return.source =
+                Some(source_start as usize..source_start.saturating_add(1) as usize);
+            hard_lines
+                .last_mut()
+                .expect("stream has a hard line")
+                .push(carriage_return);
+            hard_lines.push(Vec::new());
+        } else if atom.display == "\n" {
             hard_lines.push(Vec::new());
         } else {
             hard_lines

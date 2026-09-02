@@ -993,9 +993,6 @@ impl SceneHost {
         let Some(retained_state) = self.retained.as_ref() else {
             return Ok(None);
         };
-        if self.content_invalidated {
-            return Ok(None);
-        }
         if retained_state.layout.tree.size != size {
             return Ok(None);
         }
@@ -1010,6 +1007,51 @@ impl SceneHost {
             retained_state.root.scene.mounts.contains(*component)
                 && !retained_state.root.history_components.contains(component)
         });
+        if self.content_invalidated {
+            // Content changes do not alter the resolved semantic scene. When
+            // there is no legacy History sideband to refresh, retain that
+            // scene and rebuild only its derived layout with the new content
+            // provider. This preserves the three-plane boundary while still
+            // allowing fit-content metrics to propagate through the full
+            // layout dependency graph.
+            if scene.history().is_none()
+                && self.invalidated_components.is_empty()
+                && self.invalidated_states.is_empty()
+                && !body_changed
+                && !body_invalidated
+                && !history_changed
+                && !native_history_changed
+            {
+                let mut retained = self
+                    .retained
+                    .take()
+                    .expect("retained state was checked above");
+                self.layout_cache.begin_epoch();
+                retained.layout = layout_resolved_scene_with_cache_and_content(
+                    &retained.root.scene,
+                    size,
+                    &mut self.layout_cache,
+                    content,
+                );
+                self.content_invalidated = false;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
+                self.incremental_paint_states.clear();
+                self.state_only_refresh = false;
+                self.incremental_paint_history = false;
+                self.history_only_refresh = false;
+                self.full_paint_pending = false;
+                self.pending_damage = None;
+                #[cfg(test)]
+                {
+                    self.incremental_resolves += 1;
+                }
+                return Ok(Some(retained));
+            }
+            return Ok(None);
+        }
         if !self.invalidated_states.is_empty()
             && (!self.invalidated_components.is_empty()
                 || body_changed

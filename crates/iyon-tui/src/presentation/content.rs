@@ -31,7 +31,7 @@ impl Default for ContentMeasurement {
 /// Connector projection while measuring, but painting only reads the prepared
 /// result. No method owns or mutates Source bytes or viewport state.
 pub(crate) trait ContentProvider {
-    fn projection_revision(&self, port_id: u64) -> u64;
+    fn projection_revision(&self, port_id: u64, offered_width: u16) -> u64;
 
     fn measure(
         &mut self,
@@ -54,7 +54,7 @@ pub(crate) trait ContentProvider {
 pub(crate) struct EmptyContentProvider;
 
 impl ContentProvider for EmptyContentProvider {
-    fn projection_revision(&self, _port_id: u64) -> u64 {
+    fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
         0
     }
 

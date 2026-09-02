@@ -141,7 +141,8 @@ fn prepare_kind(
         MeasuredKind::ContentHost { measurement, .. } => (
             PreparedKind::Leaf,
             measurement.intrinsic_size,
-            measurement.physically_complete,
+            measurement.physically_complete
+                && measurement.intrinsic_size.height <= requested_core_height,
         ),
         MeasuredKind::Container { child } => {
             let prepared = prepare_node(child, Some(requested_core_height), cache);

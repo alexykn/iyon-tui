@@ -193,6 +193,7 @@ pub struct ContentMutationResult {
 
 const SOURCE_CHUNK_BYTES: usize = 16 * 1024;
 const MAX_SOURCE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+const MAX_CONTENT_PROJECTION_ROWS: u64 = u16::MAX as u64;
 const MAX_SOURCE_ANNOTATIONS: usize = 16 * 1024;
 const MAX_ANNOTATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
@@ -417,6 +418,39 @@ impl SourceStorage {
     }
 }
 
+fn projected_bounds(
+    snapshot: &HostContentSourceSnapshot,
+    wrap: TextWrapMode,
+    offered_width: u16,
+) -> (u64, u64) {
+    let width = u64::from(offered_width.max(1));
+    let mut rows = 0u64;
+    let mut line_bytes = 0u64;
+    let mut max_line_bytes = 0u64;
+    for (bytes, _) in snapshot.chunks() {
+        for byte in bytes {
+            if *byte == b'\n' {
+                max_line_bytes = max_line_bytes.max(line_bytes);
+                rows = if wrap == TextWrapMode::NoWrap {
+                    rows.saturating_add(1)
+                } else {
+                    rows.saturating_add(line_bytes.div_ceil(width).max(1))
+                };
+                line_bytes = 0;
+            } else {
+                line_bytes = line_bytes.saturating_add(1);
+            }
+        }
+    }
+    max_line_bytes = max_line_bytes.max(line_bytes);
+    rows = if wrap == TextWrapMode::NoWrap {
+        rows.saturating_add(1)
+    } else {
+        rows.saturating_add(line_bytes.div_ceil(width).max(1))
+    };
+    (rows, max_line_bytes)
+}
+
 fn annotation_policy(kind: u32) -> AnnotationTruncationPolicy {
     match kind {
         CONTENT_ANNOTATION_KIND_TAG | CONTENT_ANNOTATION_KIND_STYLE => {
@@ -449,6 +483,18 @@ fn project_plain_snapshot(
         });
     }
 
+    let (row_bound, max_line_bytes) = projected_bounds(snapshot, funnel.wrap, offered_width);
+    if row_bound > MAX_CONTENT_PROJECTION_ROWS {
+        return Err(anyhow!(
+            "LIMIT_EXCEEDED: content projection requires {row_bound} rows, exceeding the terminal row limit"
+        ));
+    }
+    if max_line_bytes > MAX_CONTENT_PROJECTION_ROWS {
+        return Err(anyhow!(
+            "LIMIT_EXCEEDED: content projection has a {max_line_bytes}-byte logical line, exceeding the terminal line limit"
+        ));
+    }
+
     let range = StreamRange::new(
         StreamOffset::new(snapshot.source_base),
         StreamOffset::new(snapshot.source_end),
@@ -474,8 +520,7 @@ fn project_plain_snapshot(
         .map_err(|error| anyhow!("content projection failed: {error}"))?;
     let theme = crate::Theme::new();
     let compiler = crate::presentation::layout::ViewCompiler::new(&theme);
-    let (compiled_width, rows) =
-        compiler.compile_projected_text_with_metadata(&projected, offered_width.max(1));
+    let (_, rows) = compiler.compile_projected_text_with_metadata(&projected, offered_width.max(1));
     let intrinsic_width = rows
         .iter()
         .map(|row| row.width)
@@ -483,7 +528,11 @@ fn project_plain_snapshot(
         .unwrap_or_default()
         .min(usize::from(u16::MAX)) as u16;
     let intrinsic_height = rows.len().min(usize::from(u16::MAX)) as u16;
-    let surface_width = compiled_width.max(intrinsic_width);
+    // The ContentHost box supplies its own width/background. Retain only the
+    // painted row width here instead of allocating `offered_width` cells for
+    // every row; a wide terminal plus a long narrow stream would otherwise
+    // multiply derived storage far beyond the Source payload.
+    let surface_width = intrinsic_width;
     let mut surface = Surface::new(surface_width, intrinsic_height);
     for (row_index, row) in rows
         .into_iter()
@@ -912,15 +961,6 @@ impl HostContentSource {
             return Err(anyhow!("SOURCE_DISPOSED: Source is disposed"));
         }
         Ok(record.content_generation)
-    }
-
-    fn revision(&self) -> Result<u64> {
-        let record = self
-            .record
-            .lock()
-            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
-        ensure_source_live(&record)?;
-        Ok(record.revision)
     }
 
     pub fn snapshot(&self) -> Result<HostContentSourceSnapshot> {
@@ -1648,10 +1688,46 @@ impl ContentHostRegistry {
         })
     }
 
-    fn connector_revision(&self, connector_id: u64) -> u64 {
-        self.connector_projection_key(connector_id, 1)
-            .map(TextProjectionKey::revision)
-            .unwrap_or_default()
+    fn connector_revision(&self, connector_id: u64, offered_width: u16) -> u64 {
+        let Ok(key) = self.connector_projection_key(connector_id, offered_width) else {
+            return 0;
+        };
+        let Some(connector) = self.connectors.get(&connector_id) else {
+            return 0;
+        };
+        let Ok(state) = connector.lock() else {
+            return 0;
+        };
+        let port_mounted = state
+            .port
+            .upgrade()
+            .and_then(|port| port.lock().ok().map(|port| port.desired_mounted))
+            .unwrap_or(false);
+        let projection_ready = state
+            .candidate_projection
+            .as_ref()
+            .is_some_and(|projection| projection.key == key)
+            || state
+                .committed_projection
+                .as_ref()
+                .is_some_and(|projection| projection.key == key)
+            || Self::cached_projection(&state, &key).is_some();
+
+        // The layout cache is keyed before ContentProvider::measure can
+        // prepare a projection. Include Connector identity and readiness so a
+        // cache entry from another Connector, an unmounted occurrence, or an
+        // evicted width projection cannot commit a measured node that the
+        // painter has no corresponding derived rows for.
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        connector_id.hash(&mut hasher);
+        key.hash(&mut hasher);
+        projection_ready.hash(&mut hasher);
+        state.requested.hash(&mut hasher);
+        state.visible.hash(&mut hasher);
+        state.error.is_some().hash(&mut hasher);
+        port_mounted.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn selected_connector_id(&self, port_id: u64) -> Option<u64> {
@@ -1732,6 +1808,13 @@ impl ContentHostRegistry {
             }
             if let Some(projection) = Self::cached_projection(&state, &key) {
                 state.candidate_projection = Some(Arc::clone(&projection));
+                // A successful cache hit is still a successful preparation
+                // for this input. Clear an older failure recorded for a
+                // different width/revision so status does not remain stale
+                // after the Connector has recovered without recompiling.
+                state.error = None;
+                state.failed_source_revision = None;
+                state.projection_failure_key = None;
                 return Ok(projection.measurement());
             }
         }
@@ -1785,6 +1868,13 @@ impl ContentHostRegistry {
             .map(|projection| projection.measurement())
     }
 
+    fn projection_failure_is_recorded(&self, connector_id: u64, key: TextProjectionKey) -> bool {
+        self.connectors
+            .get(&connector_id)
+            .and_then(|connector| connector.lock().ok())
+            .is_some_and(|state| state.error.is_some() && state.projection_failure_key == Some(key))
+    }
+
     fn record_projection_failure(
         &mut self,
         connector_id: u64,
@@ -1795,8 +1885,13 @@ impl ContentHostRegistry {
             return;
         };
         if let Ok(mut state) = connector.lock() {
+            let code = if diagnostic.starts_with("LIMIT_EXCEEDED:") {
+                "LIMIT_EXCEEDED"
+            } else {
+                "PROJECTION_FAILED"
+            };
             state.error = Some(ContentConnectorError {
-                code: "PROJECTION_FAILED".to_owned(),
+                code: code.to_owned(),
                 diagnostic,
             });
             state.failed_source_revision = Some(key.source_revision);
@@ -1853,7 +1948,7 @@ impl ContentHostRegistry {
         // Keep the native/unit failure fixture on the same candidate-fallback
         // boundary as real projection failures.
         if self
-            .prepare_activation_candidate(connector_id)
+            .prepare_activation_candidate(connector_id, offered_width)
             .unwrap_or(false)
         {
             let fallback = visible.and_then(|id| {
@@ -1874,7 +1969,9 @@ impl ContentHostRegistry {
                 self.refine_fit_measurement(connector_id, offered_width, width_rule, measurement)
             }
             Err(error) => {
-                if let Ok(key) = self.connector_projection_key(connector_id, offered_width) {
+                if let Ok(key) = self.connector_projection_key(connector_id, offered_width)
+                    && !self.projection_failure_is_recorded(connector_id, key)
+                {
                     self.record_projection_failure(connector_id, key, error.to_string());
                 }
                 let fallback = visible.and_then(|id| {
@@ -1946,10 +2043,12 @@ impl ContentHostRegistry {
                 } else {
                     match desired_connector {
                         None => None,
-                        Some(id) if port_mounted && self.prepare_activation_candidate(id)? => {
-                            visible_connector
+                        // Projection/activation belongs to the measure pass;
+                        // this final selection step must not retry a failed
+                        // candidate with an arbitrary width after layout.
+                        Some(id) if port_mounted && self.connector_is_candidate_ready(id) => {
+                            Some(id)
                         }
-                        Some(id) if self.connector_is_candidate_ready(id) => Some(id),
                         Some(_) => visible_connector,
                     }
                 };
@@ -1965,7 +2064,11 @@ impl ContentHostRegistry {
     /// preparation time. This keeps activation request state truthful and
     /// exercises the same old-visible fallback boundary that real projection
     /// errors will use in PERF-13-F.
-    fn prepare_activation_candidate(&mut self, connector_id: u64) -> Result<bool> {
+    fn prepare_activation_candidate(
+        &mut self,
+        connector_id: u64,
+        offered_width: u16,
+    ) -> Result<bool> {
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return Err(anyhow!(
                 "INTERNAL_INVARIANT: activation candidate {connector_id} disappeared"
@@ -1982,11 +2085,21 @@ impl ContentHostRegistry {
                 "INTERNAL_INVARIANT: activation failure targeted a non-candidate Connector {connector_id}"
             ));
         }
-        // Capture the revision at the start of the failed attempt. A
-        // concurrent Source mutation may commit while the host is still
-        // preparing this candidate; recording the pre-attempt revision
-        // lets that mutation request exactly one later retry.
-        let attempted_source_revision = state.source.revision()?;
+        // Capture the revision and input key at the start of the failed
+        // attempt. A concurrent Source mutation may commit while the host is
+        // still preparing this candidate; recording the pre-attempt revision
+        // and exact width prevents a second layout measurement in this same
+        // frame from retrying the identical failed input.
+        let snapshot = state.source.snapshot()?;
+        let key = TextProjectionKey {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+            source_revision: snapshot.revision,
+            width: offered_width.max(1),
+            wrap: state.funnel.wrap,
+        };
+        let attempted_source_revision = snapshot.revision;
         let diagnostic = state
             .activation_failure
             .take()
@@ -1996,6 +2109,7 @@ impl ContentHostRegistry {
             diagnostic,
         });
         state.failed_source_revision = Some(attempted_source_revision);
+        state.projection_failure_key = Some(key);
         state.phase = "failed";
         Ok(true)
     }
@@ -2274,33 +2388,46 @@ impl ContentHostRegistry {
             .get(&connector_id)
             .cloned()
             .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {connector_id} is unavailable"))?;
-        let (port, source, generation, was_visible, was_requested) = {
+        let (port, source, generation, was_visible, was_requested, was_selected, visible_connector) = {
             let state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
             if state.lifecycle != ConnectorLifecycle::Live {
                 return Err(anyhow!("CONNECTOR_DISPOSING: Connector is not active"));
             }
+            let port = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+            let (was_selected, visible_connector) = {
+                let port_state = port
+                    .lock()
+                    .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
+                (
+                    port_state.desired_connector == Some(connector_id),
+                    port_state.visible_connector,
+                )
+            };
             (
-                state
-                    .port
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?,
+                port,
                 state.source.clone(),
                 state.generation,
                 state.visible,
                 state.requested,
+                was_selected,
+                visible_connector,
             )
         };
         let in_flight = self.in_flight_connectors.contains(&connector_id);
         if !was_requested && !was_visible && !in_flight {
             return Ok(false);
         }
-        if port
-            .lock()
-            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
-            .desired_connector
-            == Some(connector_id)
+        if was_selected
+            && port
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .desired_connector
+                == Some(connector_id)
         {
             port.lock()
                 .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
@@ -2317,7 +2444,14 @@ impl ContentHostRegistry {
             state.requested = false;
             state.phase = if state.visible { "active" } else { "idle" };
         }
-        Ok(was_visible || in_flight)
+        // A failed switch leaves the old visible Connector as the fallback
+        // while the requested candidate remains selected. Deactivating that
+        // candidate must still schedule the removal of the visible fallback;
+        // otherwise the port would stay visibly active with no requested
+        // Connector and no pending epoch to remove it.
+        Ok(was_visible
+            || in_flight
+            || (was_requested && was_selected && visible_connector.is_some()))
     }
 
     fn request_connector_disposal(&mut self, connector_id: u64) -> Result<bool> {
@@ -2327,7 +2461,7 @@ impl ContentHostRegistry {
             .cloned()
             .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {connector_id} is unavailable"))?;
         let in_flight = self.in_flight_connectors.contains(&connector_id);
-        let (port, source, generation, visible, desired) = {
+        let (port, source, generation, visible, desired, visible_connector) = {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -2339,19 +2473,26 @@ impl ContentHostRegistry {
             state.lifecycle = ConnectorLifecycle::Disposing;
             state.requested = false;
             state.phase = "disposing";
+            let port = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+            let (desired, visible_connector) = {
+                let port_state = port
+                    .lock()
+                    .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
+                (
+                    (port_state.desired_connector == Some(connector_id)).then_some(()),
+                    port_state.visible_connector,
+                )
+            };
             (
-                state
-                    .port
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?,
+                port,
                 state.source.clone(),
                 state.generation,
                 state.visible,
-                state.port.upgrade().and_then(|port| {
-                    port.lock().ok().and_then(|port| {
-                        (port.desired_connector == Some(connector_id)).then_some(())
-                    })
-                }),
+                desired,
+                visible_connector,
             )
         };
         if !visible && !in_flight {
@@ -2367,8 +2508,9 @@ impl ContentHostRegistry {
             // finalize only after commit/abort reconciles that candidate.
             return Ok(true);
         }
+        let removes_visible_fallback = desired.is_some() && visible_connector.is_some();
         self.remove_connector(connector_id);
-        Ok(false)
+        Ok(removes_visible_fallback)
     }
 
     fn dispose_port(&mut self, port: &Arc<Mutex<PortRecord>>) -> Result<()> {
@@ -2663,6 +2805,7 @@ impl ContentHostRegistry {
                 state.lifecycle == ConnectorLifecycle::Live
                     && state.requested
                     && state.error.is_none()
+                    && state.candidate_projection.is_some()
             })
     }
 
@@ -2740,9 +2883,11 @@ impl ContentHostRegistry {
 }
 
 impl ContentProvider for ContentHostRegistry {
-    fn projection_revision(&self, port_id: u64) -> u64 {
+    fn projection_revision(&self, port_id: u64, offered_width: u16) -> u64 {
         self.selected_connector_id(port_id)
-            .map_or(0, |connector_id| self.connector_revision(connector_id))
+            .map_or(0, |connector_id| {
+                self.connector_revision(connector_id, offered_width)
+            })
     }
 
     fn measure(

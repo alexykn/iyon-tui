@@ -699,7 +699,11 @@ impl SceneHost {
                 content,
             )?;
 
-            if resolved.root.history_overflow_rows == 0 {
+            if resolved.root.history_overflow_rows == 0
+                || scene
+                    .history()
+                    .is_some_and(crate::History::contains_content_host)
+            {
                 crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
                 return Ok(self.paint_with_content(resolved, theme, content));
             }

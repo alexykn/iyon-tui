@@ -22,6 +22,17 @@ export type {
   NativeTextSourceContract,
 };
 
+export interface NativeTextFunnelControl {
+  readonly kind: "plain" | "markdown" | "diff" | "ansi";
+  readonly wrap: "word" | "grapheme" | "noWrap";
+  readonly hyperlinks: boolean;
+  readonly smooth: boolean;
+  readonly tickIntervalMs: number;
+  readonly spring: number;
+  readonly minUnitsPerSecond: number;
+  readonly maxUnitsPerSecond: number;
+}
+
 export function createTextSource(
   kind: "block" | "stream",
   options?: object,
@@ -47,9 +58,19 @@ export function contentPortMounted(port: NativeContentPortContract): boolean {
 export function connectContent(
   port: NativeContentPortContract,
   source: NativeTextSourceContract,
-  funnel: object,
+  funnel: NativeTextFunnelControl,
 ): NativeContentConnectorContract {
-  return port.connect(source, funnel);
+  return port.connect(
+    source,
+    funnel.kind,
+    funnel.wrap,
+    funnel.hyperlinks,
+    funnel.smooth,
+    funnel.tickIntervalMs,
+    funnel.spring,
+    funnel.minUnitsPerSecond,
+    funnel.maxUnitsPerSecond,
+  );
 }
 
 export function activateContent(

@@ -946,27 +946,33 @@ export class Tui implements TuiRuntime {
     this.assertNotMutating("tui.exit");
     this.historyLifetime.closed = true;
     const errors: unknown[] = [];
+    let exitFailed = false;
+    try {
+      // The final exit frame must run while its desired ContentPort bindings
+      // still exist. Retained-resource teardown follows the native final
+      // frame, unlike close(), which never prepares another frame.
+      this.host.exit();
+    } catch (error) {
+      exitFailed = true;
+      errors.push(asTuiError(error));
+    }
     try {
       this.disposeRetainedExecution();
     } catch (error) {
       errors.push(error);
     }
-    try {
-      this.host.exit();
-    } catch (error) {
-      errors.push(asTuiError(error));
+    if (exitFailed) {
       try {
         this.host.dispose();
       } catch (cleanupError) {
         errors.push(asTuiError(cleanupError));
       }
-    } finally {
-      // Exit is terminal even when terminal restoration reports an error;
-      // retained roots and caller-owned History liveness must not remain
-      // usable after the cleanup path has run.
-      this.closed = true;
-      this.currentScene = undefined;
     }
+    // Exit is terminal even when terminal restoration reports an error;
+    // retained roots and caller-owned History liveness must not remain usable
+    // after the cleanup path has run.
+    this.closed = true;
+    this.currentScene = undefined;
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "TUI exit cleanup failed");
   }

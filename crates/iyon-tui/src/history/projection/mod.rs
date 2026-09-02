@@ -65,7 +65,7 @@ enum FlowItem {
     BottomPadding,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Selected {
     offset: usize,
     height: usize,

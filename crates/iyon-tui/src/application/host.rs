@@ -921,6 +921,29 @@ impl HostHistory {
         funnel: HostContentFunnel,
         insets: crate::Insets,
     ) -> Result<HistoryUnitId> {
+        self.attach_content_stream(source, funnel, insets, None)
+    }
+
+    pub fn replace_content_stream(
+        &self,
+        unit: u64,
+        source: &HostContentSource,
+        funnel: HostContentFunnel,
+        insets: crate::Insets,
+    ) -> Result<()> {
+        let unit = HistoryUnitId::from_value(unit)
+            .ok_or_else(|| anyhow::anyhow!("history unit id must be non-zero"))?;
+        self.attach_content_stream(source, funnel, insets, Some(unit))
+            .map(|_| ())
+    }
+
+    fn attach_content_stream(
+        &self,
+        source: &HostContentSource,
+        funnel: HostContentFunnel,
+        insets: crate::Insets,
+        existing_unit: Option<HistoryUnitId>,
+    ) -> Result<HistoryUnitId> {
         let port = {
             let mut inner = self.lock_mut()?;
             inner
@@ -936,12 +959,21 @@ impl HostHistory {
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?
                 .fill_width()
                 .padding(insets);
-            let unit = inner
-                .running
-                .scene_history_mut()
-                .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-                .push(view)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            let unit = match existing_unit {
+                Some(unit) => inner
+                    .running
+                    .scene_history_mut()
+                    .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
+                    .replace_static_content(unit, view)
+                    .map(|_| unit)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+                None => inner
+                    .running
+                    .scene_history_mut()
+                    .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
+                    .push(view)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?,
+            };
             inner.refresh_desired_state_bindings()?;
             inner.running.invalidate_frame();
             unit

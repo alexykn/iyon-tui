@@ -27,6 +27,7 @@ import {
   type NativeContentConnectorContract,
   type NativeContentPortContract,
   type NativeStateWake,
+  type NativeTextFunnelControl,
   type NativeTextSourceContract,
 } from "../../transport/content/control.ts";
 import { SEMANTIC_VIEW_KIND } from "../view/semantic-node.ts";
@@ -542,15 +543,17 @@ function deliveryFor(value: boolean | TextSmoothOptions | undefined): TextFunnel
   return { kind: "smooth", options: Object.freeze(options) };
 }
 
-function textFunnelNative(funnel: TextFunnel): object {
+function textFunnelNative(funnel: TextFunnel): NativeTextFunnelControl {
+  const options = funnel.delivery.options;
   return {
-    family: funnel.family,
     kind: funnel.mode,
     wrap: funnel.wrap,
     hyperlinks: funnel.hyperlinks,
-    delivery: funnel.delivery.kind === "immediate"
-      ? { kind: "immediate" }
-      : { kind: "smooth", ...funnel.delivery.options },
+    smooth: funnel.delivery.kind === "smooth",
+    tickIntervalMs: options?.tickIntervalMs ?? 16,
+    spring: options?.spring ?? 2,
+    minUnitsPerSecond: options?.minUnitsPerSecond ?? 20,
+    maxUnitsPerSecond: options?.maxUnitsPerSecond ?? 800,
   };
 }
 

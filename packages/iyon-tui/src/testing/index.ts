@@ -36,6 +36,7 @@ interface AppHarnessContract extends TuiRuntime {
 export class AppHarness implements AppHarnessContract {
   private readonly tui: Tui;
   private clock = 0;
+  private terminalExited = false;
 
   private constructor(tui: Tui) {
     this.tui = tui;
@@ -80,6 +81,7 @@ export class AppHarness implements AppHarnessContract {
   }
 
   exit(): void {
+    this.terminalExited = true;
     this.tui.exit();
   }
 
@@ -128,11 +130,14 @@ export class AppHarness implements AppHarnessContract {
   private inspect<R>(operation: (access: ReturnType<typeof runtimeAccess>) => R): R {
     return this.callTesting(() => {
       const access = runtimeAccess(this.tui);
-      // Flush retained/native zero-time work before a deterministic snapshot.
-      // This keeps headless inspection coherent without exposing testing-only
-      // clock control to application code.
-      access.flush();
-      access.advance(0);
+      // Flush retained/native zero-time work before a deterministic snapshot
+      // while the host is live. After terminal exit the final frame is already
+      // committed; read-only inspection must remain available for diagnostics
+      // without reopening a closed Tui barrier.
+      if (!this.terminalExited) {
+        access.flush();
+        access.advance(0);
+      }
       return operation(access);
     });
   }

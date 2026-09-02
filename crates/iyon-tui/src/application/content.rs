@@ -2825,7 +2825,7 @@ impl ContentHostRegistry {
     }
 
     pub(crate) fn candidate_bindings(&mut self, targets: &[u64]) -> Result<Vec<ContentBinding>> {
-        // Ordinary target validation belongs to H3 prepare. Repeating it here
+        // Ordinary target validation belongs to H3 prepare; Repeating it here
         // would let the fallible frame path report stale/duplicate/wrong-host
         // attachment errors after the desired publication has already been
         // accepted. The owner registry and H3 lease keep this lookup valid;

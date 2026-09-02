@@ -23,6 +23,7 @@ use frontier::{FrozenStaticRemainder, SpacingTransferState, StreamFrontierState}
 pub(crate) enum NativeBlockReason {
     Live,
     StreamBlocked,
+    ContentHost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +126,14 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
             NativeTransferStatus::SemanticBlocked {
                 unit: unit_id,
                 reason: NativeBlockReason::Live,
+            },
+        )),
+        HistoryUnitContent::Static(view) if view.contains_content_identity() => Ok(outcome(
+            0,
+            0,
+            NativeTransferStatus::SemanticBlocked {
+                unit: unit_id,
+                reason: NativeBlockReason::ContentHost,
             },
         )),
         HistoryUnitContent::Static(view) => {

@@ -12,12 +12,12 @@ use iyon_tui::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
 use iyon_tui::text::{TextRun, TextVisitor};
 use iyon_tui::{
     BorderEdges, BorderGlyphs, BorderSpec, ContentDelivery, ContentFamily, GridCellSpec, GridTrack,
-    History, HorizontalAlign, HostCellStyle, HostContentConnector, HostContentFunnel,
-    HostContentPort, HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot,
-    Insets, IntoView, Key, KeyStroke, MarkdownOptions, MarkdownProjector, Modifiers, Output,
-    Projector, Renderer, SmoothConfig, StyleRef, StyleSpec, TextContent, TextFunnelKind, TextInput,
-    TextPart, TextRole, TextSelector, TextSourceKind, TextSpan, TextWrapMode, TuiEnvironment,
-    TuiHost, VerticalAlign, View, WrapMode,
+    History, HistoryUnitId, HorizontalAlign, HostCellStyle, HostContentConnector,
+    HostContentFunnel, HostContentPort, HostContentSource, HostHistory, HostScrollPane,
+    HostTextInput, HostViewSlot, Insets, IntoView, Key, KeyStroke, MarkdownOptions,
+    MarkdownProjector, Modifiers, Output, Projector, Renderer, SmoothConfig, StyleRef, StyleSpec,
+    TextContent, TextFunnelKind, TextInput, TextPart, TextRole, TextSelector, TextSourceKind,
+    TextSpan, TextWrapMode, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -295,7 +295,8 @@ pub struct NativeHistory {
     host: Option<HostHistory>,
     /// Detached histories defer Source-backed content units until the History
     /// is transferred to a host. No legacy stream store is created.
-    pending_content_streams: Mutex<Vec<(HostContentSource, HostContentFunnel, Insets)>>,
+    pending_content_streams:
+        Mutex<Vec<(HostContentSource, HostContentFunnel, Insets, HistoryUnitId)>>,
     attached_content_sources: Mutex<Vec<HostContentSource>>,
     alive: AtomicBool,
     view_runtime: usize,
@@ -520,10 +521,16 @@ impl NativeHistory {
                 .push(stream.source.clone());
             return Ok(());
         }
+        let unit = self
+            .state
+            .lock()
+            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?
+            .push(iyon_tui::View::spacer(0))
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
         self.pending_content_streams
             .lock()
             .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
-            .push((stream.source.clone(), funnel, insets));
+            .push((stream.source.clone(), funnel, insets, unit));
         Ok(())
     }
 
@@ -540,7 +547,7 @@ impl NativeHistory {
             .lock()
             .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
             .iter()
-            .any(|(source, _, _)| {
+            .any(|(source, _, _, _)| {
                 source.id() == stream.source.id()
                     && source.generation() == stream.source.generation()
             });
@@ -919,10 +926,10 @@ impl NativeTuiHost {
             .drain(..)
             .collect::<Vec<_>>();
         history.host = Some(self.host.history());
-        for (source, funnel, insets) in pending {
+        for (source, funnel, insets, unit) in pending {
             self.host
                 .history()
-                .push_content_stream(&source, funnel, insets)
+                .replace_content_stream(unit.value(), &source, funnel, insets)
                 .map_err(|error| crate::NativeError::internal(error.to_string()))?;
             history
                 .attached_content_sources
@@ -1465,11 +1472,27 @@ impl NativeContentPort {
     pub fn connect(
         &self,
         source: &NativeTextSource,
-        funnel: Value,
+        kind: String,
+        wrap: String,
+        hyperlinks: bool,
+        smooth: bool,
+        tick_interval_ms: u32,
+        spring: f64,
+        min_units_per_second: f64,
+        max_units_per_second: f64,
     ) -> Result<NativeContentConnector> {
         ensure_alive(&self.alive)?;
         ensure_alive(&source.alive)?;
-        let funnel = parse_content_funnel(funnel)?;
+        let funnel = parse_text_funnel_control(
+            &kind,
+            &wrap,
+            hyperlinks,
+            smooth,
+            u64::from(tick_interval_ms),
+            spring,
+            min_units_per_second,
+            max_units_per_second,
+        )?;
         let connector = self
             .port
             .connect(&source.source, funnel)
@@ -1648,114 +1671,64 @@ fn optional_positive_safe_u64(object: &Map<String, Value>, field: &str) -> Resul
     Ok(Some(value))
 }
 
-fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel must be an object"))?;
-    for key in object.keys() {
-        if !matches!(
-            key.as_str(),
-            "family" | "kind" | "wrap" | "delivery" | "hyperlinks"
-        ) {
-            return Err(crate::NativeError::invalid_input(format!(
-                "INVALID_FUNNEL: unknown Funnel field `{key}`"
-            )));
-        }
-    }
-    let family = object
-        .get("family")
-        .and_then(Value::as_str)
-        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel family is required"))?;
-    if family != "text" {
-        return Err(crate::NativeError::invalid_input(
-            "CONTENT_FAMILY_MISMATCH: Funnel family must be text",
-        ));
-    }
-    let kind = match object
-        .get("kind")
-        .and_then(Value::as_str)
-        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel kind is required"))?
-    {
-        "plain" => iyon_tui::TextFunnelKind::Plain,
-        "markdown" => iyon_tui::TextFunnelKind::Markdown,
-        "diff" => iyon_tui::TextFunnelKind::Diff,
-        "ansi" => iyon_tui::TextFunnelKind::Ansi,
-        other => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "INVALID_FUNNEL: unknown text Funnel kind `{other}`"
-            )));
+fn parse_text_funnel_control(
+    kind: &str,
+    wrap: &str,
+    hyperlinks: bool,
+    smooth: bool,
+    tick_interval_ms: u64,
+    spring: f64,
+    minimum: f64,
+    maximum: f64,
+) -> Result<HostContentFunnel> {
+    let kind = match kind {
+        "plain" => TextFunnelKind::Plain,
+        "markdown" => TextFunnelKind::Markdown,
+        "diff" => TextFunnelKind::Diff,
+        "ansi" => TextFunnelKind::Ansi,
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "Content Funnel kind is invalid",
+            ));
         }
     };
-    let wrap = match object.get("wrap").and_then(Value::as_str).unwrap_or("word") {
+    let wrap = match wrap {
         "word" => TextWrapMode::Word,
         "grapheme" => TextWrapMode::Grapheme,
         "noWrap" => TextWrapMode::NoWrap,
-        other => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "INVALID_FUNNEL: unknown text wrap mode `{other}`"
-            )));
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "Content Funnel wrap mode is invalid",
+            ));
         }
     };
-    let hyperlinks = match object.get("hyperlinks") {
-        None => true,
-        Some(value) => value.as_bool().ok_or_else(|| {
-            crate::NativeError::invalid_input("Content Funnel hyperlinks must be boolean")
-        })?,
+    let delivery = if !smooth {
+        ContentDelivery::Immediate
+    } else {
+        if !spring.is_finite()
+            || !minimum.is_finite()
+            || !maximum.is_finite()
+            || spring < f64::from(f32::MIN)
+            || spring > f64::from(f32::MAX)
+            || minimum < f64::from(f32::MIN)
+            || minimum > f64::from(f32::MAX)
+            || maximum < f64::from(f32::MIN)
+            || maximum > f64::from(f32::MAX)
+        {
+            return Err(crate::NativeError::invalid_input(
+                "Smooth values must be finite f32 values",
+            ));
+        }
+        let config = SmoothConfig::try_from_parts(
+            Duration::from_millis(tick_interval_ms),
+            spring as f32,
+            minimum as f32,
+            maximum as f32,
+        )
+        .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        ContentDelivery::Smooth(config)
     };
-    let delivery = parse_content_delivery(object.get("delivery"))?;
     Ok(HostContentFunnel::new(kind, wrap, hyperlinks, delivery))
-}
-
-fn parse_content_delivery(value: Option<&Value>) -> Result<iyon_tui::ContentDelivery> {
-    let Some(value) = value else {
-        return Ok(iyon_tui::ContentDelivery::Immediate);
-    };
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("Content Funnel delivery must be an object")
-    })?;
-    for key in object.keys() {
-        if !matches!(
-            key.as_str(),
-            "kind" | "tickIntervalMs" | "spring" | "minUnitsPerSecond" | "maxUnitsPerSecond"
-        ) {
-            return Err(crate::NativeError::invalid_input(format!(
-                "INVALID_FUNNEL: unknown delivery field `{key}`"
-            )));
-        }
-    }
-    let kind = object
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("immediate");
-    if kind == "immediate" {
-        return Ok(iyon_tui::ContentDelivery::Immediate);
-    }
-    if kind != "smooth" {
-        return Err(crate::NativeError::invalid_input(
-            "INVALID_FUNNEL: unknown delivery kind",
-        ));
-    }
-    let defaults = iyon_tui::SmoothConfig::new();
-    let tick_interval_ms = object
-        .get("tickIntervalMs")
-        .map(|value| {
-            value.as_u64().ok_or_else(|| {
-                crate::NativeError::invalid_input("Smooth tickIntervalMs must be an integer")
-            })
-        })
-        .transpose()?
-        .unwrap_or(u64::try_from(defaults.tick_interval().as_millis()).expect("tick fits u64"));
-    let spring = pacing_f32(object, "spring", defaults.spring())?;
-    let minimum = pacing_f32(object, "minUnitsPerSecond", defaults.min_units_per_second())?;
-    let maximum = pacing_f32(object, "maxUnitsPerSecond", defaults.max_units_per_second())?;
-    let config = iyon_tui::SmoothConfig::try_from_parts(
-        Duration::from_millis(tick_interval_ms),
-        spring,
-        minimum,
-        maximum,
-    )
-    .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-    Ok(iyon_tui::ContentDelivery::Smooth(config))
 }
 
 fn parse_text_stream_control(
@@ -1771,67 +1744,19 @@ fn parse_text_stream_control(
     bottom: u16,
     left: u16,
 ) -> Result<(HostContentFunnel, Insets)> {
-    let kind = match projector {
-        "plain" => TextFunnelKind::Plain,
-        "markdown" => TextFunnelKind::Markdown,
-        _ => {
-            return Err(crate::NativeError::invalid_input(
-                "TextStream projector must be plain or markdown",
-            ));
-        }
-    };
-    let wrap = match wrap {
-        "word" => TextWrapMode::Word,
-        "grapheme" => TextWrapMode::Grapheme,
-        "noWrap" => TextWrapMode::NoWrap,
-        _ => {
-            return Err(crate::NativeError::invalid_input(
-                "TextStream wrap mode is invalid",
-            ));
-        }
-    };
-    let delivery = if smooth {
-        if spring < f64::from(f32::MIN)
-            || spring > f64::from(f32::MAX)
-            || minimum < f64::from(f32::MIN)
-            || minimum > f64::from(f32::MAX)
-            || maximum < f64::from(f32::MIN)
-            || maximum > f64::from(f32::MAX)
-        {
-            return Err(crate::NativeError::invalid_input(
-                "TextStream Smooth values must fit finite f32 values",
-            ));
-        }
-        let config = SmoothConfig::try_from_parts(
-            Duration::from_millis(tick_interval_ms),
-            spring as f32,
-            minimum as f32,
-            maximum as f32,
-        )
-        .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        ContentDelivery::Smooth(config)
-    } else {
-        ContentDelivery::Immediate
-    };
     Ok((
-        HostContentFunnel::new(kind, wrap, true, delivery),
+        parse_text_funnel_control(
+            projector,
+            wrap,
+            true,
+            smooth,
+            tick_interval_ms,
+            spring,
+            minimum,
+            maximum,
+        )?,
         Insets::new(top, right, bottom, left),
     ))
-}
-
-fn pacing_f32(object: &Map<String, Value>, field: &str, default: f32) -> Result<f32> {
-    let Some(value) = object.get(field) else {
-        return Ok(default);
-    };
-    let value = value.as_f64().ok_or_else(|| {
-        crate::NativeError::invalid_input(format!("stream pacing {field} must be a number"))
-    })?;
-    if !value.is_finite() || value < f64::from(f32::MIN) || value > f64::from(f32::MAX) {
-        return Err(crate::NativeError::invalid_input(format!(
-            "stream pacing {field} must be finite"
-        )));
-    }
-    Ok(value as f32)
 }
 
 #[napi]

@@ -100,7 +100,17 @@ export interface NativeContentPortContract extends NativeStructuralAttachmentCon
   portGeneration(): number;
   family(): string;
   deactivate(): NativeStateWake;
-  connect(source: NativeTextSourceContract, funnel: object): NativeContentConnectorContract;
+  connect(
+    source: NativeTextSourceContract,
+    kind: "plain" | "markdown" | "diff" | "ansi",
+    wrap: "word" | "grapheme" | "noWrap",
+    hyperlinks: boolean,
+    smooth: boolean,
+    tickIntervalMs: number,
+    spring: number,
+    minUnitsPerSecond: number,
+    maxUnitsPerSecond: number,
+  ): NativeContentConnectorContract;
   mounted(): boolean;
 }
 

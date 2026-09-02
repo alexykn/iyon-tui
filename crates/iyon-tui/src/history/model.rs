@@ -142,6 +142,21 @@ impl History {
         Ok(())
     }
 
+    pub(crate) fn replace_static_content(
+        &mut self,
+        unit: HistoryUnitId,
+        view: View,
+    ) -> Result<(), HistoryError> {
+        let index = self.index_of(unit)?;
+        if !matches!(self.units[index].content, HistoryUnitContent::Static(_)) {
+            return Err(HistoryError::UnitNotLive { unit });
+        }
+        self.units[index].content = HistoryUnitContent::Static(view);
+        self.invalidate_unit_layout(index);
+        self.bump_revision();
+        Ok(())
+    }
+
     pub fn freeze(
         &mut self,
         unit: HistoryUnitId,
@@ -277,6 +292,18 @@ impl History {
 
     pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
         self.units.iter()
+    }
+
+    /// ContentHost units are resident content-plane destinations. They must
+    /// not trigger native scrollback transfer, which has no ContentProvider
+    /// context and would move the port out of the follow-end viewport.
+    pub(crate) fn contains_content_host(&self) -> bool {
+        self.units.iter().any(|unit| match &unit.content {
+            HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view) => {
+                view.contains_content_identity()
+            }
+            HistoryUnitContent::Stream(_) => false,
+        })
     }
 
     /// Returns semantic History views that can carry retained state. Stream

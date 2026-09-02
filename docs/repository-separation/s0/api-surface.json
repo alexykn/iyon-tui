@@ -112,10 +112,6 @@
         "optional": true
       },
       {
-        "name": "NativeTextStream",
-        "optional": true
-      },
-      {
         "name": "NativeMarkdownProjector",
         "optional": true
       },
@@ -273,17 +269,6 @@
           "setText",
           "submitted",
           "text"
-        ]
-      },
-      {
-        "kind": "function",
-        "name": "NativeTextStream",
-        "prototype": [
-          "append",
-          "dispose",
-          "seal",
-          "snapshot",
-          "update"
         ]
       },
       {

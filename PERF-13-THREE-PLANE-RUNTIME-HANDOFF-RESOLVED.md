@@ -1126,7 +1126,7 @@ source.append("hello");
 
 `port.connect(source, funnel)` is the normative API. `source.funnel(...)` is not used because it makes a Source-bound object look like the immutable Funnel value from the entity model.
 
-If a fluent Source-bound convenience is later justified, its type must be named `ContentFeed`, `SourceBinding`, or equivalent, and `port.connect` must still produce the Connector explicitly.
+If a fluent Source-bound convenience is later justified, its type must be named `ContentFeed`, `SourceBinding`, or equivalent, and `port.connect` must still produce the Connector explicitly. Compatibility adapters may translate old calls to these primitives, but they must not serialize a compatibility Funnel/Connector descriptor as JSON or retain a second native content object.
 
 ### 9.2 Funnel properties
 
@@ -2003,7 +2003,7 @@ TextStream.update(snapshot/text)
         -> return new-path result
 ```
 
-The adapter owns no storage, native identity, queue, or repaint behavior. It may be deprecated according to package policy, but its continued presence does not violate one architecture when it is a pure adapter.
+The adapter owns no storage, native identity, queue, or repaint behavior. Its History attachment passes typed projector/delivery/viewport values through the control seam; it does not construct or serialize a compatibility Funnel. It may be deprecated according to package policy, but its continued presence does not violate one architecture when it is a pure adapter.
 
 ### 16.3 Monotonic external coordinates
 
@@ -2754,7 +2754,7 @@ Move the real consumer and every currently required semantic feature to the new 
 
 #### Temporary allowance
 
-Old production path may remain behind a short-lived fallback feature flag for comparison/rollback during this tranche only. The flag chooses one architecture at startup; it never double-dispatches one mutation.
+No alternate production renderer, payload bridge, scheduler, or Funnel fallback is permitted during G dogfooding. A comparison oracle, if needed, is test-only and explicitly selected outside production; it never double-dispatches one mutation. A pure compatibility adapter may translate an old public call directly to Source/Funnel/Connector primitives, with typed control arguments and no serialized compatibility object.
 
 #### Stop gates
 

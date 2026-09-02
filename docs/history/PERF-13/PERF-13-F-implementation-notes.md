@@ -127,7 +127,11 @@ Connector. ContentPort owns only structural mount, allocation, and clipping.
 - PERF-13-E commits:
   - `89a4c76 feat: implement PERF-13-E retained content data`
   - `e1c2b7a docs: clarify PERF-13 benchmark policy`
-- The requested PERF-13-F implementation has not started.
+- The PERF-13-F implementation is in progress. The initial worktree slice now
+  contains a generic presentation `ContentProvider`, plain Connector projection
+  and cache entries, ContentHost layout/paint integration, content-aware cache
+  invalidation, and ScrollPane content-extent synchronization. Continue auditing
+  and hardening before calling F complete.
 - The repository was clean before this notes file was created.
 - The current Pi process is `openai-codex/gpt-5.6-luna`.
 - `~/.pi/agent/models.json` was updated during this session so the
@@ -388,9 +392,10 @@ enum LayoutContent {
 children/dependencies, style, and `LayoutContent`. It indexes component roots
 and retained state roots, but not content-port roots.
 
-Current ContentHost is always measured/prepared as zero content. F must replace
-that placeholder with a generic content-host layout value that identifies the
-Port and carries candidate intrinsic metrics/clip/materialization metadata.
+F replaces the former zero-content ContentHost placeholder with a generic
+content-host layout value that identifies the Port and carries candidate
+intrinsic metrics/clip/materialization metadata. Keep this value separate from
+semantic child Views.
 Possible implementation shape (choose the simplest architecture-compatible
 form):
 
@@ -515,8 +520,8 @@ The public API already has:
 - `ContentConnector.activate()`, `.deactivate()`, `.dispose()`, `.status()`;
 - status phases already anticipating F: `blocked-geometry` and
   `unsupported-backend` are in the TypeScript union;
-- `ContentConnectorStatus.projectedSourceRevision?` already exists but is not
-  populated by native code yet;
+- `ContentConnectorStatus.projectedSourceRevision?` already exists and the F
+  implementation populates it only for the committed visible projection;
 - `View.content(port)` is the only structural ContentHost attachment.
 
 The TypeScript API currently has no explicit projection callback, viewport

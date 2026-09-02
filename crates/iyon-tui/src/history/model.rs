@@ -75,6 +75,14 @@ impl History {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.units.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.units.is_empty()
+    }
+
     pub fn push(&mut self, view: impl IntoView) -> Result<HistoryUnitId, HistoryError> {
         self.push_with_boundary(view, FlowBoundary::Default)
     }

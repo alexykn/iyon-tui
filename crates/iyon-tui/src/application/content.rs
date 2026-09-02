@@ -232,6 +232,7 @@ struct TextProjectionKey {
     wrap: TextWrapMode,
     funnel_kind: TextFunnelKind,
     delivery_revision: u64,
+    theme_revision: u64,
 }
 
 impl TextProjectionKey {
@@ -795,7 +796,9 @@ fn reveal_surface(surface: &Surface, mut units: usize) -> Surface {
                 surface.width().saturating_sub(column),
                 1,
             ));
-            last_row = last_row.max(row);
+            if column > 0 {
+                last_row = last_row.max(row);
+            }
             break;
         }
     }
@@ -810,6 +813,7 @@ fn project_text_snapshot(
     funnel: HostContentFunnel,
     offered_width: u16,
     theme: &Theme,
+    theme_revision: u64,
     execution: &mut ConnectorExecution,
     delivery_revision: u64,
 ) -> Result<HostContentProjection> {
@@ -822,6 +826,7 @@ fn project_text_snapshot(
         wrap: funnel.wrap,
         funnel_kind: funnel.kind,
         delivery_revision,
+        theme_revision,
     };
     if snapshot.source_base == snapshot.source_end {
         return Ok(HostContentProjection {
@@ -2573,6 +2578,7 @@ impl ContentHostRegistry {
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
+            theme_revision: self.theme_revision,
         })
     }
 
@@ -2691,6 +2697,7 @@ impl ContentHostRegistry {
             wrap: funnel.wrap,
             funnel_kind: funnel.kind,
             delivery_revision,
+            theme_revision: self.theme_revision,
         };
         {
             let mut state = connector
@@ -2732,6 +2739,7 @@ impl ContentHostRegistry {
             funnel,
             offered_width,
             &self.theme,
+            self.theme_revision,
             &mut execution,
             delivery_revision,
         ) {
@@ -3077,6 +3085,7 @@ impl ContentHostRegistry {
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
+            theme_revision: self.theme_revision,
         };
         let attempted_source_revision = snapshot.revision;
         let diagnostic = state
@@ -3886,13 +3895,9 @@ impl ContentHostRegistry {
             .unwrap_or_default();
         let payload_content_start = content_start.max(start).saturating_sub(start);
         let payload_content_end = content_end.min(end).saturating_sub(start);
-        let leading_padding = if sealed {
-            usize::from(insets.top())
-                .saturating_sub(start)
-                .min(end.saturating_sub(start))
-        } else {
-            0
-        };
+        let leading_padding = usize::from(insets.top())
+            .saturating_sub(start)
+            .min(end.saturating_sub(start));
         let trailing_padding = if sealed {
             end.saturating_sub(content_end.max(start))
                 .min(usize::from(insets.bottom()))
@@ -3901,7 +3906,7 @@ impl ContentHostRegistry {
         };
         Some(HistoryContentRows {
             rows,
-            complete: sealed && committed_rows >= usize::from(surface.height()),
+            complete: sealed && end >= usize::from(surface.height()),
             content_start: payload_content_start.min(payload_content_end),
             content_end: payload_content_end.max(payload_content_start),
             leading_padding,
@@ -3959,7 +3964,7 @@ impl ContentHostRegistry {
             })
             .collect::<Vec<_>>();
         for (port, connector_ids) in ports {
-            if let Ok(mut state) = port.lock() {
+            let port_id = if let Ok(mut state) = port.lock() {
                 state.history_unit = None;
                 state.history_committed_rows = 0;
                 state.history_committed_content_rows = 0;
@@ -3969,10 +3974,15 @@ impl ContentHostRegistry {
                 state.visible_mounted = false;
                 state.desired_connector = None;
                 state.visible_connector = None;
-            }
+                state.lifecycle = PortLifecycle::Disposed;
+                state.id
+            } else {
+                continue;
+            };
             for connector_id in connector_ids {
                 self.remove_connector(connector_id);
             }
+            self.ports.remove(&port_id);
         }
     }
 
@@ -4404,6 +4414,7 @@ impl Drop for HostContentConnector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ThemeColor;
     use crate::View;
     use crate::application::environment::TuiEnvironment;
     use crate::application::host::TuiHost;
@@ -4652,5 +4663,298 @@ mod tests {
         );
         registry.commit_visible(&[]);
         assert!(!registry.connectors.contains_key(&connector_id));
+    }
+
+    #[test]
+    fn history_rows_complete_is_true_when_payload_reaches_sealed_end() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"one\ntwo\nthree\n", &[], &[]).unwrap();
+        source.seal().unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let _ = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let rows = registry.history_rows(port.id(), 20).unwrap();
+        assert!(!rows.rows.is_empty(), "rows should contain lines");
+        assert!(
+            rows.complete,
+            "rows.complete MUST be true when returning all rows of sealed unit"
+        );
+    }
+
+    #[test]
+    fn history_rows_leading_padding_is_preserved_for_open_streams() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"line 1\nline 2\n", &[], &[]).unwrap();
+        // note: NOT sealed!
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::new(2, 0, 0, 0))
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let _ = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let rows = registry.history_rows(port.id(), 20).unwrap();
+        assert_eq!(
+            rows.leading_padding, 2,
+            "open stream must report leading padding so history_view can strip top padding"
+        );
+    }
+
+    #[test]
+    fn history_unit_retirement_disposes_and_removes_internal_port() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port_id, 42, crate::Insets::ZERO)
+            .unwrap();
+        assert!(registry.ports.contains_key(&port_id));
+        registry.history_unit_retired(42);
+        assert!(
+            !registry.ports.contains_key(&port_id),
+            "retired History port must be removed from ContentHostRegistry to prevent memory leaks"
+        );
+        assert!(!registry.connectors.contains_key(&connector.id()));
+    }
+
+    #[test]
+    fn reveal_surface_cut_at_row_boundary_does_not_add_blank_trailing_row() {
+        let mut surface = Surface::new(10, 2);
+        for column in 0..3 {
+            let cell = crate::physical::PhysicalCell {
+                grapheme: Some("a".to_owned()),
+                style: crate::physical::PhysicalStyle::default(),
+                painted: true,
+                continuation: false,
+            };
+            *surface.get_mut(column, 0) = cell;
+        }
+        for column in 0..3 {
+            let cell = crate::physical::PhysicalCell {
+                grapheme: Some("b".to_owned()),
+                style: crate::physical::PhysicalStyle::default(),
+                painted: true,
+                continuation: false,
+            };
+            *surface.get_mut(column, 1) = cell;
+        }
+        // Exactly 3 units -> reveals only the 3 cells in row 0
+        let revealed = reveal_surface(&surface, 3);
+        assert_eq!(
+            revealed.height(),
+            1,
+            "revealed surface should only have 1 row when all cells of row 1 are unrevealed"
+        );
+    }
+
+    #[test]
+    fn theme_change_invalidates_content_measurement_projection_revision() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"hello world\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let t1 = Theme::new().with_color("accent", ThemeColor::Indexed(1));
+        let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
+        registry.set_theme(&t1);
+        let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let key1 = registry
+            .connector_projection_key(connector.id(), 20)
+            .unwrap();
+        registry.set_theme(&t2);
+        let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let key2 = registry
+            .connector_projection_key(connector.id(), 20)
+            .unwrap();
+        assert_ne!(key1, key2, "TextProjectionKey must differ across themes");
+        assert_ne!(
+            m1.projection_revision, m2.projection_revision,
+            "ContentMeasurement projection_revision must change across themes to invalidate paint cache"
+        );
+    }
+
+    #[derive(Default)]
+    struct LocalSink {
+        rows: Vec<crate::physical::PhysicalRow>,
+    }
+
+    impl crate::backend::NativeHistorySink for LocalSink {
+        type Error = ();
+        fn insert_history_rows(
+            &mut self,
+            rows: &[crate::physical::PhysicalRow],
+        ) -> Result<usize, Self::Error> {
+            self.rows.extend(rows.iter().cloned());
+            Ok(rows.len())
+        }
+    }
+
+    #[test]
+    fn history_content_transfer_retires_unit_and_strips_padding() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"line 1\nline 2\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let mut history = crate::History::new();
+        let view = View::native_content_host(port_id)
+            .unwrap()
+            .padding(crate::Insets::new(2, 0, 1, 0));
+        let unit_id = history.push(view.clone()).unwrap();
+        registry
+            .set_history_unit(port_id, unit_id.value(), crate::Insets::new(2, 0, 1, 0))
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let _ = registry.measure_content(port_id, 20, crate::presentation::WidthRule::Fill);
+
+        // While open: transfer stable prefix
+        let mut sink = LocalSink::default();
+        let theme = crate::Theme::new();
+        let outcome = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(outcome.inserted > 0);
+        // Verify resident view has top padding stripped:
+        let resident_view = registry.history_view(&view);
+        assert_eq!(resident_view.decoration().padding.top, 0);
+
+        // Now seal the stream
+        source.seal().unwrap();
+        let _ = registry.measure_content(port_id, 20, crate::presentation::WidthRule::Fill);
+        let outcome = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                outcome.status,
+                crate::history::NativeTransferStatus::Progress
+            ) || outcome.inserted > 0
+        );
+        assert!(
+            history.is_empty(),
+            "sealed History unit must be retired immediately upon transferring its final rows"
+        );
+        assert!(
+            !registry.ports.contains_key(&port_id),
+            "retired History unit port must be cleaned up from ContentHostRegistry"
+        );
     }
 }

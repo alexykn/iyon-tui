@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::presentation::{ContentMeasurement, ContentProvider};
 use crate::{
     component::ComponentId,
     geometry::Size,
@@ -119,7 +120,10 @@ pub(super) enum MeasuredKind {
     Spacer {
         rows: u16,
     },
-    ContentHost,
+    ContentHost {
+        port_id: u64,
+        measurement: ContentMeasurement,
+    },
     Container {
         child: Arc<MeasuredNode>,
     },
@@ -191,6 +195,7 @@ pub(super) fn measure_node(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
 ) -> Arc<MeasuredNode> {
     let (mut key, cacheable) = match view.kind() {
         ViewKind::ComponentSlot(slot) => {
@@ -213,6 +218,11 @@ pub(super) fn measure_node(
         key.geometry_revision = state.geometry_revision;
         key.presentation_revision = state.presentation_revision;
     }
+    if matches!(view.kind(), ViewKind::ContentHost)
+        && let Some(port_id) = view.content_attachment_id()
+    {
+        key.content_revision = content.projection_revision(port_id);
+    }
     if cacheable && let Some(measured) = cache.measured(key) {
         return measured;
     }
@@ -226,6 +236,7 @@ pub(super) fn measure_node(
         key,
         cacheable,
         cache,
+        content,
     ));
     if cacheable {
         cache.store_measured(key, Arc::clone(&measured));
@@ -243,6 +254,7 @@ fn measure_node_uncached(
     key: MeasureKey,
     cacheable: bool,
     cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredNode {
     perf::inc(Counter::MeasureNodeCalls);
     #[cfg(test)]
@@ -315,6 +327,7 @@ fn measure_node_uncached(
         child_scope,
         cache,
         &geometry,
+        content,
     );
     let core_size = kind.intrinsic_size();
     let core_width = match (intent, geometry.width) {
@@ -361,6 +374,7 @@ fn measure_kind(
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
     geometry: &EffectiveGeometry,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     match view.kind() {
         ViewKind::Text(text) => {
@@ -377,7 +391,14 @@ fn measure_kind(
             MeasuredKind::Text { text, metrics }
         }
         ViewKind::Spacer { rows } => MeasuredKind::Spacer { rows: *rows },
-        ViewKind::ContentHost => MeasuredKind::ContentHost,
+        ViewKind::ContentHost => {
+            let port_id = view.content_attachment_id().unwrap_or_default();
+            let measurement = content.measure(port_id, width, geometry.width);
+            MeasuredKind::ContentHost {
+                port_id,
+                measurement,
+            }
+        }
         ViewKind::Container(container) => MeasuredKind::Container {
             child: measure_node(
                 &container.child,
@@ -386,10 +407,11 @@ fn measure_kind(
                 overlay,
                 component_scope,
                 cache,
+                content,
             ),
         },
         ViewKind::Hanging(hanging) => {
-            measure_hanging(hanging, width, overlay, component_scope, cache)
+            measure_hanging(hanging, width, overlay, component_scope, cache, content)
         }
         ViewKind::ClampRows(clamp) => {
             let child = measure_node(
@@ -399,6 +421,7 @@ fn measure_kind(
                 overlay,
                 component_scope,
                 cache,
+                content,
             );
             MeasuredKind::ClampRows {
                 child,
@@ -407,7 +430,7 @@ fn measure_kind(
             }
         }
         ViewKind::RowViewport(viewport) => {
-            measure_viewport(viewport, width, overlay, component_scope, cache)
+            measure_viewport(viewport, width, overlay, component_scope, cache, content)
         }
         ViewKind::Column(column) => measure_column(
             column,
@@ -416,6 +439,7 @@ fn measure_kind(
             component_scope,
             cache,
             geometry.gap.unwrap_or(column.gap),
+            content,
         ),
         ViewKind::Row(row) => measure_row(
             row,
@@ -425,10 +449,17 @@ fn measure_kind(
             cache,
             geometry.gap.unwrap_or(row.gap),
             geometry.alignment.vertical.unwrap_or(row.vertical_align),
+            content,
         ),
-        ViewKind::Grid(grid) => {
-            measure_grid(grid, width, overlay, component_scope, cache, geometry.gap)
-        }
+        ViewKind::Grid(grid) => measure_grid(
+            grid,
+            width,
+            overlay,
+            component_scope,
+            cache,
+            geometry.gap,
+            content,
+        ),
         ViewKind::ComponentSlot(slot) => {
             let snapshot = overlay
                 .component(slot.id)
@@ -441,6 +472,7 @@ fn measure_kind(
                     overlay,
                     Some(slot.id),
                     cache,
+                    content,
                 ),
             }
         }
@@ -453,6 +485,7 @@ fn measure_hanging(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     let prefix = measure_node(
         &hanging.prefix,
@@ -461,6 +494,7 @@ fn measure_hanging(
         overlay,
         component_scope,
         cache,
+        content,
     );
     let prefix_width = prefix.size.width;
     let body_width = width.saturating_sub(prefix_width).max(1);
@@ -471,6 +505,7 @@ fn measure_hanging(
         overlay,
         component_scope,
         cache,
+        content,
     );
     let continuation_prefix = measure_node(
         &hanging.continuation_prefix,
@@ -479,6 +514,7 @@ fn measure_hanging(
         overlay,
         component_scope,
         cache,
+        content,
     );
     MeasuredKind::Hanging {
         prefix_width,
@@ -495,6 +531,7 @@ fn measure_column(
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
     gap: u16,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     let children = column
         .children
@@ -508,6 +545,7 @@ fn measure_column(
                 overlay,
                 component_scope,
                 cache,
+                content,
             ),
         })
         .collect::<Vec<_>>();
@@ -522,6 +560,7 @@ fn measure_row(
     cache: &mut LayoutCache,
     gap: u16,
     vertical_align: crate::presentation::VerticalAlign,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     let tracks = row
         .children
@@ -536,6 +575,7 @@ fn measure_row(
             overlay,
             component_scope,
             cache,
+            content,
         )
         .size
         .width
@@ -555,6 +595,7 @@ fn measure_row(
                     overlay,
                     component_scope,
                     cache,
+                    content,
                 ),
             }
         })
@@ -574,6 +615,7 @@ fn measure_grid(
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
     gap: Option<u16>,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     let column_requirements = grid
         .cells
@@ -588,6 +630,7 @@ fn measure_grid(
                 overlay,
                 component_scope,
                 cache,
+                content,
             )
             .size
             .width,
@@ -621,6 +664,7 @@ fn measure_grid(
                     overlay,
                     component_scope,
                     cache,
+                    content,
                 ),
             }
         })
@@ -655,6 +699,7 @@ fn measure_viewport(
     overlay: &ResolutionOverlay,
     component_scope: Option<ComponentId>,
     cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
 ) -> MeasuredKind {
     let child = measure_node(
         &viewport.child,
@@ -663,6 +708,7 @@ fn measure_viewport(
         overlay,
         component_scope,
         cache,
+        content,
     );
     MeasuredKind::RowViewport {
         width,
@@ -679,7 +725,7 @@ impl MeasuredKind {
         match self {
             Self::Text { metrics, .. } => Size::new(metrics.width, metrics.row_count),
             Self::Spacer { rows } => Size::new(0, *rows),
-            Self::ContentHost => Size::new(0, 0),
+            Self::ContentHost { measurement, .. } => measurement.intrinsic_size,
             Self::Container { child } => child.size,
             Self::Hanging {
                 prefix_width, body, ..

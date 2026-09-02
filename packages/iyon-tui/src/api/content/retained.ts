@@ -650,7 +650,7 @@ export class ContentConnector<TContent = TextContent> extends FrameworkHandle<"c
         readonly phase: ContentConnectorPhase;
         readonly requested: boolean;
         readonly visible: boolean;
-        readonly projectedSourceRevision?: string | number;
+        readonly projectedSourceRevision?: string | number | null;
         readonly error?: ContentConnectorError | null;
       };
       if (status.phase === "disposed") this.finalizeWrapper();
@@ -658,9 +658,9 @@ export class ContentConnector<TContent = TextContent> extends FrameworkHandle<"c
         phase: status.phase,
         requested: status.requested,
         visible: status.visible,
-        ...(status.projectedSourceRevision === undefined
+        ...(status.projectedSourceRevision === undefined || status.projectedSourceRevision === null
           ? {}
-          : { projectedSourceRevision: BigInt(status.projectedSourceRevision) }),
+          : { projectedSourceRevision: sourceBigInt(status.projectedSourceRevision, "projected source revision") }),
         ...(status.error === undefined || status.error === null ? {} : { error: status.error }),
       };
     } catch (error) {

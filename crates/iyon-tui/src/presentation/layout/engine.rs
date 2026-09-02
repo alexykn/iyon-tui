@@ -10,6 +10,7 @@ use super::{
     place::emit_prepared,
     prepare::prepare_node,
 };
+use crate::presentation::{ContentProvider, EmptyContentProvider};
 
 pub(crate) fn layout_view(view: &View, constraints: LayoutConstraints) -> super::tree::LayoutTree {
     layout_view_with_overlay(view, constraints, &ResolutionOverlay::default())
@@ -30,7 +31,33 @@ pub(crate) fn layout_view_with_overlay_and_cache(
     overlay: &ResolutionOverlay,
     cache: &mut LayoutCache,
 ) -> super::tree::LayoutTree {
-    layout_view_with_overlay_and_cache_in_scope(view, constraints, overlay, None, cache)
+    let mut content = EmptyContentProvider;
+    layout_view_with_overlay_and_cache_and_content(
+        view,
+        constraints,
+        overlay,
+        None,
+        cache,
+        &mut content,
+    )
+}
+
+pub(crate) fn layout_view_with_overlay_and_cache_and_content(
+    view: &View,
+    constraints: LayoutConstraints,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<crate::component::ComponentId>,
+    cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
+) -> super::tree::LayoutTree {
+    layout_view_with_overlay_and_cache_in_scope_and_content(
+        view,
+        constraints,
+        overlay,
+        component_scope,
+        cache,
+        content,
+    )
 }
 
 /// Lays out one retained component root under the component scope that owns
@@ -43,6 +70,25 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope(
     component_scope: Option<crate::component::ComponentId>,
     cache: &mut LayoutCache,
 ) -> super::tree::LayoutTree {
+    let mut content = EmptyContentProvider;
+    layout_view_with_overlay_and_cache_in_scope_and_content(
+        view,
+        constraints,
+        overlay,
+        component_scope,
+        cache,
+        &mut content,
+    )
+}
+
+pub(crate) fn layout_view_with_overlay_and_cache_in_scope_and_content(
+    view: &View,
+    constraints: LayoutConstraints,
+    overlay: &ResolutionOverlay,
+    component_scope: Option<crate::component::ComponentId>,
+    cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
+) -> super::tree::LayoutTree {
     let width = constraints.width.definite().unwrap_or_else(|| {
         measure_node(
             view,
@@ -51,6 +97,7 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope(
             overlay,
             component_scope,
             cache,
+            content,
         )
         .size
         .width
@@ -62,6 +109,7 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope(
         overlay,
         component_scope,
         cache,
+        content,
     );
     let prepared = prepare_node(&measured, constraints.height.definite(), cache);
     let root_clip = Rect::new(
@@ -111,5 +159,25 @@ pub(crate) fn measure_view_with_overlay_and_cache(
     overlay: &ResolutionOverlay,
     cache: &mut LayoutCache,
 ) -> Size {
-    measure_node(view, width, WidthIntent::Semantic, overlay, None, cache).size
+    let mut content = EmptyContentProvider;
+    measure_view_with_overlay_and_cache_and_content(view, width, overlay, cache, &mut content)
+}
+
+pub(crate) fn measure_view_with_overlay_and_cache_and_content(
+    view: &View,
+    width: u16,
+    overlay: &ResolutionOverlay,
+    cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
+) -> Size {
+    measure_node(
+        view,
+        width,
+        WidthIntent::Semantic,
+        overlay,
+        None,
+        cache,
+        content,
+    )
+    .size
 }

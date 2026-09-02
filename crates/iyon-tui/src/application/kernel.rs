@@ -14,6 +14,7 @@ use crate::{
     component::ComponentRegistry,
     geometry::Size,
     output::OutputDispatchError,
+    presentation::{ContentProvider, EmptyContentProvider},
     retained_state::ViewStateSnapshot,
     scene::{PreparedSceneFrame, SceneHost, SceneHostError},
 };
@@ -164,6 +165,12 @@ where
     }
 
     #[cfg(feature = "native-host")]
+    pub(crate) fn host_invalidate_content(&mut self) {
+        self.scene_host.invalidate_content();
+        self.invalidate_frame();
+    }
+
+    #[cfg(feature = "native-host")]
     pub(crate) fn host_has_invalidated_components(&self) -> bool {
         self.scene_host.has_invalidated_components()
     }
@@ -226,8 +233,8 @@ where
     }
 
     /// Collects ContentPort attachments from the prospective body and current
-    /// static/live History views. Stream units remain on their legacy path
-    /// until the later content projection tranche.
+    /// static/live History views. Legacy History stream units remain separate;
+    /// retained ContentPort projections use the content-plane provider.
     #[cfg(feature = "native-host")]
     pub(crate) fn host_content_attachment_targets(&self, body: &View) -> anyhow::Result<Vec<u64>> {
         let history_views = self
@@ -630,7 +637,8 @@ where
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
-        self.prepare_frame_with_states(now, sink, viewport, &HashMap::new())
+        let mut content = EmptyContentProvider;
+        self.prepare_frame_with_states(now, sink, viewport, &HashMap::new(), &mut content)
     }
 
     pub(crate) fn prepare_frame_with_states<S, F>(
@@ -639,6 +647,7 @@ where
         sink: &mut S,
         mut viewport: F,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
         S: NativeHistorySink,
@@ -659,6 +668,7 @@ where
             sink,
             &mut viewport,
             states,
+            content,
         )?;
         // Retirement is deferred until this successful reconciliation has
         // replaced the committed mount graph. A retired component that was

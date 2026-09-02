@@ -14,6 +14,7 @@ use crate::{
 };
 
 use crate::presentation::{
+    ContentProvider, EmptyContentProvider,
     ir::{ViewId, WidthRule},
     layout::{LayoutContent, LayoutNode, LayoutNodeId, LayoutTree, ViewCompiler},
 };
@@ -60,6 +61,9 @@ struct PaintKey {
     /// Text alignment/width intent are retained-state geometry inputs that do
     /// not necessarily change the immutable semantic ViewId or rectangle.
     text_layout: Option<(u8, u8)>,
+    /// Content projection changes must invalidate the retained surface even
+    /// when the ContentHost rectangle and style are unchanged.
+    content_revision: Option<u64>,
     /// Border/background glyph data can change without changing a rect or
     /// resolved text style. Keep it in the retained paint key as a compact
     /// fingerprint rather than reusing stale decoration output.
@@ -80,10 +84,20 @@ fn text_layout_key(content: &LayoutContent) -> Option<(u8, u8)> {
             },
         )),
         LayoutContent::Spacer { .. }
-        | LayoutContent::ContentHost
+        | LayoutContent::ContentHost { .. }
         | LayoutContent::Children
         | LayoutContent::Clamp { .. }
         | LayoutContent::RowViewport { .. } => None,
+    }
+}
+
+fn content_projection_revision(content: &LayoutContent) -> Option<u64> {
+    match content {
+        LayoutContent::ContentHost {
+            projection_revision,
+            ..
+        } => Some(*projection_revision),
+        _ => None,
     }
 }
 
@@ -205,7 +219,14 @@ pub(crate) struct ViewPainter;
 impl ViewPainter {
     pub(crate) fn paint_tree(&self, compiler: &ViewCompiler, tree: &LayoutTree) -> Surface {
         let mut cache = PaintCache::default();
-        self.paint_tree_with_style_and_cache(compiler, tree, PhysicalStyle::default(), &mut cache)
+        let content = EmptyContentProvider;
+        self.paint_tree_with_style_and_cache(
+            compiler,
+            tree,
+            PhysicalStyle::default(),
+            &mut cache,
+            &content,
+        )
     }
 
     pub(crate) fn paint_tree_with_cache(
@@ -214,7 +235,30 @@ impl ViewPainter {
         tree: &LayoutTree,
         cache: &mut PaintCache,
     ) -> Surface {
-        self.paint_tree_with_style_and_cache(compiler, tree, PhysicalStyle::default(), cache)
+        let content = EmptyContentProvider;
+        self.paint_tree_with_style_and_cache(
+            compiler,
+            tree,
+            PhysicalStyle::default(),
+            cache,
+            &content,
+        )
+    }
+
+    pub(crate) fn paint_tree_with_content(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        cache: &mut PaintCache,
+        content: &dyn ContentProvider,
+    ) -> Surface {
+        self.paint_tree_with_style_and_cache(
+            compiler,
+            tree,
+            PhysicalStyle::default(),
+            cache,
+            content,
+        )
     }
 
     /// Repaints one component root into an existing frame surface. The
@@ -229,10 +273,30 @@ impl ViewPainter {
         surface: &mut Surface,
         cache: &mut PaintCache,
     ) -> bool {
+        let content = EmptyContentProvider;
+        self.paint_component_into_with_content(compiler, tree, component, surface, cache, &content)
+    }
+
+    pub(crate) fn paint_component_into_with_content(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        component: ComponentId,
+        surface: &mut Surface,
+        cache: &mut PaintCache,
+        content: &dyn ContentProvider,
+    ) -> bool {
         let Some(component_root) = tree.component_roots.get(&component).copied() else {
             return false;
         };
-        self.paint_subtree_into(compiler, tree, component_root, surface, cache)
+        self.paint_subtree_into_with_content(
+            compiler,
+            tree,
+            component_root,
+            surface,
+            cache,
+            content,
+        )
     }
 
     /// Repaints one non-component subtree into an existing frame surface.
@@ -248,6 +312,19 @@ impl ViewPainter {
         subtree_root: LayoutNodeId,
         surface: &mut Surface,
         cache: &mut PaintCache,
+    ) -> bool {
+        let content = EmptyContentProvider;
+        self.paint_subtree_into_with_content(compiler, tree, subtree_root, surface, cache, &content)
+    }
+
+    pub(crate) fn paint_subtree_into_with_content(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        subtree_root: LayoutNodeId,
+        surface: &mut Surface,
+        cache: &mut PaintCache,
+        content: &dyn ContentProvider,
     ) -> bool {
         let path = tree.path_to_root(subtree_root);
         if path.is_empty() {
@@ -286,6 +363,7 @@ impl ViewPainter {
             context,
             cache,
             false,
+            content,
         );
         let effective_y = i32::from(node.rect.y).saturating_add(offset_y);
         let effective_bottom = effective_y.saturating_add(i32::from(node.rect.height));
@@ -315,7 +393,8 @@ impl ViewPainter {
         inherited: PhysicalStyle,
     ) -> Surface {
         let mut cache = PaintCache::default();
-        self.paint_tree_with_style_and_cache(compiler, tree, inherited, &mut cache)
+        let content = EmptyContentProvider;
+        self.paint_tree_with_style_and_cache(compiler, tree, inherited, &mut cache, &content)
     }
 
     fn paint_tree_with_style_and_cache(
@@ -324,6 +403,7 @@ impl ViewPainter {
         tree: &LayoutTree,
         inherited: PhysicalStyle,
         cache: &mut PaintCache,
+        content: &dyn ContentProvider,
     ) -> Surface {
         let surface = self.paint_node(
             compiler,
@@ -333,6 +413,7 @@ impl ViewPainter {
             compiler.style_context(tree.node(tree.root).style.component_scope),
             cache,
             false,
+            content,
         );
         let mut surface = Arc::try_unwrap(surface).unwrap_or_else(|surface| (*surface).clone());
         surface.physically_complete = tree.physically_complete;
@@ -349,6 +430,7 @@ impl ViewPainter {
         inherited_context: crate::presentation::paint::StyleContext,
         cache: &mut PaintCache,
         use_cache: bool,
+        content: &dyn ContentProvider,
     ) -> Arc<Surface> {
         perf::inc(Counter::PaintNodesVisited);
         let node = tree.node(id);
@@ -374,6 +456,7 @@ impl ViewPainter {
             node_context: StyleContextKey::from(&node_context),
             descendant_context: StyleContextKey::from(&descendant_context),
             text_layout: text_layout_key(&node.content),
+            content_revision: content_projection_revision(&node.content),
             box_fingerprint: box_paint_key(
                 compiler,
                 &node.style.decoration,
@@ -415,7 +498,18 @@ impl ViewPainter {
                 let y = node.content_rect.y.saturating_sub(node.rect.y);
                 output.composite(&painted, x, y);
             }
-            LayoutContent::ContentHost => {}
+            LayoutContent::ContentHost { port_id, .. } => {
+                if let Some(painted) =
+                    content.paint(*port_id, node.content_rect.width, node.content_rect.height)
+                {
+                    let mut painted = (*painted).clone();
+                    apply_content_style(&mut painted, resolved);
+                    let x = node.content_rect.x.saturating_sub(node.rect.x);
+                    let y = node.content_rect.y.saturating_sub(node.rect.y);
+                    let clip = Rect::new(x, y, node.content_rect.width, node.content_rect.height);
+                    output.composite_clipped(&painted, i32::from(x), i32::from(y), clip);
+                }
+            }
             LayoutContent::Children | LayoutContent::Clamp { .. } => {
                 self.paint_children(
                     compiler,
@@ -425,6 +519,7 @@ impl ViewPainter {
                     resolved,
                     &descendant_context,
                     cache,
+                    content,
                 );
                 if let LayoutContent::Clamp { overflow } = &node.content
                     && node
@@ -457,6 +552,7 @@ impl ViewPainter {
                         descendant_context.clone(),
                         cache,
                         true,
+                        content,
                     );
                     for y in 0..output.height() {
                         let source_y = usize::from(*skip_rows).saturating_add(usize::from(y));
@@ -502,6 +598,7 @@ impl ViewPainter {
         resolved: PhysicalStyle,
         context: &crate::presentation::paint::StyleContext,
         cache: &mut PaintCache,
+        content: &dyn ContentProvider,
     ) {
         for child in &node.children {
             let child_node = tree.node(*child);
@@ -513,6 +610,7 @@ impl ViewPainter {
                 context.clone(),
                 cache,
                 true,
+                content,
             );
             let x = child_node.rect.x.saturating_sub(node.rect.x);
             let y = child_node.rect.y.saturating_sub(node.rect.y);
@@ -564,6 +662,26 @@ impl ViewPainter {
                 *output.get_mut(x, row) = indicator.get(x, 0).clone();
             }
         }
+    }
+}
+
+fn apply_content_style(surface: &mut Surface, inherited: PhysicalStyle) {
+    for cell in &mut surface.cells {
+        if !cell.painted {
+            continue;
+        }
+        if cell.style.foreground.is_none() {
+            cell.style.foreground = inherited.foreground;
+        }
+        if cell.style.background.is_none() {
+            cell.style.background = inherited.background;
+        }
+        cell.style.bold |= inherited.bold;
+        cell.style.dim |= inherited.dim;
+        cell.style.italic |= inherited.italic;
+        cell.style.underline |= inherited.underline;
+        cell.style.reversed |= inherited.reversed;
+        cell.style.strikethrough |= inherited.strikethrough;
     }
 }
 

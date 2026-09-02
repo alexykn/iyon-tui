@@ -40,6 +40,7 @@ use crate::{
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
+    presentation::{ContentProvider, EmptyContentProvider},
     retained_state::{StateNodeKind, ViewStateRecord, ViewStateRegistry, ViewStateSnapshot},
     scene::{PreparedSceneFrame, SceneHostError},
     terminal::{PresentReceipt, TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
@@ -161,6 +162,9 @@ pub(super) struct HostInner {
     visible_frame_revision: u64,
     pending_epoch: u64,
     committed_epoch: u64,
+    /// A Source/control mutation requires content-derived layout/paint cache
+    /// invalidation. It remains set until the corresponding frame commits.
+    content_dirty: bool,
     #[cfg(test)]
     fail_next_frame: Option<String>,
     view_states: ViewStateRegistry,
@@ -560,6 +564,7 @@ impl Component for MountedScrollPane {
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
         cx.focusable();
         cx.on_layout_changed(Self::on_layout_changed);
+        cx.on_content_extent_changed(Self::on_content_extent_changed);
         cx.key_commands(Self::map_command, Self::handle_command);
     }
 }
@@ -568,6 +573,12 @@ impl MountedScrollPane {
     fn on_layout_changed(component: &mut Self, size: Size) {
         if let Ok(mut pane) = component.0.state.lock() {
             pane.on_layout_changed(size);
+        }
+    }
+
+    fn on_content_extent_changed(component: &mut Self, extent: Size) {
+        if let Ok(mut pane) = component.0.state.lock() {
+            pane.on_content_extent_changed(extent);
         }
     }
 
@@ -2226,6 +2237,7 @@ impl TuiHost {
                 visible_frame_revision: 0,
                 pending_epoch: 0,
                 committed_epoch: 0,
+                content_dirty: false,
                 #[cfg(test)]
                 fail_next_frame: None,
                 view_states: ViewStateRegistry::new(),
@@ -2264,8 +2276,8 @@ impl TuiHost {
     }
 
     /// Creates a host-owned ContentPort. Source/Funnel identity remains
-    /// separate from the structural attachment and no content is projected in
-    /// PERF-13-D.
+    /// separate from the structural attachment; plain content projection is
+    /// prepared only when the port is mounted and selected.
     pub fn create_content_port(&self, family: ContentFamily) -> Result<HostContentPort> {
         let mut inner = self.lock_mut()?;
         if inner.closed {
@@ -2979,6 +2991,11 @@ impl HostInner {
         }
     }
 
+    pub(super) fn mark_content_pending(&mut self) -> anyhow::Result<WakeDisposition> {
+        self.content_dirty = true;
+        self.mark_pending()
+    }
+
     pub(super) fn mark_pending(&mut self) -> anyhow::Result<WakeDisposition> {
         self.pending_epoch = self
             .pending_epoch
@@ -3010,16 +3027,31 @@ impl HostInner {
         }
         let target_epoch = self.pending_epoch;
         let target_structural_revision = self.desired_structural_revision;
-        let content_bindings = self.candidate_content_bindings()?;
-        let states = self.state_snapshots()?;
-        let candidate = match prepare_frame(&mut self.running, &mut self.backend, self.now, &states)
-        {
+        self.content.begin_projection_candidate();
+        if self.content_dirty {
+            self.running.host_invalidate_content();
+        }
+        let states = match self.state_snapshots() {
+            Ok(states) => states,
+            Err(error) => {
+                self.content.abort_candidate();
+                return Err(error);
+            }
+        };
+        let candidate = match prepare_frame_with_content(
+            &mut self.running,
+            &mut self.backend,
+            self.now,
+            &states,
+            &mut self.content,
+        ) {
             Ok(candidate) => candidate,
             Err(error) => {
                 // SceneHost may have staged derived layout/surface state before
                 // a late preparation error. Keep the HostInner frame as the
                 // sole visible authority and rebuild the candidate on retry.
                 self.failed_attempt = Some((target_epoch, target_structural_revision));
+                self.content.abort_candidate();
                 self.running.host_discard_candidate();
                 return Err(error);
             }
@@ -3029,6 +3061,14 @@ impl HostInner {
             .iter()
             .map(|(id, _)| *id)
             .collect::<Vec<_>>();
+        let content_bindings = match self.candidate_content_bindings() {
+            Ok(bindings) => bindings,
+            Err(error) => {
+                self.content.abort_candidate();
+                self.running.host_discard_candidate();
+                return Err(error);
+            }
+        };
         self.set_in_flight_state_bindings(&state_ids);
         let previous_pending = self.frame_pending;
         debug_assert!(self.candidate_frame.is_none());
@@ -3152,6 +3192,9 @@ impl HostInner {
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
         self.committed_epoch = candidate_epoch;
+        if self.pending_epoch == candidate_epoch {
+            self.content_dirty = false;
+        }
         self.environment.complete_host(
             self.host_id,
             self.pending_epoch,
@@ -3306,35 +3349,11 @@ impl HostInner {
         }
 
         if self.pending_epoch != self.committed_epoch {
-            // A control-only content transition still has to commit its
-            // requested/visible Connector state even when PERF-13-D has no
-            // projection work that would produce a visual surface delta.
-            let content_targets = self.running.host_current_content_attachment_targets()?;
-            let content_bindings = self.content.candidate_bindings(&content_targets)?;
-            self.content.commit_visible(&content_bindings);
-            // A desired publication with no effective visual delta still
-            // completes its host epoch without manufacturing another frame.
-            let committed_epoch = self.pending_epoch;
-            let visible_structural_revision = self.desired_structural_revision;
-            self.visible_structural_revision = visible_structural_revision;
-            self.visible_frame_revision = self
-                .visible_frame_revision
-                .checked_add(1)
-                .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
-            self.committed_epoch = committed_epoch;
-            self.environment.complete_host(
-                self.host_id,
-                self.pending_epoch,
-                self.committed_epoch,
-                true,
-                false,
-            )?;
-            return Ok(HostFlushOutcome {
-                committed: true,
-                waiting_for_presentation: false,
-                committed_epoch: Some(committed_epoch),
-                visible_structural_revision: Some(visible_structural_revision),
-            });
+            // Content control and Source mutations do not invalidate the
+            // semantic kernel. They still require a real candidate frame so
+            // Connector projection, measurement, viewport handling, and paint
+            // observe the latest content before the epoch is committed.
+            return self.render();
         }
         Ok(HostFlushOutcome::default())
     }
@@ -3356,6 +3375,17 @@ fn prepare_frame(
     now: Instant,
     states: &HashMap<u64, ViewStateSnapshot>,
 ) -> Result<PreparedSceneFrame> {
+    let mut content = EmptyContentProvider;
+    prepare_frame_with_content(running, backend, now, states, &mut content)
+}
+
+fn prepare_frame_with_content(
+    running: &mut HostRunning,
+    backend: &mut HostBackend,
+    now: Instant,
+    states: &HashMap<u64, ViewStateSnapshot>,
+    content: &mut dyn ContentProvider,
+) -> Result<PreparedSceneFrame> {
     match backend {
         HostBackend::Headless(sink) => running
             .prepare_frame_with_states(
@@ -3363,6 +3393,7 @@ fn prepare_frame(
                 sink,
                 |sink| Ok(Size::new(sink.width, sink.height)),
                 states,
+                content,
             )
             .map_err(|error| {
                 let (code, retryable) = if matches!(error, SceneHostError::DidNotConverge) {
@@ -3378,7 +3409,7 @@ fn prepare_frame(
                 )
             }),
         HostBackend::Real(backend) => running
-            .prepare_frame_with_states(now, backend, |backend| backend.viewport(), states)
+            .prepare_frame_with_states(now, backend, |backend| backend.viewport(), states, content)
             .map_err(|error| {
                 let (code, retryable) = if matches!(error, SceneHostError::DidNotConverge) {
                     ("LAYOUT_DID_NOT_CONVERGE", false)

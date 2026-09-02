@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
+use crate::presentation::{ContentProvider, EmptyContentProvider};
 use crate::{
     component::{ComponentId, ComponentRegistry, MountGraph},
     geometry::{LayoutConstraints, Size},
     interaction::MountedCapabilities,
     presentation::layout::{
-        ComponentGeometryMap, LayoutCache, LayoutTree, layout_view_with_overlay_and_cache,
-        layout_view_with_overlay_and_cache_in_scope,
+        ComponentGeometryMap, LayoutCache, LayoutTree,
+        layout_view_with_overlay_and_cache_and_content,
+        layout_view_with_overlay_and_cache_in_scope_and_content,
     },
 };
 
@@ -30,11 +32,23 @@ pub(crate) fn layout_resolved_scene_with_cache(
     size: Size,
     cache: &mut LayoutCache,
 ) -> ResolvedSceneLayout {
-    let tree = layout_view_with_overlay_and_cache(
+    let mut content = EmptyContentProvider;
+    layout_resolved_scene_with_cache_and_content(scene, size, cache, &mut content)
+}
+
+pub(crate) fn layout_resolved_scene_with_cache_and_content(
+    scene: &ResolvedScene,
+    size: Size,
+    cache: &mut LayoutCache,
+    content: &mut dyn ContentProvider,
+) -> ResolvedSceneLayout {
+    let tree = layout_view_with_overlay_and_cache_and_content(
         &scene.view,
         LayoutConstraints::bounded(size),
         &scene.overlay,
+        None,
         cache,
+        content,
     );
     let components = tree.component_geometry();
     ResolvedSceneLayout { tree, components }
@@ -50,6 +64,7 @@ impl ResolvedSceneLayout {
         view: &crate::presentation::View,
         overlay: &super::ResolutionOverlay,
         cache: &mut LayoutCache,
+        content: &mut dyn ContentProvider,
     ) -> bool {
         let Some(component_root) = self.components.roots.get(&component).copied() else {
             return false;
@@ -58,12 +73,13 @@ impl ResolvedSceneLayout {
             return false;
         };
         let old_size = self.tree.node(child).rect.size();
-        let replacement = layout_view_with_overlay_and_cache_in_scope(
+        let replacement = layout_view_with_overlay_and_cache_in_scope_and_content(
             view,
             LayoutConstraints::width_only(old_size.width),
             overlay,
             Some(component),
             cache,
+            content,
         );
         let shape_changed = replacement.size != old_size;
         let tree_patched =
@@ -90,6 +106,7 @@ pub(crate) enum LayoutSync {
 #[derive(Debug, Default)]
 pub(crate) struct LayoutSynchronizer {
     delivered: HashMap<ComponentId, Size>,
+    delivered_content_extents: HashMap<ComponentId, Size>,
 }
 
 impl LayoutSynchronizer {
@@ -101,6 +118,8 @@ impl LayoutSynchronizer {
         registry: &mut ComponentRegistry,
     ) -> LayoutSync {
         self.delivered.retain(|id, _| graph.contains(*id));
+        self.delivered_content_extents
+            .retain(|id, _| graph.contains(*id));
         let mut dirty = false;
         for node in graph.iter() {
             dirty |= self.synchronize_component(node.id, capabilities, geometry, registry)
@@ -113,8 +132,10 @@ impl LayoutSynchronizer {
         }
     }
 
-    /// Synchronizes only one retained component's layout callback. This is
-    /// the R6b path for a topology-preserving local scope update.
+    /// Synchronizes one retained component's layout and content-extent
+    /// callbacks. The two notifications have independent delivery revisions
+    /// because a viewport can keep the same allocation while its full content
+    /// extent changes.
     pub(crate) fn synchronize_component(
         &mut self,
         id: ComponentId,
@@ -122,23 +143,49 @@ impl LayoutSynchronizer {
         geometry: &ComponentGeometryMap,
         registry: &mut ComponentRegistry,
     ) -> LayoutSync {
-        let Some(handler) = capabilities
-            .get(id)
-            .and_then(|caps| caps.layout_changed.as_ref())
-            .cloned()
-        else {
-            self.delivered.remove(&id);
-            return LayoutSync::Stable;
-        };
         let Some(entry) = geometry.entries.get(&id) else {
             unreachable!("mounted component has no layout geometry");
         };
         let size = entry.content.size();
-        if self.delivered.get(&id).copied() == Some(size) {
-            return LayoutSync::Stable;
+        let layout_handler = capabilities
+            .get(id)
+            .and_then(|caps| caps.layout_changed.as_ref())
+            .cloned();
+        let extent_handler = capabilities
+            .get(id)
+            .and_then(|caps| caps.content_extent_changed.as_ref())
+            .cloned();
+        let mut dirty = false;
+
+        if let Some(handler) = layout_handler {
+            if self.delivered.get(&id).copied() != Some(size) {
+                self.delivered.insert(id, size);
+                registry.with_any_mut(id, |component| handler(component, size));
+                dirty = true;
+            }
+        } else {
+            self.delivered.remove(&id);
         }
-        self.delivered.insert(id, size);
-        registry.with_any_mut(id, |component| handler(component, size));
-        LayoutSync::Dirty
+
+        let extent = geometry.content_extents.get(&id).copied();
+        if let Some(handler) = extent_handler {
+            if let Some(extent) = extent {
+                if self.delivered_content_extents.get(&id).copied() != Some(extent) {
+                    self.delivered_content_extents.insert(id, extent);
+                    registry.with_any_mut(id, |component| handler(component, extent));
+                    dirty = true;
+                }
+            } else {
+                self.delivered_content_extents.remove(&id);
+            }
+        } else {
+            self.delivered_content_extents.remove(&id);
+        }
+
+        if dirty {
+            LayoutSync::Dirty
+        } else {
+            LayoutSync::Stable
+        }
     }
 }

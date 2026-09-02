@@ -127,11 +127,11 @@ Connector. ContentPort owns only structural mount, allocation, and clipping.
 - PERF-13-E commits:
   - `89a4c76 feat: implement PERF-13-E retained content data`
   - `e1c2b7a docs: clarify PERF-13 benchmark policy`
-- The PERF-13-F implementation is in progress. The initial worktree slice now
-  contains a generic presentation `ContentProvider`, plain Connector projection
-  and cache entries, ContentHost layout/paint integration, content-aware cache
-  invalidation, and ScrollPane content-extent synchronization. Continue auditing
-  and hardening before calling F complete.
+- The PERF-13-F implementation is complete in the worktree. It contains a
+  generic presentation `ContentProvider`, plain Connector projection and cache
+  entries, ContentHost layout/paint integration, content-aware cache
+  invalidation, and ScrollPane content-extent synchronization. See
+  `PERF-13-F-completion.md` for the sign-off summary.
 - The repository was clean before this notes file was created.
 - The current Pi process is `openai-codex/gpt-5.6-luna`.
 - `~/.pi/agent/models.json` was updated during this session so the
@@ -1119,12 +1119,12 @@ Do not mark F complete until all of these are true:
 At the time of writing:
 
 - Todo #46 (re-read PERF-13-F handoff): completed.
-- Todo #47 (audit existing F seams): in progress.
-- Todo #48 (implement PERF-13-F): pending behind #47.
-- Todo #49 (verify PERF-13-F): pending behind #48.
-- Todo #50 (document and commit PERF-13-F): pending behind #49.
+- Todo #47 (audit existing F seams): completed.
+- Todo #48 (implement PERF-13-F): completed.
+- Todo #49 (verify PERF-13-F): completed.
+- Todo #50 (document and commit PERF-13-F): in progress.
 
-After compaction, read this file first, then inspect the current git status and
-continue with the active audit. Mark #47 complete only after the existing F
-seams and implementation plan are sufficiently mapped. Start #48 only after
-that. Keep exactly one todo in progress.
+After compaction, read this file first, inspect the current git status, and
+continue with documentation/commit bookkeeping if needed. PERF-13-F is plain
+text only; do not pull v5 Markdown/diff/ANSI/Smooth/Surface/Taffy work into F.
+Keep exactly one todo in progress.

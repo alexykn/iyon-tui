@@ -17,6 +17,7 @@ pub(super) struct MeasureKey {
     pub(super) component_view: Option<ViewId>,
     pub(super) geometry_revision: u64,
     pub(super) presentation_revision: u64,
+    pub(super) content_revision: u64,
     pub(super) width: u16,
     pub(super) intent: WidthIntent,
 }
@@ -152,6 +153,7 @@ impl MeasureKey {
             component_view: None,
             geometry_revision: 0,
             presentation_revision: 0,
+            content_revision: 0,
             width,
             intent,
         }
@@ -168,6 +170,7 @@ impl MeasureKey {
             component_view: Some(component_view),
             geometry_revision: 0,
             presentation_revision: 0,
+            content_revision: 0,
             width,
             intent,
         }

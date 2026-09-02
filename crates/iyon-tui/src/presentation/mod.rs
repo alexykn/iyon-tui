@@ -6,6 +6,7 @@
 //! Unicode wrapping. Generic stream provenance is a sibling `stream` subsystem.
 
 pub(crate) mod api;
+pub(crate) mod content;
 pub(crate) mod ir;
 pub(crate) mod layout;
 pub(crate) mod paint;
@@ -22,4 +23,5 @@ pub(crate) use api::{StyleFacts, StyleStates};
 
 // Retained IR types remain private implementation details of the semantic
 // layout engine.
+pub(crate) use content::{ContentMeasurement, ContentProvider, EmptyContentProvider};
 pub(crate) use ir::WidthRule;

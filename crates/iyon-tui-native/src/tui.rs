@@ -1557,6 +1557,7 @@ impl NativeContentConnector {
             "phase": status.phase,
             "requested": status.requested,
             "visible": status.visible,
+            "projectedSourceRevision": status.projected_source_revision.map(|revision| revision.to_string()),
             "error": status.error.map(|error| serde_json::json!({
                 "code": error.code,
                 "diagnostic": error.diagnostic,

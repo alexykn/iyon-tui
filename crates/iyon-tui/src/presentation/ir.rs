@@ -1794,8 +1794,8 @@ pub(crate) enum ViewKind {
     ClampRows(Arc<ClampRowsView>),
     RowViewport(Arc<RowViewportView>),
     ComponentSlot(ComponentSlotNode),
-    /// A structural receiving region for a retained ContentPort. Its content
-    /// is empty until a later content projection tranche supplies rows.
+    /// A structural receiving region for a retained ContentPort. Derived
+    /// content rows are supplied by the host frame's content provider.
     ContentHost,
 }
 

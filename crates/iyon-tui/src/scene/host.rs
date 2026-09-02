@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::Result;
 
+use crate::presentation::{ContentProvider, EmptyContentProvider};
 use crate::{
     Theme,
     backend::NativeHistorySink,
@@ -26,10 +27,7 @@ use crate::{
     physical::Surface,
     presentation::{
         ir::{View, ViewKind},
-        layout::{
-            LayoutCache, ViewCompiler, layout_view_with_overlay_and_cache,
-            measure_view_with_overlay_and_cache,
-        },
+        layout::{LayoutCache, ViewCompiler, layout_view_with_overlay_and_cache_and_content},
         paint::{PaintCache, ViewPainter},
     },
     retained_state::{DamageRegion, StateEffects, StateNodeKind, ViewStateSnapshot},
@@ -38,8 +36,9 @@ use crate::{
 use super::root::merge_root_scene;
 use super::{
     LayoutSynchronizer, ResolveError, ResolveSession, ResolvedRootScene, ResolvedScene,
-    ResolvedSceneLayout, Scene, layout_resolved_scene_with_cache,
-    resolve_component_subtree_with_states, resolve_root_scene_with_anchor_and_cache_and_states,
+    ResolvedSceneLayout, Scene, layout_resolved_scene_with_cache_and_content,
+    resolve_component_subtree_with_states,
+    resolve_root_scene_with_anchor_and_cache_and_states_and_content,
 };
 use crate::history::{HistoryViewportAnchor, project_into_session_for_host};
 
@@ -199,6 +198,10 @@ pub(crate) struct SceneHost {
     /// True while the current retained candidate was rebuilt from the History
     /// branch without re-resolving the body branch.
     history_only_refresh: bool,
+    /// Source revisions change descendant layout/paint products without
+    /// changing semantic View identity. This flag prevents a coalesced
+    /// state-only refresh from committing a stale content projection.
+    content_invalidated: bool,
     /// A body geometry/topology change has been prepared, but native History
     /// promotion may require another retained History refresh before painting.
     /// Keep the final paint whole so that refresh cannot leave moved body rows
@@ -254,6 +257,7 @@ impl Default for SceneHost {
             state_only_refresh: false,
             incremental_paint_history: false,
             history_only_refresh: false,
+            content_invalidated: false,
             full_paint_pending: false,
             pending_damage: None,
             #[cfg(test)]
@@ -284,6 +288,7 @@ impl SceneHost {
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
+        self.content_invalidated = false;
         self.full_paint_pending = false;
         self.pending_damage = None;
     }
@@ -310,6 +315,16 @@ impl SceneHost {
             .or_insert(effects);
     }
 
+    /// Content revisions are not semantic View revisions, so descendant
+    /// layout/paint cache entries cannot be invalidated by ViewId alone. Clear
+    /// derived caches before a content candidate is measured; the immutable
+    /// semantic Scene and component graph remain retained.
+    pub(crate) fn invalidate_content(&mut self) {
+        self.content_invalidated = true;
+        self.layout_cache.clear();
+        self.paint_cache.clear();
+    }
+
     /// Re-lays out only fixed-allocation state subtrees. If a geometry change
     /// can escape the target's allocation, the caller falls back to a retained
     /// resolved-root layout so parent dependencies remain correct.
@@ -318,6 +333,7 @@ impl SceneHost {
         retained: &mut StableScene,
         state_ids: &[u64],
         state_effects: &HashMap<u64, StateEffects>,
+        content: &mut dyn ContentProvider,
     ) -> Option<Vec<ComponentId>> {
         let mut propagation_nodes = 0usize;
         let mut geometry_roots = Vec::with_capacity(state_ids.len());
@@ -370,7 +386,7 @@ impl SceneHost {
                                     && dependency.parent_uses_child_height())
                         });
                     if may_escape {
-                        let natural = layout_view_with_overlay_and_cache(
+                        let natural = layout_view_with_overlay_and_cache_and_content(
                             view,
                             // Measure against an unconstrained width. Using
                             // the old allocation here would hide an increased
@@ -378,18 +394,22 @@ impl SceneHost {
                             // incorrectly keep the target locally clipped.
                             LayoutConstraints::width_only(u16::MAX),
                             &retained.root.scene.overlay,
+                            None,
                             &mut self.layout_cache,
+                            content,
                         );
                         if natural.size != rect.size() {
                             continue;
                         }
                     }
                 }
-                let replacement = layout_view_with_overlay_and_cache(
+                let replacement = layout_view_with_overlay_and_cache_and_content(
                     view,
                     LayoutConstraints::bounded(rect.size()),
                     &retained.root.scene.overlay,
+                    None,
                     &mut self.layout_cache,
+                    content,
                 );
                 if replacement.size != rect.size()
                     || !retained.layout.tree.patch_subtree(node_id, &replacement)
@@ -472,6 +492,7 @@ impl SceneHost {
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
+        self.content_invalidated = false;
         self.full_paint_pending = false;
         self.pending_damage = None;
     }
@@ -608,6 +629,7 @@ impl SceneHost {
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
+        let mut content = EmptyContentProvider;
         self.render_at_with_states(
             Instant::now(),
             scene,
@@ -616,6 +638,7 @@ impl SceneHost {
             sink,
             viewport,
             &HashMap::new(),
+            &mut content,
         )
     }
 
@@ -632,7 +655,17 @@ impl SceneHost {
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
-        self.render_at_with_states(now, scene, registry, theme, sink, viewport, &HashMap::new())
+        let mut content = EmptyContentProvider;
+        self.render_at_with_states(
+            now,
+            scene,
+            registry,
+            theme,
+            sink,
+            viewport,
+            &HashMap::new(),
+            &mut content,
+        )
     }
 
     pub(crate) fn render_at_with_states<S, F>(
@@ -644,6 +677,7 @@ impl SceneHost {
         sink: &mut S,
         mut viewport: F,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
         S: NativeHistorySink,
@@ -662,16 +696,17 @@ impl SceneHost {
                 now,
                 HistoryViewportAnchor::FollowEnd,
                 states,
+                content,
             )?;
 
             if resolved.root.history_overflow_rows == 0 {
                 crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
-                return Ok(self.paint(resolved, theme));
+                return Ok(self.paint_with_content(resolved, theme, content));
             }
 
             let Some(history) = scene.history_mut() else {
                 crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
-                return Ok(self.paint(resolved, theme));
+                return Ok(self.paint_with_content(resolved, theme, content));
             };
 
             let pressure = drain_native_pressure(
@@ -708,9 +743,10 @@ impl SceneHost {
                         now,
                         HistoryViewportAnchor::NativeFrontier,
                         states,
+                        content,
                     )?;
                     crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
-                    return Ok(self.paint(pinned, theme));
+                    return Ok(self.paint_with_content(pinned, theme, content));
                 }
             }
         }
@@ -734,6 +770,7 @@ impl SceneHost {
         size: Size,
         now: Instant,
     ) -> Result<StableScene, SceneHostError<E>> {
+        let mut content = EmptyContentProvider;
         self.resolve_stable_at_with_anchor(
             scene,
             registry,
@@ -741,6 +778,7 @@ impl SceneHost {
             now,
             HistoryViewportAnchor::FollowEnd,
             &HashMap::new(),
+            &mut content,
         )
     }
 
@@ -752,19 +790,20 @@ impl SceneHost {
         now: Instant,
         anchor: HistoryViewportAnchor,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
         let mut force_full = false;
         let mut layout_epoch_started = false;
         for _ in 0..MAX_LAYOUT_PASSES {
             let resolved = if !force_full {
-                match self.try_incremental_stable(scene, registry, size, anchor, states) {
+                match self.try_incremental_stable(scene, registry, size, anchor, states, content) {
                     Ok(Some(resolved)) => resolved,
                     Ok(None) => {
                         if !layout_epoch_started {
                             self.layout_cache.begin_epoch();
                             layout_epoch_started = true;
                         }
-                        self.resolve_full_stable(scene, registry, size, anchor, states)?
+                        self.resolve_full_stable(scene, registry, size, anchor, states, content)?
                     }
                     Err(error) => return Err(SceneHostError::Resolve(error)),
                 }
@@ -773,7 +812,7 @@ impl SceneHost {
                     self.layout_cache.begin_epoch();
                     layout_epoch_started = true;
                 }
-                self.resolve_full_stable(scene, registry, size, anchor, states)?
+                self.resolve_full_stable(scene, registry, size, anchor, states, content)?
             };
             let incremental_host = (self.state_only_refresh
                 || self.history_only_refresh
@@ -890,6 +929,7 @@ impl SceneHost {
         size: Size,
         anchor: HistoryViewportAnchor,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
         if !self.invalidated_states.is_empty() {
             // Parent cache entries do not encode every descendant state
@@ -900,17 +940,22 @@ impl SceneHost {
             self.paint_cache.clear();
         }
         self.pending_damage = None;
-        let resolved = resolve_root_scene_with_anchor_and_cache_and_states(
+        let resolved = resolve_root_scene_with_anchor_and_cache_and_states_and_content(
             scene,
             registry,
             size,
             anchor,
             &mut self.layout_cache,
             states,
+            content,
         )
         .map_err(SceneHostError::Resolve)?;
-        let layout =
-            layout_resolved_scene_with_cache(&resolved.scene, size, &mut self.layout_cache);
+        let layout = layout_resolved_scene_with_cache_and_content(
+            &resolved.scene,
+            size,
+            &mut self.layout_cache,
+            content,
+        );
         self.incremental_sync_components.clear();
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
@@ -919,6 +964,7 @@ impl SceneHost {
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
+        self.content_invalidated = false;
         #[cfg(test)]
         {
             self.full_resolves += 1;
@@ -939,6 +985,7 @@ impl SceneHost {
         size: Size,
         anchor: HistoryViewportAnchor,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let history_revision = scene.history().map_or(0, crate::History::revision);
         let native_history_revision = scene.history().map_or(0, crate::History::native_revision);
@@ -946,6 +993,9 @@ impl SceneHost {
         let Some(retained_state) = self.retained.as_ref() else {
             return Ok(None);
         };
+        if self.content_invalidated {
+            return Ok(None);
+        }
         if retained_state.layout.tree.size != size {
             return Ok(None);
         }
@@ -1052,6 +1102,7 @@ impl SceneHost {
                     &mut retained,
                     &geometry_state_ids,
                     &state_effects,
+                    content,
                 ) {
                     self.incremental_sync_components = changed_components;
                     self.state_only_refresh = true;
@@ -1089,10 +1140,11 @@ impl SceneHost {
                 } else {
                     self.layout_cache.invalidate_view_ids(&dirty_view_ids);
                 }
-                let next_layout = layout_resolved_scene_with_cache(
+                let next_layout = layout_resolved_scene_with_cache_and_content(
                     &retained.root.scene,
                     size,
                     &mut self.layout_cache,
+                    content,
                 );
                 let geometry_unchanged =
                     layout_geometry_unchanged(&retained.layout.tree, &next_layout.tree);
@@ -1142,7 +1194,7 @@ impl SceneHost {
                 .filter(|component| retained.root.history_components.contains(component))
                 .collect();
             return self.refresh_history_projection(
-                scene, registry, size, anchor, retained, affected, false, states,
+                scene, registry, size, anchor, retained, affected, false, states, content,
             );
         }
 
@@ -1184,7 +1236,7 @@ impl SceneHost {
 
         let mut updates = Vec::with_capacity(roots.len());
         for id in &roots {
-            match prepare_component_subtree_update(&retained, registry, *id, states) {
+            match prepare_component_subtree_update(&retained, registry, *id, states, content) {
                 Ok(update) => updates.push(update),
                 Err(error) => {
                     self.retained = Some(retained);
@@ -1235,6 +1287,7 @@ impl SceneHost {
                 view,
                 &retained.root.scene.overlay,
                 &mut incremental_cache,
+                content,
             ) {
                 patched = false;
                 break;
@@ -1272,14 +1325,16 @@ impl SceneHost {
                 roots.clone(),
                 topology_changed || body_geometry_changed || body_patch_failed,
                 states,
+                content,
             );
         }
         if !patched || topology_changed {
             self.layout_cache.begin_epoch();
-            retained.layout = layout_resolved_scene_with_cache(
+            retained.layout = layout_resolved_scene_with_cache_and_content(
                 &retained.root.scene,
                 size,
                 &mut self.layout_cache,
+                content,
             );
             self.incremental_requires_full_sync = true;
             self.incremental_paint_components.clear();
@@ -1314,6 +1369,7 @@ impl SceneHost {
         affected: Vec<ComponentId>,
         body_layout_changed: bool,
         states: &HashMap<u64, ViewStateSnapshot>,
+        content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let Some(history) = scene.history() else {
             self.retained = Some(retained);
@@ -1327,11 +1383,12 @@ impl SceneHost {
             .iter()
             .any(|component| !retained.root.history_components.contains(component));
         let body_height = if body_affected {
-            measure_view_with_overlay_and_cache(
+            crate::presentation::layout::measure_view_with_overlay_and_cache_and_content(
                 &retained.root.body_scene.view,
                 size.width,
                 &retained.root.body_scene.overlay,
                 &mut self.layout_cache,
+                content,
             )
             .height
             .min(size.height)
@@ -1396,7 +1453,12 @@ impl SceneHost {
                 return Err(error);
             }
         };
-        let layout = layout_resolved_scene_with_cache(&merged, size, &mut self.layout_cache);
+        let layout = layout_resolved_scene_with_cache_and_content(
+            &merged,
+            size,
+            &mut self.layout_cache,
+            content,
+        );
         let mut sync_components = Vec::new();
         for component in affected {
             if !merged.mounts.contains(component) {
@@ -1468,6 +1530,16 @@ impl SceneHost {
     }
 
     fn paint(&mut self, resolved: StableScene, theme: &Theme) -> PreparedSceneFrame {
+        let content = EmptyContentProvider;
+        self.paint_with_content(resolved, theme, &content)
+    }
+
+    fn paint_with_content(
+        &mut self,
+        resolved: StableScene,
+        theme: &Theme,
+        content: &dyn ContentProvider,
+    ) -> PreparedSceneFrame {
         self.retained = Some(resolved);
         let retained = self.retained.as_ref().expect("retained frame installed");
         let state_bindings = retained.layout.tree.state_bindings();
@@ -1498,12 +1570,13 @@ impl SceneHost {
                             .copied()
                     });
                     incremental = history_root.is_some_and(|root| {
-                        ViewPainter.paint_subtree_into(
+                        ViewPainter.paint_subtree_into_with_content(
                             &compiler,
                             &retained.layout.tree,
                             root,
                             &mut surface,
                             &mut incremental_cache,
+                            content,
                         )
                     });
                 }
@@ -1515,12 +1588,13 @@ impl SceneHost {
                             incremental = false;
                             break;
                         };
-                        if !ViewPainter.paint_subtree_into(
+                        if !ViewPainter.paint_subtree_into_with_content(
                             &compiler,
                             &retained.layout.tree,
                             state_root,
                             &mut surface,
                             &mut incremental_cache,
+                            content,
                         ) {
                             incremental = false;
                             break;
@@ -1529,12 +1603,13 @@ impl SceneHost {
                 }
                 if incremental {
                     for component in self.incremental_paint_components.iter().copied() {
-                        if !ViewPainter.paint_component_into(
+                        if !ViewPainter.paint_component_into_with_content(
                             &compiler,
                             &retained.layout.tree,
                             component,
                             &mut surface,
                             &mut incremental_cache,
+                            content,
                         ) {
                             incremental = false;
                             break;
@@ -1578,10 +1653,11 @@ impl SceneHost {
             self.full_paints += 1;
         }
         self.paint_cache.begin_epoch(theme);
-        let surface = ViewPainter.paint_tree_with_cache(
+        let surface = ViewPainter.paint_tree_with_content(
             &compiler,
             &retained.layout.tree,
             &mut self.paint_cache,
+            content,
         );
         let output = surface.clone();
         self.last_surface = Some(surface);
@@ -1715,6 +1791,7 @@ fn prepare_component_subtree_update(
     registry: &ComponentRegistry,
     id: ComponentId,
     states: &HashMap<u64, ViewStateSnapshot>,
+    _content: &mut dyn ContentProvider,
 ) -> Result<PreparedComponentSubtree, ResolveError> {
     let snapshot = registry
         .resolution(id)

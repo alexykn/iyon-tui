@@ -37,9 +37,13 @@ use crate::{
 pub(crate) use cache::LayoutCache;
 #[cfg(test)]
 pub(crate) use engine::layout_view_with_overlay;
+#[allow(unused_imports)]
 pub(crate) use engine::{
-    layout_view, layout_view_with_overlay_and_cache, layout_view_with_overlay_and_cache_in_scope,
-    measure_view, measure_view_with_overlay, measure_view_with_overlay_and_cache,
+    layout_view, layout_view_with_overlay_and_cache,
+    layout_view_with_overlay_and_cache_and_content, layout_view_with_overlay_and_cache_in_scope,
+    layout_view_with_overlay_and_cache_in_scope_and_content, measure_view,
+    measure_view_with_overlay, measure_view_with_overlay_and_cache,
+    measure_view_with_overlay_and_cache_and_content,
 };
 pub(crate) use tree::{ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree};
 

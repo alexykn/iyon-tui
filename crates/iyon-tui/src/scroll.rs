@@ -23,6 +23,10 @@ pub struct ScrollPane {
     content: View,
     mode: ScrollMode,
     layout_size: Option<Size>,
+    /// Native layout reports the full extent behind a RowViewport. Keeping
+    /// this hint here lets ContentHost content use the same controller without
+    /// making ContentPort own scroll state.
+    content_extent: Option<Size>,
 }
 
 impl ScrollPane {
@@ -36,6 +40,7 @@ impl ScrollPane {
             content,
             mode: ScrollMode::FollowEnd,
             layout_size: None,
+            content_extent: None,
         }
     }
 
@@ -46,6 +51,7 @@ impl ScrollPane {
             "ScrollPane content cannot contain Component identity"
         );
         self.content = content;
+        self.content_extent = None;
         self.repair_detached();
     }
 
@@ -117,7 +123,10 @@ impl ScrollPane {
     }
 
     fn content_height(&self, width: u16) -> usize {
-        usize::from(measure_view(&self.content, width.max(1)).height)
+        self.content_extent.map_or_else(
+            || usize::from(measure_view(&self.content, width.max(1)).height),
+            |extent| usize::from(extent.height),
+        )
     }
 
     fn repair_detached(&mut self) {
@@ -137,6 +146,14 @@ impl ScrollPane {
             return;
         }
         self.layout_size = Some(size);
+        self.repair_detached();
+    }
+
+    pub(crate) fn on_content_extent_changed(&mut self, extent: Size) {
+        if self.content_extent == Some(extent) {
+            return;
+        }
+        self.content_extent = Some(extent);
         self.repair_detached();
     }
 

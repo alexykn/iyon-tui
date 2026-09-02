@@ -29,7 +29,10 @@ pub(crate) enum LayoutContent {
     Spacer {
         rows: u16,
     },
-    ContentHost,
+    ContentHost {
+        port_id: u64,
+        projection_revision: u64,
+    },
     Children,
     Clamp {
         overflow: OverflowIndicator,
@@ -128,6 +131,9 @@ pub(crate) struct ComponentGeometry {
 pub(crate) struct ComponentGeometryMap {
     pub(crate) entries: HashMap<ComponentId, ComponentGeometry>,
     pub(crate) roots: HashMap<ComponentId, LayoutNodeId>,
+    /// Full intrinsic extent discovered behind a component-owned RowViewport.
+    /// This is a measurement result; it is not viewport ownership.
+    pub(crate) content_extents: HashMap<ComponentId, Size>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -485,9 +491,32 @@ impl LayoutTree {
         let mut entries = HashMap::new();
         let root = SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
         self.collect_component_geometry(self.root, 0, root, &mut entries);
+        let mut content_extents = HashMap::new();
+        for (component, root) in &self.component_roots {
+            if let Some(extent) = self.content_extent_in_subtree(*root) {
+                content_extents.insert(*component, extent);
+            }
+        }
         ComponentGeometryMap {
             entries,
             roots: self.component_roots.clone(),
+            content_extents,
+        }
+    }
+
+    fn content_extent_in_subtree(&self, id: LayoutNodeId) -> Option<Size> {
+        let node = self.node(id);
+        match node.content {
+            LayoutContent::RowViewport { .. } => node
+                .children
+                .first()
+                .map(|child| self.node(*child).rect.size())
+                .or(Some(node.content_rect.size())),
+            LayoutContent::ContentHost { .. } => Some(node.content_rect.size()),
+            _ => node
+                .children
+                .iter()
+                .find_map(|child| self.content_extent_in_subtree(*child)),
         }
     }
 
@@ -545,6 +574,12 @@ impl LayoutTree {
             inherited_clip,
             &mut geometry.entries,
         );
+        geometry.content_extents.clear();
+        for (component, root) in &self.component_roots {
+            if let Some(extent) = self.content_extent_in_subtree(*root) {
+                geometry.content_extents.insert(*component, extent);
+            }
+        }
         true
     }
 

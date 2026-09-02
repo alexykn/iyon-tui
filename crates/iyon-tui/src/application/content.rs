@@ -3,7 +3,7 @@
 //! Source storage is deliberately host-independent. This module owns the
 //! PERF-13-E mutation boundary and the PERF-13-D lifecycle graph: environment-
 //! owned Sources, host-owned Ports and Connectors, desired/visible mount state,
-//! and weak subscription bookkeeping. Projection remains a later tranche.
+//! weak subscription bookkeeping, and the plain-text Connector projection.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
@@ -13,6 +13,13 @@ use std::sync::{
 };
 
 use anyhow::{Result, anyhow};
+
+use crate::{
+    geometry::Size,
+    physical::Surface,
+    presentation::{ContentMeasurement, ContentProvider},
+    stream::{ProjectedText, StreamOffset, StreamRange},
+};
 
 use super::environment::{EnvironmentIdentity, WakeDisposition};
 use super::host::HostInner;
@@ -114,6 +121,49 @@ impl HostContentSourceSnapshot {
 
     pub fn chunk_count(&self) -> usize {
         self.storage.chunks.len()
+    }
+
+    fn chunks(&self) -> impl Iterator<Item = (&[u8], u64)> {
+        self.storage
+            .chunks
+            .iter()
+            .map(|chunk| (chunk.bytes.as_ref(), chunk.start))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct TextProjectionKey {
+    source_id: u64,
+    source_generation: u32,
+    content_generation: u64,
+    source_revision: u64,
+    width: u16,
+    wrap: TextWrapMode,
+}
+
+impl TextProjectionKey {
+    fn revision(self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct HostContentProjection {
+    key: TextProjectionKey,
+    intrinsic_size: Size,
+    surface: Arc<Surface>,
+}
+
+impl HostContentProjection {
+    fn measurement(&self) -> ContentMeasurement {
+        ContentMeasurement {
+            intrinsic_size: self.intrinsic_size,
+            physically_complete: self.surface.physically_complete,
+            projection_revision: self.key.revision(),
+        }
     }
 }
 
@@ -376,6 +426,83 @@ fn annotation_policy(kind: u32) -> AnnotationTruncationPolicy {
         CONTENT_ANNOTATION_KIND_POINT => AnnotationTruncationPolicy::Point,
         _ => AnnotationTruncationPolicy::Drop,
     }
+}
+
+fn project_plain_snapshot(
+    snapshot: &HostContentSourceSnapshot,
+    funnel: HostContentFunnel,
+    offered_width: u16,
+) -> Result<HostContentProjection> {
+    let key = TextProjectionKey {
+        source_id: snapshot.source_id,
+        source_generation: snapshot.source_generation,
+        content_generation: snapshot.content_generation,
+        source_revision: snapshot.revision,
+        width: offered_width.max(1),
+        wrap: funnel.wrap,
+    };
+    if snapshot.source_base == snapshot.source_end {
+        return Ok(HostContentProjection {
+            key,
+            intrinsic_size: Size::new(0, 0),
+            surface: Arc::new(Surface::new(0, 0)),
+        });
+    }
+
+    let range = StreamRange::new(
+        StreamOffset::new(snapshot.source_base),
+        StreamOffset::new(snapshot.source_end),
+    );
+    let wrap = match funnel.wrap {
+        TextWrapMode::Word => crate::WrapMode::WordThenGrapheme,
+        TextWrapMode::Grapheme => crate::WrapMode::Grapheme,
+        TextWrapMode::NoWrap => crate::WrapMode::NoWrap,
+    };
+    let mut builder = ProjectedText::builder(range).fill_width().wrap(wrap);
+    for (bytes, start) in snapshot.chunks() {
+        let text = str::from_utf8(bytes).expect("Source snapshot chunks are valid UTF-8");
+        let end = start
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| anyhow!("INVALID_RANGE: Source coordinate exhausted"))?;
+        builder = builder.exact(
+            StreamRange::new(StreamOffset::new(start), StreamOffset::new(end)),
+            text.to_owned(),
+        );
+    }
+    let projected = builder
+        .finish()
+        .map_err(|error| anyhow!("content projection failed: {error}"))?;
+    let theme = crate::Theme::new();
+    let compiler = crate::presentation::layout::ViewCompiler::new(&theme);
+    let (compiled_width, rows) =
+        compiler.compile_projected_text_with_metadata(&projected, offered_width.max(1));
+    let intrinsic_width = rows
+        .iter()
+        .map(|row| row.width)
+        .max()
+        .unwrap_or_default()
+        .min(usize::from(u16::MAX)) as u16;
+    let intrinsic_height = rows.len().min(usize::from(u16::MAX)) as u16;
+    let surface_width = compiled_width.max(intrinsic_width);
+    let mut surface = Surface::new(surface_width, intrinsic_height);
+    for (row_index, row) in rows
+        .into_iter()
+        .take(usize::from(intrinsic_height))
+        .enumerate()
+    {
+        let (placed, complete) = row.row.place(surface_width, 0);
+        surface.physically_complete &= complete;
+        for (column, cell) in placed.cells().iter().enumerate() {
+            if cell.painted {
+                *surface.get_mut(column as u16, row_index as u16) = cell.clone();
+            }
+        }
+    }
+    Ok(HostContentProjection {
+        key,
+        intrinsic_size: Size::new(intrinsic_width, intrinsic_height),
+        surface: Arc::new(surface),
+    })
 }
 
 // ContentPort IDs cross the structural/native boundary, so they must not be
@@ -1055,7 +1182,7 @@ impl HostContentSource {
                     .source_subscription_is_live(id, generation, revision);
             }
             if affected {
-                let wake = host.mark_pending()?;
+                let wake = host.mark_content_pending()?;
                 schedule_environment_drain |= wake.schedule_environment_drain;
                 environment_wake_epoch = host.environment_wake_epoch();
             }
@@ -1268,9 +1395,15 @@ struct ConnectorRecord {
     /// A later Source revision clears the retryable error exactly once.
     failed_source_revision: Option<u64>,
     /// Deterministic synthetic operational failure used by native/unit
-    /// fixtures to exercise transactional switch fallback before projection
-    /// is implemented by the later content tranche.
+    /// fixtures to exercise transactional switch fallback.
     activation_failure: Option<String>,
+    /// Connector-local width-dependent derived projections. Cold Connectors
+    /// clear this cache; the Source remains the authoritative store.
+    projection_cache: VecDeque<(TextProjectionKey, Arc<HostContentProjection>)>,
+    committed_projection: Option<Arc<HostContentProjection>>,
+    candidate_projection: Option<Arc<HostContentProjection>>,
+    projected_source_revision: Option<u64>,
+    projection_failure_key: Option<TextProjectionKey>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1300,6 +1433,9 @@ pub(crate) struct ContentHostRegistry {
     ports: HashMap<u64, Arc<Mutex<PortRecord>>>,
     connectors: HashMap<u64, Arc<Mutex<ConnectorRecord>>>,
     in_flight_connectors: HashSet<u64>,
+    /// Candidate selection/projection is discarded on frame abort and
+    /// promoted only after the backend receipt commits.
+    candidate_selections: HashMap<u64, Option<u64>>,
 }
 
 impl ContentHostRegistry {
@@ -1312,6 +1448,7 @@ impl ContentHostRegistry {
             ports: HashMap::new(),
             connectors: HashMap::new(),
             in_flight_connectors: HashSet::new(),
+            candidate_selections: HashMap::new(),
         }
     }
 
@@ -1412,6 +1549,11 @@ impl ContentHostRegistry {
             error: None,
             failed_source_revision: None,
             activation_failure: None,
+            projection_cache: VecDeque::new(),
+            committed_projection: None,
+            candidate_projection: None,
+            projected_source_revision: None,
+            projection_failure_key: None,
         }));
         self.connectors
             .insert(self.next_connector_id, Arc::clone(&record));
@@ -1483,6 +1625,298 @@ impl ContentHostRegistry {
         Ok(())
     }
 
+    pub(crate) fn begin_projection_candidate(&mut self) {
+        self.clear_candidate_projections();
+    }
+
+    fn connector_projection_key(&self, connector_id: u64, width: u16) -> Result<TextProjectionKey> {
+        let connector =
+            self.connectors.get(&connector_id).cloned().ok_or_else(|| {
+                anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
+            })?;
+        let state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        let snapshot = state.source.snapshot()?;
+        Ok(TextProjectionKey {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+            source_revision: snapshot.revision,
+            width: width.max(1),
+            wrap: state.funnel.wrap,
+        })
+    }
+
+    fn connector_revision(&self, connector_id: u64) -> u64 {
+        self.connector_projection_key(connector_id, 1)
+            .map(TextProjectionKey::revision)
+            .unwrap_or_default()
+    }
+
+    fn selected_connector_id(&self, port_id: u64) -> Option<u64> {
+        if let Some(selection) = self.candidate_selections.get(&port_id) {
+            return *selection;
+        }
+        let (desired, visible, desired_mounted) = {
+            let port = self.ports.get(&port_id)?.lock().ok()?;
+            (
+                port.desired_connector,
+                port.visible_connector,
+                port.desired_mounted,
+            )
+        };
+        if desired_mounted {
+            if let Some(desired) = desired {
+                let failed = self
+                    .connectors
+                    .get(&desired)
+                    .and_then(|connector| connector.lock().ok())
+                    .is_some_and(|state| state.error.is_some() && !state.visible);
+                if !failed {
+                    return Some(desired);
+                }
+            }
+            visible
+        } else {
+            None
+        }
+    }
+
+    fn cached_projection(
+        state: &ConnectorRecord,
+        key: &TextProjectionKey,
+    ) -> Option<Arc<HostContentProjection>> {
+        state
+            .projection_cache
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, projection)| Arc::clone(projection))
+    }
+
+    fn prepare_connector_projection(
+        &mut self,
+        connector_id: u64,
+        offered_width: u16,
+    ) -> Result<ContentMeasurement> {
+        let connector =
+            self.connectors.get(&connector_id).cloned().ok_or_else(|| {
+                anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
+            })?;
+        let (source, funnel) = {
+            let state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            if state.lifecycle != ConnectorLifecycle::Live || (!state.requested && !state.visible) {
+                return Ok(ContentMeasurement::default());
+            }
+            (state.source.clone(), state.funnel)
+        };
+        let snapshot = source.snapshot()?;
+        let key = TextProjectionKey {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+            source_revision: snapshot.revision,
+            width: offered_width.max(1),
+            wrap: funnel.wrap,
+        };
+        {
+            let mut state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            if state.error.is_some() && state.projection_failure_key == Some(key) {
+                return Err(anyhow!(
+                    "PROJECTION_RETRY_BLOCKED: Connector projection is already failed for this input"
+                ));
+            }
+            if let Some(projection) = Self::cached_projection(&state, &key) {
+                state.candidate_projection = Some(Arc::clone(&projection));
+                return Ok(projection.measurement());
+            }
+        }
+
+        // The snapshot owns immutable chunks; the Source lock is not held
+        // while width-dependent projection allocates/compiles derived rows.
+        let projection = Arc::new(project_plain_snapshot(&snapshot, funnel, offered_width)?);
+        let measurement = projection.measurement();
+        let mut state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        state
+            .projection_cache
+            .retain(|(candidate, _)| candidate != &key);
+        state
+            .projection_cache
+            .push_front((key, Arc::clone(&projection)));
+        while state.projection_cache.len() > 4 {
+            state.projection_cache.pop_back();
+        }
+        state.candidate_projection = Some(Arc::clone(&projection));
+        state.error = None;
+        state.failed_source_revision = None;
+        state.projection_failure_key = None;
+        Ok(measurement)
+    }
+
+    fn projection_measurement(
+        &self,
+        connector_id: u64,
+        offered_width: u16,
+    ) -> Option<ContentMeasurement> {
+        let key = self
+            .connector_projection_key(connector_id, offered_width)
+            .ok()?;
+        let connector = self.connectors.get(&connector_id)?.lock().ok()?;
+        if let Some(projection) = connector
+            .candidate_projection
+            .as_ref()
+            .filter(|projection| projection.key == key)
+        {
+            return Some(projection.measurement());
+        }
+        if let Some(projection) = Self::cached_projection(&connector, &key) {
+            return Some(projection.measurement());
+        }
+        connector
+            .committed_projection
+            .as_ref()
+            .filter(|projection| projection.key.width == key.width)
+            .map(|projection| projection.measurement())
+    }
+
+    fn record_projection_failure(
+        &mut self,
+        connector_id: u64,
+        key: TextProjectionKey,
+        diagnostic: String,
+    ) {
+        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+            return;
+        };
+        if let Ok(mut state) = connector.lock() {
+            state.error = Some(ContentConnectorError {
+                code: "PROJECTION_FAILED".to_owned(),
+                diagnostic,
+            });
+            state.failed_source_revision = Some(key.source_revision);
+            state.projection_failure_key = Some(key);
+            state.phase = if state.visible { "active" } else { "failed" };
+        }
+    }
+
+    fn refine_fit_measurement(
+        &mut self,
+        connector_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+        measurement: ContentMeasurement,
+    ) -> ContentMeasurement {
+        if width_rule != crate::presentation::WidthRule::Fit
+            || measurement.intrinsic_size.width == 0
+            || measurement.intrinsic_size.width >= offered_width.max(1)
+        {
+            return measurement;
+        }
+        self.prepare_connector_projection(connector_id, measurement.intrinsic_size.width)
+            .unwrap_or(measurement)
+    }
+
+    fn measure_content(
+        &mut self,
+        port_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+    ) -> ContentMeasurement {
+        let Some(port) = self.ports.get(&port_id).cloned() else {
+            return ContentMeasurement::default();
+        };
+        let (desired, visible, desired_mounted) = {
+            let Ok(port) = port.lock() else {
+                return ContentMeasurement::default();
+            };
+            (
+                port.desired_connector,
+                port.visible_connector,
+                port.desired_mounted,
+            )
+        };
+        if !desired_mounted {
+            self.candidate_selections.insert(port_id, None);
+            return ContentMeasurement::default();
+        }
+        let Some(connector_id) = desired else {
+            self.candidate_selections.insert(port_id, None);
+            return ContentMeasurement::default();
+        };
+
+        // Keep the native/unit failure fixture on the same candidate-fallback
+        // boundary as real projection failures.
+        if self
+            .prepare_activation_candidate(connector_id)
+            .unwrap_or(false)
+        {
+            let fallback = visible.and_then(|id| {
+                self.prepare_connector_projection(id, offered_width)
+                    .ok()
+                    .map(|measurement| {
+                        self.refine_fit_measurement(id, offered_width, width_rule, measurement)
+                    })
+            });
+            self.candidate_selections.insert(port_id, visible);
+            return fallback.unwrap_or_default();
+        }
+
+        match self.prepare_connector_projection(connector_id, offered_width) {
+            Ok(measurement) => {
+                self.candidate_selections
+                    .insert(port_id, Some(connector_id));
+                self.refine_fit_measurement(connector_id, offered_width, width_rule, measurement)
+            }
+            Err(error) => {
+                if let Ok(key) = self.connector_projection_key(connector_id, offered_width) {
+                    self.record_projection_failure(connector_id, key, error.to_string());
+                }
+                let fallback = visible.and_then(|id| {
+                    self.prepare_connector_projection(id, offered_width)
+                        .ok()
+                        .or_else(|| self.projection_measurement(id, offered_width))
+                        .map(|measurement| {
+                            self.refine_fit_measurement(id, offered_width, width_rule, measurement)
+                        })
+                });
+                self.candidate_selections.insert(port_id, visible);
+                fallback.unwrap_or_default()
+            }
+        }
+    }
+
+    fn paint_content(&self, port_id: u64, offered_width: u16) -> Option<Arc<Surface>> {
+        let connector_id = self.selected_connector_id(port_id)?;
+        let key = self
+            .connector_projection_key(connector_id, offered_width)
+            .ok()?;
+        let connector = self.connectors.get(&connector_id)?.lock().ok()?;
+        if let Some(projection) = connector
+            .candidate_projection
+            .as_ref()
+            .filter(|projection| projection.key.width == key.width)
+        {
+            // The candidate owns the immutable Source snapshot captured for
+            // this frame. A concurrent Source revision is left for the next
+            // host epoch rather than mixing snapshots during paint.
+            return Some(Arc::clone(&projection.surface));
+        }
+        if let Some(projection) = Self::cached_projection(&connector, &key) {
+            return Some(Arc::clone(&projection.surface));
+        }
+        connector
+            .committed_projection
+            .as_ref()
+            .filter(|projection| projection.key.width == key.width)
+            .map(|projection| Arc::clone(&projection.surface))
+    }
+
     pub(crate) fn candidate_bindings(&mut self, targets: &[u64]) -> Result<Vec<ContentBinding>> {
         // Ordinary target validation belongs to H3 prepare. Repeating it here
         // would let the fallible frame path report stale/duplicate/wrong-host
@@ -1507,13 +1941,17 @@ impl ContentHostRegistry {
                         port.desired_mounted,
                     )
                 };
-                let connector_id = match desired_connector {
-                    None => None,
-                    Some(id) if port_mounted && self.prepare_activation_candidate(id)? => {
-                        visible_connector
+                let connector_id = if let Some(selection) = self.candidate_selections.get(port_id) {
+                    *selection
+                } else {
+                    match desired_connector {
+                        None => None,
+                        Some(id) if port_mounted && self.prepare_activation_candidate(id)? => {
+                            visible_connector
+                        }
+                        Some(id) if self.connector_is_candidate_ready(id) => Some(id),
+                        Some(_) => visible_connector,
                     }
-                    Some(id) if self.connector_is_candidate_ready(id) => Some(id),
-                    Some(_) => visible_connector,
                 };
                 Ok(ContentBinding {
                     port_id: *port_id,
@@ -1578,12 +2016,14 @@ impl ContentHostRegistry {
     /// disposal semantics.
     pub(crate) fn end_candidate(&mut self) {
         self.in_flight_connectors.clear();
+        self.clear_candidate_projections();
     }
 
     /// Aborts a candidate without changing visible bindings. Deferred control
     /// mutations can now finalize identities that were never made visible and
     /// cold requested Connectors can lose provisional subscriptions.
     pub(crate) fn abort_candidate(&mut self) {
+        self.clear_candidate_projections();
         let connector_ids = self.in_flight_connectors.drain().collect::<Vec<_>>();
         for connector_id in connector_ids {
             self.cleanup_aborted_candidate(connector_id);
@@ -1613,7 +2053,38 @@ impl ContentHostRegistry {
         }
     }
 
+    fn promote_candidate_projection(&mut self, connector_id: u64) {
+        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+            return;
+        };
+        if let Ok(mut state) = connector.lock()
+            && let Some(projection) = state.candidate_projection.take()
+        {
+            state.projected_source_revision = Some(projection.key.source_revision);
+            state.committed_projection = Some(projection);
+        }
+    }
+
+    fn clear_candidate_projections(&mut self) {
+        self.candidate_selections.clear();
+        for connector in self.connectors.values() {
+            if let Ok(mut state) = connector.lock() {
+                state.candidate_projection = None;
+                if !state.visible {
+                    state.committed_projection = None;
+                    state.projection_cache.clear();
+                    state.projected_source_revision = None;
+                }
+            }
+        }
+    }
+
     pub(crate) fn commit_visible(&mut self, bindings: &[ContentBinding]) {
+        for binding in bindings {
+            if let Some(connector_id) = binding.connector_id {
+                self.promote_candidate_projection(connector_id);
+            }
+        }
         let mounted = bindings
             .iter()
             .map(|binding| binding.port_id)
@@ -1780,6 +2251,7 @@ impl ContentHostRegistry {
             state.requested = true;
             state.error = None;
             state.failed_source_revision = None;
+            state.projection_failure_key = None;
             state.phase = if port_mounted {
                 "activation-pending"
             } else {
@@ -1967,6 +2439,7 @@ impl ContentHostRegistry {
             // candidate will be recorded again during frame preparation.
             state.error = None;
             state.failed_source_revision = None;
+            state.projection_failure_key = None;
         }
         state.phase = if state.error.is_some() && mounted {
             "failed"
@@ -2090,7 +2563,14 @@ impl ContentHostRegistry {
             } else {
                 "active"
             };
-        } else if state.lifecycle != ConnectorLifecycle::Disposing {
+        } else {
+            state.committed_projection = None;
+            state.candidate_projection = None;
+            state.projection_cache.clear();
+            state.projected_source_revision = None;
+            state.projection_failure_key = None;
+        }
+        if !visible && state.lifecycle != ConnectorLifecycle::Disposing {
             state.phase = if state.error.is_some() && state.requested {
                 "failed"
             } else if state.requested {
@@ -2159,7 +2639,7 @@ impl ContentHostRegistry {
             phase: state.phase.to_owned(),
             requested: state.requested,
             visible: state.visible,
-            projected_source_revision: None,
+            projected_source_revision: state.projected_source_revision,
             error: state.error.clone(),
         })
     }
@@ -2213,6 +2693,7 @@ impl ContentHostRegistry {
         {
             state.error = None;
             state.failed_source_revision = None;
+            state.projection_failure_key = None;
             state.phase = "activation-pending";
         }
         state.visible || state.requested || self.in_flight_connectors.contains(&id)
@@ -2258,6 +2739,31 @@ impl ContentHostRegistry {
     }
 }
 
+impl ContentProvider for ContentHostRegistry {
+    fn projection_revision(&self, port_id: u64) -> u64 {
+        self.selected_connector_id(port_id)
+            .map_or(0, |connector_id| self.connector_revision(connector_id))
+    }
+
+    fn measure(
+        &mut self,
+        port_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+    ) -> ContentMeasurement {
+        self.measure_content(port_id, offered_width, width_rule)
+    }
+
+    fn paint(
+        &self,
+        port_id: u64,
+        offered_width: u16,
+        _allocated_height: u16,
+    ) -> Option<Arc<Surface>> {
+        self.paint_content(port_id, offered_width)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HostContentPort {
     record: Arc<Mutex<PortRecord>>,
@@ -2291,7 +2797,7 @@ impl HostContentPort {
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
         let needs_frame = inner.content.deactivate_port(self.id())?;
         if needs_frame {
-            return inner.mark_pending();
+            return inner.mark_content_pending();
         }
         Ok(WakeDisposition::default())
     }
@@ -2371,7 +2877,7 @@ impl HostContentConnector {
             .content
             .request_connector_activation(self.id(), &host_weak)?;
         if needs_frame {
-            return inner.mark_pending();
+            return inner.mark_content_pending();
         }
         Ok(WakeDisposition::default())
     }
@@ -2384,7 +2890,7 @@ impl HostContentConnector {
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
         let needs_frame = inner.content.request_connector_deactivation(self.id())?;
         if needs_frame {
-            return inner.mark_pending();
+            return inner.mark_content_pending();
         }
         Ok(WakeDisposition::default())
     }
@@ -2397,14 +2903,14 @@ impl HostContentConnector {
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
         let needs_frame = inner.content.request_connector_dispose(self.id())?;
         if needs_frame {
-            return inner.mark_pending();
+            return inner.mark_content_pending();
         }
         Ok(WakeDisposition::default())
     }
 
     /// Injects one deterministic operational failure for a native/unit
-    /// fixture. It is not part of the TypeScript content API; projection
-    /// failures in later tranches use the same candidate-fallback state.
+    /// fixture. It is not part of the TypeScript content API; real projection
+    /// failures use the same candidate-fallback state.
     pub fn fail_next_activation(&self, diagnostic: String) -> Result<()> {
         let host = self
             .host
@@ -2452,7 +2958,7 @@ impl HostContentConnector {
             },
             requested: state.requested,
             visible: state.visible,
-            projected_source_revision: None,
+            projected_source_revision: state.projected_source_revision,
             error: state.error.clone(),
         })
     }

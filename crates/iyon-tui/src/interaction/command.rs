@@ -43,6 +43,7 @@ pub(crate) struct ComponentCapabilities {
     pub(crate) key_commands: Vec<KeyCommandCapability>,
     pub(crate) tick: Option<TickCapability>,
     pub(crate) layout_changed: Option<Arc<LayoutChanged>>,
+    pub(crate) content_extent_changed: Option<Arc<LayoutChanged>>,
 }
 
 impl std::fmt::Debug for ComponentCapabilities {
@@ -55,6 +56,10 @@ impl std::fmt::Debug for ComponentCapabilities {
             .field("paste", &self.paste.is_some())
             .field("tick", &self.tick.is_some())
             .field("layout_changed", &self.layout_changed.is_some())
+            .field(
+                "content_extent_changed",
+                &self.content_extent_changed.is_some(),
+            )
             .finish()
     }
 }
@@ -124,6 +129,20 @@ impl<'a, C> ComponentCx<'a, C> {
             let component = component
                 .downcast_mut::<C>()
                 .expect("component layout handler type mismatch");
+            handler(component, size);
+        }));
+    }
+
+    /// Registers a crate-private notification for the full intrinsic extent
+    /// behind a component-owned viewport.
+    pub(crate) fn on_content_extent_changed(&mut self, handler: fn(&mut C, Size))
+    where
+        C: 'static,
+    {
+        self.capabilities.content_extent_changed = Some(Arc::new(move |component, size| {
+            let component = component
+                .downcast_mut::<C>()
+                .expect("component content extent handler type mismatch");
             handler(component, size);
         }));
     }

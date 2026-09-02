@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::presentation::{StyleFacts, StyleStates};
+use crate::presentation::{ContentProvider, EmptyContentProvider, StyleFacts, StyleStates};
 use crate::{History, IntoView, View};
 
 /// The semantic root of a terminal application.
@@ -114,7 +114,7 @@ use crate::{
             ColumnChild, ColumnView, HeightRule, PersistentSeq, TrackSize, ViewKind, ViewNodeParts,
             WidthRule,
         },
-        layout::{LayoutCache, measure_view_with_overlay_and_cache},
+        layout::{LayoutCache, measure_view_with_overlay_and_cache_and_content},
     },
 };
 
@@ -186,12 +186,34 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states(
     cache: &mut LayoutCache,
     states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
 ) -> Result<ResolvedRootScene, ResolveError> {
+    let mut content = EmptyContentProvider;
+    resolve_root_scene_with_anchor_and_cache_and_states_and_content(
+        root,
+        registry,
+        size,
+        anchor,
+        cache,
+        states,
+        &mut content,
+    )
+}
+
+pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
+    root: &Scene,
+    registry: &ComponentRegistry,
+    size: Size,
+    anchor: HistoryViewportAnchor,
+    cache: &mut LayoutCache,
+    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    content: &mut dyn ContentProvider,
+) -> Result<ResolvedRootScene, ResolveError> {
     let body_scene = resolve_branch(root.layout_body(), registry, states)?;
-    let body_height = measure_view_with_overlay_and_cache(
+    let body_height = measure_view_with_overlay_and_cache_and_content(
         &body_scene.view,
         size.width,
         &body_scene.overlay,
         cache,
+        content,
     )
     .height
     .min(size.height);

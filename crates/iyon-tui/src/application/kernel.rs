@@ -233,8 +233,8 @@ where
     }
 
     /// Collects ContentPort attachments from the prospective body and current
-    /// static/live History views. Legacy History stream units remain separate;
-    /// retained ContentPort projections use the content-plane provider.
+    /// static/live History views. Source-backed History occurrences use the
+    /// same retained ContentPort projection provider as body content.
     #[cfg(feature = "native-host")]
     pub(crate) fn host_content_attachment_targets(&self, body: &View) -> anyhow::Result<Vec<u64>> {
         let history_views = self

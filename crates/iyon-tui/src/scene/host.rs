@@ -64,6 +64,7 @@ fn drain_native_pressure<S: NativeHistorySink>(
     overflow_rows: usize,
     theme: &Theme,
     transfer_calls: &mut usize,
+    content: &mut dyn ContentProvider,
 ) -> Result<NativePressure, crate::history::NativeTransferError<S::Error>> {
     use crate::history::NativeTransferStatus::{Idle, Progress, SemanticBlocked, SinkBlocked};
 
@@ -72,8 +73,8 @@ fn drain_native_pressure<S: NativeHistorySink>(
 
     while remaining > 0 {
         let physical_before = history.physical_rows_inserted();
-        let outcome = crate::history::transfer_native_prefix_with_theme(
-            history, sink, width, remaining, theme,
+        let outcome = crate::history::transfer_native_prefix_with_theme_and_content(
+            history, sink, width, remaining, theme, content,
         )?;
         *transfer_calls += 1;
         crate::history::trace::trace_transfer(
@@ -699,11 +700,11 @@ impl SceneHost {
                 content,
             )?;
 
-            if resolved.root.history_overflow_rows == 0
-                || scene
-                    .history()
-                    .is_some_and(crate::History::contains_content_host)
-            {
+            let front_content_blocked = scene
+                .history()
+                .and_then(crate::History::front_content_attachment_id)
+                .is_some_and(|port_id| content.history_transfer_blocked(port_id, size.width));
+            if resolved.root.history_overflow_rows == 0 || front_content_blocked {
                 crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
                 return Ok(self.paint_with_content(resolved, theme, content));
             }
@@ -720,6 +721,7 @@ impl SceneHost {
                 resolved.root.history_overflow_rows,
                 theme,
                 &mut transfer_calls,
+                content,
             )
             .map_err(SceneHostError::Transfer)?;
 
@@ -1013,7 +1015,7 @@ impl SceneHost {
         });
         if self.content_invalidated {
             // Content changes do not alter the resolved semantic scene. When
-            // there is no legacy History sideband to refresh, retain that
+            // there is no separate History branch to refresh, retain that
             // scene and rebuild only its derived layout with the new content
             // provider. This preserves the three-plane boundary while still
             // allowing fit-content metrics to propagate through the full

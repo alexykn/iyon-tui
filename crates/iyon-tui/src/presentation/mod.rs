@@ -23,5 +23,7 @@ pub(crate) use api::{StyleFacts, StyleStates};
 
 // Retained IR types remain private implementation details of the semantic
 // layout engine.
-pub(crate) use content::{ContentMeasurement, ContentProvider, EmptyContentProvider};
+pub(crate) use content::{
+    ContentMeasurement, ContentProvider, EmptyContentProvider, HistoryContentRows,
+};
 pub(crate) use ir::WidthRule;

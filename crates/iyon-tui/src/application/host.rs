@@ -848,8 +848,13 @@ impl HostHistory {
             .running
             .scene_history_mut()
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .push(view)
+            .push(view.clone())
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Some(port_id) = view.content_attachment_id() {
+            inner
+                .content
+                .set_history_unit(port_id, unit.value(), view.decoration().padding)?;
+        }
         inner.set_desired_state_bindings(&state_targets)?;
         inner.content.set_desired(&content_targets)?;
         inner.running.invalidate_frame();
@@ -886,8 +891,14 @@ impl HostHistory {
             .running
             .scene_history_mut()
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .freeze(unit, view)
+            .freeze(unit, view.clone())
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        inner.content.clear_history_unit(unit.value());
+        if let Some(port_id) = view.content_attachment_id() {
+            inner
+                .content
+                .set_history_unit(port_id, unit.value(), view.decoration().padding)?;
+        }
         inner.set_desired_state_bindings(&state_targets)?;
         inner.content.set_desired(&content_targets)?;
         inner.running.invalidate_frame();
@@ -905,6 +916,7 @@ impl HostHistory {
             .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
             .discard_live(unit)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        inner.content.clear_history_unit(unit.value());
         inner.refresh_desired_state_bindings()?;
         inner.running.invalidate_frame();
         inner.advance_and_render()?;
@@ -974,6 +986,10 @@ impl HostHistory {
                     .push(view)
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?,
             };
+            inner.content.clear_history_unit(unit.value());
+            inner
+                .content
+                .set_history_unit(port.id(), unit.value(), insets)?;
             inner.refresh_desired_state_bindings()?;
             inner.running.invalidate_frame();
             unit
@@ -992,8 +1008,8 @@ impl HostHistory {
         Ok(())
     }
 
-    /// Removes compatibility ContentHost connectors for one Source while
-    /// leaving unrelated content resources mounted on the host intact.
+    /// Removes ContentHost connectors for one Source while leaving unrelated
+    /// content resources mounted on the host intact.
     pub fn detach_content_source(&self, source: &HostContentSource) -> Result<()> {
         let mut inner = self.lock_mut()?;
         let changed = inner

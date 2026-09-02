@@ -294,16 +294,17 @@ impl History {
         self.units.iter()
     }
 
-    /// ContentHost units are resident content-plane destinations. They must
-    /// not trigger native scrollback transfer, which has no ContentProvider
-    /// context and would move the port out of the follow-end viewport.
-    pub(crate) fn contains_content_host(&self) -> bool {
-        self.units.iter().any(|unit| match &unit.content {
-            HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view) => {
-                view.contains_content_identity()
+    pub(crate) fn front_content_attachment_id(&self) -> Option<u64> {
+        match self.units.front().map(|unit| &unit.content) {
+            Some(HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view))
+                if view.contains_content_identity() =>
+            {
+                Some(view.content_attachment_id().unwrap_or(0))
             }
-            HistoryUnitContent::Stream(_) => false,
-        })
+            Some(HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_))
+            | Some(HistoryUnitContent::Stream(_))
+            | None => None,
+        }
     }
 
     /// Returns semantic History views that can carry retained state. Stream
@@ -326,8 +327,8 @@ impl History {
     }
 
     /// Returns semantic History views that can carry a retained ContentPort.
-    /// Stream units remain on the legacy stream path until the content-plane
-    /// projection tranche; static/live units are still validated at H3.
+    /// Source-backed streams are represented by ordinary ContentHost views;
+    /// static/live units are still validated at H3.
     pub(crate) fn content_views(&self) -> Vec<View> {
         self.units
             .iter()

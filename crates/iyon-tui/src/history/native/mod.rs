@@ -8,7 +8,9 @@ mod tests;
 use crate::{
     backend::NativeHistorySink,
     physical::PhysicalRow,
-    presentation::layout::compile_view_with_theme,
+    presentation::{
+        ContentProvider, EmptyContentProvider, HistoryContentRows, layout::compile_view_with_theme,
+    },
     stream::{
         CompiledStream, FrozenPhysicalRows, StreamPartialTransfer, StreamTransferPayload,
         plan_stream_transfer,
@@ -17,7 +19,9 @@ use crate::{
 
 use super::{FlowBoundary, History, HistoryUnitContent, HistoryUnitId};
 pub(super) use frontier::NativeFrontier;
-use frontier::{FrozenStaticRemainder, SpacingTransferState, StreamFrontierState};
+use frontier::{
+    FrozenContentRemainder, FrozenStaticRemainder, SpacingTransferState, StreamFrontierState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NativeBlockReason {
@@ -69,7 +73,39 @@ pub(crate) fn transfer_native_prefix_with_theme<S: NativeHistorySink>(
     max_rows: usize,
     theme: &crate::Theme,
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let outcome = transfer_native_prefix_inner(history, sink, width, max_rows, theme)?;
+    let mut content = EmptyContentProvider;
+    transfer_native_prefix_with_theme_and_content(
+        history,
+        sink,
+        width,
+        max_rows,
+        theme,
+        &mut content,
+    )
+}
+
+pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink>(
+    history: &mut History,
+    sink: &mut S,
+    width: u16,
+    max_rows: usize,
+    theme: &crate::Theme,
+    content: &mut dyn ContentProvider,
+) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
+    let before = history
+        .units
+        .iter()
+        .map(|unit| unit.id.value())
+        .collect::<std::collections::HashSet<_>>();
+    let outcome = transfer_native_prefix_inner(history, sink, width, max_rows, theme, content)?;
+    let after = history
+        .units
+        .iter()
+        .map(|unit| unit.id.value())
+        .collect::<std::collections::HashSet<_>>();
+    for unit_id in before.difference(&after) {
+        content.history_unit_retired(*unit_id);
+    }
     history.native.record_physical_rows(outcome.inserted);
     // Native promotion changes the display frontier even when it inserts no
     // physical rows (for example, retiring a zero-row stream/unit). Keep that
@@ -87,6 +123,7 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
     width: u16,
     max_rows: usize,
     theme: &crate::Theme,
+    content: &mut dyn ContentProvider,
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
     if max_rows == 0 || width == 0 || history.units.is_empty() {
         return Ok(outcome(0, 0, NativeTransferStatus::Idle));
@@ -114,6 +151,10 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
         return result;
     }
 
+    if history.native.frozen_content.is_some() {
+        return transfer_frozen_content(history, sink, max_rows, content);
+    }
+
     if history.native.frozen_static.is_some() {
         return transfer_frozen_static(history, sink, max_rows);
     }
@@ -128,23 +169,58 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
                 reason: NativeBlockReason::Live,
             },
         )),
-        HistoryUnitContent::Static(view) if view.contains_content_identity() => Ok(outcome(
-            0,
-            0,
-            NativeTransferStatus::SemanticBlocked {
-                unit: unit_id,
-                reason: NativeBlockReason::ContentHost,
-            },
-        )),
+        HistoryUnitContent::Static(view) if view.contains_content_identity() => {
+            let Some(port_id) = view.content_attachment_id() else {
+                return Ok(outcome(
+                    0,
+                    0,
+                    NativeTransferStatus::SemanticBlocked {
+                        unit: unit_id,
+                        reason: NativeBlockReason::ContentHost,
+                    },
+                ));
+            };
+            let Some(rows) = content.history_rows(port_id, width) else {
+                return Ok(outcome(
+                    0,
+                    0,
+                    NativeTransferStatus::SemanticBlocked {
+                        unit: unit_id,
+                        reason: NativeBlockReason::ContentHost,
+                    },
+                ));
+            };
+            if rows.rows.is_empty() {
+                if rows.complete {
+                    retire_front(history);
+                    return transfer_native_prefix_inner(
+                        history, sink, width, max_rows, theme, content,
+                    );
+                }
+                return Ok(outcome(
+                    0,
+                    0,
+                    NativeTransferStatus::SemanticBlocked {
+                        unit: unit_id,
+                        reason: NativeBlockReason::ContentHost,
+                    },
+                ));
+            }
+            transfer_content(history, sink, port_id, rows, max_rows, content)
+        }
         HistoryUnitContent::Static(view) => {
             let rows = static_rows(view, width, history.layout(), theme);
             if rows.is_empty() {
                 retire_front(history);
-                return transfer_native_prefix_inner(history, sink, width, max_rows, theme);
+                return transfer_native_prefix_inner(
+                    history, sink, width, max_rows, theme, content,
+                );
             }
             transfer_static(history, sink, rows, max_rows)
         }
-        HistoryUnitContent::Stream(_) => transfer_stream(history, sink, width, max_rows, theme),
+        HistoryUnitContent::Stream(_) => {
+            transfer_stream(history, sink, width, max_rows, theme, content)
+        }
     }
 }
 
@@ -276,6 +352,120 @@ fn transfer_static<S: NativeHistorySink>(
     ))
 }
 
+fn transfer_content<S: NativeHistorySink>(
+    history: &mut History,
+    sink: &mut S,
+    port_id: u64,
+    payload: HistoryContentRows,
+    max_rows: usize,
+    content: &mut dyn ContentProvider,
+) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
+    let unit_id = history.units.front().expect("content unit").id;
+    let ack = insert_prefix(sink, &payload.rows, max_rows)?;
+    if ack.accepted == 0 {
+        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
+    }
+    let accepted_content = ack
+        .accepted
+        .saturating_sub(payload.content_start)
+        .min(payload.content_end.saturating_sub(payload.content_start));
+    let accepted_leading = ack.accepted.min(payload.leading_padding);
+    let accepted_trailing = ack
+        .accepted
+        .saturating_sub(payload.content_end)
+        .min(payload.trailing_padding);
+    content.history_rows_committed(
+        port_id,
+        ack.accepted,
+        accepted_content,
+        accepted_leading,
+        accepted_trailing,
+    );
+    cross_zero_spacing(history);
+    if ack.accepted < payload.rows.len() {
+        let content_start = payload.content_start.saturating_sub(ack.accepted);
+        let content_end = payload.content_end.saturating_sub(ack.accepted);
+        let trailing_padding = payload
+            .trailing_padding
+            .saturating_sub(ack.accepted.saturating_sub(payload.content_end));
+        history.native.frozen_content = Some(FrozenContentRemainder {
+            unit: unit_id,
+            port_id,
+            rows: FrozenPhysicalRows::new(payload.rows[ack.accepted..].to_vec()),
+            complete: payload.complete,
+            content_start,
+            content_end,
+            leading_padding: payload.leading_padding.saturating_sub(ack.accepted),
+            trailing_padding,
+        });
+    } else if payload.complete {
+        retire_front(history);
+    }
+    Ok(outcome(
+        ack.requested,
+        ack.accepted,
+        NativeTransferStatus::Progress,
+    ))
+}
+
+fn transfer_frozen_content<S: NativeHistorySink>(
+    history: &mut History,
+    sink: &mut S,
+    max_rows: usize,
+    content: &mut dyn ContentProvider,
+) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
+    let frozen = history
+        .native
+        .frozen_content
+        .as_ref()
+        .expect("frozen content");
+    let port_id = frozen.port_id;
+    let content_start = frozen.content_start;
+    let content_end = frozen.content_end;
+    let complete = frozen.complete;
+    let leading_padding = frozen.leading_padding;
+    let trailing_padding = frozen.trailing_padding;
+    let rows = frozen.rows.as_slice().to_vec();
+    let ack = insert_prefix(sink, &rows, max_rows)?;
+    if ack.accepted == 0 {
+        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
+    }
+    let accepted_content = ack
+        .accepted
+        .saturating_sub(content_start)
+        .min(content_end.saturating_sub(content_start));
+    let accepted_leading = ack.accepted.min(leading_padding);
+    let accepted_trailing = ack
+        .accepted
+        .saturating_sub(content_end)
+        .min(trailing_padding);
+    content.history_rows_committed(
+        port_id,
+        ack.accepted,
+        accepted_content,
+        accepted_leading,
+        accepted_trailing,
+    );
+    if ack.accepted == rows.len() {
+        history.native.frozen_content = None;
+        if complete {
+            retire_front(history);
+        }
+    } else if let Some(frozen) = history.native.frozen_content.as_mut() {
+        frozen.rows = FrozenPhysicalRows::new(rows[ack.accepted..].to_vec());
+        frozen.content_start = content_start.saturating_sub(ack.accepted);
+        frozen.content_end = content_end.saturating_sub(ack.accepted);
+        frozen.leading_padding = leading_padding.saturating_sub(ack.accepted);
+        frozen.trailing_padding =
+            trailing_padding.saturating_sub(ack.accepted.saturating_sub(content_end));
+    }
+    Ok(outcome(
+        ack.requested,
+        ack.accepted,
+        NativeTransferStatus::Progress,
+    ))
+}
+
 fn transfer_frozen_static<S: NativeHistorySink>(
     history: &mut History,
     sink: &mut S,
@@ -310,6 +500,7 @@ fn transfer_stream<S: NativeHistorySink>(
     width: u16,
     max_rows: usize,
     theme: &crate::Theme,
+    content: &mut dyn ContentProvider,
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
     let unit = history.units.front().expect("stream unit");
     let unit_id = unit.id;
@@ -368,7 +559,7 @@ fn transfer_stream<S: NativeHistorySink>(
         // physical rows, so the outer transfer status cannot carry this
         // semantic frontier transition on its own.
         history.bump_native_revision();
-        return transfer_native_prefix_inner(history, sink, width, max_rows, theme);
+        return transfer_native_prefix_inner(history, sink, width, max_rows, theme, content);
     }
     let plan = plan_stream_transfer(
         &compiled,

@@ -43,6 +43,9 @@ struct UnitPlan {
     boundary: FlowBoundary,
     height: Option<usize>,
     cache_key: Option<HistoryUnitLayoutKey>,
+    /// Static History views may receive provider-owned resident decoration
+    /// after a prefix has been accepted by native scrollback.
+    view: Option<View>,
     content: PlannedContent,
 }
 
@@ -181,6 +184,7 @@ fn project_into_session_with_mode(
                     boundary: unit.boundary,
                     height,
                     cache_key: Some(cache_key),
+                    view: Some(content.history_view(view)),
                     content: PlannedContent::Static,
                 })
             }
@@ -195,6 +199,7 @@ fn project_into_session_with_mode(
                     boundary: unit.boundary,
                     height,
                     cache_key: Some(cache_key),
+                    view: None,
                     content: PlannedContent::Live(resolved),
                 })
             }
@@ -212,6 +217,7 @@ fn project_into_session_with_mode(
                     boundary: unit.boundary,
                     height,
                     cache_key: Some(cache_key),
+                    view: None,
                     content: PlannedContent::Stream {
                         index: None,
                         start,
@@ -1153,6 +1159,7 @@ fn ensure_height(
     }
     let height = match (&mut plan.content, &unit.content) {
         (PlannedContent::Static, HistoryUnitContent::Static(view)) => {
+            let view = plan.view.as_ref().unwrap_or(view);
             view_height(view, width, overlay, content)
         }
         (PlannedContent::Frozen(rows), _) => rows.len(),
@@ -1213,6 +1220,7 @@ fn unit_view(
             let HistoryUnitContent::Static(view) = &unit.content else {
                 unreachable!("static plan must match static unit")
             };
+            let view = plan.view.as_ref().unwrap_or(view);
             View::row_viewport_with_height(
                 view.clone(),
                 selected.offset.min(usize::from(u16::MAX)) as u16,

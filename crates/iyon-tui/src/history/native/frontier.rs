@@ -25,6 +25,18 @@ pub(crate) struct FrozenStaticRemainder {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FrozenContentRemainder {
+    pub(crate) unit: HistoryUnitId,
+    pub(crate) port_id: u64,
+    pub(crate) rows: FrozenPhysicalRows,
+    pub(crate) complete: bool,
+    pub(crate) content_start: usize,
+    pub(crate) content_end: usize,
+    pub(crate) leading_padding: usize,
+    pub(crate) trailing_padding: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StreamFrontierState {
     pub(crate) unit: HistoryUnitId,
     pub(crate) committed_through: StreamOffset,
@@ -38,6 +50,7 @@ pub(crate) struct NativeFrontier {
     pub(crate) top_padding: SpacingTransferState,
     pub(crate) leading_gap: Option<SpacingTransferState>,
     pub(crate) frozen_static: Option<FrozenStaticRemainder>,
+    pub(crate) frozen_content: Option<FrozenContentRemainder>,
     pub(crate) stream: Option<StreamFrontierState>,
 }
 
@@ -53,6 +66,7 @@ impl NativeFrontier {
     pub(super) fn reset_unit_state(&mut self) {
         self.leading_gap = None;
         self.frozen_static = None;
+        self.frozen_content = None;
         self.stream = None;
     }
 

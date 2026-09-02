@@ -167,6 +167,7 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
       if (streamOwnerOf(stream) !== this) {
         throw tuiError("stream", "TUI_STREAM_NOT_ATTACHED: the TextStream is not attached to this History");
       }
+      if (stream.snapshot().sealed) return;
       this.nativeAs<NativeHistoryContract>().sealStream(nativeResourceOf<object>(stream));
     });
   }

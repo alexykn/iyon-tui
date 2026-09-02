@@ -11,12 +11,13 @@ use iyon_tui::stream::{StreamOffset, StreamRange};
 use iyon_tui::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
 use iyon_tui::text::{TextRun, TextVisitor};
 use iyon_tui::{
-    BorderEdges, BorderGlyphs, BorderSpec, ContentFamily, GridCellSpec, GridTrack, History,
-    HorizontalAlign, HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort,
-    HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostTextStream, HostViewSlot,
-    IntoView, Key, KeyStroke, MarkdownOptions, MarkdownProjector, Modifiers, Output, Projector,
-    Renderer, StyleRef, StyleSpec, TextContent, TextInput, TextPart, TextRole, TextSelector,
-    TextSourceKind, TextSpan, TextWrapMode, TuiEnvironment, TuiHost, VerticalAlign, View, WrapMode,
+    BorderEdges, BorderGlyphs, BorderSpec, ContentDelivery, ContentFamily, GridCellSpec, GridTrack,
+    History, HorizontalAlign, HostCellStyle, HostContentConnector, HostContentFunnel,
+    HostContentPort, HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot,
+    Insets, IntoView, Key, KeyStroke, MarkdownOptions, MarkdownProjector, Modifiers, Output,
+    Projector, Renderer, SmoothConfig, StyleRef, StyleSpec, TextContent, TextFunnelKind, TextInput,
+    TextPart, TextRole, TextSelector, TextSourceKind, TextSpan, TextWrapMode, TuiEnvironment,
+    TuiHost, VerticalAlign, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -292,6 +293,10 @@ fn resolve_native_view(runtime: usize, view_ref: i64) -> Result<View> {
 pub struct NativeHistory {
     state: Mutex<History>,
     host: Option<HostHistory>,
+    /// Detached histories defer Source-backed content units until the History
+    /// is transferred to a host. No legacy stream store is created.
+    pending_content_streams: Mutex<Vec<(HostContentSource, HostContentFunnel, Insets)>>,
+    attached_content_sources: Mutex<Vec<HostContentSource>>,
     alive: AtomicBool,
     view_runtime: usize,
 }
@@ -303,14 +308,37 @@ impl NativeHistory {
         Ok(Self {
             state: Mutex::new(History::new()),
             host: None,
+            pending_content_streams: Mutex::new(Vec::new()),
+            attached_content_sources: Mutex::new(Vec::new()),
             alive: AtomicBool::new(true),
             view_runtime: view_abi::runtime_ptr_for_env(&env)? as usize,
         })
     }
 
     #[napi]
-    pub fn dispose(&self) {
-        self.alive.store(false, Ordering::Release);
+    pub fn dispose(&self) -> Result<()> {
+        if !self.alive.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let _pending = self
+            .pending_content_streams
+            .lock()
+            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
+            .drain(..)
+            .collect::<Vec<_>>();
+        let attached = self
+            .attached_content_sources
+            .lock()
+            .map_err(|_| crate::NativeError::internal("history attached stream lock is poisoned"))?
+            .drain(..)
+            .collect::<Vec<_>>();
+        if let Some(host) = &self.host {
+            for source in attached {
+                host.detach_content_source(&source)
+                    .map_err(|error| crate::NativeError::content(error.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     #[napi(js_name = "isDetached")]
@@ -443,44 +471,88 @@ impl NativeHistory {
         Self {
             state: Mutex::new(History::new()),
             host: Some(host),
+            pending_content_streams: Mutex::new(Vec::new()),
+            attached_content_sources: Mutex::new(Vec::new()),
             alive: AtomicBool::new(true),
             view_runtime,
         }
     }
 
     #[napi(js_name = "pushStream")]
-    pub fn push_stream(&self, stream: &NativeTextStream) -> Result<()> {
+    pub fn push_stream(
+        &self,
+        stream: &NativeTextSource,
+        projector: String,
+        wrap: String,
+        smooth: bool,
+        tick_interval_ms: u32,
+        spring: f64,
+        min_units_per_second: f64,
+        max_units_per_second: f64,
+        top: u16,
+        right: u16,
+        bottom: u16,
+        left: u16,
+    ) -> Result<()> {
         ensure_alive(&self.alive)?;
+        ensure_alive(&stream.alive)?;
+        let (funnel, insets) = parse_text_stream_control(
+            &projector,
+            &wrap,
+            smooth,
+            u64::from(tick_interval_ms),
+            spring,
+            min_units_per_second,
+            max_units_per_second,
+            top,
+            right,
+            bottom,
+            left,
+        )?;
         if let Some(host) = &self.host {
-            return host
-                .push_stream(&stream.stream)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
+            host.push_content_stream(&stream.source, funnel, insets)
+                .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+            self.attached_content_sources
+                .lock()
+                .map_err(|_| {
+                    crate::NativeError::internal("history attached stream lock is poisoned")
+                })?
+                .push(stream.source.clone());
+            return Ok(());
         }
-        let mut history = self
-            .state
+        self.pending_content_streams
             .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?;
-        stream
-            .stream
-            .attach(&mut history)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
+            .push((stream.source.clone(), funnel, insets));
+        Ok(())
     }
 
     #[napi(js_name = "sealStream")]
-    pub fn seal_stream(&self, stream: &NativeTextStream) -> Result<()> {
+    pub fn seal_stream(&self, stream: &NativeTextSource) -> Result<()> {
         ensure_alive(&self.alive)?;
         if let Some(host) = &self.host {
             return host
-                .seal_stream(&stream.stream)
+                .seal_content_stream(&stream.source)
                 .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
         }
-        let mut history = self
-            .state
+        let attached = self
+            .pending_content_streams
             .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?;
+            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
+            .iter()
+            .any(|(source, _, _)| {
+                source.id() == stream.source.id()
+                    && source.generation() == stream.source.generation()
+            });
+        if !attached {
+            return Err(crate::NativeError::invalid_input(
+                "stream is not attached to this History",
+            ));
+        }
         stream
-            .stream
-            .seal_history(&mut history)
+            .source
+            .seal()
+            .map(|_| ())
             .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
     }
 }
@@ -840,7 +912,26 @@ impl NativeTuiHost {
         self.host
             .set_history(detached)
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        let pending = history
+            .pending_content_streams
+            .lock()
+            .map_err(|_| crate::NativeError::internal("history pending stream lock is poisoned"))?
+            .drain(..)
+            .collect::<Vec<_>>();
         history.host = Some(self.host.history());
+        for (source, funnel, insets) in pending {
+            self.host
+                .history()
+                .push_content_stream(&source, funnel, insets)
+                .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+            history
+                .attached_content_sources
+                .lock()
+                .map_err(|_| {
+                    crate::NativeError::internal("history attached stream lock is poisoned")
+                })?
+                .push(source);
+        }
         Ok(())
     }
 
@@ -1157,98 +1248,6 @@ fn parse_key(key: &str, modifiers: Option<&[String]>) -> Result<KeyStroke> {
 }
 
 #[napi]
-pub struct NativeTextStream {
-    stream: HostTextStream,
-    alive: AtomicBool,
-}
-
-#[napi]
-impl NativeTextStream {
-    #[napi(constructor)]
-    pub fn new(options: Option<Value>) -> Result<Self> {
-        let (markdown, insets, pacing) = parse_stream_options(options)?;
-        Ok(Self {
-            stream: if markdown {
-                HostTextStream::with_markdown_presentation(
-                    iyon_tui::TextStreamPresentation::new(insets).with_pacing(pacing),
-                )
-            } else {
-                HostTextStream::new()
-            },
-            alive: AtomicBool::new(true),
-        })
-    }
-
-    #[napi]
-    pub fn dispose(&self) {
-        self.alive.store(false, Ordering::Release);
-    }
-
-    #[napi]
-    pub fn update(&self, text: String) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.stream
-            .update(text)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn append(&self, text: String, annotations: Option<Vec<Value>>) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let annotations = annotations
-            .unwrap_or_default()
-            .into_iter()
-            .map(parse_stream_annotation)
-            .collect::<Result<Vec<_>>>()?;
-        self.stream
-            .append(text, &annotations)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn seal(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.stream
-            .seal()
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi]
-    pub fn snapshot(&self) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        let (text, revision, sealed, segments) = self
-            .stream
-            .snapshot_json()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        let mut snapshot =
-            serde_json::json!({"text": text, "revision": revision, "sealed": sealed});
-        if segments
-            .iter()
-            .any(|(annotations, _)| !annotations.is_empty())
-        {
-            snapshot["segments"] = serde_json::Value::Array(
-                segments
-                    .into_iter()
-                    .map(|(annotations, text)| {
-                        let annotations = annotations
-                            .into_iter()
-                            .map(|annotation| {
-                                serde_json::json!({
-                                    "namespace": annotation.namespace,
-                                    "name": annotation.name,
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        serde_json::json!({"annotations": annotations, "text": text})
-                    })
-                    .collect(),
-            );
-        }
-        Ok(snapshot)
-    }
-}
-
-#[napi]
 pub struct NativeTextSource {
     source: HostContentSource,
     alive: AtomicBool,
@@ -1299,6 +1298,16 @@ impl NativeTextSource {
             return Ok(());
         }
         self.source.dispose().map_err(crate::NativeError::content)?;
+        self.alive.store(false, Ordering::Release);
+        Ok(())
+    }
+
+    #[napi(js_name = "requestDisposeWhenUnused")]
+    pub fn request_dispose_when_unused(&self) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.source
+            .request_dispose_when_unused()
+            .map_err(crate::NativeError::content)?;
         self.alive.store(false, Ordering::Release);
         Ok(())
     }
@@ -1606,7 +1615,7 @@ fn parse_text_source_options(value: Option<Value>) -> Result<Option<TextSourceRe
             "text Source retention requires maxBytes or maxLines",
         ));
     }
-    let overflow = match retention.get("overflow").and_then(Value::as_str) {
+    let drop_oldest = match retention.get("overflow").and_then(Value::as_str) {
         Some("drop-oldest") => true,
         Some("error") => false,
         Some(_) | None => {
@@ -1618,7 +1627,7 @@ fn parse_text_source_options(value: Option<Value>) -> Result<Option<TextSourceRe
     Ok(Some(TextSourceRetentionConfig {
         max_bytes,
         max_lines,
-        drop_oldest: overflow,
+        drop_oldest,
     }))
 }
 
@@ -1644,7 +1653,10 @@ fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {
         .as_object()
         .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel must be an object"))?;
     for key in object.keys() {
-        if !matches!(key.as_str(), "family" | "kind" | "wrap") {
+        if !matches!(
+            key.as_str(),
+            "family" | "kind" | "wrap" | "delivery" | "hyperlinks"
+        ) {
             return Err(crate::NativeError::invalid_input(format!(
                 "INVALID_FUNNEL: unknown Funnel field `{key}`"
             )));
@@ -1659,15 +1671,21 @@ fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {
             "CONTENT_FAMILY_MISMATCH: Funnel family must be text",
         ));
     }
-    let kind = object
+    let kind = match object
         .get("kind")
         .and_then(Value::as_str)
-        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel kind is required"))?;
-    if kind != "plain" {
-        return Err(crate::NativeError::invalid_input(
-            "INVALID_FUNNEL: only the plain text Funnel is available",
-        ));
-    }
+        .ok_or_else(|| crate::NativeError::invalid_input("Content Funnel kind is required"))?
+    {
+        "plain" => iyon_tui::TextFunnelKind::Plain,
+        "markdown" => iyon_tui::TextFunnelKind::Markdown,
+        "diff" => iyon_tui::TextFunnelKind::Diff,
+        "ansi" => iyon_tui::TextFunnelKind::Ansi,
+        other => {
+            return Err(crate::NativeError::invalid_input(format!(
+                "INVALID_FUNNEL: unknown text Funnel kind `{other}`"
+            )));
+        }
+    };
     let wrap = match object.get("wrap").and_then(Value::as_str).unwrap_or("word") {
         "word" => TextWrapMode::Word,
         "grapheme" => TextWrapMode::Grapheme,
@@ -1678,87 +1696,127 @@ fn parse_content_funnel(value: Value) -> Result<HostContentFunnel> {
             )));
         }
     };
-    Ok(HostContentFunnel::plain(wrap))
+    let hyperlinks = match object.get("hyperlinks") {
+        None => true,
+        Some(value) => value.as_bool().ok_or_else(|| {
+            crate::NativeError::invalid_input("Content Funnel hyperlinks must be boolean")
+        })?,
+    };
+    let delivery = parse_content_delivery(object.get("delivery"))?;
+    Ok(HostContentFunnel::new(kind, wrap, hyperlinks, delivery))
 }
 
-fn parse_stream_options(
-    value: Option<Value>,
-) -> Result<(bool, iyon_tui::Insets, iyon_tui::SmoothConfig)> {
+fn parse_content_delivery(value: Option<&Value>) -> Result<iyon_tui::ContentDelivery> {
     let Some(value) = value else {
-        return Ok((false, iyon_tui::Insets::ZERO, iyon_tui::SmoothConfig::new()));
+        return Ok(iyon_tui::ContentDelivery::Immediate);
     };
-    if let Some(projector) = value.as_str() {
-        return match projector {
-            "markdown" => Ok((true, iyon_tui::Insets::ZERO, iyon_tui::SmoothConfig::new())),
-            "" => Ok((false, iyon_tui::Insets::ZERO, iyon_tui::SmoothConfig::new())),
-            _ => Err(crate::NativeError::invalid_input(
-                "stream projector must be markdown",
-            )),
-        };
-    }
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("stream options must be an object"))?;
-    let markdown = match object.get("projector").and_then(Value::as_str) {
-        None | Some("") => false,
-        Some("markdown") => true,
-        Some(_) => {
-            return Err(crate::NativeError::invalid_input(
-                "stream projector must be markdown",
-            ));
+    let object = value.as_object().ok_or_else(|| {
+        crate::NativeError::invalid_input("Content Funnel delivery must be an object")
+    })?;
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "kind" | "tickIntervalMs" | "spring" | "minUnitsPerSecond" | "maxUnitsPerSecond"
+        ) {
+            return Err(crate::NativeError::invalid_input(format!(
+                "INVALID_FUNNEL: unknown delivery field `{key}`"
+            )));
         }
-    };
-    let insets = object
-        .get("presentation")
-        .and_then(Value::as_object)
-        .and_then(|presentation| presentation.get("insets"))
-        .map(|value| -> Result<iyon_tui::Insets> {
-            let insets = value.as_object().ok_or_else(|| {
-                crate::NativeError::invalid_input("stream insets must be an object")
-            })?;
-            Ok(iyon_tui::Insets::new(
-                optional_u16_value(insets, "top")?,
-                optional_u16_value(insets, "right")?,
-                optional_u16_value(insets, "bottom")?,
-                optional_u16_value(insets, "left")?,
-            ))
-        })
-        .transpose()?
-        .unwrap_or(iyon_tui::Insets::ZERO);
-    let pacing = parse_stream_pacing(object.get("pacing"))?;
-    Ok((markdown, insets, pacing))
-}
-
-fn parse_stream_pacing(value: Option<&Value>) -> Result<iyon_tui::SmoothConfig> {
-    let Some(value) = value else {
-        return Ok(iyon_tui::SmoothConfig::new());
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("stream pacing must be an object"))?;
+    }
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("immediate");
+    if kind == "immediate" {
+        return Ok(iyon_tui::ContentDelivery::Immediate);
+    }
+    if kind != "smooth" {
+        return Err(crate::NativeError::invalid_input(
+            "INVALID_FUNNEL: unknown delivery kind",
+        ));
+    }
     let defaults = iyon_tui::SmoothConfig::new();
     let tick_interval_ms = object
         .get("tickIntervalMs")
         .map(|value| {
             value.as_u64().ok_or_else(|| {
-                crate::NativeError::invalid_input("stream pacing tickIntervalMs must be an integer")
+                crate::NativeError::invalid_input("Smooth tickIntervalMs must be an integer")
             })
         })
         .transpose()?
-        .unwrap_or(
-            u64::try_from(defaults.tick_interval().as_millis())
-                .expect("default stream tick interval fits u64"),
-        );
+        .unwrap_or(u64::try_from(defaults.tick_interval().as_millis()).expect("tick fits u64"));
     let spring = pacing_f32(object, "spring", defaults.spring())?;
     let minimum = pacing_f32(object, "minUnitsPerSecond", defaults.min_units_per_second())?;
     let maximum = pacing_f32(object, "maxUnitsPerSecond", defaults.max_units_per_second())?;
-    iyon_tui::SmoothConfig::try_from_parts(
+    let config = iyon_tui::SmoothConfig::try_from_parts(
         Duration::from_millis(tick_interval_ms),
         spring,
         minimum,
         maximum,
     )
-    .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+    .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+    Ok(iyon_tui::ContentDelivery::Smooth(config))
+}
+
+fn parse_text_stream_control(
+    projector: &str,
+    wrap: &str,
+    smooth: bool,
+    tick_interval_ms: u64,
+    spring: f64,
+    minimum: f64,
+    maximum: f64,
+    top: u16,
+    right: u16,
+    bottom: u16,
+    left: u16,
+) -> Result<(HostContentFunnel, Insets)> {
+    let kind = match projector {
+        "plain" => TextFunnelKind::Plain,
+        "markdown" => TextFunnelKind::Markdown,
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "TextStream projector must be plain or markdown",
+            ));
+        }
+    };
+    let wrap = match wrap {
+        "word" => TextWrapMode::Word,
+        "grapheme" => TextWrapMode::Grapheme,
+        "noWrap" => TextWrapMode::NoWrap,
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "TextStream wrap mode is invalid",
+            ));
+        }
+    };
+    let delivery = if smooth {
+        if spring < f64::from(f32::MIN)
+            || spring > f64::from(f32::MAX)
+            || minimum < f64::from(f32::MIN)
+            || minimum > f64::from(f32::MAX)
+            || maximum < f64::from(f32::MIN)
+            || maximum > f64::from(f32::MAX)
+        {
+            return Err(crate::NativeError::invalid_input(
+                "TextStream Smooth values must fit finite f32 values",
+            ));
+        }
+        let config = SmoothConfig::try_from_parts(
+            Duration::from_millis(tick_interval_ms),
+            spring as f32,
+            minimum as f32,
+            maximum as f32,
+        )
+        .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
+        ContentDelivery::Smooth(config)
+    } else {
+        ContentDelivery::Immediate
+    };
+    Ok((
+        HostContentFunnel::new(kind, wrap, true, delivery),
+        Insets::new(top, right, bottom, left),
+    ))
 }
 
 fn pacing_f32(object: &Map<String, Value>, field: &str, default: f32) -> Result<f32> {
@@ -1774,26 +1832,6 @@ fn pacing_f32(object: &Map<String, Value>, field: &str, default: f32) -> Result<
         )));
     }
     Ok(value as f32)
-}
-
-fn parse_stream_annotation(value: Value) -> Result<iyon_tui::TextStreamAnnotation> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("stream annotation must be an object"))?;
-    let namespace = object
-        .get("namespace")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            crate::NativeError::invalid_input("stream annotation namespace is required")
-        })?;
-    let name = object
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| crate::NativeError::invalid_input("stream annotation name is required"))?;
-    Ok(iyon_tui::TextStreamAnnotation {
-        namespace: namespace.to_owned(),
-        name: name.to_owned(),
-    })
 }
 
 #[napi]
@@ -4175,13 +4213,5 @@ mod tests {
         assert_eq!(input.cursor_bytes().unwrap(), "hello 🌍".len() as i64);
         input.dispose();
         assert!(input.text().is_err());
-    }
-
-    #[test]
-    fn native_stream_rejects_updates_after_seal() {
-        let stream = NativeTextStream::new(None).unwrap();
-        stream.update("first".into()).unwrap();
-        stream.seal().unwrap();
-        assert!(stream.update("late".into()).is_err());
     }
 }

@@ -78,6 +78,8 @@ The attached PERF-13 handoff remains the source for already-settled high-level a
 | Port unmount/remount | A port retains Connector membership and requested selection while unmounted. It is cold and has no projection until a visible mount commits. |
 | Disposal | Individual disposal is explicit and non-cascading. A mounted/in-use resource rejects disposal. Host/environment teardown is the documented owner-death cascade. |
 | Public content nouns | Canonical API is `port.connect(source, funnel)`. A Funnel is immutable and Source-neutral. A Source-bound intermediate is not called a Funnel. |
+| Content feature parity | PERF-13 completion includes every content capability exercised by the current Iyon consumer: annotations, Markdown, diff, safe ANSI interpretation, streaming, and Connector-local smoothing. These are migrated/adapted to the new content plane rather than deferred to v5. |
+| Semantic versus visual styling | Changing a semantic role/annotation in content is a CONTENT mutation. Changing how an existing role or occurrence resolves through `StyleRef`, theme, foreground/background, or attributes is retained PRESENTATION/HOST ENVIRONMENT state: structure and content remain unchanged. |
 | Host affinity | Attaching a host-owned ViewState or ContentPort makes that View subtree host-affine. Publishing it to another host is an H3 prepare error. |
 | Annotation identity | Source annotations contain semantic, environment-level style data, never host-native Style IDs. They are resolved for the target host/theme during projection. |
 | Viewport ownership | ScrollPane/RowViewport owns offset and follow state. ContentPort owns allocation/clip binding only. Connector receives a read-only viewport context. |
@@ -1137,6 +1139,8 @@ A Funnel is:
 - deterministic and side-effect free for fixed inputs;
 - represented by a generated/closed native-known configuration union in PERF-13 v1.
 
+A Funnel includes the delivery policy when one is requested. Stream smoothing is therefore a Funnel configuration consumed by Connector-local execution; the mutable reveal frontier, clock/timer state, lag, and catch-up state belong to the Connector, never to the Funnel or Source. `Smooth` is a PERF-13 content target, not a v5-only placeholder.
+
 A compiled native Funnel plan may be interned per environment. That is an implementation detail and does not change value semantics.
 
 Arbitrary JavaScript callbacks in the projection hot path are out of scope for PERF-13.
@@ -1568,6 +1572,19 @@ Clipping and text truncation happen in the same Source mutation transaction and 
 
 The content ABI represents a style semantically, not as a host-renderer ID. A semantic style descriptor contains the fields used by the current Iyon annotation model, normalized into:
 
+Style ownership is explicit:
+
+```text
+semantic role/annotation changes
+    -> CONTENT semantic IR/source revision
+
+StyleRef/theme/foreground/background/attribute resolution changes
+    -> retained PRESENTATION or HOST ENVIRONMENT revision
+    -> paint/style-cache invalidation only
+```
+
+The latter never changes the semantic text IR, does not reparse content, and does not publish a structural View. A Connector resolves semantic roles against the target host/theme only when producing host-specific paint data.
+
 ```text
 optional foreground semantic color
 optional background semantic color
@@ -1732,6 +1749,18 @@ It must:
 - participate in the same convergence and viewport materialization path as plain text.
 
 An existing Markdown parser/algorithm may be reused internally. Its old host scheduling or high-volume payload route may not survive.
+
+### 14.7 Diff, ANSI, and Smooth are current content features
+
+PERF-13-G migrates every currently exercised content transform to the same canonical text IR and Connector path:
+
+- unified diff input becomes semantic diff roles/records and is restyled by the target host/theme;
+- ANSI input is parsed into semantic text/style/link intent, with unsafe cursor, window, and other control operations stripped or diagnosed; raw untrusted ANSI never reaches terminal output;
+- stream smoothing is a delivery policy in the Funnel specification, with mutable reveal frontiers and clocks owned by each Connector.
+
+Changing a diff/ANSI semantic role or annotation is a content revision. Changing the `StyleRef`, theme mapping, or host realization of that role is presentation/environment invalidation only: no structural publication and no semantic reparse.
+
+These features are not deferred beyond PERF-13. Existing implementations may be adapted and reused, but their old mutation, scheduling, History, or payload paths may not remain authoritative.
 
 ---
 
@@ -2707,6 +2736,9 @@ Move the real consumer and every currently required semantic feature to the new 
 - semantic host-independent style descriptors and per-host/theme resolution;
 - head-truncation policy table and round-trip fixtures;
 - MarkdownFunnel using new Source snapshots/projection/convergence;
+- DiffFunnel/semantic diff projection using the same canonical text IR;
+- AnsiFunnel/safe ANSI interpretation using the same canonical text IR;
+- Smooth as a Funnel delivery policy with Connector-local native clock/frontier execution;
 - migrate Iyon live content creation/mutation and Connector control;
 - migrate History freeze/navigation to committed snapshots/projections;
 - migrate follow-end/manual scroll behavior through the viewport owner;
@@ -2727,9 +2759,12 @@ Old production path may remain behind a short-lived fallback feature flag for co
 #### Stop gates
 
 - every audited Iyon annotation kind/field round-trips and paints with parity;
-- Markdown streaming/history goldens pass;
-- one Source renders correctly in two hosts/themes;
-- History retains/frees snapshots according to policy;
+- Markdown, diff, and safe ANSI streaming/history goldens pass through the canonical text IR;
+- Smooth reveal is Connector-local, grapheme-safe, native-clock driven, and has zero React/TypeScript traffic per tick;
+- changing a semantic role is content work, while changing theme/StyleRef resolution is presentation work with no structural/content reparse;
+- one Source renders correctly in two hosts/themes with independent Funnel and Smooth policies;
+- History retains/frees committed snapshots according to policy;
+- follow-end/manual scroll behavior matches the pre-migration consumer;
 - Iyon default integration uses the new path;
 - legacy invocation counter is zero in the complete consumer suite.
 
@@ -2896,9 +2931,11 @@ PERF-13 is complete only when every statement below is true.
 
 - every current Iyon annotation kind/field is represented by the generated sidecar and native semantic model;
 - Source annotations are host-independent and head truncation is kind-correct;
+- semantic styling changes remain in CONTENT, while theme/StyleRef realization changes remain presentation/environment invalidation;
 - ScrollPane/RowViewport owns offset/follow state;
 - Connector receives only read-only viewport context;
-- Markdown is a Funnel;
+- Markdown, diff, and ANSI are Funnels lowering into the canonical text IR;
+- Smooth is a Funnel delivery policy with Connector-local state and native ticking;
 - History consumes committed new-path snapshots/projections;
 - Iyon parity and lifetime tests pass.
 

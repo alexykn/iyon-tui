@@ -4,7 +4,7 @@
 //! code consumes only immutable measurements and derived surfaces; it never
 //! reaches into Source/Port/Connector lifecycle or scheduling state.
 
-use crate::{geometry::Size, physical::Surface};
+use crate::{Theme, geometry::Size, physical::Surface};
 
 /// Intrinsic metrics returned by a Connector projection for one offered width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +31,10 @@ impl Default for ContentMeasurement {
 /// Connector projection while measuring, but painting only reads the prepared
 /// result. No method owns or mutates Source bytes or viewport state.
 pub(crate) trait ContentProvider {
+    /// Supplies the host theme before the candidate layout/paint pass. The
+    /// content provider stores only semantic/theme data, never host-native IDs.
+    fn set_theme(&mut self, _theme: &Theme) {}
+
     fn projection_revision(&self, port_id: u64, offered_width: u16) -> u64;
 
     fn measure(

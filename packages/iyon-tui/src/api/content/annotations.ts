@@ -1,5 +1,24 @@
+import type { TextAttribute } from "../presentation/style.ts";
+import type { ColorSpec } from "../presentation/theme.ts";
+
 export interface SemanticTag { readonly namespace: string; readonly name: string; }
 export type SemanticValue = string | number | boolean | null;
+
+/** Host-independent style intent carried by a Source annotation. */
+export interface SemanticTextStyle {
+  readonly role?: string;
+  readonly foreground?: ColorSpec;
+  readonly background?: ColorSpec;
+  readonly attributes?: Readonly<Partial<Record<TextAttribute, boolean>>>;
+}
+
+/** Closed v1 Source annotation schema and head-retention semantics. */
+export const TEXT_SOURCE_ANNOTATION_SCHEMA = Object.freeze([
+  Object.freeze({ kind: "tag", truncation: "clip", payload: "namespace\0name" }),
+  Object.freeze({ kind: "style", truncation: "clip", payload: "semantic-text-style-v1" }),
+  Object.freeze({ kind: "atomic", truncation: "drop", payload: "opaque-bytes" }),
+  Object.freeze({ kind: "point", truncation: "point", payload: "opaque-bytes" }),
+] as const);
 
 export class Annotations {
   readonly kind = "annotations" as const;

@@ -183,13 +183,12 @@ pub use application::{
 
 #[cfg(feature = "native-host")]
 pub use application::{
-    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentFamily, ContentMutationResult,
-    HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel, HostContentPort,
-    HostContentSource, HostContentSourceSnapshot, HostContentSourceStats, HostDrainReport,
-    HostEpochs, HostFrameError, HostHistory, HostScrollPane, HostTextInput, HostTextStream,
-    HostViewSlot, HostViewState, RoutedOutput, TextFunnelKind, TextSourceKind,
-    TextStreamAnnotation, TextStreamPresentation, TextWrapMode, TuiEnvironment, TuiHost,
-    WakeDisposition,
+    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentDelivery, ContentFamily,
+    ContentMutationResult, HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel,
+    HostContentPort, HostContentSource, HostContentSourceSnapshot, HostContentSourceStats,
+    HostDrainReport, HostEpochs, HostFrameError, HostHistory, HostScrollPane, HostTextInput,
+    HostViewSlot, HostViewState, RoutedOutput, TextFunnelKind, TextSourceKind, TextWrapMode,
+    TuiEnvironment, TuiHost, WakeDisposition,
 };
 
 pub use component::{Component, ComponentCx, ComponentHandle};
@@ -199,10 +198,11 @@ pub use content::diff::{
     DiffRange, DiffRenderer, DiffValidationError,
 };
 pub use content::text::{
-    Block, CodeBlockLabelPolicy, HeadingLevel, Inline, InlineContent, MarkdownOptions,
-    MarkdownProjector, PlainTextProjector, RawText, SoftBreakPolicy, TableColumnSizing,
-    TaskListMarkerPolicy, TextContent, TextListKind, TextOrigin, TextPart, TextRenderPolicy,
-    TextRenderer, TextRole, TextSelector, TextTableSection, TextTaskState,
+    AnsiOptions, AnsiProjector, Block, CodeBlockLabelPolicy, DiffProjector, HeadingLevel, Inline,
+    InlineContent, MarkdownOptions, MarkdownProjector, PlainTextProjector, RawText,
+    SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent, TextListKind,
+    TextOrigin, TextPart, TextRenderPolicy, TextRenderer, TextRole, TextSelector, TextTableSection,
+    TextTaskState,
 };
 pub use controls::{TextChange, TextInput};
 pub use history::{

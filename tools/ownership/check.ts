@@ -1203,6 +1203,7 @@ function contractParityGate(): void {
   const view = sources.get("view.ts")!;
   const style = sources.get("style.ts")!;
   const text = sources.get("text.ts")!;
+  const textStream = sources.get("api/controls/text-stream.ts")!;
   const styleInternals = sources.get("style-lowering.ts")!;
   const nativeViewAbi = sources.get("native-view-abi.ts")!;
   const kernel = readFileSync(join(ROOT, "crates/iyon-tui/src/application/kernel.rs"), "utf8");
@@ -1255,11 +1256,13 @@ function contractParityGate(): void {
   if (!/function\s+styleAttributesFor[\s\S]*validateTextAttribute\(name\)/u.test(styleInternals)) {
     offenders.push("style lowering does not validate the closed native text-attribute vocabulary");
   }
-  if (!/optional_u16_value\(insets, "top"\)/u.test(native)
-    || !/optional_u16_value\(insets, "right"\)/u.test(native)
-    || !/optional_u16_value\(insets, "bottom"\)/u.test(native)
-    || !/optional_u16_value\(insets, "left"\)/u.test(native)) {
-    offenders.push("NativeTextStream does not honor optional stream inset fields");
+  if (!textStream.includes("appendTextSource")
+    || !textStream.includes("replaceTextSource")
+    || !textStream.includes("sealTextSource")
+    || !textStream.includes("textStreamControlFor")
+    || !native.includes("pub fn push_stream")
+    || !native.includes("projector: String")) {
+    offenders.push("TextStream compatibility must terminate in Source FFI and typed History control");
   }
   if (!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(native)) {
     offenders.push("NativeTextInput disposal does not request deferred component retirement");

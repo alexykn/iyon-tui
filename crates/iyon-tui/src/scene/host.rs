@@ -40,7 +40,7 @@ use super::{
     resolve_component_subtree_with_states,
     resolve_root_scene_with_anchor_and_cache_and_states_and_content,
 };
-use crate::history::{HistoryViewportAnchor, project_into_session_for_host};
+use crate::history::{HistoryViewportAnchor, project_into_session_for_host_with_content};
 
 const MAX_LAYOUT_PASSES: usize = 8;
 
@@ -1445,11 +1445,12 @@ impl SceneHost {
             body_layout_changed || retained.root.history_height != history_height;
         let mut session = ResolveSession::new(registry);
         session.set_state_snapshots(states);
-        let projection = match project_into_session_for_host(
+        let projection = match project_into_session_for_host_with_content(
             history,
             Size::new(size.width, history_height),
             &mut session,
             anchor,
+            content,
         ) {
             Ok(projection) => projection,
             Err(error) => {

@@ -25,7 +25,20 @@ export interface NativeHistoryContract {
   freeze(unit: number, view: object): void;
   freezeRef(unit: number, viewRef: number): void;
   discardLive(unit: number): void;
-  pushStream(stream: object): void;
+  pushStream(
+    stream: object,
+    projector: "plain" | "markdown",
+    wrap: "word",
+    smooth: boolean,
+    tickIntervalMs: number,
+    spring: number,
+    minUnitsPerSecond: number,
+    maxUnitsPerSecond: number,
+    top: number,
+    right: number,
+    bottom: number,
+    left: number,
+  ): void;
   sealStream(stream: object): void;
 }
 
@@ -61,16 +74,9 @@ export interface NativeTextInputContract {
   componentId(): number | null;
 }
 
-export interface NativeTextStreamContract {
-  dispose(): void;
-  update(text: string): void;
-  append(text: string, annotations?: readonly object[]): void;
-  seal(): void;
-  snapshot(): object;
-}
-
 export interface NativeTextSourceContract {
   dispose(): void;
+  requestDisposeWhenUnused(): void;
   sourceId(): number;
   sourceGeneration(): number;
   environmentSlot(): number;
@@ -245,7 +251,6 @@ export interface NativeTuiAddon {
   NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
   NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => NativeTuiHostContract;
   NativeTuiOutput?: new () => NativeTuiOutputContract;
-  NativeTextStream?: new (options?: "markdown" | { readonly projector?: "markdown"; readonly presentation?: object; readonly pacing?: object }) => NativeTextStreamContract;
   NativeTextSource?: new (kind?: "block" | "stream", options?: object) => NativeTextSourceContract;
   NativeMarkdownProjector?: new () => NativeProjectorContract;
   NativePlainProjector?: new () => NativeProjectorContract;

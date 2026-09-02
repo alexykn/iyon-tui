@@ -1,6 +1,6 @@
 import { View } from "../view/view.ts";
 
-export type TextFormat = "plain" | "markdown";
+export type TextFormat = "plain" | "markdown" | "diff" | "ansi";
 
 export interface TextOrigin {
   readonly format: TextFormat;

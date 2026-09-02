@@ -12,6 +12,7 @@ import {
   replaceTextSource,
   sealTextSource,
   truncateTextSource,
+  decodeSemanticStylePayload,
 } from "../../transport/content/ffi.ts";
 import { nativeResourceOf } from "../../transport/native/resources.ts";
 import {
@@ -30,6 +31,7 @@ import {
 } from "../../transport/content/control.ts";
 import { SEMANTIC_VIEW_KIND } from "../view/semantic-node.ts";
 import type { TextContent } from "./text-content.ts";
+import type { SemanticTextStyle } from "./annotations.ts";
 
 export type ContentFamily = "text";
 
@@ -44,6 +46,7 @@ export interface TextSourceOptions {
 }
 
 export type TextSourceAnnotationKind = "tag" | "style" | "atomic" | "point";
+export type { SemanticTextStyle } from "./annotations.ts";
 
 /** Fixed-envelope Source annotation input. Ranges are operation-local UTF-8 bytes. */
 export interface TextSourceAnnotation {
@@ -52,6 +55,7 @@ export interface TextSourceAnnotation {
   readonly endByte?: number;
   readonly namespace?: string;
   readonly name?: string;
+  readonly style?: SemanticTextStyle;
   readonly payload?: Uint8Array;
 }
 
@@ -69,6 +73,7 @@ export interface TextSourceAnnotationSnapshot {
   readonly payload: Uint8Array;
   readonly aux0: number;
   readonly aux1: number;
+  readonly style?: SemanticTextStyle;
 }
 
 export interface TextSourceSnapshot {
@@ -104,8 +109,24 @@ export interface ContentPortOptions {
 
 export type TextFunnelWrap = "word" | "grapheme" | "noWrap";
 
+export type TextFunnelKind = "plain" | "markdown" | "diff" | "ansi";
+
+export interface TextSmoothOptions {
+  readonly tickIntervalMs?: number;
+  readonly spring?: number;
+  readonly minUnitsPerSecond?: number;
+  readonly maxUnitsPerSecond?: number;
+}
+
 export interface TextFunnelOptions {
   readonly wrap?: TextFunnelWrap;
+  readonly smooth?: boolean | TextSmoothOptions;
+  readonly hyperlinks?: boolean;
+}
+
+export interface TextFunnelDelivery {
+  readonly kind: "immediate" | "smooth";
+  readonly options?: Readonly<TextSmoothOptions>;
 }
 
 export interface Funnel<TContent = TextContent> {
@@ -263,15 +284,19 @@ function sourceSnapshot(resource: NativeTextSourceContract): TextSourceSnapshot 
     sealed: native.sealed,
     headPartial: native.headPartial,
     text: native.text,
-    annotations: native.annotations.map((annotation) => ({
-      kind: annotation.kind,
-      flags: annotation.flags,
-      startByte: sourceBigInt(annotation.startByte, "annotation start"),
-      endByte: sourceBigInt(annotation.endByte, "annotation end"),
-      payload: Uint8Array.from(annotation.payload ?? []),
-      aux0: annotation.aux0,
-      aux1: annotation.aux1,
-    })),
+    annotations: native.annotations.map((annotation) => {
+      const payload = Uint8Array.from(annotation.payload ?? []);
+      return {
+        kind: annotation.kind,
+        flags: annotation.flags,
+        startByte: sourceBigInt(annotation.startByte, "annotation start"),
+        endByte: sourceBigInt(annotation.endByte, "annotation end"),
+        payload,
+        aux0: annotation.aux0,
+        aux1: annotation.aux1,
+        ...(annotation.kind === 2 ? { style: decodeSemanticStylePayload(payload) } : {}),
+      };
+    }),
   };
 }
 
@@ -441,35 +466,92 @@ export class TextBlockSource extends FrameworkHandle<"source"> {
   }
 }
 
-/** Immutable, Source-neutral text transformation configuration. */
+/** Immutable, Source-neutral text transformation and delivery configuration. */
 export class TextFunnel implements Funnel<TextContent> {
   readonly kind = "text-funnel" as const;
   readonly family = "text" as const;
-  readonly mode = "plain" as const;
+  readonly mode: TextFunnelKind;
   readonly wrap: TextFunnelWrap;
+  readonly delivery: TextFunnelDelivery;
+  readonly hyperlinks: boolean;
 
-  private constructor(options: TextFunnelOptions) {
+  private constructor(mode: TextFunnelKind, options: TextFunnelOptions) {
+    this.mode = mode;
     this.wrap = options.wrap ?? "word";
     if (this.wrap !== "word" && this.wrap !== "grapheme" && this.wrap !== "noWrap") {
       throw new RangeError("text Funnel wrap mode is invalid");
     }
+    this.hyperlinks = options.hyperlinks ?? true;
+    if (typeof this.hyperlinks !== "boolean") throw new TypeError("text Funnel hyperlinks must be boolean");
+    this.delivery = deliveryFor(options.smooth);
+    Object.freeze(this.delivery);
     Object.freeze(this);
   }
 
-  static plain(options: TextFunnelOptions = {}): TextFunnel {
-    if (typeof options !== "object" || options === null) {
-      throw new TypeError("text Funnel options must be an object");
-    }
-    for (const key of Object.keys(options)) {
-      if (key !== "wrap") throw new RangeError(`unknown text Funnel option ${JSON.stringify(key)}`);
-    }
-    return new TextFunnel(options);
+  static plain(options: TextFunnelOptions = {}): TextFunnel { return TextFunnel.create("plain", options); }
+  static markdown(options: TextFunnelOptions = {}): TextFunnel { return TextFunnel.create("markdown", options); }
+  static diff(options: TextFunnelOptions = {}): TextFunnel { return TextFunnel.create("diff", options); }
+  static ansi(options: TextFunnelOptions = {}): TextFunnel { return TextFunnel.create("ansi", options); }
+
+  /** Returns a new Funnel with Connector-local native smoothing enabled. */
+  smooth(options: TextSmoothOptions = {}): TextFunnel {
+    return TextFunnel.create(this.mode, { wrap: this.wrap, hyperlinks: this.hyperlinks, smooth: options });
   }
 
+  immediate(): TextFunnel {
+    return TextFunnel.create(this.mode, { wrap: this.wrap, hyperlinks: this.hyperlinks, smooth: false });
+  }
+
+  private static create(mode: TextFunnelKind, options: TextFunnelOptions): TextFunnel {
+    if (typeof options !== "object" || options === null) throw new TypeError("text Funnel options must be an object");
+    for (const key of Object.keys(options)) {
+      if (key !== "wrap" && key !== "smooth" && key !== "hyperlinks") {
+        throw new RangeError(`unknown text Funnel option ${JSON.stringify(key)}`);
+      }
+    }
+    if (options.hyperlinks !== undefined && typeof options.hyperlinks !== "boolean") {
+      throw new TypeError("text Funnel hyperlinks must be boolean");
+    }
+    return new TextFunnel(mode, options);
+  }
+}
+
+function deliveryFor(value: boolean | TextSmoothOptions | undefined): TextFunnelDelivery {
+  if (value === undefined || value === false) return { kind: "immediate" };
+  if (value === true) return { kind: "smooth", options: {} };
+  if (typeof value !== "object" || value === null) throw new TypeError("text Funnel smooth must be boolean or an object");
+  for (const key of Object.keys(value)) {
+    if (key !== "tickIntervalMs" && key !== "spring" && key !== "minUnitsPerSecond" && key !== "maxUnitsPerSecond") {
+      throw new RangeError(`unknown Smooth option ${JSON.stringify(key)}`);
+    }
+  }
+  const options = { ...value };
+  for (const [name, candidate] of Object.entries(options)) {
+    if (candidate === undefined) continue;
+    if (typeof candidate !== "number" || !Number.isFinite(candidate) || candidate < 0) {
+      throw new RangeError(`Smooth option ${name} must be a finite non-negative number`);
+    }
+  }
+  if (options.tickIntervalMs !== undefined && (!Number.isInteger(options.tickIntervalMs) || options.tickIntervalMs === 0)) {
+    throw new RangeError("Smooth option tickIntervalMs must be a positive integer");
+  }
+  if (options.minUnitsPerSecond !== undefined && options.maxUnitsPerSecond !== undefined
+    && options.minUnitsPerSecond > options.maxUnitsPerSecond) {
+    throw new RangeError("Smooth minimum rate cannot exceed maximum rate");
+  }
+  return { kind: "smooth", options: Object.freeze(options) };
 }
 
 function textFunnelNative(funnel: TextFunnel): object {
-  return { family: funnel.family, kind: funnel.mode, wrap: funnel.wrap };
+  return {
+    family: funnel.family,
+    kind: funnel.mode,
+    wrap: funnel.wrap,
+    hyperlinks: funnel.hyperlinks,
+    delivery: funnel.delivery.kind === "immediate"
+      ? { kind: "immediate" }
+      : { kind: "smooth", ...funnel.delivery.options },
+  };
 }
 
 /** Host-owned structural ContentPort. It owns Connector membership, not data. */

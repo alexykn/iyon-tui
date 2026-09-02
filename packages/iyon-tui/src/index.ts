@@ -73,8 +73,11 @@ export type {
   ContentSource,
   Funnel,
   Source,
+  TextFunnelDelivery,
+  TextFunnelKind,
   TextFunnelOptions,
   TextFunnelWrap,
+  TextSmoothOptions,
   TextRetentionPolicy,
   TextSourceAnnotation,
   TextSourceAnnotationKind,
@@ -126,7 +129,8 @@ export { DiffRange, DiffLine, DiffHunk, DiffRenderer } from "./api/content/diff.
 export { Theme, ThemeKey, themeColor } from "./api/presentation/theme.ts";
 export type { DiffLineKind, DiffLineTermination } from "./api/content/diff.ts";
 export type { ProjectionSpan } from "./api/content/projection.ts";
-export type { SemanticTag, SemanticValue } from "./api/content/annotations.ts";
+export type { SemanticTag, SemanticTextStyle, SemanticValue } from "./api/content/annotations.ts";
+export { TEXT_SOURCE_ANNOTATION_SCHEMA } from "./api/content/annotations.ts";
 export type { TextFormat, TextOrigin } from "./api/content/text-content.ts";
 export { PlainTextProjector, MarkdownProjector } from "./api/content/projectors.ts";
 export { Scene } from "./api/view/scene.ts";

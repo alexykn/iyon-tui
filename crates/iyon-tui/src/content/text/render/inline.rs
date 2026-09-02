@@ -108,5 +108,6 @@ fn run_span(
         facts = facts.format(format);
     }
     facts = facts.annotations(run.annotations());
-    styled_span(run.text(), facts)
+    let style = run.style().cloned().unwrap_or_else(text_style_ref);
+    TextSpan::styled(run.text(), style).with_style_facts(facts.finish())
 }

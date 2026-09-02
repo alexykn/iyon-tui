@@ -1,7 +1,9 @@
 import { dlopen } from "bun:ffi";
 
 import { TuiError } from "../../api/errors.ts";
-import type { TextSourceAnnotation } from "../../api/content/retained.ts";
+import type { TextSourceAnnotation, SemanticTextStyle } from "../../api/content/retained.ts";
+import type { TextAttribute } from "../../api/presentation/style.ts";
+import type { ColorSpec } from "../../api/presentation/theme.ts";
 import { nativeArtifact, type NativeTextSourceContract } from "../native/addon.ts";
 import {
   CONTENT_ABI_ANNOTATION_LANES,
@@ -36,6 +38,24 @@ const annotationKinds = {
   point: 4,
 } as const;
 type AnnotationKind = keyof typeof annotationKinds;
+const STYLE_PAYLOAD_VERSION = 1;
+const STYLE_FLAG_ROLE = 1 << 0;
+const STYLE_FLAG_FOREGROUND = 1 << 1;
+const STYLE_FLAG_BACKGROUND = 1 << 2;
+const STYLE_FLAG_ATTRIBUTES = 1 << 3;
+const STYLE_ATTRIBUTE_BITS: Readonly<Record<TextAttribute, number>> = {
+  bold: 1,
+  dim: 2,
+  italic: 4,
+  underline: 8,
+  reversed: 16,
+  strikethrough: 32,
+};
+const ANSI_COLOR_VALUES = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray",
+  "darkGray", "lightRed", "lightGreen", "lightYellow", "lightBlue", "lightMagenta",
+  "lightCyan", "white",
+] as const;
 
 interface EncodedAnnotations {
   readonly records: Uint32Array;
@@ -177,7 +197,10 @@ function finishMutation(
     throw contentError("ABI_MISMATCH", `unknown content ABI status ${status >>> 0}`);
   }
   if (name !== "OK") {
-    throw contentError(name, `content Source mutation failed with ${name}`);
+    const message = name === "SOURCE_SEALED"
+      ? "source is sealed"
+      : `content Source mutation failed with ${name}`;
+    throw contentError(name, message);
   }
   const decoded = mutationResult(result);
   if (decoded.reserved0 !== 0 || (decoded.flags & ~CONTENT_ABI_SCHEDULE_ENVIRONMENT_DRAIN) !== 0) {
@@ -290,7 +313,7 @@ function validateAnnotationObject(annotation: TextSourceAnnotation): void {
     throw contentError("INVALID_ANNOTATION_PAYLOAD", "Source annotation must be an object");
   }
   for (const key of Object.keys(annotation)) {
-    if (!["kind", "startByte", "endByte", "namespace", "name", "payload"].includes(key)) {
+    if (!["kind", "startByte", "endByte", "namespace", "name", "style", "payload"].includes(key)) {
       throw contentError("INVALID_ANNOTATION_PAYLOAD", `unknown Source annotation field ${JSON.stringify(key)}`);
     }
   }
@@ -328,6 +351,18 @@ function annotationPayload(
   kind: AnnotationKind,
   maximum: number,
 ): Uint8Array {
+  if (kind === "style") {
+    if (annotation.payload !== undefined || annotation.namespace !== undefined || annotation.name !== undefined) {
+      throw contentError("INVALID_ANNOTATION_PAYLOAD", "style annotations use a semantic style, not tag names or opaque payload");
+    }
+    if (annotation.style === undefined) {
+      throw contentError("INVALID_ANNOTATION_PAYLOAD", "style annotations require a semantic style");
+    }
+    return encodeSemanticStyle(annotation.style, maximum);
+  }
+  if (annotation.style !== undefined) {
+    throw contentError("INVALID_ANNOTATION_PAYLOAD", `${kind} annotations do not accept a semantic style`);
+  }
   if (kind === "tag") {
     if (annotation.payload !== undefined) {
       throw contentError("INVALID_ANNOTATION_PAYLOAD", "tag annotations use namespace and name, not payload");
@@ -370,6 +405,170 @@ function annotationPayload(
     throw contentError("PAYLOAD_TOO_LARGE", "Source annotation payload is too large");
   }
   return annotation.payload;
+}
+
+function encodeSemanticStyle(style: SemanticTextStyle, maximum: number): Uint8Array {
+  if (typeof style !== "object" || style === null) {
+    throw contentError("INVALID_ANNOTATION_PAYLOAD", "semantic style must be an object");
+  }
+  for (const key of Object.keys(style)) {
+    if (key !== "role" && key !== "foreground" && key !== "background" && key !== "attributes") {
+      throw contentError("INVALID_ANNOTATION_PAYLOAD", `unknown semantic style field ${JSON.stringify(key)}`);
+    }
+  }
+  const chunks: number[] = [STYLE_PAYLOAD_VERSION, 0, 0, 0];
+  let flags = 0;
+  if (style.role !== undefined) {
+    validateStyleName(style.role, "style role");
+    flags |= STYLE_FLAG_ROLE;
+    appendStyleString(chunks, style.role, maximum);
+  }
+  if (style.foreground !== undefined) {
+    flags |= STYLE_FLAG_FOREGROUND;
+    appendStyleColor(chunks, style.foreground, maximum);
+  }
+  if (style.background !== undefined) {
+    flags |= STYLE_FLAG_BACKGROUND;
+    appendStyleColor(chunks, style.background, maximum);
+  }
+  const attributes = style.attributes;
+  if (attributes !== undefined) {
+    if (typeof attributes !== "object" || attributes === null) {
+      throw contentError("INVALID_ANNOTATION_PAYLOAD", "semantic text attributes must be an object");
+    }
+    flags |= STYLE_FLAG_ATTRIBUTES;
+    for (const key of Object.keys(attributes)) {
+      if (!(key in STYLE_ATTRIBUTE_BITS)) {
+        throw contentError("INVALID_ANNOTATION_PAYLOAD", `unknown semantic text attribute ${JSON.stringify(key)}`);
+      }
+      const value = attributes[key as TextAttribute];
+      if (typeof value !== "boolean") {
+        throw contentError("INVALID_ANNOTATION_PAYLOAD", `semantic text attribute ${JSON.stringify(key)} must be boolean`);
+      }
+      chunks[2] = (chunks[2]! | STYLE_ATTRIBUTE_BITS[key as TextAttribute]!) & 0xff;
+      if (value) chunks[3] = (chunks[3]! | STYLE_ATTRIBUTE_BITS[key as TextAttribute]!) & 0xff;
+    }
+  }
+  chunks[1] = flags;
+  const encoded = Uint8Array.from(chunks);
+  if (encoded.byteLength > maximum) throw contentError("PAYLOAD_TOO_LARGE", "Source annotation payload is too large");
+  return encoded;
+}
+
+function appendStyleString(output: number[], value: string, maximum: number): void {
+  const bytes = encoder.encode(value);
+  if (bytes.byteLength > 0xffff || output.length + 2 + bytes.byteLength > maximum) {
+    throw contentError("PAYLOAD_TOO_LARGE", "semantic style string is too large");
+  }
+  output.push(bytes.byteLength & 0xff, bytes.byteLength >>> 8);
+  output.push(...bytes);
+}
+
+function appendStyleColor(output: number[], color: ColorSpec, maximum: number): void {
+  switch (color.type) {
+    case "named": {
+      const index = ANSI_COLOR_VALUES.indexOf(color.value);
+      if (index < 0) throw contentError("INVALID_ANNOTATION_PAYLOAD", "unknown semantic ANSI color");
+      output.push(1, index);
+      break;
+    }
+    case "indexed":
+      assertU32(color.value, "semantic indexed color");
+      if (color.value > 255) throw contentError("INVALID_ANNOTATION_PAYLOAD", "semantic indexed color must fit in one byte");
+      output.push(2, color.value);
+      break;
+    case "rgb":
+      for (const [name, value] of [["red", color.r], ["green", color.g], ["blue", color.b]] as const) {
+        if (!Number.isInteger(value) || value < 0 || value > 255) {
+          throw contentError("INVALID_ANNOTATION_PAYLOAD", `semantic ${name} channel must fit in one byte`);
+        }
+      }
+      output.push(3, color.r, color.g, color.b);
+      break;
+    case "theme": {
+      const key = typeof color.key === "string" ? color.key : color.key.value;
+      validateStyleName(key, "semantic theme key");
+      output.push(4);
+      appendStyleString(output, key, maximum);
+      break;
+    }
+    default:
+      throw contentError("INVALID_ANNOTATION_PAYLOAD", "unknown semantic style color");
+  }
+  if (output.length > maximum) throw contentError("PAYLOAD_TOO_LARGE", "Source annotation payload is too large");
+}
+
+function validateStyleName(value: string, label: string): void {
+  if (typeof value !== "string" || value.length === 0 || /\\s|\\0/u.test(value)) {
+    throw contentError("INVALID_ANNOTATION_PAYLOAD", `${label} must be non-empty and contain no whitespace or NUL`);
+  }
+}
+
+/** Decodes the fixed semantic-style payload exposed by Source snapshots. */
+export function decodeSemanticStylePayload(payload: Uint8Array): SemanticTextStyle {
+  if (payload.length < 4 || payload[0] !== STYLE_PAYLOAD_VERSION) {
+    throw contentError("ABI_MISMATCH", "semantic style payload version is unsupported");
+  }
+  const flags = payload[1]!;
+  const presence = payload[2]!;
+  const values = payload[3]!;
+  if ((flags & ~0x0f) !== 0 || (presence & ~0x3f) !== 0 || (values & ~presence) !== 0) {
+    throw contentError("ABI_MISMATCH", "semantic style payload is malformed");
+  }
+  let offset = 4;
+  const readString = (label: string): string => {
+    if (offset + 2 > payload.length) throw contentError("ABI_MISMATCH", `semantic style ${label} is truncated`);
+    const length = payload[offset]! | (payload[offset + 1]! << 8);
+    offset += 2;
+    if (offset + length > payload.length) throw contentError("ABI_MISMATCH", `semantic style ${label} is truncated`);
+    try {
+      const value = new TextDecoder("utf-8", { fatal: true }).decode(payload.subarray(offset, offset + length));
+      validateStyleName(value, label);
+      offset += length;
+      return value;
+    } catch (error) {
+      if (error instanceof TuiError) throw error;
+      throw contentError("ABI_MISMATCH", `semantic style ${label} is not valid UTF-8`);
+    }
+  };
+  const readByte = (label: string): number => {
+    if (offset >= payload.length) throw contentError("ABI_MISMATCH", `semantic style ${label} is truncated`);
+    return payload[offset++]!;
+  };
+  const readColor = (label: string): ColorSpec => {
+    const kind = readByte(`${label} color`);
+    if (kind === 1) {
+      const index = readByte(`${label} ANSI color`);
+      const value = ANSI_COLOR_VALUES[index];
+      if (value === undefined) throw contentError("ABI_MISMATCH", `semantic style ${label} ANSI color is invalid`);
+      return { type: "named", value };
+    }
+    if (kind === 2) return { type: "indexed", value: readByte(`${label} indexed color`) };
+    if (kind === 3) return {
+      type: "rgb",
+      r: readByte(`${label} red`),
+      g: readByte(`${label} green`),
+      b: readByte(`${label} blue`),
+    };
+    if (kind === 4) return { type: "theme", key: readString(`${label} theme key`) };
+    throw contentError("ABI_MISMATCH", `semantic style ${label} color kind is invalid`);
+  };
+  const role = flags & STYLE_FLAG_ROLE ? readString("role") : undefined;
+  const foreground = flags & STYLE_FLAG_FOREGROUND ? readColor("foreground") : undefined;
+  const background = flags & STYLE_FLAG_BACKGROUND ? readColor("background") : undefined;
+  if (offset !== payload.length || (!(flags & STYLE_FLAG_ATTRIBUTES) && (presence !== 0 || values !== 0))) {
+    throw contentError("ABI_MISMATCH", "semantic style payload has trailing or reserved data");
+  }
+  const attributes: Partial<Record<TextAttribute, boolean>> = {};
+  for (const [name, bit] of Object.entries(STYLE_ATTRIBUTE_BITS) as [TextAttribute, number][]) {
+    if (presence & bit) attributes[name] = (values & bit) !== 0;
+  }
+  return {
+    ...(role === undefined ? {} : { role }),
+    ...(foreground === undefined ? {} : { foreground }),
+    ...(background === undefined ? {} : { background }),
+    ...(flags & STYLE_FLAG_ATTRIBUTES ? { attributes } : {}),
+  };
 }
 
 function boundary(bytes: Uint8Array, offset: number): boolean {

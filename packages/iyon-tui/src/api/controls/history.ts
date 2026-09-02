@@ -6,6 +6,7 @@ import { nativeResourceOf } from "../../transport/native/resources.ts";
 import { FrameworkHandle } from "./framework-handle.ts";
 import { nativeTui } from "../../transport/native/factories.ts";
 import type { NativeHistoryContract } from "../../transport/native/addon.ts";
+import { textStreamControlFor } from "./text-stream.ts";
 import type { TextStream as TextStreamContract } from "./text-stream.ts";
 
 export interface History extends FrameworkHandle<"history"> {
@@ -133,7 +134,21 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
     History.callHost(this, () => {
       const streamResource = nativeResourceOf<object>(stream);
       assertStreamCanAttach(stream);
-      this.nativeAs<NativeHistoryContract>().pushStream(streamResource);
+      const controls = textStreamControlFor(stream);
+      this.nativeAs<NativeHistoryContract>().pushStream(
+        streamResource,
+        controls.projector,
+        "word",
+        controls.smooth,
+        controls.tickIntervalMs,
+        controls.spring,
+        controls.minUnitsPerSecond,
+        controls.maxUnitsPerSecond,
+        controls.insets.top,
+        controls.insets.right,
+        controls.insets.bottom,
+        controls.insets.left,
+      );
       streamOwners.set(stream, new WeakRef(this));
       let streams = historyStreams.get(this);
       if (streams === undefined) {

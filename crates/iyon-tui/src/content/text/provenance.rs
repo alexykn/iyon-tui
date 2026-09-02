@@ -21,6 +21,10 @@ pub struct TextRun {
     text: Arc<str>,
     provenance: TextProvenance,
     annotations: super::Annotations,
+    /// Host-independent semantic style intent supplied by a content
+    /// annotation or a content transform. The renderer resolves its theme
+    /// references for the target host; it is never a native style ID.
+    style: Option<crate::StyleRef>,
 }
 
 impl fmt::Debug for TextRun {
@@ -29,6 +33,7 @@ impl fmt::Debug for TextRun {
             .field("text", &self.text)
             .field("provenance", &self.provenance)
             .field("annotations", &self.annotations)
+            .field("style", &self.style)
             .finish()
     }
 }
@@ -71,6 +76,7 @@ impl TextRun {
             text,
             provenance: TextProvenance::Exact(range),
             annotations: super::Annotations::default(),
+            style: None,
         })
     }
 
@@ -79,6 +85,7 @@ impl TextRun {
             text: text.into(),
             provenance: TextProvenance::Derived(range),
             annotations: super::Annotations::default(),
+            style: None,
         }
     }
 
@@ -87,6 +94,7 @@ impl TextRun {
             text: text.into(),
             provenance: TextProvenance::Synthetic,
             annotations: super::Annotations::default(),
+            style: None,
         }
     }
 
@@ -94,6 +102,7 @@ impl TextRun {
         Arc::ptr_eq(&self.text, &other.text)
             && self.provenance == other.provenance
             && self.annotations == other.annotations
+            && self.style == other.style
     }
 
     pub fn text(&self) -> &str {
@@ -107,6 +116,16 @@ impl TextRun {
     pub fn annotations(&self) -> &super::Annotations {
         &self.annotations
     }
+
+    pub(crate) fn style(&self) -> Option<&crate::StyleRef> {
+        self.style.as_ref()
+    }
+
+    pub(crate) fn with_style(mut self, style: crate::StyleRef) -> Self {
+        self.style = Some(style);
+        self
+    }
+
     pub fn map_annotations(
         self,
         map: impl FnOnce(super::Annotations) -> super::Annotations,
@@ -139,11 +158,13 @@ impl TextRun {
                 text: Arc::from(left),
                 provenance: provenance(0, byte_offset),
                 annotations: self.annotations.clone(),
+                style: self.style.clone(),
             },
             Self {
                 text: Arc::from(right),
                 provenance: provenance(byte_offset, self.text.len()),
                 annotations: self.annotations.clone(),
+                style: self.style.clone(),
             },
         ))
     }

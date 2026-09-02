@@ -27,6 +27,12 @@ typedef struct IyonTuiPerf13AbiMetadataV1 {
     uint32_t reserved[2];
 } IyonTuiPerf13AbiMetadataV1;
 
+/*
+ * kind=STYLE payloads use semantic-text-style-v1:
+ * version:u8, flags:u8, attribute_presence:u8, attribute_values:u8,
+ * followed by optional length-prefixed UTF-8 role/colors. The payload is
+ * host-independent; it never contains a native Style ID.
+ */
 typedef struct IyonTuiAnnotationRecordV1 {
     uint32_t kind;
     uint32_t flags;

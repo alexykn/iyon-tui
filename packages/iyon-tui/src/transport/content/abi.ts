@@ -29,7 +29,7 @@ export const CONTENT_ABI_BUILD_FINGERPRINT = [
 ] as const;
 export const CONTENT_ABI_SCHEMA_FINGERPRINT = [
   0x5045_5246,
-  0x3133_2d45,
+  0x3133_2d47,
   0x434f_4e54,
   0x454e_542d,
   0x4142_4931,

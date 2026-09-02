@@ -31,6 +31,10 @@ impl TextOrigin {
     pub const MARKDOWN: Self = Self(OriginAtom::Static("markdown"));
     /// Origin claimed by [`super::PlainTextProjector`].
     pub const PLAIN_TEXT: Self = Self(OriginAtom::Static("plain-text"));
+    /// Origin claimed by [`super::AnsiProjector`].
+    pub const ANSI: Self = Self(OriginAtom::Static("ansi"));
+    /// Origin claimed by the generic semantic diff projector.
+    pub const DIFF: Self = Self(OriginAtom::Static("diff"));
 
     pub fn markdown() -> Self {
         Self::MARKDOWN
@@ -38,6 +42,14 @@ impl TextOrigin {
 
     pub fn plain_text() -> Self {
         Self::PLAIN_TEXT
+    }
+
+    pub fn ansi() -> Self {
+        Self::ANSI
+    }
+
+    pub fn diff() -> Self {
+        Self::DIFF
     }
 
     pub fn new(value: impl Into<Arc<str>>) -> Result<Self, TextIrError> {

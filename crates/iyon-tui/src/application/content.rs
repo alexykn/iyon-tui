@@ -11,14 +11,24 @@ use std::sync::{
     Arc, Mutex, Weak,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    geometry::Size,
+    geometry::{Rect, Size},
     physical::Surface,
     presentation::{ContentMeasurement, ContentProvider},
-    stream::{ProjectedText, StreamOffset, StreamRange},
+    projection::{Projection, ProjectionBuilder, Projector, Smooth, SmoothConfig},
+    stream::{StreamOffset, StreamRange},
+    text::{
+        AnsiProjector, Block, DiffProjector, Inline, InlineContent, InlineKind, LiteralText,
+        MarkdownOptions, MarkdownProjector, PlainTextProjector, TextContent, TextProjectionError,
+        TextProvenance, TextRenderer, TextRewriter, TextRun, walk_rewrite_block,
+        walk_rewrite_inline,
+    },
+    {AnsiColor, ColorSpec, StyleRef, StyleSpec, TextAttribute, Theme},
 };
 
 use super::environment::{EnvironmentIdentity, WakeDisposition};
@@ -38,6 +48,15 @@ pub enum TextSourceKind {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TextFunnelKind {
     Plain,
+    Markdown,
+    Diff,
+    Ansi,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ContentDelivery {
+    Immediate,
+    Smooth(SmoothConfig),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -129,6 +148,10 @@ impl HostContentSourceSnapshot {
             .iter()
             .map(|chunk| (chunk.bytes.as_ref(), chunk.start))
     }
+
+    fn annotations_for_projection(&self) -> &[SourceAnnotation] {
+        &self.storage.annotations
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -139,6 +162,8 @@ struct TextProjectionKey {
     source_revision: u64,
     width: u16,
     wrap: TextWrapMode,
+    funnel_kind: TextFunnelKind,
+    delivery_revision: u64,
 }
 
 impl TextProjectionKey {
@@ -155,6 +180,26 @@ struct HostContentProjection {
     key: TextProjectionKey,
     intrinsic_size: Size,
     surface: Arc<Surface>,
+}
+
+/// Mutable execution state that belongs to one Connector binding. Funnels
+/// remain immutable specifications; inactive Connectors drop this value so
+/// cold membership retains no parser, delivery, or projection work.
+#[derive(Debug)]
+struct ConnectorExecution {
+    markdown: Option<MarkdownProjector>,
+    smoother: Option<Smooth>,
+}
+
+impl ConnectorExecution {
+    fn new(funnel: &HostContentFunnel) -> Self {
+        Self {
+            markdown: matches!(funnel.kind, TextFunnelKind::Markdown).then(|| {
+                MarkdownProjector::new(MarkdownOptions::gfm().with_live_table_stabilization(true))
+            }),
+            smoother: funnel.smooth_config().map(Smooth::new),
+        }
+    }
 }
 
 impl HostContentProjection {
@@ -221,6 +266,8 @@ struct SourceAnnotation {
     payload: Arc<[u8]>,
     aux0: u32,
     aux1: u32,
+    tag: Option<crate::text::SemanticTag>,
+    style: Option<StyleRef>,
 }
 
 #[derive(Clone, Debug)]
@@ -462,10 +509,227 @@ fn annotation_policy(kind: u32) -> AnnotationTruncationPolicy {
     }
 }
 
-fn project_plain_snapshot(
+fn source_projection(
+    snapshot: &HostContentSourceSnapshot,
+) -> Result<Projection<TextContent>, TextProjectionError> {
+    let mut builder = ProjectionBuilder::new(
+        StreamOffset::new(snapshot.source_base),
+        StreamOffset::new(snapshot.source_end),
+        StreamOffset::new(snapshot.source_end),
+        snapshot.sealed,
+    );
+    for (bytes, start) in snapshot.chunks() {
+        let text = str::from_utf8(bytes).expect("Source snapshot chunks are valid UTF-8");
+        let end = start.saturating_add(bytes.len() as u64);
+        builder = builder.emit(
+            StreamRange::new(StreamOffset::new(start), StreamOffset::new(end)),
+            TextContent::raw(text.to_owned()),
+        );
+    }
+    builder.finish().map_err(TextProjectionError::Projection)
+}
+
+fn source_grapheme_projection(
+    snapshot: &HostContentSourceSnapshot,
+) -> Result<Projection<TextContent>, TextProjectionError> {
+    let mut builder = ProjectionBuilder::new(
+        StreamOffset::new(snapshot.source_base),
+        StreamOffset::new(snapshot.source_end),
+        StreamOffset::new(snapshot.source_end),
+        snapshot.sealed,
+    );
+    let mut carry: Option<(u64, String)> = None;
+    for (bytes, start) in snapshot.chunks() {
+        let text = str::from_utf8(bytes).expect("Source snapshot chunks are valid UTF-8");
+        let (combined_start, mut combined) = match carry.take() {
+            Some((carry_start, carry_text)) => {
+                let mut combined = carry_text;
+                combined.push_str(text);
+                (carry_start, combined)
+            }
+            None => (start, text.to_owned()),
+        };
+        let boundaries = combined
+            .grapheme_indices(true)
+            .map(|(offset, grapheme)| (offset, grapheme.len()))
+            .collect::<Vec<_>>();
+        let keep = boundaries.last().copied();
+        for (offset, length) in boundaries
+            .iter()
+            .copied()
+            .take(boundaries.len().saturating_sub(1))
+        {
+            let grapheme_start = combined_start.saturating_add(offset as u64);
+            let grapheme_end = grapheme_start.saturating_add(length as u64);
+            builder = builder.emit(
+                StreamRange::new(
+                    StreamOffset::new(grapheme_start),
+                    StreamOffset::new(grapheme_end),
+                ),
+                TextContent::raw(combined[offset..offset + length].to_owned()),
+            );
+        }
+        if let Some((offset, length)) = keep {
+            let carry_start = combined_start.saturating_add(offset as u64);
+            carry = Some((carry_start, combined[offset..offset + length].to_owned()));
+        }
+        // Drop the temporary combined buffer after preserving only the final
+        // grapheme. This keeps cross-append EGC handling correct without
+        // materializing the complete Source.
+        combined.clear();
+    }
+    if let Some((start, grapheme)) = carry {
+        let end = start.saturating_add(grapheme.len() as u64);
+        builder = builder.emit(
+            StreamRange::new(StreamOffset::new(start), StreamOffset::new(end)),
+            TextContent::raw(grapheme),
+        );
+    }
+    builder.finish().map_err(TextProjectionError::Projection)
+}
+
+fn project_semantic_snapshot(
+    snapshot: &HostContentSourceSnapshot,
+    funnel: HostContentFunnel,
+    execution: &mut ConnectorExecution,
+) -> Result<Projection<TextContent>> {
+    let raw = source_projection(snapshot).map_err(|error| anyhow!(error.to_string()))?;
+    let semantic = match funnel.kind {
+        TextFunnelKind::Plain => PlainTextProjector::new()
+            .project(&raw)
+            .map_err(|error| anyhow!(error.to_string()))?,
+        TextFunnelKind::Markdown => execution
+            .markdown
+            .get_or_insert_with(|| {
+                MarkdownProjector::new(MarkdownOptions::gfm().with_live_table_stabilization(true))
+            })
+            .project(&raw)
+            .map_err(|error| anyhow!(error.to_string()))?,
+        TextFunnelKind::Diff => DiffProjector::new()
+            .project(&raw)
+            .map_err(|error| anyhow!(error.to_string()))?,
+        TextFunnelKind::Ansi => AnsiProjector::new(crate::text::AnsiOptions {
+            hyperlinks: funnel.hyperlinks,
+        })
+        .project(&raw)
+        .map_err(|error| anyhow!(error.to_string()))?,
+    };
+    if snapshot.annotations_for_projection().is_empty() {
+        return Ok(semantic);
+    }
+    SourceAnnotationRewriter::new(snapshot.annotations_for_projection())
+        .into_projector()
+        .project(&semantic)
+        .map_err(|error| anyhow!(error.to_string()))
+}
+
+fn content_text_renderer() -> TextRenderer {
+    let policy = crate::TextRenderPolicy::new()
+        .with_block_gap(1)
+        .with_soft_break(crate::SoftBreakPolicy::LineBreak)
+        .with_table_column_sizing(crate::TableColumnSizing::Content)
+        .with_table_column_gap(1)
+        .with_table_row_gap(0)
+        .with_task_list_marker(crate::TaskListMarkerPolicy::TaskOnly)
+        .with_code_block_label(crate::CodeBlockLabelPolicy::Language)
+        .with_code_block_gap(0)
+        .with_code_wrap(crate::WrapMode::NoWrap);
+    TextRenderer::with_policy(policy)
+}
+
+fn render_semantic_surface(
+    semantic: &Projection<TextContent>,
+    theme: &Theme,
+    offered_width: u16,
+    reveal_units: Option<usize>,
+) -> Result<(Size, Surface)> {
+    let values = semantic
+        .spans()
+        .iter()
+        .flat_map(|span| span.values().iter().cloned())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Ok((Size::new(0, 0), Surface::new(0, 0)));
+    }
+    let renderer = content_text_renderer();
+    let view = <TextRenderer as crate::content::Renderer<[TextContent]>>::render(
+        &renderer,
+        values.as_slice(),
+    );
+    let compiled =
+        crate::presentation::layout::ViewCompiler::new(theme).compile(&view, offered_width.max(1));
+    let width = compiled.width;
+    let height = compiled.rows.len().min(usize::from(u16::MAX)) as u16;
+    let mut surface = Surface::new(width, height);
+    surface.physically_complete = compiled.physically_complete;
+    for (row_index, row) in compiled
+        .rows
+        .into_iter()
+        .take(usize::from(height))
+        .enumerate()
+    {
+        let (placed, complete) = row.place(width, 0);
+        surface.physically_complete &= complete;
+        for (column, cell) in placed.cells().iter().enumerate() {
+            if cell.painted {
+                *surface.get_mut(column as u16, row_index as u16) = cell.clone();
+            }
+        }
+    }
+    if let Some(reveal_units) = reveal_units {
+        let revealed = reveal_surface(&surface, reveal_units);
+        let size = Size::new(revealed.width(), revealed.height());
+        return Ok((size, revealed));
+    }
+    Ok((Size::new(width, height), surface))
+}
+
+fn reveal_surface(surface: &Surface, mut units: usize) -> Surface {
+    if units == 0 || surface.width() == 0 || surface.height() == 0 {
+        return Surface::new(surface.width(), 0);
+    }
+    let mut revealed = surface.clone();
+    let mut last_row = 0u16;
+    let mut saw_glyph = false;
+    for row in 0..surface.height() {
+        let mut cut = None;
+        for column in 0..surface.width() {
+            let cell = surface.get(column, row);
+            if !cell.painted || cell.continuation {
+                continue;
+            }
+            if units == 0 {
+                cut = Some(column);
+                break;
+            }
+            units -= 1;
+            saw_glyph = true;
+            last_row = row;
+        }
+        if let Some(column) = cut {
+            revealed.clear_rect(Rect::new(
+                column,
+                row,
+                surface.width().saturating_sub(column),
+                1,
+            ));
+            last_row = last_row.max(row);
+            break;
+        }
+    }
+    if !saw_glyph {
+        return Surface::new(surface.width(), 0);
+    }
+    revealed.crop_to(surface.width(), last_row.saturating_add(1))
+}
+
+fn project_text_snapshot(
     snapshot: &HostContentSourceSnapshot,
     funnel: HostContentFunnel,
     offered_width: u16,
+    theme: &Theme,
+    execution: &mut ConnectorExecution,
+    delivery_revision: u64,
 ) -> Result<HostContentProjection> {
     let key = TextProjectionKey {
         source_id: snapshot.source_id,
@@ -474,6 +738,8 @@ fn project_plain_snapshot(
         source_revision: snapshot.revision,
         width: offered_width.max(1),
         wrap: funnel.wrap,
+        funnel_kind: funnel.kind,
+        delivery_revision,
     };
     if snapshot.source_base == snapshot.source_end {
         return Ok(HostContentProjection {
@@ -495,63 +761,222 @@ fn project_plain_snapshot(
         ));
     }
 
-    let range = StreamRange::new(
-        StreamOffset::new(snapshot.source_base),
-        StreamOffset::new(snapshot.source_end),
-    );
-    let wrap = match funnel.wrap {
-        TextWrapMode::Word => crate::WrapMode::WordThenGrapheme,
-        TextWrapMode::Grapheme => crate::WrapMode::Grapheme,
-        TextWrapMode::NoWrap => crate::WrapMode::NoWrap,
+    let semantic = project_semantic_snapshot(snapshot, funnel, execution)?;
+    let reveal_units = if let Some(smoother) = execution.smoother.as_mut() {
+        let units = source_grapheme_projection(snapshot)
+            .map_err(|error| anyhow!("content smoothing input failed: {error}"))?;
+        smoother.project(&units);
+        Some(
+            units
+                .spans()
+                .iter()
+                .take_while(|span| span.source().end() <= smoother.published_through())
+                .count(),
+        )
+    } else {
+        None
     };
-    let mut builder = ProjectedText::builder(range).fill_width().wrap(wrap);
-    for (bytes, start) in snapshot.chunks() {
-        let text = str::from_utf8(bytes).expect("Source snapshot chunks are valid UTF-8");
-        let end = start
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| anyhow!("INVALID_RANGE: Source coordinate exhausted"))?;
-        builder = builder.exact(
-            StreamRange::new(StreamOffset::new(start), StreamOffset::new(end)),
-            text.to_owned(),
-        );
-    }
-    let projected = builder
-        .finish()
-        .map_err(|error| anyhow!("content projection failed: {error}"))?;
-    let theme = crate::Theme::new();
-    let compiler = crate::presentation::layout::ViewCompiler::new(&theme);
-    let (_, rows) = compiler.compile_projected_text_with_metadata(&projected, offered_width.max(1));
-    let intrinsic_width = rows
-        .iter()
-        .map(|row| row.width)
-        .max()
-        .unwrap_or_default()
-        .min(usize::from(u16::MAX)) as u16;
-    let intrinsic_height = rows.len().min(usize::from(u16::MAX)) as u16;
-    // The ContentHost box supplies its own width/background. Retain only the
-    // painted row width here instead of allocating `offered_width` cells for
-    // every row; a wide terminal plus a long narrow stream would otherwise
-    // multiply derived storage far beyond the Source payload.
-    let surface_width = intrinsic_width;
-    let mut surface = Surface::new(surface_width, intrinsic_height);
-    for (row_index, row) in rows
-        .into_iter()
-        .take(usize::from(intrinsic_height))
-        .enumerate()
-    {
-        let (placed, complete) = row.row.place(surface_width, 0);
-        surface.physically_complete &= complete;
-        for (column, cell) in placed.cells().iter().enumerate() {
-            if cell.painted {
-                *surface.get_mut(column as u16, row_index as u16) = cell.clone();
-            }
-        }
-    }
+    let (intrinsic_size, surface) =
+        render_semantic_surface(&semantic, theme, offered_width, reveal_units)?;
     Ok(HostContentProjection {
         key,
-        intrinsic_size: Size::new(intrinsic_width, intrinsic_height),
+        intrinsic_size,
         surface: Arc::new(surface),
     })
+}
+
+/// Applies Source annotations to semantic runs without resolving them to a
+/// host-native style. Exact runs preserve source coordinates; transformed
+/// runs use a deterministic proportional split when a range crosses them.
+struct SourceAnnotationRewriter<'a> {
+    annotations: &'a [SourceAnnotation],
+}
+
+impl<'a> SourceAnnotationRewriter<'a> {
+    fn new(annotations: &'a [SourceAnnotation]) -> Self {
+        Self { annotations }
+    }
+
+    fn annotate_run(&self, run: TextRun) -> Result<Vec<TextRun>, TextProjectionError> {
+        let Some(source) = (match run.provenance() {
+            TextProvenance::Exact(range) | TextProvenance::Derived(range) => Some(*range),
+            TextProvenance::Synthetic => None,
+        }) else {
+            return Ok(vec![run]);
+        };
+        if source.is_empty() || run.text().is_empty() {
+            return Ok(vec![run]);
+        }
+        let mut cuts = vec![0usize, run.text().len()];
+        for annotation in self.annotations {
+            if annotation.end_byte <= source.start().as_u64()
+                || annotation.start_byte >= source.end().as_u64()
+            {
+                continue;
+            }
+            for offset in [annotation.start_byte, annotation.end_byte] {
+                if offset <= source.start().as_u64() || offset >= source.end().as_u64() {
+                    continue;
+                }
+                let local = source_local_offset(&run, source, offset);
+                if run.text().is_char_boundary(local) {
+                    cuts.push(local);
+                }
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut output = Vec::with_capacity(cuts.len().saturating_sub(1));
+        for pair in cuts.windows(2) {
+            let local_start = pair[0];
+            let local_end = pair[1];
+            if local_start == local_end {
+                continue;
+            }
+            let (piece, _) = run.split_at(local_end)?;
+            let (_, piece) = piece.split_at(local_start)?;
+            let piece_source = source_range_for_piece(&run, source, local_start, local_end);
+            let active = self
+                .annotations
+                .iter()
+                .filter(|annotation| {
+                    annotation.end_byte > piece_source.start().as_u64()
+                        && annotation.start_byte < piece_source.end().as_u64()
+                })
+                .collect::<Vec<_>>();
+            let mut piece = piece;
+            if !active.is_empty() {
+                piece = piece.map_annotations(|current| {
+                    active.iter().fold(current, |current, annotation| {
+                        if let Some(tag) = annotation.tag.as_ref() {
+                            current.with_tag(tag.clone())
+                        } else {
+                            current
+                        }
+                    })
+                });
+                if let Some(style) = active
+                    .iter()
+                    .rev()
+                    .find_map(|annotation| annotation.style.clone())
+                {
+                    piece = piece.with_style(style);
+                }
+            }
+            output.push(piece);
+        }
+        Ok(output)
+    }
+}
+
+impl TextRewriter for SourceAnnotationRewriter<'_> {
+    type Error = TextProjectionError;
+
+    fn rewrite_block(&mut self, block: Block) -> Result<Block, Self::Error> {
+        walk_rewrite_block(self, block)
+    }
+
+    fn rewrite_inline(&mut self, inline: Inline) -> Result<Inline, Self::Error> {
+        let InlineKind::Text(run) = inline.kind() else {
+            return walk_rewrite_inline(self, inline);
+        };
+        let pieces = self.annotate_run(run.clone())?;
+        if pieces.len() != 1 {
+            // Inline content owns the vector boundary. This branch is only
+            // used by rewrite_inline callers outside our inline-content hook;
+            // preserve the first piece rather than duplicating an Inline.
+            let Some(first) = pieces.into_iter().next() else {
+                return Ok(inline);
+            };
+            return Ok(Inline::from_parts(
+                InlineKind::Text(first),
+                inline.marks().clone(),
+                inline.annotations().clone(),
+            ));
+        }
+        Ok(Inline::from_parts(
+            InlineKind::Text(pieces.into_iter().next().expect("one piece")),
+            inline.marks().clone(),
+            inline.annotations().clone(),
+        ))
+    }
+
+    fn rewrite_inline_content(
+        &mut self,
+        content: InlineContent,
+    ) -> Result<InlineContent, Self::Error> {
+        let mut output = Vec::new();
+        for inline in content.items() {
+            let InlineKind::Text(run) = inline.kind() else {
+                output.push(self.rewrite_inline(inline.clone())?);
+                continue;
+            };
+            for piece in self.annotate_run(run.clone())? {
+                output.push(Inline::from_parts(
+                    InlineKind::Text(piece),
+                    inline.marks().clone(),
+                    inline.annotations().clone(),
+                ));
+            }
+        }
+        Ok(InlineContent::new(output))
+    }
+
+    fn rewrite_literal(&mut self, literal: LiteralText) -> Result<LiteralText, Self::Error> {
+        let mut runs = Vec::new();
+        for run in literal.runs() {
+            runs.extend(self.annotate_run(run.clone())?);
+        }
+        Ok(LiteralText::new(runs))
+    }
+}
+
+fn source_local_offset(run: &TextRun, source: StreamRange, offset: u64) -> usize {
+    let source_delta = offset.saturating_sub(source.start().as_u64());
+    let local = match run.provenance() {
+        TextProvenance::Exact(_) => source_delta,
+        TextProvenance::Derived(_) => source_delta
+            .saturating_mul(run.text().len() as u64)
+            .checked_div(source.len().max(1))
+            .unwrap_or_default(),
+        TextProvenance::Synthetic => 0,
+    };
+    usize::try_from(local)
+        .unwrap_or(run.text().len())
+        .min(run.text().len())
+}
+
+fn source_range_for_piece(
+    run: &TextRun,
+    source: StreamRange,
+    local_start: usize,
+    local_end: usize,
+) -> StreamRange {
+    match run.provenance() {
+        TextProvenance::Exact(_) => StreamRange::new(
+            source.start().saturating_add(local_start as u64),
+            source.start().saturating_add(local_end as u64),
+        ),
+        TextProvenance::Derived(_) => {
+            let start = source.start().as_u64().saturating_add(
+                (local_start as u64)
+                    .saturating_mul(source.len())
+                    .checked_div(run.text().len().max(1) as u64)
+                    .unwrap_or_default(),
+            );
+            let end = source.start().as_u64().saturating_add(
+                (local_end as u64)
+                    .saturating_mul(source.len())
+                    .checked_div(run.text().len().max(1) as u64)
+                    .unwrap_or_default(),
+            );
+            StreamRange::new(
+                StreamOffset::new(start.min(source.end().as_u64())),
+                StreamOffset::new(end.min(source.end().as_u64())),
+            )
+        }
+        TextProvenance::Synthetic => StreamRange::new(source.start(), source.start()),
+    }
 }
 
 // ContentPort IDs cross the structural/native boundary, so they must not be
@@ -561,11 +986,13 @@ static NEXT_CONTENT_PORT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Immutable, Source-neutral Funnel configuration supplied by the control
 /// transport. It has no active state, host, viewport, or projection cache.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HostContentFunnel {
     pub family: ContentFamily,
     pub kind: TextFunnelKind,
     pub wrap: TextWrapMode,
+    pub hyperlinks: bool,
+    pub delivery: ContentDelivery,
 }
 
 impl HostContentFunnel {
@@ -574,7 +1001,51 @@ impl HostContentFunnel {
             family: ContentFamily::Text,
             kind: TextFunnelKind::Plain,
             wrap,
+            hyperlinks: true,
+            delivery: ContentDelivery::Immediate,
         }
+    }
+
+    pub const fn new(
+        kind: TextFunnelKind,
+        wrap: TextWrapMode,
+        hyperlinks: bool,
+        delivery: ContentDelivery,
+    ) -> Self {
+        Self {
+            family: ContentFamily::Text,
+            kind,
+            wrap,
+            hyperlinks,
+            delivery,
+        }
+    }
+
+    fn smooth_config(&self) -> Option<SmoothConfig> {
+        match self.delivery {
+            ContentDelivery::Immediate => None,
+            ContentDelivery::Smooth(config) => Some(config),
+        }
+    }
+
+    fn fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.family.hash(&mut hasher);
+        self.kind.hash(&mut hasher);
+        self.wrap.hash(&mut hasher);
+        self.hyperlinks.hash(&mut hasher);
+        match self.delivery {
+            ContentDelivery::Immediate => 0u8.hash(&mut hasher),
+            ContentDelivery::Smooth(config) => {
+                1u8.hash(&mut hasher);
+                config.tick_interval().hash(&mut hasher);
+                config.spring().to_bits().hash(&mut hasher);
+                config.min_units_per_second().to_bits().hash(&mut hasher);
+                config.max_units_per_second().to_bits().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
     }
 }
 
@@ -626,6 +1097,7 @@ struct ContentSourceRecord {
     dropped_head_bytes: u64,
     accepted_bytes: u64,
     connector_count: usize,
+    dispose_when_unused: bool,
     subscribers: Vec<SourceSubscription>,
 }
 
@@ -699,6 +1171,7 @@ impl ContentSourceRegistry {
             dropped_head_bytes: 0,
             accepted_bytes: 0,
             connector_count: 0,
+            dispose_when_unused: false,
             subscribers: Vec::new(),
         }));
         registry.sources.insert(id, Arc::clone(&record));
@@ -840,19 +1313,14 @@ fn decode_annotations(
                 ));
             }
             let annotation_payload = &payload[record.payload_offset as usize..payload_end as usize];
-            if record.kind == CONTENT_ANNOTATION_KIND_TAG {
-                let separator = annotation_payload.iter().position(|byte| *byte == 0).ok_or_else(|| {
-                    anyhow!("INVALID_ANNOTATION_PAYLOAD: tag annotations require a NUL-separated namespace and name")
-                })?;
-                if annotation_payload[separator + 1..].contains(&0)
-                    || str::from_utf8(&annotation_payload[..separator]).is_err()
-                    || str::from_utf8(&annotation_payload[separator + 1..]).is_err()
-                {
-                    return Err(anyhow!(
-                        "INVALID_ANNOTATION_PAYLOAD: tag annotation names must be valid UTF-8 without embedded NUL"
-                    ));
+            let (tag, style) = match record.kind {
+                CONTENT_ANNOTATION_KIND_TAG => (Some(decode_tag(annotation_payload)?), None),
+                CONTENT_ANNOTATION_KIND_STYLE => {
+                    (None, Some(decode_semantic_style(annotation_payload)?))
                 }
-            }
+                CONTENT_ANNOTATION_KIND_ATOMIC | CONTENT_ANNOTATION_KIND_POINT => (None, None),
+                _ => unreachable!("annotation kind was validated above"),
+            };
             let absolute_start = absolute_base
                 .checked_add(record.start_byte as u64)
                 .ok_or_else(|| anyhow!("INVALID_RANGE: annotation coordinate exhausted"))?;
@@ -867,9 +1335,191 @@ fn decode_annotations(
                 payload: Arc::from(&payload[record.payload_offset as usize..payload_end as usize]),
                 aux0: record.aux0,
                 aux1: record.aux1,
+                tag,
+                style,
             })
         })
         .collect()
+}
+
+fn decode_tag(payload: &[u8]) -> Result<crate::text::SemanticTag> {
+    let separator = payload.iter().position(|byte| *byte == 0).ok_or_else(|| {
+        anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: tag annotations require a NUL-separated namespace and name"
+        )
+    })?;
+    if payload[separator + 1..].contains(&0) {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: tag annotation names must not contain NUL"
+        ));
+    }
+    let namespace = str::from_utf8(&payload[..separator])
+        .map_err(|_| anyhow!("INVALID_ANNOTATION_PAYLOAD: tag namespace is not valid UTF-8"))?;
+    let name = str::from_utf8(&payload[separator + 1..])
+        .map_err(|_| anyhow!("INVALID_ANNOTATION_PAYLOAD: tag name is not valid UTF-8"))?;
+    crate::text::SemanticTag::new(namespace, name)
+        .map_err(|error| anyhow!("INVALID_ANNOTATION_PAYLOAD: {error}"))
+}
+
+const STYLE_PAYLOAD_VERSION: u8 = 1;
+const STYLE_FLAG_ROLE: u8 = 1 << 0;
+const STYLE_FLAG_FOREGROUND: u8 = 1 << 1;
+const STYLE_FLAG_BACKGROUND: u8 = 1 << 2;
+const STYLE_FLAG_ATTRIBUTES: u8 = 1 << 3;
+
+fn decode_semantic_style(payload: &[u8]) -> Result<StyleRef> {
+    if payload.len() < 4 || payload[0] != STYLE_PAYLOAD_VERSION {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style payload version is unsupported"
+        ));
+    }
+    let flags = payload[1];
+    if flags & !0x0f != 0 {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style payload has reserved flags"
+        ));
+    }
+    let presence = payload[2];
+    let values = payload[3];
+    if presence & !0x3f != 0 || values & !presence != 0 {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style attributes are malformed"
+        ));
+    }
+    let mut cursor = 4usize;
+    let role = if flags & STYLE_FLAG_ROLE != 0 {
+        Some(read_style_string(payload, &mut cursor, "role")?)
+    } else {
+        None
+    };
+    let foreground = if flags & STYLE_FLAG_FOREGROUND != 0 {
+        Some(read_style_color(payload, &mut cursor, "foreground")?)
+    } else {
+        None
+    };
+    let background = if flags & STYLE_FLAG_BACKGROUND != 0 {
+        Some(read_style_color(payload, &mut cursor, "background")?)
+    } else {
+        None
+    };
+    if cursor != payload.len() {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style payload has trailing bytes"
+        ));
+    }
+    let mut style = StyleSpec::new();
+    if let Some(color) = foreground {
+        style.set_foreground(color);
+    }
+    if let Some(color) = background {
+        style.set_background(color);
+    }
+    if flags & STYLE_FLAG_ATTRIBUTES != 0 {
+        for (bit, attribute) in [
+            (1, TextAttribute::Bold),
+            (2, TextAttribute::Dim),
+            (4, TextAttribute::Italic),
+            (8, TextAttribute::Underline),
+            (16, TextAttribute::Reversed),
+            (32, TextAttribute::Strikethrough),
+        ] {
+            if presence & bit != 0 {
+                style.set_attribute(attribute, values & bit != 0);
+            }
+        }
+    } else if presence != 0 || values != 0 {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style attributes flag is missing"
+        ));
+    }
+    Ok(match role {
+        Some(role) => StyleRef::themed(role, style),
+        None => StyleRef::themed(crate::content::text::TEXT_THEME_KEY, style),
+    })
+}
+
+fn read_style_string(payload: &[u8], cursor: &mut usize, field: &str) -> Result<String> {
+    let length = read_style_u16(payload, cursor, field)? as usize;
+    let end = cursor.checked_add(length).ok_or_else(|| {
+        anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} length overflow")
+    })?;
+    let value = payload.get(*cursor..end).ok_or_else(|| {
+        anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} is truncated")
+    })?;
+    *cursor = end;
+    let value = str::from_utf8(value)
+        .map_err(|_| anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} is not UTF-8"))?;
+    if value.is_empty() || value.contains('\0') || value.chars().any(char::is_whitespace) {
+        return Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style {field} is not a valid name"
+        ));
+    }
+    Ok(value.to_owned())
+}
+
+fn read_style_u16(payload: &[u8], cursor: &mut usize, field: &str) -> Result<u16> {
+    let end = (*cursor).saturating_add(2);
+    let bytes = payload.get(*cursor..end).ok_or_else(|| {
+        anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} length is truncated")
+    })?;
+    *cursor = end;
+    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_style_color(payload: &[u8], cursor: &mut usize, field: &str) -> Result<ColorSpec> {
+    let kind = *payload.get(*cursor).ok_or_else(|| {
+        anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} color is truncated")
+    })?;
+    *cursor += 1;
+    match kind {
+        1 => Ok(ColorSpec::named(read_ansi_color(payload, cursor, field)?)),
+        2 => Ok(ColorSpec::ansi(read_style_byte(payload, cursor, field)?)),
+        3 => Ok(ColorSpec::rgb(
+            read_style_byte(payload, cursor, field)?,
+            read_style_byte(payload, cursor, field)?,
+            read_style_byte(payload, cursor, field)?,
+        )),
+        4 => Ok(ColorSpec::theme(read_style_string(payload, cursor, field)?)),
+        _ => Err(anyhow!(
+            "INVALID_ANNOTATION_PAYLOAD: semantic style {field} color kind is unknown"
+        )),
+    }
+}
+
+fn read_style_byte(payload: &[u8], cursor: &mut usize, field: &str) -> Result<u8> {
+    let value = *payload.get(*cursor).ok_or_else(|| {
+        anyhow!("INVALID_ANNOTATION_PAYLOAD: semantic style {field} color is truncated")
+    })?;
+    *cursor += 1;
+    Ok(value)
+}
+
+fn read_ansi_color(payload: &[u8], cursor: &mut usize, field: &str) -> Result<AnsiColor> {
+    let value = read_style_byte(payload, cursor, field)?;
+    let color = match value {
+        0 => AnsiColor::Black,
+        1 => AnsiColor::Red,
+        2 => AnsiColor::Green,
+        3 => AnsiColor::Yellow,
+        4 => AnsiColor::Blue,
+        5 => AnsiColor::Magenta,
+        6 => AnsiColor::Cyan,
+        7 => AnsiColor::Gray,
+        8 => AnsiColor::DarkGray,
+        9 => AnsiColor::LightRed,
+        10 => AnsiColor::LightGreen,
+        11 => AnsiColor::LightYellow,
+        12 => AnsiColor::LightBlue,
+        13 => AnsiColor::LightMagenta,
+        14 => AnsiColor::LightCyan,
+        15 => AnsiColor::White,
+        _ => {
+            return Err(anyhow!(
+                "INVALID_ANNOTATION_PAYLOAD: semantic style {field} ANSI color is unknown"
+            ));
+        }
+    };
+    Ok(color)
 }
 
 fn retention_head(storage: &SourceStorage, retention: Option<SourceRetentionPolicy>) -> u64 {
@@ -950,6 +1600,19 @@ impl HostContentSource {
             .lock()
             .map(|record| record.kind)
             .unwrap_or(TextSourceKind::Stream)
+    }
+
+    fn retention_compatible(&self, funnel: TextFunnelKind) -> Result<bool> {
+        let record = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+        if funnel != TextFunnelKind::Markdown {
+            return Ok(true);
+        }
+        let truncated = record.retention.is_some_and(|policy| policy.drop_oldest)
+            || record.storage.source_base != 0;
+        Ok(!truncated)
     }
 
     pub fn content_generation(&self) -> Result<u64> {
@@ -1339,12 +2002,61 @@ impl HostContentSource {
     }
 
     fn release_connector(&self) {
-        if let Ok(mut record) = self.record.lock() {
+        let dispose = self.record.lock().ok().and_then(|mut record| {
             record.connector_count = record.connector_count.saturating_sub(1);
             if record.connector_count == 0 {
                 record.subscribers.clear();
             }
+            if record.connector_count == 0 && record.dispose_when_unused {
+                record.dispose_when_unused = false;
+                record.lifecycle = SourceLifecycle::Disposed;
+                Some(record.id)
+            } else {
+                None
+            }
+        });
+        if let Some(source_id) = dispose
+            && let Ok(mut registry) = self.registry.inner.lock()
+            && registry
+                .sources
+                .get(&source_id)
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, &self.record))
+        {
+            registry.sources.remove(&source_id);
         }
+    }
+
+    /// Compatibility adapters may request disposal while a History-owned
+    /// Connector still exists. The Source becomes disposed as soon as its
+    /// final Connector membership is released; ordinary Source.dispose()
+    /// remains strict and reports SOURCE_IN_USE.
+    pub fn request_dispose_when_unused(&self) -> Result<()> {
+        let dispose_now = {
+            let mut record = self
+                .record
+                .lock()
+                .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+            if record.lifecycle == SourceLifecycle::Disposed {
+                return Ok(());
+            }
+            if record.connector_count == 0 {
+                record.lifecycle = SourceLifecycle::Disposed;
+                Some(record.id)
+            } else {
+                record.dispose_when_unused = true;
+                None
+            }
+        };
+        if let Some(source_id) = dispose_now
+            && let Ok(mut registry) = self.registry.inner.lock()
+            && registry
+                .sources
+                .get(&source_id)
+                .is_some_and(|candidate| Arc::ptr_eq(candidate, &self.record))
+        {
+            registry.sources.remove(&source_id);
+        }
+        Ok(())
     }
 
     fn subscribe(
@@ -1444,6 +2156,8 @@ struct ConnectorRecord {
     candidate_projection: Option<Arc<HostContentProjection>>,
     projected_source_revision: Option<u64>,
     projection_failure_key: Option<TextProjectionKey>,
+    delivery_revision: u64,
+    execution: Option<ConnectorExecution>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1468,6 +2182,8 @@ pub struct ContentConnectorStatus {
 pub(crate) struct ContentHostRegistry {
     source_registry: ContentSourceRegistry,
     owner_host: Weak<Mutex<HostInner>>,
+    theme: Theme,
+    theme_revision: u64,
     next_connector_id: u64,
     next_generation: u32,
     ports: HashMap<u64, Arc<Mutex<PortRecord>>>,
@@ -1483,6 +2199,8 @@ impl ContentHostRegistry {
         Self {
             source_registry,
             owner_host: Weak::new(),
+            theme: Theme::new(),
+            theme_revision: 0,
             next_connector_id: 0,
             next_generation: 0,
             ports: HashMap::new(),
@@ -1555,6 +2273,11 @@ impl ContentHostRegistry {
         if !source.is_live() {
             return Err(anyhow!("SOURCE_DISPOSED: Source is disposed"));
         }
+        if !source.retention_compatible(funnel.kind)? {
+            return Err(anyhow!(
+                "RETENTION_INCOMPATIBLE: Markdown requires an untruncated Source from its logical start"
+            ));
+        }
         if funnel.family != port_family || funnel.family != source.family() {
             return Err(anyhow!(
                 "CONTENT_FAMILY_MISMATCH: ContentPort and Source/Funnel families differ"
@@ -1594,6 +2317,8 @@ impl ContentHostRegistry {
             candidate_projection: None,
             projected_source_revision: None,
             projection_failure_key: None,
+            delivery_revision: 0,
+            execution: None,
         }));
         self.connectors
             .insert(self.next_connector_id, Arc::clone(&record));
@@ -1669,6 +2394,53 @@ impl ContentHostRegistry {
         self.clear_candidate_projections();
     }
 
+    /// Advances Connector-local delivery clocks without parsing or touching
+    /// Source storage. A progressed smoother invalidates only its derived
+    /// projection; the host frame commits the new visible frontier later.
+    pub(crate) fn advance(&mut self, now: Instant) -> bool {
+        let connector_ids = self.connectors.keys().copied().collect::<Vec<_>>();
+        let mut changed = false;
+        for connector_id in connector_ids {
+            let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+                continue;
+            };
+            let Ok(mut state) = connector.lock() else {
+                continue;
+            };
+            if !state.visible && !state.requested {
+                continue;
+            }
+            let progressed = state
+                .execution
+                .as_mut()
+                .and_then(|execution| execution.smoother.as_mut())
+                .is_some_and(|smoother| smoother.advance(now));
+            if !progressed {
+                continue;
+            }
+            state.delivery_revision = state
+                .delivery_revision
+                .checked_add(1)
+                .expect("Connector delivery revision exhausted");
+            state.candidate_projection = None;
+            state.projection_cache.clear();
+            changed = true;
+        }
+        changed
+    }
+
+    pub(crate) fn next_wakeup(&self) -> Option<Instant> {
+        self.connectors
+            .values()
+            .filter_map(|connector| {
+                let state = connector.lock().ok()?;
+                (state.visible || state.requested)
+                    .then(|| state.execution.as_ref()?.smoother.as_ref()?.next_wakeup())
+                    .flatten()
+            })
+            .min()
+    }
+
     fn connector_projection_key(&self, connector_id: u64, width: u16) -> Result<TextProjectionKey> {
         let connector =
             self.connectors.get(&connector_id).cloned().ok_or_else(|| {
@@ -1685,6 +2457,8 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             width: width.max(1),
             wrap: state.funnel.wrap,
+            funnel_kind: state.funnel.kind,
+            delivery_revision: state.delivery_revision,
         })
     }
 
@@ -1779,16 +2553,21 @@ impl ContentHostRegistry {
             self.connectors.get(&connector_id).cloned().ok_or_else(|| {
                 anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
             })?;
-        let (source, funnel) = {
+        let (source, funnel, delivery_revision) = {
             let state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
             if state.lifecycle != ConnectorLifecycle::Live || (!state.requested && !state.visible) {
                 return Ok(ContentMeasurement::default());
             }
-            (state.source.clone(), state.funnel)
+            (state.source.clone(), state.funnel, state.delivery_revision)
         };
         let snapshot = source.snapshot()?;
+        if funnel.kind == TextFunnelKind::Markdown && snapshot.source_base != 0 {
+            return Err(anyhow!(
+                "RETENTION_INCOMPATIBLE: Markdown requires an untruncated Source from its logical start"
+            ));
+        }
         let key = TextProjectionKey {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
@@ -1796,6 +2575,8 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             width: offered_width.max(1),
             wrap: funnel.wrap,
+            funnel_kind: funnel.kind,
+            delivery_revision,
         };
         {
             let mut state = connector
@@ -1821,11 +2602,38 @@ impl ContentHostRegistry {
 
         // The snapshot owns immutable chunks; the Source lock is not held
         // while width-dependent projection allocates/compiles derived rows.
-        let projection = Arc::new(project_plain_snapshot(&snapshot, funnel, offered_width)?);
+        // Execution state is Connector-local. Take it out while projecting so
+        // a parser/smoother can mutate without holding the Connector mutex.
+        let mut execution = {
+            let mut state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            state
+                .execution
+                .take()
+                .unwrap_or_else(|| ConnectorExecution::new(&funnel))
+        };
+        let projection = match project_text_snapshot(
+            &snapshot,
+            funnel,
+            offered_width,
+            &self.theme,
+            &mut execution,
+            delivery_revision,
+        ) {
+            Ok(projection) => Arc::new(projection),
+            Err(error) => {
+                // A failed candidate must not retain partially advanced
+                // delivery/parser state. The next eligible revision or
+                // explicit retry starts from a clean Connector execution.
+                return Err(error);
+            }
+        };
         let measurement = projection.measurement();
         let mut state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        state.execution = Some(execution);
         state
             .projection_cache
             .retain(|(candidate, _)| candidate != &key);
@@ -1887,6 +2695,8 @@ impl ContentHostRegistry {
         if let Ok(mut state) = connector.lock() {
             let code = if diagnostic.starts_with("LIMIT_EXCEEDED:") {
                 "LIMIT_EXCEEDED"
+            } else if diagnostic.starts_with("RETENTION_INCOMPATIBLE:") {
+                "RETENTION_INCOMPATIBLE"
             } else {
                 "PROJECTION_FAILED"
             };
@@ -2098,6 +2908,8 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             width: offered_width.max(1),
             wrap: state.funnel.wrap,
+            funnel_kind: state.funnel.kind,
+            delivery_revision: state.delivery_revision,
         };
         let attempted_source_revision = snapshot.revision;
         let diagnostic = state
@@ -2188,6 +3000,8 @@ impl ContentHostRegistry {
                     state.committed_projection = None;
                     state.projection_cache.clear();
                     state.projected_source_revision = None;
+                    state.execution = None;
+                    state.delivery_revision = 0;
                 }
             }
         }
@@ -2711,6 +3525,8 @@ impl ContentHostRegistry {
             state.projection_cache.clear();
             state.projected_source_revision = None;
             state.projection_failure_key = None;
+            state.execution = None;
+            state.delivery_revision = 0;
         }
         if !visible && state.lifecycle != ConnectorLifecycle::Disposing {
             state.phase = if state.error.is_some() && state.requested {
@@ -2725,6 +3541,22 @@ impl ContentHostRegistry {
         if !visible {
             self.unsubscribe_connector(&source, connector_id, generation);
         }
+    }
+
+    pub(crate) fn detach_source(&mut self, source_id: u64, source_generation: u32) -> bool {
+        let connector_ids = self
+            .connectors
+            .iter()
+            .filter_map(|(id, connector)| {
+                let state = connector.lock().ok()?;
+                (state.source.id() == source_id && state.source.generation() == source_generation)
+                    .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for connector_id in connector_ids.iter().copied() {
+            self.remove_connector(connector_id);
+        }
+        !connector_ids.is_empty()
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
@@ -2883,11 +3715,34 @@ impl ContentHostRegistry {
 }
 
 impl ContentProvider for ContentHostRegistry {
+    fn set_theme(&mut self, theme: &Theme) {
+        if self.theme == *theme {
+            return;
+        }
+        self.theme = theme.clone();
+        self.theme_revision = self
+            .theme_revision
+            .checked_add(1)
+            .expect("content theme revision exhausted");
+        for connector in self.connectors.values() {
+            if let Ok(mut state) = connector.lock() {
+                state.projection_cache.clear();
+                state.candidate_projection = None;
+            }
+        }
+    }
+
     fn projection_revision(&self, port_id: u64, offered_width: u16) -> u64 {
-        self.selected_connector_id(port_id)
+        let connector_revision = self
+            .selected_connector_id(port_id)
             .map_or(0, |connector_id| {
                 self.connector_revision(connector_id, offered_width)
-            })
+            });
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        connector_revision.hash(&mut hasher);
+        self.theme_revision.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn measure(

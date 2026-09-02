@@ -1,6 +1,8 @@
 mod annotations;
+mod ansi;
 mod block;
 mod content;
+mod diff;
 mod errors;
 mod inline;
 mod markdown;
@@ -16,11 +18,13 @@ mod visit;
 
 pub use crate::content::Renderer;
 pub use annotations::{Annotations, SemanticKey, SemanticTag, SemanticValue};
+pub use ansi::{AnsiOptions, AnsiProjectionError, AnsiProjector};
 pub use block::{
     Alignment, Block, BlockKind, CodeBlock, HeadingLevel, List, ListItem, ListMarker,
     NumberDelimiter, NumberStyle, Table, TableCell, TableColumn, TableRow,
 };
 pub use content::{RawText, TextContent};
+pub use diff::{DiffProjectionError, DiffProjector};
 pub use errors::{TextIrError, TextProjectionError};
 pub use inline::{
     BreakKind, FormatId, Image, Inline, InlineContent, InlineKind, LanguageId, LinkTarget, Mark,

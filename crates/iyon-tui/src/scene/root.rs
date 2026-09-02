@@ -108,7 +108,9 @@ impl Scene {
 use crate::{
     component::{ComponentId, ComponentRegistry},
     geometry::Size,
-    history::{HistoryPhysicalOverlay, HistoryViewportAnchor, project_into_session_for_host},
+    history::{
+        HistoryPhysicalOverlay, HistoryViewportAnchor, project_into_session_for_host_with_content,
+    },
     presentation::{
         ir::{
             ColumnChild, ColumnView, HeightRule, PersistentSeq, TrackSize, ViewKind, ViewNodeParts,
@@ -228,11 +230,12 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
             Some(history) => {
                 let mut session = ResolveSession::new(registry);
                 session.set_state_snapshots(states);
-                let projection = project_into_session_for_host(
+                let projection = project_into_session_for_host_with_content(
                     history,
                     Size::new(size.width, history_height),
                     &mut session,
                     anchor,
+                    content,
                 )?;
                 let history_scene = session.finish(projection.view);
                 let history_components = history_scene.mounts.ids().collect();

@@ -627,6 +627,10 @@ where
         .min()
     }
 
+    pub(crate) fn theme(&self) -> &crate::Theme {
+        &self.theme
+    }
+
     pub(crate) fn prepare_frame<S, F>(
         &mut self,
         now: Instant,

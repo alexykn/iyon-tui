@@ -132,7 +132,7 @@ describe("retained TUI semantic values", () => {
   });
 
   test("worker teardown releases its environment-local native session", async () => {
-    const baseline = native.tuiViewBridgeEnvironmentCount();
+    const baseline = native.tuiViewEnvironmentCount();
     for (let index = 0; index < 3; index += 1) {
       const worker = new Worker(new URL("./tui_worker_lifecycle.ts", import.meta.url));
       await new Promise<void>((resolve, reject) => {
@@ -144,9 +144,9 @@ describe("retained TUI semantic values", () => {
       });
       worker.terminate();
     }
-    for (let attempt = 0; attempt < 20 && native.tuiViewBridgeEnvironmentCount() !== baseline; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && native.tuiViewEnvironmentCount() !== baseline; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(native.tuiViewBridgeEnvironmentCount()).toBe(baseline);
+    expect(native.tuiViewEnvironmentCount()).toBe(baseline);
   });
 });

@@ -14,7 +14,7 @@ export interface PreparedStructuralPublication {
 /**
  * Structural target owned by a runtime or control boundary. Composition knows
  * only the semantic View and the prepare/commit/abort protocol; native refs,
- * bridge records, leases, and host objects stay behind the target.
+ * transport records, leases, and host objects stay behind the target.
  */
 export interface StructuralPublicationTarget {
   /** Returns undefined when the enclosing publication batch must abort. */

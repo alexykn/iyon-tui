@@ -2,9 +2,9 @@
  * Backend-neutral normalization for presentation values.
  *
  * The public style/theme objects are convenient immutable facades, while the
- * structural bridge uses a different representation (string color atoms,
+ * structural transport uses a different representation (string color atoms,
  * numeric tags, and native packing). H3-A gives semantic View construction a
- * copied, frozen representation independent of that bridge. Retained
+ * copied, frozen representation independent of that transport. Retained
  * structural transport now consumes these semantic styles directly; structural
  * style-lowering remains only at the canonical native boundary.
  */
@@ -103,7 +103,7 @@ export function semanticOverflowFor(overflow: OverflowIndicator): SemanticOverfl
 
 /**
  * Input shape for a semantic decoration. It deliberately contains public
- * semantic values, not bridge records or native style atoms.
+ * semantic values, not transport records or native style atoms.
  */
 export interface SemanticDecorationInput {
   readonly padding?: number | Insets | InsetsValue;

@@ -319,7 +319,7 @@ fn run_view_case(
         cache.begin_epoch();
         let start = Instant::now();
         match pattern {
-            "COLD" => {
+            "FRESH" => {
                 let fixture = build_fixture(workload, nodes);
                 std::hint::black_box(render_view(
                     &fixture.view,
@@ -566,7 +566,7 @@ pub fn run() {
     for workload in Workload::ALL {
         for (size_name, node_count) in VIEW_SIZES {
             for pattern in [
-                "COLD",
+                "FRESH",
                 "IDENTICAL_IDENTITY",
                 "SHARED_PATH",
                 "REBUILT_EQUIVALENT",

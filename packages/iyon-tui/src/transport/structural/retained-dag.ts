@@ -18,7 +18,7 @@
  *
  * The retained path consumes semantic nodes directly and is the single
  * production structural architecture (PRE-V5-R0). There is no secondary
- * complete-bridge decoding path in production: a retained refusal fails
+ * complete-object decoding path in production: a retained refusal fails
  * explicitly through the boundary instead of selecting another transport.
  */
 
@@ -1159,7 +1159,7 @@ export function ensureNative(node: SemanticViewNode | object, tx: MaterializeTx)
   return ensureSemanticNative(node, tx);
 }
 
-/** @internal Semantic-only retained entrypoint; bridge callers use ensureNative. */
+/** @internal Semantic-only retained entrypoint; transport callers use ensureNative. */
 export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx): number {
   const hint = SEMANTIC_NATIVE.get(node);
   if (hint !== undefined && hint.generation === tx.generation) {

@@ -70,7 +70,7 @@ export interface TuiRuntime {
   flush(): void;
   /**
    * Registers a host runtime-error listener; returning true consumes the
-   * record and suppresses the fallback reporter. The returned function removes
+   * record and suppresses the default reporter. The returned function removes
    * the listener.
    */
   onRuntimeError(listener: RuntimeErrorReporter): () => void;
@@ -374,7 +374,7 @@ export class Tui implements TuiRuntime {
    * PERF-12 T13 (§49/§77-B1): production scene router.
    *
    * ```text
-   * same body object          → no-op (identity cutoff above the bridge)
+   * same body object          → no-op (identity cutoff above the transport)
    * warm root hint            → §20 exact-root fast path (one host render)
    * otherwise                 → §18 boundary install: ensureNative walks the
    *                             changed semantic frontier, children-first, and

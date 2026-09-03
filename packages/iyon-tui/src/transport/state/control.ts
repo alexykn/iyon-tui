@@ -264,10 +264,10 @@ function normalizeTextAttributes(value: unknown): object {
 }
 
 function nativeColorFor(color: ColorSpec): string | object {
-  return bridgeColor(semanticColorFor(color));
+  return transportColor(semanticColorFor(color));
 }
 
-function bridgeColor(color: SemanticColor): string | object {
+function transportColor(color: SemanticColor): string | object {
   switch (color.kind) {
     case "theme": return `theme:${color.key}`;
     case "named": return color.value;
@@ -280,8 +280,8 @@ function nativeStyleFor(style: StyleRef | StyleSpec): object {
   const normalized = semanticStyleFor(style);
   return {
     ...(normalized.theme === undefined ? {} : { theme: normalized.theme }),
-    ...(normalized.foreground === undefined ? {} : { foreground: bridgeColor(normalized.foreground) }),
-    ...(normalized.background === undefined ? {} : { background: bridgeColor(normalized.background) }),
+    ...(normalized.foreground === undefined ? {} : { foreground: transportColor(normalized.foreground) }),
+    ...(normalized.background === undefined ? {} : { background: transportColor(normalized.background) }),
     attributes: { ...normalized.attributes },
   };
 }

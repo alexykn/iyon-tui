@@ -671,7 +671,7 @@ export function composeGrid(
   if (scope === undefined) return View.grid(specification);
   const slot = scope.nextSemanticSlot();
   // Normalize only the public grid input. The previous implementation built a
-  // complete bridge node and View before comparing it, which defeated the
+  // complete node and View before comparing it, which defeated the
   // retained no-op path for every grid update.
   const builder = gridBuilderFromSpecification(specification);
   const previous = slot.current;

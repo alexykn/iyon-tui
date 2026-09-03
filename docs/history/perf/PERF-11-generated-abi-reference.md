@@ -1,11 +1,11 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd; generator_blake3 = 8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65 -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 90c4574d58806b37acee3d351b3059c11be2f0e023be8583d48fd9df6e008704; generator_blake3 = c929e3e1f77d78143cb66be8625c910e55d641010957aaa54beca3368dd956b7 -->
 
 # PERF-11 generated ABI reference
 
 > This file is generated. Do not edit it directly.
 
-- Schema BLAKE3: `7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd`
-- Generator BLAKE3: `8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65`
+- Schema BLAKE3: `90c4574d58806b37acee3d351b3059c11be2f0e023be8583d48fd9df6e008704`
+- Generator BLAKE3: `c929e3e1f77d78143cb66be8625c910e55d641010957aaa54beca3368dd956b7`
 - ABI: `iyon_tui_view` v1
 - Semantic schema: v1
 - Minimum Bun: `1.4.0`
@@ -33,7 +33,7 @@
 
 ### `WrapMode`
 
-| Value | Bridge key |
+| Value | Source key |
 |---|---|
 | `WordThenGrapheme` | `wrapWordThenGrapheme` |
 | `Grapheme` | `wrapGrapheme` |
@@ -41,7 +41,7 @@
 
 ### `HorizontalAlign`
 
-| Value | Bridge key |
+| Value | Source key |
 |---|---|
 | `Start` | `horizontalStart` |
 | `Center` | `horizontalCenter` |
@@ -52,7 +52,7 @@
 | Name | Family | Hotness | Return | Thread | Allocates | Host mutation |
 |---|---|---|---|---|---|---|
 | `runtime_noop` | `runtime` | `probe` | `u32` | `owner_thread` | `false` | `false` |
-| `view_status_detail` | `diagnostic` | `cold` | `u32` | `owner_thread` | `false` | `false` |
+| `view_status_detail` | `diagnostic` | `rare` | `u32` | `owner_thread` | `false` | `false` |
 | `view_render_ref` | `render_ref` | `critical` | `ViewRefResult` | `owner_thread` | `false` | `false` |
 | `host_render_ref` | `render_ref` | `critical` | `i32` | `owner_thread` | `false` | `true` |
 | `view_state_attach` | `structural_patch` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
@@ -74,7 +74,7 @@
 | `axis_builder_begin` | `builder` | `warm` | `native_ref_result` | `owner_thread` | `true` | `false` |
 | `axis_builder_push` | `builder` | `warm` | `status_only` | `owner_thread` | `true` | `false` |
 | `axis_builder_finish` | `builder` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
-| `axis_builder_abort` | `builder` | `cold` | `status_only` | `owner_thread` | `false` | `false` |
+| `axis_builder_abort` | `builder` | `rare` | `status_only` | `owner_thread` | `false` | `false` |
 | `view_axis_set_child` | `structural_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
 | `view_axis_splice_buffer` | `structural_patch` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
 | `view_grid_set_cell` | `structural_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
@@ -87,7 +87,7 @@
 | `view_component_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
 | `view_decorated_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
 | `view_grid_set_cell_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
-| `view_release_many` | `lifecycle` | `cold` | `i32` | `owner_thread` | `false` | `false` |
+| `view_release_many` | `lifecycle` | `rare` | `i32` | `owner_thread` | `false` | `false` |
 | `view_ref_for_node_id` | `exact_lookup` | `critical` | `ViewRefResult` | `owner_thread` | `false` | `false` |
 | `path_root` | `path` | `warm` | `PathRefResult` | `owner_thread` | `true` | `false` |
 | `path_child` | `path` | `warm` | `PathRefResult` | `owner_thread` | `true` | `false` |
@@ -99,7 +99,7 @@
 | `edit_txn_begin` | `edit_transaction` | `critical` | `native_ref_result` | `owner_thread` | `true` | `false` |
 | `edit_txn_add_text_layout` | `edit_transaction` | `critical` | `status_only` | `owner_thread` | `true` | `false` |
 | `edit_txn_commit_render` | `edit_transaction` | `critical` | `native_ref_result` | `owner_thread` | `true` | `true` |
-| `edit_txn_abort` | `edit_transaction` | `cold` | `status_only` | `owner_thread` | `false` | `false` |
+| `edit_txn_abort` | `edit_transaction` | `rare` | `status_only` | `owner_thread` | `false` | `false` |
 | `style_atom_create_cstring` | `style_atom` | `warm` | `StyleAtomRefResult` | `owner_thread` | `true` | `false` |
 | `style_create_bits` | `style_atom` | `warm` | `StyleRefResult` | `owner_thread` | `true` | `false` |
 | `view_text_create_cstring` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |

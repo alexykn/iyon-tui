@@ -1,4 +1,4 @@
-//! Retained content-plane identities, Source storage, and cold control state.
+//! Retained content-plane identities, Source storage, and inactive control state.
 //!
 //! Source storage is deliberately host-independent. This module owns the
 //! PERF-13-E mutation boundary and the PERF-13-D lifecycle graph: environment-
@@ -254,7 +254,7 @@ struct HostContentProjection {
 
 /// Mutable execution state that belongs to one Connector binding. Funnels
 /// remain immutable specifications; inactive Connectors drop this value so
-/// cold membership retains no parser, delivery, or projection work.
+/// inactive membership retains no parser, delivery, or projection work.
 #[derive(Debug)]
 struct ConnectorExecution {
     markdown: Option<MarkdownProjector>,
@@ -2251,9 +2251,9 @@ struct ConnectorRecord {
     /// A later Source revision clears the retryable error exactly once.
     failed_source_revision: Option<u64>,
     /// Deterministic synthetic operational failure used by native/unit
-    /// fixtures to exercise transactional switch fallback.
+    /// fixtures to exercise transactional switch rollback.
     activation_failure: Option<String>,
-    /// Connector-local width-dependent derived projections. Cold Connectors
+    /// Connector-local width-dependent derived projections. Inactive connectors
     /// clear this cache; the Source remains the authoritative store.
     projection_cache: VecDeque<(TextProjectionKey, Arc<HostContentProjection>)>,
     committed_projection: Option<Arc<HostContentProjection>>,
@@ -2888,13 +2888,13 @@ impl ContentHostRegistry {
                 return ContentMeasurement::default();
             };
 
-            // Keep the native/unit failure fixture on the same candidate-fallback
+            // Keep the native/unit failure fixture on the same candidate-rollback
             // boundary as real projection failures.
             if self
                 .prepare_activation_candidate(connector_id, offered_width)
                 .unwrap_or(false)
             {
-                let fallback = visible.and_then(|id| {
+                let rollback = visible.and_then(|id| {
                     self.prepare_connector_projection(id, offered_width)
                         .ok()
                         .map(|measurement| {
@@ -2902,7 +2902,7 @@ impl ContentHostRegistry {
                         })
                 });
                 self.candidate_selections.insert(port_id, visible);
-                fallback.unwrap_or_default()
+                rollback.unwrap_or_default()
             } else {
                 match self.prepare_connector_projection(connector_id, offered_width) {
                     Ok(measurement) => {
@@ -2921,7 +2921,7 @@ impl ContentHostRegistry {
                         {
                             self.record_projection_failure(connector_id, key, error.to_string());
                         }
-                        let fallback = visible.and_then(|id| {
+                        let rollback = visible.and_then(|id| {
                             self.prepare_connector_projection(id, offered_width)
                                 .ok()
                                 .or_else(|| self.projection_measurement(id, offered_width))
@@ -2935,7 +2935,7 @@ impl ContentHostRegistry {
                                 })
                         });
                         self.candidate_selections.insert(port_id, visible);
-                        fallback.unwrap_or_default()
+                        rollback.unwrap_or_default()
                     }
                 }
             }
@@ -3038,7 +3038,7 @@ impl ContentHostRegistry {
 
     /// Applies the native/unit-only operational failure hook at candidate
     /// preparation time. This keeps activation request state truthful and
-    /// exercises the same old-visible fallback boundary that real projection
+    /// exercises the same old-visible rollback boundary that real projection
     /// errors will use in PERF-13-F.
     fn prepare_activation_candidate(
         &mut self,
@@ -3114,7 +3114,7 @@ impl ContentHostRegistry {
 
     /// Aborts a candidate without changing visible bindings. Deferred control
     /// mutations can now finalize identities that were never made visible and
-    /// cold requested Connectors can lose provisional subscriptions.
+    /// inactive requested Connectors can lose provisional subscriptions.
     pub(crate) fn abort_candidate(&mut self) {
         self.clear_candidate_projections();
         let connector_ids = self.in_flight_connectors.drain().collect::<Vec<_>>();
@@ -3425,9 +3425,9 @@ impl ContentHostRegistry {
             state.requested = false;
             state.phase = if state.visible { "active" } else { "idle" };
         }
-        // A failed switch leaves the old visible Connector as the fallback
+        // A failed switch keeps the old visible Connector (rollback)
         // while the requested candidate remains selected. Deactivating that
-        // candidate must still schedule the removal of the visible fallback;
+        // candidate must still schedule the removal of the rolled-back visible;
         // otherwise the port would stay visibly active with no requested
         // Connector and no pending epoch to remove it.
         Ok(was_visible
@@ -3489,9 +3489,9 @@ impl ContentHostRegistry {
             // finalize only after commit/abort reconciles that candidate.
             return Ok(true);
         }
-        let removes_visible_fallback = desired.is_some() && visible_connector.is_some();
+        let removes_visible_rollback = desired.is_some() && visible_connector.is_some();
         self.remove_connector(connector_id);
-        Ok(removes_visible_fallback)
+        Ok(removes_visible_rollback)
     }
 
     fn dispose_port(&mut self, port: &Arc<Mutex<PortRecord>>) -> Result<()> {
@@ -4319,7 +4319,7 @@ impl HostContentConnector {
 
     /// Injects one deterministic operational failure for a native/unit
     /// fixture. It is not part of the TypeScript content API; real projection
-    /// failures use the same candidate-fallback state.
+    /// failures use the same candidate-rollback state.
     pub fn fail_next_activation(&self, diagnostic: String) -> Result<()> {
         let host = self
             .host
@@ -4435,7 +4435,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_membership_blocks_source_disposal_until_connector_release() {
+    fn inactive_membership_blocks_source_disposal_until_connector_release() {
         let source_registry = ContentSourceRegistry::new();
         let source = source_registry.create(TextSourceKind::Stream).unwrap();
         let mut registry = ContentHostRegistry::new(source_registry);
@@ -4473,7 +4473,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_failure_is_recorded_by_candidate_fallback() {
+    fn activation_failure_is_recorded_by_candidate_rollback() {
         let environment = TuiEnvironment::new();
         let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let source = environment

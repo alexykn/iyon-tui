@@ -417,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_preserves_legacy_char_boundary_after_zwj_merge() {
+    fn cursor_preserves_char_boundary_after_zwj_merge() {
         let mut buffer = TextBuffer::new();
         buffer.set_text("👩💻", true);
         buffer.set_cursor("👩".len());

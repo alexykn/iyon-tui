@@ -939,7 +939,7 @@ pub struct TuiHost {
 
 // The host is the single owner of the retained native runtime. All access to
 // its non-Send component registry and routing tables is serialized through
-// `inner`; no component or callback is exposed to the async bridge.
+// `inner`; no component or callback is exposed to the async boundary.
 unsafe impl Send for TuiHost {}
 unsafe impl Sync for TuiHost {}
 

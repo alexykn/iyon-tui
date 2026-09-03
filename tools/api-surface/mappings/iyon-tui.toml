@@ -16396,7 +16396,7 @@ typescript_module = "iyon:tui"
 typescript_export = "presentation__ir__View__downgrade"
 implementation_owner = "T5"
 status = "stub"
-note = "bridge-gated opaque weak View handle"
+note = "boundary-gated opaque weak View handle"
 
 [[records]]
 item_id = "iyon-tui::presentation::ir::View::with_text_layout"

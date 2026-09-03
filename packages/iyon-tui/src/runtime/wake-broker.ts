@@ -299,7 +299,7 @@ export class EnvironmentWakeBroker {
       if (hostId !== undefined) {
         const entry = this.hosts.get(hostId);
         const diagnostic = error instanceof Error ? error.message : String(error);
-        entry?.errorChannel.deref()?.accept(fallbackError(hostId, diagnostic));
+        entry?.errorChannel.deref()?.accept(drainError(hostId, diagnostic));
       }
     }
   }
@@ -324,7 +324,7 @@ export class EnvironmentWakeBroker {
       try {
         report = native.flushPendingHosts(this.budget, forceRetry);
       } catch (error) {
-        const record = fallbackError(driver.id, error instanceof Error ? error.message : String(error));
+        const record = drainError(driver.id, error instanceof Error ? error.message : String(error));
         this.hosts.get(driver.id)?.errorChannel.deref()?.accept(record);
         return { ...emptyReport(), errors: [toNativeError(record)] };
       }
@@ -361,7 +361,7 @@ export class EnvironmentWakeBroker {
         entry.errorChannel.deref()?.markCommitted(id);
         this.pending.delete(id);
       } catch (error) {
-        entry.errorChannel.deref()?.accept(fallbackError(id, error instanceof Error ? error.message : String(error)));
+        entry.errorChannel.deref()?.accept(drainError(id, error instanceof Error ? error.message : String(error)));
       }
     }
   }
@@ -479,7 +479,7 @@ function toBigInt(value: string | number): bigint {
   return BigInt(value);
 }
 
-function fallbackError(hostId: string, diagnostic: string): RuntimeFrameErrorRecord {
+function drainError(hostId: string, diagnostic: string): RuntimeFrameErrorRecord {
   return {
     hostId,
     attemptedEpoch: 0n,

@@ -243,7 +243,7 @@ pub fn human_reference(document: &AbiDocument, schema_hash: &str, generator_hash
     output.push_str("\n## Enums\n\n");
     for enum_spec in &document.enums {
         output.push_str(&format!(
-            "### `{}`\n\n| Value | Bridge key |\n|---|---|\n",
+            "### `{}`\n\n| Value | Source key |\n|---|---|\n",
             enum_spec.name
         ));
         for value in &enum_spec.values {

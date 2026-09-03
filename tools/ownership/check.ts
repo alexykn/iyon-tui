@@ -1,7 +1,7 @@
 /**
  * Standalone TUI ownership gates (IYON-TUI-REPOSITORY-SEPARATION-HANDOFF §7).
  *
- * Machine-checks the generic framework, native bridge, public surface, and
+ * Machine-checks the generic framework, native boundary, public surface, and
  * external-consumer fixture. Run with `bun run check:ownership`. Every
  * failure names the file and rule; no gate relies on prose alone.
  */
@@ -1178,7 +1178,7 @@ function rootAndTestingSurfaceGate(): void {
   const workspaceManifest = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
     exports?: Record<string, unknown>;
   };
-  const forbiddenRootNames = /\b(?:AppHarness|createAppHarness|NativeOutputHandle|NativeViewSlot|NativeScrollPane|(?:Renderer|Projector|TextVisitor|TextRewriter|StreamingSource)Adapter|ComponentAdapterBridge|FocusController|InteractionRouter)\b/u;
+  const forbiddenRootNames = /\b(?:AppHarness|createAppHarness|NativeOutputHandle|NativeViewSlot|NativeScrollPane|(?:Renderer|Projector|TextVisitor|TextRewriter|StreamingSource)Adapter|AsyncComponentAdapter|FocusController|InteractionRouter)\b/u;
   const testOnlyMethods = /^\s+(?:enqueue|screenRows|nativeHistoryRows|styleAt|cellXOfText|advance|current|exited)\s*\(/mu;
   const offenders: string[] = [];
 

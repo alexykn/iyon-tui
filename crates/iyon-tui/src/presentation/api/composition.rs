@@ -442,8 +442,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_and_new_composition_compile_identically() {
-        let old_row = View::from_node(ViewNodeParts {
+    fn struct_and_builder_construction_compile_identically() {
+        let struct_row = View::from_node(ViewNodeParts {
             width: WidthRule::Fit,
             height: HeightRule::Fit,
             decoration: Default::default(),
@@ -460,7 +460,7 @@ mod tests {
                 vertical_align: VerticalAlign::Bottom,
             })),
         });
-        let new_row = View::horizontal(|row| {
+        let builder_row = View::horizontal(|row| {
             row.child("a");
             row.fixed(4, "b");
             row.flex("c");
@@ -468,11 +468,11 @@ mod tests {
             row.vertical_align(VerticalAlign::Bottom);
         });
 
-        let old_column = View::column(
+        let struct_column = View::column(
             vec![View::text("a").into_view(), View::text("b").into_view()],
             1,
         );
-        let new_column = View::vertical(|column| {
+        let builder_column = View::vertical(|column| {
             column.child("a");
             column.child("b");
             column.gap(1);
@@ -480,14 +480,14 @@ mod tests {
 
         let compiler = crate::presentation::layout::ViewCompiler::default();
         for width in [3, 8, 20] {
-            let old = compiler.compile(&old_row, width);
-            let new = compiler.compile(&new_row, width);
+            let old = compiler.compile(&struct_row, width);
+            let new = compiler.compile(&builder_row, width);
             assert_eq!(new.rows, old.rows);
             assert_eq!(new.physically_complete, old.physically_complete);
         }
         for width in [3, 8, 20] {
-            let old = compiler.compile(&old_column, width);
-            let new = compiler.compile(&new_column, width);
+            let old = compiler.compile(&struct_column, width);
+            let new = compiler.compile(&builder_column, width);
             assert_eq!(new.rows, old.rows);
             assert_eq!(new.physically_complete, old.physically_complete);
         }

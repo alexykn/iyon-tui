@@ -47,7 +47,7 @@ type KindCodes = {
 const schema = kindCodes as KindCodes;
 
 /** Private numeric kind codes shared by the retained TS DAG and native constructors. */
-export const BRIDGE_VIEW_KIND = {
+export const NATIVE_VIEW_KIND = {
   text: schema.viewText,
   diff: schema.viewDiff,
   spacer: schema.viewSpacer,
@@ -63,7 +63,7 @@ export const BRIDGE_VIEW_KIND = {
   contentHost: schema.viewContentHost,
 } as const;
 
-export const BRIDGE_LAYOUT_CHILD_KIND = {
+export const NATIVE_LAYOUT_CHILD_KIND = {
   normal: schema.layoutNormal,
   fixed: schema.layoutFixed,
   flex: schema.layoutFlex,
@@ -71,7 +71,7 @@ export const BRIDGE_LAYOUT_CHILD_KIND = {
   contentMax: schema.layoutContentMax,
 } as const;
 
-export const BRIDGE_GRID_TRACK_KIND = {
+export const NATIVE_GRID_TRACK_KIND = {
   content: schema.trackContent,
   contentMax: schema.trackContentMax,
   fixed: schema.trackFixed,
@@ -79,31 +79,31 @@ export const BRIDGE_GRID_TRACK_KIND = {
   flexMax: schema.trackFlexMax,
 } as const;
 
-export const BRIDGE_WRAP_MODE = {
+export const NATIVE_WRAP_MODE = {
   wordThenGrapheme: schema.wrapWordThenGrapheme,
   grapheme: schema.wrapGrapheme,
   noWrap: schema.wrapNoWrap,
 } as const;
 
-export const BRIDGE_HORIZONTAL_ALIGN = {
+export const NATIVE_HORIZONTAL_ALIGN = {
   start: schema.horizontalStart,
   center: schema.horizontalCenter,
   end: schema.horizontalEnd,
 } as const;
 
-export const BRIDGE_VERTICAL_ALIGN = {
+export const NATIVE_VERTICAL_ALIGN = {
   top: schema.verticalTop,
   center: schema.verticalCenter,
   bottom: schema.verticalBottom,
 } as const;
 
-export const BRIDGE_DIFF_LINE_KIND = {
+export const NATIVE_DIFF_LINE_KIND = {
   context: schema.diffContext,
   addition: schema.diffAddition,
   deletion: schema.diffDeletion,
 } as const;
 
-export const BRIDGE_DIFF_LINE_TERMINATION = {
+export const NATIVE_DIFF_LINE_TERMINATION = {
   terminated: schema.terminationTerminated,
   unterminated: schema.terminationUnterminated,
 } as const;

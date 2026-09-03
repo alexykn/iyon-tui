@@ -104,7 +104,7 @@ fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
 }
 
 /// Link/surface probe only: construct one owned public TUI value and discard
-/// it. The native bridge must not duplicate or serialize the TUI renderer.
+/// it. The native boundary must not duplicate or serialize the TUI renderer.
 #[napi(js_name = "tuiSmoke")]
 pub fn tui_smoke() -> Result<String> {
     let _view = View::text("iyon-tui/t1").into_view();
@@ -215,8 +215,8 @@ pub fn tui_perf_snapshot() -> Value {
     Value::Object(counters)
 }
 
-#[napi(js_name = "tuiViewBridgeEnvironmentCount")]
-pub fn tui_view_bridge_environment_count() -> i64 {
+#[napi(js_name = "tuiViewEnvironmentCount")]
+pub fn tui_view_environment_count() -> i64 {
     view_abi::runtime_environment_count()
 }
 
@@ -1344,7 +1344,7 @@ impl NativeContentConnector {
         }))
     }
 
-    /// Native/unit-only failure injection for validating switch fallback. The
+    /// Native/unit-only failure injection for validating switch rollback. The
     /// public TypeScript Connector intentionally does not expose this hook.
     #[napi(js_name = "failNextActivation")]
     pub fn fail_next_activation(&self, diagnostic: String) -> Result<()> {
@@ -1822,7 +1822,7 @@ fn cell_style_value(style: HostCellStyle) -> Value {
 }
 
 /// Lowers a theme style value for the current theme pipeline
-/// (`set_theme` and theme-color/selector lowering below). This is not bridge
+/// (`set_theme` and theme-color/selector lowering below). This is not transport
 /// decoding: it serves the live theme N-API surface.
 fn lower_style_spec(value: &Value) -> Result<StyleSpec> {
     let object = value

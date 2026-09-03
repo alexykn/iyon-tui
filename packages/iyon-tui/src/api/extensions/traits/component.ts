@@ -43,7 +43,7 @@ export interface ComponentAdapter {
   onTick?(context: ComponentContext): InteractionResult | Promise<InteractionResult>;
 }
 
-export class ComponentAdapterBridge {
+export class AsyncComponentAdapter {
   constructor(private readonly implementation: ComponentAdapter) {}
   view(context: ComponentContext): Promise<View> { return Promise.resolve().then(() => this.implementation.view(context)); }
   capabilities(context: ComponentContext): Promise<ComponentCapabilities> { return Promise.resolve().then(() => this.implementation.capabilities?.(context) ?? {}); }

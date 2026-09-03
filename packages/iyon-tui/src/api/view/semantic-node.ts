@@ -1,14 +1,13 @@
 /**
  * Backend-neutral semantic representation of an immutable View.
  *
- * This module deliberately has no knowledge of the structural bridge, native
+ * This module deliberately has no knowledge of the structural transport, native
  * handles, ABI schema, or generated calls. It is the private semantic model
- * that API/view and composition will share during the H3 cutover.
+ * that API/view and composition share.
  *
  * The factories and sidecars here are private semantic infrastructure;
- * retained structural transport consumes these nodes directly. Complete
- * bridge records survive only in the test-oracle lowering outside
- * production reach (PRE-V5-R0).
+ * retained structural transport consumes these nodes directly. No
+ * complete-object lowering of these nodes exists anywhere (PRE-V5-R0).
  */
 
 import type { HandleId } from "../controls/framework-handle.ts";
@@ -162,7 +161,7 @@ export interface SemanticDiffHunk {
 /** Private semantic identity; it is not a native ABI identifier. */
 export type SemanticNodeId = number;
 
-/** Private semantic discriminants. They are intentionally not bridge codes. */
+/** Private semantic discriminants. They are intentionally not transport codes. */
 export const SEMANTIC_VIEW_KIND = Object.freeze({
   text: 0,
   diff: 1,

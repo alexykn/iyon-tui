@@ -318,6 +318,22 @@ as kept-or-deferred above and has since been removed):
   "structural/component fallback" comment → "change", one
   "cold-frame parity" comment → "first-frame parity". The differential
   bench runner deletion above is pinned in `removedPaths` too.
+- Second vocabulary sweep (no behavior change): `BRIDGE_*` kind-code
+  tables → `NATIVE_*` (+ `bridgeViewKind` → `nativeViewKind`);
+  `hotness = "cold"` → `"rare"` with ABI regen (schema hash rollover,
+  native restaged, snapshots accepted); `perf_bench` `COLD` pattern →
+  `FRESH`; content-plane `cold` membership → `inactive`, `fallback`
+  rollback slots → `rollback`; `bridgeColor` → `transportColor`;
+  `tuiViewBridgeEnvironmentCount` → `tuiViewEnvironmentCount` (native
+  restaged); `ComponentAdapterBridge` → `AsyncComponentAdapter`;
+  stale "Direct decoder"/"bridge schema"/"test-oracle lowering" comments
+  reworded to the live architecture; `legacy_*` test names reworded to
+  what they assert. Deliberately kept: absence-guard regexes (they must
+  name the deleted things to forbid them), `imageFallback` (public
+  content-model domain term), `*-compatible`/`incompatible-*`
+  validation taxonomy, `retention_compatible`, vendored termwiz color
+  fallback, `ION_TUI_NATIVE_ARTIFACT`, and the mandated `direct-ffi`
+  feature surface.
 
 ---
 

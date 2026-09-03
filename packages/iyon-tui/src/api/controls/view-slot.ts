@@ -132,7 +132,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     this.boundary = new RetainedRootBoundary(session, () => undefined, (ref) => {
       if (this.disposed) return false;
       // Native exceptions remain visible to the retained transaction rather
-      // than being converted into an unrelated fallback.
+      // than being converted into an unrelated error.
       this.nativeAs<NativeViewSlotHandle>().setViewRef(ref);
       return true;
     });

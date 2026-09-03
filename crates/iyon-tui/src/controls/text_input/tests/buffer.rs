@@ -18,7 +18,7 @@ fn graphemes_move_and_delete_atomically() {
 }
 
 #[test]
-fn zwj_insertion_preserves_legacy_char_boundary_after_cluster_merge() {
+fn zwj_insertion_preserves_char_boundary_after_cluster_merge() {
     let mut buffer = TextBuffer::new();
     buffer.set_text("👩💻", true);
     buffer.set_cursor("👩".len());
@@ -38,7 +38,7 @@ fn forward_delete_removes_one_extended_grapheme() {
 }
 
 #[test]
-fn word_navigation_and_deletion_share_legacy_runs() {
+fn word_navigation_and_deletion_share_separator_runs() {
     let mut buffer = TextBuffer::new();
     buffer.set_text("hello world", true);
     assert!(buffer.move_word_left());
@@ -53,7 +53,7 @@ fn word_navigation_and_deletion_share_legacy_runs() {
 }
 
 #[test]
-fn kill_and_yank_preserve_the_legacy_line_editing_shape() {
+fn kill_and_yank_preserve_the_line_editing_shape() {
     let mut buffer = TextBuffer::new();
     buffer.set_text("one\ntwo", true);
     buffer.set_cursor(6);

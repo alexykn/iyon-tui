@@ -188,7 +188,7 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
 }
 
 /**
- * Materializes a small/new axis without a JS child packet. The children must
+ * Materializes a small/new axis without a JS child array. The children must
  * already have NativeRefs.
  */
 export function tryRetainedAxisCreate(

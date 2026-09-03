@@ -69,7 +69,7 @@ export function textLayoutAtNativePathForTransport(
 ): View {
   if (steps.length > 4) throw new RangeError("native retained path depth must be at most 4");
   // The semantic patch stores string modes, so validate them at the same
-  // boundary where the former bridge patch converted them to ABI codes.
+  // boundary where the former patch converted them to ABI codes.
   wrapModeCode(wrap);
   horizontalAlignCode(align);
   const nextNode = patchSemanticTextPath(viewNode(view), steps, wrap, align);

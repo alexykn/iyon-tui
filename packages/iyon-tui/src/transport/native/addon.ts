@@ -225,7 +225,7 @@ export interface NativeTuiAddon {
     alive: boolean;
   };
   tuiViewAbiSession: () => NativeViewAbiHandle;
-  tuiViewBridgeEnvironmentCount(): number;
+  tuiViewEnvironmentCount(): number;
   NativeHistory?: new () => NativeHistoryContract;
   NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
   NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => NativeTuiHostContract;

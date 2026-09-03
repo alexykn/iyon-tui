@@ -3117,10 +3117,10 @@ pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
 
 /// PERF-12 T11 (§41): parses the framed words+bytes payload describing a new
 /// Diff view and constructs it through the semantic `DiffRenderer` lowering
-/// used by the Direct decoder. Every read is bounds-checked; the word buffer
+/// used by the direct materializer. Every read is bounds-checked; the word buffer
 /// must be consumed exactly and byte lengths must sum to the byte buffer.
 fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
-    // Canonical enum codes shared with the bridge schema and Direct decoder.
+    // Canonical enum codes shared with the kind-code schema and direct materializer.
     const DIFF_LINE_CONTEXT: u32 = 1;
     const DIFF_LINE_ADDITION: u32 = 2;
     const DIFF_LINE_DELETION: u32 = 3;
@@ -3304,7 +3304,7 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 
 /// PERF-12 T13 (§76): parses the framed words+bytes payload describing one
 /// decorated node and applies the property-only decoration in exactly the
-/// Direct decoder's order (padding, background, foreground, border, style,
+/// direct materializer's order (padding, background, foreground, border, style,
 /// style states, width, height, min/max). The result is a canonical base View;
 /// no extra physical occurrence is retained for the decoration record.
 /// Colors arrive as style atoms. Custom border glyphs arrive as a mask-gated
@@ -3439,8 +3439,8 @@ fn parse_and_build_decorated(
         view = view.border(spec);
     }
     // The style always applies: ref 0 resolves to the default StyleRef, which
-    // overlays nothing — matching the Direct decoder's unconditional `.style()`
-    // over the (possibly empty) bridge style node.
+    // overlays nothing — matching the direct materializer's unconditional `.style()`
+    // over the (possibly empty) style node.
     let style = runtime.style_for_ref(style_ref)?;
     view = view.style(style);
     for _ in 0..state_count {
@@ -5496,7 +5496,7 @@ mod tests {
     fn diff_create_buffer_builds_validates_and_consults_cache_perf12_t11() {
         // PERF-12 §41: a new diff materializes through one borrowed
         // words+bytes call and validates semantic coordinates exactly like
-        // the Direct decoder; a live NodeId short-circuits without parsing.
+        // the direct materializer; a live NodeId short-circuits without parsing.
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
         // Hunk: -1,2 +1,2 with context/deletion/unterminated-addition.

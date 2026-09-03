@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd
-// generator_blake3 = 8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65
+// schema_blake3 = 90c4574d58806b37acee3d351b3059c11be2f0e023be8583d48fd9df6e008704
+// generator_blake3 = c929e3e1f77d78143cb66be8625c910e55d641010957aaa54beca3368dd956b7
 // Generated safe N-API methods. The only unsafe operations are the
 // private calls from typed N-API values into the validated semantic wrappers.
 #[napi]

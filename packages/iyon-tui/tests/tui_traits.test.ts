@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { TextContent, View } from "../src/index.ts";
-import { ComponentAdapterBridge } from "../src/api/extensions/traits/component.ts";
+import { AsyncComponentAdapter } from "../src/api/extensions/traits/component.ts";
 import { RendererAdapter } from "../src/api/extensions/traits/renderer.ts";
 import { TextRewriterAdapter } from "../src/api/extensions/traits/text-rewriter.ts";
 
@@ -21,7 +21,7 @@ describe("T5 JS-thread trait adapters", () => {
   });
 
   test("component callbacks receive no borrowed native value", async () => {
-    const bridge = new ComponentAdapterBridge({
+    const bridge = new AsyncComponentAdapter({
       view: async () => View.text("component"),
       onKey: async (event) => ({ type: event.key === "Enter" ? "handled" : "ignored" }),
     });

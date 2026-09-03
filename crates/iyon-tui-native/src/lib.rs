@@ -3,7 +3,7 @@
 //! Native bindings for the generic Iyon terminal UI framework.
 //!
 //! Application/session bindings live in the application repository. This
-//! crate exports only the generic TUI bridge and its framework load probe.
+//! crate exports only the generic TUI boundary and its framework load probe.
 
 mod content_ffi;
 mod error;

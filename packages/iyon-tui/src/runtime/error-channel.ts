@@ -103,8 +103,8 @@ export class RuntimeErrorChannel {
     } catch (error) {
       // Reporting must not make the automatic drain throw. If the configured
       // reporter fails, use the platform reporter once more when available;
-      // otherwise make the failure visible through the package's diagnostic
-      // fallback while leaving frame/retry state untouched.
+      // otherwise make the failure visible through the package's last-resort
+      // diagnostic sink while leaving frame/retry state untouched.
       try {
         const reportError = (globalThis as unknown as ErrorGlobals).reportError;
         if (typeof reportError === "function") reportError(error);

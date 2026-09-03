@@ -2,18 +2,18 @@
  * Explicit semantic-to-structural encodings for the retained ABI.
  *
  * Semantic discriminants and values intentionally remain independent from the
- * bridge schema. This module is the only owner of the compact numeric forms
+ * numeric kind codes. This module is the only owner of the compact numeric forms
  * used by generated structural calls.
  */
 
 import {
-  BRIDGE_DIFF_LINE_KIND,
-  BRIDGE_DIFF_LINE_TERMINATION,
-  BRIDGE_GRID_TRACK_KIND,
-  BRIDGE_HORIZONTAL_ALIGN,
-  BRIDGE_VIEW_KIND,
-  BRIDGE_VERTICAL_ALIGN,
-  BRIDGE_WRAP_MODE,
+  NATIVE_DIFF_LINE_KIND,
+  NATIVE_DIFF_LINE_TERMINATION,
+  NATIVE_GRID_TRACK_KIND,
+  NATIVE_HORIZONTAL_ALIGN,
+  NATIVE_VIEW_KIND,
+  NATIVE_VERTICAL_ALIGN,
+  NATIVE_WRAP_MODE,
 } from "./ir.ts";
 import type {
   SemanticAxisTrack,
@@ -36,21 +36,21 @@ import type {
 } from "../../api/view/semantic-node.ts";
 import { SEMANTIC_VIEW_KIND } from "../../api/view/semantic-node.ts";
 
-export function bridgeViewKind(kind: SemanticViewKind): number {
+export function nativeViewKind(kind: SemanticViewKind): number {
   switch (kind) {
-    case SEMANTIC_VIEW_KIND.text: return BRIDGE_VIEW_KIND.text;
-    case SEMANTIC_VIEW_KIND.diff: return BRIDGE_VIEW_KIND.diff;
-    case SEMANTIC_VIEW_KIND.spacer: return BRIDGE_VIEW_KIND.spacer;
-    case SEMANTIC_VIEW_KIND.row: return BRIDGE_VIEW_KIND.row;
-    case SEMANTIC_VIEW_KIND.column: return BRIDGE_VIEW_KIND.column;
-    case SEMANTIC_VIEW_KIND.grid: return BRIDGE_VIEW_KIND.grid;
-    case SEMANTIC_VIEW_KIND.hanging: return BRIDGE_VIEW_KIND.hanging;
-    case SEMANTIC_VIEW_KIND.container: return BRIDGE_VIEW_KIND.container;
-    case SEMANTIC_VIEW_KIND.clamp: return BRIDGE_VIEW_KIND.clamp;
-    case SEMANTIC_VIEW_KIND.contentMax: return BRIDGE_VIEW_KIND.contentMax;
-    case SEMANTIC_VIEW_KIND.component: return BRIDGE_VIEW_KIND.component;
-    case SEMANTIC_VIEW_KIND.decorated: return BRIDGE_VIEW_KIND.decorated;
-    case SEMANTIC_VIEW_KIND.contentHost: return BRIDGE_VIEW_KIND.contentHost;
+    case SEMANTIC_VIEW_KIND.text: return NATIVE_VIEW_KIND.text;
+    case SEMANTIC_VIEW_KIND.diff: return NATIVE_VIEW_KIND.diff;
+    case SEMANTIC_VIEW_KIND.spacer: return NATIVE_VIEW_KIND.spacer;
+    case SEMANTIC_VIEW_KIND.row: return NATIVE_VIEW_KIND.row;
+    case SEMANTIC_VIEW_KIND.column: return NATIVE_VIEW_KIND.column;
+    case SEMANTIC_VIEW_KIND.grid: return NATIVE_VIEW_KIND.grid;
+    case SEMANTIC_VIEW_KIND.hanging: return NATIVE_VIEW_KIND.hanging;
+    case SEMANTIC_VIEW_KIND.container: return NATIVE_VIEW_KIND.container;
+    case SEMANTIC_VIEW_KIND.clamp: return NATIVE_VIEW_KIND.clamp;
+    case SEMANTIC_VIEW_KIND.contentMax: return NATIVE_VIEW_KIND.contentMax;
+    case SEMANTIC_VIEW_KIND.component: return NATIVE_VIEW_KIND.component;
+    case SEMANTIC_VIEW_KIND.decorated: return NATIVE_VIEW_KIND.decorated;
+    case SEMANTIC_VIEW_KIND.contentHost: return NATIVE_VIEW_KIND.contentHost;
   }
 }
 
@@ -63,8 +63,8 @@ export function axisKindForHorizontal(horizontal: boolean): number {
 }
 
 // Axis-create words intentionally use a different discriminant lane from the
-// bridge layout-child records. Keep these physical ABI codes local to the
-// structural encoder rather than reusing BRIDGE_LAYOUT_CHILD_KIND values.
+// layout-child records. Keep these physical ABI codes local to the
+// structural encoder rather than reusing NATIVE_LAYOUT_CHILD_KIND values.
 const AXIS_TRACK_CONTENT_MAX = 2;
 const AXIS_TRACK_FIXED = 3;
 const AXIS_TRACK_FLEX = 4;
@@ -99,50 +99,50 @@ export function axisTrackWord(track: SemanticAxisTrack | undefined): number {
 
 export function gridTrackWord(track: SemanticGridTrack): number {
   switch (track.kind) {
-    case "content": return BRIDGE_GRID_TRACK_KIND.content;
-    case "contentMax": return BRIDGE_GRID_TRACK_KIND.contentMax | (track.max << 8);
-    case "fixed": return BRIDGE_GRID_TRACK_KIND.fixed | (track.size << 8);
-    case "flex": return BRIDGE_GRID_TRACK_KIND.flex;
-    case "flexMax": return BRIDGE_GRID_TRACK_KIND.flexMax | (track.max << 8);
+    case "content": return NATIVE_GRID_TRACK_KIND.content;
+    case "contentMax": return NATIVE_GRID_TRACK_KIND.contentMax | (track.max << 8);
+    case "fixed": return NATIVE_GRID_TRACK_KIND.fixed | (track.size << 8);
+    case "flex": return NATIVE_GRID_TRACK_KIND.flex;
+    case "flexMax": return NATIVE_GRID_TRACK_KIND.flexMax | (track.max << 8);
   }
 }
 
 export function wrapModeCode(mode: SemanticWrapMode): number {
   switch (mode) {
-    case "wordThenGrapheme": return BRIDGE_WRAP_MODE.wordThenGrapheme;
-    case "grapheme": return BRIDGE_WRAP_MODE.grapheme;
-    case "noWrap": return BRIDGE_WRAP_MODE.noWrap;
+    case "wordThenGrapheme": return NATIVE_WRAP_MODE.wordThenGrapheme;
+    case "grapheme": return NATIVE_WRAP_MODE.grapheme;
+    case "noWrap": return NATIVE_WRAP_MODE.noWrap;
   }
 }
 
 export function horizontalAlignCode(align: SemanticHorizontalAlign): number {
   switch (align) {
-    case "start": return BRIDGE_HORIZONTAL_ALIGN.start;
-    case "center": return BRIDGE_HORIZONTAL_ALIGN.center;
-    case "end": return BRIDGE_HORIZONTAL_ALIGN.end;
+    case "start": return NATIVE_HORIZONTAL_ALIGN.start;
+    case "center": return NATIVE_HORIZONTAL_ALIGN.center;
+    case "end": return NATIVE_HORIZONTAL_ALIGN.end;
   }
 }
 
 export function verticalAlignCode(align: SemanticVerticalAlign): number {
   switch (align) {
-    case "top": return BRIDGE_VERTICAL_ALIGN.top;
-    case "center": return BRIDGE_VERTICAL_ALIGN.center;
-    case "bottom": return BRIDGE_VERTICAL_ALIGN.bottom;
+    case "top": return NATIVE_VERTICAL_ALIGN.top;
+    case "center": return NATIVE_VERTICAL_ALIGN.center;
+    case "bottom": return NATIVE_VERTICAL_ALIGN.bottom;
   }
 }
 
 export function diffLineKindCode(kind: SemanticDiffLineKind): number {
   switch (kind) {
-    case "context": return BRIDGE_DIFF_LINE_KIND.context;
-    case "addition": return BRIDGE_DIFF_LINE_KIND.addition;
-    case "deletion": return BRIDGE_DIFF_LINE_KIND.deletion;
+    case "context": return NATIVE_DIFF_LINE_KIND.context;
+    case "addition": return NATIVE_DIFF_LINE_KIND.addition;
+    case "deletion": return NATIVE_DIFF_LINE_KIND.deletion;
   }
 }
 
 export function diffTerminationCode(termination: SemanticDiffLineTermination): number {
   return termination === "terminated"
-    ? BRIDGE_DIFF_LINE_TERMINATION.terminated
-    : BRIDGE_DIFF_LINE_TERMINATION.unterminated;
+    ? NATIVE_DIFF_LINE_TERMINATION.terminated
+    : NATIVE_DIFF_LINE_TERMINATION.unterminated;
 }
 
 /** Maps semantic overflow kinds to the retained ABI's 0/1/2 value lane.

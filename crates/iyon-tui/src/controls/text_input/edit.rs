@@ -1,4 +1,4 @@
-//! Text normalization and the legacy-compatible shell-editor word runs.
+//! Text normalization and shell-editor word runs.
 
 pub(super) const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
 

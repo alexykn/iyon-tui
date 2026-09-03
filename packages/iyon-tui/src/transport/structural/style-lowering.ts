@@ -22,7 +22,7 @@ interface ThemeDefinition {
   readonly textStyles: readonly { readonly selector: TextSelectorValue; readonly value: StyleSpecValue }[];
 }
 
-/** Lowers a public color value to the existing retained bridge atom. */
+/** Lowers a public color value to the existing retained atom. */
 export function colorNodeFor(color: ColorSpec): ColorNode {
   switch (color.type) {
     case "theme":
@@ -113,7 +113,7 @@ const BORDER_GLYPH_FIELDS = [
   "bottomRight",
 ] as const;
 
-/** Lowers a public styled span to the existing text-span bridge record. */
+/** Lowers a public styled span to the existing text-span record. */
 export function textSpanNodeFor(span: TextSpan): TextSpanNode {
   return {
     text: span.value.text,

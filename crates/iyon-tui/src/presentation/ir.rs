@@ -2201,7 +2201,7 @@ mod tests {
 
     #[cfg(feature = "native-host")]
     #[test]
-    fn weak_bridge_handles_do_not_keep_views_alive() {
+    fn weak_view_handles_do_not_keep_views_alive() {
         let view = View::text("weak").into_view();
         let weak = view.downgrade();
         let upgraded = weak.upgrade().expect("live view must upgrade");

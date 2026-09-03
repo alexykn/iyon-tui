@@ -302,7 +302,7 @@ pub(crate) fn wrap_styled_lines<'a>(
     output
 }
 
-/// Fallback hard breaking between extended grapheme clusters.
+/// Last-resort hard breaking between extended grapheme clusters.
 fn wrap_graphemes_exact<'a>(
     line: &[StyledGrapheme<'a>],
     width: usize,

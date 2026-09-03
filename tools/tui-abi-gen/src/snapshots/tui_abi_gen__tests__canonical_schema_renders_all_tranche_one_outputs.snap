@@ -1,6 +1,5 @@
 ---
 source: tools/tui-abi-gen/src/main.rs
-assertion_line: 309
 expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json\").expect(\"manifest output\")"
 ---
 {
@@ -222,7 +221,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "benchmark_registration": "diagnostic.status_detail",
       "borrow_duration": "call",
       "family": "diagnostic",
-      "hotness": "cold",
+      "hotness": "rare",
       "implementation": "view_status_detail_impl",
       "max_buffer_bytes": 0,
       "max_input_count": 0,
@@ -1520,7 +1519,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "benchmark_registration": "builder.axis_abort",
       "borrow_duration": "call",
       "family": "builder",
-      "hotness": "cold",
+      "hotness": "rare",
       "implementation": "axis_builder_abort_impl",
       "max_buffer_bytes": 0,
       "max_input_count": 1,
@@ -2434,7 +2433,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "benchmark_registration": "lifecycle.release_many",
       "borrow_duration": "call",
       "family": "lifecycle",
-      "hotness": "cold",
+      "hotness": "rare",
       "implementation": "view_release_many_impl",
       "max_buffer_bytes": 524288,
       "max_input_count": 131072,
@@ -3258,7 +3257,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "benchmark_registration": "edit_txn.abort",
       "borrow_duration": "call",
       "family": "edit_transaction",
-      "hotness": "cold",
+      "hotness": "rare",
       "implementation": "edit_txn_abort_impl",
       "max_buffer_bytes": 0,
       "max_input_count": 1,
@@ -4166,7 +4165,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "docs/history/perf/PERF-11-generated-abi-reference.md"
   ],
-  "generator_blake3": "8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65",
+  "generator_blake3": "c929e3e1f77d78143cb66be8625c910e55d641010957aaa54beca3368dd956b7",
   "handles": [
     {
       "kind": null,
@@ -4259,5 +4258,5 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "size": 8
     }
   ],
-  "schema_blake3": "7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd"
+  "schema_blake3": "90c4574d58806b37acee3d351b3059c11be2f0e023be8583d48fd9df6e008704"
 }

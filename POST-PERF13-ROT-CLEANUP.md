@@ -202,7 +202,12 @@ All other PERF-12 benches are deleted (direct/realistic/memory/multi_edit
 cases + runners, dispatcher, s6 ×2, t13 frontier) along with the entire
 `bench/direct_ffi` oracle-copy tree. Historical `.jsonl` reports are
 retained as records. The only benchmark with a standing mandate is the
-authoritative route assertion.
+authoritative route assertion. Follow-up: the differential
+`perf12_t15_authoritative.ts` runner (napi-vs-`direct_ffi_oracle`
+comparison staging `ION_NATIVE_FEATURES=direct-ffi`, referencing the
+deleted `perf12_t15_case.ts`, zero referrers) is deleted and pinned in
+the ownership `removedPaths`; the uncalled `makeT15Pair` helper and its
+"Compatibility" comment go with it.
 
 ---
 
@@ -306,6 +311,13 @@ as kept-or-deferred above and has since been removed):
 - Ownership gate extended with absence assertions for all of the above
   (deleted file pinned in `removedPaths`; ~30 identifiers added to the
   `forbidden` production-source regex).
+- Stale execution vocabulary removed without behavior change:
+  `ViewStateFullDamageFallbacks`/`ViewStateGeometryFullFallbacks`
+  counters → `…Repaints` (same-architecture damage escalation, not a
+  second path), `cold_host` test fixtures → `fresh_host`, one
+  "structural/component fallback" comment → "change", one
+  "cold-frame parity" comment → "first-frame parity". The differential
+  bench runner deletion above is pinned in `removedPaths` too.
 
 ---
 
@@ -316,7 +328,9 @@ bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
   → 98 pass, 0 fail, 27 files (+2: wide text, custom glyphs)
 bun run check:ownership       → ALL OWNERSHIP CHECKS PASSED
 cargo run -q -p tui-abi-gen -- check → clean (exit 0)
-cargo test -p tui-abi-gen     → 27 pass (snapshots accepted: new function + generator hash)
+cargo test -p tui-abi-gen     → 7 pass (27 at tranche close; materializer
+                               generator tests deleted with the duplicate
+                               materializer in the follow-up)
 cargo test -p iyon-tui-native → 36 pass + 5 pass + 1 pass (lib + integration)
 cargo check/fmt               → 0 errors, 0 warnings, fmt clean
 tsc --noEmit                  → repo-clean (2 pre-existing lib.dom

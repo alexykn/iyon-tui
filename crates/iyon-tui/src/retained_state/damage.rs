@@ -50,7 +50,7 @@ impl DamageRegion {
         let full = merged.len() > 64
             || (viewport_area > 0 && total_area.saturating_mul(2) >= viewport_area);
         if full {
-            crate::perf::inc(crate::perf::Counter::ViewStateFullDamageFallbacks);
+            crate::perf::inc(crate::perf::Counter::ViewStateFullDamageRepaints);
             return Self::full(viewport.size());
         }
         Self {

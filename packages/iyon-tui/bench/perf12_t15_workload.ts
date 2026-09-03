@@ -160,12 +160,3 @@ export function makeT15Scenario({ workload, mode, size }: T15WorkloadConfig): T1
     next: (seed) => wrapSharedPath(leaf(workload, seed), stable, depth),
   };
 }
-
-/** Compatibility helper for isolated one-pair probes. */
-export function makeT15Pair(
-  config: T15WorkloadConfig,
-  seed: number,
-): { base: View; next: View } {
-  const scenario = makeT15Scenario(config);
-  return { base: scenario.initial, next: scenario.next(seed) };
-}

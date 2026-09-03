@@ -102,7 +102,7 @@ describe("T13.1 R9 — scoped invalidation acceptance", () => {
 
       // Geometry-changing content still keeps the execution frontier narrow;
       // the native R6b differential tests separately prove the required
-      // layout/paint propagation and cold-frame parity.
+      // layout/paint propagation and first-frame parity.
       values[500]!.set("changed\nrow");
       await drain();
       expect(appCalls).toBe(1);

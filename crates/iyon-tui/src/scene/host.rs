@@ -940,7 +940,7 @@ impl SceneHost {
         if !self.invalidated_states.is_empty() {
             // Parent cache entries do not encode every descendant state
             // revision. A state mutation combined with a structural/component
-            // fallback must therefore discard both derived caches before the
+            // change must therefore discard both derived caches before the
             // full candidate is measured and painted.
             self.layout_cache.clear();
             self.paint_cache.clear();
@@ -1215,7 +1215,7 @@ impl SceneHost {
                 } else {
                     self.state_only_refresh = false;
                     self.incremental_paint_states.clear();
-                    crate::perf::inc(crate::perf::Counter::ViewStateGeometryFullFallbacks);
+                    crate::perf::inc(crate::perf::Counter::ViewStateGeometryFullRepaints);
                 }
                 return Ok(Some(retained));
             }
@@ -2135,14 +2135,14 @@ mod tests {
             assert!(counters.value(crate::perf::Counter::PaintCacheMisses) <= 1);
             assert!(counters.value(crate::perf::Counter::SurfaceCellsComposited) <= 8);
         }
-        let mut same_cold_host = SceneHost::default();
-        let same_cold = same_cold_host
+        let mut same_fresh_host = SceneHost::default();
+        let same_fresh = same_fresh_host
             .resolve_stable::<()>(&scene, &mut registry, size)
             .unwrap();
-        let same_cold_frame = same_cold_host.paint(same_cold, &Theme::default());
+        let same_fresh_frame = same_fresh_host.paint(same_fresh, &Theme::default());
         assert_eq!(
             same_geometry_frame.screen_lines(),
-            same_cold_frame.screen_lines()
+            same_fresh_frame.screen_lines()
         );
 
         #[cfg(feature = "perf-counters")]
@@ -2164,12 +2164,12 @@ mod tests {
 
         assert_eq!(host.full_resolves, 0);
         assert_eq!(host.incremental_resolves, 2);
-        let mut cold_host = SceneHost::default();
-        let cold = cold_host
+        let mut fresh_host = SceneHost::default();
+        let fresh = fresh_host
             .resolve_stable::<()>(&scene, &mut registry, size)
             .unwrap();
-        let cold_frame = cold_host.paint(cold, &Theme::default());
-        assert_eq!(geometry_frame.screen_lines(), cold_frame.screen_lines());
+        let fresh_frame = fresh_host.paint(fresh, &Theme::default());
+        assert_eq!(geometry_frame.screen_lines(), fresh_frame.screen_lines());
     }
 
     #[test]
@@ -2298,12 +2298,12 @@ mod tests {
             .unwrap();
         let retained_frame = host.paint(retained, &Theme::default());
 
-        let mut cold_host = SceneHost::default();
-        let cold = cold_host
+        let mut fresh_host = SceneHost::default();
+        let fresh = fresh_host
             .resolve_stable::<()>(&scene, &mut registry, size)
             .unwrap();
-        let cold_frame = cold_host.paint(cold, &Theme::default());
-        assert_eq!(retained_frame.surface, cold_frame.surface);
+        let fresh_frame = fresh_host.paint(fresh, &Theme::default());
+        assert_eq!(retained_frame.surface, fresh_frame.surface);
     }
 
     #[test]
@@ -2370,12 +2370,12 @@ mod tests {
             .unwrap();
         let frame = host.paint(updated, &Theme::default());
 
-        let mut cold_host = SceneHost::default();
-        let cold = cold_host
+        let mut fresh_host = SceneHost::default();
+        let fresh = fresh_host
             .resolve_stable::<()>(&scene, &mut registry, size)
             .unwrap();
-        let cold_frame = cold_host.paint(cold, &Theme::default());
-        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
+        let fresh_frame = fresh_host.paint(fresh, &Theme::default());
+        assert_eq!(frame.screen_lines(), fresh_frame.screen_lines());
     }
 
     #[test]
@@ -2423,18 +2423,18 @@ mod tests {
             )
             .unwrap();
 
-        let mut cold_host = SceneHost::default();
-        let mut cold_sink = TestSink::default();
-        let cold_frame = cold_host
+        let mut fresh_host = SceneHost::default();
+        let mut fresh_sink = TestSink::default();
+        let fresh_frame = fresh_host
             .render(
                 &mut scene,
                 &mut registry,
                 &Theme::default(),
-                &mut cold_sink,
+                &mut fresh_sink,
                 |_| Ok(size),
             )
             .unwrap();
-        assert_eq!(frame.screen_lines(), cold_frame.screen_lines());
+        assert_eq!(frame.screen_lines(), fresh_frame.screen_lines());
     }
 
     #[test]

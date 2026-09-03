@@ -1118,6 +1118,7 @@ function perf13CleanupGate(): void {
     "packages/iyon-tui/src/transport/structural/cold-lowering.ts",
     "packages/iyon-tui/src/transport/abi/structural/generated/view_materialize.ts",
     "packages/iyon-tui/bench/direct_ffi",
+    "packages/iyon-tui/bench/perf12_t15_authoritative.ts",
     "packages/iyon-tui/bench/perf12_t15_direct_case.ts",
     "packages/iyon-tui/bench/perf12_t15_case.ts",
     "packages/iyon-tui/bench/perf12_t15_realistic.ts",

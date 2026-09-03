@@ -29,14 +29,14 @@ pub enum ModelError {
         #[source]
         source: toml_edit::TomlError,
     },
-    #[error("failed to read bridge schema {path}: {source}")]
-    BridgeRead {
+    #[error("failed to read kind codes schema {path}: {source}")]
+    KindCodesRead {
         path: String,
         #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse bridge schema {path}: {source}")]
-    BridgeParse {
+    #[error("failed to parse kind codes schema {path}: {source}")]
+    KindCodesParse {
         path: String,
         #[source]
         source: serde_json::Error,
@@ -55,8 +55,6 @@ pub struct AbiDocument {
     pub pods: Vec<PodSpec>,
     #[serde(rename = "function", default)]
     pub functions: Vec<FunctionSpec>,
-    #[serde(rename = "materializer", default)]
-    pub materializers: Vec<MaterializerSpec>,
     #[serde(rename = "conformance", default)]
     pub conformance: Vec<ConformanceSpec>,
 }
@@ -130,7 +128,6 @@ pub struct FunctionSpec {
     pub family: String,
     pub hotness: String,
     pub implementation: String,
-    pub fallback: String,
     pub ownership: String,
     pub borrow_duration: String,
     pub thread_affinity: String,
@@ -161,114 +158,6 @@ pub struct ArgumentSpec {
     /// count this argument carries. Single-buffer functions infer the pair.
     #[serde(default)]
     pub buffer_used_of: Option<String>,
-}
-
-/// PERF-12 T5 (§63): strongly typed semantic materializer declaration.
-/// Each spec lowers one BridgeViewNode kind into a sequence of generated FFI
-/// constructor arguments, children first, with explicit lifetime policy.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterializerSpec {
-    pub name: String,
-    pub bridge_kind: String,
-    pub rust_builder: String,
-    pub fallback: String,
-    pub ownership: String,
-    pub borrow_duration: String,
-    pub thread_affinity: String,
-    /// PERF-12 T5 (§74): `none`, `child_ref`, or `base_ref`. Declares which
-    /// stale-ref detail kind the builder's failure status carries so the JS
-    /// recovery path can identify the offending ref without probing.
-    pub status_detail: String,
-    pub benchmark_registration: String,
-    pub result: MaterializerResultSpec,
-    #[serde(rename = "field", default)]
-    pub fields: Vec<MaterializerFieldSpec>,
-    /// PERF-12 T7 (§22/§32): fixed-arity axis shape. When present, the bridge
-    /// node is a layout axis (`children: readonly BridgeLayoutChild[]` plus
-    /// `gap`) and the generated materializer lowers children first through a
-    /// monomorphic fixed-arity constructor family, dispatching on child count.
-    #[serde(default)]
-    pub fixed_arity_axis: Option<MaterializerFixedArityAxisSpec>,
-}
-
-/// PERF-12 T7 (§22/§32): the ordered fixed-arity constructor family for one
-/// axis kind. Entry `i` builds arity `i`; the family length minus one is the
-/// maximum specialization arity (baseline §32: arities 0..=4).
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterializerFixedArityAxisSpec {
-    pub builders: Vec<String>,
-    /// PERF-12 T8 (§29/§32): borrowed-buffer lane for arities above the
-    /// fixed-arity family. The generated dispatcher fills the reusable JS
-    /// scratch with `(track_word, child_ref)` pairs and makes ONE synchronous
-    /// `buffer`/`buffer_length` call; native reads the storage only for the
-    /// call duration and retains no pointer (§29/§107). Arities above the
-    /// retained cap fall back to the complete cold path (§50).
-    #[serde(default)]
-    pub buffer_builder: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterializerFieldSpec {
-    pub name: String,
-    pub source: String,
-    #[serde(rename = "type")]
-    pub abi_type: String,
-    pub role: String,
-    /// Required for RefBuffer/AuxBuffer/ByteBuffer roles (§64): names the
-    /// builder argument carrying the element length for this buffer.
-    #[serde(default)]
-    pub buffer_length_of: Option<String>,
-    /// Required for buffer roles (§64): explicit upper bound in bytes.
-    #[serde(default)]
-    pub max_buffer_bytes: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaterializerResultSpec {
-    pub kind: String,
-}
-
-/// Strongly typed view of MaterializerFieldSpec.role (§63).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaterializerFieldRole {
-    NodeIdLow,
-    NodeIdHigh,
-    Scalar,
-    ChildRef,
-    RefBuffer,
-    AuxBuffer,
-    ByteBuffer,
-    StyleRef,
-    BaseRef,
-}
-
-impl MaterializerFieldRole {
-    pub fn parse(role: &str) -> Option<Self> {
-        Some(match role {
-            "node_id_low" => Self::NodeIdLow,
-            "node_id_high" => Self::NodeIdHigh,
-            "scalar" => Self::Scalar,
-            "child_ref" => Self::ChildRef,
-            "ref_buffer" => Self::RefBuffer,
-            "aux_buffer" => Self::AuxBuffer,
-            "byte_buffer" => Self::ByteBuffer,
-            "style_ref" => Self::StyleRef,
-            "base_ref" => Self::BaseRef,
-            _ => return None,
-        })
-    }
-
-    pub fn is_buffer(self) -> bool {
-        matches!(self, Self::RefBuffer | Self::AuxBuffer | Self::ByteBuffer)
-    }
-
-    pub fn is_reference(self) -> bool {
-        matches!(self, Self::ChildRef | Self::StyleRef | Self::BaseRef)
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -312,15 +201,15 @@ pub fn load(path: &Path) -> Result<(AbiDocument, String, toml_edit::Document<Str
     Ok((document, source, syntax))
 }
 
-pub fn load_bridge_schema(
+pub fn load_kind_codes(
     path: &Path,
 ) -> Result<serde_json::Map<String, serde_json::Value>, ModelError> {
     let path_display = path.display().to_string();
-    let source = std::fs::read_to_string(path).map_err(|source| ModelError::BridgeRead {
+    let source = std::fs::read_to_string(path).map_err(|source| ModelError::KindCodesRead {
         path: path_display.clone(),
         source,
     })?;
-    serde_json::from_str(&source).map_err(|source| ModelError::BridgeParse {
+    serde_json::from_str(&source).map_err(|source| ModelError::KindCodesParse {
         path: path_display,
         source,
     })

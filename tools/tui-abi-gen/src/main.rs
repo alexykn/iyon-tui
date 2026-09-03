@@ -19,8 +19,8 @@ use thiserror::Error;
 use crate::{model::ModelError, validate::ValidationError};
 
 const DEFAULT_SCHEMA: &str = "tools/tui-abi/view_abi.toml";
-const BRIDGE_SCHEMA: &str =
-    "packages/iyon-tui/src/transport/abi/structural/schema/bridge-schema.json";
+const KIND_CODES_SCHEMA: &str =
+    "packages/iyon-tui/src/transport/abi/structural/schema/view-kind-codes.json";
 const GENERATOR_OUTPUTS: &[&str] = &[
     "crates/iyon-tui-native/src/generated/view_abi_types.rs",
     "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
@@ -31,7 +31,6 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "packages/iyon-tui/src/transport/abi/structural/generated/view_abi.ts",
     "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_conformance.ts",
     "packages/iyon-tui/src/transport/abi/structural/generated/view_calls.ts",
-    "packages/iyon-tui/src/transport/abi/structural/generated/view_materialize.ts",
     "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
     "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
@@ -143,13 +142,12 @@ fn run() -> Result<(), GeneratorError> {
                 })
                 .and_then(|table| table.get("name").and_then(toml_edit::Item::span));
             println!(
-                "name: {}\nsource_span: {:?}\nfamily: {}\nhotness: {}\nimplementation: {}\nfallback: {}\nownership: {}\nborrow_duration: {}\nthread_affinity: {}\nmay_allocate_native_memory: {}\nmutates_host_state: {}\nmax_buffer_bytes: {}\nmax_input_count: {}\narity_specializations: {:?}\nbenchmark_registration: {}\nreturn: {}",
+                "name: {}\nsource_span: {:?}\nfamily: {}\nhotness: {}\nimplementation: {}\nownership: {}\nborrow_duration: {}\nthread_affinity: {}\nmay_allocate_native_memory: {}\nmutates_host_state: {}\nmax_buffer_bytes: {}\nmax_input_count: {}\narity_specializations: {:?}\nbenchmark_registration: {}\nreturn: {}",
                 function_spec.name,
                 source_span,
                 function_spec.family,
                 function_spec.hotness,
                 function_spec.implementation,
-                function_spec.fallback,
                 function_spec.ownership,
                 function_spec.borrow_duration,
                 function_spec.thread_affinity,
@@ -182,20 +180,20 @@ fn render_outputs(
     schema_path: &Path,
 ) -> Result<BTreeMap<String, String>, GeneratorError> {
     let (document, schema_source, _) = model::load(schema_path)?;
-    let bridge_path = workspace.join(BRIDGE_SCHEMA);
-    let bridge_schema = model::load_bridge_schema(&bridge_path)?;
-    validate::validate(&document, &bridge_schema)?;
+    let kind_codes_path = workspace.join(KIND_CODES_SCHEMA);
+    let kind_codes = model::load_kind_codes(&kind_codes_path)?;
+    validate::validate(&document, &kind_codes)?;
     let schema_hash = blake3::hash(schema_source.as_bytes()).to_hex().to_string();
     let generator_hash = render_manifest::generator_hash();
     let output_paths: Vec<&str> = GENERATOR_OUTPUTS.to_vec();
     let mut outputs = BTreeMap::new();
     outputs.insert(
         GENERATOR_OUTPUTS[0].to_owned(),
-        render_rust::types(&document, &bridge_schema, &schema_hash, &generator_hash),
+        render_rust::types(&document, &kind_codes, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[1].to_owned(),
-        render_rust::exports(&document, &bridge_schema, &schema_hash, &generator_hash),
+        render_rust::exports(&document, &kind_codes, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[2].to_owned(),
@@ -211,7 +209,7 @@ fn render_outputs(
     );
     outputs.insert(
         GENERATOR_OUTPUTS[5].to_owned(),
-        render_header::header(&document, &bridge_schema, &schema_hash, &generator_hash),
+        render_header::header(&document, &kind_codes, &schema_hash, &generator_hash),
     );
     outputs.insert(
         GENERATOR_OUTPUTS[6].to_owned(),
@@ -227,26 +225,22 @@ fn render_outputs(
     );
     outputs.insert(
         GENERATOR_OUTPUTS[9].to_owned(),
-        render_typescript::materialize(&document, &schema_hash, &generator_hash),
-    );
-    outputs.insert(
-        GENERATOR_OUTPUTS[10].to_owned(),
         render_manifest::manifest(&document, &schema_hash, &generator_hash, &output_paths),
     );
     outputs.insert(
-        GENERATOR_OUTPUTS[11].to_owned(),
+        GENERATOR_OUTPUTS[10].to_owned(),
         render_typescript::layout_test(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
-        GENERATOR_OUTPUTS[12].to_owned(),
+        GENERATOR_OUTPUTS[11].to_owned(),
         render_typescript::benchmark_registry(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
-        GENERATOR_OUTPUTS[13].to_owned(),
+        GENERATOR_OUTPUTS[12].to_owned(),
         render_rust::layout_tests(&document, &schema_hash, &generator_hash),
     );
     outputs.insert(
-        GENERATOR_OUTPUTS[14].to_owned(),
+        GENERATOR_OUTPUTS[13].to_owned(),
         render_manifest::human_reference(&document, &schema_hash, &generator_hash),
     );
     Ok(outputs)
@@ -332,10 +326,10 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
         document.functions[0].args[0].lowering = "not_a_bun_ffi_type".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
+        assert!(validate::validate(&document, &kind_codes).is_err());
     }
 
     #[test]
@@ -343,10 +337,10 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
         document.functions[0].args[0].lowering = "u32".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
+        assert!(validate::validate(&document, &kind_codes).is_err());
     }
 
     #[test]
@@ -354,8 +348,8 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
         let used = document
             .functions
             .iter_mut()
@@ -363,7 +357,7 @@ mod tests {
             .find(|argument| argument.lowering == "buffer_used")
             .expect("canonical buffer_used");
         used.lowering = "u32".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
+        assert!(validate::validate(&document, &kind_codes).is_err());
     }
 
     #[test]
@@ -371,8 +365,8 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
         let length = document
             .functions
             .iter_mut()
@@ -380,142 +374,7 @@ mod tests {
             .find(|argument| argument.lowering == "buffer_length")
             .expect("canonical buffer length");
         length.buffer_length_of = None;
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    fn first_materializer_mut(document: &mut model::AbiDocument) -> &mut model::MaterializerSpec {
-        document
-            .materializers
-            .first_mut()
-            .expect("canonical materializer slice")
-    }
-
-    #[test]
-    fn canonical_schema_declares_the_t5_vertical_slice() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (document, _, _) = model::load(&schema).expect("canonical schema parses");
-        // T5 shipped the spacer slice; T7 added the row/column fixed-arity
-        // axis slices on top of it.
-        assert_eq!(document.materializers.len(), 3);
-        let spacer = &document.materializers[0];
-        assert_eq!(spacer.name, "spacer");
-        assert_eq!(spacer.bridge_kind, "viewSpacer");
-        assert_eq!(spacer.rust_builder, "view_spacer_create");
-        assert_eq!(spacer.borrow_duration, "call");
-        assert_eq!(spacer.thread_affinity, "owner_thread");
-    }
-
-    #[test]
-    fn validation_rejects_unknown_bridge_kind() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        first_materializer_mut(&mut document).bridge_kind = "viewDoesNotExist".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_missing_node_id_half() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        // §64: a u64 NodeId narrowed into a single u32 half fails generation.
-        first_materializer_mut(&mut document)
-            .fields
-            .retain(|field| field.role != "node_id_high");
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_unknown_field_role() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        first_materializer_mut(&mut document).fields[2].role = "magic_ref".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_unbounded_buffer_field() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        let materializer = first_materializer_mut(&mut document);
-        materializer.fields.push(model::MaterializerFieldSpec {
-            name: "children".to_owned(),
-            source: "children".to_owned(),
-            abi_type: "ViewRef".to_owned(),
-            role: "ref_buffer".to_owned(),
-            buffer_length_of: None,
-            max_buffer_bytes: None,
-        });
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_non_call_borrow_duration() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        // §107: a constructor that can retain a borrowed buffer is illegal.
-        first_materializer_mut(&mut document).borrow_duration = "session".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_owner_thread_violation() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        first_materializer_mut(&mut document).thread_affinity = "any_thread".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_duplicate_materializer_name() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        let clone = document.materializers[0].clone();
-        document.materializers.push(clone);
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_missing_benchmark_registration() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        first_materializer_mut(&mut document).benchmark_registration = String::new();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn validation_rejects_unknown_builder_function() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        first_materializer_mut(&mut document).rust_builder = "view_not_a_function".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
+        assert!(validate::validate(&document, &kind_codes).is_err());
     }
 
     #[test]
@@ -523,162 +382,9 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
         document.conformance[0].args[0] = "i32".to_owned();
-        assert!(validate::validate(&document, &bridge).is_err());
-    }
-
-    #[test]
-    fn canonical_schema_declares_the_t7_axis_slices() {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (document, _, _) = model::load(&schema).expect("canonical schema parses");
-        assert_eq!(document.materializers.len(), 3);
-        let row = document
-            .materializers
-            .iter()
-            .find(|materializer| materializer.name == "row")
-            .expect("row materializer");
-        let axis = row.fixed_arity_axis.as_ref().expect("fixed-arity axis");
-        assert_eq!(axis.builders.len(), 5);
-        assert_eq!(axis.builders[0], "view_row_create_0");
-        assert_eq!(axis.builders[4], "view_row_create_4");
-    }
-
-    /// Builds the canonical document, converts the spacer slice into a
-    /// fixed-arity axis declaration, and applies `mutate` before validating.
-    fn validate_mutated_axis(
-        mutate: impl FnOnce(&mut model::MaterializerSpec),
-    ) -> Result<(), validate::ValidationError> {
-        let workspace = workspace_root().expect("workspace metadata");
-        let schema = workspace.join(DEFAULT_SCHEMA);
-        let (mut document, _, _) = model::load(&schema).expect("canonical schema parses");
-        let bridge = model::load_bridge_schema(&workspace.join(BRIDGE_SCHEMA))
-            .expect("bridge schema parses");
-        let position = document
-            .materializers
-            .iter()
-            .position(|materializer| materializer.name == "row")
-            .expect("canonical row materializer");
-        let materializer = &mut document.materializers[position];
-        materializer.fixed_arity_axis = Some(model::MaterializerFixedArityAxisSpec {
-            builders: [
-                "view_row_create_0",
-                "view_row_create_1",
-                "view_row_create_2",
-                "view_row_create_3",
-                "view_row_create_4",
-            ]
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect(),
-            buffer_builder: None,
-        });
-        mutate(materializer);
-        validate::validate(&document, &bridge)
-    }
-
-    #[test]
-    fn validation_accepts_well_formed_fixed_arity_axis() {
-        if let Err(error) = validate_mutated_axis(|_| {}) {
-            panic!("axis should validate: {error}");
-        }
-    }
-
-    #[test]
-    fn validation_rejects_axis_on_non_axis_kind() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                materializer.bridge_kind = "viewSpacer".to_owned();
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_unknown_family_builder() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
-                axis.builders[2] = "view_not_a_function".to_owned();
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_duplicate_family_builder() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
-                axis.builders[3] = axis.builders[2].clone();
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_family_lifetime_disagreement() {
-        // The family builders are runtime_owned/owner_thread; flipping the
-        // materializer's thread affinity must fail generation (§69).
-        assert!(
-            validate_mutated_axis(|materializer| {
-                materializer.thread_affinity = "any_thread".to_owned();
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_unknown_buffer_builder() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                materializer
-                    .fixed_arity_axis
-                    .as_mut()
-                    .expect("axis")
-                    .buffer_builder = Some("view_not_a_function".to_owned());
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_buffer_builder_lifetime_disagreement() {
-        // view_axis_create_buffer borrows for the call only; flipping the
-        // materializer to a session borrow must fail generation (107).
-        assert!(
-            validate_mutated_axis(|materializer| {
-                let axis = materializer.fixed_arity_axis.as_mut().expect("axis");
-                axis.buffer_builder = Some("view_axis_create_buffer".to_owned());
-                materializer.borrow_duration = "session".to_owned();
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn validation_accepts_t8_buffer_lane() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                materializer
-                    .fixed_arity_axis
-                    .as_mut()
-                    .expect("axis")
-                    .buffer_builder = Some("view_axis_create_buffer".to_owned());
-            })
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn validation_rejects_rust_builder_outside_family_base() {
-        assert!(
-            validate_mutated_axis(|materializer| {
-                materializer.rust_builder = "view_row_create_2".to_owned();
-            })
-            .is_err()
-        );
+        assert!(validate::validate(&document, &kind_codes).is_err());
     }
 }

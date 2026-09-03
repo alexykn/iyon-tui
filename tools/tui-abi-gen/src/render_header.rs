@@ -7,7 +7,7 @@ use crate::{
 
 pub fn header(
     document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
     schema_hash: &str,
     generator_hash: &str,
 ) -> String {
@@ -26,7 +26,7 @@ pub fn header(
     for enum_spec in &document.enums {
         output.push_str(&format!("typedef enum {} {{\n", enum_spec.name));
         for value in &enum_spec.values {
-            let number = bridge_schema
+            let number = kind_codes
                 .get(&value.source_key)
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
-// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
+// schema_blake3 = 7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd
+// generator_blake3 = 8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 export type ViewAbiSymbols = NativeViewAbiHandle;
 

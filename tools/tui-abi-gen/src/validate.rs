@@ -3,10 +3,7 @@ use std::collections::HashSet;
 use serde_json::Map;
 use thiserror::Error;
 
-use crate::model::{
-    AbiDocument, ConformanceSpec, EnumSpec, MaterializerFieldRole, MaterializerFieldSpec,
-    MaterializerFixedArityAxisSpec, MaterializerSpec, PodSpec,
-};
+use crate::model::{AbiDocument, ConformanceSpec, EnumSpec, PodSpec};
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -16,7 +13,7 @@ pub enum ValidationError {
 
 pub fn validate(
     document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
 ) -> Result<(), ValidationError> {
     if document.abi.name.is_empty() || !is_snake_case(&document.abi.name) {
         return invalid("abi.name must be a non-empty snake_case identifier");
@@ -54,7 +51,7 @@ pub fn validate(
 
     let mut enum_names = HashSet::new();
     for enum_spec in &document.enums {
-        validate_enum(enum_spec, bridge_schema)?;
+        validate_enum(enum_spec, kind_codes)?;
         if !enum_names.insert(enum_spec.name.as_str()) {
             return invalid(format!("duplicate enum {}", enum_spec.name));
         }
@@ -73,7 +70,6 @@ pub fn validate(
         validate_conformance(conformance)?;
     }
 
-    validate_materializers(document, bridge_schema)?;
     for function in &document.functions {
         if !is_snake_case(&function.name) {
             return invalid(format!("function {} must be snake_case", function.name));
@@ -84,7 +80,6 @@ pub fn validate(
         if function.family.is_empty()
             || function.hotness.is_empty()
             || function.implementation.is_empty()
-            || function.fallback.is_empty()
             || function.ownership.is_empty()
             || function.borrow_duration.is_empty()
             || function.thread_affinity.is_empty()
@@ -406,7 +401,7 @@ fn validate_conformance(conformance: &ConformanceSpec) -> Result<(), ValidationE
 
 fn validate_enum(
     enum_spec: &EnumSpec,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
 ) -> Result<(), ValidationError> {
     if !is_pascal_case(&enum_spec.name) {
         return invalid(format!("enum {} must be PascalCase", enum_spec.name));
@@ -428,17 +423,20 @@ fn validate_enum(
                 enum_spec.name, value.name
             ));
         }
-        let Some(number) = bridge_schema
+        let Some(number) = kind_codes
             .get(&value.source_key)
             .and_then(serde_json::Value::as_u64)
         else {
             return invalid(format!(
-                "enum {} value {} does not resolve integer bridge key {}",
+                "enum {} value {} does not resolve integer kind-codes key {}",
                 enum_spec.name, value.name, value.source_key
             ));
         };
         if number > u32::MAX as u64 {
-            return invalid(format!("bridge key {} does not fit u32", value.source_key));
+            return invalid(format!(
+                "kind-codes key {} does not fit u32",
+                value.source_key
+            ));
         }
     }
     Ok(())
@@ -576,372 +574,6 @@ fn primitive_layout(type_name: &str) -> Option<(u32, u32)> {
 
 fn align_up(value: u32, align: u32) -> u32 {
     value.div_ceil(align) * align
-}
-
-/// PERF-12 T5 (§64): generator validation for semantic materializer
-/// declarations. Generation must fail on illegal lifetime declarations,
-/// unknown kinds, narrowed NodeIds, unrepresented child fields, unbounded
-/// buffers, and missing benchmark/conformance registration.
-fn validate_materializers(
-    document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
-) -> Result<(), ValidationError> {
-    let function_names: HashSet<&str> = document
-        .functions
-        .iter()
-        .map(|function| function.name.as_str())
-        .collect();
-    let handle_names: HashSet<&str> = document
-        .handles
-        .iter()
-        .map(|handle| handle.name.as_str())
-        .collect();
-    // Scalar ABI types that lower directly as engine-native call arguments.
-    const SCALAR_TYPES: [&str; 6] = ["u32", "i32", "u64", "i64", "f32", "f64"];
-
-    let mut materializer_names = HashSet::new();
-    for materializer in &document.materializers {
-        validate_materializer(
-            document,
-            materializer,
-            &function_names,
-            &handle_names,
-            &SCALAR_TYPES,
-            bridge_schema,
-        )?;
-        if !materializer_names.insert(materializer.name.as_str()) {
-            return invalid(format!("duplicate materializer {}", materializer.name));
-        }
-    }
-    Ok(())
-}
-
-fn validate_materializer(
-    document: &AbiDocument,
-    materializer: &MaterializerSpec,
-    function_names: &HashSet<&str>,
-    handle_names: &HashSet<&str>,
-    scalar_types: &[&str; 6],
-    bridge_schema: &Map<String, serde_json::Value>,
-) -> Result<(), ValidationError> {
-    if !is_snake_case(&materializer.name) {
-        return invalid(format!(
-            "materializer {} must be snake_case",
-            materializer.name
-        ));
-    }
-    if function_names.contains(materializer.name.as_str()) {
-        return invalid(format!(
-            "materializer {} collides with an ABI function name",
-            materializer.name
-        ));
-    }
-    // Unknown BridgeViewNode kind (§64): the kind must exist in the bridge
-    // schema as a view-kind discriminant.
-    let kind_declared = bridge_schema
-        .get(&materializer.bridge_kind)
-        .is_some_and(|value| value.is_i64() || value.is_u64());
-    if !kind_declared || !materializer.bridge_kind.starts_with("view") {
-        return invalid(format!(
-            "materializer {} declares unknown BridgeViewNode kind {}",
-            materializer.name, materializer.bridge_kind
-        ));
-    }
-    // The rust builder must be a declared ABI function returning ViewRefResult.
-    let builder_function = document
-        .functions
-        .iter()
-        .find(|function| function.name == materializer.rust_builder);
-    let Some(builder_function) = builder_function else {
-        return invalid(format!(
-            "materializer {} references unknown builder function {}",
-            materializer.name, materializer.rust_builder
-        ));
-    };
-    if builder_function.return_type != "ViewRefResult" {
-        return invalid(format!(
-            "materializer {} builder {} must return ViewRefResult",
-            materializer.name, materializer.rust_builder
-        ));
-    }
-    // §68/§69: checked-vs-timing policy stays explicit and materializers run
-    // synchronously on the environment owner thread with call-scoped borrows.
-    if materializer.ownership != builder_function.ownership {
-        return invalid(format!(
-            "materializer {} ownership must match its builder function",
-            materializer.name
-        ));
-    }
-    if materializer.borrow_duration != "call" {
-        return invalid(format!(
-            "materializer {} may not retain a borrowed pointer past the call (§107)",
-            materializer.name
-        ));
-    }
-    if materializer.thread_affinity != "owner_thread"
-        || materializer.thread_affinity != builder_function.thread_affinity
-    {
-        return invalid(format!(
-            "materializer {} must run on the environment owner thread (§69)",
-            materializer.name
-        ));
-    }
-    if !matches!(
-        materializer.status_detail.as_str(),
-        "none" | "child_ref" | "base_ref"
-    ) {
-        return invalid(format!(
-            "materializer {} has unsupported status_detail {} (§74)",
-            materializer.name, materializer.status_detail
-        ));
-    }
-    if materializer.benchmark_registration.is_empty() {
-        return invalid(format!(
-            "materializer {} is missing benchmark/conformance registration",
-            materializer.name
-        ));
-    }
-    if materializer.fallback.is_empty() {
-        return invalid(format!(
-            "materializer {} has no fallback declaration",
-            materializer.name
-        ));
-    }
-    if materializer.result.kind != "view_ref" {
-        return invalid(format!(
-            "materializer {} result kind must be view_ref",
-            materializer.name
-        ));
-    }
-
-    // PERF-12 T7 (§22/§32): fixed-arity axis shape rules.
-    if let Some(axis) = &materializer.fixed_arity_axis {
-        validate_fixed_arity_axis(document, materializer, axis, scalar_types)?;
-    }
-
-    // §64: a u64 field must never be narrowed into one u32 - the full 53-bit
-    // safe NodeId requires exactly one low half and one high half.
-    let low_count = materializer
-        .fields
-        .iter()
-        .filter(|field| field.role == "node_id_low")
-        .count();
-    let high_count = materializer
-        .fields
-        .iter()
-        .filter(|field| field.role == "node_id_high")
-        .count();
-    if low_count != 1 || high_count != 1 {
-        return invalid(format!(
-            "materializer {} must declare exactly one node_id_low and one node_id_high field",
-            materializer.name
-        ));
-    }
-
-    let mut seen_fields = HashSet::new();
-    for field in &materializer.fields {
-        validate_materializer_field(field, handle_names, scalar_types)?;
-        if !seen_fields.insert(field.role.as_str()) {
-            return invalid(format!(
-                "materializer {} declares duplicate role {}",
-                materializer.name, field.role
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_materializer_field(
-    field: &MaterializerFieldSpec,
-    handle_names: &HashSet<&str>,
-    scalar_types: &[&str; 6],
-) -> Result<(), ValidationError> {
-    let Some(role) = MaterializerFieldRole::parse(&field.role) else {
-        return invalid(format!(
-            "materializer field {} has unknown role {}",
-            field.name, field.role
-        ));
-    };
-    if field.source.is_empty() {
-        return invalid(format!(
-            "materializer field {} has an empty source",
-            field.name
-        ));
-    }
-    let type_ok = scalar_types.contains(&field.abi_type.as_str())
-        || handle_names.contains(field.abi_type.as_str());
-    if !type_ok {
-        return invalid(format!(
-            "materializer field {} has undeclared ABI type {}",
-            field.name, field.abi_type
-        ));
-    }
-    if role.is_buffer() {
-        // §64: buffer without explicit bounded length fails generation.
-        if field.buffer_length_of.is_none() || field.max_buffer_bytes.is_none() {
-            return invalid(format!(
-                "buffer field {} must declare buffer_length_of and max_buffer_bytes",
-                field.name
-            ));
-        }
-        if field
-            .max_buffer_bytes
-            .is_some_and(|limit| limit > 16 * 1024 * 1024)
-        {
-            return invalid(format!(
-                "buffer field {} exceeds the 16 MiB scratch bound",
-                field.name
-            ));
-        }
-    } else {
-        if field.buffer_length_of.is_some() || field.max_buffer_bytes.is_some() {
-            return invalid(format!(
-                "non-buffer field {} must not declare buffer bounds",
-                field.name
-            ));
-        }
-        if role.is_reference() && field.abi_type != "ViewRef" && field.abi_type != "StyleRef" {
-            return invalid(format!(
-                "reference field {} must lower through ViewRef or StyleRef",
-                field.name
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// PERF-12 T7 (§22/§32): validation for fixed-arity axis materializers.
-/// The bridge kind must be a layout axis; the constructor family must exist,
-/// return ViewRefResult, and agree with the materializer's lifetime policy;
-/// the field list must be exactly the axis scalars (node id halves + gap) —
-/// children are lowered structurally, never declared as fields.
-fn validate_fixed_arity_axis(
-    document: &AbiDocument,
-    materializer: &MaterializerSpec,
-    axis: &MaterializerFixedArityAxisSpec,
-    scalar_types: &[&str],
-) -> Result<(), ValidationError> {
-    if !matches!(materializer.bridge_kind.as_str(), "viewRow" | "viewColumn") {
-        return invalid(format!(
-            "materializer {} declares fixed_arity_axis on non-axis kind {}",
-            materializer.name, materializer.bridge_kind
-        ));
-    }
-    if axis.builders.is_empty() || axis.builders.len() > 8 {
-        return invalid(format!(
-            "materializer {} fixed-arity family must contain 1 through 8 builders",
-            materializer.name
-        ));
-    }
-    if materializer.rust_builder != axis.builders[0] {
-        return invalid(format!(
-            "materializer {} rust_builder must be the arity-0 family builder {}",
-            materializer.name, axis.builders[0]
-        ));
-    }
-    // PERF-12 T8 (§29): the borrowed-buffer lane builder must exist, return
-    // ViewRefResult, and agree with the materializer's lifetime policy.
-    if let Some(buffer_builder) = &axis.buffer_builder {
-        let Some(builder) = document
-            .functions
-            .iter()
-            .find(|function| function.name == *buffer_builder)
-        else {
-            return invalid(format!(
-                "materializer {} buffer builder {} is not a declared ABI function",
-                materializer.name, buffer_builder
-            ));
-        };
-        if builder.return_type != "ViewRefResult" {
-            return invalid(format!(
-                "materializer {} buffer builder {} must return ViewRefResult",
-                materializer.name, buffer_builder
-            ));
-        }
-        if builder.ownership != materializer.ownership
-            || builder.thread_affinity != materializer.thread_affinity
-            || builder.borrow_duration != materializer.borrow_duration
-        {
-            return invalid(format!(
-                "materializer {} buffer builder {} lifetime policy disagrees with the materializer",
-                materializer.name, buffer_builder
-            ));
-        }
-        if axis.builders.contains(buffer_builder) {
-            return invalid(format!(
-                "materializer {} buffer builder {} must not duplicate a family builder",
-                materializer.name, buffer_builder
-            ));
-        }
-    }
-
-    let mut seen = HashSet::new();
-    for (arity, builder_name) in axis.builders.iter().enumerate() {
-        let Some(builder) = document
-            .functions
-            .iter()
-            .find(|function| function.name == *builder_name)
-        else {
-            return invalid(format!(
-                "materializer {} family builder {} (arity {}) is not a declared ABI function",
-                materializer.name, builder_name, arity
-            ));
-        };
-        if builder.return_type != "ViewRefResult" {
-            return invalid(format!(
-                "materializer {} family builder {} must return ViewRefResult",
-                materializer.name, builder_name
-            ));
-        }
-        if builder.ownership != materializer.ownership
-            || builder.thread_affinity != materializer.thread_affinity
-        {
-            return invalid(format!(
-                "materializer {} family builder {} lifetime policy disagrees with the materializer",
-                materializer.name, builder_name
-            ));
-        }
-        if !seen.insert(builder_name.as_str()) {
-            return invalid(format!(
-                "materializer {} declares duplicate family builder {}",
-                materializer.name, builder_name
-            ));
-        }
-    }
-    // Axis fields: exactly one node_id pair and exactly one scalar (gap).
-    let low_count = materializer
-        .fields
-        .iter()
-        .filter(|field| field.role == "node_id_low")
-        .count();
-    let high_count = materializer
-        .fields
-        .iter()
-        .filter(|field| field.role == "node_id_high")
-        .count();
-    let scalar_fields: Vec<_> = materializer
-        .fields
-        .iter()
-        .filter(|field| field.role == "scalar")
-        .collect();
-    if low_count != 1
-        || high_count != 1
-        || scalar_fields.len() != 1
-        || materializer.fields.len() != 3
-    {
-        return invalid(format!(
-            "materializer {} axis shape requires exactly node_id_low, node_id_high, and one gap scalar",
-            materializer.name
-        ));
-    }
-    let gap = scalar_fields[0];
-    if gap.source != "gap" || !scalar_types.contains(&gap.abi_type.as_str()) {
-        return invalid(format!(
-            "materializer {} axis gap field must source 'gap' as a scalar ABI type",
-            materializer.name
-        ));
-    }
-    Ok(())
 }
 
 fn is_snake_case(value: &str) -> bool {

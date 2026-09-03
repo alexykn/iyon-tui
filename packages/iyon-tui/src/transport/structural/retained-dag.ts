@@ -109,13 +109,13 @@ const STYLE_REF_CACHE: {
  * independently of timing noise (exact root = 0 field reads / 0 ref words).
  */
 export interface RetainedIdentityCounters {
-  bridge_hint_hits: number;
-  bridge_hint_misses: number;
+  retained_hint_hits: number;
+  retained_hint_misses: number;
   node_id_ref_promotion_attempts: number;
   node_id_ref_promotion_hits: number;
   node_id_ref_promotion_misses: number;
-  bridge_semantic_nodes_inspected: number;
-  bridge_children_visited: number;
+  retained_semantic_nodes_inspected: number;
+  retained_children_visited: number;
   direct_materializer_calls: number;
   derivation_fast_path_calls: number;
   ref_words_written: number;
@@ -127,13 +127,13 @@ export interface RetainedIdentityCounters {
 }
 
 const counters: RetainedIdentityCounters = {
-  bridge_hint_hits: 0,
-  bridge_hint_misses: 0,
+  retained_hint_hits: 0,
+  retained_hint_misses: 0,
   node_id_ref_promotion_attempts: 0,
   node_id_ref_promotion_hits: 0,
   node_id_ref_promotion_misses: 0,
-  bridge_semantic_nodes_inspected: 0,
-  bridge_children_visited: 0,
+  retained_semantic_nodes_inspected: 0,
+  retained_children_visited: 0,
   direct_materializer_calls: 0,
   derivation_fast_path_calls: 0,
   ref_words_written: 0,
@@ -474,7 +474,7 @@ function runMaterializer(_kind: string, lower: () => number): number {
 
 function materializeSpacerNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.spacer) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("spacer", () => viewSpacerCreate(tx.symbols, tx.runtime, low, high, node.rows));
 }
@@ -483,7 +483,7 @@ function materializeContentHostNode(node: SemanticViewNode, tx: MaterializeTx): 
   if (node.kind !== SEMANTIC_VIEW_KIND.contentHost || node.contentAttachment === undefined) {
     throw new RetainedRefusalError("ContentHost is missing its ContentPort attachment");
   }
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const resource = nativeResourceForHandleId<NativeStructuralAttachmentContract>(node.contentAttachment, "content-port");
   const portId = resource.attachmentId();
   const words = u64Words(portId);
@@ -519,8 +519,8 @@ function materializeAxisNode(node: SemanticAxisNode, tx: MaterializeTx): number 
     if (child === undefined) throw new RetainedRefusalError("axis sequence contains a missing child");
     return child;
   };
-  counters.bridge_children_visited += count;
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_children_visited += count;
+  counters.retained_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   if (count <= 4) {
     const child0 = count > 0 ? childAt(0) : undefined;
@@ -605,8 +605,8 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
     }
   }
   tx.noteRefWords(wordCount);
-  counters.bridge_children_visited += cellCount;
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_children_visited += cellCount;
+  counters.retained_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("grid", () => viewGridCreateBuffer(
     tx.symbols,
@@ -684,7 +684,7 @@ function styleRefFor(style: SemanticStyle | undefined, tx: MaterializeTx): numbe
 
 function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const spans = node.spans;
   if (spans.length < 1) {
     throw new RetainedRefusalError("text requires at least one span");
@@ -769,7 +769,7 @@ function materializeWideTextNode(
   spans: readonly SemanticTextSpan[],
 ): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const styleRefs = spans.map((span) => styleRefCounted(span.style, tx));
   const wrap = wrapModeCode(node.wrap);
   const align = horizontalAlignCode(node.align);
@@ -808,7 +808,7 @@ function requiredU64Words(value: number): readonly [number, number] {
 /** PERF-12 T11 (§41): new-Diff construction through one words+bytes call. */
 function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.diff) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const hunks = node.hunks;
   let wordCount = 1;
   let byteCount = 0;
@@ -870,7 +870,7 @@ function styleRefCounted(style: SemanticStyle | undefined, tx: MaterializeTx): n
 
 function materializeHangingNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.hanging) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const prefixRef = ensureSemanticNative(node.prefix, tx);
   const continuationRef = ensureSemanticNative(node.continuation, tx);
   const bodyRef = ensureSemanticNative(node.body, tx);
@@ -882,7 +882,7 @@ function materializeHangingNode(node: SemanticViewNode, tx: MaterializeTx): numb
 
 function materializeContainerNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.container) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("container", () =>
@@ -895,7 +895,7 @@ function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number
   if (node.kind !== SEMANTIC_VIEW_KIND.clamp && node.kind !== SEMANTIC_VIEW_KIND.contentMax) {
     throw new RetainedRefusalError("kind mismatch");
   }
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   let overflowStyleRef = 0;
   let prefix = "";
@@ -915,7 +915,7 @@ function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number
 
 function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.component) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   const handleWords = requiredU64Words(componentIdForHandleId(node.handleId));
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("component", () =>
@@ -958,7 +958,7 @@ function readCustomBorderGlyphs(glyphs: unknown): readonly string[] | undefined 
 
 function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedRefusalError("kind mismatch");
-  counters.bridge_semantic_nodes_inspected += 1;
+  counters.retained_semantic_nodes_inspected += 1;
   // Decoration values apply directly to the child View's canonical physical
   // box; no extra physical occurrence owns padding, bounds, or border geometry.
   counters.decorated_normalized_nodes += 1;
@@ -1163,7 +1163,7 @@ export function ensureNative(node: SemanticViewNode | object, tx: MaterializeTx)
 export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx): number {
   const hint = SEMANTIC_NATIVE.get(node);
   if (hint !== undefined && hint.generation === tx.generation) {
-    counters.bridge_hint_hits += 1;
+    counters.retained_hint_hits += 1;
     tx.noteBorrowedHint(node, hint.nativeRef);
     return hint.nativeRef;
   }
@@ -1204,7 +1204,7 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
     if (reference === undefined) {
       const materializer = MATERIALIZERS.get(node.kind);
       if (materializer === undefined) {
-        counters.bridge_semantic_nodes_inspected += 1;
+        counters.retained_semantic_nodes_inspected += 1;
         throw new RetainedRefusalError(`no materializer for kind ${node.kind}`);
       }
       reference = materializeWithRecovery(node, tx, materializer);
@@ -1398,7 +1398,7 @@ export function renderExactRoot(
   const hint = SEMANTIC_NATIVE.get(node);
 
   if (hint !== undefined && hint.generation === generation) {
-    counters.bridge_hint_hits += 1;
+    counters.retained_hint_hits += 1;
     const hostStart = phaseNow();
     const status = hostRenderRef(session.symbols, session.runtime, host, hint.nativeRef);
     const hostEnd = phaseNow();

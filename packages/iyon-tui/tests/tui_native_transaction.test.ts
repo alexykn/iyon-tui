@@ -5,7 +5,7 @@ import {
   nativeViewAbiSession,
   nativeViewRefForNodeId,
   releaseNativeViewRef,
-  tryNativeEditTransactionRender,
+  tryRetainedEditTransactionRender,
 } from "../src/transport/structural/native-view-abi.ts";
 import { viewNodeId, View } from "../src/api/view/view.ts";
 import {
@@ -51,7 +51,7 @@ describe("PERF-11.6 native edit transactions", () => {
         expectedViewKind: NATIVE_PATH_VIEW_KIND.column,
         selector: 1,
       });
-      const result = tryNativeEditTransactionRender(host, base, baseRef, [
+      const result = tryRetainedEditTransactionRender(host, base, baseRef, [
         { lineage: leftLineage, nodeIds: [viewNodeId(changedLeft), viewNodeId(changed)], wrap: 3, align: 1 },
         { lineage: rightLineage, nodeIds: [viewNodeId(changedRight), viewNodeId(changed)], wrap: 2, align: 2 },
       ]);

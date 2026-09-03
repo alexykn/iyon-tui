@@ -5,7 +5,7 @@ import {
   nativeViewAbiSession,
   nativeViewRefForNodeId,
   releaseNativeViewRef,
-  tryNativeAxisCreateRender,
+  tryRetainedAxisCreateRender,
 } from "../src/transport/structural/native-view-abi.ts";
 import { AppHarness } from "../src/testing/index.ts";
 import { View } from "../src/api/view/view.ts";
@@ -34,7 +34,7 @@ describe("PERF-11.8 native builders and small constructors", () => {
       const rightRef = nativeViewRefForNodeId(right);
       expect(leftRef).toBeGreaterThan(0);
       expect(rightRef).toBeGreaterThan(0);
-      const result = tryNativeAxisCreateRender(host, next, false, 0, [
+      const result = tryRetainedAxisCreateRender(host, next, false, 0, [
         { view: left, trackWord: 3 | (1 << 8) },
         { view: right, trackWord: 4 | (1 << 8) },
       ]);

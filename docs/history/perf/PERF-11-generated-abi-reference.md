@@ -1,11 +1,11 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41; generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659 -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd; generator_blake3 = 8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65 -->
 
 # PERF-11 generated ABI reference
 
 > This file is generated. Do not edit it directly.
 
-- Schema BLAKE3: `06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41`
-- Generator BLAKE3: `37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659`
+- Schema BLAKE3: `7a24d016ae0beb92c3015bac0a6dd66f09ba93bb899e0271232d576bc586c2bd`
+- Generator BLAKE3: `8988baafda3c5ed74ab4450221eca5cd9a1b7fcd82dd351d571694bcb307ca65`
 - ABI: `iyon_tui_view` v1
 - Semantic schema: v1
 - Minimum Bun: `1.4.0`
@@ -49,68 +49,68 @@
 
 ## Functions
 
-| Name | Family | Hotness | Return | Fallback | Thread | Allocates | Host mutation |
-|---|---|---|---|---|---|---|---|
-| `runtime_noop` | `runtime` | `probe` | `u32` | `none` | `owner_thread` | `false` | `false` |
-| `view_status_detail` | `diagnostic` | `cold` | `u32` | `none` | `owner_thread` | `false` | `false` |
-| `view_render_ref` | `render_ref` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `false` | `false` |
-| `host_render_ref` | `render_ref` | `critical` | `i32` | `none` | `owner_thread` | `false` | `true` |
-| `view_state_attach` | `structural_patch` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_content_host_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_spacer_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_root` | `scalar_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_common_patch_root` | `scalar_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_axis_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_row_create_0` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_row_create_1` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_row_create_2` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_row_create_3` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_row_create_4` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_column_create_0` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_column_create_1` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_column_create_2` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_column_create_3` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_column_create_4` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `axis_builder_begin` | `builder` | `warm` | `native_ref_result` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `axis_builder_push` | `builder` | `warm` | `status_only` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `axis_builder_finish` | `builder` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `axis_builder_abort` | `builder` | `cold` | `status_only` | `none` | `owner_thread` | `false` | `false` |
-| `view_axis_set_child` | `structural_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_axis_splice_buffer` | `structural_patch` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_grid_set_cell` | `structural_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_axis_set_child_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_grid_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_diff_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_hanging_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_container_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_clamp_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_component_create` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_decorated_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_grid_set_cell_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_release_many` | `lifecycle` | `cold` | `i32` | `none` | `owner_thread` | `false` | `false` |
-| `view_ref_for_node_id` | `exact_lookup` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `false` | `false` |
-| `path_root` | `path` | `warm` | `PathRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `path_child` | `path` | `warm` | `PathRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_path` | `path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_path_d1` | `path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_path_d2` | `path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_path_d3` | `path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_layout_patch_path_d4` | `path_patch` | `critical` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `edit_txn_begin` | `edit_transaction` | `critical` | `native_ref_result` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `edit_txn_add_text_layout` | `edit_transaction` | `critical` | `status_only` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `edit_txn_commit_render` | `edit_transaction` | `critical` | `native_ref_result` | `direct_decode` | `owner_thread` | `true` | `true` |
-| `edit_txn_abort` | `edit_transaction` | `cold` | `status_only` | `none` | `owner_thread` | `false` | `false` |
-| `style_atom_create_cstring` | `style_atom` | `warm` | `StyleAtomRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `style_create_bits` | `style_atom` | `warm` | `StyleRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_cstring` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_utf8` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_utf8_2` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_utf8_3` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_utf8_4` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_cstring_2` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_cstring_3` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_cstring_4` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
-| `view_text_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
+| Name | Family | Hotness | Return | Thread | Allocates | Host mutation |
+|---|---|---|---|---|---|---|
+| `runtime_noop` | `runtime` | `probe` | `u32` | `owner_thread` | `false` | `false` |
+| `view_status_detail` | `diagnostic` | `cold` | `u32` | `owner_thread` | `false` | `false` |
+| `view_render_ref` | `render_ref` | `critical` | `ViewRefResult` | `owner_thread` | `false` | `false` |
+| `host_render_ref` | `render_ref` | `critical` | `i32` | `owner_thread` | `false` | `true` |
+| `view_state_attach` | `structural_patch` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_content_host_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_spacer_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_root` | `scalar_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_common_patch_root` | `scalar_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_axis_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_row_create_0` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_row_create_1` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_row_create_2` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_row_create_3` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_row_create_4` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_column_create_0` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_column_create_1` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_column_create_2` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_column_create_3` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_column_create_4` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `axis_builder_begin` | `builder` | `warm` | `native_ref_result` | `owner_thread` | `true` | `false` |
+| `axis_builder_push` | `builder` | `warm` | `status_only` | `owner_thread` | `true` | `false` |
+| `axis_builder_finish` | `builder` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `axis_builder_abort` | `builder` | `cold` | `status_only` | `owner_thread` | `false` | `false` |
+| `view_axis_set_child` | `structural_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_axis_splice_buffer` | `structural_patch` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_grid_set_cell` | `structural_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_axis_set_child_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_grid_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_diff_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_hanging_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_container_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_clamp_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_component_create` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_decorated_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_grid_set_cell_path` | `structural_path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_release_many` | `lifecycle` | `cold` | `i32` | `owner_thread` | `false` | `false` |
+| `view_ref_for_node_id` | `exact_lookup` | `critical` | `ViewRefResult` | `owner_thread` | `false` | `false` |
+| `path_root` | `path` | `warm` | `PathRefResult` | `owner_thread` | `true` | `false` |
+| `path_child` | `path` | `warm` | `PathRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_path` | `path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_path_d1` | `path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_path_d2` | `path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_path_d3` | `path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_layout_patch_path_d4` | `path_patch` | `critical` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `edit_txn_begin` | `edit_transaction` | `critical` | `native_ref_result` | `owner_thread` | `true` | `false` |
+| `edit_txn_add_text_layout` | `edit_transaction` | `critical` | `status_only` | `owner_thread` | `true` | `false` |
+| `edit_txn_commit_render` | `edit_transaction` | `critical` | `native_ref_result` | `owner_thread` | `true` | `true` |
+| `edit_txn_abort` | `edit_transaction` | `cold` | `status_only` | `owner_thread` | `false` | `false` |
+| `style_atom_create_cstring` | `style_atom` | `warm` | `StyleAtomRefResult` | `owner_thread` | `true` | `false` |
+| `style_create_bits` | `style_atom` | `warm` | `StyleRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_cstring` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_utf8` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_utf8_2` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_utf8_3` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_utf8_4` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_cstring_2` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_cstring_3` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_cstring_4` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
+| `view_text_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `owner_thread` | `true` | `false` |
 
 ## ABI conformance fixtures
 

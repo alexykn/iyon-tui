@@ -11,7 +11,7 @@ use crate::{
 
 pub fn types(
     document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
     schema_hash: &str,
     generator_hash: &str,
 ) -> String {
@@ -46,7 +46,7 @@ pub fn types(
         output.push_str("#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\n");
         output.push_str(&format!("pub enum {} {{\n", enum_spec.name));
         for value in &enum_spec.values {
-            let number = bridge_schema
+            let number = kind_codes
                 .get(&value.source_key)
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
@@ -54,7 +54,7 @@ pub fn types(
         }
         output.push_str("}\n\n");
         for value in &enum_spec.values {
-            let number = bridge_schema
+            let number = kind_codes
                 .get(&value.source_key)
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
@@ -70,7 +70,7 @@ pub fn types(
 
 pub fn exports(
     document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
     schema_hash: &str,
     generator_hash: &str,
 ) -> String {
@@ -105,7 +105,7 @@ pub fn exports(
             result_type,
             result_type
         ));
-        source.push_str(&validation_statements(function, document, bridge_schema));
+        source.push_str(&validation_statements(function, document, kind_codes));
         source.push_str(&format!(
             "            Ok(unsafe {{ generated_impls::{}({}) }})\n        }})()\n    }},\n        {}\n    )\n}}\n\n#[cfg(feature = \"direct-ffi\")]\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn iyon_{}_v1({}) -> {} {{\n    unsafe {{ invoke_iyon_{}_v1({}) }}\n}}\n\n",
             function.implementation,
@@ -435,16 +435,15 @@ fn weighted_sum_expression(spec: &crate::model::ConformanceSpec) -> String {
 
 pub fn table(document: &AbiDocument, schema_hash: &str, generator_hash: &str) -> String {
     let mut output = banner(schema_hash, generator_hash);
-    output.push_str("#![allow(dead_code)]\n\n#[derive(Clone, Copy, Debug)]\npub struct FunctionDescriptor {\n    pub name: &'static str,\n    pub symbol: &'static str,\n    pub family: &'static str,\n    pub hotness: &'static str,\n    pub fallback: &'static str,\n    pub ownership: &'static str,\n    pub borrow_duration: &'static str,\n    pub thread_affinity: &'static str,\n    pub may_allocate_native_memory: bool,\n    pub mutates_host_state: bool,\n    pub max_buffer_bytes: u64,\n    pub max_input_count: u32,\n    pub benchmark_registration: &'static str,\n}\n\n");
+    output.push_str("#![allow(dead_code)]\n\n#[derive(Clone, Copy, Debug)]\npub struct FunctionDescriptor {\n    pub name: &'static str,\n    pub symbol: &'static str,\n    pub family: &'static str,\n    pub hotness: &'static str,\n    pub ownership: &'static str,\n    pub borrow_duration: &'static str,\n    pub thread_affinity: &'static str,\n    pub may_allocate_native_memory: bool,\n    pub mutates_host_state: bool,\n    pub max_buffer_bytes: u64,\n    pub max_input_count: u32,\n    pub benchmark_registration: &'static str,\n}\n\n");
     output.push_str("pub static FUNCTIONS: &[FunctionDescriptor] = &[\n");
     for function in &document.functions {
         output.push_str(&format!(
-            "    FunctionDescriptor {{\n        name: {:?},\n        symbol: {:?},\n        family: {:?},\n        hotness: {:?},\n        fallback: {:?},\n        ownership: {:?},\n        borrow_duration: {:?},\n        thread_affinity: {:?},\n        may_allocate_native_memory: {},\n        mutates_host_state: {},\n        max_buffer_bytes: {},\n        max_input_count: {},\n        benchmark_registration: {:?},\n    }},\n",
+            "    FunctionDescriptor {{\n        name: {:?},\n        symbol: {:?},\n        family: {:?},\n        hotness: {:?},\n        ownership: {:?},\n        borrow_duration: {:?},\n        thread_affinity: {:?},\n        may_allocate_native_memory: {},\n        mutates_host_state: {},\n        max_buffer_bytes: {},\n        max_input_count: {},\n        benchmark_registration: {:?},\n    }},\n",
             function.name,
             format!("iyon_{}_v1", function.name),
             function.family,
             function.hotness,
-            function.fallback,
             function.ownership,
             function.borrow_duration,
             function.thread_affinity,
@@ -506,7 +505,7 @@ fn error_literal(function: &crate::model::FunctionSpec, kind: &str) -> String {
 fn validation_statements(
     function: &crate::model::FunctionSpec,
     document: &AbiDocument,
-    bridge_schema: &Map<String, serde_json::Value>,
+    kind_codes: &Map<String, serde_json::Value>,
 ) -> String {
     let error = error_literal(function, "invalid");
     let buffer_error = if function.return_type == "i32" || function.return_type == "status_only" {
@@ -638,10 +637,10 @@ fn validation_statements(
                     .into_iter()
                     .flat_map(|enum_spec| enum_spec.values.iter())
                     .map(|value| {
-                        bridge_schema
+                        kind_codes
                             .get(&value.source_key)
                             .and_then(serde_json::Value::as_u64)
-                            .expect("validated bridge enum value")
+                            .expect("validated kind-codes enum value")
                             .to_string()
                     })
                     .collect::<Vec<_>>()

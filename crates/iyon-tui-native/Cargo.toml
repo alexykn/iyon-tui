@@ -25,7 +25,6 @@ static_assertions.workspace = true
 
 [build-dependencies]
 napi-build = "2.4.1"
-serde_json.workspace = true
 
 # The bridge deliberately exposes generated ABI tables and owner-thread
 # retained handles; these are validated by the ABI and runtime tests rather

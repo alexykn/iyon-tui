@@ -151,7 +151,6 @@ pub fn manifest(
                 "family": function.family,
                 "hotness": function.hotness,
                 "implementation": function.implementation,
-                "fallback": function.fallback,
                 "ownership": function.ownership,
                 "borrow_duration": function.borrow_duration,
                 "thread_affinity": function.thread_affinity,
@@ -186,32 +185,6 @@ pub fn manifest(
             })
         })
         .collect();
-    let materializers: Vec<Value> = document
-        .materializers
-        .iter()
-        .map(|materializer| {
-            json!({
-                "name": materializer.name,
-                "bridge_kind": materializer.bridge_kind,
-                "rust_builder": materializer.rust_builder,
-                "fallback": materializer.fallback,
-                "ownership": materializer.ownership,
-                "borrow_duration": materializer.borrow_duration,
-                "thread_affinity": materializer.thread_affinity,
-                "status_detail": materializer.status_detail,
-                "benchmark_registration": materializer.benchmark_registration,
-                "result": materializer.result,
-                "fields": materializer.fields.iter().map(|field| json!({
-                    "name": field.name,
-                    "source": field.source,
-                    "type": field.abi_type,
-                    "role": field.role,
-                    "buffer_length_of": field.buffer_length_of,
-                    "max_buffer_bytes": field.max_buffer_bytes,
-                })).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
     let conformance: Vec<Value> = document
         .conformance
         .iter()
@@ -239,7 +212,6 @@ pub fn manifest(
         "enums": enums,
         "pods": document.pods,
         "functions": functions,
-        "materializers": materializers,
         "conformance": conformance,
         "generated_outputs": output_paths,
     });
@@ -280,16 +252,15 @@ pub fn human_reference(document: &AbiDocument, schema_hash: &str, generator_hash
         output.push('\n');
     }
     output.push_str(
-        "## Functions\n\n| Name | Family | Hotness | Return | Fallback | Thread | Allocates | Host mutation |\n|---|---|---|---|---|---|---|---|\n",
+        "## Functions\n\n| Name | Family | Hotness | Return | Thread | Allocates | Host mutation |\n|---|---|---|---|---|---|---|\n",
     );
     for function in &document.functions {
         output.push_str(&format!(
-            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
+            "| `{}` | `{}` | `{}` | `{}` | `{}` | `{}` | `{}` |\n",
             function.name,
             function.family,
             function.hotness,
             function.return_type,
-            function.fallback,
             function.thread_affinity,
             function.may_allocate_native_memory,
             function.mutates_host_state

@@ -1116,6 +1116,7 @@ function perf13CleanupGate(): void {
     "crates/iyon-tui/src/stream/snapshot.rs",
     "crates/iyon-tui/src/stream/source.rs",
     "packages/iyon-tui/src/transport/structural/cold-lowering.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_materialize.ts",
     "packages/iyon-tui/bench/direct_ffi",
     "packages/iyon-tui/bench/perf12_t15_direct_case.ts",
     "packages/iyon-tui/bench/perf12_t15_case.ts",
@@ -1135,7 +1136,11 @@ function perf13CleanupGate(): void {
   // JSON-decode graph, no bench-only decode copies, and no fallback/route
   // vocabulary that implied a second architecture. (Core-grid `lower_grid`
   // is a legitimate framework helper and is deliberately not listed.)
-  const forbidden = /\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector|lowerColdView|lowerSemanticView|tuiViewAbiDecodeRef|tui_view_abi_decode_ref|tryNativeMaterialize|renderColdRef|prepareColdInstall|setRootColdMaterializer|COLD_ROOT_MATERIALIZER|coldLoweringCounterSnapshot|resetColdLoweringCounters|cold_bridge_objects_allocated|RetainedFastFallbackError|FAST_FALLBACK|NativeViewRoute|recordNativeViewRoute|nativeViewRouteSnapshot|resetNativeViewRouteCounters|view_bridge_cache|with_view_runtime|ViewBridgeCache|decode_view|ViewDecoder|publish_decoded_view|record_decoded_semantic_view|lower_axis|apply_decoration|decode_border|decode_decoration)\b/u;
+  // Follow-up: the dead bridge-view tree types, the generated duplicate
+  // materializer, the `fallback`/`direct_decode` ABI metadata, the dead
+  // build-time schema-constants block, and the legacy `bridge_*`/`tryNative*`
+  // names are deleted too.
+  const forbidden = /\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector|lowerColdView|lowerSemanticView|tuiViewAbiDecodeRef|tui_view_abi_decode_ref|tryNativeMaterialize|renderColdRef|prepareColdInstall|setRootColdMaterializer|COLD_ROOT_MATERIALIZER|coldLoweringCounterSnapshot|resetColdLoweringCounters|cold_bridge_objects_allocated|RetainedFastFallbackError|FAST_FALLBACK|NativeViewRoute|recordNativeViewRoute|nativeViewRouteSnapshot|resetNativeViewRouteCounters|view_bridge_cache|with_view_runtime|ViewBridgeCache|decode_view|ViewDecoder|publish_decoded_view|record_decoded_semantic_view|lower_axis|apply_decoration|decode_border|decode_decoration|BridgeViewNode|BridgeViewNodeDraft|BridgeLayoutChild|BridgeGridTrackNode|BridgeGridCellNode|BridgeGridRowNode|BridgeDiffHunkNode|BridgeDiffLineNode|BridgeOverflowIndicatorNode|DecorationNode|DiffRangeNode|InsetsNode|VIEW_BRIDGE_SCHEMA_VERSION|BRIDGE_OVERFLOW_KIND|bridge-schema|MaterializerSpec|materializeSpacer|materializeRow|materializeColumn|decodeMaterializeStatus|MaterializeStatus|tryNativeAxisCreate|tryNativeAxisSetChildRender|tryNativeAxisSpliceRender|tryNativeGridSetCellRender|tryNativeEditTransactionRender|bridge_hint|bridge_semantic|bridge_children|tui_bridge_schema|load_bridge_schema|direct_decode)\b/u;
   const forbiddenNativeBinding = /(?:pub fn (?:render|create_view_slot|scroll_pane|set_view|set_content|set_animation|stop_animation)\b|js_name = "(?:render|createViewSlot|scrollPane|setView|setContent|setAnimation|stopAnimation)")/u;
   const productionRoots = [
     join(ROOT, "packages/iyon-tui/src"),

@@ -3,9 +3,9 @@ import { expect, test } from "bun:test";
 import { native } from "../src/transport/native/addon.ts";
 import {
   nativeViewRefForNodeId,
-  tryNativeAxisSetChildRender,
-  tryNativeAxisSpliceRender,
-  tryNativeGridSetCellRender,
+  tryRetainedAxisSetChildRender,
+  tryRetainedAxisSpliceRender,
+  tryRetainedGridSetCellRender,
 } from "../src/transport/structural/native-view-abi.ts";
 import { View } from "../src/api/view/view.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
@@ -45,9 +45,9 @@ test("native axis replace/insert/remove preserves wide host parity", () => {
   const withRemoved = View.vertical([...items.slice(0, 1_000), ...items.slice(1_001)]);
 
   const cases = [
-    { next: withReplacement, children: [replacement], op: (host: StructuralHost, ref: number) => tryNativeAxisSetChildRender(host, base, ref, withReplacement, replacement, 1_337) },
-    { next: withInserted, children: [inserted], op: (host: StructuralHost, ref: number) => tryNativeAxisSpliceRender(host, base, ref, withInserted, 1_000, 0, [{ view: inserted }]) },
-    { next: withRemoved, children: [], op: (host: StructuralHost, ref: number) => tryNativeAxisSpliceRender(host, base, ref, withRemoved, 1_000, 1, []) },
+    { next: withReplacement, children: [replacement], op: (host: StructuralHost, ref: number) => tryRetainedAxisSetChildRender(host, base, ref, withReplacement, replacement, 1_337) },
+    { next: withInserted, children: [inserted], op: (host: StructuralHost, ref: number) => tryRetainedAxisSpliceRender(host, base, ref, withInserted, 1_000, 0, [{ view: inserted }]) },
+    { next: withRemoved, children: [], op: (host: StructuralHost, ref: number) => tryRetainedAxisSpliceRender(host, base, ref, withRemoved, 1_000, 1, []) },
   ];
 
   for (const { next, children, op } of cases) {
@@ -91,7 +91,7 @@ test("native grid cell path copy preserves placement and parity", () => {
   const reference = new Host(80, 64, true);
   try {
     const baseRef = seed(host, base, replacement);
-    const nextRef = tryNativeGridSetCellRender(host, base, baseRef, next, 31, 0, replacement);
+    const nextRef = tryRetainedGridSetCellRender(host, base, baseRef, next, 31, 0, replacement);
     expect(nextRef).toBeDefined();
     renderRetained(reference, next);
     expect(host.screenRows()).toEqual(reference.screenRows());

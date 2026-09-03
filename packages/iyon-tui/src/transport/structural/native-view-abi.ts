@@ -191,7 +191,7 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
  * Materializes a small/new axis without a JS child packet. The children must
  * already have NativeRefs.
  */
-export function tryNativeAxisCreate(
+export function tryRetainedAxisCreate(
   next: View,
   horizontal: boolean,
   gap: number,
@@ -225,7 +225,7 @@ export function tryNativeAxisCreate(
 }
 
 /** Installs a newly-created native axis with one host mutation. */
-export function tryNativeAxisCreateRender(
+export function tryRetainedAxisCreateRender(
   host: NativeViewRenderHost,
   next: View,
   horizontal: boolean,
@@ -234,7 +234,7 @@ export function tryNativeAxisCreateRender(
 ): number | undefined {
   if (!canInstallNativeRef(host)) return undefined;
   const session = nativeViewAbiSession();
-  const nextRef = tryNativeAxisCreate(next, horizontal, gap, children);
+  const nextRef = tryRetainedAxisCreate(next, horizontal, gap, children);
   if (nextRef === undefined) return undefined;
   try {
     const status = installNativeRef(host, session, nextRef);
@@ -314,7 +314,7 @@ function createAxisWithBuilder(
  * operation supplies only the child NativeRef and the new root NodeId; it
  * does not encode the surrounding axis or descendants.
  */
-export function tryNativeAxisSetChildRender(
+export function tryRetainedAxisSetChildRender(
   host: NativeViewRenderHost,
   previous: View,
   previousRef: number,
@@ -354,7 +354,7 @@ export function tryNativeAxisSetChildRender(
  * buffer contains only `(track_word, child_ref)` pairs; no View payload or
  * generic operation record is serialized.
  */
-export function tryNativeAxisSpliceRender(
+export function tryRetainedAxisSpliceRender(
   host: NativeViewRenderHost,
   previous: View,
   previousRef: number,
@@ -400,7 +400,7 @@ export function tryNativeAxisSpliceRender(
 }
 
 /** Replaces one grid cell using the persistent cell sequence index. */
-export function tryNativeGridSetCellRender(
+export function tryRetainedGridSetCellRender(
   host: NativeViewRenderHost,
   previous: View,
   previousRef: number,
@@ -440,7 +440,7 @@ export function tryNativeGridSetCellRender(
  * changed-path-trie result. Construction-time transaction metadata supplies
  * scalar NodeIds.
  */
-export function tryNativeEditTransactionRender(
+export function tryRetainedEditTransactionRender(
   host: NativeViewRenderHost,
   previous: View,
   previousRef: number,

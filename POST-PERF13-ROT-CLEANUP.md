@@ -122,14 +122,19 @@ Approximate production LOC removed: ~300 (mostly retained-dag cold
 machinery + fallback branches). Added: ~120 (explicit-failure comments,
 blocker annotations, exact-size byte accounting).
 
-NOT yet physically deleted (zero production importers/callers, recorded
-under R0-B003): `cold-lowering.ts` + `BridgeViewNode`/`ir.ts` (test/bench
-oracle), `tuiViewAbiDecodeRef` native export + Rust bridge-decode graph,
-`retained-path.ts` path-recipe constructors (test/bench-only),
-`NativeViewRoute "fallback"` member (never recorded now),
-`RetainedFastFallbackError` name (kept: generated ABI code imports it;
-now means explicit retained refusal), `bridge_*` counter names (measure
-the authoritative path).
+NOT yet physically deleted at tranche close (zero production
+importers/callers, recorded under R0-B003): `cold-lowering.ts` +
+`BridgeViewNode`/`ir.ts` (test/bench oracle), `tuiViewAbiDecodeRef`
+native export + Rust bridge-decode graph, `retained-path.ts`
+path-recipe constructors (test/bench-only), `NativeViewRoute
+"fallback"` member (never recorded now), `RetainedFastFallbackError`
+name (kept: generated ABI code imports it; now means explicit retained
+refusal), `bridge_*` counter names (measure the authoritative path).
+All of these except the `retained-path.ts` constructors were removed in
+the follow-up residue eradication recorded in §9 (dead types deleted,
+generated duplicate materializer deleted at the source-of-truth level,
+`fallback` metadata deleted, counters/helpers renamed, schema file
+renamed, dead `build.rs` block deleted).
 
 ---
 
@@ -256,27 +261,51 @@ R0-B003  EXECUTED. Deleted: cold-lowering.ts; Rust decode graph
 ```
 
 Deliberately KEPT (investigated, not overlooked):
-- `bridge-schema.json` — load-bearing build input: build.rs numeric
-  constants + tui-abi-gen enum keys/validation. Deleting it means
-  re-plumbing numeric codes across TS/Rust/codegen for zero runtime
-  effect. The name is legacy; the function is current infrastructure.
-- `ir.ts` bridge types — serve the live theme pipeline
-  (runtime.ts borderNodeFor/materializeTheme, style-lowering
-  *NodeFor). Deleting them means redesigning the theme contract.
 - `retained-path.ts` — verified clean: production imports types only;
   runtime helpers are current-arch path-patch test scaffolding, with no
   cold/decode/bridge references (one historical comment word).
-- Generator `[[materializer]]` specs + `view_materialize.ts` — dead
-  (zero importers) but consistent; generator surgery belongs to the
-  census, not to a deletion tranche.
-- `fallback = "direct_decode"` TOML metadata + `hotness` labels —
-  per-function schema metadata, all 60 functions carry them; renaming
-  is snapshot churn with zero runtime effect.
-- `bridge_*` TS counters — they measure the AUTHORITATIVE path
-  (authoritative bench asserts them); the word is legacy, the metrics
-  are current.
 - `decode_wrap/decode_align` Rust scalar parsers — normal
   value-parsing terminology, no architectural meaning.
+- `hotness` labels — per-function ABI performance metadata orthogonal
+  to fallback routing; retained.
+- `BRIDGE_*` numeric code tables (`BRIDGE_VIEW_KIND`,
+  `BRIDGE_LAYOUT_CHILD_KIND`, grid/wrap/align/diff codes in `ir.ts`)
+  — load-bearing discriminant tables consumed by the live
+  retained materializers (`encoding.ts`) and the ABI generator's enum
+  validation. Only the names are legacy.
+
+Follow-up residue eradication (post-tranche; everything below was listed
+as kept-or-deferred above and has since been removed):
+- `bridge-schema.json` RENAMED to `view-kind-codes.json` (content
+  byte-identical); TOML enum sources, tui-abi-gen paths/names, and the
+  `ir.ts` import/binding renamed with it.
+- `ir.ts` dead full-view tree types DELETED (`BridgeViewNode`,
+  `BridgeViewNodeDraft`, `BridgeLayoutChild`, grid/diff/overflow node
+  types, `DecorationNode`, `DiffRangeNode`, `InsetsNode`,
+  `VIEW_BRIDGE_SCHEMA_VERSION`, `BRIDGE_OVERFLOW_KIND`). The live theme
+  atoms (`ColorNode`, `StyleNode`, `TextSpanNode`, `BorderNode`) and
+  the numeric code tables stay.
+- Generator `[[materializer]]` specs + `view_materialize.ts` DELETED:
+  TOML blocks, model structs/roles, validation section, manifest and
+  TypeScript rendering, generator tests, insta snapshot (regenerated),
+  and all regenerated outputs. The duplicate materializer is gone at
+  the source-of-truth level, not just at the file level.
+- `fallback` ABI metadata DELETED: model field, all 63 TOML lines,
+  manifest JSON, Rust `FunctionDescriptor` field + table literals,
+  human-reference column, and `explain` output. Nothing read it at
+  runtime (verified: zero readers outside generated literals).
+- `bridge_*` TS counters RENAMED to `retained_*`
+  (`retained_hint_hits/misses`, `retained_semantic_nodes_inspected`,
+  `retained_children_visited`); authoritative bench/tests updated.
+- `tryNative*` structural helpers RENAMED to `tryRetained*`
+  (axis/grid/edit retained-only helpers + their test call sites).
+- `build.rs` dead schema-constants block DELETED (it generated
+  `tui_bridge_schema.rs` into OUT_DIR which nothing includes; numeric
+  codes ship through tui-abi-gen instead) along with its now-unused
+  `serde_json` build-dependency. `fn main` keeps `napi_build::setup()`.
+- Ownership gate extended with absence assertions for all of the above
+  (deleted file pinned in `removedPaths`; ~30 identifiers added to the
+  `forbidden` production-source regex).
 
 ---
 

@@ -47,7 +47,7 @@ describe(H3C, () => {
       tui.render(() => ({ body: next }));
       const retained = retainedIdentityCounterSnapshot();
       expect(retained.derivation_fast_path_calls).toBe(1);
-      expect(retained.bridge_children_visited).toBe(0);
+      expect(retained.retained_children_visited).toBe(0);
       expect(tui.screenRows().join("\n")).toContain("replacement");
     } finally {
       tui.close();

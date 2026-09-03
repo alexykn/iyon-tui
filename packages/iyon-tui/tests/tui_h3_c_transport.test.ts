@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { View } from "../src/index.ts";
+import { TextSpan, View } from "../src/index.ts";
 import { axisSetChildForTransport } from "../src/api/view/view.ts";
 import { AppHarness } from "../src/testing/index.ts";
 import {
@@ -46,8 +46,9 @@ describe(H3C, () => {
     const next = axisSetChildForTransport(base, 0, View.text("replacement").noWrap());
     const tui = await AppHarness.open({ width: 20, height: 8 });
     try {
-      // The initial 2,000-child root intentionally uses the complete cold
-      // route because the direct axis packet cap is 1,024 children.
+      // The initial 2,000-child root materializes through the single retained
+      // path (PRE-V5-R0: no arity refusal; the axis buffer carries all
+      // children and the native limit is the only bound).
       tui.render(() => ({ body: base }));
       resetColdLoweringCounters();
       resetRetainedIdentityCounters();
@@ -75,14 +76,35 @@ describe(H3C, () => {
     }
   });
 
-  test("retained refusal still uses complete cold lowering", async () => {
+  test("large NUL-bearing text stays on the retained path", async () => {
+    // PRE-V5-R0: the exact-byte lane carries payloads up to the native text
+    // limit. No size heuristic selects another transport.
     const body = View.text(`${"x".repeat(65_536)}\0`);
     resetColdLoweringCounters();
+    resetRetainedIdentityCounters();
     const tui = await AppHarness.open({ width: 20, height: 4 });
     try {
       tui.render(() => ({ body }));
-      expect(coldLoweringCounterSnapshot().cold_bridge_objects_allocated).toBeGreaterThan(0);
+      expect(coldLoweringCounterSnapshot().cold_bridge_objects_allocated).toBe(0);
+      expect(retainedIdentityCounterSnapshot().direct_materializer_calls).toBeGreaterThan(0);
       expect(tui.screenRows()[0]).toContain("x");
+    } finally {
+      tui.close();
+    }
+  });
+
+  test("unsupported shapes fail explicitly instead of selecting another transport", async () => {
+    // PRE-V5-R0 BLOCKER R0-B001: 5-span styled text has no retained
+    // constructor. The refusal is an explicit preparation failure; the
+    // previous visible frame stays authoritative and no bridge object is
+    // allocated for a second architecture.
+    const spans = ["a", "b", "c", "d", "e"].map((text) => TextSpan.plain(text));
+    const body = View.styledText(spans);
+    resetColdLoweringCounters();
+    const tui = await AppHarness.open({ width: 20, height: 4 });
+    try {
+      expect(() => tui.render({ body })).toThrow("TUI_ROOT_PREPARATION_FAILED");
+      expect(coldLoweringCounterSnapshot().cold_bridge_objects_allocated).toBe(0);
     } finally {
       tui.close();
     }

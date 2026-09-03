@@ -16,11 +16,9 @@ import { EnvironmentWakeBroker } from "../src/runtime/wake-broker.ts";
 import { native } from "../src/transport/native/addon.ts";
 import {
   nativeViewAbiSession,
-  tryNativeMaterialize,
 } from "../src/transport/structural/native-view-abi.ts";
 import {
   RetainedRootBoundary,
-  setRootColdMaterializer,
 } from "../src/transport/structural/retained-dag.ts";
 import type { HandleId } from "../src/api/controls/framework-handle.ts";
 
@@ -263,7 +261,6 @@ test(`${PERF13A} separates desired structural publication from visible frame com
   const Host = native.NativeTuiHost;
   if (session === undefined || Host === undefined) throw new Error("native PERF-13-A surface is unavailable");
   const host = new Host(20, 4, true);
-  setRootColdMaterializer(tryNativeMaterialize);
   const boundary = new RetainedRootBoundary(
     session,
     () => host,

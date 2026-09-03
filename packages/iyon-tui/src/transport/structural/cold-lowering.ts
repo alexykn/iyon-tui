@@ -1,9 +1,11 @@
 /**
- * Complete derived semantic-to-bridge lowering for the cold structural path.
+ * Complete derived semantic-to-bridge lowering (test oracle only).
  *
- * The semantic node remains authoritative. This module is used only when a
- * caller needs a complete bridge object for safe N-API decoding; retained
- * materialization consumes semantic nodes directly.
+ * PRE-V5-R0: no production module imports this file. The semantic node
+ * remains authoritative and retained materialization consumes semantic nodes
+ * directly; a retained refusal fails explicitly instead of lowering here.
+ * The lowering survives only as an explicit test/benchmark oracle until its
+ * consumers are rewritten and it can be physically deleted (R0-B003).
  */
 
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
@@ -73,7 +75,7 @@ export function lowerColdView(view: View): BridgeViewNode {
   return lowerSemanticView(semanticNodeOf(view));
 }
 
-/** Lowers a semantic node completely for the safe bridge fallback. */
+/** Lowers a semantic node completely for the test-oracle bridge comparison. */
 export function lowerSemanticView(node: SemanticViewNode): BridgeViewNode {
   // A cached bridge component embeds a physical ComponentId. Do not reuse
   // that artifact after the HandleId's resource is disposed or recreated;

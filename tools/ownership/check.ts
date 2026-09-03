@@ -1311,8 +1311,22 @@ function contractParityGate(): void {
   if (!/impl\s+NativeTextInput[\s\S]*?self\.alive\.swap\(false,\s*Ordering::AcqRel\)[\s\S]*?host\.retire\(\)/u.test(native)) {
     offenders.push("NativeTextInput disposal does not request deferred component retirement");
   }
-  if (!/export\s+function\s+tryNativeMaterialize[\s\S]*?tuiViewAbiDecodeRef/u.test(nativeViewAbi)) {
-    offenders.push("cold materialization does not have a paint-free native direct-decoder fallback");
+  // PRE-V5-R0 (CLEAN2): the retained structural path is the single production
+  // architecture. No production module may select the previous-generation
+  // complete-bridge decode: native-view-abi.ts exports no cold materializer,
+  // and no boundary or control falls back to one. A retained refusal fails
+  // explicitly instead.
+  if (/export\s+function\s+(tryNativeMaterialize|renderColdRef)\b/u.test(nativeViewAbi)
+    || /cold-lowering|tuiViewAbiDecodeRef/u.test(nativeViewAbi)) {
+    offenders.push("native-view-abi.ts still exposes the previous-generation cold materialization path");
+  }
+  const retainedDag = readFileSync(join(FRAMEWORK_SRC, "transport/structural/retained-dag.ts"), "utf8");
+  if (/prepareColdInstall|COLD_ROOT_MATERIALIZER|setRootColdMaterializer/u.test(retainedDag)
+    || /prepareColdInstall|tryNativeMaterialize/u.test(runtime)
+    || /prepareColdInstall|tryNativeMaterialize/u.test(sources.get("api/controls/view-slot.ts")!)
+    || /prepareColdInstall|tryNativeMaterialize/u.test(sources.get("api/controls/scroll-pane.ts")!)
+    || /tryNativeMaterialize/u.test(sources.get("api/controls/history.ts")!)) {
+    offenders.push("a production structural boundary still selects the previous-generation cold path");
   }
   if (!kernel.includes("self.reap_retired_components();")) {
     offenders.push("successful frame preparation does not reap deferred component retirements");

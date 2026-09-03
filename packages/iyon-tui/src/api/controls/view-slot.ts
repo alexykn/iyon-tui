@@ -4,7 +4,6 @@ import type { ComponentCapabilities } from "../extensions/traits/component.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
-  tryNativeMaterialize,
   tryRetainedMaterializeRef,
 } from "../../transport/structural/native-view-abi.ts";
 import { RetainedRootBoundary } from "../../transport/structural/retained-dag.ts";
@@ -23,10 +22,10 @@ import {
 } from "../../runtime/attachments.ts";
 
 /**
- * PERF-12 T13: builds the native slot for the initial content. Retained
- * materialization first (identity-first, hint-driven), then the complete
- * cold decoder through the safe N-API bridge; the temporary lease always drains because
- * the slot natively retains its own strong copy.
+ * PERF-12 T13: builds the native slot for the initial content through the
+ * single retained materialization path (identity-first, hint-driven); the
+ * temporary lease always drains because the slot natively retains its own
+ * strong copy. A retained refusal fails explicitly (PRE-V5-R0).
  */
 function buildSlotHandle(
   host: NativeTuiHostContract,
@@ -35,7 +34,7 @@ function buildSlotHandle(
 ): object {
   if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
-  const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
+  const retained = tryRetainedMaterializeRef(seed);
   if (retained === undefined) {
     throw new Error("TUI_VIEW_SLOT_INITIALIZATION_FAILED: structural content could not be materialized");
   }
@@ -209,11 +208,9 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
       const attachments = prepareAttachmentsForView(view, this.attachmentContext);
       try {
         // PERF-12 T13 retained path: identity-first install through the slot's
-        // own §18 boundary. Capacity misses use the canonical cold
-        // materialization transaction; the previous content remains leased
-        // until the replacement commits.
-        const publication = this.boundary!.prepareInstall(view)
-          ?? this.boundary!.prepareColdInstall(view);
+        // own §18 boundary. The previous content remains leased until the
+        // replacement commits; a retained refusal fails explicitly.
+        const publication = this.boundary!.prepareInstall(view);
         if (publication === undefined) {
           throw new Error("TUI_VIEW_SLOT_UPDATE_FAILED: structural content could not be materialized");
         }
@@ -241,19 +238,17 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
   /**
    * PERF-12 T13.1 R7: transactional variant of {@link setView}. Delegates to
    * the slot's own RetainedRootBoundary — ownership stays inside the boundary
-   * (no split-brain). Capacity misses use a canonical cold publication;
-   * the returned publication's commit installs the prepared root and its
-   * abort leaves the old content installed and leased.
+   * (no split-brain). The returned publication's commit installs the prepared
+   * root and its abort leaves the old content installed and leased.
    */
   prepareSetView(view: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
     const attachments = prepareAttachmentsForView(view, this.attachmentContext);
-    // A retained preparation can refuse for a budget/unsupported-kind
-    // reason. Complete cold materialization is the canonical transactional
-    // publication before installation.
+    // A retained preparation can refuse for an unsupported-kind reason; the
+    // refusal surfaces as an explicit failure, never a second transport.
     let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
     try {
-      publication = this.boundary!.prepareInstall(view) ?? this.boundary!.prepareColdInstall(view);
+      publication = this.boundary!.prepareInstall(view);
     } catch (error) {
       attachments.abort();
       throw error;
@@ -310,7 +305,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
         for (const [index, frame] of frames.entries()) {
           // T13: animation frames ride retained identity too — stable frame
           // View objects hit their hints on every cycle instead of rebuilding.
-          const ref = tryRetainedMaterializeRef(frame) ?? tryNativeMaterialize(frame);
+          const ref = tryRetainedMaterializeRef(frame);
           if (ref === undefined) {
             throw new Error("TUI_VIEW_SLOT_ANIMATION_UPDATE_FAILED: structural content could not be materialized");
           }
@@ -371,7 +366,7 @@ export class ViewSlot extends FrameworkHandle<"component"> implements ViewSlotCo
     this.assertUserMutationAllowed("slot animation mutation");
     this.call(() => {
       prepareAttachmentsForView(view, this.attachmentContext).abort();
-      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
+      const ref = tryRetainedMaterializeRef(view);
       if (ref === undefined) {
         throw new Error("TUI_VIEW_SLOT_ANIMATION_UPDATE_FAILED: structural content could not be materialized");
       }

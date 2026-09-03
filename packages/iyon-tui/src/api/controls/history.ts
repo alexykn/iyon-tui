@@ -1,6 +1,6 @@
 import { tuiError } from "../errors.ts";
 import type { View } from "../view/view.ts";
-import { nativeViewAbiSession, releaseNativeViewRef, tryNativeMaterialize, tryRetainedMaterializeRef } from "../../transport/structural/native-view-abi.ts";
+import { nativeViewAbiSession, releaseNativeViewRef, tryRetainedMaterializeRef } from "../../transport/structural/native-view-abi.ts";
 import { nativeResourceOf } from "../../transport/native/resources.ts";
 import { FrameworkHandle } from "./framework-handle.ts";
 import { nativeTui } from "../../transport/native/factories.ts";
@@ -60,14 +60,14 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   }
 
   /**
-   * Unit import is identity-first. Retained hints reuse any subtree already
-   * materialized through a framework boundary; a capacity miss uses the
-   * canonical cold materializer. The temporary lease drains after the push
-   * because History retains its own strong state.
+   * Unit import is identity-first through the single retained path. Retained
+   * hints reuse any subtree already materialized through a framework
+   * boundary. The temporary lease drains after the push because History
+   * retains its own strong state; a retained refusal fails explicitly.
    */
   push(view: View): number {
     return History.callHost(this, () => {
-      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
+      const ref = tryRetainedMaterializeRef(view);
       if (ref === undefined) throw new Error("HISTORY_PUSH_FAILED: View could not be materialized");
       try {
         return this.nativeAs<NativeHistoryContract>().pushRef(ref);
@@ -80,9 +80,9 @@ export class History extends FrameworkHandle<"history"> implements HistoryContra
   freeze(unit: number, view: View): void {
     History.callHost(this, () => {
       validateHistoryUnit(unit);
-      // T13 (§78): same retained-first rule as push — freezing a live card
+      // T13 (§78): same retained rule as push — freezing a live card
       // reuses its already-materialized nodes through their hints.
-      const ref = tryRetainedMaterializeRef(view) ?? tryNativeMaterialize(view);
+      const ref = tryRetainedMaterializeRef(view);
       if (ref === undefined) throw new Error("HISTORY_FREEZE_FAILED: View could not be materialized");
       try {
         this.nativeAs<NativeHistoryContract>().freezeRef(unit, ref);

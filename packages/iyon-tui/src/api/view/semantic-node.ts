@@ -5,9 +5,10 @@
  * handles, ABI schema, or generated calls. It is the private semantic model
  * that API/view and composition will share during the H3 cutover.
  *
- * H3-C keeps bridge records as derived cold-fallback artifacts only. The
- * factories and sidecars here are private semantic infrastructure; retained
- * structural transport consumes these nodes directly.
+ * The factories and sidecars here are private semantic infrastructure;
+ * retained structural transport consumes these nodes directly. Complete
+ * bridge records survive only in the test-oracle lowering outside
+ * production reach (PRE-V5-R0).
  */
 
 import type { HandleId } from "../controls/framework-handle.ts";

@@ -26,12 +26,10 @@ import { TextContent } from "../api/content/text-content.ts";
 import {
   nativeViewAbiSession,
   recordNativeViewRoute,
-  tryNativeMaterialize,
 } from "../transport/structural/native-view-abi.ts";
 import {
   resetStyleRefCacheForThemeChange,
   RetainedRootBoundary,
-  setRootColdMaterializer,
 } from "../transport/structural/retained-dag.ts";
 import type { RootPublication } from "../transport/structural/retained-dag.ts";
 import { OwnedBuilderRoot, RetainedExecutionRuntime } from "../composition/execution.ts";
@@ -160,11 +158,6 @@ export class Tui implements TuiRuntime {
       environment: this.runtimeEnvironment.token,
       host: this.hostRegistration.token,
     };
-    // Bootstrap the boundary's COLD materializer (Direct decode w/o paint)
-    // so prepareColdInstall can fulfill the SS32.2.3 no-paint-during-PREPARE
-    // rule. Idempotent; last Tui wins (single active runtime per process is
-    // the supported model).
-    setRootColdMaterializer((view) => tryNativeMaterialize(view));
     const hostRef = host;
     // autoFlush stays enabled: tracked-state writes drain on the next
     // microtask (retained scheduler semantics). render() additionally drains
@@ -225,11 +218,11 @@ export class Tui implements TuiRuntime {
   }
 
   /**
-   * PERF-13-A root publication target: retained prepare first; on refusal a
-   * COLD MATERIALIZE-ONLY fallback (never paints during PREPARE). H3 commit
-   * installs desired structure; the environment frame barrier performs the
-   * visible host update. History sideband is validated here and swapped at
-   * desired commit.
+   * PERF-13-A root publication target: the retained structural path is the
+   * single production architecture. A retained refusal fails explicitly;
+   * H3 commit installs desired structure and the environment frame barrier
+   * performs the visible host update. History sideband is validated here
+   * and swapped at desired commit.
    */
   private prepareRootPublication(
     session: ReturnType<typeof nativeViewAbiSession>,
@@ -250,11 +243,6 @@ export class Tui implements TuiRuntime {
     try {
       this.ensureBoundary(session);
       prepared = this.boundary!.prepareDesiredInstall(output);
-      if (prepared === undefined) {
-        // Cold materialize-only: decode without painting before the desired
-        // structural publication. This is the canonical capacity fallback.
-        prepared = this.boundary!.prepareColdInstall(output);
-      }
     } catch (error) {
       attachments.abort();
       throw error;
@@ -296,7 +284,7 @@ export class Tui implements TuiRuntime {
     historyToBind: HistoryContract | undefined,
     previousHistory: HistoryContract | undefined,
   ): void {
-    // History swap BEFORE body publish mirrors the direct path's ordering
+    // History swap BEFORE body publish mirrors the renderDirect ordering
     // (set_history then install/paint). Host-fabricated histories are born
     // attached to their fabricating host; only detached handles transfer here.
     if (historyToBind === undefined || historyToBind === previousHistory) return;
@@ -395,10 +383,8 @@ export class Tui implements TuiRuntime {
    *                             changed semantic frontier, children-first, and
    *                             commits once through the root publication
    *                             target
-   * refused / over-budget     → complete cold path (Direct N-API decode), per
-   *                             §49: constructors published before the budget
-   *                             abort remain valid cache entries the decode
-   *                             reuses through its NodeId-first consult
+   * refused                   → explicit preparation failure; the previous
+   *                             visible frame stays authoritative
    * ```
    *
    * The pre-T13 recipe cascade (render_ref/scalar/path/structural/edit-tx)

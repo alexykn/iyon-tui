@@ -36,8 +36,8 @@ import {
   editTxnAbort,
   type ViewAbiSymbols,
 } from "../abi/structural/generated/view_calls.ts";
-import { lowerColdView } from "./cold-lowering.ts";
 import { axisKindForHorizontal } from "./encoding.ts";
+
 import { semanticNodeOf } from "../../api/view/semantic-node.ts";
 import {
   nodeIdPair,
@@ -161,9 +161,9 @@ export function nativeViewAbiSession(): NativeViewAbiSession {
 }
 
 /**
- * Obtains the environment-local NativeRef after an authoritative direct
- * decode has installed the corresponding View. The caller owns the resulting
- * root lease until it replaces or closes that root.
+ * Obtains the environment-local NativeRef for a View whose root already
+ * exists natively. The caller owns the resulting root lease until it
+ * replaces or closes that root.
  */
 export function nativeViewRefForNodeId(view: View): number | undefined {
   const session = nativeViewAbiSession();
@@ -176,17 +176,17 @@ export function nativeViewRefForNodeId(view: View): number | undefined {
  * View only transiently (History unit import, animation frames) or that run
  * their own §18 boundary. Identity-first: semantic NativeRef hint hits reuse
  * already-materialized nodes with zero payload reads; ceiling is 0 so genuinely new
- * nodes skip the NodeId probe exactly like the §19 ordering requires — cold
- * unit imports pay no extra per-node round trips, while anything previously
- * materialized through any boundary rides its hint.
+ * nodes skip the NodeId probe exactly like the §19 ordering requires —
+ * first-time imports pay no extra per-node round trips, while anything
+ * previously materialized through any boundary rides its hint.
  *
  * Returns the root ref carrying exactly ONE lease owned by the caller. A
  * generation-valid hint is only a borrowed acceleration result, so it is
  * promoted through the native NodeId cache before returning; otherwise a
  * transient boundary could release another boundary's lease. Every other
  * temporary lease drains in one batch. Returns undefined when the retained
- * path refused or a borrowed hint has gone stale; callers then route their
- * complete fallback.
+ * path refused or a borrowed hint has gone stale; callers fail explicitly
+ * (PRE-V5-R0: no secondary transport).
  */
 export function tryRetainedMaterializeRef(next: View): number | undefined {
   const session = nativeViewAbiSession();
@@ -217,45 +217,6 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
     if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
     throw error;
   }
-}
-
-/**
- * Obtains one leased native root without painting. Existing NodeId entries are
- * promoted first; a missing entry uses the native direct decoder, which is
- * the complete cold materialization path for retained-cap misses (large text,
- * custom borders, and other shapes outside the fast families).
- */
-/** Benchmark-only cold installation through the canonical generated host-ref ABI. */
-export function renderColdRef(host: NativeTuiHostContract, view: View): void {
-  const session = nativeViewAbiSession();
-  const reference = tryNativeMaterialize(view);
-  if (reference === undefined) throw new Error("native cold root could not be materialized");
-  try {
-    if (hostRenderRef(session.symbols, session.runtime, host, reference) !== 0) {
-      throw new Error("native host-ref render failed");
-    }
-  } finally {
-    viewReleaseMany(session.symbols, session.runtime, new Uint32Array([reference]), 1);
-  }
-}
-
-export function tryNativeMaterialize(next: View): number | undefined {
-  const session = nativeViewAbiSession();
-  try {
-    const [low, high] = nodeIdPair(next);
-    return viewRefForNodeId(session.symbols, session.runtime, low, high);
-  } catch (error) {
-    if (!isExpectedNativeStatus(error)) throw error;
-  }
-  const decodeRef = native.tuiViewAbiDecodeRef;
-  // Only construct the complete bridge after the NodeId promotion misses.
-  // Existing native roots are a physical fast path and do not need semantic
-  // payload lowering merely to discover that they are already retained.
-  const bridge = lowerColdView(next);
-  const reference = decodeRef(bridge as unknown as object);
-  return Number.isSafeInteger(reference) && reference > 0 && reference < 0x8000_0000
-    ? reference
-    : undefined;
 }
 
 /**
@@ -400,7 +361,7 @@ export function tryNativeAxisSetChildRender(
   let childRef: number | undefined;
   let nextRef: number | undefined;
   try {
-    childRef = tryNativeMaterialize(child);
+    childRef = tryRetainedMaterializeRef(child);
     if (childRef === undefined) return undefined;
     const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
     nextRef = viewAxisSetChild(session.symbols, session.runtime, previousRef, nodeIdLow, nodeIdHigh, childIndex, trackWord, childRef);
@@ -446,7 +407,7 @@ export function tryNativeAxisSpliceRender(
   let nextRef: number | undefined;
   try {
     for (const [childIndex, entry] of children.entries()) {
-      const childRef = tryNativeMaterialize(entry.view);
+      const childRef = tryRetainedMaterializeRef(entry.view);
       if (childRef === undefined) return undefined;
       refs[childIndex * 2] = entry.trackWord ?? 0;
       refs[childIndex * 2 + 1] = childRef;
@@ -486,7 +447,7 @@ export function tryNativeGridSetCellRender(
   let childRef: number | undefined;
   let nextRef: number | undefined;
   try {
-    childRef = tryNativeMaterialize(child);
+    childRef = tryRetainedMaterializeRef(child);
     if (childRef === undefined) return undefined;
     const [nodeIdLow, nodeIdHigh] = nodeIdPair(next);
     nextRef = viewGridSetCell(session.symbols, session.runtime, previousRef, nodeIdLow, nodeIdHigh, row, column, childRef);

@@ -9,6 +9,10 @@ import {
   View,
 } from "../src/index.ts";
 import { AppHarness } from "../src/testing/index.ts";
+import {
+  resetRetainedIdentityCounters,
+  retainedIdentityCounterSnapshot,
+} from "../src/transport/structural/retained-dag.ts";
 
 const PERF13B = "PERF-13-B retained presentation state";
 
@@ -47,15 +51,20 @@ test(`${PERF13B} applies presentation overrides without republishing structure`,
   }
 });
 
-test(`${PERF13B} carries state through the complete cold fallback`, async () => {
+test(`${PERF13B} carries state through the retained structural path`, async () => {
+  // PRE-V5-R0: styled text plus retained presentation state materialize
+  // through the single retained architecture (multi-span text at/below the
+  // R0-B001 boundary; wider spans fail explicitly per tui_h3_c_transport).
+  resetRetainedIdentityCounters();
   const tui = await AppHarness.open({ width: 12, height: 3 });
   const state = tui.viewState();
   try {
-    const spans = ["a", "b", "c", "d", "e"].map((text) => TextSpan.plain(text));
+    const spans = ["a", "b", "c", "d"].map((text) => TextSpan.plain(text));
     tui.render(() => ({ body: View.styledText(spans).state(state) }));
+    expect(retainedIdentityCounterSnapshot().direct_materializer_calls).toBeGreaterThan(0);
     state.setPresentation({ foreground: indexed(5), textAttributes: { italic: true } });
     tui.flush();
-    expect(tui.screenRows()[2]).toContain("abcde");
+    expect(tui.screenRows()[2]).toContain("abcd");
     expect(tui.styleAt(2, 0).foreground).toBe("ansi:5");
     expect(tui.styleAt(2, 0).italic).toBe(true);
   } finally {

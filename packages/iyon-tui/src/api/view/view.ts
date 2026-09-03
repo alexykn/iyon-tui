@@ -4,7 +4,7 @@
  * The View layer owns semantic identity, child relationships, normalized
  * presentation values, and retained derivation hints. Structural transport is
  * deliberately absent here; the retained path consumes these semantic values
- * directly and the cold path lowers them only at the physical boundary.
+ * directly as the single production structural architecture (PRE-V5-R0).
  */
 
 import type { BorderSpec, TextAttribute } from "../presentation/style.ts";
@@ -502,7 +502,7 @@ export class View {
     // PERF-12 T9 (§27/§28): a scalar-only decoration is exactly
     // `base + masked modifiers`, which the retained common patch expresses
     // without re-materializing the base subtree. Mixed decorations stay
-    // unhinted and route through normal materialization/fallback.
+    // unhinted and route through normal retained materialization.
     const scalarDerivation = commonScalarDerivation(child, next);
     if (scalarDerivation !== undefined) setSemanticDerivation(semanticNodeOf(derived), scalarDerivation);
     return derived;

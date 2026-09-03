@@ -4,7 +4,6 @@ import type { ComponentCapabilities } from "../extensions/traits/component.ts";
 import {
   nativeViewAbiSession,
   releaseNativeViewRef,
-  tryNativeMaterialize,
   tryRetainedMaterializeRef,
 } from "../../transport/structural/native-view-abi.ts";
 import { RetainedRootBoundary } from "../../transport/structural/retained-dag.ts";
@@ -40,7 +39,7 @@ type NativeScrollPaneHandle = {
   followEnd(): void;
 };
 
-/** T13: retained-first construction of the pane's initial content. */
+/** T13: retained construction of the pane's initial content (PRE-V5-R0: single path). */
 function buildPaneHandle(
   host: NativeTuiHostContract,
   initialView: View | undefined,
@@ -48,7 +47,7 @@ function buildPaneHandle(
 ): object {
   if (initialView !== undefined) prepareAttachmentsForView(initialView, attachmentContext).abort();
   const seed = initialView ?? View.spacer(0);
-  const retained = tryRetainedMaterializeRef(seed) ?? tryNativeMaterialize(seed);
+  const retained = tryRetainedMaterializeRef(seed);
   if (retained === undefined) {
     throw new Error("TUI_SCROLL_PANE_INITIALIZATION_FAILED: structural content could not be materialized");
   }
@@ -148,11 +147,11 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
   private prepareSetContent(output: View): { commit(): void; abort(): void } | undefined {
     if (this.disposed) return undefined;
     const attachments = prepareAttachmentsForView(output, this.attachmentContext);
-    // Retained preparation may refuse on a bounded/unsupported path; use the
-    // complete cold materializer transactionally before reporting failure.
+    // A retained preparation can refuse for an unsupported-kind reason; the
+    // refusal surfaces as an explicit failure, never a second transport.
     let publication: ReturnType<RetainedRootBoundary["prepareInstall"]>;
     try {
-      publication = this.boundary!.prepareInstall(output) ?? this.boundary!.prepareColdInstall(output);
+      publication = this.boundary!.prepareInstall(output);
     } catch (error) {
       attachments.abort();
       throw error;
@@ -195,11 +194,9 @@ export class NativeScrollPane extends FrameworkHandle<"component"> implements Sc
       const attachments = prepareAttachmentsForView(view, this.attachmentContext);
       try {
         // PERF-12 T13 retained path (§80): previous content stays leased until
-        // the replacement is fully materialized and committed. Capacity misses
-        // use the canonical cold materialization transaction; there is no
-        // parallel native-view mutation route.
-        const publication = this.boundary!.prepareInstall(view)
-          ?? this.boundary!.prepareColdInstall(view);
+        // the replacement is fully materialized and committed. There is no
+        // parallel native-view mutation route (PRE-V5-R0).
+        const publication = this.boundary!.prepareInstall(view);
         if (publication === undefined) {
           throw new Error("TUI_SCROLL_PANE_UPDATE_FAILED: structural content could not be materialized");
         }

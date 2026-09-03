@@ -16,11 +16,13 @@
  *   fully materialized and installed; temporary leases drain in one batch;
  *   the private NodeId high-water is captured as `nativeLookupCeiling`.
  *
- * The retained path consumes semantic nodes directly. Complete bridge objects
- * are produced only by the separate cold fallback.
+ * The retained path consumes semantic nodes directly and is the single
+ * production structural architecture (PRE-V5-R0). There is no secondary
+ * complete-bridge decoding path in production: a retained refusal fails
+ * explicitly through the boundary instead of selecting another transport.
  */
 
-import { native, type NativeTuiHostContract, type NativeViewAbiHandle } from "../native/addon.ts";
+import type { NativeTuiHostContract, NativeViewAbiHandle } from "../native/addon.ts";
 import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContentHostCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import {
   axisKind,
@@ -43,18 +45,9 @@ import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanti
 import { componentIdForHandleId } from "./component-id.ts";
 import { nativeResourceForHandleId } from "../native/resources.ts";
 import type { NativeStructuralAttachmentContract, NativeViewStateContract } from "../native/addon.ts";
-import { lowerSemanticView } from "./cold-lowering.ts";
 import { viewNodeIdHighWater, type View } from "../../api/view/view.ts";
 import type { NativeViewAbiSession } from "./native-view-abi.ts";
-import {
-  MAX_DIRECT_AXIS_REFS,
-  MAX_DIRECT_DIFF_BYTES,
-  MAX_DIRECT_DIFF_WORDS,
-  MAX_DIRECT_GRID_WORDS,
-  MAX_DIRECT_TEXT_BYTES,
-  MAX_RETAINED_DEPTH,
-  MAX_RETAINED_NEW_NODES,
-} from "./policy.ts";
+import { MAX_DIRECT_TEXT_BYTES } from "./policy.ts";
 
 /** Generation-scoped NativeRef hint; weak acceleration only (§15/§16). */
 export interface SemanticNativeHint {
@@ -129,7 +122,6 @@ export interface RetainedIdentityCounters {
   byte_payload_bytes: number;
   transport_scratch_reuses: number;
   stale_ref_retries: number;
-  cold_fallbacks: number;
   decorated_normalized_nodes: number;
   host_mutations: number;
 }
@@ -148,7 +140,6 @@ const counters: RetainedIdentityCounters = {
   byte_payload_bytes: 0,
   transport_scratch_reuses: 0,
   stale_ref_retries: 0,
-  cold_fallbacks: 0,
   decorated_normalized_nodes: 0,
   host_mutations: 0,
 };
@@ -191,10 +182,17 @@ function recordPhaseSample(sample: RetainedPhaseSample): void {
   phaseInstrumentation?.record(sample);
 }
 
-/** Raised when a node cannot be materialized on the retained path (§49/§50). */
+/**
+ * Raised when a node cannot be materialized on the retained path.
+ *
+ * PRE-V5-R0: this is an explicit retained refusal, not a route selector.
+ * Boundaries convert it into an explicit preparation failure; no caller may
+ * catch it to select a previous-generation transport. (The historical name
+ * is kept because generated ABI code imports it.)
+ */
 export class RetainedFastFallbackError extends Error {
   constructor(reason: string) {
-    super(`retained fast fallback: ${reason}`);
+    super(`retained materialization refused: ${reason}`);
     this.name = "RetainedFastFallbackError";
   }
 }
@@ -219,7 +217,6 @@ export class MaterializeTx {
   readonly temporaryLeases: number[] = [];
   /** Hint hits borrowed for this tx; no lease was taken (§16/§47). */
   readonly borrowedHints: { readonly node: SemanticViewNode; readonly nativeRef: number }[] = [];
-  newNodeCount = 0;
   depth = 0;
   /** One targeted stale-ref recovery is allowed per root transaction (§47). */
   staleRefRetries = 0;
@@ -237,18 +234,13 @@ export class MaterializeTx {
 
   /**
    * PERF-12 T8 (§29/§30): the reusable borrowed scratch for one variable-axis
-   * transport. The small tier is a single environment-level Uint32Array
-   * allocated once and reused by every transaction (single owner thread, no
-   * pointer outlives the synchronous call). Counts above MAX_DIRECT_AXIS_REFS
-   * refuse the retained path entirely (§30 cap rule / §50).
+   * transport. Buffers are reused per active materialization depth (single
+   * owner thread, no pointer outlives the synchronous call) and grow to the
+   * request; there is no arity refusal (PRE-V5-R0).
    */
   axisRefScratch(childCount: number): Uint32Array {
-    if (childCount > MAX_DIRECT_AXIS_REFS) {
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError(
-        `axis arity ${childCount} exceeds the retained buffer cap ${MAX_DIRECT_AXIS_REFS}`,
-      );
-    }
+    // PRE-V5-R0: no arity refusal. The scratch grows to the request and the
+    // native constructor reports an explicit status past its child limit.
     const words = childCount * 2;
     // Keep one reusable buffer per active semantic recursion level. The
     // inProgress set includes the node currently being materialized, so its
@@ -269,13 +261,10 @@ export class MaterializeTx {
   }
 
   /** Returns reusable u32 construction scratch; no per-node TypedArray. */
-  private wordScratch(wordCount: number, cap: number, label: string): Uint32Array {
-    if (wordCount > cap) {
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError(
-        `${label} word payload ${wordCount} exceeds the retained cap ${cap}`,
-      );
-    }
+  private wordScratch(wordCount: number): Uint32Array {
+    // PRE-V5-R0: no word-count refusal. The scratch grows to the request;
+    // allocation or native validation is the only limit, and both fail
+    // explicitly inside the retained transaction.
     const depth = this.inProgress.size;
     if (GRID_WORD_SCRATCH.runtime !== this.runtime) {
       GRID_WORD_SCRATCH.runtime = this.runtime;
@@ -292,12 +281,12 @@ export class MaterializeTx {
 
   /** PERF-12 T10 (§30/§36): reusable flat-grid construction scratch. */
   gridWordScratch(wordCount: number): Uint32Array {
-    return this.wordScratch(wordCount, MAX_DIRECT_GRID_WORDS, "grid");
+    return this.wordScratch(wordCount);
   }
 
   /** PERF-12 T11 (§30/§41): reusable diff framing scratch (same u32 tier). */
   diffWordScratch(wordCount: number): Uint32Array {
-    return this.wordScratch(wordCount, MAX_DIRECT_DIFF_WORDS, "diff");
+    return this.wordScratch(wordCount);
   }
 
   /**
@@ -306,15 +295,17 @@ export class MaterializeTx {
    * `needed` above the cap refuses the retained path (§50).
    */
   byteScratch(needed: number, label: string): Uint8Array {
+    // PRE-V5-R0: the byte tier grows to the request. Payloads past the
+    // native text limit fail explicitly; oversized allocation itself throws
+    // instead of selecting another architecture.
     if (needed > MAX_DIRECT_TEXT_BYTES) {
-      counters.cold_fallbacks += 1;
       throw new RetainedFastFallbackError(
-        `${label} payload ${needed} bytes exceeds the retained cap ${MAX_DIRECT_TEXT_BYTES}`,
+        `${label} payload ${needed} bytes exceeds the native ${MAX_DIRECT_TEXT_BYTES}-byte limit`,
       );
     }
     if (BYTE_SCRATCH.runtime !== this.runtime || BYTE_SCRATCH.array.length < needed) {
       BYTE_SCRATCH.runtime = this.runtime;
-      BYTE_SCRATCH.array = new Uint8Array(MAX_DIRECT_TEXT_BYTES);
+      BYTE_SCRATCH.array = new Uint8Array(Math.max(needed, 1));
     }
     counters.transport_scratch_reuses += 1;
     return BYTE_SCRATCH.array.subarray(0, needed);
@@ -382,18 +373,6 @@ function isStaleBase(error: unknown): boolean {
     && (nativeStatusDetail(error) >>> 30) === STATUS_DETAIL_BASE_KIND;
 }
 
-/** Exceptional §73 recovery: cold-decode one semantic node and return a lease. */
-function recoverNodeWithDirectDecode(node: SemanticViewNode, tx: MaterializeTx): number | undefined {
-  const decodeRef = native.tuiViewAbiDecodeRef;
-  if (decodeRef === undefined) return undefined;
-  const reference = decodeRef(lowerSemanticView(node) as unknown as object);
-  if (!isValidNativeRef(reference)) return undefined;
-  installHint(node, tx.generation, reference);
-  tx.refs.set(node, reference);
-  tx.temporaryLeases.push(reference);
-  return reference;
-}
-
 function childAtOrdinal(node: SemanticViewNode, ordinal: number): SemanticViewNode | undefined {
   if (!Number.isSafeInteger(ordinal) || ordinal < 0) return undefined;
   if (node.kind === SEMANTIC_VIEW_KIND.row || node.kind === SEMANTIC_VIEW_KIND.column) {
@@ -433,7 +412,11 @@ function derivationChildAt(derivation: SemanticDerivation, ordinal: number): Sem
   }
 }
 
-/** Invalidates one stale hint and performs bounded semantic recovery. */
+/**
+ * Invalidates one stale hint and retries once through the same retained
+ * materializer. There is no secondary recovery transport: when the retained
+ * retry refuses, the caller sees an explicit preparation failure.
+ */
 function recoverStaleNode(node: SemanticViewNode, tx: MaterializeTx): number | undefined {
   if (tx.staleRefRetries >= 1) return undefined;
   tx.staleRefRetries += 1;
@@ -443,9 +426,9 @@ function recoverStaleNode(node: SemanticViewNode, tx: MaterializeTx): number | u
   try {
     return ensureSemanticNative(node, tx);
   } catch (error) {
-    if (!(error instanceof RetainedFastFallbackError) && !(error instanceof RetainedCycleError)) throw error;
+    if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
+    throw error;
   }
-  return recoverNodeWithDirectDecode(node, tx);
 }
 
 function materializeWithRecovery(
@@ -646,8 +629,8 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
  * §25 reuse before adding, §40 no second native style cache). Text uses the
  * cstring family whenever every span is NUL-free — zero JS encoding, Bun
  * lowers the strings natively — and the exact-byte utf8 family otherwise,
- * encoding once into the reusable byte tier. Span counts outside the 1..=4
- * constructor families route to the complete cold path (§49/§76).
+ * encoding once into a byte tier sized to the payload. Span counts outside
+ * the 1..=4 constructor families fail explicitly (PRE-V5-R0 BLOCKER R0-B001).
  */
 const TEXT_ENCODER = new TextEncoder();
 
@@ -703,8 +686,11 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
   counters.bridge_semantic_nodes_inspected += 1;
   const spans = node.spans;
   if (spans.length < 1 || spans.length > 4) {
-    counters.cold_fallbacks += 1;
-    throw new RetainedFastFallbackError(`text span count ${spans.length} is outside the retained family`);
+    // PRE-V5-R0 BLOCKER R0-B001: the retained text ABI exposes constructors
+    // for 1..=4 spans only; wider styled text has no retained constructor.
+    // This fails explicitly instead of routing to a second architecture. A
+    // variadic text-buffer constructor is the needed ABI extension.
+    throw new RetainedFastFallbackError(`text span count ${spans.length} is outside the retained 1..=4 family`);
   }
   // Payload dependencies resolve before any transport (children-first analog).
   const styleRefs = spans.map((span) => {
@@ -712,7 +698,6 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
       return styleRefFor(span.style, tx);
     } catch (error) {
       if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
-        counters.cold_fallbacks += 1;
         if (isExpectedNativeStatus(error)) {
           throw new RetainedFastFallbackError("style publication reported a failure status");
         }
@@ -742,16 +727,15 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
       }
     });
   }
-  // Exact-byte lane: encode once into the reusable byte tier; capacity
-  // overrun refuses the retained path instead of truncating (§30/§50).
-  const scratch = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "text");
+  // Exact-byte lane: encode once into a reused byte tier sized to the exact
+  // payload. Overrun past the native limit fails explicitly (byteScratch).
+  const scratch = tx.byteScratch(spans.reduce((total, span) => total + Buffer.byteLength(span.text), 0), "text");
   let offset = 0;
   const lengths: number[] = [];
   for (const span of spans) {
     const encoded = TEXT_ENCODER.encodeInto(span.text, scratch.subarray(offset));
     if (encoded.read !== span.text.length) {
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError("text payload exceeds the retained byte tier");
+      throw new RetainedFastFallbackError("text payload exceeds its measured byte length");
     }
     lengths.push(encoded.written);
     offset += encoded.written;
@@ -782,9 +766,13 @@ function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number 
   counters.bridge_semantic_nodes_inspected += 1;
   const hunks = node.hunks;
   let wordCount = 1;
-  for (const hunk of hunks) wordCount += 9 + hunk.lines.length * 6;
+  let byteCount = 0;
+  for (const hunk of hunks) {
+    wordCount += 9 + hunk.lines.length * 6;
+    for (const line of hunk.lines) byteCount += Buffer.byteLength(line.text);
+  }
   const words = tx.diffWordScratch(wordCount);
-  const bytes = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "diff");
+  const bytes = tx.byteScratch(byteCount, "diff");
   let wordOffset = 0;
   let byteOffset = 0;
   const writeWords = (...values: number[]): void => {
@@ -805,8 +793,7 @@ function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number 
       const newLine = line.newLine === undefined ? [0, 0] as const : requiredU64Words(line.newLine);
       const encoded = TEXT_ENCODER.encodeInto(line.text, bytes.subarray(byteOffset));
       if (encoded.read !== line.text.length || encoded.written > 0xffff_ffff) {
-        counters.cold_fallbacks += 1;
-        throw new RetainedFastFallbackError("diff line payload exceeds the retained byte tier");
+        throw new RetainedFastFallbackError("diff line payload exceeds its measured byte length");
       }
       writeWords(meta, oldLine[0], oldLine[1], newLine[0], newLine[1], encoded.written);
       byteOffset += encoded.written;
@@ -821,8 +808,8 @@ function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number 
 }
 
 /**
- * T13: styleRefFor with retained-refusal accounting — publication failures
- * count one cold fallback and route the complete cold path like any cap miss.
+ * styleRefFor with retained-refusal accounting: a native publication failure
+ * becomes an explicit retained refusal. There is no secondary transport.
  */
 function styleRefCounted(style: SemanticStyle | undefined, tx: MaterializeTx): number {
   try {
@@ -830,7 +817,6 @@ function styleRefCounted(style: SemanticStyle | undefined, tx: MaterializeTx): n
   } catch (error) {
     if (error instanceof RetainedFastFallbackError) throw error;
     if (isExpectedNativeStatus(error)) {
-      counters.cold_fallbacks += 1;
       throw new RetainedFastFallbackError("style publication reported a failure status");
     }
     throw error;
@@ -901,7 +887,10 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
   const childRef = ensureSemanticNative(node.child, tx);
   const decoration = node.decoration;
   if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {
-    counters.cold_fallbacks += 1;
+    // PRE-V5-R0 BLOCKER R0-B002: the retained decorated-word encoding has no
+    // custom-glyph lane. This fails explicitly instead of routing to a second
+    // architecture; a glyph-capable decorated constructor is the needed ABI
+    // extension.
     throw new RetainedFastFallbackError("custom border glyphs are not expressible on the retained lane");
   }
   const encodedDecoration = decorationWordEncoding(decoration);
@@ -909,7 +898,10 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
   // Fixed header: mask + 9 payload words + state count, then 4 words per state.
   const wordCount = 11 + states.length * 4;
   const words = tx.diffWordScratch(wordCount);
-  const bytes = tx.byteScratch(MAX_DIRECT_TEXT_BYTES, "decorated");
+  const bytes = tx.byteScratch(
+    states.reduce((total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value), 0),
+    "decorated",
+  );
   let byteOffset = 0;
   let colorAtoms: [number, number] = [0, 0];
   try {
@@ -919,7 +911,6 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
     ];
   } catch (error) {
     if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
-      counters.cold_fallbacks += 1;
       throw error instanceof RetainedFastFallbackError ? error : new RetainedFastFallbackError("decoration color atom publication failed");
     }
     throw error;
@@ -943,15 +934,13 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
   for (const [key, value] of states) {
     const keyBytes = TEXT_ENCODER.encodeInto(key, bytes.subarray(byteOffset));
     if (keyBytes.read !== key.length) {
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError("style-state payload exceeds the retained byte tier");
+      throw new RetainedFastFallbackError("style-state payload exceeds its measured byte length");
     }
     const keyOffset = byteOffset;
     byteOffset += keyBytes.written;
     const valueBytes = TEXT_ENCODER.encodeInto(value, bytes.subarray(byteOffset));
     if (valueBytes.read !== value.length) {
-      counters.cold_fallbacks += 1;
-      throw new RetainedFastFallbackError("style-state payload exceeds the retained byte tier");
+      throw new RetainedFastFallbackError("style-state payload exceeds its measured byte length");
     }
     const valueOffset = byteOffset;
     byteOffset += valueBytes.written;
@@ -1017,7 +1006,7 @@ function attachStateIfPresent(
  * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane;
  * T13 adds hanging, container, clamp/contentMax, component references, and
  * decorated nodes — every §76 kind is now direct-materialized or explicitly
- * fallback-routed (text spans >4, oversized payloads, custom border glyphs).
+ * refused (text spans >4 per R0-B001, custom border glyphs per R0-B002).
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [SEMANTIC_VIEW_KIND.spacer, materializeSpacerNode],
@@ -1048,7 +1037,7 @@ export function refreshNativeHint(view: View, generation: number, nativeRef: num
   installHint(semanticNodeOf(view), generation, nativeRef);
 }
 
-/** @internal Drops a confirmed-stale hint before complete fallback recovery. */
+/** @internal Drops a confirmed-stale hint before retained recovery. */
 export function clearNativeHint(view: View): void {
   deleteSemanticNativeHint(semanticNodeOf(view));
 }
@@ -1087,7 +1076,7 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
   const local = tx.refs.get(node);
   if (local !== undefined) return local;
 
-  // A previous cold/direct/native path may have materialized this semantic
+  // A previous retained publication may have materialized this semantic
   // NodeId without ever installing a JS-side hint. Only nodes that existed
   // before the boundary's last successful commit are eligible; genuinely new
   // NodeIds skip the extra FFI probe entirely (§19).
@@ -1108,15 +1097,10 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
   }
 
   if (tx.inProgress.has(node)) throw new RetainedCycleError();
-  if (++tx.newNodeCount > MAX_RETAINED_NEW_NODES) {
-    counters.cold_fallbacks += 1;
-    throw new RetainedFastFallbackError(`new-node budget ${MAX_RETAINED_NEW_NODES} exceeded`);
-  }
-  if (tx.depth >= MAX_RETAINED_DEPTH) {
-    counters.cold_fallbacks += 1;
-    throw new RetainedFastFallbackError(`depth budget ${MAX_RETAINED_DEPTH} exceeded`);
-  }
 
+  // PRE-V5-R0: no new-node or depth budgets. Large and deep trees cost more
+  // retained work inside this same transaction; they never select another
+  // architecture.
   tx.inProgress.add(node);
   try {
     // §19 ordering: derivations are tried after identity resolution but
@@ -1126,8 +1110,7 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
       const materializer = MATERIALIZERS.get(node.kind);
       if (materializer === undefined) {
         counters.bridge_semantic_nodes_inspected += 1;
-        counters.cold_fallbacks += 1;
-        throw new RetainedFastFallbackError(`no generated materializer for kind ${node.kind}`);
+        throw new RetainedFastFallbackError(`no materializer for kind ${node.kind}`);
       }
       reference = materializeWithRecovery(node, tx, materializer);
     }
@@ -1148,7 +1131,8 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
  * before the boundary's last commit — one ceiling-gated NodeId→NativeRef
  * promotion recovers the ref exactly as `ensureNative` would; the acquired
  * lease joins the transaction's temporary leases so it drains with the tx on
- * every path. An unavailable base leaves the hint unused (§38 fallback rule).
+ * every path. An unavailable base leaves the hint unused (§38: fall back to
+ * direct semantic materialization within the same retained transaction).
  */
 function derivationBaseRef(base: SemanticViewNode, tx: MaterializeTx): number | undefined {
   const hint = SEMANTIC_NATIVE.get(base);
@@ -1306,8 +1290,8 @@ export type ExactRootRender =
  * words written, zero node constructors. Independent of descendant count.
  *
  * On `FAST_CACHE_MISS` the single targeted recovery of §47 applies: drop the
- * stale hint, re-acquire by NodeId promotion, retry once. Anything else is
- * propagated to the caller's fallback handling.
+ * stale hint, re-acquire by NodeId promotion, retry once. Anything else
+ * fails explicitly; there is no secondary recovery transport (PRE-V5-R0).
  */
 export function renderExactRoot(
   session: NativeViewAbiSession,
@@ -1343,18 +1327,14 @@ export function renderExactRoot(
       } catch (error) {
         if (!isExpectedNativeStatus(error)) throw error;
         counters.node_id_ref_promotion_misses += 1;
-        const decodeRef = native.tuiViewAbiDecodeRef;
-        if (decodeRef !== undefined) {
-          recoveredRef = decodeRef(lowerSemanticView(node) as unknown as object);
-        }
       }
       if (recoveredRef === undefined || !isValidNativeRef(recoveredRef)) {
         SEMANTIC_NATIVE.delete(node);
         return { status: "no_root_ref" };
       }
-      // A NodeId promotion or direct recovery returns one lease. Keep it on a
-      // successful retry so the owning boundary can transfer it to its root
-      // lease; only failed retries release it here.
+      // A NodeId promotion returns one lease. Keep it on a successful retry
+      // so the owning boundary can transfer it to its root lease; only
+      // failed retries release it here.
       let releaseRecoveredLease = true;
       installHint(node, generation, recoveredRef);
       try {
@@ -1388,9 +1368,9 @@ export function renderExactRoot(
 }
 
 /**
- * Acquires the NativeRef for a root that already exists natively (decoded by
- * the Direct path or built by an earlier transport) without walking the tree:
- * one ceiling-free NodeId→NativeRef promotion, one hint installation. Used by
+ * Acquires the NativeRef for a root that already exists natively (built by an
+ * earlier retained publication) without walking the tree: one ceiling-free
+ * NodeId→NativeRef promotion, one hint installation. Used by
  * `RetainedRootBoundary.adopt`; the returned ref carries one lease the
  * boundary owns as its root lease.
  */
@@ -1432,22 +1412,6 @@ export function acquireKnownRoot(session: NativeViewAbiSession, view: View): num
  * definitely-new NodeIds from older possibly-cached ones (§19).
  */
 /**
- * PERF-12 T13.1 R8 — injectable COLD materializer used by
- * {@link RetainedRootBoundary.prepareColdInstall}: decodes a whole View tree
- * into a leased native root reference WITHOUT painting. Bootstrap wires this
- * to the Direct N-API decode (`tryNativeMaterialize`) — kept behind a hook
- * because retained-dag must not import native-view-abi (cycle).
- */
-let COLD_ROOT_MATERIALIZER: ((view: View) => number | undefined) | undefined;
-
-/** Bootstrap wiring for {@link COLD_ROOT_MATERIALIZER} (idempotent). */
-export function setRootColdMaterializer(
-  materializer: (view: View) => number | undefined,
-): void {
-  COLD_ROOT_MATERIALIZER = materializer;
-}
-
-/**
  * PERF-12 T13.1 R7 — one prepared-but-unpublished root replacement
  * (handoff §32.1 R7, AMENDMENT-C §13).
  *
@@ -1462,8 +1426,8 @@ export function setRootColdMaterializer(
 export interface RootPublication {
   /** The prepared native root reference (held under lease until commit/abort). */
   readonly rootRef: number;
-  /** Diagnostic route selected during preparation. */
-  readonly route?: "retained" | "fallback";
+  /** Diagnostic route selected during preparation (always retained). */
+  readonly route?: "retained";
   /** Publishes the prepared root. Infallible after successful preparation. */
   commit(): void;
   /** Discards the prepared root; no visible mutation ever occurred. */
@@ -1543,7 +1507,8 @@ export class RetainedRootBoundary {
   /**
    * Adopts a root that already exists natively as the boundary's first root:
    * unconditional NodeId promotion, root-lease transfer, ceiling capture.
-   * This is how a boundary takes over state the Direct decoder published.
+   * This is how a boundary takes over state an earlier retained publication
+   * installed.
    */
   adopt(view: View): boolean {
     if (this.closed) throw new Error("boundary is closed");
@@ -1583,8 +1548,9 @@ export class RetainedRootBoundary {
 
   /**
    * Full §18 replace sequence via `ensureNative`. Returns the new root ref,
-   * or undefined when the retained path fell back (caller routes the complete
-   * cold path; the old root remains installed and leased).
+   * or undefined when the retained path refused; the old root remains
+   * installed and leased and the caller fails explicitly (PRE-V5-R0: no
+   * secondary transport).
    *
    * Lease ownership rule: the boundary's previousRef always carries exactly
    * one lease the boundary owns. A root resolved through a borrowed hint
@@ -1606,9 +1572,9 @@ export class RetainedRootBoundary {
    * stale recovery, lease acquisition) WITHOUT publishing anything — the
    * installed root, its lease, and every visible byte stay untouched.
    *
-   * Returns `undefined` when the retained path refused (fallback/budget/
-   * unrecoverable stale node); the caller keeps the old root, identically to
-   * a refused `install`.
+   * Returns `undefined` when the retained path refused (unsupported shape or
+   * unrecoverable stale node); the caller keeps the old root and fails
+   * explicitly, identically to a refused `install`.
    *
    * The returned publication's `commit()` performs only: the single publish
    * call (validated inputs — lease held, generation current), temporary-
@@ -1766,7 +1732,7 @@ export class RetainedRootBoundary {
     try {
       resolvedRef = ensureSemanticNative(node, tx);
     } catch (error) {
-      // Fallback, cycle guard, and unexpected errors all drain every
+      // Retained refusal, cycle guard, and unexpected errors all drain every
       // temporary lease before the caller sees the failure.
       tx.releaseAll();
       if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
@@ -1777,7 +1743,9 @@ export class RetainedRootBoundary {
     // it deliberately avoids taking a second lease for the already-installed
     // ref. Validate that hint before returning a prepared publication;
     // otherwise a scavenged slot would fail during commit, where the
-    // transaction can no longer take the documented cold-fallback path.
+    // transaction can no longer recover.
+    // (PRE-V5-R0: an undefined return fails explicitly at the caller; there
+    // is no secondary transport.)
     if (hintedRoot?.generation === this.session.abi.generation && resolvedRef === this.currentRootRef()) {
       try {
         viewRenderRef(this.session.symbols, this.session.runtime, resolvedRef);
@@ -1851,133 +1819,6 @@ export class RetainedRootBoundary {
       }
       : undefined;
     return { node, rootRef, tx, ownsTempLease, phase, acquiredBoundaryLease };
-  }
-
-  /**
-   * PERF-12 T13.1 R8: COLD transactional publication. Decodes the whole tree
-   * via the injected cold materializer (Direct decode, NO painting) and
-   * returns a publication whose commit either paints the prepared ref once
-   * for a direct boundary or installs it as desired structure for the
-   * H3 host boundary. Used when the retained path refuses — guarantees "cold
-   * fallback never paints during PREPARE" (handoff §32.2.3 hard rule).
-   */
-  prepareColdInstall(view: View): RootPublication | undefined {
-    if (this.deferHostCommit) return this.prepareDesiredColdInstall(view);
-    if (this.closed) throw new Error("boundary is closed");
-    const node = semanticNodeOf(view);
-    if (this.installRef === undefined && this.host() === undefined) return undefined;
-    const materialize = COLD_ROOT_MATERIALIZER;
-    if (materialize === undefined) return undefined;
-    const materializeStart = phaseNow();
-    const rootRef = materialize(view);
-    const materializeEnd = phaseNow();
-    if (rootRef === undefined) return undefined;
-    const coldPhase = materializeStart !== undefined && materializeEnd !== undefined
-      ? materializeEnd - materializeStart
-      : undefined;
-    let finished = false;
-    return {
-      rootRef,
-      route: "fallback",
-      commit: (): void => {
-        if (finished) throw new Error("root publication already finished");
-        finished = true;
-        let transferred = false;
-        const hostStart = phaseNow();
-        try {
-          if (this.installRef !== undefined) {
-            // Component/scroll boundaries publish through their retained slot
-            // target rather than the scene host. Cold preparation is still
-            // paint-free; the ref install is the only commit-side mutation.
-            if (!this.installRef(rootRef)) {
-              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: component target refused");
-            }
-          } else {
-            const host = this.host();
-            if (host === undefined) {
-              throw new Error("TUI_ROOT_COLD_PUBLISH_REFUSED: no host");
-            }
-            const status = hostRenderRef(this.session.symbols, this.session.runtime, host, rootRef);
-            if (status !== HOST_STATUS_OK) {
-              throw new Error(`TUI_ROOT_COLD_PUBLISH_REFUSED: status ${status}`);
-            }
-          }
-          const hostEnd = phaseNow();
-          if (coldPhase !== undefined && hostStart !== undefined && hostEnd !== undefined) {
-            recordPhaseSample({
-              transport_prepare_ns: 0,
-              native_materialize_ns: coldPhase,
-              host_commit_ns: hostEnd - hostStart,
-            });
-          }
-          counters.host_mutations += 1;
-          // The boundary now owns the recovered lease, so its JS-side hint is
-          // safe to use for the next exact-root render.
-          installHint(node, this.session.abi.generation, rootRef);
-          // Transfer our lease on the new root into the boundary; the previous
-          // root's lease is released here exactly like transferRoot does. A
-          // cold decoder may rediscover the already-installed root, in which
-          // case its extra lease must not become a permanent duplicate.
-          const duplicateRoot = this.previousRef === rootRef;
-          this.transferRoot(rootRef);
-          if (duplicateRoot) this.releaseColdLease(rootRef);
-          transferred = true;
-        } catch (error) {
-          // A thrown install/host callback must not strand the materializer's
-          // temporary lease. The publication is already finished, so abort()
-          // will not run as a second cleanup path.
-          if (!transferred) this.releaseColdLease(rootRef);
-          throw error;
-        }
-      },
-      abort: (): void => {
-        if (finished) return;
-        finished = true;
-        this.releaseColdLease(rootRef);
-      },
-    };
-  }
-
-  private prepareDesiredColdInstall(view: View): RootPublication | undefined {
-    if (this.closed) throw new Error("boundary is closed");
-    const node = semanticNodeOf(view);
-    const materialize = COLD_ROOT_MATERIALIZER;
-    if (materialize === undefined) return undefined;
-    const rootRef = materialize(view);
-    if (rootRef === undefined) return undefined;
-    let finished = false;
-    return {
-      rootRef,
-      route: "fallback",
-      commit: (): void => {
-        if (finished) throw new Error("root publication already finished");
-        finished = true;
-        const host = this.host();
-        const setDesired = host?.setDesiredViewRef;
-        if (host === undefined || setDesired === undefined) {
-          throw new Error("TUI_ROOT_DESIRED_PUBLISH_UNAVAILABLE");
-        }
-        try {
-          setDesired.call(host, rootRef);
-          const duplicate = this.desiredRef === rootRef || this.visibleRef === rootRef;
-          this.transferDesiredRoot(rootRef, node, this.desiredRevisionForHost(host));
-          installHint(node, this.session.abi.generation, rootRef);
-          if (duplicate) this.releaseColdLease(rootRef);
-        } catch (error) {
-          this.releaseColdLease(rootRef);
-          throw error;
-        }
-      },
-      abort: (): void => {
-        if (finished) return;
-        finished = true;
-        this.releaseColdLease(rootRef);
-      },
-    };
-  }
-
-  private releaseColdLease(rootRef: number): void {
-    this.releaseReference(rootRef);
   }
 
   /**

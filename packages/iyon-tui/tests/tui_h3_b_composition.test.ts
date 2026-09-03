@@ -8,23 +8,20 @@ import {
 import { AppHarness } from "../src/testing/index.ts";
 import { SEMANTIC_VIEW_KIND, semanticNodeOf } from "../src/api/view/semantic-node.ts";
 import { executionCounterSnapshot, resetExecutionCounters } from "../src/composition/execution.ts";
-import { lowerColdView } from "../src/transport/structural/cold-lowering.ts";
-import { BRIDGE_VIEW_KIND, VIEW_BRIDGE_SCHEMA_VERSION } from "../src/transport/structural/ir.ts";
 
 const H3B = "API-H3 H3-B composition/semantic cutover";
 
 describe(H3B, () => {
-  test("View construction is semantic-authoritative while cold transport receives a derived bridge", () => {
+  test("View construction is semantic-authoritative and memoized", () => {
     const child = View.text("child");
     const view = View.vertical([child, View.text("sibling")]);
     const semantic = semanticNodeOf(view);
-    const bridge = lowerColdView(view);
 
     expect(semantic.kind).toBe(SEMANTIC_VIEW_KIND.column);
     expect("schema" in semantic).toBe(false);
+    expect("handle" in semantic).toBe(false);
     expect(Object.isFrozen(semantic)).toBe(true);
-    expect(bridge.schema).toBe(VIEW_BRIDGE_SCHEMA_VERSION);
-    expect(lowerColdView(view)).toBe(bridge);
+    expect(semanticNodeOf(view)).toBe(semantic);
     if (semantic.kind !== SEMANTIC_VIEW_KIND.column) throw new Error("expected semantic column");
     expect(semantic.children[0]!.child).toBe(semanticNodeOf(child));
   });
@@ -76,10 +73,8 @@ describe(H3B, () => {
       if (semantic.kind !== SEMANTIC_VIEW_KIND.component) throw new Error("expected semantic component");
       expect(semantic.handleId).toBe(slot.id);
       expect("handle" in semantic).toBe(false);
+      expect(typeof semantic.handleId).toBe("number");
 
-      const bridge = lowerColdView(view);
-      if (bridge.kind !== BRIDGE_VIEW_KIND.component) throw new Error("expected bridge component");
-      expect(bridge.handle).toBeGreaterThan(0);
       slot.dispose();
       expect(() => slot.view()).toThrow(/disposed/i);
     } finally {

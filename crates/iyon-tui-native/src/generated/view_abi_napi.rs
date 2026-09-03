@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
-// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
+// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
+// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
 // Generated safe N-API methods. The only unsafe operations are the
 // private calls from typed N-API values into the validated semantic wrappers.
 #[napi]
@@ -369,6 +369,12 @@ impl NativeViewAbiSession {
         let text2_cstring = std::ffi::CString::new(text2).map_err(|_| napi::Error::from_reason("text2 must not contain NUL"))?;
         let text3_cstring = std::ffi::CString::new(text3).map_err(|_| napi::Error::from_reason("text3 must not contain NUL"))?;
         Ok(unsafe { generated_exports::invoke_iyon_view_text_create_cstring_4_v1(runtime, node_id_low, node_id_high, text0_cstring.as_ptr(), style0, text1_cstring.as_ptr(), style1, text2_cstring.as_ptr(), style2, text3_cstring.as_ptr(), style3, wrap, align) })
+    }
+
+#[napi(js_name = "viewTextCreateBuffer")]
+    pub fn view_text_create_buffer(&self, node_id_low: u32, node_id_high: u32, words: napi::bindgen_prelude::Uint32Array, used_word_count: u32, bytes: napi::bindgen_prelude::Uint8Array, used_byte_count: u32, wrap: u32, align: u32) -> napi::Result<u32> {
+        let runtime = self.runtime_ptr()?;
+        Ok(unsafe { generated_exports::invoke_iyon_view_text_create_buffer_v1(runtime, node_id_low, node_id_high, words.as_ref().as_ptr() as *const u32, words.as_ref().len().saturating_mul(4), used_word_count, bytes.as_ref().as_ptr() as *const u8, bytes.as_ref().len().saturating_mul(1), used_byte_count, wrap, align) })
     }
 
 #[napi(js_name = "u8_8")]

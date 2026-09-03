@@ -1,11 +1,11 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e; generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41; generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659 -->
 
 # PERF-11 generated ABI reference
 
 > This file is generated. Do not edit it directly.
 
-- Schema BLAKE3: `2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e`
-- Generator BLAKE3: `2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f`
+- Schema BLAKE3: `06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41`
+- Generator BLAKE3: `37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659`
 - ABI: `iyon_tui_view` v1
 - Semantic schema: v1
 - Minimum Bun: `1.4.0`
@@ -110,6 +110,7 @@
 | `view_text_create_cstring_2` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
 | `view_text_create_cstring_3` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
 | `view_text_create_cstring_4` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
+| `view_text_create_buffer` | `constructor` | `warm` | `ViewRefResult` | `direct_decode` | `owner_thread` | `true` | `false` |
 
 ## ABI conformance fixtures
 

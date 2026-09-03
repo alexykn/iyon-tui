@@ -23,7 +23,7 @@
  */
 
 import type { NativeTuiHostContract, NativeViewAbiHandle } from "../native/addon.ts";
-import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContentHostCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
+import { NativeAbiStatusError, axisBuilderBegin, axisBuilderFinish, axisBuilderPush, axisBuilderAbort, hostRenderRef, viewStateAttach, styleAtomCreateCstring, styleCreateBits, viewAxisCreateBuffer, viewAxisSetChild, viewAxisSpliceBuffer, viewClampCreate, viewCommonPatchRoot, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewComponentCreate, viewContentHostCreate, viewContainerCreate, viewDecoratedCreateBuffer, viewDiffCreateBuffer, viewGridCreateBuffer, viewGridSetCell, viewHangingCreate, viewRefForNodeId, viewReleaseMany, viewRenderRef, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate, viewTextCreateCstring, viewTextCreateCstring2, viewTextCreateCstring3, viewTextCreateCstring4, viewTextCreateBuffer, viewTextCreateUtf8, viewTextCreateUtf82, viewTextCreateUtf83, viewTextCreateUtf84, viewTextLayoutPatchRoot } from "../abi/structural/generated/view_calls.ts";
 import {
   axisKind,
   axisTrackWord,
@@ -41,7 +41,7 @@ import {
   u64Words,
   wrapModeCode,
 } from "./encoding.ts";
-import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticViewNode } from "../../api/view/semantic-node.ts";
+import { isSemanticViewNode, semanticNodeOf, peekSemanticDerivation, peekSemanticGridSequenceOverride, peekSemanticSequenceOverride, SEMANTIC_VIEW_KIND, type SemanticColor, type SemanticDerivation, type SemanticLayoutChild, type SemanticStyle, type SemanticTextSpan, type SemanticViewNode } from "../../api/view/semantic-node.ts";
 import { componentIdForHandleId } from "./component-id.ts";
 import { nativeResourceForHandleId } from "../native/resources.ts";
 import type { NativeStructuralAttachmentContract, NativeViewStateContract } from "../native/addon.ts";
@@ -190,10 +190,10 @@ function recordPhaseSample(sample: RetainedPhaseSample): void {
  * catch it to select a previous-generation transport. (The historical name
  * is kept because generated ABI code imports it.)
  */
-export class RetainedFastFallbackError extends Error {
+export class RetainedRefusalError extends Error {
   constructor(reason: string) {
     super(`retained materialization refused: ${reason}`);
-    this.name = "RetainedFastFallbackError";
+    this.name = "RetainedRefusalError";
   }
 }
 
@@ -299,7 +299,7 @@ export class MaterializeTx {
     // native text limit fail explicitly; oversized allocation itself throws
     // instead of selecting another architecture.
     if (needed > MAX_DIRECT_TEXT_BYTES) {
-      throw new RetainedFastFallbackError(
+      throw new RetainedRefusalError(
         `${label} payload ${needed} bytes exceeds the native ${MAX_DIRECT_TEXT_BYTES}-byte limit`,
       );
     }
@@ -426,7 +426,7 @@ function recoverStaleNode(node: SemanticViewNode, tx: MaterializeTx): number | u
   try {
     return ensureSemanticNative(node, tx);
   } catch (error) {
-    if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
+    if (error instanceof RetainedRefusalError || error instanceof RetainedCycleError) return undefined;
     throw error;
   }
 }
@@ -455,13 +455,13 @@ function materializeWithRecovery(
         return invoke();
       } catch (retryError) {
         if (isExpectedNativeStatus(retryError)) {
-          throw new RetainedFastFallbackError("native constructor retry reported a failure status");
+          throw new RetainedRefusalError("native constructor retry reported a failure status");
         }
         throw retryError;
       }
     }
     if (isExpectedNativeStatus(error)) {
-      throw new RetainedFastFallbackError("native constructor reported a failure status");
+      throw new RetainedRefusalError("native constructor reported a failure status");
     }
     throw error;
   }
@@ -473,7 +473,7 @@ function runMaterializer(_kind: string, lower: () => number): number {
 }
 
 function materializeSpacerNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.spacer) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.spacer) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("spacer", () => viewSpacerCreate(tx.symbols, tx.runtime, low, high, node.rows));
@@ -481,14 +481,14 @@ function materializeSpacerNode(node: SemanticViewNode, tx: MaterializeTx): numbe
 
 function materializeContentHostNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.contentHost || node.contentAttachment === undefined) {
-    throw new RetainedFastFallbackError("ContentHost is missing its ContentPort attachment");
+    throw new RetainedRefusalError("ContentHost is missing its ContentPort attachment");
   }
   counters.bridge_semantic_nodes_inspected += 1;
   const resource = nativeResourceForHandleId<NativeStructuralAttachmentContract>(node.contentAttachment, "content-port");
   const portId = resource.attachmentId();
   const words = u64Words(portId);
   if (words === undefined || portId === 0) {
-    throw new RetainedFastFallbackError("ContentPort native identity is not a safe positive integer");
+    throw new RetainedRefusalError("ContentPort native identity is not a safe positive integer");
   }
   const [low, high] = splitNodeId(node.id);
   return runMaterializer("contentHost", () => viewContentHostCreate(
@@ -516,7 +516,7 @@ function materializeAxisNode(node: SemanticAxisNode, tx: MaterializeTx): number 
   const count = axisChildCount(node);
   const childAt = (index: number): SemanticLayoutChild => {
     const child = axisChildAt(node, index);
-    if (child === undefined) throw new RetainedFastFallbackError("axis sequence contains a missing child");
+    if (child === undefined) throw new RetainedRefusalError("axis sequence contains a missing child");
     return child;
   };
   counters.bridge_children_visited += count;
@@ -566,18 +566,18 @@ function materializeAxisNode(node: SemanticAxisNode, tx: MaterializeTx): number 
 }
 
 function materializeRowNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.row) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.row) throw new RetainedRefusalError("kind mismatch");
   return materializeAxisNode(node, tx);
 }
 
 function materializeColumnNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.column) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.column) throw new RetainedRefusalError("kind mismatch");
   return materializeAxisNode(node, tx);
 }
 
 /** PERF-12 T10 (§36): new Grid construction through one borrowed word lane. */
 function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.grid) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.grid) throw new RetainedRefusalError("kind mismatch");
   const override = peekSemanticGridSequenceOverride(node);
   const rowCount = override?.rowTracks.length ?? node.rows.length;
   const cellCount = override?.sequence.length ?? node.rows.reduce((total, row) => total + row.cells.length, 0);
@@ -590,7 +590,7 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
   for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
     const row = override === undefined ? node.rows[rowIndex]! : undefined;
     const track = override?.rowTracks[rowIndex] ?? row?.track;
-    if (track === undefined) throw new RetainedFastFallbackError("grid sequence contains a missing row track");
+    if (track === undefined) throw new RetainedRefusalError("grid sequence contains a missing row track");
     const start = override?.rowOffsets[rowIndex] ?? 0;
     const end = override?.rowOffsets[rowIndex + 1] ?? row!.cells.length;
     const rowCells = override === undefined ? row!.cells : undefined;
@@ -598,7 +598,7 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
     words[offset++] = end - start;
     for (let index = start; index < end; index += 1) {
       const cell = override === undefined ? rowCells![index - start]! : override.sequence.get(index);
-      if (cell === undefined) throw new RetainedFastFallbackError("grid sequence contains a missing cell");
+      if (cell === undefined) throw new RetainedRefusalError("grid sequence contains a missing cell");
       words[offset++] = ensureSemanticNative(cell.view, tx);
       words[offset++] = gridCellSpanWord(cell.columnSpan, cell.rowSpan);
       words[offset++] = gridCellAlignmentWord(cell.horizontalAlign, cell.verticalAlign);
@@ -629,8 +629,9 @@ function materializeGridNode(node: SemanticViewNode, tx: MaterializeTx): number 
  * §25 reuse before adding, §40 no second native style cache). Text uses the
  * cstring family whenever every span is NUL-free — zero JS encoding, Bun
  * lowers the strings natively — and the exact-byte utf8 family otherwise,
- * encoding once into a byte tier sized to the payload. Span counts outside
- * the 1..=4 constructor families fail explicitly (PRE-V5-R0 BLOCKER R0-B001).
+ * encoding once into a byte tier sized to the payload. Span counts above 4
+ * use the variadic words+bytes buffer lane (view_text_create_buffer),
+ * mirroring the diff lane; only an empty span list fails explicitly.
  */
 const TEXT_ENCODER = new TextEncoder();
 
@@ -649,7 +650,7 @@ function styleColorAtom(color: SemanticColor): string {
 
 function styleAtomRef(value: string, tx: MaterializeTx): number {
   if (value.indexOf("\0") !== -1) {
-    throw new RetainedFastFallbackError("style atom contains an embedded NUL");
+    throw new RetainedRefusalError("style atom contains an embedded NUL");
   }
   ensureStyleCache(tx);
   const cached = STYLE_REF_CACHE.atoms.get(value);
@@ -667,7 +668,7 @@ function styleRefFor(style: SemanticStyle | undefined, tx: MaterializeTx): numbe
   if (cached !== undefined) return cached;
   const attributes = styleAttributeEncoding(style);
   if (!attributes.valid) {
-    throw new RetainedFastFallbackError(
+    throw new RetainedRefusalError(
       attributes.reason === "unknown"
         ? `unknown text attribute ${attributes.name}`
         : `text attribute ${attributes.name} must be boolean`,
@@ -682,24 +683,27 @@ function styleRefFor(style: SemanticStyle | undefined, tx: MaterializeTx): numbe
 }
 
 function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const spans = node.spans;
-  if (spans.length < 1 || spans.length > 4) {
-    // PRE-V5-R0 BLOCKER R0-B001: the retained text ABI exposes constructors
-    // for 1..=4 spans only; wider styled text has no retained constructor.
-    // This fails explicitly instead of routing to a second architecture. A
-    // variadic text-buffer constructor is the needed ABI extension.
-    throw new RetainedFastFallbackError(`text span count ${spans.length} is outside the retained 1..=4 family`);
+  if (spans.length < 1) {
+    throw new RetainedRefusalError("text requires at least one span");
+  }
+  if (spans.length > 4) {
+    // Variadic lane: span counts above the 1..=4 fixed-arity families use the
+    // words+bytes buffer constructor (view_text_create_buffer), mirroring the
+    // diff lane. Same style-ref resolution and single-encode discipline as
+    // the exact-byte lane below.
+    return materializeWideTextNode(node, tx, spans);
   }
   // Payload dependencies resolve before any transport (children-first analog).
   const styleRefs = spans.map((span) => {
     try {
       return styleRefFor(span.style, tx);
     } catch (error) {
-      if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
+      if (error instanceof RetainedRefusalError || isExpectedNativeStatus(error)) {
         if (isExpectedNativeStatus(error)) {
-          throw new RetainedFastFallbackError("style publication reported a failure status");
+          throw new RetainedRefusalError("style publication reported a failure status");
         }
         throw error;
       }
@@ -735,7 +739,7 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
   for (const span of spans) {
     const encoded = TEXT_ENCODER.encodeInto(span.text, scratch.subarray(offset));
     if (encoded.read !== span.text.length) {
-      throw new RetainedFastFallbackError("text payload exceeds its measured byte length");
+      throw new RetainedRefusalError("text payload exceeds its measured byte length");
     }
     lengths.push(encoded.written);
     offset += encoded.written;
@@ -751,18 +755,59 @@ function materializeTextNode(node: SemanticViewNode, tx: MaterializeTx): number 
   });
 }
 
+/**
+ * Variadic N-span text materialization (spans.length > 4) through the
+ * words+bytes buffer constructor. Words carry
+ * `[span_count, per span (style_ref, span_byte_length)]`; bytes carry the
+ * concatenated span payloads encoded once into the exact-size byte tier —
+ * the same single-encode discipline as the exact-byte lane, which also
+ * covers NUL-containing spans since bytes are length-delimited.
+ */
+function materializeWideTextNode(
+  node: SemanticViewNode,
+  tx: MaterializeTx,
+  spans: readonly SemanticTextSpan[],
+): number {
+  if (node.kind !== SEMANTIC_VIEW_KIND.text) throw new RetainedRefusalError("kind mismatch");
+  counters.bridge_semantic_nodes_inspected += 1;
+  const styleRefs = spans.map((span) => styleRefCounted(span.style, tx));
+  const wrap = wrapModeCode(node.wrap);
+  const align = horizontalAlignCode(node.align);
+  const [low, high] = splitNodeId(node.id);
+  const scratch = tx.byteScratch(spans.reduce((total, span) => total + Buffer.byteLength(span.text), 0), "text");
+  const words = tx.diffWordScratch(1 + spans.length * 2);
+  let wordOffset = 0;
+  let byteOffset = 0;
+  words[wordOffset++] = spans.length;
+  for (let index = 0; index < spans.length; index++) {
+    const span = spans[index]!;
+    const encoded = TEXT_ENCODER.encodeInto(span.text, scratch.subarray(byteOffset));
+    if (encoded.read !== span.text.length) {
+      throw new RetainedRefusalError("text payload exceeds its measured byte length");
+    }
+    words[wordOffset++] = styleRefs[index]!;
+    words[wordOffset++] = encoded.written;
+    byteOffset += encoded.written;
+  }
+  counters.ref_words_written += wordOffset;
+  counters.byte_payload_bytes += byteOffset;
+  return runMaterializer("text", () =>
+    viewTextCreateBuffer(tx.symbols, tx.runtime, low, high, words, wordOffset, scratch, byteOffset, wrap, align)
+  );
+}
+
 /** Splits a safe-integer coordinate into the canonical lo/hi word pair. */
 function requiredU64Words(value: number): readonly [number, number] {
   const words = u64Words(value);
   if (words === undefined) {
-    throw new RetainedFastFallbackError(`diff coordinate ${value} is not a safe non-negative integer`);
+    throw new RetainedRefusalError(`diff coordinate ${value} is not a safe non-negative integer`);
   }
   return words;
 }
 
 /** PERF-12 T11 (§41): new-Diff construction through one words+bytes call. */
 function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.diff) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.diff) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const hunks = node.hunks;
   let wordCount = 1;
@@ -793,7 +838,7 @@ function materializeDiffNode(node: SemanticViewNode, tx: MaterializeTx): number 
       const newLine = line.newLine === undefined ? [0, 0] as const : requiredU64Words(line.newLine);
       const encoded = TEXT_ENCODER.encodeInto(line.text, bytes.subarray(byteOffset));
       if (encoded.read !== line.text.length || encoded.written > 0xffff_ffff) {
-        throw new RetainedFastFallbackError("diff line payload exceeds its measured byte length");
+        throw new RetainedRefusalError("diff line payload exceeds its measured byte length");
       }
       writeWords(meta, oldLine[0], oldLine[1], newLine[0], newLine[1], encoded.written);
       byteOffset += encoded.written;
@@ -815,16 +860,16 @@ function styleRefCounted(style: SemanticStyle | undefined, tx: MaterializeTx): n
   try {
     return styleRefFor(style, tx);
   } catch (error) {
-    if (error instanceof RetainedFastFallbackError) throw error;
+    if (error instanceof RetainedRefusalError) throw error;
     if (isExpectedNativeStatus(error)) {
-      throw new RetainedFastFallbackError("style publication reported a failure status");
+      throw new RetainedRefusalError("style publication reported a failure status");
     }
     throw error;
   }
 }
 
 function materializeHangingNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.hanging) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.hanging) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const prefixRef = ensureSemanticNative(node.prefix, tx);
   const continuationRef = ensureSemanticNative(node.continuation, tx);
@@ -836,7 +881,7 @@ function materializeHangingNode(node: SemanticViewNode, tx: MaterializeTx): numb
 }
 
 function materializeContainerNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.container) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.container) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   const [low, high] = splitNodeId(node.id);
@@ -848,7 +893,7 @@ function materializeContainerNode(node: SemanticViewNode, tx: MaterializeTx): nu
 /** Lowers clamp/contentMax nodes; contentMax is a clamp with no indicator. */
 function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number {
   if (node.kind !== SEMANTIC_VIEW_KIND.clamp && node.kind !== SEMANTIC_VIEW_KIND.contentMax) {
-    throw new RetainedFastFallbackError("kind mismatch");
+    throw new RetainedRefusalError("kind mismatch");
   }
   counters.bridge_semantic_nodes_inspected += 1;
   const childRef = ensureSemanticNative(node.child, tx);
@@ -869,7 +914,7 @@ function materializeClampNode(node: SemanticViewNode, tx: MaterializeTx): number
 }
 
 function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.component) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.component) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   const handleWords = requiredU64Words(componentIdForHandleId(node.handleId));
   const [low, high] = splitNodeId(node.id);
@@ -878,28 +923,61 @@ function materializeComponentNode(node: SemanticViewNode, tx: MaterializeTx): nu
   );
 }
 
+const CUSTOM_BORDER_GLYPH_FIELDS = [
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "topLeft",
+  "topRight",
+  "bottomLeft",
+  "bottomRight",
+] as const;
+
+/**
+ * Reads a complete custom border-glyph set in native wire order. Absent or
+ * empty glyphs mean no trailer; a present-but-incomplete set fails
+ * explicitly, matching the old decoder's required-field errors. Grapheme and
+ * cell-width validity is enforced natively by BorderGlyphs.
+ */
+function readCustomBorderGlyphs(glyphs: unknown): readonly string[] | undefined {
+  if (glyphs === undefined) return undefined;
+  if (typeof glyphs !== "object" || glyphs === null) {
+    throw new RetainedRefusalError("border glyphs must be an object");
+  }
+  const source = glyphs as Record<string, unknown>;
+  if (Object.keys(source).length === 0) return undefined;
+  return CUSTOM_BORDER_GLYPH_FIELDS.map((field) => {
+    const value = source[field];
+    if (typeof value !== "string") {
+      throw new RetainedRefusalError(`border glyph ${field} must be a string`);
+    }
+    return value;
+  });
+}
+
 function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): number {
-  if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedFastFallbackError("kind mismatch");
+  if (node.kind !== SEMANTIC_VIEW_KIND.decorated) throw new RetainedRefusalError("kind mismatch");
   counters.bridge_semantic_nodes_inspected += 1;
   // Decoration values apply directly to the child View's canonical physical
   // box; no extra physical occurrence owns padding, bounds, or border geometry.
   counters.decorated_normalized_nodes += 1;
   const childRef = ensureSemanticNative(node.child, tx);
   const decoration = node.decoration;
-  if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {
-    // PRE-V5-R0 BLOCKER R0-B002: the retained decorated-word encoding has no
-    // custom-glyph lane. This fails explicitly instead of routing to a second
-    // architecture; a glyph-capable decorated constructor is the needed ABI
-    // extension.
-    throw new RetainedFastFallbackError("custom border glyphs are not expressible on the retained lane");
-  }
+  // Custom border glyphs ride a mask-gated trailer (glyph count + 8
+  // offset/length pairs) between the state count and the style-state entries.
+  // A present-but-incomplete glyph set fails explicitly: the old decoder
+  // required every field, so partial sets have no valid rendering.
+  const customGlyphs = readCustomBorderGlyphs(decoration.border?.glyphs);
   const encodedDecoration = decorationWordEncoding(decoration);
   const states = Object.entries(decoration.styleStates ?? {});
-  // Fixed header: mask + 9 payload words + state count, then 4 words per state.
-  const wordCount = 11 + states.length * 4;
+  // Fixed header: mask + 9 payload words + state count, then the optional
+  // glyph trailer (count + 8 pairs), then 4 words per state.
+  const wordCount = 11 + states.length * 4 + (customGlyphs === undefined ? 0 : 1 + 8 * 2);
   const words = tx.diffWordScratch(wordCount);
   const bytes = tx.byteScratch(
-    states.reduce((total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value), 0),
+    states.reduce((total, [key, value]) => total + Buffer.byteLength(key) + Buffer.byteLength(value), 0) +
+      (customGlyphs ?? []).reduce((total, glyph) => total + Buffer.byteLength(glyph), 0),
     "decorated",
   );
   let byteOffset = 0;
@@ -910,8 +988,8 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
       decoration.background === undefined ? 0 : styleAtomRef(styleColorAtom(decoration.background), tx),
     ];
   } catch (error) {
-    if (error instanceof RetainedFastFallbackError || isExpectedNativeStatus(error)) {
-      throw error instanceof RetainedFastFallbackError ? error : new RetainedFastFallbackError("decoration color atom publication failed");
+    if (error instanceof RetainedRefusalError || isExpectedNativeStatus(error)) {
+      throw error instanceof RetainedRefusalError ? error : new RetainedRefusalError("decoration color atom publication failed");
     }
     throw error;
   }
@@ -931,16 +1009,32 @@ function materializeDecoratedNode(node: SemanticViewNode, tx: MaterializeTx): nu
   writeWord(encodedDecoration.borderStyleEdges);
   writeWord(borderColorAtom);
   writeWord(states.length);
+  if (customGlyphs !== undefined) {
+    // Glyph trailer order matches the native parser: count, then
+    // (offset, length) per glyph. Glyph bytes are appended after the
+    // style-state bytes; offsets are absolute.
+    writeWord(customGlyphs.length);
+    const glyphOffsets: number[] = [];
+    for (const glyph of customGlyphs) {
+      const glyphBytes = TEXT_ENCODER.encodeInto(glyph, bytes.subarray(byteOffset));
+      if (glyphBytes.read !== glyph.length) {
+        throw new RetainedRefusalError("border-glyph payload exceeds its measured byte length");
+      }
+      glyphOffsets.push(byteOffset, glyphBytes.written);
+      byteOffset += glyphBytes.written;
+    }
+    for (const word of glyphOffsets) writeWord(word);
+  }
   for (const [key, value] of states) {
     const keyBytes = TEXT_ENCODER.encodeInto(key, bytes.subarray(byteOffset));
     if (keyBytes.read !== key.length) {
-      throw new RetainedFastFallbackError("style-state payload exceeds its measured byte length");
+      throw new RetainedRefusalError("style-state payload exceeds its measured byte length");
     }
     const keyOffset = byteOffset;
     byteOffset += keyBytes.written;
     const valueBytes = TEXT_ENCODER.encodeInto(value, bytes.subarray(byteOffset));
     if (valueBytes.read !== value.length) {
-      throw new RetainedFastFallbackError("style-state payload exceeds its measured byte length");
+      throw new RetainedRefusalError("style-state payload exceeds its measured byte length");
     }
     const valueOffset = byteOffset;
     byteOffset += valueBytes.written;
@@ -979,7 +1073,7 @@ function attachStateIfPresent(
     const stateId = resource.stateId();
     const stateWords = u64Words(stateId);
     if (stateWords === undefined || stateId === 0) {
-      throw new RetainedFastFallbackError("ViewState native identity is not a safe positive integer");
+      throw new RetainedRefusalError("ViewState native identity is not a safe positive integer");
     }
     const [nodeLow, nodeHigh] = splitNodeId(node.id);
     return viewStateAttach(
@@ -1005,8 +1099,9 @@ function attachStateIfPresent(
  * arities). T7 covers spacer plus row/column arities 0..=4; T10 adds Grid;
  * T11 adds the text cstring/utf8 payload lanes and the diff words+bytes lane;
  * T13 adds hanging, container, clamp/contentMax, component references, and
- * decorated nodes — every §76 kind is now direct-materialized or explicitly
- * refused (text spans >4 per R0-B001, custom border glyphs per R0-B002).
+ * decorated nodes; PRE-V5-R0 adds the variadic N-span text buffer lane and
+ * the custom-glyph decorated trailer, so every §76 kind is now
+ * direct-materialized with no explicit-refusal gaps.
  */
 const MATERIALIZERS = new Map<number, NodeMaterializer>([
   [SEMANTIC_VIEW_KIND.spacer, materializeSpacerNode],
@@ -1059,7 +1154,7 @@ export function ensureNative(node: SemanticViewNode, tx: MaterializeTx): number;
 export function ensureNative(node: object, tx: MaterializeTx): number;
 export function ensureNative(node: SemanticViewNode | object, tx: MaterializeTx): number {
   if (!isSemanticViewNode(node)) {
-    throw new RetainedFastFallbackError("structural materialization requires a semantic node");
+    throw new RetainedRefusalError("structural materialization requires a semantic node");
   }
   return ensureSemanticNative(node, tx);
 }
@@ -1110,7 +1205,7 @@ export function ensureSemanticNative(node: SemanticViewNode, tx: MaterializeTx):
       const materializer = MATERIALIZERS.get(node.kind);
       if (materializer === undefined) {
         counters.bridge_semantic_nodes_inspected += 1;
-        throw new RetainedFastFallbackError(`no materializer for kind ${node.kind}`);
+        throw new RetainedRefusalError(`no materializer for kind ${node.kind}`);
       }
       reference = materializeWithRecovery(node, tx, materializer);
     }
@@ -1735,7 +1830,7 @@ export class RetainedRootBoundary {
       // Retained refusal, cycle guard, and unexpected errors all drain every
       // temporary lease before the caller sees the failure.
       tx.releaseAll();
-      if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
+      if (error instanceof RetainedRefusalError || error instanceof RetainedCycleError) return undefined;
       throw error;
     }
     // A generation-valid hint is only an acceleration hint. The current-root

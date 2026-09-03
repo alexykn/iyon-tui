@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
-// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
+// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
+// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
 import { expect, test } from "bun:test";
 import manifest from "../../src/transport/abi/structural/generated/view_abi_manifest.json";
 
 test("generated ABI manifest is pinned and ordered", () => {
-  expect(manifest.schema_blake3).toBe("2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e");
+  expect(manifest.schema_blake3).toBe("06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41");
   expect(manifest.abi.version).toBe(1);
   expect(manifest.functions.map((item) => item.name)).toEqual([
     "runtime_noop",
@@ -67,6 +67,7 @@ test("generated ABI manifest is pinned and ordered", () => {
     "view_text_create_cstring_2",
     "view_text_create_cstring_3",
     "view_text_create_cstring_4",
+    "view_text_create_buffer",
   ]);
   expect(manifest.conformance.map((item) => item.name)).toEqual([
     "u8_8",
@@ -163,5 +164,6 @@ test("generated ABI signatures and POD layouts are pinned", () => {
     ["runtime_ptr", "u32", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "u32", "u32"],
     ["runtime_ptr", "u32", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "u32", "u32"],
     ["runtime_ptr", "u32", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "cstring_ephemeral", "u32", "u32", "u32"],
+    ["runtime_ptr", "u32", "u32", "buffer", "buffer_length", "buffer_used", "buffer", "buffer_length", "buffer_used", "u32", "u32"],
   ]);
 });

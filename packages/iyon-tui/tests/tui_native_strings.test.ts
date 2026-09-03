@@ -5,7 +5,7 @@ import { StyleSpec, View, TextSpan } from "../src/index.ts";
 import { AppHarness } from "../src/testing/index.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
 type HostContract = NativeTuiHostContract;
 
@@ -15,7 +15,7 @@ describe("PERF-11.9 native strings and style atoms", () => {
   test("preserves Unicode, styled spans, and embedded NUL parity", async () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const tui = await AppHarness.open({ width: 24, height: 4 });
-    const oracle = new Host(24, 4, true);
+    const reference = new Host(24, 4, true);
     const values = [
       View.text("héllo 🌍").bold().foreground({ type: "named", value: "red" }).noWrap(),
       View.styledText([
@@ -32,15 +32,15 @@ describe("PERF-11.9 native strings and style atoms", () => {
     ];
     try {
       // Every value renders through the production semantic router and must
-      // match the generated host-ref oracle exactly.
+      // match the generated host-ref reference exactly.
       for (const value of values) {
         tui.render({ body: value });
-        renderCold(oracle, value);
-        expect(tui.screenRows()).toEqual(oracle.screenRows());
+        renderRetained(reference, value);
+        expect(tui.screenRows()).toEqual(reference.screenRows());
       }
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 

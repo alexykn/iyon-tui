@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
-// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
+// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
+// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
 // Generated C ABI wrappers. Semantic implementations are handwritten and linked below.
 use super::{NativeViewRuntime, NativeHost, AxisChildInputV1};
 pub mod generated_impls {
@@ -1207,6 +1207,35 @@ pub mod generated_impls {
                 style2,
                 text3,
                 style3,
+                wrap,
+                align,
+            )
+        }
+    }
+    pub(super) unsafe fn view_text_create_buffer_impl(
+        runtime: *mut NativeViewRuntime,
+        node_id_low: u32,
+        node_id_high: u32,
+        words: *const u32,
+        words_capacity_bytes: usize,
+        used_word_count: u32,
+        bytes: *const u8,
+        bytes_capacity_bytes: usize,
+        used_byte_count: u32,
+        wrap: u32,
+        align: u32,
+    ) -> u32 {
+        unsafe {
+            super::super::view_text_create_buffer_impl(
+                runtime,
+                node_id_low,
+                node_id_high,
+                words,
+                words_capacity_bytes,
+                used_word_count,
+                bytes,
+                bytes_capacity_bytes,
+                used_byte_count,
                 wrap,
                 align,
             )
@@ -4857,6 +4886,98 @@ pub unsafe extern "C" fn iyon_view_text_create_cstring_4_v1(
             style2,
             text3,
             style3,
+            wrap,
+            align,
+        )
+    }
+}
+
+pub(super) unsafe fn invoke_iyon_view_text_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    generated_catch_unwind(
+        || {
+            (|| -> Result<u32, u32> {
+                let runtime = generated_nonnull(runtime, 0x8000_0001u32)?;
+                let (node_id_low, node_id_high) =
+                    generated_node_id(node_id_low, node_id_high, 0x8000_0001u32)?;
+                let words =
+                    generated_buffer(words, words_capacity_bytes, 4, 1048576, 0x8000_0002u32)?;
+                let used_word_count = generated_buffer_used(
+                    used_word_count,
+                    words_capacity_bytes,
+                    4,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                let bytes =
+                    generated_buffer(bytes, bytes_capacity_bytes, 1, 1048576, 0x8000_0002u32)?;
+                let used_byte_count = generated_buffer_used(
+                    used_byte_count,
+                    bytes_capacity_bytes,
+                    1,
+                    262144,
+                    0x8000_0003u32,
+                )?;
+                let wrap = generated_enum(wrap, &[1, 2, 3], 0x8000_0001u32)?;
+                let align = generated_enum(align, &[1, 2, 3], 0x8000_0001u32)?;
+                Ok(unsafe {
+                    generated_impls::view_text_create_buffer_impl(
+                        runtime,
+                        node_id_low,
+                        node_id_high,
+                        words,
+                        words_capacity_bytes,
+                        used_word_count,
+                        bytes,
+                        bytes_capacity_bytes,
+                        used_byte_count,
+                        wrap,
+                        align,
+                    )
+                })
+            })()
+        },
+        0x8000_00ffu32,
+    )
+}
+
+#[cfg(feature = "direct-ffi")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iyon_view_text_create_buffer_v1(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    unsafe {
+        invoke_iyon_view_text_create_buffer_v1(
+            runtime,
+            node_id_low,
+            node_id_high,
+            words,
+            words_capacity_bytes,
+            used_word_count,
+            bytes,
+            bytes_capacity_bytes,
+            used_byte_count,
             wrap,
             align,
         )

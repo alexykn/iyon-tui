@@ -44,9 +44,9 @@ function randomView(rng: Rng, depth: number, shared?: View): View {
 }
 
 describe("PERF-12 T14 retained differential", () => {
-  test("100 deterministic DAG seeds match a fresh cold render", async () => {
+  test("100 deterministic DAG seeds match a fresh retained render", async () => {
     const retained = await AppHarness.open({ width: 32, height: 12 });
-    const cold = await AppHarness.open({ width: 32, height: 12 });
+    const fresh = await AppHarness.open({ width: 32, height: 12 });
     try {
       for (let seed = 0; seed < 100; seed++) {
         const rng = new Rng(seed + 1);
@@ -54,12 +54,12 @@ describe("PERF-12 T14 retained differential", () => {
         const next = randomView(rng, 3, base);
         await retained.render(new Scene(base));
         await retained.render(new Scene(next));
-        await cold.render(new Scene(next));
-        expect(retained.screenRows(), `seed ${seed}`).toEqual(cold.screenRows());
+        await fresh.render(new Scene(next));
+        expect(retained.screenRows(), `seed ${seed}`).toEqual(fresh.screenRows());
       }
     } finally {
       await retained.close();
-      await cold.close();
+      await fresh.close();
     }
   });
 });

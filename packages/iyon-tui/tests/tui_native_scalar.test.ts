@@ -9,17 +9,17 @@ import {
   textLayoutAtNativePathForTransport,
 } from "../src/transport/structural/retained-path.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
-type OracleHost = NativeTuiHostContract;
+type ReferenceHost = NativeTuiHostContract;
 
-const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => OracleHost) | undefined;
+const Host = native.NativeTuiHost as unknown as (new (width: number, height: number, headless: boolean) => ReferenceHost) | undefined;
 
 describe("PERF-11.3 generated scalar retained route", () => {
   test("keeps exact identity O(1) and renders text layout through generated FFI", async () => {
     if (Host === undefined) return;
     const tui = await AppHarness.open({ width: 8, height: 4 });
-    const oracle = new Host(8, 4, true);
+    const reference = new Host(8, 4, true);
     const base = View.text("hello");
     const changed = base.noWrap().textAlign("center");
     try {
@@ -29,18 +29,18 @@ describe("PERF-11.3 generated scalar retained route", () => {
       expect(tui.screenRows()).toEqual(first);
 
       tui.render({ body: changed });
-      renderCold(oracle, changed);
-      expect(tui.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, changed);
+      expect(tui.screenRows()).toEqual(reference.screenRows());
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 
   test("renders a depth-one text edit through an interned PathRef", async () => {
     if (Host === undefined) return;
     const tui = await AppHarness.open({ width: 8, height: 4 });
-    const oracle = new Host(8, 4, true);
+    const reference = new Host(8, 4, true);
     const base = View.vertical((column) => column.child(View.text("hello")));
     const changed = textLayoutAtNativePathForTransport(
       base,
@@ -51,18 +51,18 @@ describe("PERF-11.3 generated scalar retained route", () => {
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      renderCold(oracle, changed);
-      expect(tui.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, changed);
+      expect(tui.screenRows()).toEqual(reference.screenRows());
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 
   test("keeps depth-specialized PathRef edits parity through depth four", async () => {
     if (Host === undefined) return;
     const tui = await AppHarness.open({ width: 8, height: 4 });
-    const oracle = new Host(8, 4, true);
+    const reference = new Host(8, 4, true);
     try {
       for (let depth = 1; depth <= 4; depth += 1) {
         let base = View.text("hello");
@@ -78,29 +78,29 @@ describe("PERF-11.3 generated scalar retained route", () => {
         const changed = textLayoutAtNativePathForTransport(base, steps, "noWrap", "center");
         tui.render({ body: base });
         tui.render({ body: changed });
-        renderCold(oracle, changed);
-        expect(tui.screenRows()).toEqual(oracle.screenRows());
+        renderRetained(reference, changed);
+        expect(tui.screenRows()).toEqual(reference.screenRows());
       }
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 
   test("renders supported root common-field patches through generated FFI", async () => {
     if (Host === undefined) return;
     const tui = await AppHarness.open({ width: 8, height: 4 });
-    const oracle = new Host(8, 4, true);
+    const reference = new Host(8, 4, true);
     const base = View.text("x");
     const changed = base.padding(1);
     try {
       tui.render({ body: base });
       tui.render({ body: changed });
-      renderCold(oracle, changed);
-      expect(tui.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, changed);
+      expect(tui.screenRows()).toEqual(reference.screenRows());
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 });

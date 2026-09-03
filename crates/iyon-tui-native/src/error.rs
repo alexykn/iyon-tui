@@ -1,6 +1,6 @@
 use napi::{Error, Status};
 
-/// Stable error categories exposed by the smoke bridge.
+/// Stable error categories exposed by the native addon surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeError {
     InvalidInput,

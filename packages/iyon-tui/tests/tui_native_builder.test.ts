@@ -10,7 +10,7 @@ import {
 import { AppHarness } from "../src/testing/index.ts";
 import { View } from "../src/api/view/view.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
 type HostContract = NativeTuiHostContract;
 
@@ -20,7 +20,7 @@ describe("PERF-11.8 native builders and small constructors", () => {
   test("constructs small axes through generated scalar constructors", () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const host = new Host(8, 4, true);
-    const oracle = new Host(8, 4, true);
+    const reference = new Host(8, 4, true);
     const left = View.spacer(1);
     const right = View.spacer(2);
     const next = View.vertical((column) => {
@@ -28,9 +28,9 @@ describe("PERF-11.8 native builders and small constructors", () => {
       column.flex(right);
     });
     try {
-      renderCold(host, left);
+      renderRetained(host, left);
       const leftRef = nativeViewRefForNodeId(left);
-      renderCold(host, right);
+      renderRetained(host, right);
       const rightRef = nativeViewRefForNodeId(right);
       expect(leftRef).toBeGreaterThan(0);
       expect(rightRef).toBeGreaterThan(0);
@@ -41,33 +41,33 @@ describe("PERF-11.8 native builders and small constructors", () => {
       expect(result).toBeGreaterThan(0);
       releaseNativeViewRef(nativeViewAbiSession(), leftRef!);
       releaseNativeViewRef(nativeViewAbiSession(), rightRef!);
-      renderCold(oracle, next);
-      expect(host.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, next);
+      expect(host.screenRows()).toEqual(reference.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {
       host.dispose();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 
-  test("constructs a compact cold axis through the native builder and keeps text on fallback", async () => {
+  test("constructs a compact retained axis through the native builder and keeps text on the same path", async () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const tui = await AppHarness.open({ width: 8, height: 6 });
-    const oracle = new Host(8, 6, true);
+    const reference = new Host(8, 6, true);
     const spacers = Array.from({ length: 6 }, (_, index) => View.spacer(index + 1));
     const next = View.vertical(spacers);
     try {
       tui.render({ body: next });
-      renderCold(oracle, next);
-      expect(tui.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, next);
+      expect(tui.screenRows()).toEqual(reference.screenRows());
 
       const textFallback = View.vertical([View.text("unsupported"), View.spacer(1)]);
       tui.render({ body: textFallback });
-      renderCold(oracle, textFallback);
-      expect(tui.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, textFallback);
+      expect(tui.screenRows()).toEqual(reference.screenRows());
     } finally {
       tui.close();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 });

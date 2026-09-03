@@ -1,27 +1,33 @@
 # POST-PERF13-ROT-CLEANUP.md
 
-**Status:** cleanup complete with 3 recorded owner blockers (R0-B001..R0-B003)
+**Status:** cleanup complete, all blockers resolved (R0-B001, R0-B002 extended
+the road; R0-B003 demolished it)
 **Tranche:** PRE-V5-R0 (CLEAN2.md), executed against the finished post-PERF-13 `iyon-tui`
 **Rule applied:** one semantic operation → one authoritative production path.
 Failure means failure; no previous-generation implementation may make the
 operation succeed.
 
-Result: **all automatic architecture fallbacks are deleted from production.**
-The retained structural path is the single production structural
-architecture; state and content planes were already single-path and are
-unchanged. 96/96 TypeScript tests pass, `check:ownership` passes,
-`check:tui-abi` passes, `tsc --noEmit` is clean. The architecture census is
-gated ONLY on the 3 blockers in §9 (two small ABI extensions + one physical
-deletion tranche). No blocker is embedded as compatibility code.
+Result: **the retained structural path is the single production structural
+architecture with no expressiveness gaps and no oracle residue.** B001 adds
+the variadic N-span text constructor, B002 adds the custom-glyph decorated
+lane, and B003 physically deletes the previous-generation JSON-decode graph,
+the cold-lowering oracle, obsolete benchmarks, and oracle-bound tests (all
+rewritten against the authoritative path). 98/98 TypeScript tests pass,
+`check:ownership` passes (extended with B003 absence assertions),
+`check:tui-abi` passes, `tsc --noEmit` is repo-clean, `cargo` is
+warning-free, and the native crate tests pass. The architecture census is
+UNGATED.
 
 ---
 
 ## 0. Result
 
-CLEAN2 exit criteria (§42): 24 of 27 hold. The 3 that do not are exactly the
-recorded blockers — genuine retained-ABI expressiveness gaps (text spans
->4, custom border glyphs) and the physical deletion of now-unreachable
-oracle/native-decode code. Every other criterion holds, including:
+CLEAN2 exit criteria (§42): all 27 hold. R0-B001 and R0-B002 are resolved by
+ABI extension (full parity: every View the API can construct materializes on
+the retained lane); R0-B003 is executed (physical deletion tranche, §10).
+The only refusals left in production are for inputs with no valid rendering
+(empty span lists, incomplete glyph sets, malformed payloads) — not for
+expressible operations.
 
 ```text
 STRUCTURE = one authoritative path (retained; refusal fails explicitly)
@@ -150,37 +156,48 @@ Route integrity is asserted, not just pixels (CLEAN2 §26):
 
 ```text
 h3_c: 2,000-child axis renders retained (derivation_fast_path_calls == 1,
-      children_visited == 0, cold objects == 0) — previously cold-routed
+      children_visited == 0) — previously cold-routed
 h3_c: 64 KiB+NUL text renders on the retained exact-byte lane with
       direct_materializer_calls > 0 — previously cold-routed
-h3_c: 5-span text throws TUI_ROOT_PREPARATION_FAILED with zero bridge
-      allocation — previously silently cold-routed (R0-B001)
+h3_c: 6-span styled text + trailing NUL renders on the retained buffer
+      lane (R0-B001) — previously refused
+h3_c: custom "*" border glyphs replace the named style on the retained
+      decorated lane (R0-B002) — previously refused
 perf13_b: 4-span styled text + presentation state on the retained path with
       direct_materializer_calls > 0 (renamed from "cold fallback")
 perf13_a: desired/visible seam test without the cold bootstrap hook
+fuzz: malformed buffer framings + unknown layout codes fail without host
+      mutation; live NodeId resolves from the semantic cache without
+      reading the payload
+values: malformed buffer payloads fail at the retained boundary; worker
+      lifecycle test drives the current N-API surface
+h3_a: 15 sample Views compare against hand-written semantic literals
+      (ids stripped); normalizers pinned to backend-neutral goldens
 ```
 
-Full suite: 96 pass / 0 fail across 27 files. Breaking the retained path
+Full suite: 98 pass / 0 fail across 27 files. Breaking the retained path
 (e.g. restoring a span/glyph refusal, removing a materializer) fails these
 tests; no second implementation can make them pass — the fallback branches
-they would have taken no longer exist in production.
+they would have taken no longer exist anywhere in the tree.
 
-Deleted/rewritten obsolete-implementation coverage: the old “refusal uses
-cold lowering” assertion, the 5-span cold-render assertion, the cold
-bootstrap line. Oracle-style tests that never executed production fallback
-(h3_a bridge comparisons, h3_b derivation checks, values, differential,
-fuzz) are untouched and still pass.
+Rewritten obsolete-oracle coverage: every differential test now compares
+within the authoritative architecture (incremental edit ≡ retained full
+publish via the renderRetained fixture) or against hand-written literals.
+The cold-lowering module, its counters, the native decode export, and the
+bench oracle copies are deleted; nothing references them.
 
 ---
 
 ## 7. Benchmarks
 
-`perf12_t15_authoritative_case.ts` now asserts the intended route: retained
-publication or benchmark failure (CLEAN2 §25). Historical `.jsonl` reports
-are retained as records; executable old architecture they reference is not
- production-reachable. `bench/direct_ffi` oracle copies are untouched
-(explicit qualification tooling, no production imports). Obsolete-benchmark
-deletion beyond the authoritative case is deferred to the census.
+`perf12_t15_authoritative_case.ts` asserts the intended route: retained
+publication or benchmark failure (CLEAN2 §25), with `perf12_t15_workload.ts`
+as its scenario builder and `perf13_h_content.ts` as the live content bench.
+All other PERF-12 benches are deleted (direct/realistic/memory/multi_edit
+cases + runners, dispatcher, s6 ×2, t13 frontier) along with the entire
+`bench/direct_ffi` oracle-copy tree. Historical `.jsonl` reports are
+retained as records. The only benchmark with a standing mandate is the
+authoritative route assertion.
 
 ---
 
@@ -189,36 +206,77 @@ deletion beyond the authoritative case is deferred to the census.
 No temporary counters were added (existing `direct_materializer_calls`,
 `derivation_fast_path_calls`, cold-oracle allocation counters sufficed as
 proof). Deleted after proving cleanup: `cold_fallbacks` counter field and
-all ~15 increment sites, `COLD_ROOT_MATERIALIZER` hook, `NativeViewRoute`
-`"fallback"` recording (member retained for bench-type compat, never
-recorded). `cold_bridge_objects_allocated` remains in the oracle module,
-asserted `== 0` by route tests.
+all ~15 increment sites, `COLD_ROOT_MATERIALIZER` hook. B003 additionally
+deleted the entire `NativeViewRoute` counter apparatus (type, counters,
+record/reset/snapshot, both runtime call sites) — its only consumer was the
+deleted s6 bench — and `cold_bridge_objects_allocated` with the oracle
+module itself.
 
 ---
 
-## 9. Blockers
+## 9. Blockers — all resolved
 
 ```text
-R0-B001  N-span retained text constructor. The retained ABI exposes 1..=4
-         span constructors; wider styled text fails explicitly. Needed: a
-         variadic text-buffer constructor (words+bytes lane, mirroring
-         viewDiffCreateBuffer) + ABI regen + snapshot updates. Only known
-         production-shape impact: >4-span View.styledText.
-R0-B002  Custom-glyph decorated lane. The retained decorated-word encoding
-         has no glyph lane; custom border glyphs fail explicitly. Needed:
-         glyph-capable decorated constructor or explicit product decision
-         that structural borders stay glyph-free (content plane owns rich
-         borders). No current test renders custom glyphs productively.
-R0-B003  Physical deletion tranche. Zero-reachability code awaiting removal:
-         cold-lowering.ts, ir.ts BridgeViewNode, bridge-schema.json,
-         retained-path.ts test-only constructors, native tuiViewAbiDecodeRef
-         + Rust bridge-decode graph, "fallback" route member, bridge_*
-         counter renames. Requires rewriting the oracle-consumer tests
-         (h3_a, h3_b, values, bridge_worker, fixtures, fuzz) + ABI regen.
+R0-B001  RESOLVED by extension (owner: full parity). New ABI function
+         view_text_create_buffer (words [span_count, per span
+         (style_ref, byte_length)] + concatenated UTF-8 bytes), mirroring
+         view_diff_create_buffer: same 1_048_576/262_144 limits,
+         semantic-cache-first, same text rules. Span counts 1..=4 keep
+         their fixed-arity fast lanes; wider text (incl. NUL-bearing)
+         rides the buffer lane. ABI regen + snapshot + function-count pin
+         59→60 updated. Proven by h3_c wide-text test (6 styled spans +
+         trailing NUL, retained counters, pixels) and the fuzz
+         cache-skips-payload test.
+R0-B002  RESOLVED by extension (owner: full parity). New mask bit
+         DECORATION_GLYPHS (0x400) + glyph trailer between the state count
+         and the style-state entries: count (always 8) + 8
+         (offset,length) pairs in top/right/bottom/left/topLeft/topRight/
+         bottomLeft/bottomRight order, glyph bytes after state bytes.
+         Native replaces the named style with BorderSpec::custom exactly
+         like the old decoder (style/edges codes still validated, then
+         edges + color apply). No TOML signature change. Proven by h3_c
+         custom-glyph test (plain style + "*" glyphs reach the pixels).
+R0-B003  EXECUTED. Deleted: cold-lowering.ts; Rust decode graph
+         (decode_view, tui_view_abi_decode_ref napi, ViewDecoder, all
+         decode_*; test-only lower_* view family + its 2 tests;
+         apply_decoration; view_bridge_cache/with_view_runtime trio;
+         tui_perf_inc/add macros; tui_bridge_schema include) +
+         publish_decoded_view/record_decoded_semantic_view; addon
+         tuiViewAbiDecodeRef contract entry; bench/direct_ffi (7 files),
+         12 obsolete bench files (direct/realistic/memory/multi_edit
+         cases+runners, dispatcher, s6 ×2, t13 frontier); route-counter
+         apparatus; "fallback" route member. Restored lower_style_spec
+         (live theme pipeline, was sharing the deleted region) with a
+         clarifying doc comment. Renamed RetainedFastFallbackError →
+         RetainedRefusalError, FAST_FALLBACK → FAST_REFUSED, fallbackId →
+         ancestorDefault. Rewrote all oracle tests to authoritative
+         assertions (edit ≡ full publish via renderRetained; literals
+         where crisp). Ownership gate extended with B003 absence
+         assertions (deleted paths + 30 forbidden identifiers).
 ```
 
-Any blocker prevents the architecture census per §42. None is embedded as
-compatibility code; all surface as explicit failures.
+Deliberately KEPT (investigated, not overlooked):
+- `bridge-schema.json` — load-bearing build input: build.rs numeric
+  constants + tui-abi-gen enum keys/validation. Deleting it means
+  re-plumbing numeric codes across TS/Rust/codegen for zero runtime
+  effect. The name is legacy; the function is current infrastructure.
+- `ir.ts` bridge types — serve the live theme pipeline
+  (runtime.ts borderNodeFor/materializeTheme, style-lowering
+  *NodeFor). Deleting them means redesigning the theme contract.
+- `retained-path.ts` — verified clean: production imports types only;
+  runtime helpers are current-arch path-patch test scaffolding, with no
+  cold/decode/bridge references (one historical comment word).
+- Generator `[[materializer]]` specs + `view_materialize.ts` — dead
+  (zero importers) but consistent; generator surgery belongs to the
+  census, not to a deletion tranche.
+- `fallback = "direct_decode"` TOML metadata + `hotness` labels —
+  per-function schema metadata, all 60 functions carry them; renaming
+  is snapshot churn with zero runtime effect.
+- `bridge_*` TS counters — they measure the AUTHORITATIVE path
+  (authoritative bench asserts them); the word is legacy, the metrics
+  are current.
+- `decode_wrap/decode_align` Rust scalar parsers — normal
+  value-parsing terminology, no architectural meaning.
 
 ---
 
@@ -226,24 +284,23 @@ compatibility code; all surface as explicit failures.
 
 ```text
 bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
-  → 96 pass, 0 fail, 27 files
+  → 98 pass, 0 fail, 27 files (+2: wide text, custom glyphs)
 bun run check:ownership       → ALL OWNERSHIP CHECKS PASSED
 cargo run -q -p tui-abi-gen -- check → clean (exit 0)
-tsc --noEmit                  → clean apart from 2 pre-existing lib.dom
+cargo test -p tui-abi-gen     → 27 pass (snapshots accepted: new function + generator hash)
+cargo test -p iyon-tui-native → 36 pass + 5 pass + 1 pass (lib + integration)
+cargo check/fmt               → 0 errors, 0 warnings, fmt clean
+tsc --noEmit                  → repo-clean (2 pre-existing lib.dom
                                TextDecoder/TextEncoder variances, identical
-                               on the unmodified baseline (environmental:
-                               TS 5.8.3 lib vs bun-types; unrelated to this
-                               change)
-bun run check:tui-declarations → fails identically on baseline and branch:
-                               sandbox denies bunx/tsc temp writes
-                               (environmental). Compensating evidence:
-                               ts-surface-snapshot passes — 44 value + 97
-                               type public exports byte-identical to S0.
+                               on the unmodified baseline)
+bun run check:tui-declarations → probe compiles with zero non-lib errors;
+                               gate exit still blocked by the same 2
+                               environmental lib.dom variances above
 ```
 
 V5 handoff note: the foundation now matches the v5 plane contract —
 structure/state/content each mutate through exactly one vocabulary, bulk
 content never touches React/composition, and refusals are explicit instead
-of hidden second architectures. The R0-B001/B002 ABI extensions slot
-directly into the retained materializer table without touching the
-boundary/lease/epoch machinery.
+of hidden second architectures. The census is ungated: every View the API
+can construct materializes on the retained lane, and no second runtime
+road remains to confuse the inventory.

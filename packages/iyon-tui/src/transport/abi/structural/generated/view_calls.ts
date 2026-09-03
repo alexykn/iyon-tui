@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
-// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
+// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
+// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 export type ViewAbiSymbols = NativeViewAbiHandle;
 
@@ -319,6 +319,11 @@ export function viewTextCreateCstring3(symbols: ViewAbiSymbols, runtime: NativeV
 
 export function viewTextCreateCstring4(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, node_id_low: number, node_id_high: number, text0: string, style0: number, text1: string, style1: number, text2: string, style2: number, text3: string, style3: number, wrap: number, align: number): number {
   const result = runtime.viewTextCreateCstring4(node_id_low, node_id_high, text0, style0, text1, style1, text2, style2, text3, style3, wrap, align);
+  return checkedRef(symbols, runtime, result);
+}
+
+export function viewTextCreateBuffer(symbols: ViewAbiSymbols, runtime: NativeViewAbiHandle, node_id_low: number, node_id_high: number, words: Uint32Array, used_word_count: number, bytes: Uint8Array, used_byte_count: number, wrap: number, align: number): number {
+  const result = runtime.viewTextCreateBuffer(node_id_low, node_id_high, words, used_word_count, bytes, used_byte_count, wrap, align);
   return checkedRef(symbols, runtime, result);
 }
 

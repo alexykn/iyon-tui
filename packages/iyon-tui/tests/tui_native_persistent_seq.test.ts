@@ -9,7 +9,7 @@ import {
 } from "../src/transport/structural/native-view-abi.ts";
 import { View } from "../src/api/view/view.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
 type StructuralHost = NativeTuiHostContract;
 
@@ -18,10 +18,10 @@ const Host = native.NativeTuiHost as unknown as
 
 function seed(host: StructuralHost, base: View, ...children: View[]): number {
   for (const child of children) {
-    renderCold(host, child);
+    renderRetained(host, child);
     if (nativeViewRefForNodeId(child) === undefined) throw new Error("native child ref unavailable");
   }
-  renderCold(host, base);
+  renderRetained(host, base);
   const reference = nativeViewRefForNodeId(base);
   if (reference === undefined) throw new Error("native base ref unavailable");
   return reference;
@@ -52,16 +52,16 @@ test("native axis replace/insert/remove preserves wide host parity", () => {
 
   for (const { next, children, op } of cases) {
     const host = new Host(80, 2_050, true);
-    const oracle = new Host(80, 2_050, true);
+    const reference = new Host(80, 2_050, true);
     try {
       const baseRef = seed(host, base, ...children);
       const nextRef = op(host, baseRef);
       expect(nextRef).toBeDefined();
-      renderCold(oracle, next);
-      expect(host.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, next);
+      expect(host.screenRows()).toEqual(reference.screenRows());
     } finally {
       host.dispose();
-      oracle.dispose();
+      reference.dispose();
     }
   }
 });
@@ -88,15 +88,15 @@ test("native grid cell path copy preserves placement and parity", () => {
     }
   });
   const host = new Host(80, 64, true);
-  const oracle = new Host(80, 64, true);
+  const reference = new Host(80, 64, true);
   try {
     const baseRef = seed(host, base, replacement);
     const nextRef = tryNativeGridSetCellRender(host, base, baseRef, next, 31, 0, replacement);
     expect(nextRef).toBeDefined();
-    renderCold(oracle, next);
-    expect(host.screenRows()).toEqual(oracle.screenRows());
+    renderRetained(reference, next);
+    expect(host.screenRows()).toEqual(reference.screenRows());
   } finally {
     host.dispose();
-    oracle.dispose();
+    reference.dispose();
   }
 });

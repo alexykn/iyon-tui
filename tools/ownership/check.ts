@@ -198,7 +198,6 @@ function cut2OwnershipGate(): void {
     "composition/persistent-seq.ts",
     "composition/tracked-state.ts",
     "transport/structural/component-id.ts",
-    "transport/structural/cold-lowering.ts",
     "transport/structural/encoding.ts",
     "transport/structural/ir.ts",
     "transport/structural/native-view-abi.ts",
@@ -573,9 +572,13 @@ function h3dResidualCleanupGate(): void {
     offenders.push("composition/execution.ts: legacy projection publication path remains");
   }
 
-  const cold = readFileSync(join(FRAMEWORK_SRC, "transport/structural/cold-lowering.ts"), "utf8");
+  // PRE-V5-R0 (B003): the cold-lowering oracle module is deleted; its
+  // migration-only derivation/sequence sidecars must not reappear anywhere.
+  if (existsSync(join(FRAMEWORK_SRC, "transport/structural/cold-lowering.ts"))) {
+    offenders.push("superseded module remains: transport/structural/cold-lowering.ts");
+  }
   const ir = readFileSync(join(FRAMEWORK_SRC, "transport/structural/ir.ts"), "utf8");
-  if (/\b(?:semanticNodeForBridge|setBridgeDerivation|peekBridgeDerivation|setBridgeSequenceOverride|peekBridgeSequenceOverride|setBridgeGridSequenceOverride|peekBridgeGridSequenceOverride|BridgeDerivation|BridgeSequenceOverride|BridgeGridSequenceOverride)\b/u.test(cold + "\n" + ir)) {
+  if (/\b(?:semanticNodeForBridge|setBridgeDerivation|peekBridgeDerivation|setBridgeSequenceOverride|peekBridgeSequenceOverride|setBridgeGridSequenceOverride|peekBridgeGridSequenceOverride|BridgeDerivation|BridgeSequenceOverride|BridgeGridSequenceOverride)\b/u.test(ir)) {
     offenders.push("structural transport: migration-only bridge derivation/sequence sidecars remain");
   }
   if (/\b(?:componentViewFor|componentIdForPlacement)\b/u.test(readFileSync(join(FRAMEWORK_SRC, "transport/structural/component-id.ts"), "utf8"))) {
@@ -841,7 +844,6 @@ async function themeStyleSemanticGate(): Promise<void> {
     "transport/structural/native-view-abi.ts",
     "transport/structural/retained-dag.ts",
     "transport/structural/style-lowering.ts",
-    "transport/structural/cold-lowering.ts",
     "transport/structural/encoding.ts",
     "transport/structural/component-id.ts",
     "transport/state/control.ts",
@@ -1113,9 +1115,27 @@ function perf13CleanupGate(): void {
     "crates/iyon-tui/src/stream/projected.rs",
     "crates/iyon-tui/src/stream/snapshot.rs",
     "crates/iyon-tui/src/stream/source.rs",
+    "packages/iyon-tui/src/transport/structural/cold-lowering.ts",
+    "packages/iyon-tui/bench/direct_ffi",
+    "packages/iyon-tui/bench/perf12_t15_direct_case.ts",
+    "packages/iyon-tui/bench/perf12_t15_case.ts",
+    "packages/iyon-tui/bench/perf12_t15_realistic.ts",
+    "packages/iyon-tui/bench/perf12_t15_realistic_case.ts",
+    "packages/iyon-tui/bench/perf12_t15_memory.ts",
+    "packages/iyon-tui/bench/perf12_t15_memory_case.ts",
+    "packages/iyon-tui/bench/perf12_t15_multi_edit.ts",
+    "packages/iyon-tui/bench/perf12_t15_multi_edit_case.ts",
+    "packages/iyon-tui/bench/perf12_s6_napi_dispatch.ts",
+    "packages/iyon-tui/bench/perf12_s6_napi_transport.ts",
+    "packages/iyon-tui/bench/perf12_t13_1_r6b_frontier.ts",
   ];
   const stalePaths = removedPaths.filter((path) => existsSync(join(ROOT, path)));
-  const forbidden = /\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector)\b/u;
+  // PRE-V5-R0 (B003): the previous-generation complete-bridge decode and its
+  // oracle scaffolding are deleted: no cold-lowering entry points, no native
+  // JSON-decode graph, no bench-only decode copies, and no fallback/route
+  // vocabulary that implied a second architecture. (Core-grid `lower_grid`
+  // is a legitimate framework helper and is deliberately not listed.)
+  const forbidden = /\b(?:TextStream|StreamPane|StreamingSource|StreamSnapshot|StreamRevision|ProjectedText|HistoryStreamHandle|pushStream|sealStream|push_stream|seal_stream|advance_streams|next_stream_wakeup|requestDisposeWhenUnused|request_dispose_when_unused|NativeMarkdownProjector|NativePlainProjector|lowerColdView|lowerSemanticView|tuiViewAbiDecodeRef|tui_view_abi_decode_ref|tryNativeMaterialize|renderColdRef|prepareColdInstall|setRootColdMaterializer|COLD_ROOT_MATERIALIZER|coldLoweringCounterSnapshot|resetColdLoweringCounters|cold_bridge_objects_allocated|RetainedFastFallbackError|FAST_FALLBACK|NativeViewRoute|recordNativeViewRoute|nativeViewRouteSnapshot|resetNativeViewRouteCounters|view_bridge_cache|with_view_runtime|ViewBridgeCache|decode_view|ViewDecoder|publish_decoded_view|record_decoded_semantic_view|lower_axis|apply_decoration|decode_border|decode_decoration)\b/u;
   const forbiddenNativeBinding = /(?:pub fn (?:render|create_view_slot|scroll_pane|set_view|set_content|set_animation|stop_animation)\b|js_name = "(?:render|createViewSlot|scrollPane|setView|setContent|setAnimation|stopAnimation)")/u;
   const productionRoots = [
     join(ROOT, "packages/iyon-tui/src"),

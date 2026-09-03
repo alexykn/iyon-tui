@@ -147,9 +147,10 @@ export function diffTerminationCode(termination: SemanticDiffLineTermination): n
 
 /** Maps semantic overflow kinds to the retained ABI's 0/1/2 value lane.
  *
- * The cold bridge schema uses 1/2/3 (including an explicit `none` tag), while
- * `viewClampCreate` uses zero for none. Keep this mapping independent from the
- * bridge discriminants so a clamp never shifts its indicator kind at the ABI.
+ * The shared numeric registry uses 1/2/3 (including an explicit `none` tag),
+ * while `viewClampCreate` uses zero for none. Keep this mapping independent
+ * from the registry discriminants so a clamp never shifts its indicator kind
+ * at the ABI.
  */
 export function overflowKindCode(overflow: SemanticOverflowIndicator): number {
   switch (overflow.kind) {
@@ -235,6 +236,7 @@ const DECORATION_MIN_WIDTH = 64;
 const DECORATION_MAX_WIDTH = 128;
 const DECORATION_MIN_HEIGHT = 256;
 const DECORATION_MAX_HEIGHT = 512;
+const DECORATION_GLYPHS = 1024;
 const BORDER_STYLE_CODES = { plain: 1, rounded: 2, double: 3 } as const;
 const BORDER_EDGE_CODES = { all: 1, topBottom: 2 } as const;
 
@@ -252,6 +254,9 @@ export function decorationWordEncoding(decoration: SemanticDecoration): Decorati
   if (decoration.maxWidth !== undefined) mask |= DECORATION_MAX_WIDTH;
   if (decoration.minHeight !== undefined) mask |= DECORATION_MIN_HEIGHT;
   if (decoration.maxHeight !== undefined) mask |= DECORATION_MAX_HEIGHT;
+  if (decoration.border?.glyphs !== undefined && Object.keys(decoration.border.glyphs).length > 0) {
+    mask |= DECORATION_GLYPHS;
+  }
   const borderStyle = borderStyleCode(decoration.border?.style);
   const borderEdges = borderEdgeCode(decoration.border?.edges);
   return {

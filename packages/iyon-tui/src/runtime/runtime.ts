@@ -23,10 +23,7 @@ import { createViewState, type ViewState as ViewStateContract } from "../api/vie
 import { createContentPort as createContentPortHandle, type ContentPort as ContentPortContract, type ContentPortOptions } from "../api/content/retained.ts";
 import { createContentPort as createContentPortResource } from "../transport/content/control.ts";
 import { TextContent } from "../api/content/text-content.ts";
-import {
-  nativeViewAbiSession,
-  recordNativeViewRoute,
-} from "../transport/structural/native-view-abi.ts";
+import { nativeViewAbiSession } from "../transport/structural/native-view-abi.ts";
 import {
   resetStyleRefCacheForThemeChange,
   RetainedRootBoundary,
@@ -529,7 +526,6 @@ export class Tui implements TuiRuntime {
         this.runtimeEnvironment.token,
         this.hostRegistration.token,
       );
-      recordNativeViewRoute("no_op");
       this.stagedHistory = effectiveHistory;
       this.disposeRootBuilder();
       this.flush();
@@ -547,7 +543,6 @@ export class Tui implements TuiRuntime {
       this.stagedHistory = previousStagedHistory;
       throw error;
     }
-    recordNativeViewRoute(publication.route ?? "retained");
     this.stagedHistory = effectiveHistory;
     this.disposeRootBuilder();
     this.flush();

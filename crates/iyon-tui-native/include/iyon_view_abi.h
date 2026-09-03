@@ -1,6 +1,6 @@
 /* DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml. */
-/* schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e */
-/* generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f */
+/* schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41 */
+/* generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659 */
 #ifndef IYON_VIEW_ABI_H
 #define IYON_VIEW_ABI_H
 
@@ -150,6 +150,8 @@ uint32_t iyon_view_text_create_cstring_2_v1(NativeViewRuntime * runtime, uint32_
 uint32_t iyon_view_text_create_cstring_3_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, const char * text0, uint32_t style0, const char * text1, uint32_t style1, const char * text2, uint32_t style2, uint32_t wrap, uint32_t align);
 
 uint32_t iyon_view_text_create_cstring_4_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, const char * text0, uint32_t style0, const char * text1, uint32_t style1, const char * text2, uint32_t style2, const char * text3, uint32_t style3, uint32_t wrap, uint32_t align);
+
+uint32_t iyon_view_text_create_buffer_v1(NativeViewRuntime * runtime, uint32_t node_id_low, uint32_t node_id_high, const uint32_t * words, size_t words_capacity_bytes, uint32_t used_word_count, const uint8_t * bytes, size_t bytes_capacity_bytes, uint32_t used_byte_count, uint32_t wrap, uint32_t align);
 
 uint32_t iyon_abi_conformance_u8_8_v1(uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5, uint8_t a6, uint8_t a7);
 

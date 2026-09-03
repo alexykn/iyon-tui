@@ -14,7 +14,7 @@ import {
   nativePathChildLineage,
 } from "../src/transport/structural/retained-path.ts";
 import type { NativeTuiHostContract } from "../src/transport/native/addon.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
 type HostContract = NativeTuiHostContract;
 
@@ -24,7 +24,7 @@ describe("PERF-11.6 native edit transactions", () => {
   test("shares a changed root across two typed text edits and preserves host parity", () => {
     if (Host === undefined || nativeViewAbiSession() === undefined) return;
     const host = new Host(16, 4, true);
-    const oracle = new Host(16, 4, true);
+    const reference = new Host(16, 4, true);
     const left = View.text("left");
     const right = View.text("right");
     const base = View.vertical((column) => {
@@ -38,7 +38,7 @@ describe("PERF-11.6 native edit transactions", () => {
       column.child(changedRight);
     });
     try {
-      renderCold(host, base);
+      renderRetained(host, base);
       const baseRef = nativeViewRefForNodeId(base);
       if (baseRef === undefined) return;
       const leftLineage = nativePathChildLineage(base, undefined, {
@@ -56,12 +56,12 @@ describe("PERF-11.6 native edit transactions", () => {
         { lineage: rightLineage, nodeIds: [viewNodeId(changedRight), viewNodeId(changed)], wrap: 2, align: 2 },
       ]);
       expect(result).toBeGreaterThan(0);
-      renderCold(oracle, changed);
-      expect(host.screenRows()).toEqual(oracle.screenRows());
+      renderRetained(reference, changed);
+      expect(host.screenRows()).toEqual(reference.screenRows());
       releaseNativeViewRef(nativeViewAbiSession(), result!);
     } finally {
       host.dispose();
-      oracle.dispose();
+      reference.dispose();
     }
   });
 });

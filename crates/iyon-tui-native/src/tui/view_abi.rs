@@ -1,9 +1,9 @@
 use super::NativeTuiHost;
 use crate::NativeError;
 use iyon_tui::{
-    AnsiColor, BorderEdges, BorderSpec, ColorSpec, DiffHunk, DiffLine, DiffLineNumber,
-    DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec, GridTrack,
-    HorizontalAlign, Insets, IntoView, Renderer, RetainedPathStep, StyleRef, StyleSpec,
+    AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
+    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
+    GridTrack, HorizontalAlign, Insets, IntoView, Renderer, RetainedPathStep, StyleRef, StyleSpec,
     TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
 };
 use napi::Env;
@@ -40,7 +40,7 @@ const ABI_VERSION: u32 = 1;
 const SEMANTIC_VERSION: u32 = 1;
 const FAST_INVALID: u32 = 0x8000_0001;
 const FAST_CACHE_MISS: u32 = 0x8000_0004;
-const FAST_FALLBACK: u32 = 0x8000_0005;
+const FAST_REFUSED: u32 = 0x8000_0005;
 const FAST_INTERNAL: u32 = 0x8000_0006;
 
 // PERF-12 §74/T12: the status detail side channel uses the top two bits for
@@ -138,7 +138,7 @@ enum SemanticIdentityMatch {
     /// A live NativeRef already maps to this exact View.
     SameLiveWithRef(View),
     /// The weak cache holds this exact live View but no live NativeRef
-    /// (for example a decode-only transport saw it first).
+    /// (for example a weak publication recorded it first).
     SameLiveWithoutRef,
     /// A different live View owns this NodeId: impossible identity conflict.
     Conflict,
@@ -149,7 +149,7 @@ enum SemanticIdentityMatch {
 /// Lease mode requested from the central semantic publication helper
 /// (PERF-12 handoff §24). `Leased` publications return a caller-owned lease
 /// (generated constructors); `Weak` publications only record semantic identity
-/// without keeping the View alive (bulk/decode-style transports).
+/// without keeping the View alive (bulk path-patch publishers).
 pub(super) enum PublicationLease {
     Leased,
     Weak,
@@ -505,7 +505,7 @@ impl NativeViewRuntime {
         if let Some(reference) = self.path_keys.get(&key).copied() {
             return Ok(reference);
         }
-        let reference = self.allocate_path_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_path_ref().ok_or(FAST_REFUSED)?;
         self.path_keys.insert(key, reference);
         self.path_nodes.insert(
             reference,
@@ -555,7 +555,7 @@ impl NativeViewRuntime {
         {
             return Err(FAST_INVALID);
         }
-        let reference = self.allocate_builder_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_builder_ref().ok_or(FAST_REFUSED)?;
         self.builders.insert(
             reference,
             AxisBuilder {
@@ -647,7 +647,7 @@ impl NativeViewRuntime {
         let Ok((base_view, _)) = self.resolve_ref(base_root_ref) else {
             return Err(FAST_CACHE_MISS);
         };
-        let reference = self.allocate_edit_txn_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_edit_txn_ref().ok_or(FAST_REFUSED)?;
         self.edit_txns.insert(
             reference,
             EditTxn {
@@ -740,7 +740,7 @@ impl NativeViewRuntime {
                     child
                 } else {
                     if trie.len() >= MAX_TXN_STAGED_OBJECTS {
-                        return Err(FAST_FALLBACK);
+                        return Err(FAST_REFUSED);
                     }
                     let child = trie.len();
                     trie.push(EditTrieNode {
@@ -902,7 +902,7 @@ impl NativeViewRuntime {
         {
             return Ok(*reference);
         }
-        let reference = self.allocate_style_atom_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_style_atom_ref().ok_or(FAST_REFUSED)?;
         self.style_atoms.insert(reference, value.to_owned());
         Ok(reference)
     }
@@ -926,7 +926,7 @@ impl NativeViewRuntime {
         {
             return Ok(*reference);
         }
-        let reference = self.allocate_style_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_style_ref().ok_or(FAST_REFUSED)?;
         self.styles.insert(reference, style);
         Ok(reference)
     }
@@ -986,7 +986,7 @@ impl NativeViewRuntime {
             return Err(FAST_INVALID);
         }
         let Some(count) = slot.js_lease_count.checked_add(1) else {
-            return Err(FAST_FALLBACK);
+            return Err(FAST_REFUSED);
         };
         if slot.leased.is_none() {
             slot.leased = Some(view);
@@ -1109,7 +1109,7 @@ impl NativeViewRuntime {
             }
             SemanticIdentityMatch::SameLiveWithoutRef | SemanticIdentityMatch::Fresh => {}
         }
-        let reference = self.allocate_ref().ok_or(FAST_FALLBACK)?;
+        let reference = self.allocate_ref().ok_or(FAST_REFUSED)?;
         self.install_semantic_view(
             node_id,
             view,
@@ -1171,36 +1171,11 @@ impl NativeViewRuntime {
             .and_then(iyon_tui::WeakView::upgrade)
     }
 
-    /// Drops the cached weak entry for a NodeId. Decode-style transports call
-    /// this on a confirmed cache miss before re-decoding; at that point any
+    /// Drops the cached weak entry for a NodeId. Callers invoke this on a
+    /// confirmed cache miss before re-publishing; at that point any
     /// remaining entry is expired by definition.
     pub(super) fn drop_cached_entry(&mut self, node_id: u64) {
         self.nodes.remove(&node_id);
-    }
-
-    /// Shared insertion rules for decoded semantic Views: same identity rules
-    /// as publication without minting a NativeRef. An identical live View
-    /// deduplicates, a conflicting live View is rejected as an impossible
-    /// semantic identity, and expired entries are replaced. Applies the shared
-    /// size-based retain cleanup so the cache stays bounded.
-    pub(super) fn record_decoded_semantic_view(
-        &mut self,
-        node_id: u64,
-        view: &View,
-    ) -> Result<(), u32> {
-        if let Some(existing) = self
-            .nodes
-            .get(&node_id)
-            .and_then(iyon_tui::WeakView::upgrade)
-            && existing != *view
-        {
-            return Err(FAST_INVALID);
-        }
-        self.nodes.insert(node_id, view.downgrade());
-        if self.nodes.len() > 4096 && self.nodes.len() % 256 == 0 {
-            self.nodes.retain(|_, weak| weak.upgrade().is_some());
-        }
-        Ok(())
     }
 
     /// PERF-12 §55 periodic maintenance: process a bounded budget of
@@ -1477,19 +1452,6 @@ pub(super) fn runtime_from_handle(
         ));
     }
     Ok(runtime)
-}
-
-pub(super) fn publish_decoded_view(
-    handle: &ViewRuntimeHandle,
-    node_id: u64,
-    view: View,
-) -> napi::Result<u32> {
-    let runtime = runtime_from_handle(handle)?;
-    runtime.publish(node_id, view).map_err(|status| {
-        NativeError::invalid_input(format!(
-            "decoded View publication failed with status 0x{status:x}"
-        ))
-    })
 }
 
 pub(super) fn runtime_for_env(env: &Env) -> napi::Result<*mut NativeViewRuntime> {
@@ -2008,7 +1970,7 @@ fn validate_path_publication(
         }
     }
     if runtime.next_native_ref >= PATH_ROOT_REF.saturating_sub(node_ids.len() as u32) {
-        return Err(FAST_FALLBACK);
+        return Err(FAST_REFUSED);
     }
     Ok(())
 }
@@ -2549,7 +2511,7 @@ fn resolve_axis_children(
     used_child_count: u32,
 ) -> Result<Vec<(u32, View)>, StatusFailure> {
     if used_child_count > MAX_AXIS_CHILD_COUNT {
-        return Err(FAST_FALLBACK.into());
+        return Err(FAST_REFUSED.into());
     }
     if used_child_count == 0 {
         return Ok(Vec::new());
@@ -3345,8 +3307,11 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 /// Direct decoder's order (padding, background, foreground, border, style,
 /// style states, width, height, min/max). The result is a canonical base View;
 /// no extra physical occurrence is retained for the decoration record.
-/// Colors arrive as style atoms; custom border glyphs are not expressible on
-/// this lane.
+/// Colors arrive as style atoms. Custom border glyphs arrive as a mask-gated
+/// trailer between the state count and the style-state entries: a glyph count
+/// (always 8) followed by 8 (byte_offset, byte_length) pairs in top, right,
+/// bottom, left, topLeft, topRight, bottomLeft, bottomRight order; glyph
+/// bytes are appended after the style-state bytes.
 fn parse_and_build_decorated(
     runtime: &NativeViewRuntime,
     child: View,
@@ -3366,6 +3331,7 @@ fn parse_and_build_decorated(
     const MASK_MAX_WIDTH: u32 = 128;
     const MASK_MIN_HEIGHT: u32 = 256;
     const MASK_MAX_HEIGHT: u32 = 512;
+    const MASK_GLYPHS: u32 = 1024;
     let mut cursor = 0usize;
     let mut next_word = || -> Result<u32, u32> {
         let value = *words.get(cursor).ok_or(FAST_INVALID)?;
@@ -3375,7 +3341,7 @@ fn parse_and_build_decorated(
     let half =
         |word: u32| -> Result<u16, u32> { u16::try_from(word & 0xffff).map_err(|_| FAST_INVALID) };
     let mask = next_word()?;
-    if mask & !0x3ff != 0 {
+    if mask & !0x7ff != 0 {
         return Err(FAST_INVALID);
     }
     let padding_top_right = next_word()?;
@@ -3391,6 +3357,43 @@ fn parse_and_build_decorated(
     if state_count as usize > bytes.len() + 1 {
         return Err(FAST_INVALID);
     }
+    // The glyph trailer is parsed before the style states so the border can
+    // apply in decoder order below; glyph bytes live after the state bytes
+    // but offsets are absolute, so position in the stream is irrelevant.
+    let custom_glyphs = if mask & MASK_GLYPHS != 0 {
+        let glyph_count = next_word()?;
+        if glyph_count != 8 {
+            return Err(FAST_INVALID);
+        }
+        let mut values = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let glyph_offset = next_word()? as usize;
+            let glyph_length = next_word()? as usize;
+            let glyph_end = glyph_offset.checked_add(glyph_length).ok_or(FAST_INVALID)?;
+            if glyph_end > bytes.len() {
+                return Err(FAST_INVALID);
+            }
+            let glyph = str::from_utf8(&bytes[glyph_offset..glyph_end])
+                .map(str::to_owned)
+                .map_err(|_| FAST_INVALID)?;
+            values.push(glyph);
+        }
+        Some(
+            BorderGlyphs::new(
+                values[0].as_str(),
+                values[1].as_str(),
+                values[2].as_str(),
+                values[3].as_str(),
+                values[4].as_str(),
+                values[5].as_str(),
+                values[6].as_str(),
+                values[7].as_str(),
+            )
+            .map_err(|_| FAST_INVALID)?,
+        )
+    } else {
+        None
+    };
     let mut view = child;
     if mask & MASK_PADDING != 0 {
         view = view.padding(Insets::new(
@@ -3417,6 +3420,12 @@ fn parse_and_build_decorated(
             3 => BorderSpec::double(),
             _ => return Err(FAST_INVALID),
         };
+        // Custom glyphs replace the named style exactly like the Direct
+        // decoder: style/edges codes are still validated above, then the
+        // glyph set takes over before edges and color apply.
+        if let Some(glyphs) = custom_glyphs {
+            spec = BorderSpec::custom(glyphs);
+        }
         spec = match (border_style_edges >> 8) & 0xff {
             1 => spec.edges(BorderEdges::ALL),
             2 => spec.edges(BorderEdges::TOP_BOTTOM),
@@ -3778,7 +3787,7 @@ fn reserve_staged_ref(
             return Ok(candidate);
         }
     }
-    Err(FAST_FALLBACK)
+    Err(FAST_REFUSED)
 }
 
 fn is_valid_view_ref(reference: u32) -> bool {
@@ -3923,7 +3932,7 @@ fn text_view_from_owned(text: String, style: StyleRef, wrap: u32, align: u32) ->
 fn cstring_to_owned(pointer: *const std::ffi::c_char, maximum_bytes: u32) -> Result<String, u32> {
     let bytes = unsafe { CStr::from_ptr(pointer) }.to_bytes();
     if bytes.len() > maximum_bytes as usize {
-        return Err(FAST_FALLBACK);
+        return Err(FAST_REFUSED);
     }
     str::from_utf8(bytes)
         .map(str::to_owned)
@@ -4376,6 +4385,100 @@ pub unsafe extern "Rust" fn view_text_create_cstring_4_impl(
         align,
     )
     .unwrap_or_else(|error| error);
+    record_result(runtime, result)
+}
+
+/// PRE-V5-R0 (R0-B001): variadic N-span text construction through one borrowed
+/// words+bytes lane: `[span_count, per span (style_ref, span_byte_length)]`
+/// plus concatenated UTF-8 span bytes. Span counts 1..=4 keep their
+/// fixed-arity lanes; wider styled text arrives here under the same text
+/// rules (style-ref resolution, UTF-8 validity, native byte limit).
+fn parse_and_build_text_buffer(
+    runtime: &NativeViewRuntime,
+    words: &[u32],
+    bytes: &[u8],
+) -> Result<Vec<TextSpan>, u32> {
+    if bytes.len() > MAX_NEW_TEXT_BYTES as usize {
+        return Err(FAST_INVALID);
+    }
+    let mut cursor = 0usize;
+    let mut next_word = || -> Result<u32, u32> {
+        let value = *words.get(cursor).ok_or(FAST_INVALID)?;
+        cursor += 1;
+        Ok(value)
+    };
+    let span_count = next_word()? as usize;
+    if span_count == 0 {
+        return Err(FAST_INVALID);
+    }
+    // The framing check precedes any allocation: a corrupt span count cannot
+    // force a huge Vec.
+    let framed = span_count.checked_mul(2).ok_or(FAST_INVALID)?;
+    if words.len() != 1 + framed {
+        return Err(FAST_INVALID);
+    }
+    let mut spans = Vec::with_capacity(span_count);
+    let mut offset = 0usize;
+    for _ in 0..span_count {
+        let style_ref = next_word()?;
+        let length = next_word()? as usize;
+        let end = offset.checked_add(length).ok_or(FAST_INVALID)?;
+        if end > bytes.len() {
+            return Err(FAST_INVALID);
+        }
+        let text = str::from_utf8(&bytes[offset..end])
+            .map(str::to_owned)
+            .map_err(|_| FAST_INVALID)?;
+        offset = end;
+        let style = runtime.style_for_ref(style_ref)?;
+        spans.push(TextSpan::styled(text, style));
+    }
+    if offset != bytes.len() {
+        return Err(FAST_INVALID);
+    }
+    Ok(spans)
+}
+
+#[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
+pub unsafe extern "Rust" fn view_text_create_buffer_impl(
+    runtime: *mut NativeViewRuntime,
+    node_id_low: u32,
+    node_id_high: u32,
+    words: *const u32,
+    _words_capacity_bytes: usize,
+    used_word_count: u32,
+    bytes: *const u8,
+    _bytes_capacity_bytes: usize,
+    used_byte_count: u32,
+    wrap: u32,
+    align: u32,
+) -> u32 {
+    let Ok(runtime) = runtime_mut(runtime) else {
+        return FAST_INVALID;
+    };
+    let Ok(node_id) = node_id(node_id_low, node_id_high) else {
+        return FAST_INVALID;
+    };
+    // PERF-12 §23 semantic-cache-first: a live NodeId returns its ref
+    // without parsing any payload.
+    match runtime.ref_for_node_id(node_id) {
+        Ok(reference) => return record_result(runtime, reference),
+        Err(FAST_CACHE_MISS) => {}
+        Err(error) => return record_result(runtime, error),
+    }
+    if used_word_count == 0 || words.is_null() || (used_byte_count != 0 && bytes.is_null()) {
+        return record_result(runtime, FAST_INVALID);
+    }
+    let words = unsafe { slice::from_raw_parts(words, used_word_count as usize) };
+    let bytes = if used_byte_count == 0 {
+        &[] as &[u8]
+    } else {
+        unsafe { slice::from_raw_parts(bytes, used_byte_count as usize) }
+    };
+    let result = parse_and_build_text_buffer(runtime, words, bytes)
+        .and_then(|spans| text_view_from_spans(spans, wrap, align))
+        .and_then(|view| runtime.publish(node_id, view))
+        .unwrap_or_else(|error| error);
     record_result(runtime, result)
 }
 

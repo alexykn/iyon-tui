@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { TextSpan, View } from "../src/index.ts";
+import { StyleSpec, TextSpan, View } from "../src/index.ts";
 import { axisSetChildForTransport } from "../src/api/view/view.ts";
 import { AppHarness } from "../src/testing/index.ts";
-import {
-  coldLoweringCounterSnapshot,
-  resetColdLoweringCounters,
-} from "../src/transport/structural/cold-lowering.ts";
 import {
   resetRetainedIdentityCounters,
   retainedIdentityCounterSnapshot,
@@ -15,7 +11,7 @@ import {
 const H3C = "API-H3 H3-C semantic transport cutover";
 
 describe(H3C, () => {
-  test("retained materialization consumes semantic nodes without cold bridge allocation", async () => {
+  test("retained materialization consumes semantic nodes with zero second-architecture allocation", async () => {
     const body = View.vertical([
       View.text("header").bold(),
       View.horizontal([View.text("left"), View.text("right").italic()]),
@@ -24,14 +20,11 @@ describe(H3C, () => {
         rows: [{ cells: [{ view: View.text("cell") }, { view: View.spacer(1) }] }],
       }),
     ]);
-    resetColdLoweringCounters();
     resetRetainedIdentityCounters();
     const tui = await AppHarness.open({ width: 30, height: 8 });
     try {
       tui.render(() => ({ body }));
-      const cold = coldLoweringCounterSnapshot();
       const retained = retainedIdentityCounterSnapshot();
-      expect(cold.cold_bridge_objects_allocated).toBe(0);
       expect(retained.direct_materializer_calls).toBeGreaterThan(0);
       expect(tui.screenRows().join("\n")).toContain("header");
     } finally {
@@ -50,12 +43,9 @@ describe(H3C, () => {
       // path (PRE-V5-R0: no arity refusal; the axis buffer carries all
       // children and the native limit is the only bound).
       tui.render(() => ({ body: base }));
-      resetColdLoweringCounters();
       resetRetainedIdentityCounters();
       tui.render(() => ({ body: next }));
-      const cold = coldLoweringCounterSnapshot();
       const retained = retainedIdentityCounterSnapshot();
-      expect(cold.cold_bridge_objects_allocated).toBe(0);
       expect(retained.derivation_fast_path_calls).toBe(1);
       expect(retained.bridge_children_visited).toBe(0);
       expect(tui.screenRows().join("\n")).toContain("replacement");
@@ -80,12 +70,10 @@ describe(H3C, () => {
     // PRE-V5-R0: the exact-byte lane carries payloads up to the native text
     // limit. No size heuristic selects another transport.
     const body = View.text(`${"x".repeat(65_536)}\0`);
-    resetColdLoweringCounters();
     resetRetainedIdentityCounters();
     const tui = await AppHarness.open({ width: 20, height: 4 });
     try {
       tui.render(() => ({ body }));
-      expect(coldLoweringCounterSnapshot().cold_bridge_objects_allocated).toBe(0);
       expect(retainedIdentityCounterSnapshot().direct_materializer_calls).toBeGreaterThan(0);
       expect(tui.screenRows()[0]).toContain("x");
     } finally {
@@ -93,18 +81,57 @@ describe(H3C, () => {
     }
   });
 
-  test("unsupported shapes fail explicitly instead of selecting another transport", async () => {
-    // PRE-V5-R0 BLOCKER R0-B001: 5-span styled text has no retained
-    // constructor. The refusal is an explicit preparation failure; the
-    // previous visible frame stays authoritative and no bridge object is
-    // allocated for a second architecture.
-    const spans = ["a", "b", "c", "d", "e"].map((text) => TextSpan.plain(text));
+  test("wide styled text materializes on the retained buffer lane", async () => {
+    // PRE-V5-R0 R0-B001: span counts above the 1..=4 fixed-arity families use
+    // the variadic words+bytes buffer constructor on the retained path — no
+    // refusal, no second architecture. The trailing NUL proves the
+    // length-delimited bytes lane carries what the cstring lane cannot.
+    const spans = [
+      TextSpan.plain("a"),
+      TextSpan.styled("b", new StyleSpec().bold()),
+      TextSpan.styled("c", new StyleSpec().italic()),
+      TextSpan.styled("d", new StyleSpec().underline()),
+      TextSpan.plain("e"),
+      TextSpan.styled("f\0", new StyleSpec().bold()),
+    ];
     const body = View.styledText(spans);
-    resetColdLoweringCounters();
+    resetRetainedIdentityCounters();
     const tui = await AppHarness.open({ width: 20, height: 4 });
     try {
-      expect(() => tui.render({ body })).toThrow("TUI_ROOT_PREPARATION_FAILED");
-      expect(coldLoweringCounterSnapshot().cold_bridge_objects_allocated).toBe(0);
+      tui.render({ body });
+      expect(retainedIdentityCounterSnapshot().direct_materializer_calls).toBeGreaterThan(0);
+      expect(tui.screenRows().join("\n")).toContain("abcde");
+    } finally {
+      tui.close();
+    }
+  });
+
+  test("custom border glyphs materialize on the retained decorated lane", async () => {
+    // PRE-V5-R0 R0-B002: custom glyphs ride the mask-gated decorated trailer
+    // on the retained path. The "*" glyphs replace the named plain style,
+    // proving the glyph set reached the native constructor.
+    const body = View.text("hi").border({
+      style: "plain",
+      edges: "all",
+      glyphs: {
+        top: "*",
+        right: "*",
+        bottom: "*",
+        left: "*",
+        topLeft: "*",
+        topRight: "*",
+        bottomLeft: "*",
+        bottomRight: "*",
+      },
+    });
+    resetRetainedIdentityCounters();
+    const tui = await AppHarness.open({ width: 20, height: 4 });
+    try {
+      tui.render({ body });
+      expect(retainedIdentityCounterSnapshot().direct_materializer_calls).toBeGreaterThan(0);
+      const screen = tui.screenRows().join("\n");
+      expect(screen).toContain("hi");
+      expect(screen).toContain("*");
     } finally {
       tui.close();
     }

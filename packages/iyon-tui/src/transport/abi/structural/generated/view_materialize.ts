@@ -1,11 +1,11 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = 2270e170b545aee6d335b4b191d44a86bf5545e8f6b6da480a8830b2216abe6e
-// generator_blake3 = 2335fce089746636cb1cabd5f3af5a9d4854526e6310b5ef3fb6e983d1f4744f
+// schema_blake3 = 06c8791fc29b7e4801b5826b6537a1e023c8a1fb9feee77673b9f6597e4d9f41
+// generator_blake3 = 37d1cbccc6ee301fd4d0260336aad5e2bc7b7d8878f9c6343b8f6e6e883c6659
 import type { NativeViewAbiHandle, NativeTuiHostContract } from "../../../native/addon.ts";
 import { viewAxisCreateBuffer, viewColumnCreate0, viewColumnCreate1, viewColumnCreate2, viewColumnCreate3, viewColumnCreate4, viewRowCreate0, viewRowCreate1, viewRowCreate2, viewRowCreate3, viewRowCreate4, viewSpacerCreate } from "./view_calls";
 import type { ViewAbiSymbols } from "./view_calls";
 import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from "../../../structural/ir.ts";
-import { RetainedFastFallbackError, ensureNative } from "../../../structural/retained-dag.ts";
+import { RetainedRefusalError, ensureNative } from "../../../structural/retained-dag.ts";
 import { MAX_DIRECT_AXIS_REFS } from "../../../structural/policy.ts";
 import type { MaterializeTx } from "../../../structural/retained-dag.ts";
 export type { MaterializeTx };
@@ -79,8 +79,8 @@ export function materializeRow(node: BridgeRowMaterializeNode, tx: MaterializeTx
     case 3: return viewRowCreate3(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx));
     case 4: return viewRowCreate4(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx), layoutTrackWord(children[3]), ensureNative(children[3].child, tx));
     default: {
-      // Single enforcement point: axisRefScratch refuses arities above the
-      // retained cap (Sections 30/50) and counts the fallback.
+      // Arities above the fixed family ride the borrowed axis buffer,
+      // the native constructor reports an explicit status past its child limit.
       const scratch = tx.axisRefScratch(children.length);
       let offset = 0;
       for (let index = 0; index < children.length; index++) {
@@ -113,8 +113,8 @@ export function materializeColumn(node: BridgeColumnMaterializeNode, tx: Materia
     case 3: return viewColumnCreate3(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx));
     case 4: return viewColumnCreate4(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, node.gap, layoutTrackWord(children[0]), ensureNative(children[0].child, tx), layoutTrackWord(children[1]), ensureNative(children[1].child, tx), layoutTrackWord(children[2]), ensureNative(children[2].child, tx), layoutTrackWord(children[3]), ensureNative(children[3].child, tx));
     default: {
-      // Single enforcement point: axisRefScratch refuses arities above the
-      // retained cap (Sections 30/50) and counts the fallback.
+      // Arities above the fixed family ride the borrowed axis buffer,
+      // the native constructor reports an explicit status past its child limit.
       const scratch = tx.axisRefScratch(children.length);
       let offset = 0;
       for (let index = 0; index < children.length; index++) {

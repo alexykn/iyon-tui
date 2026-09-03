@@ -5,7 +5,7 @@ import {
   MaterializeTx,
   refreshNativeHint,
   RetainedCycleError,
-  RetainedFastFallbackError,
+  RetainedRefusalError,
 } from "./retained-dag.ts";
 import {
   hostRenderRef,
@@ -77,38 +77,6 @@ export interface NativeViewRenderHost {
   readonly tuiViewAbiHost?: NativeTuiHostContract;
   /** Native-ref installation for generic View-bearing controls. */
   readonly tuiViewAbiInstallRef?: (viewRef: number) => void;
-}
-
-export type NativeViewRoute =
-  | "no_op"
-  | "render_ref"
-  | "retained"
-  | "fallback";
-
-export type NativeViewRouteSnapshot = Readonly<Record<NativeViewRoute, number>>;
-
-const ROUTE_NAMES: readonly NativeViewRoute[] = [
-  "no_op",
-  "render_ref",
-  "retained",
-  "fallback",
-];
-const routeCounts: Record<NativeViewRoute, number> = Object.fromEntries(
-  ROUTE_NAMES.map((name) => [name, 0]),
-) as Record<NativeViewRoute, number>;
-
-/** Benchmark-only route counters; disabled unless explicitly requested. */
-export function resetNativeViewRouteCounters(): void {
-  for (const name of ROUTE_NAMES) routeCounts[name] = 0;
-}
-
-export function nativeViewRouteSnapshot(): NativeViewRouteSnapshot {
-  return Object.freeze({ ...routeCounts });
-}
-
-export function recordNativeViewRoute(route: NativeViewRoute): void {
-  if (Bun.env.PERF_NATIVE_VIEW_STATS !== "1") return;
-  routeCounts[route] += 1;
 }
 
 /**
@@ -214,7 +182,7 @@ export function tryRetainedMaterializeRef(next: View): number | undefined {
     return reference;
   } catch (error) {
     tx.releaseAll();
-    if (error instanceof RetainedFastFallbackError || error instanceof RetainedCycleError) return undefined;
+    if (error instanceof RetainedRefusalError || error instanceof RetainedCycleError) return undefined;
     throw error;
   }
 }
@@ -502,11 +470,11 @@ export function tryNativeEditTransactionRender(
       const [targetLow, targetHigh] = target;
       // Generated checked wrappers validate every fixed NodeId lane. Unused
       // lanes carry the valid root identity and are ignored by native staging.
-      const fallbackId = pairs[depth]!;
-      const [ancestor0Low, ancestor0High] = pairs[1] ?? fallbackId;
-      const [ancestor1Low, ancestor1High] = pairs[2] ?? fallbackId;
-      const [ancestor2Low, ancestor2High] = pairs[3] ?? fallbackId;
-      const [ancestor3Low, ancestor3High] = pairs[4] ?? fallbackId;
+      const ancestorDefault = pairs[depth]!;
+      const [ancestor0Low, ancestor0High] = pairs[1] ?? ancestorDefault;
+      const [ancestor1Low, ancestor1High] = pairs[2] ?? ancestorDefault;
+      const [ancestor2Low, ancestor2High] = pairs[3] ?? ancestorDefault;
+      const [ancestor3Low, ancestor3High] = pairs[4] ?? ancestorDefault;
       const status = editTxnAddTextLayout(
         session.symbols,
         session.runtime,

@@ -225,7 +225,7 @@ type BridgeViewNodeData = (
   | { readonly kind: typeof BRIDGE_VIEW_KIND.decorated; readonly child: BridgeViewNode; readonly decoration: DecorationNode }
   | { readonly kind: typeof BRIDGE_VIEW_KIND.contentHost; readonly contentPortId: number }
 ) & {
-  /** Native state identity in the derived cold transport only. */
+  /** Native state identity attached at composition time (slots, inputs, panes). */
   readonly stateAttachment?: number;
 };
 

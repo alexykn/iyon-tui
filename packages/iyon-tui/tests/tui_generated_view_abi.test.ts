@@ -3,7 +3,7 @@ import { native } from "../src/transport/native/addon.ts";
 import { nativeViewAbiSession } from "../src/transport/structural/native-view-abi.ts";
 import { hostRenderRef, runtimeNoop, viewCommonPatchRoot, viewRefForNodeId, viewRenderRef, viewReleaseMany, viewSpacerCreate, viewTextLayoutPatchRoot } from "../src/transport/abi/structural/generated/view_calls.ts";
 import { nodeIdPair, View } from "../src/api/view/view.ts";
-import { renderCold } from "./fixtures/native-host.ts";
+import { renderRetained } from "./fixtures/native-host.ts";
 
 type AbiHost = NonNullable<typeof native.NativeTuiHost> extends new (...args: never[]) => infer T ? T : never;
 
@@ -13,7 +13,7 @@ describe("PERF-11 generated vertical slice", () => {
   test("loads the generated N-API session and keeps its opaque handle stable", () => {
     const session = nativeViewAbiSession();
     if (session === undefined) return;
-    expect(session.abi.function_count).toBe(59);
+    expect(session.abi.function_count).toBe(60);
     const addon = native as unknown as Record<string, unknown>;
     expect(addon.tuiViewAbiBootstrap).toBeUndefined();
     expect(addon.tuiPerfAbiProbe).toBeUndefined();
@@ -31,7 +31,7 @@ describe("PERF-11 generated vertical slice", () => {
     const host = new Host(8, 4, true);
     const view = View.spacer(2);
     try {
-      renderCold(host, view);
+      renderRetained(host, view);
       const [nodeIdLow, nodeIdHigh] = nodeIdPair(view);
       const reference = viewRefForNodeId(session.symbols, session.runtime, nodeIdLow, nodeIdHigh);
       expect(hostRenderRef(session.symbols, session.runtime, host, reference)).toBe(0);
@@ -63,7 +63,7 @@ describe("PERF-11 generated vertical slice", () => {
     const textBase = View.text("hello");
     const textChanged = textBase.noWrap().textAlign("center");
     try {
-      renderCold(host, textBase);
+      renderRetained(host, textBase);
       const [textLow, textHigh] = nodeIdPair(textBase);
       const textRef = viewRefForNodeId(session.symbols, session.runtime, textLow, textHigh);
       const [textChangedLow, textChangedHigh] = nodeIdPair(textChanged);
@@ -77,9 +77,9 @@ describe("PERF-11 generated vertical slice", () => {
         2,
       );
       expect(textChangedRef).toBeGreaterThan(0);
-      renderCold(host, textChanged);
+      renderRetained(host, textChanged);
       const directText = View.text("hello").noWrap().textAlign("center");
-      renderCold(direct, directText);
+      renderRetained(direct, directText);
       expect(host.screenRows()).toEqual(direct.screenRows());
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([textRef, textChangedRef]), 2);
 
@@ -107,11 +107,11 @@ describe("PERF-11 generated vertical slice", () => {
         baseRef,
       );
       expect(changedRef).toBeGreaterThan(0);
-      renderCold(host, base);
-      renderCold(host, changed);
+      renderRetained(host, base);
+      renderRetained(host, changed);
       const directBase = View.spacer(1);
-      renderCold(direct, directBase);
-      renderCold(direct, directBase.padding(1));
+      renderRetained(direct, directBase);
+      renderRetained(direct, directBase.padding(1));
       expect(host.screenRows()).toEqual(direct.screenRows());
       viewReleaseMany(session.symbols, session.runtime, new Uint32Array([baseRef, changedRef]), 2);
     } finally {

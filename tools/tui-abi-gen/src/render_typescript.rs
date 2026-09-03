@@ -131,7 +131,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
     output.push_str("import type { ViewAbiSymbols } from \"./view_calls\";\n");
     // PERF-12 T7: axis materializers lower children through the runtime's
     // identity-first ensureNative (§22) and signal unsupported arities as
-    // fast fallbacks (§32/§49). The import cycle is safe: the generated
+    // explicit retained refusals. The import cycle is safe: the generated
     // module only calls into retained_dag at materialization time.
     let has_axis = document
         .materializers
@@ -148,7 +148,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             "import { BRIDGE_LAYOUT_CHILD_KIND, type BridgeLayoutChild } from \"../../../structural/ir.ts\";\n",
         );
         output.push_str(
-            "import { RetainedFastFallbackError, ensureNative } from \"../../../structural/retained-dag.ts\";\n",
+            "import { RetainedRefusalError, ensureNative } from \"../../../structural/retained-dag.ts\";\n",
         );
         if has_axis_buffer {
             // PERF-12 T8 (§50): retained cap for one borrowed-buffer axis call.
@@ -238,7 +238,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
             match &axis.buffer_builder {
                 None => {
                     output.push_str(&format!(
-                        "    default: throw new RetainedFastFallbackError(`{} arity ${{children.length}} exceeds fixed-arity specialization {}`);\n",
+                        "    default: throw new RetainedRefusalError(`{} arity ${{children.length}} exceeds fixed-arity specialization {}`);\n",
                         materializer.bridge_kind,
                         axis.builders.len() - 1
                     ));
@@ -255,7 +255,7 @@ pub fn materialize(document: &AbiDocument, schema_hash: &str, generator_hash: &s
                     };
                     let call = camel_case(buffer_builder);
                     output.push_str(&format!(
-                        "    default: {{\n      // Single enforcement point: axisRefScratch refuses arities above the\n      // retained cap (Sections 30/50) and counts the fallback.\n      const scratch = tx.axisRefScratch(children.length);\n      let offset = 0;\n      for (let index = 0; index < children.length; index++) {{\n        const child = children[index];\n        scratch[offset++] = layoutTrackWord(child);\n        scratch[offset++] = ensureNative(child.child, tx);\n      }}\n      tx.noteRefWords(offset);\n      return {}(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, {}, node.gap, scratch, children.length);\n    }}\n",
+                        "    default: {{\n      // Arities above the fixed family ride the borrowed axis buffer,\n      // the native constructor reports an explicit status past its child limit.\n      const scratch = tx.axisRefScratch(children.length);\n      let offset = 0;\n      for (let index = 0; index < children.length; index++) {{\n        const child = children[index];\n        scratch[offset++] = layoutTrackWord(child);\n        scratch[offset++] = ensureNative(child.child, tx);\n      }}\n      tx.noteRefWords(offset);\n      return {}(tx.symbols, tx.runtime, nodeIdLow, nodeIdHigh, {}, node.gap, scratch, children.length);\n    }}\n",
                         call, axis_kind_literal
                     ));
                 }

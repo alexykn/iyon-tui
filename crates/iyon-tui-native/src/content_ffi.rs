@@ -227,6 +227,11 @@ fn source_for_identity(
 }
 
 fn copy_records(records: &[IyonTuiAnnotationRecordV1]) -> Vec<ContentAnnotationRecord> {
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::perf::add(
+        iyon_tui::perf::Counter::AnnotationRecordsCopied,
+        records.len() as u64,
+    );
     records
         .iter()
         .map(|record| ContentAnnotationRecord {

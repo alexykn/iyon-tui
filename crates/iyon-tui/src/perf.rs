@@ -51,10 +51,16 @@ pub enum Counter {
     ViewStateGeometryFullRepaints,
     ViewStateDirtyPropagationNodes,
     DecoratedNormalizedNodes,
+    SourceSnapshotsAcquired,
+    AnnotationRecordsCopied,
+    SemanticPreparations,
+    GlobalCacheClears,
+    ContentSurfaceClones,
+    ContentRegistryPortScans,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::DecoratedNormalizedNodes as usize + 1;
+    pub const COUNT: usize = Self::ContentRegistryPortScans as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -100,6 +106,12 @@ const NAMES: [&str; Counter::COUNT] = [
     "view_state_geometry_full_repaints",
     "view_state_dirty_propagation_nodes",
     "decorated_normalized_nodes",
+    "source_snapshots_acquired",
+    "annotation_records_copied",
+    "semantic_preparations",
+    "global_cache_clears",
+    "content_surface_clones",
+    "content_registry_port_scans",
 ];
 
 #[cfg(feature = "perf-counters")]

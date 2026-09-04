@@ -322,6 +322,7 @@ impl SceneHost {
     /// semantic Scene and component graph remain retained.
     pub(crate) fn invalidate_content(&mut self) {
         self.content_invalidated = true;
+        crate::perf::inc(crate::perf::Counter::GlobalCacheClears);
         self.layout_cache.clear();
         self.paint_cache.clear();
     }

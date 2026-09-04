@@ -761,6 +761,7 @@ fn render_semantic_surface(
 }
 
 fn surface_suffix(surface: &Surface, start: usize) -> Surface {
+    crate::perf::inc(crate::perf::Counter::ContentSurfaceClones);
     let start = start.min(usize::from(surface.height()));
     let height = usize::from(surface.height()).saturating_sub(start);
     let mut suffix = Surface::new(surface.width(), height as u16);
@@ -777,6 +778,7 @@ fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
     if units == 0 || surface.width() == 0 || surface.height() == 0 {
         return (Surface::new(surface.width(), 0), 0);
     }
+    crate::perf::inc(crate::perf::Counter::ContentSurfaceClones);
     let mut revealed = surface.clone();
     let mut last_row = 0u16;
     let mut saw_glyph = false;
@@ -1780,6 +1782,7 @@ impl HostContentSource {
         if record.lifecycle != SourceLifecycle::Live {
             return Err(anyhow!("SOURCE_DISPOSED: Source is disposed"));
         }
+        crate::perf::inc(crate::perf::Counter::SourceSnapshotsAcquired);
         let storage = Arc::clone(&record.storage);
         Ok(HostContentSourceSnapshot {
             source_id: record.id,
@@ -2477,6 +2480,10 @@ impl ContentHostRegistry {
         self.validate_targets(targets)?;
         let target_set = targets.iter().copied().collect::<HashSet<_>>();
         let port_ids = self.ports.keys().copied().collect::<Vec<_>>();
+        crate::perf::add(
+            crate::perf::Counter::ContentRegistryPortScans,
+            port_ids.len() as u64,
+        );
         for port_id in port_ids {
             let Some(port) = self.ports.get(&port_id).cloned() else {
                 continue;
@@ -2681,6 +2688,7 @@ impl ContentHostRegistry {
             }
             (state.source.clone(), state.funnel, state.delivery_revision)
         };
+        crate::perf::inc(crate::perf::Counter::SemanticPreparations);
         let snapshot = source.snapshot()?;
         if funnel.kind == TextFunnelKind::Markdown && snapshot.source_base != 0 {
             return Err(anyhow!(
@@ -3196,6 +3204,10 @@ impl ContentHostRegistry {
             .map(|binding| (binding.port_id, binding.connector_id))
             .collect::<HashMap<_, _>>();
         let port_ids = self.ports.keys().copied().collect::<Vec<_>>();
+        crate::perf::add(
+            crate::perf::Counter::ContentRegistryPortScans,
+            port_ids.len() as u64,
+        );
         for port_id in port_ids {
             let Some(port) = self.ports.get(&port_id).cloned() else {
                 continue;
@@ -4757,6 +4769,10 @@ mod tests {
 
     #[test]
     fn reveal_surface_cut_at_row_boundary_does_not_add_blank_trailing_row() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
         let mut surface = Surface::new(10, 2);
         for column in 0..3 {
             let cell = crate::physical::PhysicalCell {
@@ -4778,6 +4794,11 @@ mod tests {
         }
         // Exactly 3 units -> reveals only the 3 cells in row 0
         let (revealed, fully_revealed) = reveal_surface(&surface, 3);
+        #[cfg(feature = "perf-counters")]
+        assert_eq!(
+            crate::perf::snapshot().value(crate::perf::Counter::ContentSurfaceClones),
+            1
+        );
         assert_eq!(
             revealed.height(),
             1,

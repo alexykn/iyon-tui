@@ -14,7 +14,7 @@ pub struct MarkdownOptions {
 }
 
 impl MarkdownOptions {
-    /// Strict CommonMark parsing with all optional extensions disabled.
+    /// Strict `CommonMark` parsing with all optional extensions disabled.
     pub const fn commonmark() -> Self {
         Self {
             tables: false,
@@ -30,7 +30,7 @@ impl MarkdownOptions {
     /// Enables the GFM extensions represented by the generic text IR:
     /// tables, strikethrough, and task-list markers.
     ///
-    /// `Default` remains strict CommonMark.
+    /// `Default` remains strict `CommonMark`.
     pub const fn gfm() -> Self {
         Self {
             tables: true,

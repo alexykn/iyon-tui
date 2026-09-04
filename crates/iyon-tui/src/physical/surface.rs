@@ -145,7 +145,7 @@ impl Surface {
 
     /// Overlay `child` at a signed vertical offset while respecting an
     /// additional physical clip. This is the incremental counterpart to the
-    /// full-tree RowViewport composition path.
+    /// full-tree `RowViewport` composition path.
     pub(crate) fn composite_clipped(
         &mut self,
         child: &Self,

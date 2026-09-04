@@ -171,7 +171,7 @@ impl Drop for HostInner {
     }
 }
 
-/// A shared native TextInput value that can be mounted into one TuiHost.
+/// A shared native `TextInput` value that can be mounted into one `TuiHost`.
 #[derive(Clone)]
 pub struct HostTextInput {
     state: Arc<Mutex<TextInput>>,
@@ -800,7 +800,7 @@ fn mounted_layout_changed(component: &mut MountedTextInput, size: Size) {
     }
 }
 
-/// A handle to the History owned by a TuiHost.
+/// A handle to the History owned by a `TuiHost`.
 #[derive(Clone)]
 pub struct HostHistory {
     host: Arc<Mutex<HostInner>>,
@@ -1041,7 +1041,7 @@ impl TuiHost {
         Ok(HostViewState::new(record, &self.inner))
     }
 
-    /// Creates a host-owned ContentPort. Source/Funnel identity remains
+    /// Creates a host-owned `ContentPort`. Source/Funnel identity remains
     /// separate from the structural attachment; plain content projection is
     /// prepared only when the port is mounted and selected.
     pub fn create_content_port(&self, family: ContentFamily) -> Result<HostContentPort> {

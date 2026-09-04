@@ -119,9 +119,9 @@ impl ShadowRow {
     }
 }
 
-/// One native-scrollback commit, analogous to OpenTUI `external_output` events.
+/// One native-scrollback commit, analogous to `OpenTUI` `external_output` events.
 ///
-/// OpenCode's test renderer records styled snapshots as they are published above
+/// `OpenCode`'s test renderer records styled snapshots as they are published above
 /// the split footer. Iyon publishes by full-screen CRLF, so a commit here is one
 /// displaced screen row that entered terminal scrollback.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +137,7 @@ impl ShadowScrollbackCommit {
     }
 }
 
-/// Styled span inside a captured frame, analogous to OpenTUI `CapturedSpan`.
+/// Styled span inside a captured frame, analogous to `OpenTUI` `CapturedSpan`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CapturedSpan {
     pub(crate) text: String,
@@ -150,7 +150,7 @@ pub(crate) struct CapturedLine {
     pub(crate) spans: Vec<CapturedSpan>,
 }
 
-/// Visible-screen capture, analogous to OpenTUI `captureSpans()`.
+/// Visible-screen capture, analogous to `OpenTUI` `captureSpans()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CapturedFrame {
     pub(crate) cols: usize,
@@ -449,12 +449,12 @@ impl ShadowTerminal {
         self.screen.iter().map(|row| row.trimmed_text()).collect()
     }
 
-    /// Visible screen as text, analogous to OpenTUI `captureCharFrame()`.
+    /// Visible screen as text, analogous to `OpenTUI` `captureCharFrame()`.
     pub(crate) fn capture_char_frame(&self) -> String {
         self.screen_trimmed_texts().join("\n")
     }
 
-    /// Visible screen as styled spans plus cursor, analogous to OpenTUI `captureSpans()`.
+    /// Visible screen as styled spans plus cursor, analogous to `OpenTUI` `captureSpans()`.
     pub(crate) fn capture_spans(&self) -> CapturedFrame {
         CapturedFrame {
             cols: self.width,
@@ -464,7 +464,7 @@ impl ShadowTerminal {
         }
     }
 
-    /// Native scrollback commits since the last claim, analogous to OpenTUI `externalOutput.take()`.
+    /// Native scrollback commits since the last claim, analogous to `OpenTUI` `externalOutput.take()`.
     pub(crate) fn claim_scrollback(&mut self) -> Vec<ShadowScrollbackCommit> {
         let commits = self.scrollback[self.claimed_through..]
             .iter()

@@ -141,7 +141,7 @@ impl MountGraph {
     /// Replaces only one component's mounted descendants. The owner entry is
     /// retained, and the replacement graph contains descendants only. No
     /// global index rebuild is required: entries and child lists are keyed by
-    /// stable ComponentId values.
+    /// stable `ComponentId` values.
     pub(crate) fn replace_subtree(&mut self, id: ComponentId, replacement: MountGraph) -> bool {
         if !self.contains(id) || replacement.contains(id) {
             return false;

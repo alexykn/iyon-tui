@@ -59,10 +59,10 @@ struct PaintKey {
     node_context: StyleContextKey,
     descendant_context: StyleContextKey,
     /// Text alignment/width intent are retained-state geometry inputs that do
-    /// not necessarily change the immutable semantic ViewId or rectangle.
+    /// not necessarily change the immutable semantic `ViewId` or rectangle.
     text_layout: Option<(u8, u8)>,
     /// Content projection changes must invalidate the retained surface even
-    /// when the ContentHost rectangle and style are unchanged.
+    /// when the `ContentHost` rectangle and style are unchanged.
     content_revision: Option<u64>,
     /// Border/background glyph data can change without changing a rect or
     /// resolved text style. Keep it in the retained paint key as a compact

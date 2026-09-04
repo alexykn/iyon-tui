@@ -1,4 +1,4 @@
-//! Host-owned ViewState identity, binding, and lifecycle registry.
+//! Host-owned `ViewState` identity, binding, and lifecycle registry.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

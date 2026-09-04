@@ -231,9 +231,9 @@ where
         self.host_state_attachment_targets(self.scene.body())
     }
 
-    /// Collects ContentPort attachments from the prospective body and current
+    /// Collects `ContentPort` attachments from the prospective body and current
     /// static/live History views. Source-backed History occurrences use the
-    /// same retained ContentPort projection provider as body content.
+    /// same retained `ContentPort` projection provider as body content.
     #[cfg(feature = "native-host")]
     pub(crate) fn host_content_attachment_targets(&self, body: &View) -> anyhow::Result<Vec<u64>> {
         let history_views = self
@@ -349,7 +349,7 @@ where
     }
 
     /// Discards an unpresented Scene candidate after a backend failure. The
-    /// logical HostInner frame remains authoritative, so the next retry must
+    /// logical `HostInner` frame remains authoritative, so the next retry must
     /// rebuild the derived scene instead of treating the rejected candidate as
     /// committed.
     pub(crate) fn host_discard_candidate(&mut self) {

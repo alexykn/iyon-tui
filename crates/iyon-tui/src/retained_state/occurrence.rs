@@ -1,7 +1,7 @@
 //! Canonical physical occurrence box for retained state.
 //!
 //! The box is present for every state-capable layout occurrence, even when
-//! its base decoration is empty. A ViewState changes this record's effective
+//! its base decoration is empty. A `ViewState` changes this record's effective
 //! values; it never creates a structural wrapper node.
 
 use crate::presentation::api::StyleStates;

@@ -1,6 +1,6 @@
 //! Retained geometry overrides and their native effect classification.
 //!
-//! Geometry remains an immutable semantic View value until a ViewState is
+//! Geometry remains an immutable semantic View value until a `ViewState` is
 //! attached.  These records are the host-owned sparse overlay used by the
 //! candidate layout transaction; they never change semantic topology.
 

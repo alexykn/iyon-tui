@@ -46,7 +46,7 @@ pub struct History {
     revision: Cell<u64>,
     /// Display-frontier revision, separate from semantic History revision.
     /// Native scrollback promotion mutates this frontier without changing the
-    /// ordered semantic units, so SceneHost can refresh its retained History
+    /// ordered semantic units, so `SceneHost` can refresh its retained History
     /// branch after a transfer without rebuilding the body branch.
     native_revision: Cell<u64>,
     pub(super) native: super::native::NativeFrontier,
@@ -175,7 +175,7 @@ impl History {
             .collect()
     }
 
-    /// Returns semantic History views that can carry a retained ContentPort.
+    /// Returns semantic History views that can carry a retained `ContentPort`.
     pub(crate) fn content_views(&self) -> Vec<View> {
         self.units
             .iter()

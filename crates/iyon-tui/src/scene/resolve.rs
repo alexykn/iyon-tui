@@ -114,7 +114,7 @@ impl<'a> ResolveSession<'a> {
 }
 
 /// Collects retained-state attachments from a resolved semantic graph. The
-/// ordinary View helper cannot enter ComponentSlot indirections because it has
+/// ordinary View helper cannot enter `ComponentSlot` indirections because it has
 /// no component overlay; H3 must nevertheless validate state records in the
 /// complete candidate before publishing it as desired.
 pub(crate) fn state_attachment_targets(
@@ -261,7 +261,7 @@ fn visit_state_attachments(
     result
 }
 
-/// Collects ContentPort attachment identities from a resolved semantic graph.
+/// Collects `ContentPort` attachment identities from a resolved semantic graph.
 /// Component slots are expanded through the resolution overlay so H3 can
 /// validate content mounts before publishing a desired root.
 pub(crate) fn content_attachment_targets(
@@ -426,7 +426,7 @@ struct Resolver<'a> {
 
 impl Resolver<'_> {
     /// Scans only semantic nodes that can contain a component slot. Ordinary
-    /// component-free branches are represented by their cached ViewFlags and
+    /// component-free branches are represented by their cached `ViewFlags` and
     /// require no recursive topology walk.
     fn scan_view(&mut self, view: &View, parent: Option<ComponentId>) -> Result<(), ResolveError> {
         perf::inc(Counter::ResolverNodesVisited);

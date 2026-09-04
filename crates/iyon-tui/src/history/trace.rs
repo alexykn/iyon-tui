@@ -115,11 +115,11 @@ pub(crate) fn trace_resolve_pressure(
 
 #[cfg(test)]
 mod tests {
-    /// Verify that the tracer is silent when IYON_HISTORY_TRACE is unset and
+    /// Verify that the tracer is silent when `IYON_HISTORY_TRACE` is unset and
     /// does not panic when it is set. We cannot easily assert on stderr
     /// output here, but we can assert the helper never panics.
     ///
-    /// This test does NOT set the env var (it must not, as OnceLock caches the
+    /// This test does NOT set the env var (it must not, as `OnceLock` caches the
     /// result and that would permanently enable tracing for the process). It
     /// instead verifies the `is_trace_enabled` path works at all.
     #[test]

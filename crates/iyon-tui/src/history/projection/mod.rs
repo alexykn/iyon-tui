@@ -125,7 +125,7 @@ pub(crate) fn project_into_session(
     )
 }
 
-/// Host projection mode includes the current ContentHost measurement when
+/// Host projection mode includes the current `ContentHost` measurement when
 /// native overflow metadata is calculated.
 pub(crate) fn project_into_session_for_host(
     history: &History,

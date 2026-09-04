@@ -119,10 +119,10 @@ struct NativeViewSlot {
     kind: NativeViewKindTag,
 }
 
-/// Dense paged backing for NativeRef slots (PERF-12 §52–§54).
+/// Dense paged backing for `NativeRef` slots (PERF-12 §52–§54).
 ///
 /// Replaces the former `HashMap<u32, NativeViewSlot>` for the hottest handle
-/// lookup: page = ref >> NATIVE_REF_PAGE_BITS, offset = ref & mask, so common
+/// lookup: page = ref >> `NATIVE_REF_PAGE_BITS`, offset = ref & mask, so common
 /// resolution pays vector bounds + page pointer + slot index instead of a hash.
 /// Refs are monotonic and never recycled inside one runtime generation (§53),
 /// so pages carry no ABA generation state. A page is physical metadata only:
@@ -135,14 +135,14 @@ const NATIVE_REF_PAGE_BITS: u32 = 12;
 /// to one candidate publication.
 #[derive(Debug)]
 enum SemanticIdentityMatch {
-    /// A live NativeRef already maps to this exact View.
+    /// A live `NativeRef` already maps to this exact View.
     SameLiveWithRef(View),
-    /// The weak cache holds this exact live View but no live NativeRef
+    /// The weak cache holds this exact live View but no live `NativeRef`
     /// (for example a weak publication recorded it first).
     SameLiveWithoutRef,
-    /// A different live View owns this NodeId: impossible identity conflict.
+    /// A different live View owns this `NodeId`: impossible identity conflict.
     Conflict,
-    /// No live View for this NodeId; stale metadata was cleared.
+    /// No live View for this `NodeId`; stale metadata was cleared.
     Fresh,
 }
 
@@ -801,7 +801,7 @@ impl NativeViewRuntime {
         Ok(patched)
     }
 
-    /// Validates all logical publication failures and reserves the NativeRefs
+    /// Validates all logical publication failures and reserves the `NativeRefs`
     /// without exposing them. The returned plan is committed only after the
     /// host accepts the new root, so a host error cannot leave published refs
     /// for an uninstalled View.
@@ -1057,7 +1057,7 @@ impl NativeViewRuntime {
         Ok(SemanticIdentityMatch::Fresh)
     }
 
-    /// Single installation path for a freshly allocated NativeRef. Shared by
+    /// Single installation path for a freshly allocated `NativeRef`. Shared by
     /// direct publication and staged (host-atomic) publication commits.
     fn install_semantic_view(&mut self, node_id: u64, view: View, reference: u32, leased: bool) {
         self.nodes_inserted_since_full_sweep += 1;
@@ -1077,10 +1077,10 @@ impl NativeViewRuntime {
     }
 
     /// The central semantic publication helper (PERF-12 handoff §24). Every
-    /// transport that mints or re-associates a NativeRef for a semantic NodeId
+    /// transport that mints or re-associates a `NativeRef` for a semantic `NodeId`
     /// must route through this function so there is exactly one set of
-    /// identity rules: validate NodeId, reject impossible identity conflicts,
-    /// maintain NodeId -> WeakView, allocate/associate the NativeRef, apply
+    /// identity rules: validate `NodeId`, reject impossible identity conflicts,
+    /// maintain `NodeId` -> `WeakView`, allocate/associate the `NativeRef`, apply
     /// the requested lease mode, and keep diagnostics on the shared runtime.
     fn publish_semantic_view(
         &mut self,
@@ -1164,14 +1164,14 @@ impl NativeViewRuntime {
         self.builders.clear();
     }
 
-    /// Live View for a NodeId from the shared semantic cache, if any.
+    /// Live View for a `NodeId` from the shared semantic cache, if any.
     pub(super) fn live_cached_view(&self, node_id: u64) -> Option<View> {
         self.nodes
             .get(&node_id)
             .and_then(iyon_tui::WeakView::upgrade)
     }
 
-    /// Drops the cached weak entry for a NodeId. Callers invoke this on a
+    /// Drops the cached weak entry for a `NodeId`. Callers invoke this on a
     /// confirmed cache miss before re-publishing; at that point any
     /// remaining entry is expired by definition.
     pub(super) fn drop_cached_entry(&mut self, node_id: u64) {
@@ -3309,7 +3309,7 @@ pub unsafe extern "Rust" fn view_axis_set_child_path_impl(
 /// no extra physical occurrence is retained for the decoration record.
 /// Colors arrive as style atoms. Custom border glyphs arrive as a mask-gated
 /// trailer between the state count and the style-state entries: a glyph count
-/// (always 8) followed by 8 (byte_offset, byte_length) pairs in top, right,
+/// (always 8) followed by 8 (`byte_offset`, `byte_length`) pairs in top, right,
 /// bottom, left, topLeft, topRight, bottomLeft, bottomRight order; glyph
 /// bytes are appended after the style-state bytes.
 fn parse_and_build_decorated(
@@ -4599,7 +4599,7 @@ mod tests {
     /// Representation benchmark backing the PERF-12 T2 decision (§52/§88).
     /// Not a timing gate: prints measured ns/lookup so the chosen
     /// representation and page size are recorded by measurement. Run with:
-    /// cargo test -p iyon-tui-native --release -- --ignored --nocapture native_ref_table_representation
+    /// cargo test -p iyon-tui-native --release -- --ignored --nocapture `native_ref_table_representation`
     #[test]
     #[ignore = "representation benchmark; run in release with --ignored --nocapture"]
     fn native_ref_table_representation_benchmark() {

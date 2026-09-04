@@ -1,8 +1,8 @@
 //! Exhaustive retained-state capability tables.
 //!
 //! These tables intentionally live with the retained-state plane rather than
-//! in structural transport. A new native ViewKind must choose every state
-//! capability explicitly before it can accept a ViewState attachment.
+//! in structural transport. A new native `ViewKind` must choose every state
+//! capability explicitly before it can accept a `ViewState` attachment.
 
 use crate::presentation::ir::ViewKind;
 
@@ -62,7 +62,7 @@ pub(crate) fn presentation_state_capable(kind: &ViewKind) -> bool {
     }
 }
 
-/// Validates all geometry overrides already stored on a ViewState against the
+/// Validates all geometry overrides already stored on a `ViewState` against the
 /// target occurrence. This is called at the H3 desired-binding boundary and
 /// again by mutation validation through the desired binding.
 pub(crate) fn validate_geometry_for_kind(

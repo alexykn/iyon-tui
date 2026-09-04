@@ -131,7 +131,7 @@ pub(crate) struct ComponentGeometry {
 pub(crate) struct ComponentGeometryMap {
     pub(crate) entries: HashMap<ComponentId, ComponentGeometry>,
     pub(crate) roots: HashMap<ComponentId, LayoutNodeId>,
-    /// Full intrinsic extent discovered behind a component-owned RowViewport.
+    /// Full intrinsic extent discovered behind a component-owned `RowViewport`.
     /// This is a measurement result; it is not viewport ownership.
     pub(crate) content_extents: HashMap<ComponentId, Size>,
 }
@@ -299,7 +299,7 @@ impl LayoutTree {
 
     /// Returns the vertical translation and effective ancestor clip needed to
     /// repaint one subtree directly into the committed screen surface. A
-    /// RowViewport keeps child layout coordinates in its unscrolled space;
+    /// `RowViewport` keeps child layout coordinates in its unscrolled space;
     /// incremental paint must apply the same offset as full-tree compositing.
     pub(crate) fn incremental_paint_geometry(&self, id: LayoutNodeId) -> (i32, Rect) {
         let path = self.path_to_root(id);

@@ -48,7 +48,7 @@
 //!
 //! Markdown is one projector, not the text model. [`MarkdownOptions::gfm`]
 //! enables the supported GFM extensions (tables, strikethrough, and task lists);
-//! [`MarkdownOptions::default`] remains strict CommonMark. [`TextRenderer`] is
+//! [`MarkdownOptions::default`] remains strict `CommonMark`. [`TextRenderer`] is
 //! source-format independent: it emits structure and semantic identity, never
 //! application paint. [`TextSelector`] themes semantic roles and generated
 //! parts. Origin specialization is optional. Terminal geometry remains below

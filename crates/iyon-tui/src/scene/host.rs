@@ -56,7 +56,7 @@ enum NativePressure {
 /// another full Scene resolve for each individual one-line History unit.
 ///
 /// Returns `Progress` if the caller must re-resolve, or `Blocked` if the
-/// frontier is stuck and the host should paint from the NativeFrontier anchor.
+/// frontier is stuck and the host should paint from the `NativeFrontier` anchor.
 fn drain_native_pressure<S: NativeHistorySink>(
     history: &mut crate::History,
     sink: &mut S,
@@ -317,7 +317,7 @@ impl SceneHost {
     }
 
     /// Content revisions are not semantic View revisions, so descendant
-    /// layout/paint cache entries cannot be invalidated by ViewId alone. Clear
+    /// layout/paint cache entries cannot be invalidated by `ViewId` alone. Clear
     /// derived caches before a content candidate is measured; the immutable
     /// semantic Scene and component graph remain retained.
     pub(crate) fn invalidate_content(&mut self) {
@@ -499,7 +499,7 @@ impl SceneHost {
     }
 
     /// Drops all derived candidate data after a backend presentation failure.
-    /// The HostInner frame remains authoritative, so stale candidate caches
+    /// The `HostInner` frame remains authoritative, so stale candidate caches
     /// must not seed the next retry.
     pub(crate) fn discard_candidate(&mut self) {
         self.invalidate_root();
@@ -2889,9 +2889,9 @@ mod tests {
     /// Static A, Static B, Live C (component), Static D.
     /// Overflow requires movement past C.
     ///
-    /// Drain: inserts A, inserts B, hits SemanticBlocked on C.
+    /// Drain: inserts A, inserts B, hits `SemanticBlocked` on C.
     /// Because some physical progress occurred → returns Progress, re-resolves.
-    /// On next attempt C still blocks → Blocked → NativeFrontier paint.
+    /// On next attempt C still blocks → Blocked → `NativeFrontier` paint.
     ///
     /// The host must NOT paint based on the pre-transfer stale frame.
     #[test]

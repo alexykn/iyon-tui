@@ -17,7 +17,7 @@ use super::{FlowBoundary, HistoryUnitId};
 pub(super) enum HistoryUnitLayoutKey {
     /// Component-free unit: only the semantic identity and the width matter.
     Static(ViewId),
-    /// A static semantic unit containing a retained ContentPort. The provider
+    /// A static semantic unit containing a retained `ContentPort`. The provider
     /// revision participates so Source/Funnel/delivery changes remeasure the
     /// History flow instead of reusing the empty pre-mutation height.
     Content { view: ViewId, projection: u64 },

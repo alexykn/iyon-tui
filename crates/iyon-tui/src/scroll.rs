@@ -23,9 +23,9 @@ pub struct ScrollPane {
     content: View,
     mode: ScrollMode,
     layout_size: Option<Size>,
-    /// Native layout reports the full extent behind a RowViewport. Keeping
-    /// this hint here lets ContentHost content use the same controller without
-    /// making ContentPort own scroll state.
+    /// Native layout reports the full extent behind a `RowViewport`. Keeping
+    /// this hint here lets `ContentHost` content use the same controller without
+    /// making `ContentPort` own scroll state.
     content_extent: Option<Size>,
 }
 

@@ -5,13 +5,13 @@
 //!
 //! Layout is a three-stage pipeline:
 //!
-//! 1. Measure semantic Views into width-dependent MeasuredNodes.
-//! 2. Resolve bounded allocation into PreparedNodes using only measured facts.
-//! 3. Place PreparedNodes into a LayoutTree without performing measurement or
+//! 1. Measure semantic Views into width-dependent `MeasuredNodes`.
+//! 2. Resolve bounded allocation into `PreparedNodes` using only measured facts.
+//! 3. Place `PreparedNodes` into a `LayoutTree` without performing measurement or
 //!    layout allocation.
 //!
 //! A semantic View subtree must never be re-measured merely because placement
-//! needs geometry, and LayoutTree must not retain recursive clones of semantic
+//! needs geometry, and `LayoutTree` must not retain recursive clones of semantic
 //! View subtrees.
 
 mod cache;

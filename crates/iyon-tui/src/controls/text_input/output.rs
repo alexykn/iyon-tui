@@ -2,7 +2,7 @@ use crate::output::{EventCx, Output};
 
 use super::buffer::TextBuffer;
 
-/// A borrowed snapshot of a TextInput after a user text mutation.
+/// A borrowed snapshot of a `TextInput` after a user text mutation.
 #[derive(Clone, Copy, Debug)]
 pub struct TextChange<'a> {
     text: &'a str,

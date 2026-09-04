@@ -56,7 +56,7 @@ impl LayoutCache {
     }
 
     /// Drops only entries whose semantic occurrence may have changed. Parent
-    /// ViewIds are supplied by the committed layout dependency frontier; clean
+    /// `ViewIds` are supplied by the committed layout dependency frontier; clean
     /// siblings remain reusable in the next candidate.
     pub(crate) fn invalidate_view_ids(&mut self, view_ids: &std::collections::HashSet<ViewId>) {
         self.current_measure.retain(|key, _| {

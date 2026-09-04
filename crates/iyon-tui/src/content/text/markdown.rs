@@ -19,7 +19,7 @@ use super::{
     TextContent, TextIrError, TextOrigin, TextProjectionError, TextRun, validate_text_projection,
 };
 
-/// Errors raised while converting CommonMark events to generic text IR.
+/// Errors raised while converting `CommonMark` events to generic text IR.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MarkdownProjectionError {

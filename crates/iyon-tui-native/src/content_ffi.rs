@@ -70,7 +70,7 @@ pub const CONTENT_ABI_SCHEMA_FINGERPRINT: [u32; 8] = [
 ];
 
 /// Fixed metadata record. All fields are u32 lanes so the caller can inspect
-/// it with a single Uint32Array without a C string or pointer lifetime.
+/// it with a single `Uint32Array` without a C string or pointer lifetime.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IyonTuiPerf13AbiMetadataV1 {

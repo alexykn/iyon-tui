@@ -31,7 +31,7 @@ impl Default for ContentMeasurement {
     }
 }
 
-/// Physical rows that a ContentHost can transfer into native History. Open
+/// Physical rows that a `ContentHost` can transfer into native History. Open
 /// content may expose only a stable prefix; sealed content marks its rows as
 /// complete so the semantic unit can be retired after receipt.
 #[derive(Debug)]
@@ -69,7 +69,7 @@ pub(crate) trait ContentProvider {
         allocated_height: u16,
     ) -> Option<std::sync::Arc<Surface>>;
 
-    /// Returns committed/candidate physical rows for a History ContentHost.
+    /// Returns committed/candidate physical rows for a History `ContentHost`.
     /// Open content may return only a stable prefix; `complete` is true when
     /// the returned suffix reaches the sealed end of the unit.
     fn history_rows(&self, _port_id: u64, _offered_width: u16) -> Option<HistoryContentRows> {
@@ -88,18 +88,18 @@ pub(crate) trait ContentProvider {
     ) {
     }
 
-    /// Returns the resident History view for a ContentHost. Providers may
+    /// Returns the resident History view for a `ContentHost`. Providers may
     /// remove decoration already accepted by native History while preserving
     /// the caller's body occurrence unchanged.
     fn history_view(&self, view: &crate::presentation::View) -> crate::presentation::View {
         view.clone()
     }
 
-    /// Releases a History-backed ContentHost after its rows have been
+    /// Releases a History-backed `ContentHost` after its rows have been
     /// accepted by the native scrollback sink.
     fn history_unit_retired(&mut self, _unit_id: u64) {}
 
-    /// True when the front resident History ContentHost has no transferable
+    /// True when the front resident History `ContentHost` has no transferable
     /// rows for the offered width and should remain follow-end anchored.
     fn history_transfer_blocked(&self, _port_id: u64, _offered_width: u16) -> bool {
         false
@@ -107,7 +107,7 @@ pub(crate) trait ContentProvider {
 }
 
 /// Empty provider used by generic layout/paint callers and existing tests that
-/// do not mount a retained ContentPort.
+/// do not mount a retained `ContentPort`.
 #[derive(Default)]
 pub(crate) struct EmptyContentProvider;
 

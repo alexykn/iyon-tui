@@ -2,7 +2,7 @@
 //!
 //! This module owns only boundary parsing and native-wrapper lifecycle. State
 //! records, effective geometry/presentation, and host binding remain in iyon-tui's
-//! retained_state module; no structural View or frame code is implemented here.
+//! `retained_state` module; no structural View or frame code is implemented here.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

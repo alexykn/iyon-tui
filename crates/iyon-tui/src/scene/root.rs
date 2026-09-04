@@ -267,7 +267,7 @@ fn resolve_branch(
 
 /// Resolves only the content owned by one changed component. The component
 /// itself remains in the retained graph; direct children are re-parented to
-/// it so the caller can splice this local result into the existing MountGraph.
+/// it so the caller can splice this local result into the existing `MountGraph`.
 pub(crate) fn resolve_component_subtree(
     view: &View,
     registry: &ComponentRegistry,

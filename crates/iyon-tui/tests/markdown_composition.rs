@@ -147,18 +147,18 @@ fn markdown_creates_real_json_syntax_and_mermaid_portals() {
             let TextContent::Block(block) = value else {
                 continue;
             };
-            if let Some(code) = block.as_code_block() {
-                if code.language().map(LanguageId::as_str) == Some("json") {
-                    saw_json = true;
-                    let body = code.body();
-                    assert!(body.runs().iter().any(|run| run.text() == "\"ok\""));
-                    assert!(body.runs().iter().any(|run| {
-                        run.annotations()
-                            .tags()
-                            .iter()
-                            .any(|tag| tag.name() == "token")
-                    }));
-                }
+            if let Some(code) = block.as_code_block()
+                && code.language().map(LanguageId::as_str) == Some("json")
+            {
+                saw_json = true;
+                let body = code.body();
+                assert!(body.runs().iter().any(|run| run.text() == "\"ok\""));
+                assert!(body.runs().iter().any(|run| {
+                    run.annotations()
+                        .tags()
+                        .iter()
+                        .any(|tag| tag.name() == "token")
+                }));
             }
             if block.as_container().is_some() {
                 saw_mermaid = true;

@@ -420,10 +420,10 @@ impl NativeTextInput {
 
     #[napi]
     pub fn dispose(&self) {
-        if self.alive.swap(false, Ordering::AcqRel) {
-            if let Some(host) = &self.host {
-                host.retire();
-            }
+        if self.alive.swap(false, Ordering::AcqRel)
+            && let Some(host) = &self.host
+        {
+            host.retire();
         }
     }
 
@@ -830,11 +830,11 @@ impl NativeTuiHost {
             .host
             .create_text_input(multiline.unwrap_or(false))
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        if let Some(border) = border {
-            if let Err(error) = input.set_border(border) {
-                input.retire();
-                return Err(crate::NativeError::internal(error.to_string()));
-            }
+        if let Some(border) = border
+            && let Err(error) = input.set_border(border)
+        {
+            input.retire();
+            return Err(crate::NativeError::internal(error.to_string()));
         }
         Ok(NativeTextInput::from_host(input))
     }
@@ -2216,19 +2216,19 @@ fn color_spec(value: &Value) -> Result<iyon_tui::ColorSpec> {
             |_| crate::NativeError::invalid_input("ANSI color must fit in u8"),
         )?));
     }
-    if let Some(value) = value.strip_prefix('#') {
-        if value.len() == 6 {
-            let r = u8::from_str_radix(&value[0..2], 16).map_err(|_| {
-                crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-            })?;
-            let g = u8::from_str_radix(&value[2..4], 16).map_err(|_| {
-                crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-            })?;
-            let b = u8::from_str_radix(&value[4..6], 16).map_err(|_| {
-                crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-            })?;
-            return Ok(iyon_tui::ColorSpec::rgb(r, g, b));
-        }
+    if let Some(value) = value.strip_prefix('#')
+        && value.len() == 6
+    {
+        let r = u8::from_str_radix(&value[0..2], 16).map_err(|_| {
+            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
+        })?;
+        let g = u8::from_str_radix(&value[2..4], 16).map_err(|_| {
+            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
+        })?;
+        let b = u8::from_str_radix(&value[4..6], 16).map_err(|_| {
+            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
+        })?;
+        return Ok(iyon_tui::ColorSpec::rgb(r, g, b));
     }
     let color = match value.to_ascii_lowercase().as_str() {
         "black" => iyon_tui::AnsiColor::Black,

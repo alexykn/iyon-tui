@@ -340,16 +340,16 @@ impl History {
     pub(super) fn record_unit_height(&self, index: usize, height: usize) {
         if let Some(cached) = self.units.get(index) {
             let mut layout = cached.layout.borrow_mut();
-            if layout.height.is_none() {
-                if let Some(total) = self.cached_total_height.get() {
-                    if self.stale_cached_heights.get() == 0 {
-                        self.cached_total_height.set(None);
-                    } else {
-                        self.cached_total_height
-                            .set(Some(total.saturating_add(height)));
-                        self.stale_cached_heights
-                            .set(self.stale_cached_heights.get().saturating_sub(1));
-                    }
+            if layout.height.is_none()
+                && let Some(total) = self.cached_total_height.get()
+            {
+                if self.stale_cached_heights.get() == 0 {
+                    self.cached_total_height.set(None);
+                } else {
+                    self.cached_total_height
+                        .set(Some(total.saturating_add(height)));
+                    self.stale_cached_heights
+                        .set(self.stale_cached_heights.get().saturating_sub(1));
                 }
             }
             layout.height = Some(height);
@@ -363,10 +363,10 @@ impl History {
     }
 
     pub(super) fn cached_total_flow_height(&self) -> Option<usize> {
-        if self.stale_cached_heights.get() == 0 {
-            if let Some(total) = self.cached_total_height.get() {
-                return Some(total);
-            }
+        if self.stale_cached_heights.get() == 0
+            && let Some(total) = self.cached_total_height.get()
+        {
+            return Some(total);
         }
         let mut total = 0usize;
         for unit in &self.units {

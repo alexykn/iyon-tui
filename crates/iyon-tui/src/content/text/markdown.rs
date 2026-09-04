@@ -152,13 +152,13 @@ impl Projector<TextContent> for MarkdownProjector {
         input: &Projection<TextContent>,
     ) -> Result<Projection<Self::Output>, Self::Error> {
         validate_text_projection(input)?;
-        if let Some(required) = self.required_restart_from {
-            if input.source_base() > required {
-                return Err(MarkdownProjectionError::InsufficientRestartContext {
-                    source_base: input.source_base(),
-                    required_from: required,
-                });
-            }
+        if let Some(required) = self.required_restart_from
+            && input.source_base() > required
+        {
+            return Err(MarkdownProjectionError::InsufficientRestartContext {
+                source_base: input.source_base(),
+                required_from: required,
+            });
         }
 
         let mut output = ProjectionBuilder::new(
@@ -400,35 +400,34 @@ impl MarkdownProjector {
                         .is_some_and(|prefix| prefix == cache.prefix)
             })
             .cloned()
+            && cache.stable_end > domain.source_base()
         {
-            if cache.stable_end > domain.source_base() {
-                if cache.stable_end == domain.source_end() && !cache.has_reference_context {
-                    return Ok(ParsedDomain {
-                        projection: cached_projection(&cache)?,
-                        unstable_from: None,
-                        has_reference_context: false,
-                    });
-                }
-                if cache.has_reference_context {
-                    return self.parse_uncached(domain, sealed);
-                }
-                let local = usize::try_from(
-                    cache
-                        .stable_end
-                        .as_u64()
-                        .saturating_sub(domain.source_base().as_u64()),
-                )
-                .map_err(|_| MarkdownProjectionError::InvalidSourceMap {
-                    context: "cache restart offset",
-                })?;
-                let suffix = domain.suffix(local)?;
-                let parsed = self.parse_uncached(&suffix, sealed)?;
+            if cache.stable_end == domain.source_end() && !cache.has_reference_context {
                 return Ok(ParsedDomain {
-                    projection: prepend_cached(&cache, parsed.projection)?,
-                    unstable_from: parsed.unstable_from,
-                    has_reference_context: parsed.has_reference_context,
+                    projection: cached_projection(&cache)?,
+                    unstable_from: None,
+                    has_reference_context: false,
                 });
             }
+            if cache.has_reference_context {
+                return self.parse_uncached(domain, sealed);
+            }
+            let local = usize::try_from(
+                cache
+                    .stable_end
+                    .as_u64()
+                    .saturating_sub(domain.source_base().as_u64()),
+            )
+            .map_err(|_| MarkdownProjectionError::InvalidSourceMap {
+                context: "cache restart offset",
+            })?;
+            let suffix = domain.suffix(local)?;
+            let parsed = self.parse_uncached(&suffix, sealed)?;
+            return Ok(ParsedDomain {
+                projection: prepend_cached(&cache, parsed.projection)?,
+                unstable_from: parsed.unstable_from,
+                has_reference_context: parsed.has_reference_context,
+            });
         }
         self.parse_uncached(domain, sealed)
     }
@@ -729,15 +728,13 @@ impl<'a> Builder<'a> {
                     .frames
                     .last()
                     .is_some_and(|frame| matches!(frame, Frame::Item { .. }))
-                {
-                    if let Some(Frame::List { tight, .. }) = self
+                    && let Some(Frame::List { tight, .. }) = self
                         .frames
                         .iter_mut()
                         .rev()
                         .find(|frame| matches!(frame, Frame::List { .. }))
-                    {
-                        *tight = false;
-                    }
+                {
+                    *tight = false;
                 }
                 self.frames.push(Frame::Paragraph {
                     source: range,

@@ -206,11 +206,11 @@ fn project_into_session_with_mode(
     let items = flow_items(history, &plans);
 
     let frozen_static = frozen_static_rows(history);
-    if let Some(rows) = frozen_static.clone() {
-        if let Some(plan) = plans.first_mut() {
-            plan.height = Some(rows.len());
-            plan.content = PlannedContent::Frozen(rows);
-        }
+    if let Some(rows) = frozen_static.clone()
+        && let Some(plan) = plans.first_mut()
+    {
+        plan.height = Some(rows.len());
+        plan.content = PlannedContent::Frozen(rows);
     }
 
     // Histories without a frozen native remainder can retain every unit's
@@ -441,16 +441,14 @@ fn project_into_session_with_mode(
                 if let Some(selected) = selected_units[index] {
                     if let Some((visible, row_offset)) =
                         frozen_visible_rows(&plans[index], selected)
+                        && !visible.is_empty()
                     {
-                        if !visible.is_empty() {
-                            frozen_overlay = Some(HistoryPhysicalOverlay {
-                                row: rendered_row
-                                    .saturating_add(row_offset)
-                                    .min(usize::from(u16::MAX))
-                                    as u16,
-                                rows: visible,
-                            });
-                        }
+                        frozen_overlay = Some(HistoryPhysicalOverlay {
+                            row: rendered_row
+                                .saturating_add(row_offset)
+                                .min(usize::from(u16::MAX)) as u16,
+                            rows: visible,
+                        });
                     }
                     children.push(unit_view(&plans[index], units[index], selected, overlay));
                     rendered_row = rendered_row.saturating_add(selected.height);

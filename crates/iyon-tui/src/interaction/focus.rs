@@ -108,14 +108,13 @@ impl FocusState {
             return;
         }
 
-        if next_parent == previous_parent {
-            if self
+        if next_parent == previous_parent
+            && self
                 .modal_restore
                 .last()
                 .is_some_and(|(target, _)| *target == next_parent)
-            {
-                return;
-            }
+        {
+            return;
         }
 
         if let Some(index) = self

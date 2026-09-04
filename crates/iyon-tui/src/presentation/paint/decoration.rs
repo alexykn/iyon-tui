@@ -49,26 +49,26 @@ pub(crate) fn paint_border(
         set_cell(surface, 0, 0, glyphs.top_left.clone(), style);
     }
 
-    if edges.top {
-        if let Some(label) = &border.top_label {
-            let mut text = TextView::plain(label.clone());
-            text.wrap = WrapMode::NoWrap;
-            let painted = ViewCompiler::with_resolver(theme).paint_text(
-                &text,
-                surface.width(),
-                WidthRule::Fill,
-                style,
-                context,
-            );
-            for x in 0..surface.width() {
-                let label_cell = painted.get(x, 0);
-                if !label_cell.painted {
-                    continue;
-                }
-                let mut cell = label_cell.clone();
-                cell.style.background = surface.get(x, 0).style.background;
-                *surface.get_mut(x, 0) = cell;
+    if edges.top
+        && let Some(label) = &border.top_label
+    {
+        let mut text = TextView::plain(label.clone());
+        text.wrap = WrapMode::NoWrap;
+        let painted = ViewCompiler::with_resolver(theme).paint_text(
+            &text,
+            surface.width(),
+            WidthRule::Fill,
+            style,
+            context,
+        );
+        for x in 0..surface.width() {
+            let label_cell = painted.get(x, 0);
+            if !label_cell.painted {
+                continue;
             }
+            let mut cell = label_cell.clone();
+            cell.style.background = surface.get(x, 0).style.background;
+            *surface.get_mut(x, 0) = cell;
         }
     }
     if edges.top && edges.right {

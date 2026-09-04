@@ -369,10 +369,10 @@ where
         if let Some(id) = previous {
             self.scene_host.invalidate_component(id);
         }
-        if next != previous {
-            if let Some(id) = next {
-                self.scene_host.invalidate_component(id);
-            }
+        if next != previous
+            && let Some(id) = next
+        {
+            self.scene_host.invalidate_component(id);
         }
     }
 

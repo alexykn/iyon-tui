@@ -75,10 +75,11 @@ pub(crate) fn route_key_local(
         }
     }
 
-    if key.key() == super::Key::Tab && key.modifiers() == super::Modifiers::NONE {
-        if focus.focus_next(graph, capabilities, registry) {
-            return InteractionResult::Consumed;
-        }
+    if key.key() == super::Key::Tab
+        && key.modifiers() == super::Modifiers::NONE
+        && focus.focus_next(graph, capabilities, registry)
+    {
+        return InteractionResult::Consumed;
     }
 
     InteractionResult::Ignored

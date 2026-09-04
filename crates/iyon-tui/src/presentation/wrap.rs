@@ -347,12 +347,11 @@ fn wrap_line_word_then_grapheme<'a>(
 
     let mut can_break_after = vec![false; line.len()];
     for (byte_offset, opportunity) in linebreaks(&full_text) {
-        if opportunity == BreakOpportunity::Allowed || opportunity == BreakOpportunity::Mandatory {
-            if let Ok(idx) = grapheme_byte_ends.binary_search(&byte_offset) {
-                if idx < line.len() {
-                    can_break_after[idx] = true;
-                }
-            }
+        if (opportunity == BreakOpportunity::Allowed || opportunity == BreakOpportunity::Mandatory)
+            && let Ok(idx) = grapheme_byte_ends.binary_search(&byte_offset)
+            && idx < line.len()
+        {
+            can_break_after[idx] = true;
         }
     }
 

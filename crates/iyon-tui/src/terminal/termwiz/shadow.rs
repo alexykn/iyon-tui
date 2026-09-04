@@ -542,13 +542,13 @@ fn capture_line(row: &ShadowRow) -> CapturedLine {
             .map(grapheme_cell_width)
             .unwrap_or(1)
             .max(1);
-        if let Some(last) = spans.last_mut() {
-            if last.attrs == cell.attrs {
-                last.text.push_str(&text);
-                last.width += width;
-                x += width;
-                continue;
-            }
+        if let Some(last) = spans.last_mut()
+            && last.attrs == cell.attrs
+        {
+            last.text.push_str(&text);
+            last.width += width;
+            x += width;
+            continue;
         }
         spans.push(CapturedSpan {
             text,

@@ -250,14 +250,12 @@ impl HostViewSlot {
         let Some(raw_id) = self.component_id() else {
             return;
         };
-        if let Ok(guard) = self.host.lock() {
-            if let Some(weak) = guard.as_ref() {
-                if let Some(inner) = weak.upgrade() {
-                    if let Ok(mut inner) = inner.lock() {
-                        inner.running.host_retire_component(raw_id);
-                    }
-                }
-            }
+        if let Ok(guard) = self.host.lock()
+            && let Some(weak) = guard.as_ref()
+            && let Some(inner) = weak.upgrade()
+            && let Ok(mut inner) = inner.lock()
+        {
+            inner.running.host_retire_component(raw_id);
         }
     }
 
@@ -392,10 +390,10 @@ impl HostViewSlot {
         }
         state.last_tick = Some(now);
         state.frame_index = (state.frame_index + 1) % state.frames.len();
-        if state.frame_index == 0 {
-            if let Some(frames) = state.pending_frames.take() {
-                state.frames = frames;
-            }
+        if state.frame_index == 0
+            && let Some(frames) = state.pending_frames.take()
+        {
+            state.frames = frames;
         }
         state.view = state.frames[state.frame_index].clone();
         state.revision = state.revision.saturating_add(1);
@@ -481,14 +479,12 @@ impl HostScrollPane {
         let Some(raw_id) = self.component_id() else {
             return;
         };
-        if let Ok(guard) = self.host.lock() {
-            if let Some(weak) = guard.as_ref() {
-                if let Some(inner) = weak.upgrade() {
-                    if let Ok(mut inner) = inner.lock() {
-                        inner.running.host_retire_component(raw_id);
-                    }
-                }
-            }
+        if let Ok(guard) = self.host.lock()
+            && let Some(weak) = guard.as_ref()
+            && let Some(inner) = weak.upgrade()
+            && let Ok(mut inner) = inner.lock()
+        {
+            inner.running.host_retire_component(raw_id);
         }
     }
 
@@ -672,14 +668,12 @@ impl HostTextInput {
         let Some(raw_id) = self.component_id() else {
             return;
         };
-        if let Ok(guard) = self.host.lock() {
-            if let Some(weak) = guard.as_ref() {
-                if let Some(inner) = weak.upgrade() {
-                    if let Ok(mut inner) = inner.lock() {
-                        inner.running.host_retire_component(raw_id);
-                    }
-                }
-            }
+        if let Ok(guard) = self.host.lock()
+            && let Some(weak) = guard.as_ref()
+            && let Some(inner) = weak.upgrade()
+            && let Ok(mut inner) = inner.lock()
+        {
+            inner.running.host_retire_component(raw_id);
         }
     }
 
@@ -2087,15 +2081,15 @@ impl HostInner {
             self.ensure_pending()?;
         }
 
-        if self.presentation.is_some() && !self.frame_pending {
-            if let Some(outcome) = self.poll_presentation()? {
-                if outcome.committed || outcome.waiting_for_presentation {
-                    return Ok(outcome);
-                }
-                // The bootstrap frame completed. Continue below so a desired
-                // epoch accepted before that receipt is prepared now.
-            }
+        if self.presentation.is_some()
+            && !self.frame_pending
+            && let Some(outcome) = self.poll_presentation()?
+            && (outcome.committed || outcome.waiting_for_presentation)
+        {
+            return Ok(outcome);
         }
+        // The bootstrap frame completed. Continue below so a desired
+        // epoch accepted before that receipt is prepared now.
 
         if status.dirty {
             return self.render();

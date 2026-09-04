@@ -470,16 +470,15 @@ impl TuiEnvironment {
             match result {
                 Ok((outcome, pending_epoch, committed_epoch)) => {
                     report.waiting_for_presentation |= outcome.waiting_for_presentation;
-                    if outcome.committed {
-                        if let (Some(committed_epoch), Some(visible_structural_revision)) =
+                    if outcome.committed
+                        && let (Some(committed_epoch), Some(visible_structural_revision)) =
                             (outcome.committed_epoch, outcome.visible_structural_revision)
-                        {
-                            report.commits.push(HostCommit {
-                                host_id,
-                                committed_epoch,
-                                visible_structural_revision,
-                            });
-                        }
+                    {
+                        report.commits.push(HostCommit {
+                            host_id,
+                            committed_epoch,
+                            visible_structural_revision,
+                        });
                     }
                     // Keep the host lock held through the environment queue
                     // update. A concurrent producer must not advance the host

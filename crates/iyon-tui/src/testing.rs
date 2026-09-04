@@ -179,6 +179,7 @@ pub struct PaintedFlags {
 ///
 /// Unlike `str::find`, this is a terminal column, not a UTF-8 byte offset.
 #[doc(hidden)]
+#[must_use]
 pub fn cell_x_of_text(view: &View, width: u16, needle: &str) -> usize {
     cell_x_of_text_matching(view, width, needle, |_| true)
 }
@@ -213,6 +214,7 @@ pub fn cell_x_of_text_matching(
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn style_at_text(view: &View, width: u16, theme: &Theme, needle: &str) -> PaintedFlags {
     let block = crate::presentation::layout::compile_view_with_theme(view, width, theme);
     for row in &block.rows {

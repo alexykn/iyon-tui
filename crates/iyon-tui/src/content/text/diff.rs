@@ -28,6 +28,7 @@ pub type DiffProjectionError = TextProjectionError;
 pub struct DiffProjector;
 
 impl DiffProjector {
+    #[must_use]
     pub const fn new() -> Self {
         Self
     }

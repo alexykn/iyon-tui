@@ -12,12 +12,15 @@ impl RawText {
     pub fn new(text: impl Into<Arc<str>>) -> Self {
         Self(text.into())
     }
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.0
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -62,6 +65,7 @@ impl TextContent {
     pub fn raw(text: impl Into<Arc<str>>) -> Self {
         Self::Raw(RawText::new(text))
     }
+    #[must_use]
     pub fn block(block: Block) -> Self {
         Self::Block(block)
     }

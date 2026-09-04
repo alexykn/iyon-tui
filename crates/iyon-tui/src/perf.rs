@@ -148,6 +148,7 @@ impl Default for PerfSnapshot {
 
 impl PerfSnapshot {
     /// Returns one counter value by its stable machine-readable identity.
+    #[must_use]
     pub fn value(self, counter: Counter) -> u64 {
         self.values[counter.index()]
     }

@@ -20,6 +20,7 @@ pub struct Output<T: 'static> {
 }
 
 impl<T: 'static> Output<T> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             id: OutputId::allocate(),

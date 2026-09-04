@@ -133,6 +133,7 @@ impl<'a, Action> AppCx<'a, Action> {
 
     /// Returns the persistent root History, when this App was configured with
     /// one.
+    #[must_use]
     pub fn history(&self) -> Option<&History> {
         self.scene.history()
     }
@@ -143,6 +144,7 @@ impl<'a, Action> AppCx<'a, Action> {
     }
 
     /// Returns the active application theme.
+    #[must_use]
     pub fn theme(&self) -> &Theme {
         self.theme
     }
@@ -153,11 +155,13 @@ impl<'a, Action> AppCx<'a, Action> {
     }
 
     /// Returns the driver's logical time for deterministic application policy.
+    #[must_use]
     pub fn now(&self) -> Instant {
         self.now
     }
 
     /// Returns an Action-only handle targeting this application's ingress.
+    #[must_use]
     pub fn handle(&self) -> AppHandle<Action> {
         self.handle.clone()
     }

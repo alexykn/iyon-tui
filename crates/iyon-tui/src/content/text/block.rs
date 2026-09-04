@@ -21,6 +21,7 @@ impl HeadingLevel {
             .ok_or(TextIrError::InvalidHeadingLevel)
     }
 
+    #[must_use]
     pub fn get(self) -> u8 {
         self.0
     }
@@ -84,16 +85,20 @@ impl List {
             items: items.into_iter().collect(),
         }
     }
+    #[must_use]
     pub fn marker(&self) -> ListMarker {
         self.marker
     }
+    #[must_use]
     pub fn tight(&self) -> bool {
         self.tight
     }
+    #[must_use]
     pub fn items(&self) -> &[ListItem] {
         &self.items
     }
 
+    #[must_use]
     pub fn with_tight(mut self, tight: bool) -> Self {
         self.tight = tight;
         self
@@ -150,19 +155,24 @@ impl ListItem {
             blocks: blocks.into_iter().collect(),
         }
     }
+    #[must_use]
     pub fn annotations(&self) -> &Annotations {
         &self.annotations
     }
+    #[must_use]
     pub fn checked(&self) -> Option<bool> {
         self.checked
     }
+    #[must_use]
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
+    #[must_use]
     pub fn with_annotations(mut self, annotations: Annotations) -> Self {
         self.annotations = annotations;
         self
     }
+    #[must_use]
     pub fn with_checked(mut self, checked: Option<bool>) -> Self {
         self.checked = checked;
         self
@@ -265,15 +275,19 @@ impl Table {
         self.compute_cell_columns()
             .expect("Table instances are validated at construction")
     }
+    #[must_use]
     pub fn caption(&self) -> Option<&[Block]> {
         self.caption.as_deref()
     }
+    #[must_use]
     pub fn columns(&self) -> &[TableColumn] {
         &self.columns
     }
+    #[must_use]
     pub fn header_rows(&self) -> usize {
         self.header_rows
     }
+    #[must_use]
     pub fn rows(&self) -> &[TableRow] {
         &self.rows
     }
@@ -284,21 +298,26 @@ pub struct TableColumn {
     alignment: Alignment,
 }
 impl TableColumn {
+    #[must_use]
     pub const fn start() -> Self {
         Self::new(Alignment::Start)
     }
 
+    #[must_use]
     pub const fn center() -> Self {
         Self::new(Alignment::Center)
     }
 
+    #[must_use]
     pub const fn end() -> Self {
         Self::new(Alignment::End)
     }
 
+    #[must_use]
     pub const fn new(alignment: Alignment) -> Self {
         Self { alignment }
     }
+    #[must_use]
     pub fn alignment(&self) -> Alignment {
         self.alignment
     }
@@ -316,12 +335,15 @@ impl TableRow {
             cells: cells.into_iter().collect(),
         }
     }
+    #[must_use]
     pub fn annotations(&self) -> &Annotations {
         &self.annotations
     }
+    #[must_use]
     pub fn cells(&self) -> &[TableCell] {
         &self.cells
     }
+    #[must_use]
     pub fn with_annotations(mut self, annotations: Annotations) -> Self {
         self.annotations = annotations;
         self
@@ -358,21 +380,27 @@ impl TableCell {
     pub fn plain(blocks: impl IntoIterator<Item = Block>) -> Self {
         Self::new(blocks, None, NonZeroU16::MIN, NonZeroU16::MIN)
     }
+    #[must_use]
     pub fn annotations(&self) -> &Annotations {
         &self.annotations
     }
+    #[must_use]
     pub fn alignment(&self) -> Option<Alignment> {
         self.alignment
     }
+    #[must_use]
     pub fn row_span(&self) -> NonZeroU16 {
         self.row_span
     }
+    #[must_use]
     pub fn col_span(&self) -> NonZeroU16 {
         self.col_span
     }
+    #[must_use]
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
+    #[must_use]
     pub fn with_annotations(mut self, annotations: Annotations) -> Self {
         self.annotations = annotations;
         self
@@ -422,12 +450,15 @@ impl CodeBlock {
             body: body.into(),
         }
     }
+    #[must_use]
     pub fn language(&self) -> Option<&LanguageId> {
         self.language.as_ref()
     }
+    #[must_use]
     pub fn info(&self) -> Option<&str> {
         self.info.as_deref()
     }
+    #[must_use]
     pub fn body(&self) -> &LiteralText {
         &self.body
     }
@@ -449,6 +480,7 @@ impl fmt::Debug for Block {
 }
 
 impl Block {
+    #[must_use]
     pub fn new(kind: BlockKind) -> Self {
         Self(Arc::new(BlockData {
             kind,
@@ -469,18 +501,23 @@ impl Block {
             blocks: blocks.into_iter().collect(),
         })
     }
+    #[must_use]
     pub fn list(list: List) -> Self {
         Self::new(BlockKind::List(list))
     }
+    #[must_use]
     pub fn code(code: CodeBlock) -> Self {
         Self::new(BlockKind::CodeBlock(code))
     }
+    #[must_use]
     pub fn table(table: Table) -> Self {
         Self::new(BlockKind::Table(table))
     }
+    #[must_use]
     pub fn thematic_break() -> Self {
         Self::new(BlockKind::ThematicBreak)
     }
+    #[must_use]
     pub fn raw(format: FormatId, body: LiteralText) -> Self {
         Self::new(BlockKind::RawBlock { format, body })
     }
@@ -489,39 +526,47 @@ impl Block {
             blocks: blocks.into_iter().collect(),
         })
     }
+    #[must_use]
     pub fn kind(&self) -> &BlockKind {
         &self.0.kind
     }
+    #[must_use]
     pub fn annotations(&self) -> &Annotations {
         &self.0.annotations
     }
+    #[must_use]
     pub fn with_annotations(&self, annotations: Annotations) -> Self {
         Self(Arc::new(BlockData {
             kind: self.0.kind.clone(),
             annotations,
         }))
     }
+    #[must_use]
     pub fn map_annotations(&self, map: impl FnOnce(Annotations) -> Annotations) -> Self {
         self.with_annotations(map(self.annotations().clone()))
     }
+    #[must_use]
     pub fn as_code_block(&self) -> Option<&CodeBlock> {
         match &self.0.kind {
             BlockKind::CodeBlock(code) => Some(code),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_list(&self) -> Option<&List> {
         match &self.0.kind {
             BlockKind::List(list) => Some(list),
             _ => None,
         }
     }
+    #[must_use]
     pub fn as_container(&self) -> Option<&[Block]> {
         match &self.0.kind {
             BlockKind::Container { blocks } => Some(blocks),
             _ => None,
         }
     }
+    #[must_use]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }

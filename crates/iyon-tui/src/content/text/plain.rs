@@ -11,6 +11,7 @@ use crate::stream::{StreamOffset, StreamRange};
 pub struct PlainTextProjector;
 
 impl PlainTextProjector {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

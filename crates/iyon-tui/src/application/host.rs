@@ -205,6 +205,7 @@ struct ViewSlotState {
 }
 
 impl HostViewSlot {
+    #[must_use]
     pub fn new(view: View) -> Self {
         Self {
             state: Arc::new(Mutex::new(ViewSlotState {
@@ -237,6 +238,7 @@ impl HostViewSlot {
         self.invalidate_host()
     }
 
+    #[must_use]
     pub fn component_id(&self) -> Option<u64> {
         self.component_id.lock().ok().and_then(|id| *id)
     }
@@ -259,6 +261,7 @@ impl HostViewSlot {
         }
     }
 
+    #[must_use]
     pub fn revision(&self) -> u64 {
         self.state.lock().map_or(0, |state| state.revision)
     }
@@ -446,6 +449,7 @@ impl HostViewSlot {
 }
 
 impl HostScrollPane {
+    #[must_use]
     pub fn new(content: View) -> Self {
         Self {
             state: Arc::new(Mutex::new(ScrollPane::new(content))),
@@ -470,6 +474,7 @@ impl HostScrollPane {
         self.invalidate_host()
     }
 
+    #[must_use]
     pub fn component_id(&self) -> Option<u64> {
         self.component_id.lock().ok().and_then(|id| *id)
     }
@@ -608,6 +613,7 @@ impl MountedViewSlot {
 }
 
 impl HostTextInput {
+    #[must_use]
     pub fn new(multiline: bool) -> Self {
         Self {
             state: Arc::new(Mutex::new(TextInput::new().multiline(multiline))),
@@ -656,6 +662,7 @@ impl HostTextInput {
         Ok(self.lock()?.view())
     }
 
+    #[must_use]
     pub fn component_id(&self) -> Option<u64> {
         self.component_id.lock().ok().and_then(|id| *id)
     }
@@ -1019,6 +1026,7 @@ impl TuiHost {
         Ok(Self { inner })
     }
 
+    #[must_use]
     pub fn history(&self) -> HostHistory {
         HostHistory {
             host: Arc::clone(&self.inner),
@@ -1213,6 +1221,7 @@ impl TuiHost {
         result
     }
 
+    #[must_use]
     pub fn next_wake_ms(&self) -> u64 {
         let Ok(inner) = self.lock() else {
             return 80;
@@ -1381,6 +1390,7 @@ impl TuiHost {
         inner.advance_and_render()
     }
 
+    #[must_use]
     pub fn next_output(&self) -> Option<RoutedOutput> {
         self.lock_mut().ok()?.running.state.outputs.pop_front()
     }
@@ -1403,6 +1413,7 @@ impl TuiHost {
         })
     }
 
+    #[must_use]
     pub fn cell_x_of_text(&self, row: u16, needle: &str) -> Option<u16> {
         let inner = self.lock().ok()?;
         if row >= inner.frame.surface.height() {
@@ -1433,6 +1444,7 @@ impl TuiHost {
         None
     }
 
+    #[must_use]
     pub fn exited(&self) -> bool {
         self.lock()
             .map_or(true, |inner| inner.closed || inner.running.host_exited())
@@ -1505,12 +1517,14 @@ impl TuiHost {
         }
     }
 
+    #[must_use]
     pub fn screen_rows(&self) -> Vec<String> {
         self.lock()
             .map(|inner| inner.frame.screen_lines())
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn native_history_rows(&self) -> Vec<String> {
         self.lock()
             .ok()
@@ -1582,6 +1596,7 @@ impl TuiHost {
             .map(|mut inner| inner.fail_next_frame = Some(diagnostic.into()))
     }
 
+    #[must_use]
     pub fn is_headless(&self) -> bool {
         self.lock().map_or(true, |inner| inner.headless)
     }

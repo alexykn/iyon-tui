@@ -55,6 +55,7 @@ impl std::fmt::Display for SmoothConfigError {
 impl std::error::Error for SmoothConfigError {}
 
 impl SmoothConfig {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             tick_interval: DEFAULT_TICK_INTERVAL,
@@ -80,15 +81,19 @@ impl SmoothConfig {
         Ok(config)
     }
 
+    #[must_use]
     pub fn tick_interval(self) -> Duration {
         self.tick_interval
     }
+    #[must_use]
     pub fn spring(self) -> f32 {
         self.spring
     }
+    #[must_use]
     pub fn min_units_per_second(self) -> f32 {
         self.min_units_per_second
     }
+    #[must_use]
     pub fn max_units_per_second(self) -> f32 {
         self.max_units_per_second
     }
@@ -179,6 +184,7 @@ impl Default for Smooth {
 }
 
 impl Smooth {
+    #[must_use]
     pub fn new(config: SmoothConfig) -> Self {
         Self {
             config,
@@ -197,14 +203,17 @@ impl Smooth {
         }
     }
 
+    #[must_use]
     pub fn config(&self) -> SmoothConfig {
         self.config
     }
 
+    #[must_use]
     pub fn next_wakeup(&self) -> Option<Instant> {
         self.next_wakeup
     }
 
+    #[must_use]
     pub fn published_through(&self) -> StreamOffset {
         self.published_end
     }

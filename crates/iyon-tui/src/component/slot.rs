@@ -7,6 +7,7 @@ use crate::presentation::{StyleFacts, StyleStates};
 
 impl View {
     /// Creates a live semantic mount for a retained component.
+    #[must_use]
     pub fn component<C>(handle: ComponentHandle<C>) -> Self {
         Self::from_node(ViewNodeParts {
             width: WidthRule::Fit,
@@ -19,6 +20,7 @@ impl View {
     }
 
     /// Creates a live component slot from a native host component identity.
+    #[must_use]
     pub fn native_component(raw_id: u64) -> Self {
         assert!(raw_id != 0, "native component identity must be non-zero");
         Self::from_node(ViewNodeParts {

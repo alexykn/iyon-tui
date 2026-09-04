@@ -98,6 +98,7 @@ impl TextRun {
         }
     }
 
+    #[must_use]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.text, &other.text)
             && self.provenance == other.provenance
@@ -105,14 +106,17 @@ impl TextRun {
             && self.style == other.style
     }
 
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    #[must_use]
     pub fn provenance(&self) -> &TextProvenance {
         &self.provenance
     }
 
+    #[must_use]
     pub fn annotations(&self) -> &super::Annotations {
         &self.annotations
     }
@@ -126,6 +130,7 @@ impl TextRun {
         self
     }
 
+    #[must_use]
     pub fn map_annotations(
         self,
         map: impl FnOnce(super::Annotations) -> super::Annotations,
@@ -134,6 +139,7 @@ impl TextRun {
         self.with_annotations(annotations)
     }
 
+    #[must_use]
     pub fn with_annotations(mut self, annotations: super::Annotations) -> Self {
         self.annotations = annotations;
         self
@@ -199,10 +205,12 @@ impl LiteralText {
         Ok(Self::new([TextRun::exact(text, range)?]))
     }
 
+    #[must_use]
     pub fn runs(&self) -> &[TextRun] {
         &self.runs
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty() || self.runs.iter().all(|run| run.text().is_empty())
     }

@@ -20,6 +20,7 @@ impl FormatId {
         Ok(Self(value))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -36,6 +37,7 @@ impl LanguageId {
         Ok(Self(value))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -56,9 +58,11 @@ impl LinkTarget {
         }
     }
 
+    #[must_use]
     pub fn destination(&self) -> &str {
         &self.destination
     }
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
@@ -99,9 +103,11 @@ impl MarkSet {
         Ok(Self(marks.into()))
     }
 
+    #[must_use]
     pub fn empty() -> Self {
         Self::default()
     }
+    #[must_use]
     pub fn marks(&self) -> &[Mark] {
         &self.0
     }
@@ -112,6 +118,7 @@ impl MarkSet {
         Self::new(marks)
     }
 
+    #[must_use]
     pub fn contains(&self, mark: &Mark) -> bool {
         self.0.binary_search(mark).is_ok()
     }
@@ -160,18 +167,22 @@ impl InlineContent {
         }
     }
 
+    #[must_use]
     pub fn empty() -> Self {
         Self::default()
     }
+    #[must_use]
     pub fn items(&self) -> &[Inline] {
         &self.items
     }
     pub fn iter(&self) -> impl Iterator<Item = &Inline> {
         self.items.iter()
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
+    #[must_use]
     pub fn len(&self) -> usize {
         self.items.len()
     }
@@ -184,16 +195,19 @@ impl InlineContent {
             .map(Self::new)
     }
 
+    #[must_use]
     pub fn strong(&self) -> Self {
         self.with_mark(Mark::Strong)
             .expect("Strong is a valid mark")
     }
 
+    #[must_use]
     pub fn emphasis(&self) -> Self {
         self.with_mark(Mark::Emphasis)
             .expect("Emphasis is a valid mark")
     }
 
+    #[must_use]
     pub fn code(&self) -> Self {
         self.with_mark(Mark::Code).expect("Code is a valid mark")
     }
@@ -221,6 +235,7 @@ struct InlineData {
 }
 
 impl Inline {
+    #[must_use]
     pub fn new(kind: InlineKind) -> Self {
         Self(Arc::new(InlineData {
             kind,
@@ -232,26 +247,33 @@ impl Inline {
     pub fn text(run: impl Into<TextRun>) -> Self {
         Self::new(InlineKind::Text(run.into()))
     }
+    #[must_use]
     pub fn break_(kind: BreakKind) -> Self {
         Self::new(InlineKind::Break(kind))
     }
+    #[must_use]
     pub fn image(image: Image) -> Self {
         Self::new(InlineKind::Image(image))
     }
+    #[must_use]
     pub fn raw(format: FormatId, body: LiteralText) -> Self {
         Self::new(InlineKind::RawInline { format, body })
     }
 
+    #[must_use]
     pub fn kind(&self) -> &InlineKind {
         &self.0.kind
     }
+    #[must_use]
     pub fn marks(&self) -> &MarkSet {
         &self.0.marks
     }
+    #[must_use]
     pub fn annotations(&self) -> &Annotations {
         &self.0.annotations
     }
 
+    #[must_use]
     pub fn as_text(&self) -> Option<&TextRun> {
         match &self.0.kind {
             InlineKind::Text(text) => Some(text),
@@ -263,26 +285,31 @@ impl Inline {
         Ok(self.with_marks(self.marks().with_mark(mark)?))
     }
 
+    #[must_use]
     pub fn strong(&self) -> Self {
         self.with_mark(Mark::Strong)
             .expect("Strong is a valid mark")
     }
 
+    #[must_use]
     pub fn emphasis(&self) -> Self {
         self.with_mark(Mark::Emphasis)
             .expect("Emphasis is a valid mark")
     }
 
+    #[must_use]
     pub fn strikethrough(&self) -> Self {
         self.with_mark(Mark::Strikethrough)
             .expect("Strikethrough is a valid mark")
     }
 
+    #[must_use]
     pub fn underline(&self) -> Self {
         self.with_mark(Mark::Underline)
             .expect("Underline is a valid mark")
     }
 
+    #[must_use]
     pub fn code(&self) -> Self {
         self.with_mark(Mark::Code).expect("Code is a valid mark")
     }
@@ -291,6 +318,7 @@ impl Inline {
         self.with_mark(Mark::Link(target))
     }
 
+    #[must_use]
     pub fn with_marks(&self, marks: MarkSet) -> Self {
         Self(Arc::new(InlineData {
             kind: self.0.kind.clone(),
@@ -299,6 +327,7 @@ impl Inline {
         }))
     }
 
+    #[must_use]
     pub fn with_annotations(&self, annotations: Annotations) -> Self {
         Self(Arc::new(InlineData {
             kind: self.0.kind.clone(),
@@ -306,9 +335,11 @@ impl Inline {
             annotations,
         }))
     }
+    #[must_use]
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
+    #[must_use]
     pub fn map_annotations(&self, map: impl FnOnce(Annotations) -> Annotations) -> Self {
         self.with_annotations(map(self.annotations().clone()))
     }
@@ -343,12 +374,15 @@ impl Image {
         }
     }
 
+    #[must_use]
     pub fn destination(&self) -> &str {
         &self.destination
     }
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
+    #[must_use]
     pub fn alt(&self) -> &InlineContent {
         &self.alt
     }

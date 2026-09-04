@@ -778,6 +778,7 @@ impl View {
 
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
+    #[must_use]
     pub fn native_state_attachment_id(&self) -> Option<u64> {
         self.state_attachment_id()
     }
@@ -822,6 +823,7 @@ impl View {
     /// their concrete component View owns presentation state instead.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
+    #[must_use]
     pub fn native_state_capable(&self) -> bool {
         crate::retained_state::presentation_state_capable(self.kind())
     }
@@ -1199,6 +1201,7 @@ impl View {
     }
 
     #[cfg(feature = "native-host")]
+    #[must_use]
     pub fn downgrade(&self) -> WeakView {
         WeakView {
             inner: Arc::downgrade(&self.inner),
@@ -1222,6 +1225,7 @@ pub struct RetainedPathStep {
 #[cfg(feature = "native-host")]
 #[doc(hidden)]
 impl RetainedPathStep {
+    #[must_use]
     pub const fn new(kind: u32, expected_view_kind: u32, selector: u32) -> Self {
         Self {
             kind,
@@ -1771,6 +1775,7 @@ pub struct WeakView {
 
 #[cfg(feature = "native-host")]
 impl WeakView {
+    #[must_use]
     pub fn upgrade(&self) -> Option<View> {
         self.inner.upgrade().map(|inner| View { inner })
     }

@@ -84,10 +84,12 @@ impl Modifiers {
     pub const HYPER: Self = Self { bits: 1 << 4 };
     pub const META: Self = Self { bits: 1 << 5 };
 
+    #[must_use]
     pub const fn contains(self, modifiers: Self) -> bool {
         self.bits & modifiers.bits == modifiers.bits
     }
 
+    #[must_use]
     pub const fn union(self, modifiers: Self) -> Self {
         Self {
             bits: self.bits | modifiers.bits,
@@ -117,6 +119,7 @@ pub struct KeyStroke {
 }
 
 impl KeyStroke {
+    #[must_use]
     pub const fn new(key: Key) -> Self {
         Self {
             key,
@@ -124,14 +127,17 @@ impl KeyStroke {
         }
     }
 
+    #[must_use]
     pub const fn with_modifiers(key: Key, modifiers: Modifiers) -> Self {
         Self { key, modifiers }
     }
 
+    #[must_use]
     pub const fn key(self) -> Key {
         self.key
     }
 
+    #[must_use]
     pub const fn modifiers(self) -> Modifiers {
         self.modifiers
     }

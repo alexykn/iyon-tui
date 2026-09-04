@@ -7,14 +7,17 @@ pub struct DiffLineOffset(u64);
 impl DiffLineOffset {
     pub const ZERO: Self = Self(0);
 
+    #[must_use]
     pub const fn new(offset: u64) -> Self {
         Self(offset)
     }
 
+    #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
     }
 
+    #[must_use]
     pub const fn checked_add(self, rhs: u64) -> Option<Self> {
         match self.0.checked_add(rhs) {
             Some(value) => Some(Self(value)),
@@ -22,6 +25,7 @@ impl DiffLineOffset {
         }
     }
 
+    #[must_use]
     pub const fn saturating_add(self, rhs: u64) -> Self {
         Self(self.0.saturating_add(rhs))
     }
@@ -32,6 +36,7 @@ impl DiffLineOffset {
 pub struct DiffLineNumber(NonZeroU64);
 
 impl DiffLineNumber {
+    #[must_use]
     pub const fn new(line: u64) -> Option<Self> {
         match NonZeroU64::new(line) {
             Some(line) => Some(Self(line)),
@@ -39,6 +44,7 @@ impl DiffLineNumber {
         }
     }
 
+    #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0.get()
     }
@@ -60,18 +66,22 @@ impl DiffRange {
         Ok(Self { start, line_count })
     }
 
+    #[must_use]
     pub const fn start(&self) -> DiffLineOffset {
         self.start
     }
 
+    #[must_use]
     pub const fn line_count(&self) -> u64 {
         self.line_count
     }
 
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.line_count == 0
     }
 
+    #[must_use]
     pub fn end(&self) -> DiffLineOffset {
         self.start
             .checked_add(self.line_count)
@@ -150,6 +160,7 @@ impl DiffLine {
         }
     }
 
+    #[must_use]
     pub const fn kind(&self) -> DiffLineKind {
         match &self.coordinates {
             DiffLineCoordinates::Context { .. } => DiffLineKind::Context,
@@ -158,10 +169,12 @@ impl DiffLine {
         }
     }
 
+    #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    #[must_use]
     pub const fn old_line(&self) -> Option<DiffLineNumber> {
         match &self.coordinates {
             DiffLineCoordinates::Context { old, .. } | DiffLineCoordinates::Deletion { old } => {
@@ -171,6 +184,7 @@ impl DiffLine {
         }
     }
 
+    #[must_use]
     pub const fn new_line(&self) -> Option<DiffLineNumber> {
         match &self.coordinates {
             DiffLineCoordinates::Context { new, .. } | DiffLineCoordinates::Addition { new } => {
@@ -180,10 +194,12 @@ impl DiffLine {
         }
     }
 
+    #[must_use]
     pub const fn termination(&self) -> DiffLineTermination {
         self.termination
     }
 
+    #[must_use]
     pub fn with_termination(mut self, termination: DiffLineTermination) -> Self {
         self.termination = termination;
         self
@@ -282,14 +298,17 @@ impl DiffHunk {
         Ok(hunk)
     }
 
+    #[must_use]
     pub const fn old_range(&self) -> DiffRange {
         self.old
     }
 
+    #[must_use]
     pub const fn new_range(&self) -> DiffRange {
         self.new_range
     }
 
+    #[must_use]
     pub fn lines(&self) -> &[DiffLine] {
         &self.lines
     }

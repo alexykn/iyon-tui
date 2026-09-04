@@ -110,10 +110,12 @@ pub struct HostContentSourceSnapshot {
 }
 
 impl HostContentSourceSnapshot {
+    #[must_use]
     pub fn text(&self) -> String {
         self.storage.text()
     }
 
+    #[must_use]
     pub fn annotations(&self) -> Vec<ContentAnnotationSnapshot> {
         self.storage
             .annotations
@@ -130,14 +132,17 @@ impl HostContentSourceSnapshot {
             .collect()
     }
 
+    #[must_use]
     pub fn retained_bytes(&self) -> u64 {
         self.source_end.saturating_sub(self.source_base)
     }
 
+    #[must_use]
     pub fn retained_lines(&self) -> u64 {
         self.storage.line_starts.len() as u64
     }
 
+    #[must_use]
     pub fn chunk_count(&self) -> usize {
         self.storage.chunks.len()
     }
@@ -1113,6 +1118,7 @@ pub struct HostContentFunnel {
 }
 
 impl HostContentFunnel {
+    #[must_use]
     pub const fn plain(wrap: TextWrapMode) -> Self {
         Self {
             family: ContentFamily::Text,
@@ -1123,6 +1129,7 @@ impl HostContentFunnel {
         }
     }
 
+    #[must_use]
     pub const fn new(
         kind: TextFunnelKind,
         wrap: TextWrapMode,
@@ -1707,28 +1714,34 @@ fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<SourceSubscripti
 }
 
 impl HostContentSource {
+    #[must_use]
     pub fn id(&self) -> u64 {
         self.record.lock().map_or(0, |record| record.id)
     }
 
+    #[must_use]
     pub fn generation(&self) -> u32 {
         self.record.lock().map_or(0, |record| record.generation)
     }
 
+    #[must_use]
     pub fn environment_slot(&self) -> u32 {
         self.registry.identity.slot
     }
 
+    #[must_use]
     pub fn environment_generation(&self) -> u32 {
         self.registry.identity.generation
     }
 
+    #[must_use]
     pub fn family(&self) -> ContentFamily {
         self.record
             .lock()
             .map_or(ContentFamily::Text, |record| record.family)
     }
 
+    #[must_use]
     pub fn kind(&self) -> TextSourceKind {
         self.record
             .lock()
@@ -2043,6 +2056,7 @@ impl HostContentSource {
         Arc::ptr_eq(&self.registry.inner, &registry.inner)
     }
 
+    #[must_use]
     pub fn is_live(&self) -> bool {
         self.record
             .lock()
@@ -4173,14 +4187,17 @@ pub struct HostContentPort {
 }
 
 impl HostContentPort {
+    #[must_use]
     pub fn id(&self) -> u64 {
         self.record.lock().map_or(0, |record| record.id)
     }
 
+    #[must_use]
     pub fn generation(&self) -> u32 {
         self.record.lock().map_or(0, |record| record.generation)
     }
 
+    #[must_use]
     pub fn family(&self) -> ContentFamily {
         self.record
             .lock()
@@ -4246,14 +4263,17 @@ pub struct HostContentConnector {
 }
 
 impl HostContentConnector {
+    #[must_use]
     pub fn id(&self) -> u64 {
         self.record.lock().map_or(0, |record| record.id)
     }
 
+    #[must_use]
     pub fn generation(&self) -> u32 {
         self.record.lock().map_or(0, |record| record.generation)
     }
 
+    #[must_use]
     pub fn source_id(&self) -> u64 {
         self.record.lock().map_or(0, |record| record.source.id())
     }
@@ -4355,6 +4375,7 @@ impl HostContentConnector {
         })
     }
 
+    #[must_use]
     pub fn is_disposed(&self) -> bool {
         self.record
             .lock()

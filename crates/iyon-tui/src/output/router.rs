@@ -48,6 +48,7 @@ pub struct OutputRouter<A> {
 }
 
 impl<A> OutputRouter<A> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             routes: HashMap::new(),

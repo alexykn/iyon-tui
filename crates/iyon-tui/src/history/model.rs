@@ -59,6 +59,7 @@ impl Default for History {
 }
 
 impl History {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             units: VecDeque::new(),
@@ -302,6 +303,7 @@ impl History {
         self.bump_revision();
     }
 
+    #[must_use]
     pub fn with_layout(mut self, layout: HistoryLayout) -> Self {
         self.set_layout(layout);
         self

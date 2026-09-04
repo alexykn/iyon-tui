@@ -32,18 +32,22 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_policy(policy: TextRenderPolicy) -> Self {
         Self { policy }
     }
 
+    #[must_use]
     pub fn policy(&self) -> &TextRenderPolicy {
         &self.policy
     }
 
+    #[must_use]
     pub fn render_block(&self, block: &Block) -> View {
         self.lower_block(block, &RenderContext::default())
     }

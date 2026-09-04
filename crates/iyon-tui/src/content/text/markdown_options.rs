@@ -15,6 +15,7 @@ pub struct MarkdownOptions {
 
 impl MarkdownOptions {
     /// Strict `CommonMark` parsing with all optional extensions disabled.
+    #[must_use]
     pub const fn commonmark() -> Self {
         Self {
             tables: false,
@@ -31,6 +32,7 @@ impl MarkdownOptions {
     /// tables, strikethrough, and task-list markers.
     ///
     /// `Default` remains strict `CommonMark`.
+    #[must_use]
     pub const fn gfm() -> Self {
         Self {
             tables: true,
@@ -40,16 +42,19 @@ impl MarkdownOptions {
         }
     }
 
+    #[must_use]
     pub const fn with_tables(mut self, enabled: bool) -> Self {
         self.tables = enabled;
         self
     }
 
+    #[must_use]
     pub const fn with_strikethrough(mut self, enabled: bool) -> Self {
         self.strikethrough = enabled;
         self
     }
 
+    #[must_use]
     pub const fn with_task_lists(mut self, enabled: bool) -> Self {
         self.task_lists = enabled;
         self
@@ -59,23 +64,28 @@ impl MarkdownOptions {
     ///
     /// Not GFM grammar. Used by a live streaming pipeline so a live table aligns
     /// once, after the following line proves it cannot grow more `|` rows.
+    #[must_use]
     pub const fn with_live_table_stabilization(mut self, enabled: bool) -> Self {
         self.live_table_stabilization = enabled;
         self
     }
 
+    #[must_use]
     pub const fn tables(self) -> bool {
         self.tables
     }
 
+    #[must_use]
     pub const fn strikethrough(self) -> bool {
         self.strikethrough
     }
 
+    #[must_use]
     pub const fn task_lists(self) -> bool {
         self.task_lists
     }
 
+    #[must_use]
     pub const fn live_table_stabilization(self) -> bool {
         self.live_table_stabilization
     }

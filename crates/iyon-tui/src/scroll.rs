@@ -80,6 +80,7 @@ impl ScrollPane {
         self.mode = ScrollMode::FollowEnd;
     }
 
+    #[must_use]
     pub fn is_following_end(&self) -> bool {
         matches!(self.mode, ScrollMode::FollowEnd)
     }

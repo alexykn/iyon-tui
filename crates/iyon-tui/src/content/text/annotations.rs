@@ -21,9 +21,11 @@ impl SemanticTag {
         Ok(Self { namespace, name })
     }
 
+    #[must_use]
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -48,9 +50,11 @@ impl SemanticKey {
         Ok(Self { namespace, name })
     }
 
+    #[must_use]
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -95,22 +99,27 @@ pub struct Annotations {
 }
 
 impl Annotations {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn tags(&self) -> &[SemanticTag] {
         &self.tags
     }
 
+    #[must_use]
     pub fn properties(&self) -> &[(SemanticKey, SemanticValue)] {
         &self.properties
     }
 
+    #[must_use]
     pub fn add_tag(&self, tag: SemanticTag) -> Self {
         self.clone().with_tag(tag)
     }
 
+    #[must_use]
     pub fn with_tag(mut self, tag: SemanticTag) -> Self {
         if !self.tags.iter().any(|existing| existing == &tag) {
             let mut tags = self.tags.to_vec();
@@ -121,10 +130,12 @@ impl Annotations {
         self
     }
 
+    #[must_use]
     pub fn set_property(&self, key: SemanticKey, value: impl Into<SemanticValue>) -> Self {
         self.clone().with_property(key, value)
     }
 
+    #[must_use]
     pub fn with_property(mut self, key: SemanticKey, value: impl Into<SemanticValue>) -> Self {
         let value = value.into();
         let mut properties = self.properties.to_vec();
@@ -138,10 +149,12 @@ impl Annotations {
         self
     }
 
+    #[must_use]
     pub fn contains_tag(&self, tag: &SemanticTag) -> bool {
         self.tags.binary_search(tag).is_ok()
     }
 
+    #[must_use]
     pub fn property(&self, key: &SemanticKey) -> Option<&SemanticValue> {
         self.properties
             .binary_search_by(|(existing, _)| existing.cmp(key))

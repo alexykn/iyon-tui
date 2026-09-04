@@ -104,6 +104,7 @@ pub struct TextSpan {
 }
 
 impl TextSpan {
+    #[must_use]
     pub fn text(&self) -> &str {
         self.text.as_str()
     }
@@ -118,6 +119,7 @@ impl TextSpan {
         }
     }
 
+    #[must_use]
     pub fn style(&self) -> &StyleRef {
         &self.style
     }
@@ -213,6 +215,7 @@ impl Text {
         self
     }
 
+    #[must_use]
     pub fn wrap(self, wrap: WrapMode) -> Self {
         self.map_text(|text| text.wrap = wrap)
     }
@@ -223,10 +226,12 @@ impl Text {
         })
     }
 
+    #[must_use]
     pub fn no_wrap(self) -> Self {
         self.map_text(|text| text.wrap = WrapMode::NoWrap)
     }
 
+    #[must_use]
     pub fn text_align(self, align: HorizontalAlign) -> Self {
         self.map_text(|text| text.align = align)
     }
@@ -236,6 +241,7 @@ impl Text {
         self
     }
 
+    #[must_use]
     pub fn style(self, style: impl Into<StyleRef>) -> Self {
         self.map_view(|view| view.style(style))
     }
@@ -254,6 +260,7 @@ impl Text {
     }
 
     /// Sets the current text node's padding; repeated calls replace the prior value.
+    #[must_use]
     pub fn style_state(
         mut self,
         key: impl Into<StyleStateKey>,
@@ -263,6 +270,7 @@ impl Text {
         self
     }
 
+    #[must_use]
     pub fn style_states(
         mut self,
         states: impl IntoIterator<Item = (StyleStateKey, StyleStateValue)>,
@@ -271,74 +279,91 @@ impl Text {
         self
     }
 
+    #[must_use]
     pub fn padding(self, padding: impl Into<Insets>) -> Self {
         self.map_view(|view| view.padding(padding))
     }
 
     /// Paints the text node's allocated surface, not its text-cell style.
+    #[must_use]
     pub fn background(self, color: ColorSpec) -> Self {
         self.map_view(|view| view.background(color))
     }
 
     /// Sets inherited foreground intent for this text node.
+    #[must_use]
     pub fn foreground(self, color: ColorSpec) -> Self {
         self.map_view(|view| view.foreground(color))
     }
 
     /// Replaces the text node's complete border specification.
+    #[must_use]
     pub fn border(self, border: BorderSpec) -> Self {
         self.map_view(|view| view.border(border))
     }
 
     /// Sets sparse text-attribute intent, including explicit false.
+    #[must_use]
     pub fn text_attribute(self, attribute: TextAttribute, enabled: bool) -> Self {
         self.map_view(|view| view.text_attribute(attribute, enabled))
     }
 
+    #[must_use]
     pub fn bold(self) -> Self {
         self.text_attribute(TextAttribute::Bold, true)
     }
 
+    #[must_use]
     pub fn dim(self) -> Self {
         self.text_attribute(TextAttribute::Dim, true)
     }
 
+    #[must_use]
     pub fn italic(self) -> Self {
         self.text_attribute(TextAttribute::Italic, true)
     }
 
+    #[must_use]
     pub fn underline(self) -> Self {
         self.text_attribute(TextAttribute::Underline, true)
     }
 
+    #[must_use]
     pub fn reversed(self) -> Self {
         self.text_attribute(TextAttribute::Reversed, true)
     }
 
+    #[must_use]
     pub fn strikethrough(self) -> Self {
         self.text_attribute(TextAttribute::Strikethrough, true)
     }
 
+    #[must_use]
     pub fn container(self) -> View {
         self.into_canonical_view().container()
     }
 
+    #[must_use]
     pub fn clamp_rows(self, max_rows: u16, overflow: OverflowIndicator) -> View {
         self.into_canonical_view().clamp_rows(max_rows, overflow)
     }
 
+    #[must_use]
     pub fn fit_width(self) -> Self {
         self.map_view(View::fit_width)
     }
 
+    #[must_use]
     pub fn fill_width(self) -> Self {
         self.map_view(View::fill_width)
     }
 
+    #[must_use]
     pub fn fit_height(self) -> Self {
         self.map_view(View::fit_height)
     }
 
+    #[must_use]
     pub fn fill_height(self) -> Self {
         self.map_view(View::fill_height)
     }

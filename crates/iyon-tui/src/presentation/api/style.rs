@@ -26,6 +26,7 @@ pub struct StyleSpec {
 }
 
 impl StyleSpec {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -35,6 +36,7 @@ impl StyleSpec {
     /// Unlike [`StyleSpec::new`], which leaves all attributes unspecified and
     /// therefore inheritable, `plain` explicitly disables every supported
     /// text attribute. Foreground and background remain unspecified.
+    #[must_use]
     pub fn plain() -> Self {
         Self::new()
             .attribute(TextAttribute::Bold, false)
@@ -45,40 +47,49 @@ impl StyleSpec {
             .attribute(TextAttribute::Strikethrough, false)
     }
 
+    #[must_use]
     pub fn foreground(mut self, color: ColorSpec) -> Self {
         self.foreground = Some(color);
         self
     }
 
+    #[must_use]
     pub fn background(mut self, color: ColorSpec) -> Self {
         self.background = Some(color);
         self
     }
 
+    #[must_use]
     pub fn bold(self) -> Self {
         self.attribute(TextAttribute::Bold, true)
     }
 
+    #[must_use]
     pub fn dim(self) -> Self {
         self.attribute(TextAttribute::Dim, true)
     }
 
+    #[must_use]
     pub fn italic(self) -> Self {
         self.attribute(TextAttribute::Italic, true)
     }
 
+    #[must_use]
     pub fn underline(self) -> Self {
         self.attribute(TextAttribute::Underline, true)
     }
 
+    #[must_use]
     pub fn reversed(self) -> Self {
         self.attribute(TextAttribute::Reversed, true)
     }
 
+    #[must_use]
     pub fn strikethrough(self) -> Self {
         self.attribute(TextAttribute::Strikethrough, true)
     }
 
+    #[must_use]
     pub fn attribute(mut self, attribute: TextAttribute, enabled: bool) -> Self {
         self.attributes.set(attribute, enabled);
         self
@@ -96,11 +107,13 @@ impl StyleSpec {
         self.attributes.set(attribute, enabled);
     }
 
+    #[must_use]
     pub fn with_attributes(mut self, attributes: TextAttributeSpec) -> Self {
         self.attributes = attributes;
         self
     }
 
+    #[must_use]
     pub fn attribute_value(&self, attribute: TextAttribute) -> Option<bool> {
         match attribute {
             TextAttribute::Bold => self.attributes.bold,
@@ -142,6 +155,7 @@ impl Insets {
         left: 0,
     };
 
+    #[must_use]
     pub const fn all(value: u16) -> Self {
         Self {
             top: value,
@@ -151,6 +165,7 @@ impl Insets {
         }
     }
 
+    #[must_use]
     pub const fn vertical(value: u16) -> Self {
         Self {
             top: value,
@@ -159,6 +174,7 @@ impl Insets {
         }
     }
 
+    #[must_use]
     pub const fn horizontal(value: u16) -> Self {
         Self {
             right: value,
@@ -168,6 +184,7 @@ impl Insets {
     }
 
     /// Creates insets in top, right, bottom, left order.
+    #[must_use]
     pub const fn new(top: u16, right: u16, bottom: u16, left: u16) -> Self {
         Self {
             top,
@@ -177,15 +194,19 @@ impl Insets {
         }
     }
 
+    #[must_use]
     pub const fn top(self) -> u16 {
         self.top
     }
+    #[must_use]
     pub const fn right(self) -> u16 {
         self.right
     }
+    #[must_use]
     pub const fn bottom(self) -> u16 {
         self.bottom
     }
+    #[must_use]
     pub const fn left(self) -> u16 {
         self.left
     }
@@ -222,6 +243,7 @@ pub enum AnsiColor {
 pub struct StyleStateKey(StyleAtom);
 
 impl StyleStateKey {
+    #[must_use]
     pub const fn from_static(value: &'static str) -> Self {
         Self(StyleAtom::Static(value))
     }
@@ -230,6 +252,7 @@ impl StyleStateKey {
         Self(StyleAtom::Owned(value.into()))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
@@ -266,6 +289,7 @@ impl Hash for StyleStateKey {
 pub struct StyleStateValue(StyleAtom);
 
 impl StyleStateValue {
+    #[must_use]
     pub const fn from_static(value: &'static str) -> Self {
         Self(StyleAtom::Static(value))
     }
@@ -274,6 +298,7 @@ impl StyleStateValue {
         Self(StyleAtom::Owned(value.into()))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
@@ -422,6 +447,7 @@ pub struct StyleSelector {
 }
 
 impl StyleSelector {
+    #[must_use]
     pub fn focused() -> Self {
         Self {
             focused: true,
@@ -429,6 +455,7 @@ impl StyleSelector {
         }
     }
 
+    #[must_use]
     pub fn focus_within() -> Self {
         Self {
             focus_within: true,
@@ -440,16 +467,19 @@ impl StyleSelector {
         Self::default().and_state(key, value)
     }
 
+    #[must_use]
     pub fn and_focused(mut self) -> Self {
         self.focused = true;
         self
     }
 
+    #[must_use]
     pub fn and_focus_within(mut self) -> Self {
         self.focus_within = true;
         self
     }
 
+    #[must_use]
     pub fn and_state(
         mut self,
         key: impl Into<StyleStateKey>,
@@ -525,14 +555,17 @@ impl ColorSpec {
         Self::Theme(key.into())
     }
 
+    #[must_use]
     pub const fn named(color: AnsiColor) -> Self {
         Self::Named(color)
     }
 
+    #[must_use]
     pub const fn ansi(value: u8) -> Self {
         Self::Ansi(value)
     }
 
+    #[must_use]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self::Rgb { r, g, b }
     }
@@ -543,6 +576,7 @@ impl ColorSpec {
 pub struct ThemeKey(pub(crate) String);
 
 impl ThemeKey {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -574,6 +608,7 @@ pub struct StyleRef {
 }
 
 impl StyleRef {
+    #[must_use]
     pub fn direct(style: StyleSpec) -> Self {
         Self {
             theme: None,
@@ -595,6 +630,7 @@ impl StyleRef {
         }
     }
 
+    #[must_use]
     pub fn overrides(mut self, patch: StyleSpec) -> Self {
         self.local.overlay(&patch);
         self
@@ -665,10 +701,12 @@ pub struct TextAttributeSpec {
 }
 
 impl TextAttributeSpec {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn attribute(mut self, attribute: TextAttribute, enabled: bool) -> Self {
         self.set(attribute, enabled);
         self
@@ -749,6 +787,7 @@ impl BorderEdges {
         left: false,
     };
 
+    #[must_use]
     pub const fn new(top: bool, right: bool, bottom: bool, left: bool) -> Self {
         Self {
             top,
@@ -872,6 +911,7 @@ pub struct BorderSpec {
 }
 
 impl BorderSpec {
+    #[must_use]
     pub fn plain() -> Self {
         Self {
             style: BorderStyle::Plain,
@@ -882,6 +922,7 @@ impl BorderSpec {
         }
     }
 
+    #[must_use]
     pub fn rounded() -> Self {
         Self {
             style: BorderStyle::Rounded,
@@ -892,6 +933,7 @@ impl BorderSpec {
         }
     }
 
+    #[must_use]
     pub fn double() -> Self {
         Self {
             style: BorderStyle::Double,
@@ -902,6 +944,7 @@ impl BorderSpec {
         }
     }
 
+    #[must_use]
     pub fn custom(glyphs: BorderGlyphs) -> Self {
         Self {
             style: BorderStyle::Plain,
@@ -912,17 +955,20 @@ impl BorderSpec {
         }
     }
 
+    #[must_use]
     pub fn edges(mut self, edges: BorderEdges) -> Self {
         self.edges = edges;
         self
     }
 
+    #[must_use]
     pub fn color(mut self, color: ColorSpec) -> Self {
         self.color = Some(color);
         self
     }
 
     /// Places a semantic label over the top edge without changing geometry.
+    #[must_use]
     pub fn top_label(mut self, label: impl Into<String>) -> Self {
         self.top_label = Some(label.into());
         self

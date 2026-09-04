@@ -6,10 +6,12 @@ use crate::{IntoView, Renderer, StyleRef, View};
 pub struct DiffRenderer;
 
 impl DiffRenderer {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
+    #[must_use]
     pub fn render_hunk(&self, hunk: &DiffHunk) -> View {
         View::vertical(|column| {
             column.gap(0);

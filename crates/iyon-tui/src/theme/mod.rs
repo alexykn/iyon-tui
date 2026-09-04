@@ -79,15 +79,18 @@ fn sort_variants<T>(variants: &mut [ThemeVariant<T>]) {
 }
 
 impl Theme {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_color(mut self, key: impl Into<ThemeKey>, color: ThemeColor) -> Self {
         self.set_color(key, color);
         self
     }
 
+    #[must_use]
     pub fn with_color_variant(
         mut self,
         key: impl Into<ThemeKey>,
@@ -98,11 +101,13 @@ impl Theme {
         self
     }
 
+    #[must_use]
     pub fn with_style(mut self, key: impl Into<ThemeKey>, style: StyleSpec) -> Self {
         self.set_style(key, style);
         self
     }
 
+    #[must_use]
     pub fn with_style_variant(
         mut self,
         key: impl Into<ThemeKey>,
@@ -155,6 +160,7 @@ impl Theme {
             .set_variant(selector, style, order)
     }
 
+    #[must_use]
     pub fn color(&self, key: &str) -> Option<ThemeColor> {
         self.resolve_color(
             key,
@@ -165,6 +171,7 @@ impl Theme {
         )
     }
 
+    #[must_use]
     pub fn style(&self, key: &str) -> Option<&StyleSpec> {
         self.styles.get(key)?.base.as_ref()
     }

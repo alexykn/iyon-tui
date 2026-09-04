@@ -30,6 +30,7 @@ impl HostViewState {
         }
     }
 
+    #[must_use]
     pub fn state_id(&self) -> u64 {
         self.record.lock().map_or(0, |record| record.id)
     }

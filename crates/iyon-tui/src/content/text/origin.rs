@@ -36,18 +36,22 @@ impl TextOrigin {
     /// Origin claimed by the generic semantic diff projector.
     pub const DIFF: Self = Self(OriginAtom::Static("diff"));
 
+    #[must_use]
     pub fn markdown() -> Self {
         Self::MARKDOWN
     }
 
+    #[must_use]
     pub fn plain_text() -> Self {
         Self::PLAIN_TEXT
     }
 
+    #[must_use]
     pub fn ansi() -> Self {
         Self::ANSI
     }
 
+    #[must_use]
     pub fn diff() -> Self {
         Self::DIFF
     }
@@ -58,6 +62,7 @@ impl TextOrigin {
         Ok(Self(OriginAtom::Owned(value)))
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match &self.0 {
             OriginAtom::Static(value) => value,
@@ -107,6 +112,7 @@ fn origin_key() -> SemanticKey {
 }
 
 impl Annotations {
+    #[must_use]
     pub fn with_origin(self, origin: TextOrigin) -> Self {
         self.with_property(
             origin_key(),
@@ -114,6 +120,7 @@ impl Annotations {
         )
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         match self.property(&origin_key())? {
             SemanticValue::Text(value) => TextOrigin::new(Arc::clone(value)).ok(),
@@ -123,53 +130,63 @@ impl Annotations {
 }
 
 impl Block {
+    #[must_use]
     pub fn with_origin(&self, origin: TextOrigin) -> Self {
         self.map_annotations(|annotations| annotations.with_origin(origin))
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         self.annotations().origin()
     }
 }
 
 impl Inline {
+    #[must_use]
     pub fn with_origin(&self, origin: TextOrigin) -> Self {
         self.map_annotations(|annotations| annotations.with_origin(origin))
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         self.annotations().origin()
     }
 }
 
 impl ListItem {
+    #[must_use]
     pub fn with_origin(self, origin: TextOrigin) -> Self {
         let annotations = self.annotations().clone().with_origin(origin);
         self.with_annotations(annotations)
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         self.annotations().origin()
     }
 }
 
 impl TableRow {
+    #[must_use]
     pub fn with_origin(self, origin: TextOrigin) -> Self {
         let annotations = self.annotations().clone().with_origin(origin);
         self.with_annotations(annotations)
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         self.annotations().origin()
     }
 }
 
 impl TableCell {
+    #[must_use]
     pub fn with_origin(self, origin: TextOrigin) -> Self {
         let annotations = self.annotations().clone().with_origin(origin);
         self.with_annotations(annotations)
     }
 
+    #[must_use]
     pub fn origin(&self) -> Option<TextOrigin> {
         self.annotations().origin()
     }

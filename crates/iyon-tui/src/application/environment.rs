@@ -155,6 +155,7 @@ struct EnvironmentInner {
 }
 
 impl TuiEnvironment {
+    #[must_use]
     pub fn new() -> Self {
         let identity = EnvironmentIdentity::allocate();
         let inner = Arc::new(Mutex::new(EnvironmentInner {
@@ -179,10 +180,12 @@ impl TuiEnvironment {
             .unwrap_or_default()
     }
 
+    #[must_use]
     pub fn environment_slot(&self) -> u32 {
         self.identity().slot
     }
 
+    #[must_use]
     pub fn environment_generation(&self) -> u32 {
         self.identity().generation
     }

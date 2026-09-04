@@ -129,140 +129,173 @@ pub struct TextSelector {
 }
 
 impl TextSelector {
+    #[must_use]
     pub fn any() -> Self {
         Self {
             inner: StyleSelector::default(),
         }
     }
 
+    #[must_use]
     pub fn role(role: TextRole) -> Self {
         Self::any().and_role(role)
     }
 
+    #[must_use]
     pub fn part(part: TextPart) -> Self {
         Self::any().and_fact(TextFact::Part(part))
     }
 
+    #[must_use]
     pub fn and_part(self, part: TextPart) -> Self {
         self.and_fact(TextFact::Part(part))
     }
 
+    #[must_use]
     pub fn annotation(tag: &SemanticTag) -> Self {
         Self::any().and_annotation(tag)
     }
 
+    #[must_use]
     pub fn paragraph() -> Self {
         Self::role(TextRole::Paragraph)
     }
 
+    #[must_use]
     pub fn heading() -> Self {
         Self::role(TextRole::Heading)
     }
 
+    #[must_use]
     pub fn block_quote() -> Self {
         Self::role(TextRole::BlockQuote)
     }
 
+    #[must_use]
     pub fn list() -> Self {
         Self::role(TextRole::List)
     }
 
+    #[must_use]
     pub fn list_item() -> Self {
         Self::role(TextRole::ListItem)
     }
 
+    #[must_use]
     pub fn code_block() -> Self {
         Self::role(TextRole::CodeBlock)
     }
 
+    #[must_use]
     pub fn table() -> Self {
         Self::role(TextRole::Table)
     }
 
+    #[must_use]
     pub fn table_row() -> Self {
         Self::role(TextRole::TableRow)
     }
 
+    #[must_use]
     pub fn table_cell() -> Self {
         Self::role(TextRole::TableCell)
     }
 
+    #[must_use]
     pub fn thematic_break() -> Self {
         Self::role(TextRole::ThematicBreak)
     }
 
+    #[must_use]
     pub fn strong() -> Self {
         Self::role(TextRole::Strong)
     }
 
+    #[must_use]
     pub fn emphasis() -> Self {
         Self::role(TextRole::Emphasis)
     }
 
+    #[must_use]
     pub fn strikethrough() -> Self {
         Self::role(TextRole::Strikethrough)
     }
 
+    #[must_use]
     pub fn underline() -> Self {
         Self::role(TextRole::Underline)
     }
 
+    #[must_use]
     pub fn inline_code() -> Self {
         Self::role(TextRole::InlineCode)
     }
 
+    #[must_use]
     pub fn link() -> Self {
         Self::role(TextRole::Link)
     }
 
+    #[must_use]
     pub fn and_role(self, role: TextRole) -> Self {
         self.and_fact(TextFact::Role(role))
     }
 
+    #[must_use]
     pub fn level(self, level: HeadingLevel) -> Self {
         self.and_fact(TextFact::HeadingLevel(level))
     }
 
+    #[must_use]
     pub fn origin(self, origin: TextOrigin) -> Self {
         self.and_fact(TextFact::Origin(origin))
     }
 
+    #[must_use]
     pub fn list_kind(self, kind: TextListKind) -> Self {
         self.and_fact(TextFact::ListKind(kind))
     }
 
+    #[must_use]
     pub fn task_state(self, state: TextTaskState) -> Self {
         self.and_fact(TextFact::TaskState(state))
     }
 
+    #[must_use]
     pub fn table_section(self, section: TextTableSection) -> Self {
         self.and_fact(TextFact::TableSection(section))
     }
 
+    #[must_use]
     pub fn language(self, language: &LanguageId) -> Self {
         self.and_fact(TextFact::Language(language.clone()))
     }
 
+    #[must_use]
     pub fn format(self, format: &FormatId) -> Self {
         self.and_fact(TextFact::Format(format.clone()))
     }
 
+    #[must_use]
     pub fn and_annotation(self, tag: &SemanticTag) -> Self {
         self.and_fact(TextFact::Annotation(tag.clone()))
     }
 
+    #[must_use]
     pub fn and_focused(self) -> Self {
         Self {
             inner: self.inner.and_focused(),
         }
     }
 
+    #[must_use]
     pub fn and_focus_within(self) -> Self {
         Self {
             inner: self.inner.and_focus_within(),
         }
     }
 
+    #[must_use]
     pub fn and_state(
         self,
         key: impl Into<StyleStateKey>,
@@ -295,6 +328,7 @@ impl Theme {
     /// Text styles use the same Theme/StyleSelector cascade as ordinary Views.
     /// Application text rules resolve after framework defaults and before local
     /// `StyleRef` overrides.
+    #[must_use]
     pub fn with_text_style(mut self, selector: TextSelector, style: StyleSpec) -> Self {
         self.set_text_style(selector, style);
         self

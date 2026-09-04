@@ -136,6 +136,7 @@ impl View {
     }
 
     /// Creates a new undecorated structural boundary around this view.
+    #[must_use]
     pub fn container(self) -> Self {
         self.wrap_structural(|child| ViewKind::Container(Arc::new(ContainerNode { child })))
     }
@@ -200,6 +201,7 @@ impl View {
     }
 
     /// Creates a new structural truncation boundary around this view.
+    #[must_use]
     pub fn clamp_rows(self, max_rows: u16, overflow: OverflowIndicator) -> Self {
         self.wrap_structural(|child| {
             ViewKind::ClampRows(Arc::new(ClampRowsView {
@@ -210,6 +212,7 @@ impl View {
         })
     }
 
+    #[must_use]
     pub fn spacer(rows: u16) -> Self {
         Self::new_kind(ViewKind::Spacer { rows })
     }
@@ -225,6 +228,7 @@ impl View {
 
     /// Assigns one application-owned semantic styling dimension to this View
     /// subtree. Appearance is resolved later during painting.
+    #[must_use]
     pub fn style_state(
         self,
         key: impl Into<StyleStateKey>,
@@ -248,6 +252,7 @@ impl View {
     }
 
     /// Assigns multiple application-owned semantic styling dimensions.
+    #[must_use]
     pub fn style_states(
         self,
         states: impl IntoIterator<Item = (StyleStateKey, StyleStateValue)>,
@@ -260,16 +265,19 @@ impl View {
     }
 
     /// Sets the current node's padding; repeated calls replace the prior value.
+    #[must_use]
     pub fn padding(self, padding: impl Into<Insets>) -> Self {
         self.map_node(|node| node.decoration.padding = padding.into())
     }
 
     /// Paints the current node's allocated surface, including transparent tails.
+    #[must_use]
     pub fn background(self, color: ColorSpec) -> Self {
         self.map_node(|node| node.decoration.surface_background = Some(color))
     }
 
     /// Applies a semantic named style or direct sparse style to this node.
+    #[must_use]
     pub fn style(self, style: impl Into<StyleRef>) -> Self {
         let style = style.into();
         self.map_node(|node| {
@@ -282,6 +290,7 @@ impl View {
     }
 
     /// Sets inherited foreground intent for descendant text.
+    #[must_use]
     pub fn foreground(self, color: ColorSpec) -> Self {
         self.map_node(|node| {
             node.decoration
@@ -291,11 +300,13 @@ impl View {
     }
 
     /// Replaces the current node's complete border specification.
+    #[must_use]
     pub fn border(self, border: BorderSpec) -> Self {
         self.map_node(|node| node.decoration.border = Some(border))
     }
 
     /// Sets sparse inherited text-attribute intent, including explicit false.
+    #[must_use]
     pub fn text_attribute(self, attribute: TextAttribute, enabled: bool) -> Self {
         self.map_node(|node| {
             node.decoration
@@ -304,62 +315,76 @@ impl View {
         })
     }
 
+    #[must_use]
     pub fn bold(self) -> Self {
         self.text_attribute(TextAttribute::Bold, true)
     }
 
+    #[must_use]
     pub fn dim(self) -> Self {
         self.text_attribute(TextAttribute::Dim, true)
     }
 
+    #[must_use]
     pub fn italic(self) -> Self {
         self.text_attribute(TextAttribute::Italic, true)
     }
 
+    #[must_use]
     pub fn underline(self) -> Self {
         self.text_attribute(TextAttribute::Underline, true)
     }
 
+    #[must_use]
     pub fn reversed(self) -> Self {
         self.text_attribute(TextAttribute::Reversed, true)
     }
 
+    #[must_use]
     pub fn strikethrough(self) -> Self {
         self.text_attribute(TextAttribute::Strikethrough, true)
     }
 
+    #[must_use]
     pub fn fit_width(self) -> Self {
         self.map_node(|node| node.width = WidthRule::Fit)
     }
 
+    #[must_use]
     pub fn fill_width(self) -> Self {
         self.map_node(|node| node.width = WidthRule::Fill)
     }
 
+    #[must_use]
     pub fn fit_height(self) -> Self {
         self.map_node(|node| node.height = HeightRule::Fit)
     }
 
+    #[must_use]
     pub fn fill_height(self) -> Self {
         self.map_node(|node| node.height = HeightRule::Fill)
     }
 
     /// Sets the minimum outer width this View may receive.
+    #[must_use]
     pub fn min_width(self, width: u16) -> Self {
         self.map_node(|node| node.decoration.bounds.width.min = width)
     }
 
     /// Sets the maximum outer width this View may receive.
+    #[must_use]
     pub fn max_width(self, width: u16) -> Self {
         self.map_node(|node| node.decoration.bounds.width.max = width)
     }
 
     /// Sets the minimum outer height this View may receive.
+    #[must_use]
     pub fn min_height(self, height: u16) -> Self {
         self.map_node(|node| node.decoration.bounds.height.min = height)
     }
 
     /// Sets the maximum outer height this View may receive.
+    #[must_use]
     pub fn max_height(self, height: u16) -> Self {
         self.map_node(|node| node.decoration.bounds.height.max = height)
     }
@@ -367,12 +392,14 @@ impl View {
     /// Applies text layout metadata while retaining the existing text payload.
     /// The canonical retained lowering uses this to keep span storage shared.
     #[doc(hidden)]
+    #[must_use]
     pub fn with_text_layout(self, wrap: WrapMode, align: HorizontalAlign) -> Self {
         self.with_text_layout_patch(Some(wrap), Some(align))
     }
 
     /// Applies only the supplied text layout fields, preserving all others.
     #[doc(hidden)]
+    #[must_use]
     pub fn with_text_layout_patch(
         self,
         wrap: Option<WrapMode>,

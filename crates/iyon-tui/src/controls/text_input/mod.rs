@@ -48,6 +48,7 @@ pub struct TextInput {
 
 impl TextInput {
     /// Creates an empty single-line input with its own submission channel.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             buffer: TextBuffer::new(),
@@ -62,12 +63,14 @@ impl TextInput {
     }
 
     /// Returns a copy configured for single- or multi-line editing.
+    #[must_use]
     pub fn multiline(mut self, enabled: bool) -> Self {
         self.set_multiline(enabled);
         self
     }
 
     /// Sets the semantic border used by the input surface.
+    #[must_use]
     pub fn border(mut self, border: BorderSpec) -> Self {
         self.border = Some(border);
         self
@@ -87,18 +90,22 @@ impl TextInput {
         self.repair_scroll();
     }
 
+    #[must_use]
     pub fn is_multiline(&self) -> bool {
         self.multiline
     }
 
+    #[must_use]
     pub fn text(&self) -> &str {
         self.buffer.text()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buffer.text().is_empty()
     }
 
+    #[must_use]
     pub fn cursor_bytes(&self) -> usize {
         self.buffer.cursor_bytes()
     }
@@ -116,6 +123,7 @@ impl TextInput {
     }
 
     /// Returns this input's stable submission channel.
+    #[must_use]
     pub fn submitted(&self) -> Output<String> {
         self.submitted
     }

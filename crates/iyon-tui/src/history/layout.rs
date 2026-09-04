@@ -12,6 +12,7 @@ pub struct HistoryLayout {
 
 impl HistoryLayout {
     /// Starts with default padding and gap; configure with fluent setters.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             padding: Insets::ZERO,
@@ -19,24 +20,29 @@ impl HistoryLayout {
         }
     }
 
+    #[must_use]
     pub const fn from_parts(padding: Insets, gap: u16) -> Self {
         Self { padding, gap }
     }
 
+    #[must_use]
     pub const fn with_padding(mut self, padding: Insets) -> Self {
         self.padding = padding;
         self
     }
 
+    #[must_use]
     pub const fn with_gap(mut self, gap: u16) -> Self {
         self.gap = gap;
         self
     }
 
+    #[must_use]
     pub const fn padding(self) -> Insets {
         self.padding
     }
 
+    #[must_use]
     pub const fn gap(self) -> u16 {
         self.gap
     }

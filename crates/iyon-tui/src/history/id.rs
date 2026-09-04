@@ -18,6 +18,7 @@ impl HistoryUnitId {
         ))
     }
 
+    #[must_use]
     pub const fn value(self) -> u64 {
         self.0.get()
     }

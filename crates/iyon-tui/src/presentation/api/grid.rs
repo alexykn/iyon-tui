@@ -65,30 +65,35 @@ pub struct GridTrack {
 }
 
 impl GridTrack {
+    #[must_use]
     pub const fn content() -> Self {
         Self {
             track: TrackSize::Content { max: None },
         }
     }
 
+    #[must_use]
     pub const fn content_max(max: u16) -> Self {
         Self {
             track: TrackSize::Content { max: Some(max) },
         }
     }
 
+    #[must_use]
     pub const fn fixed(size: u16) -> Self {
         Self {
             track: TrackSize::Fixed(size),
         }
     }
 
+    #[must_use]
     pub const fn flex() -> Self {
         Self {
             track: TrackSize::Flex { min: 1 },
         }
     }
 
+    #[must_use]
     pub const fn flex_max(max: u16) -> Self {
         Self {
             track: TrackSize::FlexMax { min: 1, max },
@@ -112,6 +117,7 @@ impl Default for GridCellSpec {
 }
 
 impl GridCellSpec {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             column_span: NonZeroU16::MIN,
@@ -121,6 +127,7 @@ impl GridCellSpec {
         }
     }
 
+    #[must_use]
     pub fn column_span(self, span: u16) -> Self {
         Self {
             column_span: NonZeroU16::new(span).expect("grid column span must be at least 1"),
@@ -128,6 +135,7 @@ impl GridCellSpec {
         }
     }
 
+    #[must_use]
     pub fn row_span(self, span: u16) -> Self {
         Self {
             row_span: NonZeroU16::new(span).expect("grid row span must be at least 1"),
@@ -135,6 +143,7 @@ impl GridCellSpec {
         }
     }
 
+    #[must_use]
     pub fn horizontal_align(self, align: HorizontalAlign) -> Self {
         Self {
             horizontal_align: align,
@@ -142,6 +151,7 @@ impl GridCellSpec {
         }
     }
 
+    #[must_use]
     pub fn vertical_align(self, align: VerticalAlign) -> Self {
         Self {
             vertical_align: align,

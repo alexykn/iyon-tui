@@ -35,6 +35,7 @@ pub struct ProjectionBuilder<T> {
 }
 
 impl<T> ProjectionBuilder<T> {
+    #[must_use]
     pub fn new(
         source_base: StreamOffset,
         stable_through: StreamOffset,
@@ -51,6 +52,7 @@ impl<T> ProjectionBuilder<T> {
     }
 
     /// Adds one output value for a source interval.
+    #[must_use]
     pub fn emit(mut self, source: StreamRange, value: T) -> Self {
         self.spans.push(ProjectionSpan {
             source,
@@ -60,6 +62,7 @@ impl<T> ProjectionBuilder<T> {
     }
 
     /// Adds any number of output values for a source interval.
+    #[must_use]
     pub fn emit_many(mut self, source: StreamRange, values: impl IntoIterator<Item = T>) -> Self {
         self.spans.push(ProjectionSpan {
             source,
@@ -69,6 +72,7 @@ impl<T> ProjectionBuilder<T> {
     }
 
     /// Explicitly accounts for a source interval with no projected values.
+    #[must_use]
     pub fn elide(self, source: StreamRange) -> Self {
         self.emit_many(source, [])
     }
@@ -130,6 +134,7 @@ impl<T> Projection<T> {
     }
 
     /// Starts a builder preserving this projection's source envelope.
+    #[must_use]
     pub fn rebuild<U>(&self) -> ProjectionBuilder<U> {
         ProjectionBuilder::new(
             self.source_base,
@@ -139,22 +144,27 @@ impl<T> Projection<T> {
         )
     }
 
+    #[must_use]
     pub fn source_base(&self) -> StreamOffset {
         self.source_base
     }
 
+    #[must_use]
     pub fn stable_through(&self) -> StreamOffset {
         self.stable_through
     }
 
+    #[must_use]
     pub fn source_end(&self) -> StreamOffset {
         self.source_end
     }
 
+    #[must_use]
     pub fn is_sealed(&self) -> bool {
         self.sealed
     }
 
+    #[must_use]
     pub fn spans(&self) -> &[ProjectionSpan<T>] {
         &self.spans
     }
@@ -256,10 +266,12 @@ impl<T> Projection<T> {
 }
 
 impl<T> ProjectionSpan<T> {
+    #[must_use]
     pub fn source(&self) -> StreamRange {
         self.source
     }
 
+    #[must_use]
     pub fn values(&self) -> &[T] {
         &self.values
     }

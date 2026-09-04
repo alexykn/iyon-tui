@@ -10,14 +10,17 @@ pub struct TextChange<'a> {
 }
 
 impl<'a> TextChange<'a> {
+    #[must_use]
     pub fn text(self) -> &'a str {
         self.text
     }
 
+    #[must_use]
     pub fn cursor_bytes(self) -> usize {
         self.cursor_bytes
     }
 
+    #[must_use]
     pub fn is_empty(self) -> bool {
         self.text.is_empty()
     }

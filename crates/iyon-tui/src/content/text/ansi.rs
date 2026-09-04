@@ -44,10 +44,12 @@ impl Default for AnsiProjector {
 }
 
 impl AnsiProjector {
+    #[must_use]
     pub const fn new(options: AnsiOptions) -> Self {
         Self { options }
     }
 
+    #[must_use]
     pub const fn options(self) -> AnsiOptions {
         self.options
     }

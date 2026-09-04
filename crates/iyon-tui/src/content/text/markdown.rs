@@ -112,6 +112,7 @@ struct ParsedDomain {
 }
 
 impl MarkdownProjector {
+    #[must_use]
     pub fn new(options: MarkdownOptions) -> Self {
         Self {
             options,
@@ -126,12 +127,14 @@ impl MarkdownProjector {
         }
     }
 
+    #[must_use]
     pub fn options(&self) -> MarkdownOptions {
         self.options
     }
 
     #[cfg(feature = "test-util")]
     #[doc(hidden)]
+    #[must_use]
     pub fn parser_work(&self) -> (usize, usize) {
         (self.parser_invocations, self.parser_bytes)
     }

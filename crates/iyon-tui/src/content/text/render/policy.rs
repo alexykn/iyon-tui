@@ -77,86 +77,105 @@ impl Default for TextRenderPolicy {
 }
 
 impl TextRenderPolicy {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn block_gap(&self) -> u16 {
         self.block_gap
     }
 
+    #[must_use]
     pub fn with_block_gap(mut self, gap: u16) -> Self {
         self.block_gap = gap;
         self
     }
 
+    #[must_use]
     pub fn soft_break(&self) -> SoftBreakPolicy {
         self.soft_break
     }
 
+    #[must_use]
     pub fn with_soft_break(mut self, policy: SoftBreakPolicy) -> Self {
         self.soft_break = policy;
         self
     }
 
+    #[must_use]
     pub fn table_column_gap(&self) -> u16 {
         self.table_column_gap
     }
 
+    #[must_use]
     pub fn with_table_column_gap(mut self, gap: u16) -> Self {
         self.table_column_gap = gap;
         self
     }
 
+    #[must_use]
     pub fn table_row_gap(&self) -> u16 {
         self.table_row_gap
     }
 
+    #[must_use]
     pub fn with_table_row_gap(mut self, gap: u16) -> Self {
         self.table_row_gap = gap;
         self
     }
 
+    #[must_use]
     pub fn table_column_sizing(&self) -> TableColumnSizing {
         self.table_column_sizing
     }
 
+    #[must_use]
     pub fn with_table_column_sizing(mut self, sizing: TableColumnSizing) -> Self {
         self.table_column_sizing = sizing;
         self
     }
 
+    #[must_use]
     pub fn task_list_marker(&self) -> TaskListMarkerPolicy {
         self.task_list_marker
     }
 
+    #[must_use]
     pub fn with_task_list_marker(mut self, policy: TaskListMarkerPolicy) -> Self {
         self.task_list_marker = policy;
         self
     }
 
+    #[must_use]
     pub fn code_block_label(&self) -> CodeBlockLabelPolicy {
         self.code_block_label
     }
 
+    #[must_use]
     pub fn with_code_block_label(mut self, policy: CodeBlockLabelPolicy) -> Self {
         self.code_block_label = policy;
         self
     }
 
+    #[must_use]
     pub fn code_block_gap(&self) -> u16 {
         self.code_block_gap
     }
 
+    #[must_use]
     pub fn with_code_block_gap(mut self, gap: u16) -> Self {
         self.code_block_gap = gap;
         self
     }
 
+    #[must_use]
     pub fn code_wrap(&self) -> WrapMode {
         self.code_wrap
     }
 
+    #[must_use]
     pub fn with_code_wrap(mut self, wrap: WrapMode) -> Self {
         self.code_wrap = wrap;
         self

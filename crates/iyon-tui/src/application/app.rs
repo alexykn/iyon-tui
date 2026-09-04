@@ -47,6 +47,7 @@ impl<State, Action, Error, Init, Update, ViewFn> App<State, Action, Error, Init,
     }
 
     /// Configures the application-owned semantic paint theme.
+    #[must_use]
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
@@ -66,6 +67,7 @@ impl<State, Action, Error, Init, Update, ViewFn> App<State, Action, Error, Init,
     }
 
     /// Configures the one persistent root History owned by this application.
+    #[must_use]
     pub fn with_history(mut self, history: History) -> Self {
         self.history = Some(history);
         self

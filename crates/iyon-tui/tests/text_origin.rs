@@ -28,7 +28,7 @@ fn blocks(output: &Projection<TextContent>) -> Vec<&Block> {
     output
         .spans()
         .iter()
-        .flat_map(|span| span.values())
+        .flat_map(iyon_tui::projection::ProjectionSpan::values)
         .filter_map(|value| match value {
             TextContent::Block(block) => Some(block),
             TextContent::Raw(_) => None,

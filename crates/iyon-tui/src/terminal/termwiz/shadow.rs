@@ -431,22 +431,22 @@ impl ShadowTerminal {
     }
 
     pub(crate) fn scrollback_texts(&self) -> Vec<String> {
-        self.scrollback.iter().map(|row| row.text()).collect()
+        self.scrollback.iter().map(ShadowRow::text).collect()
     }
 
     pub(crate) fn scrollback_trimmed_texts(&self) -> Vec<String> {
         self.scrollback
             .iter()
-            .map(|row| row.trimmed_text())
+            .map(ShadowRow::trimmed_text)
             .collect()
     }
 
     pub(crate) fn screen_texts(&self) -> Vec<String> {
-        self.screen.iter().map(|row| row.text()).collect()
+        self.screen.iter().map(ShadowRow::text).collect()
     }
 
     pub(crate) fn screen_trimmed_texts(&self) -> Vec<String> {
-        self.screen.iter().map(|row| row.trimmed_text()).collect()
+        self.screen.iter().map(ShadowRow::trimmed_text).collect()
     }
 
     /// Visible screen as text, analogous to `OpenTUI` `captureCharFrame()`.

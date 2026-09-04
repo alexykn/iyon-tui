@@ -3911,8 +3911,8 @@ fn parse_color_atom(value: &str) -> Result<ColorSpec, u32> {
 }
 
 fn text_view_from_spans(spans: Vec<TextSpan>, wrap: u32, align: u32) -> Result<View, u32> {
-    let wrap = decode_wrap(wrap).map_err(|_| FAST_INVALID)?;
-    let align = decode_align(align).map_err(|_| FAST_INVALID)?;
+    let wrap = decode_wrap(wrap).map_err(|()| FAST_INVALID)?;
+    let align = decode_align(align).map_err(|()| FAST_INVALID)?;
     Ok(View::styled_text(spans)
         .wrap(wrap)
         .text_align(align)

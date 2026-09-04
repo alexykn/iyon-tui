@@ -20,7 +20,7 @@ fn values(output: &Projection<TextContent>) -> Vec<&TextContent> {
     output
         .spans()
         .iter()
-        .flat_map(|span| span.values())
+        .flat_map(iyon_tui::projection::ProjectionSpan::values)
         .collect()
 }
 

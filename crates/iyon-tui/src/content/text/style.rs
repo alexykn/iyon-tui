@@ -558,10 +558,7 @@ impl TextFacts {
     }
 
     pub(crate) fn annotations(self, annotations: &Annotations) -> Self {
-        annotations
-            .tags()
-            .iter()
-            .fold(self, |facts, tag| facts.annotation(tag))
+        annotations.tags().iter().fold(self, TextFacts::annotation)
     }
 
     pub(crate) fn finish(self) -> StyleFacts {

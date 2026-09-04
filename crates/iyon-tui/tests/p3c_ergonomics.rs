@@ -37,7 +37,7 @@ fn projection_helpers_preserve_envelope_and_relation() {
     )
     .finish()
     .unwrap();
-    let mapped = input.map_ref(|value| value.to_string());
+    let mapped = input.map_ref(std::string::ToString::to_string);
     assert_eq!(mapped.source_base(), input.source_base());
     assert_eq!(mapped.spans()[0].values(), &["7"]);
     validate_projection_relation(&input, &mapped).unwrap();

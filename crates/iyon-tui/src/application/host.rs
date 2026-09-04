@@ -2193,7 +2193,13 @@ fn prepare_frame_with_content(
                 )
             }),
         HostBackend::Real(backend) => running
-            .prepare_frame_with_states(now, backend, |backend| backend.viewport(), states, content)
+            .prepare_frame_with_states(
+                now,
+                backend,
+                super::super::terminal::backend::TerminalBackend::viewport,
+                states,
+                content,
+            )
             .map_err(|error| {
                 let (code, retryable) = if matches!(error, SceneHostError::DidNotConverge) {
                     ("LAYOUT_DID_NOT_CONVERGE", false)

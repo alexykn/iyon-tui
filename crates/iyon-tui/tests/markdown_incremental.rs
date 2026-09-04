@@ -22,7 +22,7 @@ fn input(s: &str, stable: usize, sealed: bool) -> Projection<TextContent> {
 fn kinds(p: &Projection<TextContent>) -> Vec<String> {
     p.spans()
         .iter()
-        .flat_map(|s| s.values())
+        .flat_map(iyon_tui::projection::ProjectionSpan::values)
         .filter_map(|v| match v {
             TextContent::Block(b) => Some(format!("{:?}", b.kind())),
             _ => None,
@@ -33,7 +33,7 @@ fn kinds(p: &Projection<TextContent>) -> Vec<String> {
 fn blocks(p: &Projection<TextContent>) -> Vec<&iyon_tui::Block> {
     p.spans()
         .iter()
-        .flat_map(|span| span.values())
+        .flat_map(iyon_tui::projection::ProjectionSpan::values)
         .filter_map(|value| match value {
             TextContent::Block(block) => Some(block),
             TextContent::Raw(_) => None,

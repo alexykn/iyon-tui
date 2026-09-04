@@ -108,7 +108,10 @@ impl TermwizPresenter {
         let begin_sync = !self.sync_output_active;
         let transaction = native_transaction(rows, height, begin_sync);
 
-        match terminal.render(&transaction).and_then(|_| terminal.flush()) {
+        match terminal
+            .render(&transaction)
+            .and_then(|()| terminal.flush())
+        {
             Ok(()) => {
                 apply_native_scroll_model(&mut self.presented, rows.len());
                 self.known = true;
@@ -161,7 +164,7 @@ impl TermwizPresenter {
         changes: Vec<Change>,
         desired: Surface,
     ) -> Result<()> {
-        if let Err(error) = terminal.render(&changes).and_then(|_| terminal.flush()) {
+        if let Err(error) = terminal.render(&changes).and_then(|()| terminal.flush()) {
             self.known = false;
             self.abort_sync_output_best_effort(terminal, self.sync_output_active);
             return Err(anyhow!(error));

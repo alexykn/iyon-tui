@@ -609,7 +609,7 @@ impl LayoutTree {
                 ComponentGeometry {
                     outer: rect.to_rect(),
                     content: content.to_rect(),
-                    visible: rect.intersection(clip).and_then(|rect| rect.to_rect_opt()),
+                    visible: rect.intersection(clip).and_then(SignedRect::to_rect_opt),
                 },
             );
         }

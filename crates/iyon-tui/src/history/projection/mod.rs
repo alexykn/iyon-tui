@@ -481,7 +481,10 @@ fn project_into_session_with_mode(
             HistoryViewportAnchor::NativeFrontier => "NativeFrontier",
         },
         history.native.physical_rows_inserted,
-        history.native.last_native_unit.map(|id| id.value()),
+        history
+            .native
+            .last_native_unit
+            .map(super::id::HistoryUnitId::value),
         history.units.len(),
         total_flow_height,
         overflow_rows,

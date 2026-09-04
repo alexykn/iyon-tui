@@ -125,7 +125,7 @@ impl ViewCompiler<'_> {
             let source = text
                 .spans
                 .iter()
-                .map(|span| span.text())
+                .map(super::super::api::text::TextSpan::text)
                 .collect::<String>();
             validate_cursor_anchor(&source, anchor);
             source

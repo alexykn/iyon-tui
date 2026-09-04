@@ -80,7 +80,7 @@ fn setup_terminal() -> Result<(
     let line_breaks = Change::Text("\r\n".repeat(size.rows));
     if let Err(error) = terminal
         .render(&[hidden, line_breaks])
-        .and_then(|_| terminal.flush())
+        .and_then(|()| terminal.flush())
         .context("establish main-screen inline viewport")
     {
         return setup_error(&mut *terminal, error);
@@ -145,7 +145,7 @@ fn restore_terminal(terminal: &mut dyn Terminal) -> Result<()> {
             Change::AllAttributes(Default::default()),
             Change::CursorVisibility(CursorVisibility::Visible),
         ])
-        .and_then(|_| terminal.flush())
+        .and_then(|()| terminal.flush())
     {
         first_error = Some(anyhow!(error));
     }

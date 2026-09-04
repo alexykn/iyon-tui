@@ -201,7 +201,7 @@ where
                 in_flight = None;
                 presentation.presented(Instant::now());
             }
-            _ = wait_for_deadline(deadline) => {}
+            () = wait_for_deadline(deadline) => {}
             event = session.next_event() => {
                 dispatch_terminal_event(app, event
                     .map_err(|error| RunError::Runtime(runtime_error(error)))?)?;
@@ -286,7 +286,11 @@ where
     Backend: TerminalBackend,
 {
     let frame = app
-        .prepare_frame(now, session.backend_mut(), |backend| backend.viewport())
+        .prepare_frame(
+            now,
+            session.backend_mut(),
+            super::super::terminal::backend::TerminalBackend::viewport,
+        )
         .map_err(|error| RunError::Runtime(runtime_error(error)))?;
     session
         .begin_frame(&frame)

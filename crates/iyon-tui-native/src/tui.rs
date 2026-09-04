@@ -165,8 +165,8 @@ pub unsafe extern "C" fn iyon_abi_probe_cstring(value: *const std::ffi::c_char) 
         return 0;
     }
     let bytes = unsafe { std::ffi::CStr::from_ptr(value) }.to_bytes();
-    bytes.iter().fold(2166136261u32, |hash, byte| {
-        hash.wrapping_mul(16777619).wrapping_add(u32::from(*byte))
+    bytes.iter().fold(2_166_136_261_u32, |hash, byte| {
+        hash.wrapping_mul(16_777_619).wrapping_add(u32::from(*byte))
     })
 }
 

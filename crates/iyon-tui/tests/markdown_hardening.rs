@@ -148,7 +148,7 @@ fn sealed_markdown_is_independent_of_raw_transport_segmentation() {
     let mut seed = 0x9e37_79b9_u64;
     let mut cuts = Vec::new();
     for _ in 0..32 {
-        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         cuts.push((seed as usize) % source.len());
     }
     let mut projector = MarkdownProjector::default();

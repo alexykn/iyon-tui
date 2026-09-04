@@ -1,9 +1,9 @@
 import {
-  NativeResourceRegistry,
+  type NativeResourceRegistry,
   runtimeResourceEnvironment,
   runtimeResourceRegistry,
 } from "./native-resource-registry.ts";
-import { RuntimeErrorChannel } from "./error-channel.ts";
+import type { RuntimeErrorChannel } from "./error-channel.ts";
 import {
   EnvironmentWakeBroker,
   type NativeFrameHost,

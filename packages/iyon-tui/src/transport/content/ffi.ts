@@ -586,7 +586,7 @@ function encodeAnnotations(bytes: Uint8Array, annotations: readonly TextSourceAn
     const annotation = annotations[index]!;
     validateAnnotationObject(annotation);
     const kind = annotation.kind === undefined ? "tag" : annotation.kind;
-    if (typeof kind !== "string" || !Object.prototype.hasOwnProperty.call(annotationKinds, kind)) {
+    if (typeof kind !== "string" || !Object.hasOwn(annotationKinds, kind)) {
       throw contentError("UNKNOWN_ANNOTATION_KIND", `unknown Source annotation kind ${JSON.stringify(kind)}`);
     }
     const annotationKind = kind as AnnotationKind;

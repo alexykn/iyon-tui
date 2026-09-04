@@ -1,4 +1,4 @@
-import { StyleRef, StyleSpec, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
+import { StyleRef, type StyleSpec, type StyleStateKey, type StyleStateValue } from "../presentation/style.ts";
 import type { HorizontalAlign, WrapMode } from "../view/view.ts";
 export type TextRole =
   | "paragraph"

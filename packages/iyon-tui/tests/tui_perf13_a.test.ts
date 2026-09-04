@@ -142,7 +142,7 @@ test(`${PERF13A} rejects an invalid attachment in H3 prepare before visible muta
 });
 
 test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barrier`, async () => {
-  let desired = 1n;
+  const desired = 1n;
   let committed = 0n;
   let calls = 0;
   let fail = true;

@@ -1,4 +1,4 @@
-import { RuntimeErrorChannel, type FramePhase, type RuntimeFrameErrorCode, type RuntimeFrameErrorRecord } from "./error-channel.ts";
+import type { RuntimeErrorChannel, FramePhase, RuntimeFrameErrorCode, RuntimeFrameErrorRecord } from "./error-channel.ts";
 
 export interface NativeHostEpochs {
   readonly host_id: string | number;

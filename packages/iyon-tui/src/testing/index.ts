@@ -8,7 +8,7 @@ import type { TextInput as TextInputContract, TextInputOptions } from "../api/co
 import type { ViewSlot as ViewSlotContract } from "../api/controls/view-slot.ts";
 import type { ViewState as ViewStateContract } from "../api/view/retained-state.ts";
 import type { ContentPort as ContentPortContract, ContentPortOptions } from "../api/content/retained.ts";
-import { TextContent } from "../api/content/text-content.ts";
+import type { TextContent } from "../api/content/text-content.ts";
 import type { SceneProducer } from "../api/view/scene.ts";
 import type { View } from "../api/view/view.ts";
 import type { TuiEvent } from "../runtime/events.ts";

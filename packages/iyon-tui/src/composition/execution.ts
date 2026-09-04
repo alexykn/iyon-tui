@@ -29,7 +29,7 @@ import type {
 } from "./publication.ts";
 import {
   ChildOwnerState,
-  KeyGroup,
+  type KeyGroup,
   type ChildRecord,
   type OwnsChildren,
   type ViewKey,
@@ -1205,10 +1205,7 @@ export class OwnedBuilderRoot {
     target: StructuralPublicationTarget,
   ) {
     this.currentProducer = producer;
-    // The scope renders whatever the CURRENT producer yields; the producer
-    // itself is transactional state owned by this root (§32.2.6).
-    const self = this;
-    const componentType: ViewComponentType<void> = { render: () => self.currentProducer() };
+    const componentType: ViewComponentType<void> = { render: () => this.currentProducer() };
     this.scope = new RetainedExecutionScope<void>(runtime, null, componentType, undefined, -1, undefined, NEXT_SCOPE_ID++);
     this.scope.publicationTarget = target;
   }

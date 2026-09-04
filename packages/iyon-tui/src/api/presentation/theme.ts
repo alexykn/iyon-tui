@@ -1,12 +1,12 @@
 import type { StyleSelectorValue, StyleSpecValue } from "./style.ts";
 import {
-  StyleSelector,
+  type StyleSelector,
   StyleSpec,
   styleSelectorValue,
 } from "./style.ts";
 import type { TextSelectorValue } from "../content/text.ts";
 import type { TextSelector } from "../content/text.ts";
-import { ThemeKey } from "./theme-key.ts";
+import type { ThemeKey } from "./theme-key.ts";
 
 export type AnsiColor =
   | "black"

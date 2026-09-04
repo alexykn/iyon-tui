@@ -1,4 +1,4 @@
-import { TextContent } from "./text-content.ts";
+import type { TextContent } from "./text-content.ts";
 
 export interface ProjectionSpan {
   readonly sourceStart: number;

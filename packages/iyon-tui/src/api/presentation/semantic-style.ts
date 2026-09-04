@@ -260,7 +260,7 @@ function validateBorder(border: BorderSpec): void {
   if (border.glyphs === undefined) return;
   const glyphs = border.glyphs as unknown as Record<string, unknown>;
   for (const field of BORDER_GLYPH_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(glyphs, field) || typeof glyphs[field] !== "string") {
+    if (!Object.hasOwn(glyphs, field) || typeof glyphs[field] !== "string") {
       throw new TypeError(`border glyph ${JSON.stringify(field)} must be a string`);
     }
   }

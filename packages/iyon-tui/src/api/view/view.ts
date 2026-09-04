@@ -8,15 +8,15 @@
  */
 
 import type { BorderSpec, TextAttribute } from "../presentation/style.ts";
-import { StyleSpec, validateTextAttribute } from "../presentation/style.ts";
+import { type StyleSpec, validateTextAttribute } from "../presentation/style.ts";
 import type { StyleRef, StyleStateKey, StyleStateValue } from "../presentation/style.ts";
 import type { HandleId } from "../controls/framework-handle.ts";
 import type { ViewState } from "./retained-state.ts";
 import type { ContentPort } from "../content/retained.ts";
 import type { ColorSpec } from "../presentation/theme.ts";
-import { insets, Insets } from "./geometry.ts";
+import { insets, type Insets } from "./geometry.ts";
 import type { DiffHunk } from "../content/diff.ts";
-import { TextSpan } from "../content/text.ts";
+import type { TextSpan } from "../content/text.ts";
 import {
   semanticBorderFor,
   semanticCloneDecoration,

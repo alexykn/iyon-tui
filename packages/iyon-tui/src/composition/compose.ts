@@ -51,7 +51,7 @@ import {
   ChildrenBuilder,
   componentViewForHandle,
   composedAxis,
-  GridBuilder,
+  type GridBuilder,
   gridBuilderFromSpecification,
   gridViewFromBuilder,
   View,

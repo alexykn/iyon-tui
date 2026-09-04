@@ -7,7 +7,7 @@ import type {
   StyleNode,
   TextSpanNode,
 } from "./ir.ts";
-import { StyleRef, StyleSpec, validateTextAttribute } from "../../api/presentation/style.ts";
+import { type StyleRef, type StyleSpec, validateTextAttribute } from "../../api/presentation/style.ts";
 import type { TextSpan } from "../../api/content/text.ts";
 import type { ThemeKey } from "../../api/presentation/theme-key.ts";
 
@@ -96,7 +96,7 @@ function validateBorder(border: BorderSpec): void {
   if (border.glyphs === undefined) return;
   const glyphs = border.glyphs as unknown as Record<string, unknown>;
   for (const field of BORDER_GLYPH_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(glyphs, field) || typeof glyphs[field] !== "string") {
+    if (!Object.hasOwn(glyphs, field) || typeof glyphs[field] !== "string") {
       throw new TypeError(`border glyph ${JSON.stringify(field)} must be a string`);
     }
   }

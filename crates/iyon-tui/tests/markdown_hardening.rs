@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use iyon_tui::projection::{ProjectionBuilder, validate_projection_transition};
@@ -373,7 +374,7 @@ fn stable_cache_reuses_closed_prefixes() {
     let mut projector = MarkdownProjector::default();
     let mut source = String::new();
     for index in 0..1000 {
-        source.push_str(&format!("block {index}\n\n"));
+        let _ = write!(source, "block {index}\n\n");
         let output = projector
             .project(&source_projection(&source, source.len(), false, 0))
             .unwrap();

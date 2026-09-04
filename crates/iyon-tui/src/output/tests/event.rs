@@ -35,7 +35,7 @@ fn event_context_owns_non_clone_and_non_send_payloads() {
     router.route(local, PayloadAction::Local).unwrap();
 
     let actions = router.drain(&mut queue).unwrap();
-    assert_eq!(queue.is_empty(), true);
+    assert!(queue.is_empty());
     assert!(matches!(&actions[0], PayloadAction::NonClone(value) if value == "owned"));
     assert!(matches!(&actions[1], PayloadAction::Local(value) if value.as_str() == "same thread"));
 }

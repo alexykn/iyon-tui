@@ -248,9 +248,7 @@ fn prepare_top_padding(history: &mut History, width: u16) -> Option<Vec<Physical
 }
 
 fn prepare_leading_gap(history: &mut History, width: u16) -> Option<Vec<PhysicalRow>> {
-    if history.native.last_native_unit.is_none() {
-        return None;
-    }
+    history.native.last_native_unit?;
     let unit = history.units.front().expect("nonempty History");
     if !matches!(unit.boundary, FlowBoundary::Default) {
         return None;

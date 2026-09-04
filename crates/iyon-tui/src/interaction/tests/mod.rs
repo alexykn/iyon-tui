@@ -782,7 +782,7 @@ fn erased_focus_handler_mismatch_fails_loudly() {
     let mut cx = super::ComponentCx::<MismatchComponent>::new(&mut capabilities);
     cx.on_focus_changed(MismatchComponent::focus_changed);
     let handler = capabilities.focus_changed.as_ref().unwrap().clone();
-    let _ = handler(&mut OtherComponent, true);
+    handler(&mut OtherComponent, true);
 }
 
 #[test]

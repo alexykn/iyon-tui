@@ -73,15 +73,14 @@ fn one_mounted_component_ticks_only_after_its_deadline() {
         scheduler.next_timeout(start, Duration::from_secs(1)),
         Duration::from_millis(80)
     );
-    assert_eq!(
-        scheduler
+    assert!(
+        !scheduler
             .tick_due_with_events(
                 start + Duration::from_millis(79),
                 &mut registry,
                 &mut OutputQueue::new()
             )
-            .ran,
-        false
+            .ran
     );
     assert_eq!(registry.with(handle, |blinker| blinker.frame), Some(0));
     assert!(

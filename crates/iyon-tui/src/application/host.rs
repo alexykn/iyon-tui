@@ -1514,11 +1514,11 @@ impl TuiHost {
     pub fn native_history_rows(&self) -> Vec<String> {
         self.lock()
             .ok()
-            .and_then(|inner| match &inner.backend {
+            .map(|inner| match &inner.backend {
                 HostBackend::Headless(sink) => {
-                    Some(sink.history.iter().map(PhysicalRow::plain_text).collect())
+                    sink.history.iter().map(PhysicalRow::plain_text).collect()
                 }
-                HostBackend::Real(_) => Some(Vec::new()),
+                HostBackend::Real(_) => Vec::new(),
             })
             .unwrap_or_default()
     }

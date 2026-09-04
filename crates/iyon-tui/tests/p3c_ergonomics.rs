@@ -15,7 +15,7 @@ fn ordinary_text_construction_matches_explicit_ir() {
 
     assert_eq!(HeadingLevel::H1.get(), 1);
     assert_eq!(Inline::text("x").strong().marks().marks(), &[Mark::Strong]);
-    assert_eq!(List::bulleted([ListItem::paragraph("item")]).tight(), true);
+    assert!(List::bulleted([ListItem::paragraph("item")]).tight());
 
     let language = LanguageId::new("json").unwrap();
     let code = CodeBlock::new(Some(language), None::<&str>, "{}");

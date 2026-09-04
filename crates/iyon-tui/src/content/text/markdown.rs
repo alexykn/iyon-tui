@@ -1345,7 +1345,7 @@ fn normalize_gfm_table_rows(schema_width: usize, rows: Vec<TableRow>) -> Vec<Tab
     rows.into_iter()
         .map(|row| {
             let annotations = row.annotations().clone();
-            let mut cells: Vec<_> = row.cells().iter().cloned().collect();
+            let mut cells: Vec<_> = row.cells().to_vec();
             cells.truncate(schema_width);
             while cells.len() < schema_width {
                 cells.push(empty_gfm_table_cell());

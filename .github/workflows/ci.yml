@@ -15,7 +15,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: sh tools/lint/clippy-gate.sh
       - run: cargo test --workspace --all-features
 
   bun:
@@ -42,6 +42,7 @@ jobs:
             packages/iyon-tui/bench/generated \
             docs/history/perf/PERF-11-generated-abi-reference.md
       - run: bun run typecheck
+      - run: bun run lint:ts
       - run: bun run check:tui-declarations
       - run: bun run native:stage
       - run: bun run check:ownership

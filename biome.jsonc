@@ -1,0 +1,39 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules/**",
+      "!**/target/**",
+      "!**/target-direct-ffi/**",
+      "!packages/iyon-tui/src/transport/abi/structural/generated/**",
+      "!packages/iyon-tui/tests/generated/**",
+      "!packages/iyon-tui/bench/generated/**",
+      "!bun.lock"
+    ]
+  },
+  "formatter": { "enabled": true },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        // Audit backlog (11 error-severity hits): demoted to warn until
+        // fixed, then removed so the recommended error level applies.
+        "noAssignInExpressions": "warn",
+        "noUnsafeDeclarationMerging": "warn",
+        "useIterableCallbackReturn": "warn"
+      },
+      "complexity": {
+        // Cognitive complexity mirrors the Rust clippy.toml threshold (15):
+        // flag functions scoring over 15 as warnings. This is the Biome v2
+        // successor of the cyclomatic rule and tracks the radon grade-B
+        // boundary used for the audit. Warn until the backlog is fixed,
+        // then promote with --error-on-warnings in the lint:ts script.
+        "noExcessiveCognitiveComplexity": { "level": "warn", "options": { "maxAllowedComplexity": 15 } }
+      }
+    }
+  },
+  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } }
+}

@@ -6,6 +6,7 @@ on:
     paths:
       - "package.json"
       - "bun.lock"
+      - "biome.jsonc"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
       - "crates/iyon-tui/**"
@@ -19,6 +20,7 @@ on:
     paths:
       - "package.json"
       - "bun.lock"
+      - "biome.jsonc"
       - "packages/iyon-tui/**"
       - "packages/tui-consumer-fixture/**"
       - "crates/iyon-tui/**"
@@ -43,6 +45,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check:tui-abi
       - run: bun run typecheck
+      - run: bun run lint:ts
       - run: bun run check:tui-declarations
       - run: bun run native:stage
       - run: bun run check:ownership

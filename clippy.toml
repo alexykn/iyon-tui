@@ -1,0 +1,8 @@
+# Clippy tuning for the iyon-tui workspace.
+#
+# Cognitive complexity maps to the radon grade-B boundary used for TypeScript
+# (`noExcessiveComplexity`, max 10): flag any function whose cognitive
+# complexity exceeds 15. Rust control flow at the ABI/parsing level is
+# denser per function, hence 15 instead of 10; revisit when the audit
+# backlog is cleared.
+cognitive-complexity-threshold = 15

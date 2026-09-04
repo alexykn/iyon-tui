@@ -11,7 +11,7 @@ fmt:
     @cargo fmt --all
 
 clippy:
-    @cargo clippy --fix --all-targets --allow-dirty -- -D warnings -W clippy::pedantic
+    @sh tools/lint/clippy-gate.sh
 
 check: fmt clippy test
 

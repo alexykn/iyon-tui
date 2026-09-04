@@ -863,8 +863,7 @@ impl NativeViewRuntime {
         let root_ref = publication
             .entries
             .last()
-            .map(|entry| entry.reference)
-            .unwrap_or(0);
+            .map_or(0, |entry| entry.reference);
         let last_index = publication.entries.len().saturating_sub(1);
         self.next_native_ref = publication.next_native_ref;
         for (index, entry) in publication.entries.into_iter().enumerate() {
@@ -1291,17 +1290,13 @@ impl NativeViewRuntime {
         self.maintain_bounded();
         for index in 0..used_count as usize {
             let reference = unsafe { refs.add(index).read() };
-            let remove_slot = self
-                .slots
-                .get_mut(&reference)
-                .map(|slot| {
-                    slot.js_lease_count = slot.js_lease_count.saturating_sub(1);
-                    if slot.js_lease_count == 0 {
-                        slot.leased = None;
-                    }
-                    slot.js_lease_count == 0 && slot.weak.upgrade().is_none()
-                })
-                .unwrap_or(false);
+            let remove_slot = self.slots.get_mut(&reference).is_some_and(|slot| {
+                slot.js_lease_count = slot.js_lease_count.saturating_sub(1);
+                if slot.js_lease_count == 0 {
+                    slot.leased = None;
+                }
+                slot.js_lease_count == 0 && slot.weak.upgrade().is_none()
+            });
             if remove_slot {
                 if let Some(slot) = self.slots.remove(&reference) {
                     self.native_ref_expired_slots_removed += 1;
@@ -1424,8 +1419,7 @@ pub(super) fn runtime_environment_count() -> i64 {
     RUNTIME_HANDLES
         .get()
         .and_then(|handles| handles.lock().ok())
-        .map(|handles| handles.len() as i64)
-        .unwrap_or(0)
+        .map_or(0, |handles| handles.len() as i64)
 }
 
 pub(super) fn runtime_is_registered(pointer: usize) -> bool {
@@ -2255,7 +2249,7 @@ pub unsafe extern "Rust" fn edit_txn_commit_render_impl(
         Ok(root) => root,
         Err(error) => return record_result(runtime, error),
     };
-    if staged.is_empty() || staged.last().map(|(_, view)| view != &root).unwrap_or(true) {
+    if staged.is_empty() || staged.last().is_none_or(|(_, view)| view != &root) {
         return record_result(runtime, FAST_INVALID);
     }
     let publication = match runtime.prepare_staged_publication(staged) {

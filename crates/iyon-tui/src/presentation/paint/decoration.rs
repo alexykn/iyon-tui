@@ -91,11 +91,10 @@ fn border_style(
     let mut style = border
         .color
         .as_ref()
-        .map(|color| PhysicalStyle {
+        .map_or(inherited, |color| PhysicalStyle {
             foreground: Some(theme.resolve_color(color, context)),
             ..PhysicalStyle::default()
-        })
-        .unwrap_or(inherited);
+        });
     // Text backgrounds belong only to descendant text cells. Border cells
     // retain the backing surface background established before border paint.
     style.background = None;

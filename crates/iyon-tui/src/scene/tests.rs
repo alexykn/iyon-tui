@@ -146,9 +146,10 @@ struct CycleNode {
 
 impl Component for CycleNode {
     fn view(&self) -> View {
-        self.target
-            .map(|id| View::native_component(id.value()))
-            .unwrap_or_else(|| View::text("cycle").into_view())
+        self.target.map_or_else(
+            || View::text("cycle").into_view(),
+            |id| View::native_component(id.value()),
+        )
     }
 }
 

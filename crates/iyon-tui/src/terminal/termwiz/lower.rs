@@ -200,18 +200,8 @@ fn flush_text(changes: &mut Vec<Change>, text: &mut String, style: Option<CellAt
 
 pub(crate) fn physical_style(value: PhysicalStyle) -> CellAttributes {
     let mut attributes = CellAttributes::default();
-    attributes.set_foreground(
-        value
-            .foreground
-            .map(color)
-            .unwrap_or(ColorAttribute::Default),
-    );
-    attributes.set_background(
-        value
-            .background
-            .map(color)
-            .unwrap_or(ColorAttribute::Default),
-    );
+    attributes.set_foreground(value.foreground.map_or(ColorAttribute::Default, color));
+    attributes.set_background(value.background.map_or(ColorAttribute::Default, color));
     // Termwiz has one intensity field. Iyon's canonical styles do not rely on
     // simultaneous bold and dim; bold wins deterministically if both appear.
     attributes.set_intensity(if value.bold {

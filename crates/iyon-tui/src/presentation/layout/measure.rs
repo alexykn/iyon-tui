@@ -201,11 +201,10 @@ pub(super) fn measure_node(
         ViewKind::ComponentSlot(slot) => {
             let snapshot = overlay.component(slot.id);
             (
-                snapshot
-                    .map(|snapshot| {
-                        MeasureKey::with_component(view, snapshot.view.id(), width, intent)
-                    })
-                    .unwrap_or_else(|| MeasureKey::ordinary(view, width, intent)),
+                snapshot.map_or_else(
+                    || MeasureKey::ordinary(view, width, intent),
+                    |snapshot| MeasureKey::with_component(view, snapshot.view.id(), width, intent),
+                ),
                 snapshot.is_some_and(|snapshot| !snapshot.view.contains_component_identity()),
             )
         }
@@ -292,8 +291,15 @@ fn measure_node_uncached(
         | ViewKind::ContentHost
         | ViewKind::Column(_) => GeometryAlignment::default(),
     };
-    let geometry = state
-        .map(|state| {
+    let geometry = state.map_or_else(
+        || EffectiveGeometry {
+            width: view.width(),
+            height: view.height(),
+            decoration: view.decoration().clone(),
+            gap: base_gap,
+            alignment: base_alignment,
+        },
+        |state| {
             state.effective_geometry(
                 view.width(),
                 view.height(),
@@ -301,18 +307,13 @@ fn measure_node_uncached(
                 base_gap,
                 base_alignment,
             )
-        })
-        .unwrap_or_else(|| EffectiveGeometry {
-            width: view.width(),
-            height: view.height(),
-            decoration: view.decoration().clone(),
-            gap: base_gap,
-            alignment: base_alignment,
-        });
+        },
+    );
     let effective_decoration = geometry.decoration.clone();
-    let effective_style_states = state
-        .map(|state| state.effective_style_states(view.view_style_states()))
-        .unwrap_or_else(|| view.view_style_states().clone());
+    let effective_style_states = state.map_or_else(
+        || view.view_style_states().clone(),
+        |state| state.effective_style_states(view.view_style_states()),
+    );
     let bounds = effective_decoration.bounds;
     let width_capacity = width.min(bounds.width.normalized_max());
     let decoration = decoration_metrics_for(&effective_decoration, width_capacity);

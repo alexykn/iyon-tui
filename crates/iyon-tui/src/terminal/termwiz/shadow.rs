@@ -539,8 +539,7 @@ fn capture_line(row: &ShadowRow) -> CapturedLine {
         let width = cell
             .grapheme
             .as_deref()
-            .map(grapheme_cell_width)
-            .unwrap_or(1)
+            .map_or(1, grapheme_cell_width)
             .max(1);
         if let Some(last) = spans.last_mut()
             && last.attrs == cell.attrs

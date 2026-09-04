@@ -260,7 +260,7 @@ impl HostViewSlot {
     }
 
     pub fn revision(&self) -> u64 {
-        self.state.lock().map(|state| state.revision).unwrap_or(0)
+        self.state.lock().map_or(0, |state| state.revision)
     }
 
     pub fn set_animation(&self, frames: Vec<View>, interval: Duration) -> Result<()> {
@@ -540,8 +540,7 @@ impl Component for MountedScrollPane {
         self.0
             .state
             .lock()
-            .map(|pane| Component::view(&*pane))
-            .unwrap_or_else(|_| View::spacer(0))
+            .map_or_else(|_| View::spacer(0), |pane| Component::view(&*pane))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -581,8 +580,9 @@ impl MountedScrollPane {
             .0
             .state
             .lock()
-            .map(|mut pane| pane.handle_command(command, cx))
-            .unwrap_or(InteractionResult::Ignored)
+            .map_or(InteractionResult::Ignored, |mut pane| {
+                pane.handle_command(command, cx)
+            })
     }
 }
 
@@ -593,8 +593,7 @@ impl Component for MountedViewSlot {
         self.0
             .state
             .lock()
-            .map(|state| state.view.clone())
-            .unwrap_or_else(|_| View::spacer(0))
+            .map_or_else(|_| View::spacer(0), |state| state.view.clone())
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -734,8 +733,7 @@ impl Component for MountedTextInput {
     fn view(&self) -> View {
         self.0
             .lock()
-            .map(|input| input.view())
-            .unwrap_or_else(|_| View::spacer(0))
+            .map_or_else(|_| View::spacer(0), |input| input.view())
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -766,8 +764,9 @@ fn mounted_handle_command(
     component
         .0
         .lock()
-        .map(|mut input| TextInput::handle_command(&mut input, command, cx))
-        .unwrap_or(InteractionResult::Ignored)
+        .map_or(InteractionResult::Ignored, |mut input| {
+            TextInput::handle_command(&mut input, command, cx)
+        })
 }
 
 fn mounted_paste(
@@ -778,8 +777,9 @@ fn mounted_paste(
     component
         .0
         .lock()
-        .map(|mut input| TextInput::paste_callback(&mut input, text, cx))
-        .unwrap_or(InteractionResult::Ignored)
+        .map_or(InteractionResult::Ignored, |mut input| {
+            TextInput::paste_callback(&mut input, text, cx)
+        })
 }
 
 fn mounted_focus_changed(component: &mut MountedTextInput, focused: bool) {
@@ -1435,8 +1435,7 @@ impl TuiHost {
 
     pub fn exited(&self) -> bool {
         self.lock()
-            .map(|inner| inner.closed || inner.running.host_exited())
-            .unwrap_or(true)
+            .map_or(true, |inner| inner.closed || inner.running.host_exited())
     }
 
     pub fn poll_terminal(&self) -> Result<()> {
@@ -1584,7 +1583,7 @@ impl TuiHost {
     }
 
     pub fn is_headless(&self) -> bool {
-        self.lock().map(|inner| inner.headless).unwrap_or(true)
+        self.lock().map_or(true, |inner| inner.headless)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HostInner>> {

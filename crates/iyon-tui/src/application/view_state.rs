@@ -31,7 +31,7 @@ impl HostViewState {
     }
 
     pub fn state_id(&self) -> u64 {
-        self.record.lock().map(|record| record.id).unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.id)
     }
 
     pub fn validate_node_kind(&self, node_kind: u32) -> Result<()> {

@@ -1708,14 +1708,11 @@ fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<SourceSubscripti
 
 impl HostContentSource {
     pub fn id(&self) -> u64 {
-        self.record.lock().map(|record| record.id).unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.id)
     }
 
     pub fn generation(&self) -> u32 {
-        self.record
-            .lock()
-            .map(|record| record.generation)
-            .unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.generation)
     }
 
     pub fn environment_slot(&self) -> u32 {
@@ -1729,15 +1726,13 @@ impl HostContentSource {
     pub fn family(&self) -> ContentFamily {
         self.record
             .lock()
-            .map(|record| record.family)
-            .unwrap_or(ContentFamily::Text)
+            .map_or(ContentFamily::Text, |record| record.family)
     }
 
     pub fn kind(&self) -> TextSourceKind {
         self.record
             .lock()
-            .map(|record| record.kind)
-            .unwrap_or(TextSourceKind::Stream)
+            .map_or(TextSourceKind::Stream, |record| record.kind)
     }
 
     fn retention_compatible(&self, funnel: TextFunnelKind) -> Result<bool> {
@@ -2203,8 +2198,7 @@ impl HostContentSource {
     pub(crate) fn subscriber_count(&self) -> usize {
         self.record
             .lock()
-            .map(|record| record.subscribers.len())
-            .unwrap_or(0)
+            .map_or(0, |record| record.subscribers.len())
     }
 }
 
@@ -2950,8 +2944,7 @@ impl ContentHostRegistry {
             .ports
             .get(&port_id)
             .and_then(|port| port.lock().ok())
-            .map(|port| port.history_committed_content_rows)
-            .unwrap_or(0);
+            .map_or(0, |port| port.history_committed_content_rows);
         if committed_rows == 0 {
             return Some(Arc::clone(&projection.surface));
         }
@@ -4181,21 +4174,17 @@ pub struct HostContentPort {
 
 impl HostContentPort {
     pub fn id(&self) -> u64 {
-        self.record.lock().map(|record| record.id).unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.id)
     }
 
     pub fn generation(&self) -> u32 {
-        self.record
-            .lock()
-            .map(|record| record.generation)
-            .unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.generation)
     }
 
     pub fn family(&self) -> ContentFamily {
         self.record
             .lock()
-            .map(|record| record.family)
-            .unwrap_or(ContentFamily::Text)
+            .map_or(ContentFamily::Text, |record| record.family)
     }
 
     pub fn deactivate(&self) -> Result<WakeDisposition> {
@@ -4258,21 +4247,15 @@ pub struct HostContentConnector {
 
 impl HostContentConnector {
     pub fn id(&self) -> u64 {
-        self.record.lock().map(|record| record.id).unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.id)
     }
 
     pub fn generation(&self) -> u32 {
-        self.record
-            .lock()
-            .map(|record| record.generation)
-            .unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.generation)
     }
 
     pub fn source_id(&self) -> u64 {
-        self.record
-            .lock()
-            .map(|record| record.source.id())
-            .unwrap_or(0)
+        self.record.lock().map_or(0, |record| record.source.id())
     }
 
     pub fn activate(&self) -> Result<WakeDisposition> {

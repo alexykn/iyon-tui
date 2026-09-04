@@ -561,10 +561,7 @@ impl<T: SequenceAggregate + Clone> SeqNode<T> {
     fn height(&self) -> usize {
         match self {
             Self::Leaf { .. } => 0,
-            Self::Branch { children, .. } => children
-                .first()
-                .map(|child| child.height() + 1)
-                .unwrap_or(0),
+            Self::Branch { children, .. } => children.first().map_or(0, |child| child.height() + 1),
         }
     }
     fn flags(&self) -> u8 {

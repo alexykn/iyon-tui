@@ -232,9 +232,9 @@ impl TickScheduler {
 
     #[cfg(test)]
     pub(crate) fn next_timeout(&self, now: Instant, idle_timeout: Duration) -> Duration {
-        self.next_deadline()
-            .map(|deadline| deadline.checked_duration_since(now).unwrap_or_default())
-            .unwrap_or(idle_timeout)
+        self.next_deadline().map_or(idle_timeout, |deadline| {
+            deadline.checked_duration_since(now).unwrap_or_default()
+        })
     }
 
     pub(crate) fn tick_due_with_events(

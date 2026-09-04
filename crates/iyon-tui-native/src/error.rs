@@ -28,8 +28,10 @@ impl NativeError {
             .split_once(':')
             .map(|(code, _)| code)
             .filter(|code| is_content_code(code.trim()))
-            .map(|code| format!("ION_{}", code.trim()))
-            .unwrap_or_else(|| "ION_INTERNAL".to_owned());
+            .map_or_else(
+                || "ION_INTERNAL".to_owned(),
+                |code| format!("ION_{}", code.trim()),
+            );
         Error::new(Status::InvalidArg, format!("{code}: {message}"))
     }
 

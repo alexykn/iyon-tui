@@ -51,8 +51,7 @@ impl PhysicalRow {
         self.cells
             .iter()
             .rposition(|cell| cell.painted)
-            .map(|index| index + 1)
-            .unwrap_or(0)
+            .map_or(0, |index| index + 1)
     }
 
     pub(crate) fn cells(&self) -> &[PhysicalCell] {

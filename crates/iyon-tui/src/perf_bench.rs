@@ -273,12 +273,11 @@ fn print_record(
 fn run_view_clone_case(sha: &str) {
     let iterations = std::env::var("PERF_CLONE_ITERATIONS")
         .ok()
-        .map(|value| {
+        .map_or(100, |value| {
             value
                 .parse()
                 .expect("PERF_CLONE_ITERATIONS must be an integer")
-        })
-        .unwrap_or(100);
+        });
 
     for nodes in [100, 10_000] {
         let fixture = build_fixture(Workload::ColumnHeavy, nodes);
@@ -400,12 +399,11 @@ fn render_history(history: &History, registry: &ComponentRegistry) -> usize {
 fn run_paint_gate_case(workload: Workload, nodes: usize, sha: &str) {
     let iterations = std::env::var("PERF_PAINT_ITERATIONS")
         .ok()
-        .map(|value| {
+        .map_or(30, |value| {
             value
                 .parse()
                 .expect("PERF_PAINT_ITERATIONS must be an integer")
-        })
-        .unwrap_or(30);
+        });
     let base = build_fixture(workload, nodes);
     let shared = base.view.clone();
     let mut cache = LayoutCache::default();
@@ -487,12 +485,11 @@ fn run_paint_gate(sha: &str) {
 fn run_history_case(sha: &str) {
     let iterations = std::env::var("PERF_HISTORY_ITERATIONS")
         .ok()
-        .map(|value| {
+        .map_or(100, |value| {
             value
                 .parse()
                 .expect("PERF_HISTORY_ITERATIONS must be an integer")
-        })
-        .unwrap_or(100);
+        });
 
     let mut static_history = History::new();
     for index in 0..1_000 {

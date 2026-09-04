@@ -199,8 +199,7 @@ impl TuiEnvironment {
     pub(super) fn wake_epoch(&self) -> u64 {
         self.inner
             .lock()
-            .map(|environment| environment.wake_epoch)
-            .unwrap_or(0)
+            .map_or(0, |environment| environment.wake_epoch)
     }
 
     pub fn create_content_source(&self, kind: TextSourceKind) -> anyhow::Result<HostContentSource> {

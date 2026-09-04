@@ -75,8 +75,7 @@ impl Projector<Fragment> for ToLines {
         output_from
             .as_u64()
             .checked_sub(1)
-            .map(StreamOffset::new)
-            .unwrap_or(StreamOffset::ZERO)
+            .map_or(StreamOffset::ZERO, StreamOffset::new)
     }
 }
 

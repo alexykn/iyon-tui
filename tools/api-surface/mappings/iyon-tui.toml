@@ -16865,3 +16865,26 @@ implementation_owner = "T5"
 status = "stub"
 note = "L1-01 internal binding seam projection (unsupported)"
 
+[[records]]
+
+item_id = "iyon-tui::presentation::api::view::NativeCommonPatch"
+path = "iyon-tui::binding::NativeCommonPatch"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::NativeCommonPatch"
+typescript_module = "iyon:tui"
+typescript_export = "binding__NativeCommonPatch"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-02 final common-property assembly candidate; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::View::native_patched"
+path = "iyon-tui::binding::View::native_patched"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::View::native_patched"
+typescript_module = "iyon:tui"
+typescript_export = "binding__View__native_patched"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-02 one-final-root constructor; unsupported, no TS projection"

@@ -20,3 +20,5 @@ pub use style::{
 pub(crate) use style::{StyleFacts, StyleStates};
 pub use text::{HorizontalAlign, Text, TextSpan, WrapMode};
 pub use view::IntoView;
+#[cfg(feature = "native-host")]
+pub use view::NativeCommonPatch;

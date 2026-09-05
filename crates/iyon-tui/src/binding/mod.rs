@@ -36,6 +36,10 @@ pub use crate::{
     History, HistoryLayout, Key, KeyStroke, Modifiers, Output, TextInput, TextPart, TextRole,
     TextSelector,
 };
+// Final common-property assembly. The candidate struct travels from native
+// ingress to the one-root constructor without exposing size-rule vocabulary.
+#[cfg(feature = "native-host")]
+pub use crate::NativeCommonPatch;
 
 // Native-host seam. These mirror the `native-host` gates on the crate root:
 // the native crate always enables the feature, while featureless core builds

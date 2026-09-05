@@ -1185,6 +1185,7 @@ iyon-tui::presentation::api::text::WrapMode::WordThenGrapheme
 iyon-tui::presentation::api::view::IntoView
 iyon-tui::presentation::api::view::IntoView
 iyon-tui::presentation::api::view::IntoView::into_view
+iyon-tui::presentation::api::view::NativeCommonPatch
 iyon-tui::presentation::ir::RetainedPathStep
 iyon-tui::presentation::ir::View
 iyon-tui::presentation::ir::View
@@ -1214,6 +1215,7 @@ iyon-tui::presentation::ir::View::max_width
 iyon-tui::presentation::ir::View::min_height
 iyon-tui::presentation::ir::View::min_width
 iyon-tui::presentation::ir::View::native_component
+iyon-tui::presentation::ir::View::native_patched
 iyon-tui::presentation::ir::View::padding
 iyon-tui::presentation::ir::View::reversed
 iyon-tui::presentation::ir::View::spacer

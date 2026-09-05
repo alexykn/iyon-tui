@@ -722,18 +722,48 @@ pub(crate) struct ViewNodeParts {
     pub(crate) decoration: Decoration,
     pub(crate) style_states: StyleStates,
     pub(crate) style_facts: StyleFacts,
+    pub(crate) state_attachment: Option<u64>,
+    pub(crate) content_attachment: Option<u64>,
     pub(crate) kind: ViewKind,
 }
 
+impl ViewNodeParts {
+    /// Destructures a base view into candidate parts. Payloads stay shared
+    /// behind their existing allocations; only the outer node identity is
+    /// rebuilt by the final constructor. Attachments travel with the parts
+    /// so a patch never drops them.
+    pub(crate) fn from_view(view: &View) -> Self {
+        let inner = &view.inner;
+        Self {
+            width: inner.width,
+            height: inner.height,
+            decoration: inner.decoration.clone(),
+            style_states: inner.style_states.clone(),
+            style_facts: inner.style_facts.clone(),
+            state_attachment: inner.state_attachment,
+            content_attachment: inner.content_attachment,
+            kind: inner.kind.clone(),
+        }
+    }
+}
+
 impl View {
+    /// The one final-node construction function: canonical identity
+    /// allocation with aggregate and attachment flags computed once from the
+    /// finished parts. Callers assemble complete parts first; no modifier
+    /// chain may follow a `from_node` call on a hot ingress path.
     pub(crate) fn from_node(parts: ViewNodeParts) -> Self {
         perf::inc(Counter::ViewNodesConstructedRust);
         Self {
             inner: Arc::new(ViewNode {
                 id: next_view_id(),
-                flags: ViewNode::compute_flags(&parts.kind),
-                state_attachment: None,
-                content_attachment: None,
+                flags: ViewNode::flags_for(
+                    &parts.kind,
+                    parts.state_attachment,
+                    parts.content_attachment,
+                ),
+                state_attachment: parts.state_attachment,
+                content_attachment: parts.content_attachment,
                 width: parts.width,
                 height: parts.height,
                 decoration: parts.decoration,
@@ -851,7 +881,8 @@ impl View {
         }
         let mut targets = Vec::new();
         let mut active = HashSet::new();
-        self.collect_state_attachment_targets(&mut targets, &mut active)?;
+        let mut seen = HashSet::new();
+        self.collect_state_attachment_targets(&mut targets, &mut active, &mut seen)?;
         Ok(targets)
     }
 
@@ -860,6 +891,7 @@ impl View {
         &self,
         targets: &mut Vec<(u64, crate::retained_state::StateNodeKind)>,
         active: &mut HashSet<ViewId>,
+        seen: &mut HashSet<u64>,
     ) -> Result<(), String> {
         if !self.inner.flags.contains_state_attachment() {
             return Ok(());
@@ -868,7 +900,11 @@ impl View {
             return Err("cyclic semantic View graph".to_owned());
         }
         if let Some(state_id) = self.state_attachment_id() {
-            if targets.iter().any(|(id, _)| *id == state_id) {
+            // Per-candidate uniqueness: one hash lookup per attachment
+            // instead of a scan of every target collected so far. Repeated
+            // semantic subtrees still expand into separate occurrence uses;
+            // only the attachment identity must be unique.
+            if !seen.insert(state_id) {
                 return Err("duplicate ViewState attachment".to_owned());
             }
             targets.push((
@@ -885,47 +921,47 @@ impl View {
                 for child in column.children.iter() {
                     child
                         .view
-                        .collect_state_attachment_targets(targets, active)?;
+                        .collect_state_attachment_targets(targets, active, seen)?;
                 }
             }
             ViewKind::Row(row) => {
                 for child in row.children.iter() {
                     child
                         .view
-                        .collect_state_attachment_targets(targets, active)?;
+                        .collect_state_attachment_targets(targets, active, seen)?;
                 }
             }
             ViewKind::Grid(grid) => {
                 for cell in grid.cells.iter() {
                     cell.view
-                        .collect_state_attachment_targets(targets, active)?;
+                        .collect_state_attachment_targets(targets, active, seen)?;
                 }
             }
             ViewKind::Hanging(hanging) => {
                 hanging
                     .prefix
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
                 hanging
                     .continuation_prefix
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
                 hanging
                     .body
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
             }
             ViewKind::Container(container) => {
                 container
                     .child
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
             }
             ViewKind::ClampRows(clamp) => {
                 clamp
                     .child
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
             }
             ViewKind::RowViewport(viewport) => {
                 viewport
                     .child
-                    .collect_state_attachment_targets(targets, active)?;
+                    .collect_state_attachment_targets(targets, active, seen)?;
             }
         }
         active.remove(&self.id());
@@ -948,13 +984,8 @@ impl View {
     pub(crate) fn map_node(self, update: impl FnOnce(&mut ViewNode)) -> Self {
         let mut next = self.inner.shallow_clone();
         update(&mut next);
-        next.flags = ViewNode::compute_flags(&next.kind);
-        if next.state_attachment.is_some() {
-            next.flags = next.flags.with_state_attachment();
-        }
-        if next.content_attachment.is_some() {
-            next.flags = next.flags.with_content_attachment();
-        }
+        next.flags =
+            ViewNode::flags_for(&next.kind, next.state_attachment, next.content_attachment);
         next.id = next_view_id();
         Self {
             inner: Arc::new(next),
@@ -989,32 +1020,33 @@ impl View {
         gap: u16,
         children: Vec<(u32, View)>,
     ) -> Result<Self, String> {
-        let tracks = children
-            .into_iter()
-            .map(|(track_word, view)| {
-                let track = decode_native_track_word(track_word)?;
-                Ok((track, view))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        // L1-02: decode and move straight into the final child
+        // representation. No intermediate (track, view) vector followed by a
+        // second mapping pass; a bad track word still fails before any root
+        // is allocated because the loop below builds only locals.
         let kind = if horizontal {
+            let mut built = Vec::with_capacity(children.len());
+            for (track_word, view) in children {
+                built.push(RowChild {
+                    track: decode_native_track_word(track_word)?,
+                    view,
+                });
+            }
             ViewKind::Row(Arc::new(RowView {
-                children: PersistentSeq::from_vec(
-                    tracks
-                        .into_iter()
-                        .map(|(track, view)| RowChild { track, view })
-                        .collect(),
-                ),
+                children: PersistentSeq::from_vec(built),
                 gap,
                 vertical_align: VerticalAlign::Top,
             }))
         } else {
+            let mut built = Vec::with_capacity(children.len());
+            for (track_word, view) in children {
+                built.push(ColumnChild {
+                    track: decode_native_track_word(track_word)?,
+                    view,
+                });
+            }
             ViewKind::Column(Arc::new(ColumnView {
-                children: PersistentSeq::from_vec(
-                    tracks
-                        .into_iter()
-                        .map(|(track, view)| ColumnChild { track, view })
-                        .collect(),
-                ),
+                children: PersistentSeq::from_vec(built),
                 gap,
             }))
         };
@@ -1089,19 +1121,22 @@ impl View {
         remove_count: usize,
         inserted: Vec<(u32, View)>,
     ) -> Result<Self, String> {
-        let tracks = inserted
-            .into_iter()
-            .map(|(track_word, view)| Ok((decode_native_track_word(track_word)?, view)))
-            .collect::<Result<Vec<_>, String>>()?;
+        // L1-02: decode and move straight into the final child
+        // representation, preserving the existing validation order (track
+        // words before splice bounds). No second mapping pass.
+        let inserted_len = inserted.len();
         match self.kind() {
             ViewKind::Row(row) => {
+                let mut values = Vec::with_capacity(inserted_len);
+                for (track_word, view) in inserted {
+                    values.push(RowChild {
+                        track: decode_native_track_word(track_word)?,
+                        view,
+                    });
+                }
                 if index > row.children.len() || remove_count > row.children.len() - index {
                     return Err("row axis splice range is out of bounds".to_owned());
                 }
-                let values = tracks
-                    .into_iter()
-                    .map(|(track, view)| RowChild { track, view })
-                    .collect();
                 let children = row.children.splice(index, remove_count, values);
                 Ok(self.map_node(|node| {
                     let ViewKind::Row(row) = &mut node.kind else {
@@ -1111,13 +1146,16 @@ impl View {
                 }))
             }
             ViewKind::Column(column) => {
+                let mut values = Vec::with_capacity(inserted_len);
+                for (track_word, view) in inserted {
+                    values.push(ColumnChild {
+                        track: decode_native_track_word(track_word)?,
+                        view,
+                    });
+                }
                 if index > column.children.len() || remove_count > column.children.len() - index {
                     return Err("column axis splice range is out of bounds".to_owned());
                 }
-                let values = tracks
-                    .into_iter()
-                    .map(|(track, view)| ColumnChild { track, view })
-                    .collect();
                 let children = column.children.splice(index, remove_count, values);
                 Ok(self.map_node(|node| {
                     let ViewKind::Column(column) = &mut node.kind else {
@@ -1721,6 +1759,24 @@ impl PartialEq for ViewNode {
 }
 
 impl ViewNode {
+    /// Aggregate child flags plus attachment presence, computed once per
+    /// final root. Shared by the final constructor and the retained
+    /// single-field patch path so both agree on every flag bit.
+    fn flags_for(
+        kind: &ViewKind,
+        state_attachment: Option<u64>,
+        content_attachment: Option<u64>,
+    ) -> ViewFlags {
+        let mut flags = Self::compute_flags(kind);
+        if state_attachment.is_some() {
+            flags = flags.with_state_attachment();
+        }
+        if content_attachment.is_some() {
+            flags = flags.with_content_attachment();
+        }
+        flags
+    }
+
     fn compute_flags(kind: &ViewKind) -> ViewFlags {
         match kind {
             ViewKind::ComponentSlot(_) => ViewFlags::with_component_slot(),
@@ -2211,5 +2267,109 @@ mod tests {
         drop(upgraded);
         drop(view);
         assert!(weak.upgrade().is_none());
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn final_common_patch_builds_one_root_equal_to_modifier_chain() {
+        use crate::presentation::api::NativeCommonPatch;
+        use crate::{ColorSpec, Insets};
+
+        let child = View::text("leaf").into_view();
+        let patch = NativeCommonPatch {
+            padding: Some(Insets::new(1, 2, 3, 4)),
+            foreground: Some(ColorSpec::ansi(6)),
+            width_fill: Some(true),
+            min_width: Some(10),
+            style_states: vec![("text-style".into(), "bold".into())],
+            ..Default::default()
+        };
+        let assembled = View::native_patched(child.clone(), &patch);
+        let chained = child
+            .clone()
+            .padding(Insets::new(1, 2, 3, 4))
+            .foreground(ColorSpec::ansi(6))
+            .fill_width()
+            .min_width(10)
+            .style_state("text-style", "bold");
+        assert!(
+            assembled.inner.semantic_eq(&chained.inner),
+            "final assembly must equal the modifier chain it replaces"
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            let _guard = crate::perf::test_lock();
+            crate::perf::reset();
+            let _ = View::native_patched(child.clone(), &patch);
+            assert_eq!(
+                crate::perf::snapshot().value(crate::perf::Counter::ViewNodesConstructedRust),
+                1,
+                "one final root per assembly, not one per field"
+            );
+        }
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn final_patch_preserves_child_flags_attachments_and_identity() {
+        use crate::Insets;
+        use crate::presentation::api::NativeCommonPatch;
+
+        let leaf = View::native_content_host(7).expect("valid port must attach");
+        let axis =
+            View::native_axis_from_children(false, 0, vec![(0, leaf.clone())]).expect("valid axis");
+        assert!(axis.flags().contains_content_attachment());
+        let patched = View::native_patched(
+            axis,
+            &NativeCommonPatch {
+                padding: Some(Insets::new(1, 1, 1, 1)),
+                ..Default::default()
+            },
+        );
+        assert!(
+            patched.flags().contains_content_attachment(),
+            "patching must not drop attachment flags"
+        );
+        let ViewKind::Column(column) = patched.kind() else {
+            panic!("patched axis must stay a column");
+        };
+        let kept = column
+            .children
+            .get(0)
+            .expect("patched axis keeps its child");
+        assert!(
+            View::ptr_eq(&kept.view, &leaf),
+            "patching must share the child payload, not rebuild it"
+        );
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn duplicate_state_attachment_still_rejected_once() {
+        let first = View::text("a")
+            .into_view()
+            .native_with_state_attachment(9)
+            .expect("first attachment is unique");
+        let second = View::text("b")
+            .into_view()
+            .native_with_state_attachment(9)
+            .expect("construction itself does not dedupe");
+        let axis = View::native_axis_from_children(false, 0, vec![(0, first), (0, second)])
+            .expect("axis assembly does not dedupe");
+        assert_eq!(
+            axis.native_state_attachment_targets().unwrap_err(),
+            "duplicate ViewState attachment",
+            "per-candidate uniqueness must report the same rejection"
+        );
+        let distinct = View::text("c")
+            .into_view()
+            .native_with_state_attachment(10)
+            .expect("distinct attachment is unique");
+        let ok = View::native_axis_from_children(false, 0, vec![(0, distinct)])
+            .expect("axis assembly does not dedupe");
+        assert_eq!(
+            ok.native_state_attachment_targets().expect("unique").len(),
+            1
+        );
     }
 }

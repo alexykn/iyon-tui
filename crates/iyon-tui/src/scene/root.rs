@@ -350,6 +350,8 @@ fn root_view(history: Option<View>, body: View) -> View {
         decoration: Default::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
+        state_attachment: None,
+        content_attachment: None,
         kind: ViewKind::Column(Arc::new(ColumnView {
             children: PersistentSeq::from_vec(children),
             gap: 0,

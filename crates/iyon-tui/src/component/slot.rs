@@ -15,6 +15,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::ComponentSlot(ComponentSlotNode { id: handle.id() }),
         })
     }
@@ -29,6 +31,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::ComponentSlot(crate::presentation::ir::ComponentSlotNode {
                 id: ComponentId::from_raw(raw_id),
             }),

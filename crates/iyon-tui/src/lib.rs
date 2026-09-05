@@ -224,6 +224,9 @@ pub use scene::Scene;
 pub use scroll::ScrollPane;
 pub use theme::Theme;
 
+#[cfg(feature = "native-host")]
+#[doc(hidden)]
+pub use presentation::api::NativeCommonPatch;
 pub use presentation::api::{
     AnsiColor, BorderEdges, BorderGlyphError, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec,
     Grid, GridCellSpec, GridRow, GridTrack, Horizontal, HorizontalAlign, Insets, IntoView,

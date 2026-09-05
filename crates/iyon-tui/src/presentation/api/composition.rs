@@ -449,6 +449,8 @@ mod tests {
             decoration: Default::default(),
             style_states: Default::default(),
             style_facts: Default::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::Row(Arc::new(RowView {
                 children: vec![
                     RowChild::content(View::text("a").into_view()),

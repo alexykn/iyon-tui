@@ -33,6 +33,8 @@ fn row_view(children: Vec<RowChild>, gap: u16) -> View {
         decoration: Decoration::default(),
         style_states: Default::default(),
         style_facts: Default::default(),
+        state_attachment: None,
+        content_attachment: None,
         kind: crate::presentation::ir::ViewKind::Row(Arc::new(crate::presentation::ir::RowView {
             children: crate::presentation::ir::PersistentSeq::from_vec(children),
             gap,
@@ -50,6 +52,8 @@ fn box_view(child: View, decoration: Decoration) -> View {
         decoration,
         style_states: Default::default(),
         style_facts: Default::default(),
+        state_attachment: None,
+        content_attachment: None,
         kind: crate::presentation::ir::ViewKind::Container(Arc::new(
             crate::presentation::ir::ContainerNode { child },
         )),

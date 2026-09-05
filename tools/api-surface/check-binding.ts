@@ -22,7 +22,8 @@ const BLESSED_BINDING = new Set([
   "HostContentFunnel", "HostContentPort", "HostContentSource", "HostHistory",
   "HostScrollPane", "HostTextInput", "HostViewSlot", "HostViewState",
   "Insets", "IntoView", "Key", "KeyStroke", "LanguageId", "Modifiers",
-  "Output", "OverflowIndicator", "Renderer", "RetainedPathStep", "SemanticTag",
+  "NativeCommonPatch", "Output", "OverflowIndicator", "Renderer",
+  "RetainedPathStep", "SemanticTag", "SmoothConfig",
   "StyleRef", "StyleSelector", "StyleSpec", "TextAttribute", "TextFunnelKind",
   "TextInput", "TextOrigin", "TextPart", "TextRole", "TextSelector",
   "TextSourceKind", "TextSpan", "TextWrapMode", "Theme", "ThemeColor",
@@ -64,12 +65,18 @@ else pass("binding-seam", "all native core imports go through iyon_tui::binding"
 const bindingSrc = readFileSync(BINDING, "utf8").replace(/\/\/[^\n]*/g, "");
 const exported = new Set<string>();
 for (const stmt of bindingSrc.matchAll(/pub use [^;]+;/g)) {
-  const inner = /::\{([^}]*)\}/.exec(stmt[0]);
-  const names = inner?.[1]?.split(",") ?? [];
-  for (const name of names) {
-    const trimmed = name.trim();
-    if (trimmed) exported.add(trimmed);
+  const text = stmt[0];
+  const inner = /::\{([^}]*)\}/.exec(text);
+  if (inner) {
+    for (const name of (inner[1] ?? "").split(",")) {
+      const trimmed = name.trim();
+      if (trimmed) exported.add(trimmed);
+    }
+    continue;
   }
+  // Single-name re-exports (`pub use crate::SmoothConfig;`).
+  const single = /pub use [\w:]+::(\w+)\s*;/.exec(text);
+  if (single?.[1]) exported.add(single[1]);
 }
 const added = [...exported].filter((n) => !BLESSED_BINDING.has(n)).sort();
 const removed = [...BLESSED_BINDING].filter((n) => !exported.has(n)).sort();

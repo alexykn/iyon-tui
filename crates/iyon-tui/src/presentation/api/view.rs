@@ -16,6 +16,29 @@ use crate::presentation::ir::{
     PersistentSeq, RowView, View, ViewKind, ViewNodeParts, WidthRule,
 };
 
+/// Validated common-property candidate assembled by native ingress and
+/// applied in one final root by [`View::native_patched`]. Every field is
+/// optional: `None` keeps the base value. `width_fill`/`height_fill` map
+/// `Some(true)` to `Fill` and `Some(false)` to `Fit`; size-rule vocabulary
+/// itself stays inside the core.
+#[cfg(feature = "native-host")]
+#[derive(Clone, Debug, Default)]
+#[doc(hidden)]
+pub struct NativeCommonPatch {
+    pub padding: Option<Insets>,
+    pub background: Option<ColorSpec>,
+    pub foreground: Option<ColorSpec>,
+    pub border: Option<BorderSpec>,
+    pub style: Option<StyleRef>,
+    pub style_states: Vec<(StyleStateKey, StyleStateValue)>,
+    pub width_fill: Option<bool>,
+    pub height_fill: Option<bool>,
+    pub min_width: Option<u16>,
+    pub max_width: Option<u16>,
+    pub min_height: Option<u16>,
+    pub max_height: Option<u16>,
+}
+
 impl View {
     pub(crate) fn new_kind(kind: ViewKind) -> Self {
         Self::from_node(ViewNodeParts {
@@ -24,6 +47,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind,
         })
     }
@@ -37,6 +62,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: make_kind(self),
         })
     }
@@ -149,6 +176,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::RowViewport(Arc::new(crate::presentation::ir::RowViewportView {
                 child,
                 skip_rows,
@@ -173,6 +202,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::RowViewport(Arc::new(crate::presentation::ir::RowViewportView {
                 child,
                 skip_rows,
@@ -190,6 +221,8 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
             kind: ViewKind::RowViewport(Arc::new(crate::presentation::ir::RowViewportView {
                 child,
                 skip_rows: 0,
@@ -219,11 +252,25 @@ impl View {
 
     /// Creates the native side of a retained ContentHost attachment. The
     /// public TypeScript semantic node carries a backend-neutral HandleId;
-    /// structural decoding resolves it to this host-local identity.
+    /// structural decoding resolves it to this host-local identity. The
+    /// attachment is part of the single final root: no intermediate node is
+    /// allocated just to attach the port identity.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
     pub fn native_content_host(port_id: u64) -> Result<Self, String> {
-        View::new_kind(ViewKind::ContentHost).native_with_content_attachment(port_id)
+        if port_id == 0 {
+            return Err("ContentPort identity must be positive".to_owned());
+        }
+        Ok(Self::from_node(ViewNodeParts {
+            width: WidthRule::Fit,
+            height: HeightRule::Fit,
+            decoration: Decoration::default(),
+            style_states: StyleStates::default(),
+            style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: Some(port_id),
+            kind: ViewKind::ContentHost,
+        }))
     }
 
     /// Assigns one application-owned semantic styling dimension to this View
@@ -387,6 +434,67 @@ impl View {
     #[must_use]
     pub fn max_height(self, height: u16) -> Self {
         self.map_node(|node| node.decoration.bounds.height.max = height)
+    }
+
+    /// Assembles one final root from a base plus common overrides, applying
+    /// the §6.3 precedence order. Native ingress decodes into this candidate
+    /// instead of chaining one-root-per-field modifiers.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_patched(base: View, patch: &NativeCommonPatch) -> Self {
+        let mut parts = ViewNodeParts::from_view(&base);
+        if let Some(padding) = patch.padding {
+            parts.decoration.padding = padding;
+        }
+        if let Some(background) = &patch.background {
+            parts.decoration.surface_background = Some(background.clone());
+        }
+        if let Some(foreground) = &patch.foreground {
+            parts
+                .decoration
+                .text_style
+                .overlay(&StyleSpec::new().foreground(foreground.clone()));
+        }
+        if let Some(border) = &patch.border {
+            parts.decoration.border = Some(border.clone());
+        }
+        if let Some(style) = &patch.style {
+            if style.theme.is_some() {
+                parts.decoration.text_style = style.clone();
+            } else {
+                parts.decoration.text_style.overlay(&style.local);
+            }
+        }
+        for (key, value) in &patch.style_states {
+            parts.style_states.set(key.clone(), value.clone());
+        }
+        if let Some(fill) = patch.width_fill {
+            parts.width = if fill {
+                WidthRule::Fill
+            } else {
+                WidthRule::Fit
+            };
+        }
+        if let Some(fill) = patch.height_fill {
+            parts.height = if fill {
+                HeightRule::Fill
+            } else {
+                HeightRule::Fit
+            };
+        }
+        if let Some(min) = patch.min_width {
+            parts.decoration.bounds.width.min = min;
+        }
+        if let Some(max) = patch.max_width {
+            parts.decoration.bounds.width.max = max;
+        }
+        if let Some(min) = patch.min_height {
+            parts.decoration.bounds.height.min = min;
+        }
+        if let Some(max) = patch.max_height {
+            parts.decoration.bounds.height.max = max;
+        }
+        Self::from_node(parts)
     }
 
     /// Applies text layout metadata while retaining the existing text payload.

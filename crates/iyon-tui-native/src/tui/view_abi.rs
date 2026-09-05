@@ -3,8 +3,9 @@ use crate::NativeError;
 use iyon_tui::binding::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
     DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
-    GridTrack, HorizontalAlign, Insets, IntoView, OverflowIndicator, Renderer, RetainedPathStep,
-    StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView, WrapMode,
+    GridTrack, HorizontalAlign, Insets, IntoView, NativeCommonPatch, OverflowIndicator, Renderer,
+    RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView,
+    WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -2417,9 +2418,12 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
     let Ok((base_view, _)) = runtime.resolve_ref(base) else {
         return record_base_cache_miss(runtime);
     };
-    let mut patched = base_view;
+    // L1-02: decode every masked value into a local candidate first, then
+    // assemble exactly one final root. Validation failures return before any
+    // root is allocated, so malformed patches publish nothing.
+    let mut patch = NativeCommonPatch::default();
     if mask & PATCH_PADDING != 0 {
-        patched = patched.padding(Insets::new(
+        patch.padding = Some(Insets::new(
             (padding_tr & 0xffff) as u16,
             (padding_tr >> 16) as u16,
             (padding_bl & 0xffff) as u16,
@@ -2427,43 +2431,44 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
         ));
     }
     if mask & PATCH_WIDTH != 0 {
-        patched = match width_rule {
-            1 => patched.fit_width(),
-            2 => patched.fill_width(),
+        patch.width_fill = Some(match width_rule {
+            1 => false,
+            2 => true,
             _ => return FAST_INVALID,
-        };
+        });
     }
     if mask & PATCH_HEIGHT != 0 {
-        patched = match height_rule {
-            1 => patched.fit_height(),
-            2 => patched.fill_height(),
+        patch.height_fill = Some(match height_rule {
+            1 => false,
+            2 => true,
             _ => return FAST_INVALID,
-        };
+        });
     }
     if mask & PATCH_MIN_WIDTH != 0 {
         let Ok(value) = u16::try_from(min_width) else {
             return FAST_INVALID;
         };
-        patched = patched.min_width(value);
+        patch.min_width = Some(value);
     }
     if mask & PATCH_MAX_WIDTH != 0 {
         let Ok(value) = u16::try_from(max_width) else {
             return FAST_INVALID;
         };
-        patched = patched.max_width(value);
+        patch.max_width = Some(value);
     }
     if mask & PATCH_MIN_HEIGHT != 0 {
         let Ok(value) = u16::try_from(min_height) else {
             return FAST_INVALID;
         };
-        patched = patched.min_height(value);
+        patch.min_height = Some(value);
     }
     if mask & PATCH_MAX_HEIGHT != 0 {
         let Ok(value) = u16::try_from(max_height) else {
             return FAST_INVALID;
         };
-        patched = patched.max_height(value);
+        patch.max_height = Some(value);
     }
+    let patched = View::native_patched(base_view, &patch);
     let result = match runtime.publish(node_id, patched) {
         Ok(reference) => reference,
         Err(error) => error,
@@ -3342,23 +3347,24 @@ fn parse_and_build_decorated(
     // The glyph trailer is parsed before the style states so the border can
     // apply in decoder order below; glyph bytes live after the state bytes
     // but offsets are absolute, so position in the stream is irrelevant.
+    // Glyphs decode straight into the final eight slots: no temporary vector
+    // followed by another construction copy.
     let custom_glyphs = if mask & MASK_GLYPHS != 0 {
         let glyph_count = next_word()?;
         if glyph_count != 8 {
             return Err(FAST_INVALID);
         }
-        let mut values = Vec::with_capacity(8);
-        for _ in 0..8 {
+        let mut values: [String; 8] = Default::default();
+        for slot in &mut values {
             let glyph_offset = next_word()? as usize;
             let glyph_length = next_word()? as usize;
             let glyph_end = glyph_offset.checked_add(glyph_length).ok_or(FAST_INVALID)?;
             if glyph_end > bytes.len() {
                 return Err(FAST_INVALID);
             }
-            let glyph = str::from_utf8(&bytes[glyph_offset..glyph_end])
+            *slot = str::from_utf8(&bytes[glyph_offset..glyph_end])
                 .map(str::to_owned)
                 .map_err(|_| FAST_INVALID)?;
-            values.push(glyph);
         }
         Some(
             BorderGlyphs::new(
@@ -3376,9 +3382,14 @@ fn parse_and_build_decorated(
     } else {
         None
     };
-    let mut view = child;
+    // L1-02: decode every masked value into a local candidate in the exact
+    // §6.3 precedence order, then assemble one final root. The child base,
+    // padding, background/foreground, border (style or glyph replacement,
+    // then edges and color), sparse style overlay, style-state entries, and
+    // width/height with min/max bounds apply in decoder order below.
+    let mut patch = NativeCommonPatch::default();
     if mask & MASK_PADDING != 0 {
-        view = view.padding(Insets::new(
+        patch.padding = Some(Insets::new(
             half(padding_top_right)?,
             (padding_top_right >> 16) as u16,
             half(padding_bottom_left)?,
@@ -3386,12 +3397,12 @@ fn parse_and_build_decorated(
         ));
     }
     if mask & MASK_BACKGROUND != 0 && background_atom != 0 {
-        view = view.background(parse_color_atom(
+        patch.background = Some(parse_color_atom(
             runtime.style_atom_value(background_atom)?,
         )?);
     }
     if mask & MASK_FOREGROUND != 0 && foreground_atom != 0 {
-        view = view.foreground(parse_color_atom(
+        patch.foreground = Some(parse_color_atom(
             runtime.style_atom_value(foreground_atom)?,
         )?);
     }
@@ -3418,13 +3429,12 @@ fn parse_and_build_decorated(
                 runtime.style_atom_value(border_color_atom)?,
             )?);
         }
-        view = view.border(spec);
+        patch.border = Some(spec);
     }
     // The style always applies: ref 0 resolves to the default StyleRef, which
     // overlays nothing — matching the direct materializer's unconditional `.style()`
     // over the (possibly empty) style node.
-    let style = runtime.style_for_ref(style_ref)?;
-    view = view.style(style);
+    patch.style = Some(runtime.style_for_ref(style_ref)?);
     for _ in 0..state_count {
         let key_offset = next_word()? as usize;
         let key_length = next_word()? as usize;
@@ -3437,39 +3447,39 @@ fn parse_and_build_decorated(
         }
         let key = str::from_utf8(&bytes[key_offset..key_end]).map_err(|_| FAST_INVALID)?;
         let value = str::from_utf8(&bytes[value_offset..value_end]).map_err(|_| FAST_INVALID)?;
-        view = view.style_state(key, value);
+        patch.style_states.push((key.into(), value.into()));
     }
     if mask & MASK_WIDTH != 0 {
-        view = match width_height & 0xffff {
-            1 => view.fit_width(),
-            2 => view.fill_width(),
+        patch.width_fill = Some(match width_height & 0xffff {
+            1 => false,
+            2 => true,
             _ => return Err(FAST_INVALID),
-        };
+        });
     }
     if mask & MASK_HEIGHT != 0 {
         let rule = (width_height >> 16) & 0xffff;
-        view = match rule {
-            1 => view.fit_height(),
-            2 => view.fill_height(),
+        patch.height_fill = Some(match rule {
+            1 => false,
+            2 => true,
             _ => return Err(FAST_INVALID),
-        };
+        });
     }
     if mask & MASK_MIN_WIDTH != 0 {
-        view = view.min_width(half(min_max_width)?);
+        patch.min_width = Some(half(min_max_width)?);
     }
     if mask & MASK_MAX_WIDTH != 0 {
-        view = view.max_width((min_max_width >> 16) as u16);
+        patch.max_width = Some((min_max_width >> 16) as u16);
     }
     if mask & MASK_MIN_HEIGHT != 0 {
-        view = view.min_height(half(min_max_height)?);
+        patch.min_height = Some(half(min_max_height)?);
     }
     if mask & MASK_MAX_HEIGHT != 0 {
-        view = view.max_height((min_max_height >> 16) as u16);
+        patch.max_height = Some((min_max_height >> 16) as u16);
     }
     if cursor != words.len() {
         return Err(FAST_INVALID);
     }
-    Ok(view)
+    Ok(View::native_patched(child, &patch))
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]

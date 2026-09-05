@@ -71,11 +71,11 @@ impl Surface {
         start..start + width
     }
 
-    fn row_cells(&self, y: u16) -> &[PhysicalCell] {
+    pub(crate) fn row_cells(&self, y: u16) -> &[PhysicalCell] {
         &self.cells[self.row_range(y)]
     }
 
-    fn row_cells_mut(&mut self, y: u16) -> &mut [PhysicalCell] {
+    pub(crate) fn row_cells_mut(&mut self, y: u16) -> &mut [PhysicalCell] {
         let range = self.row_range(y);
         &mut self.cells[range]
     }

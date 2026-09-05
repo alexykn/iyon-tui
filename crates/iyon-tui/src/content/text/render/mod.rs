@@ -20,15 +20,29 @@ pub use policy::{
     TextRenderPolicy,
 };
 
+pub(crate) use block::BlockLoweringCache;
+
+use std::sync::{Arc, Mutex};
+
 use super::{Block, BlockKind, ListMarker, TextContent, text_style_ref};
 use crate::content::Renderer;
 use crate::{Insets, IntoView, View};
 use identity::RenderContext;
 
 /// The one generic renderer for the frozen text IR.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TextRenderer {
     policy: TextRenderPolicy,
+    cache: Arc<Mutex<BlockLoweringCache>>,
+}
+
+impl Default for TextRenderer {
+    fn default() -> Self {
+        Self {
+            policy: TextRenderPolicy::default(),
+            cache: Arc::new(Mutex::new(BlockLoweringCache::new())),
+        }
+    }
 }
 
 impl TextRenderer {
@@ -39,7 +53,10 @@ impl TextRenderer {
 
     #[must_use]
     pub fn with_policy(policy: TextRenderPolicy) -> Self {
-        Self { policy }
+        Self {
+            policy,
+            cache: Arc::new(Mutex::new(BlockLoweringCache::new())),
+        }
     }
 
     #[must_use]
@@ -51,29 +68,14 @@ impl TextRenderer {
     pub fn render_block(&self, block: &Block) -> View {
         self.lower_block(block, &RenderContext::default())
     }
-}
 
-impl Renderer<TextContent> for TextRenderer {
-    fn render(&self, input: &TextContent) -> View {
-        match input {
-            TextContent::Raw(raw) => View::text(raw.text()).style(text_style_ref()).into_view(),
-            TextContent::Block(block) => self.lower_block(block, &RenderContext::default()),
-        }
-    }
-}
-
-impl Renderer<Block> for TextRenderer {
-    fn render(&self, input: &Block) -> View {
-        self.lower_block(input, &RenderContext::default())
-    }
-}
-
-impl Renderer<[TextContent]> for TextRenderer {
-    fn render(&self, input: &[TextContent]) -> View {
-        // L1-04: moved children plus the direct column factory; the
-        // list-aware gap policy below is untouched.
-        let mut children = Vec::with_capacity(input.len());
-        let mut previous = None;
+    pub(crate) fn lower_semantic_iter<'a, I>(&self, input: I) -> View
+    where
+        I: IntoIterator<Item = &'a TextContent>,
+    {
+        let mut children = Vec::new();
+        let mut previous: Option<&'a TextContent> = None;
+        let context = RenderContext::default();
         for content in input {
             let gap = previous
                 .and_then(list_of)
@@ -97,10 +99,37 @@ impl Renderer<[TextContent]> for TextRenderer {
                         }
                     },
                 );
-            children.push(Renderer::render(self, content).padding(Insets::new(gap, 0, 0, 0)));
+            let child = match content {
+                TextContent::Raw(raw) => {
+                    View::text(raw.text()).style(text_style_ref()).into_view()
+                }
+                TextContent::Block(block) => self.lower_block(block, &context),
+            };
+            children.push(child.padding(Insets::new(gap, 0, 0, 0)));
             previous = Some(content);
         }
         View::column_from_views(children, 0)
+    }
+}
+
+impl Renderer<TextContent> for TextRenderer {
+    fn render(&self, input: &TextContent) -> View {
+        match input {
+            TextContent::Raw(raw) => View::text(raw.text()).style(text_style_ref()).into_view(),
+            TextContent::Block(block) => self.lower_block(block, &RenderContext::default()),
+        }
+    }
+}
+
+impl Renderer<Block> for TextRenderer {
+    fn render(&self, input: &Block) -> View {
+        self.lower_block(input, &RenderContext::default())
+    }
+}
+
+impl Renderer<[TextContent]> for TextRenderer {
+    fn render(&self, input: &[TextContent]) -> View {
+        self.lower_semantic_iter(input.iter())
     }
 }
 

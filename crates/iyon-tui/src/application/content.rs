@@ -18,8 +18,11 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     geometry::{Rect, Size},
-    physical::{PhysicalRow, Surface},
-    presentation::{ContentMeasurement, ContentProvider, HistoryContentRows},
+    physical::{PhysicalCell, PhysicalRow, Surface},
+    presentation::{
+        ContentMeasurement, ContentProvider, ContentWindow, HistoryContentRows,
+        PreparedProjectionTicket,
+    },
     projection::{Projection, ProjectionBuilder, Projector, Smooth, SmoothConfig},
     stream::{StreamOffset, StreamRange},
     text::{
@@ -202,6 +205,33 @@ impl TextProjectionKey {
         self.hash(&mut hasher);
         hasher.finish()
     }
+
+    fn metric_revision(self, size: Size, complete: bool) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.source_id.hash(&mut hasher);
+        self.source_generation.hash(&mut hasher);
+        self.source_revision.hash(&mut hasher);
+        self.width.hash(&mut hasher);
+        self.wrap.hash(&mut hasher);
+        self.funnel_kind.hash(&mut hasher);
+        size.width.hash(&mut hasher);
+        size.height.hash(&mut hasher);
+        complete.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn layout_input_revision(self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.source_id.hash(&mut hasher);
+        self.source_generation.hash(&mut hasher);
+        self.source_revision.hash(&mut hasher);
+        self.width.hash(&mut hasher);
+        self.wrap.hash(&mut hasher);
+        self.funnel_kind.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 /// Key identifying a cached semantic IR projection. The semantic IR is
@@ -267,8 +297,11 @@ fn resolve_cached_semantic(
 struct HostContentProjection {
     key: TextProjectionKey,
     intrinsic_size: Size,
-    surface: Arc<Surface>,
+    physically_complete: bool,
+    rows: Arc<Vec<PhysicalRow>>,
     stable_rows: usize,
+    visible_row_count: usize,
+    cut: Option<(u16, u16)>,
 }
 
 /// Mutable delivery state that belongs to one smoothed Connector binding.
@@ -376,8 +409,10 @@ impl HostContentProjection {
     fn measurement(&self) -> ContentMeasurement {
         ContentMeasurement {
             intrinsic_size: self.intrinsic_size,
-            physically_complete: self.surface.physically_complete,
+            physically_complete: self.physically_complete,
             projection_revision: self.key.revision(),
+            metric_revision: self.key.metric_revision(self.intrinsic_size, self.physically_complete),
+            paint_revision: self.key.revision(),
         }
     }
 }
@@ -606,68 +641,26 @@ fn content_text_renderer() -> TextRenderer {
     TextRenderer::with_policy(policy)
 }
 
-fn render_semantic_surface(
+fn compile_semantic_content(
     semantic: &Projection<TextContent>,
     theme: &Theme,
     offered_width: u16,
-    reveal_units: Option<usize>,
-) -> Result<(Size, Surface, usize)> {
-    let values = semantic
-        .spans()
-        .iter()
-        .flat_map(|span| span.values().iter().cloned())
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        return Ok((Size::new(0, 0), Surface::new(0, 0), 0));
+) -> Result<crate::presentation::layout::LayoutBlock> {
+    if semantic.spans().is_empty() {
+        return Ok(crate::presentation::layout::LayoutBlock {
+            width: 0,
+            rows: Vec::new(),
+            physically_complete: true,
+        });
     }
     let renderer = content_text_renderer();
-    let view = <TextRenderer as crate::content::Renderer<[TextContent]>>::render(
-        &renderer,
-        values.as_slice(),
-    );
+    let view = renderer.lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values()));
     let compiled =
         crate::presentation::layout::ViewCompiler::new(theme).compile(&view, offered_width.max(1));
-    let width = compiled.width;
-    let height = compiled.rows.len().min(usize::from(u16::MAX)) as u16;
-    let mut surface = Surface::new(width, height);
-    surface.physically_complete = compiled.physically_complete;
-    for (row_index, row) in compiled
-        .rows
-        .into_iter()
-        .take(usize::from(height))
-        .enumerate()
-    {
-        let (placed, complete) = row.place(width, 0);
-        surface.physically_complete &= complete;
-        for (column, cell) in placed.cells().iter().enumerate() {
-            if cell.painted {
-                *surface.get_mut(column as u16, row_index as u16) = cell.clone();
-            }
-        }
-    }
-    if let Some(reveal_units) = reveal_units {
-        let (revealed, fully_revealed) = reveal_surface(&surface, reveal_units);
-        let size = Size::new(revealed.width(), revealed.height());
-        return Ok((size, revealed, fully_revealed));
-    }
-    let full_height = usize::from(height);
-    Ok((Size::new(width, height), surface, full_height))
+    Ok(compiled)
 }
 
-fn surface_suffix(surface: &Surface, start: usize) -> Surface {
-    crate::perf::inc(crate::perf::Counter::ContentSurfaceClones);
-    let start = start.min(usize::from(surface.height()));
-    let height = usize::from(surface.height()).saturating_sub(start);
-    let mut suffix = Surface::new(surface.width(), height as u16);
-    suffix.physically_complete = surface.physically_complete;
-    for row in 0..height {
-        for column in 0..surface.width() {
-            *suffix.get_mut(column, row as u16) = surface.get(column, (start + row) as u16).clone();
-        }
-    }
-    suffix
-}
-
+#[cfg(test)]
 fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
     if units == 0 || surface.width() == 0 || surface.height() == 0 {
         return (Surface::new(surface.width(), 0), 0);
@@ -715,6 +708,13 @@ fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RevealBoundary {
+    pub(crate) revealed_height: u16,
+    pub(crate) fully_revealed_rows: usize,
+    pub(crate) cut: Option<(u16, u16)>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct VisibilityIndex {
     pub(crate) row_glyphs: Vec<Vec<u16>>,
@@ -722,6 +722,92 @@ pub(crate) struct VisibilityIndex {
 }
 
 impl VisibilityIndex {
+    pub(crate) fn from_rows(rows: &[PhysicalRow]) -> Self {
+        let mut row_glyphs = Vec::with_capacity(rows.len());
+        let mut total_glyphs = 0;
+        for row in rows {
+            let mut cols = Vec::new();
+            for glyph in row.glyphs() {
+                if glyph.leader.painted {
+                    cols.push(glyph.start as u16);
+                    total_glyphs += 1;
+                }
+            }
+            row_glyphs.push(cols);
+        }
+        Self {
+            row_glyphs,
+            total_glyphs,
+        }
+    }
+
+    pub(crate) fn reveal_bounds(&self, units: usize, width: u16, height: u16) -> RevealBoundary {
+        if units == 0 || width == 0 || height == 0 || self.total_glyphs == 0 {
+            return RevealBoundary {
+                revealed_height: 0,
+                fully_revealed_rows: 0,
+                cut: None,
+            };
+        }
+        if units >= self.total_glyphs {
+            return RevealBoundary {
+                revealed_height: height,
+                fully_revealed_rows: self.row_glyphs.len(),
+                cut: None,
+            };
+        }
+        let mut remaining = units;
+        let mut last_row = 0u16;
+        let mut saw_glyph = false;
+        let mut fully_revealed = 0usize;
+        let mut cut: Option<(u16, u16)> = None;
+
+        for (row_idx, cols) in self.row_glyphs.iter().enumerate() {
+            let row = row_idx as u16;
+            if cols.is_empty() {
+                fully_revealed = row_idx + 1;
+                continue;
+            }
+            if remaining < cols.len() {
+                let cut_col = cols[remaining];
+                cut = Some((row, cut_col));
+                if remaining > 0 {
+                    saw_glyph = true;
+                    last_row = row;
+                }
+                break;
+            }
+            remaining -= cols.len();
+            saw_glyph = true;
+            last_row = row;
+            fully_revealed = row_idx + 1;
+        }
+
+        if !saw_glyph {
+            return RevealBoundary {
+                revealed_height: 0,
+                fully_revealed_rows: 0,
+                cut: None,
+            };
+        }
+
+        let target_height = if let Some((cut_row, cut_col)) = cut {
+            if cut_col > 0 {
+                last_row.max(cut_row).saturating_add(1)
+            } else {
+                last_row.saturating_add(1)
+            }
+        } else {
+            last_row.saturating_add(1)
+        };
+
+        RevealBoundary {
+            revealed_height: target_height.min(height),
+            fully_revealed_rows: fully_revealed,
+            cut,
+        }
+    }
+
     pub(crate) fn from_surface(surface: &Surface) -> Self {
         let mut row_glyphs = Vec::with_capacity(usize::from(surface.height()));
         let mut total_glyphs = 0;
@@ -828,7 +914,10 @@ struct PreparedPaintKey {
 
 #[derive(Clone, Debug)]
 struct PreparedPaintProduct {
-    unmasked_surface: Arc<Surface>,
+    rows: Arc<Vec<PhysicalRow>>,
+    width: u16,
+    height: u16,
+    physically_complete: bool,
     visibility: VisibilityIndex,
     unmasked_stable_prefix_rows: usize,
 }
@@ -861,8 +950,11 @@ fn project_text_snapshot(
         return Ok(HostContentProjection {
             key,
             intrinsic_size: Size::new(0, 0),
-            surface: Arc::new(Surface::new(0, 0)),
+            physically_complete: true,
+            rows: Arc::new(Vec::new()),
             stable_rows: 0,
+            visible_row_count: 0,
+            cut: None,
         });
     }
 
@@ -898,11 +990,12 @@ fn project_text_snapshot(
         let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
             project_semantic_snapshot(snapshot, funnel, execution)
         })?;
-        let (_unmasked_size, unmasked_surface, _) =
-            render_semantic_surface(&semantic, theme, offered_width, None)?;
-        let visibility = VisibilityIndex::from_surface(&unmasked_surface);
+        let compiled = compile_semantic_content(&semantic, theme, offered_width)?;
+        let width = compiled.width;
+        let height = compiled.rows.len().min(usize::from(u16::MAX)) as u16;
+        let visibility = VisibilityIndex::from_rows(&compiled.rows);
         let unmasked_stable_prefix_rows = if snapshot.sealed {
-            usize::from(unmasked_surface.height())
+            usize::from(height)
         } else {
             snapshot
                 .stable_prefix()
@@ -914,15 +1007,18 @@ fn project_text_snapshot(
                     })
                     .ok()
                     .and_then(|prefix_semantic| {
-                        render_semantic_surface(&prefix_semantic, theme, offered_width, None)
+                        compile_semantic_content(&prefix_semantic, theme, offered_width)
                             .ok()
-                            .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
+                            .map(|prefix_block| prefix_block.rows.len())
                     })
                 })
                 .unwrap_or(0)
         };
         let product = Arc::new(PreparedPaintProduct {
-            unmasked_surface: Arc::new(unmasked_surface),
+            rows: Arc::new(compiled.rows),
+            width,
+            height,
+            physically_complete: compiled.physically_complete,
             visibility,
             unmasked_stable_prefix_rows,
         });
@@ -934,26 +1030,30 @@ fn project_text_snapshot(
         product
     };
 
-    let (intrinsic_size, surface, fully_revealed_rows) =
+    let (intrinsic_size, visible_row_count, cut, fully_revealed_rows) =
         if let Some(delivery) = execution.delivery.as_mut() {
             delivery.accept_input(snapshot)?;
             let reveal_units = delivery.reveal_units();
-            paint_product
+            let bounds = paint_product
                 .visibility
-                .apply_reveal(&paint_product.unmasked_surface, reveal_units)
+                .reveal_bounds(reveal_units, paint_product.width, paint_product.height);
+            (
+                Size::new(paint_product.width, bounds.revealed_height),
+                usize::from(bounds.revealed_height),
+                bounds.cut,
+                bounds.fully_revealed_rows,
+            )
         } else {
             (
-                Size::new(
-                    paint_product.unmasked_surface.width(),
-                    paint_product.unmasked_surface.height(),
-                ),
-                Arc::clone(&paint_product.unmasked_surface),
+                Size::new(paint_product.width, paint_product.height),
+                usize::from(paint_product.height),
+                None,
                 paint_product.visibility.row_glyphs.len(),
             )
         };
 
     let stable_rows = if snapshot.sealed {
-        surface.height() as usize
+        usize::from(paint_product.height)
     } else if execution.delivery.is_some() {
         paint_product
             .unmasked_stable_prefix_rows
@@ -961,14 +1061,17 @@ fn project_text_snapshot(
     } else {
         paint_product
             .unmasked_stable_prefix_rows
-            .min(surface.height() as usize)
+            .min(usize::from(paint_product.height))
     };
 
     Ok(HostContentProjection {
         key,
         intrinsic_size,
-        surface,
+        physically_complete: paint_product.physically_complete,
+        rows: Arc::clone(&paint_product.rows),
         stable_rows,
+        visible_row_count,
+        cut,
     })
 }
 
@@ -2348,6 +2451,126 @@ pub struct ContentBinding {
     pub connector_id: Option<u64>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HistoryPortState {
+    pub(crate) history_unit: Option<u64>,
+    pub(crate) history_insets: crate::presentation::Insets,
+    pub(crate) history_committed_rows: usize,
+    pub(crate) history_committed_content_rows: usize,
+    pub(crate) history_leading_padding_rows: usize,
+    pub(crate) history_trailing_padding_rows: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HistoryTerminalAdapter {
+    ports: HashMap<u64, HistoryPortState>,
+}
+
+impl HistoryTerminalAdapter {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn bind_unit(
+        &mut self,
+        port_id: u64,
+        unit_id: u64,
+        insets: crate::presentation::Insets,
+    ) {
+        self.ports.insert(
+            port_id,
+            HistoryPortState {
+                history_unit: Some(unit_id),
+                history_insets: insets,
+                history_committed_rows: 0,
+                history_committed_content_rows: 0,
+                history_leading_padding_rows: 0,
+                history_trailing_padding_rows: 0,
+            },
+        );
+    }
+
+    pub(crate) fn unit_id(&self, port_id: u64) -> Option<u64> {
+        self.ports.get(&port_id).and_then(|s| s.history_unit)
+    }
+
+    pub(crate) fn committed_rows(&self, port_id: u64) -> usize {
+        self.ports.get(&port_id).map_or(0, |s| s.history_committed_rows)
+    }
+
+    pub(crate) fn committed_content_rows(&self, port_id: u64) -> usize {
+        self.ports.get(&port_id).map_or(0, |s| s.history_committed_content_rows)
+    }
+
+    pub(crate) fn leading_padding_rows(&self, port_id: u64) -> usize {
+        self.ports.get(&port_id).map_or(0, |s| s.history_leading_padding_rows)
+    }
+
+    pub(crate) fn trailing_padding_rows(&self, port_id: u64) -> usize {
+        self.ports.get(&port_id).map_or(0, |s| s.history_trailing_padding_rows)
+    }
+
+    pub(crate) fn insets(&self, port_id: u64) -> crate::presentation::Insets {
+        self.ports.get(&port_id).map_or(crate::presentation::Insets::ZERO, |s| s.history_insets)
+    }
+
+    pub(crate) fn record_committed(
+        &mut self,
+        port_id: u64,
+        rows: usize,
+        content_rows: usize,
+        leading_padding: usize,
+        trailing_padding: usize,
+    ) {
+        if let Some(state) = self.ports.get_mut(&port_id) {
+            state.history_committed_rows = state.history_committed_rows.saturating_add(rows);
+            state.history_committed_content_rows = state
+                .history_committed_content_rows
+                .saturating_add(content_rows.min(rows));
+            state.history_leading_padding_rows = state
+                .history_leading_padding_rows
+                .saturating_add(leading_padding.min(rows));
+            state.history_trailing_padding_rows = state
+                .history_trailing_padding_rows
+                .saturating_add(trailing_padding.min(rows));
+        }
+    }
+
+    pub(crate) fn clear_unit(&mut self, unit_id: u64) {
+        for state in self.ports.values_mut() {
+            if state.history_unit == Some(unit_id) {
+                state.history_unit = None;
+                state.history_committed_rows = 0;
+                state.history_committed_content_rows = 0;
+                state.history_leading_padding_rows = 0;
+                state.history_trailing_padding_rows = 0;
+            }
+        }
+    }
+
+    pub(crate) fn retire_unit(&mut self, unit_id: u64) -> Vec<u64> {
+        let matching: Vec<u64> = self
+            .ports
+            .iter()
+            .filter_map(|(&port_id, state)| (state.history_unit == Some(unit_id)).then_some(port_id))
+            .collect();
+        for port_id in &matching {
+            self.ports.remove(port_id);
+        }
+        matching
+    }
+
+    pub(crate) fn hash_state<H: std::hash::Hasher>(&self, port_id: u64, hasher: &mut H) {
+        use std::hash::Hash;
+        if let Some(state) = self.ports.get(&port_id) {
+            state.history_committed_rows.hash(hasher);
+            state.history_committed_content_rows.hash(hasher);
+            state.history_leading_padding_rows.hash(hasher);
+            state.history_trailing_padding_rows.hash(hasher);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PortRecord {
     id: u64,
@@ -2360,12 +2583,6 @@ struct PortRecord {
     visible_mounted: bool,
     desired_connector: Option<u64>,
     visible_connector: Option<u64>,
-    history_unit: Option<u64>,
-    history_insets: crate::presentation::Insets,
-    history_committed_rows: usize,
-    history_committed_content_rows: usize,
-    history_leading_padding_rows: usize,
-    history_trailing_padding_rows: usize,
 }
 
 #[derive(Debug)]
@@ -2442,6 +2659,7 @@ pub(crate) struct ContentHostRegistry {
     /// Active due deadlines for smoothed connectors. Native ticks and wake
     /// queries inspect this structure without scanning inactive registries.
     active_deadlines: HashMap<u64, Instant>,
+    history_adapter: HistoryTerminalAdapter,
 }
 
 impl ContentHostRegistry {
@@ -2458,6 +2676,7 @@ impl ContentHostRegistry {
             in_flight_connectors: HashSet::new(),
             candidate_selections: HashMap::new(),
             active_deadlines: HashMap::new(),
+            history_adapter: HistoryTerminalAdapter::new(),
         }
     }
 
@@ -2487,12 +2706,6 @@ impl ContentHostRegistry {
             visible_mounted: false,
             desired_connector: None,
             visible_connector: None,
-            history_unit: None,
-            history_insets: crate::presentation::Insets::ZERO,
-            history_committed_rows: 0,
-            history_committed_content_rows: 0,
-            history_leading_padding_rows: 0,
-            history_trailing_padding_rows: 0,
         }));
         self.ports.insert(port_id, Arc::clone(&record));
         Ok(HostContentPort { record, host })
@@ -3118,14 +3331,10 @@ impl ContentHostRegistry {
         port_id: u64,
         mut measurement: ContentMeasurement,
     ) -> ContentMeasurement {
-        let Some(committed_rows) = self
-            .ports
-            .get(&port_id)
-            .and_then(|port| port.lock().ok())
-            .map(|port| port.history_committed_content_rows)
-        else {
+        let committed_rows = self.history_adapter.committed_content_rows(port_id);
+        if committed_rows == 0 {
             return measurement;
-        };
+        }
         measurement.intrinsic_size.height = measurement
             .intrinsic_size
             .height
@@ -3205,7 +3414,7 @@ impl ContentHostRegistry {
                                         width_rule,
                                         measurement,
                                     )
-                                })
+                                    })
                         });
                         self.candidate_selections.insert(port_id, visible);
                         rollback.unwrap_or_default()
@@ -3219,18 +3428,183 @@ impl ContentHostRegistry {
     fn paint_content(&self, port_id: u64, offered_width: u16) -> Option<Arc<Surface>> {
         let connector_id = self.selected_connector_id(port_id)?;
         let projection = self.connector_projection(connector_id, offered_width)?;
-        let committed_rows = self
-            .ports
-            .get(&port_id)
-            .and_then(|port| port.lock().ok())
-            .map_or(0, |port| port.history_committed_content_rows);
-        if committed_rows == 0 {
-            return Some(Arc::clone(&projection.surface));
+        let committed_rows = self.history_adapter.committed_content_rows(port_id);
+        let rows = &projection.rows[..];
+        let available_rows = if committed_rows >= rows.len() {
+            &[][..]
+        } else {
+            &rows[committed_rows..]
+        };
+        let max_visible = projection.visible_row_count.saturating_sub(committed_rows);
+        let visible_len = available_rows.len().min(max_visible);
+        let visible_rows = &available_rows[..visible_len];
+
+        let width = offered_width.max(1);
+        let height = visible_rows.len().min(usize::from(u16::MAX)) as u16;
+        let mut surface = Surface::new(width, height);
+        surface.physically_complete = projection.physically_complete;
+
+        for (i, row) in visible_rows.iter().enumerate() {
+            let dest_row = surface.row_cells_mut(i as u16);
+            let src_cells = row.cells();
+            let projection_row_idx = committed_rows + i;
+            let max_col = if let Some((cut_row, cut_col)) = projection.cut
+                && projection_row_idx == usize::from(cut_row)
+            {
+                usize::from(cut_col)
+            } else if let Some((cut_row, _)) = projection.cut
+                && projection_row_idx > usize::from(cut_row)
+            {
+                0
+            } else {
+                usize::from(width)
+            };
+            for glyph in row.glyphs() {
+                if !glyph.leader.painted || glyph.start >= max_col {
+                    continue;
+                }
+                if glyph.start + glyph.width <= usize::from(width) {
+                    crate::physical::write_glyph_span(
+                        dest_row,
+                        glyph.start,
+                        src_cells,
+                        glyph.start,
+                        glyph.width,
+                    );
+                }
+            }
         }
-        Some(Arc::new(surface_suffix(
-            &projection.surface,
-            committed_rows,
-        )))
+        Some(Arc::new(surface))
+    }
+
+    fn paint_window_direct(
+        &self,
+        ticket: PreparedProjectionTicket,
+        window: ContentWindow,
+        target: &mut Surface,
+        target_origin: (u16, u16),
+        clip: crate::geometry::Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        let Some(connector_id) = self.selected_connector_id(ticket.port_id) else {
+            return;
+        };
+        let Some(projection) = self.connector_projection(connector_id, ticket.offered_width) else {
+            return;
+        };
+        if !projection.physically_complete {
+            target.physically_complete = false;
+        }
+        let committed_rows = self.history_adapter.committed_content_rows(ticket.port_id);
+        let rows = &projection.rows[..];
+        let available_rows = if committed_rows >= rows.len() {
+            &[][..]
+        } else {
+            &rows[committed_rows..]
+        };
+
+        let max_visible = projection.visible_row_count.saturating_sub(committed_rows);
+        let visible_len = available_rows.len().min(max_visible);
+        let visible_rows = &available_rows[..visible_len];
+
+        let start_offset = match usize::try_from(window.first_row) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if start_offset >= visible_rows.len() || window.row_count == 0 {
+            return;
+        }
+        let row_count = usize::try_from(window.row_count).unwrap_or(usize::MAX);
+        let end_offset = (start_offset.saturating_add(row_count)).min(visible_rows.len());
+        let window_slice = &visible_rows[start_offset..end_offset];
+
+        let clip_left = i32::from(clip.x);
+        let clip_top = i32::from(clip.y);
+        let clip_right = clip_left.saturating_add(i32::from(clip.width));
+        let clip_bottom = clip_top.saturating_add(i32::from(clip.height));
+        let target_width = i32::from(target.width());
+        let target_height = i32::from(target.height());
+
+        for (i, row) in window_slice.iter().enumerate() {
+            let target_y = i32::from(target_origin.1).saturating_add(i as i32);
+            if target_y < clip_top
+                || target_y >= clip_bottom
+                || target_y < 0
+                || target_y >= target_height
+            {
+                continue;
+            }
+
+            let projection_row_idx = committed_rows + start_offset + i;
+            let max_col = if let Some((cut_row, cut_col)) = projection.cut
+                && projection_row_idx == usize::from(cut_row)
+            {
+                usize::from(cut_col)
+            } else if let Some((cut_row, _)) = projection.cut
+                && projection_row_idx > usize::from(cut_row)
+            {
+                0
+            } else {
+                usize::from(ticket.offered_width.max(1))
+            };
+
+            if max_col == 0 {
+                continue;
+            }
+
+            let dest_origin_x = i32::from(target_origin.0);
+            let src_cells = row.cells();
+
+            for glyph in row.glyphs() {
+                if !glyph.leader.painted {
+                    continue;
+                }
+                if glyph.start >= max_col {
+                    break;
+                }
+                let dest_start = dest_origin_x.saturating_add(glyph.start as i32);
+                let dest_end = dest_start.saturating_add(glyph.width as i32);
+                if dest_start < clip_left
+                    || dest_end > clip_right
+                    || dest_start < 0
+                    || dest_end > target_width
+                {
+                    continue;
+                }
+
+                let dest_row = target.row_cells_mut(target_y as u16);
+                crate::perf::add(
+                    crate::perf::Counter::SurfaceCellsComposited,
+                    glyph.width as u64,
+                );
+                crate::physical::write_glyph_span(
+                    dest_row,
+                    dest_start as usize,
+                    src_cells,
+                    glyph.start,
+                    glyph.width,
+                );
+
+                for col in (dest_start as usize)..(dest_end as usize) {
+                    let cell = &mut dest_row[col];
+                    if cell.painted {
+                        if cell.style.foreground.is_none() {
+                            cell.style.foreground = style.foreground;
+                        }
+                        if cell.style.background.is_none() {
+                            cell.style.background = style.background;
+                        }
+                        cell.style.bold |= style.bold;
+                        cell.style.dim |= style.dim;
+                        cell.style.italic |= style.italic;
+                        cell.style.underline |= style.underline;
+                        cell.style.reversed |= style.reversed;
+                        cell.style.strikethrough |= style.strikethrough;
+                    }
+                }
+            }
+            debug_assert!(crate::physical::validate_cells(target.row_cells(target_y as u16)).is_ok());
+        }
     }
 
     fn connector_projection(
@@ -4086,29 +4460,22 @@ impl ContentHostRegistry {
             .ports
             .get(&port_id)
             .ok_or_else(|| anyhow!("INTERNAL_INVARIANT: ContentPort {port_id} disappeared"))?;
-        let mut state = port
-            .lock()
-            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
-        state.history_unit = Some(unit_id);
-        state.history_insets = insets;
-        state.history_committed_rows = 0;
-        state.history_committed_content_rows = 0;
-        state.history_leading_padding_rows = 0;
-        state.history_trailing_padding_rows = 0;
+        drop(
+            port.lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?,
+        );
+        self.history_adapter.bind_unit(port_id, unit_id, insets);
         Ok(())
     }
 
     fn history_rows(&self, port_id: u64, offered_width: u16) -> Option<HistoryContentRows> {
         let port = self.ports.get(&port_id)?;
-        let (insets, committed_rows, connector_id) = {
+        let connector_id = {
             let state = port.lock().ok()?;
-            (
-                state.history_insets,
-                state.history_committed_rows,
-                state.visible_connector.or(state.desired_connector),
-            )
-        };
-        let connector_id = connector_id?;
+            state.visible_connector.or(state.desired_connector)
+        }?;
+        let insets = self.history_adapter.insets(port_id);
+        let committed_rows = self.history_adapter.committed_rows(port_id);
         let connector = self.connectors.get(&connector_id)?.lock().ok()?;
         let snapshot = connector.source.snapshot().ok()?;
         let sealed = snapshot.sealed;
@@ -4116,68 +4483,55 @@ impl ContentHostRegistry {
         let content_width =
             offered_width.saturating_sub(insets.left().saturating_add(insets.right()));
         let projection = self.connector_projection(connector_id, content_width)?;
-        let content = &projection.surface;
-        let surface = if sealed {
-            let width = content
-                .width()
-                .saturating_add(insets.left())
-                .saturating_add(insets.right());
-            let height = content
-                .height()
-                .saturating_add(insets.top())
-                .saturating_add(insets.bottom());
-            let mut surface = Surface::new(width, height);
-            surface.composite(content, insets.left(), insets.top());
-            surface
-        } else {
-            let width = content
-                .width()
-                .saturating_add(insets.left())
-                .saturating_add(insets.right());
-            let height = usize::from(insets.top()).saturating_add(usize::from(content.height()));
-            let mut surface = Surface::new(width, height as u16);
-            surface.composite(content, insets.left(), insets.top());
-            surface
-        };
-        let content_start = usize::from(insets.top());
-        let content_end = content_start.saturating_add(usize::from(content.height()));
+        let content_rows = &projection.rows[..];
+        let top_padding = usize::from(insets.top());
+        let bottom_padding = if sealed { usize::from(insets.bottom()) } else { 0 };
+        let total_height = top_padding
+            .saturating_add(content_rows.len())
+            .saturating_add(bottom_padding);
+        let content_start = top_padding;
+        let content_end = content_start.saturating_add(content_rows.len());
         let stable_end = if sealed {
-            usize::from(surface.height())
+            total_height
         } else {
             projection
                 .stable_rows
-                .min(usize::from(content.height()))
+                .min(content_rows.len())
                 .saturating_add(content_start)
         };
-        let start = committed_rows.min(usize::from(surface.height()));
-        let end = stable_end.min(usize::from(surface.height()));
-        let rows = (start < end)
-            .then(|| {
-                (start..end)
-                    .map(|row| {
-                        PhysicalRow::from_cells(
-                            (0..surface.width())
-                                .map(|column| surface.get(column, row as u16).clone())
-                                .collect(),
-                        )
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let start = committed_rows.min(total_height);
+        let end = stable_end.min(total_height);
+
+        let rows = if start < end {
+            (start..end)
+                .map(|row_idx| {
+                    if row_idx < top_padding || row_idx >= content_end {
+                        let cells = vec![PhysicalCell::transparent(); usize::from(offered_width)];
+                        PhysicalRow::from_cells(cells)
+                    } else {
+                        let content_row = &content_rows[row_idx - top_padding];
+                        content_row.placed(offered_width, insets.left())
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let payload_content_start = content_start.max(start).saturating_sub(start);
         let payload_content_end = content_end.min(end).saturating_sub(start);
-        let leading_padding = usize::from(insets.top())
+        let leading_padding = top_padding
             .saturating_sub(start)
             .min(end.saturating_sub(start));
         let trailing_padding = if sealed {
             end.saturating_sub(content_end.max(start))
-                .min(usize::from(insets.bottom()))
+                .min(bottom_padding)
         } else {
             0
         };
         Some(HistoryContentRows {
             rows,
-            complete: sealed && end >= usize::from(surface.height()),
+            complete: sealed && end >= total_height,
             content_start: payload_content_start.min(payload_content_end),
             content_end: payload_content_end.max(payload_content_start),
             leading_padding,
@@ -4193,67 +4547,39 @@ impl ContentHostRegistry {
         leading_padding: usize,
         trailing_padding: usize,
     ) {
-        let Some(port) = self.ports.get(&port_id) else {
-            return;
-        };
-        if let Ok(mut state) = port.lock() {
-            state.history_committed_rows = state.history_committed_rows.saturating_add(rows);
-            state.history_committed_content_rows = state
-                .history_committed_content_rows
-                .saturating_add(content_rows.min(rows));
-            state.history_leading_padding_rows = state
-                .history_leading_padding_rows
-                .saturating_add(leading_padding.min(rows));
-            state.history_trailing_padding_rows = state
-                .history_trailing_padding_rows
-                .saturating_add(trailing_padding.min(rows));
-        }
+        self.history_adapter.record_committed(
+            port_id,
+            rows,
+            content_rows,
+            leading_padding,
+            trailing_padding,
+        );
     }
 
     pub(crate) fn clear_history_unit(&mut self, unit_id: u64) {
-        for port in self.ports.values() {
-            if let Ok(mut state) = port.lock()
-                && state.history_unit == Some(unit_id)
-            {
-                state.history_unit = None;
-                state.history_committed_rows = 0;
-                state.history_committed_content_rows = 0;
-                state.history_leading_padding_rows = 0;
-                state.history_trailing_padding_rows = 0;
-            }
-        }
+        self.history_adapter.clear_unit(unit_id);
     }
 
     pub(crate) fn history_unit_retired(&mut self, unit_id: u64) {
-        let ports = self
-            .ports
-            .values()
-            .filter_map(|port| {
-                let state = port.lock().ok()?;
-                (state.history_unit == Some(unit_id))
-                    .then(|| (Arc::clone(port), state.connector_ids.clone()))
-            })
-            .collect::<Vec<_>>();
-        for (port, connector_ids) in ports {
-            let port_id = if let Ok(mut state) = port.lock() {
-                state.history_unit = None;
-                state.history_committed_rows = 0;
-                state.history_committed_content_rows = 0;
-                state.history_leading_padding_rows = 0;
-                state.history_trailing_padding_rows = 0;
-                state.desired_mounted = false;
-                state.visible_mounted = false;
-                state.desired_connector = None;
-                state.visible_connector = None;
-                state.lifecycle = PortLifecycle::Disposed;
-                state.id
+        let ports = self.history_adapter.retire_unit(unit_id);
+        for port_id in ports {
+            let connector_ids = if let Some(port) = self.ports.remove(&port_id) {
+                if let Ok(mut state) = port.lock() {
+                    state.desired_mounted = false;
+                    state.visible_mounted = false;
+                    state.desired_connector = None;
+                    state.visible_connector = None;
+                    state.lifecycle = PortLifecycle::Disposed;
+                    state.connector_ids.clone()
+                } else {
+                    HashSet::new()
+                }
             } else {
-                continue;
+                HashSet::new()
             };
             for connector_id in connector_ids {
                 self.remove_connector(connector_id);
             }
-            self.ports.remove(&port_id);
         }
     }
 
@@ -4375,12 +4701,19 @@ impl ContentProvider for ContentHostRegistry {
         use std::hash::{Hash, Hasher};
         connector_revision.hash(&mut hasher);
         self.theme_revision.hash(&mut hasher);
-        if let Some(port) = self.ports.get(&port_id).and_then(|port| port.lock().ok()) {
-            port.history_committed_rows.hash(&mut hasher);
-            port.history_committed_content_rows.hash(&mut hasher);
-            port.history_leading_padding_rows.hash(&mut hasher);
-            port.history_trailing_padding_rows.hash(&mut hasher);
-        }
+        self.history_adapter.hash_state(port_id, &mut hasher);
+        hasher.finish()
+    }
+
+    fn layout_input_revision(&self, port_id: u64, offered_width: u16) -> u64 {
+        let connector_id = self.selected_connector_id(port_id);
+        let connector_revision = connector_id
+            .and_then(|id| self.connector_projection_key(id, offered_width).ok())
+            .map_or(0, |key| key.layout_input_revision());
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        connector_revision.hash(&mut hasher);
+        self.history_adapter.hash_state(port_id, &mut hasher);
         hasher.finish()
     }
 
@@ -4400,6 +4733,18 @@ impl ContentProvider for ContentHostRegistry {
         _allocated_height: u16,
     ) -> Option<Arc<Surface>> {
         self.paint_content(port_id, offered_width)
+    }
+
+    fn paint_window(
+        &self,
+        ticket: PreparedProjectionTicket,
+        window: ContentWindow,
+        target: &mut Surface,
+        target_origin: (u16, u16),
+        clip: crate::geometry::Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        self.paint_window_direct(ticket, window, target, target_origin, clip, style);
     }
 
     fn history_rows(&self, port_id: u64, offered_width: u16) -> Option<HistoryContentRows> {
@@ -4427,20 +4772,13 @@ impl ContentProvider for ContentHostRegistry {
         let Some(port_id) = view.content_attachment_id() else {
             return view.clone();
         };
-        let Some(port) = self.ports.get(&port_id) else {
-            return view.clone();
-        };
-        let Some(state) = port.lock().ok() else {
-            return view.clone();
-        };
         let mut insets = view.decoration().padding;
-        if state.history_leading_padding_rows > 0 {
+        if self.history_adapter.leading_padding_rows(port_id) > 0 {
             insets.top = 0;
         }
-        if state.history_trailing_padding_rows > 0 {
+        if self.history_adapter.trailing_padding_rows(port_id) > 0 {
             insets.bottom = 0;
         }
-        drop(state);
         if insets == view.decoration().padding {
             return view.clone();
         }
@@ -4458,7 +4796,7 @@ impl ContentProvider for ContentHostRegistry {
         let Some(state) = port.lock().ok() else {
             return true;
         };
-        if state.history_unit.is_none() {
+        if self.history_adapter.unit_id(port_id).is_none() {
             return false;
         }
         if state

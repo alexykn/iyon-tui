@@ -8,8 +8,64 @@ use super::identity::{RenderContext, part_facts, semantic_view_facts, stamp_text
 use super::policy::{CodeBlockLabelPolicy, TableColumnSizing, TaskListMarkerPolicy};
 use crate::{GridCellSpec, GridTrack, HorizontalAlign, IntoView, View};
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct BlockCacheKey {
+    pub(crate) block_ptr: usize,
+    pub(crate) context: super::identity::RenderContextKey,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BlockLoweringCache {
+    entries: std::collections::HashMap<BlockCacheKey, View>,
+}
+
+impl BlockLoweringCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    pub(crate) fn get(&self, key: &BlockCacheKey) -> Option<&View> {
+        self.entries.get(key)
+    }
+
+    pub(crate) fn insert(&mut self, key: BlockCacheKey, view: View) {
+        if self.entries.len() >= 1024 {
+            self.entries.clear();
+        }
+        self.entries.insert(key, view);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 impl TextRenderer {
     pub(super) fn lower_block(&self, block: &Block, context: &RenderContext) -> View {
+        let block_ptr = block.identity_ptr();
+        let key = BlockCacheKey {
+            block_ptr,
+            context: context.cache_key(),
+        };
+        if let Ok(cache) = self.cache.lock()
+            && let Some(view) = cache.get(&key)
+        {
+            return view.clone();
+        }
+        let view = self.lower_block_uncached(block, context);
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.insert(key, view.clone());
+        }
+        view
+    }
+
+    fn lower_block_uncached(&self, block: &Block, context: &RenderContext) -> View {
         let context = context.for_node(block.annotations());
         match block.kind() {
             BlockKind::Paragraph(content) => self.render_paragraph(block, content, &context, None),

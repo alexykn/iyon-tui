@@ -16,6 +16,7 @@ mod text_metrics;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use glyph::{validate_cells, write_glyph_span};
 pub(crate) use row::PhysicalRow;
 pub(crate) use style::{AnsiColor, PhysicalColor, PhysicalStyle};
 pub(crate) use surface::{PhysicalCell, Surface};

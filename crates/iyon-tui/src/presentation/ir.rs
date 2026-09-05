@@ -848,6 +848,19 @@ impl View {
         Ok(self.map_node(|node| node.content_attachment = Some(port_id)))
     }
 
+    pub(crate) fn content_host(port_id: u64) -> Self {
+        Self::from_node(ViewNodeParts {
+            width: WidthRule::Fit,
+            height: HeightRule::Fit,
+            decoration: Decoration::default(),
+            style_states: StyleStates::default(),
+            style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: Some(port_id),
+            kind: ViewKind::ContentHost,
+        })
+    }
+
     /// Exhaustive native capability classification for retained presentation
     /// state. Component indirections have no independently addressable box;
     /// their concrete component View owns presentation state instead.

@@ -4,6 +4,15 @@ use super::super::{
 };
 use crate::{IntoView, Text, View};
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct RenderContextKey {
+    pub(super) role_depth: usize,
+    pub(super) list_kind: Option<TextListKind>,
+    pub(super) task_state: Option<TextTaskState>,
+    pub(super) table_section: Option<TextTableSection>,
+    pub(super) format: Option<FormatId>,
+}
+
 /// Semantic environment known while lowering IR into Views.
 #[derive(Clone, Debug, Default)]
 pub(super) struct RenderContext {
@@ -17,6 +26,16 @@ pub(super) struct RenderContext {
 }
 
 impl RenderContext {
+    pub(super) fn cache_key(&self) -> RenderContextKey {
+        RenderContextKey {
+            role_depth: self.ancestor_roles.len(),
+            list_kind: self.list_kind,
+            task_state: self.task_state,
+            table_section: self.table_section,
+            format: self.format.clone(),
+        }
+    }
+
     pub(super) fn effective_origin(&self, annotations: &Annotations) -> Option<TextOrigin> {
         annotations.origin().or_else(|| self.origin.clone())
     }

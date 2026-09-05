@@ -498,17 +498,30 @@ impl ViewPainter {
                 let y = node.content_rect.y.saturating_sub(node.rect.y);
                 output.composite(&painted, x, y);
             }
-            LayoutContent::ContentHost { port_id, .. } => {
-                if let Some(painted) =
-                    content.paint(*port_id, node.content_rect.width, node.content_rect.height)
-                {
-                    let mut painted = (*painted).clone();
-                    apply_content_style(&mut painted, resolved);
-                    let x = node.content_rect.x.saturating_sub(node.rect.x);
-                    let y = node.content_rect.y.saturating_sub(node.rect.y);
-                    let clip = Rect::new(x, y, node.content_rect.width, node.content_rect.height);
-                    output.composite_clipped(&painted, i32::from(x), i32::from(y), clip);
-                }
+            LayoutContent::ContentHost {
+                port_id,
+                projection_revision,
+            } => {
+                let x = node.content_rect.x.saturating_sub(node.rect.x);
+                let y = node.content_rect.y.saturating_sub(node.rect.y);
+                let clip = Rect::new(x, y, node.content_rect.width, node.content_rect.height);
+                let ticket = crate::presentation::PreparedProjectionTicket {
+                    port_id: *port_id,
+                    offered_width: node.content_rect.width,
+                    projection_revision: *projection_revision,
+                };
+                let window = crate::presentation::ContentWindow {
+                    first_row: 0,
+                    row_count: u32::from(node.content_rect.height),
+                };
+                content.paint_window(
+                    ticket,
+                    window,
+                    &mut output,
+                    (x, y),
+                    clip,
+                    resolved,
+                );
             }
             LayoutContent::Children | LayoutContent::Clamp { .. } => {
                 self.paint_children(
@@ -544,27 +557,53 @@ impl ViewPainter {
                         .first()
                         .copied()
                         .expect("row viewport must have one child");
-                    let painted = self.paint_node(
-                        compiler,
-                        tree,
-                        child_id,
-                        resolved,
-                        descendant_context.clone(),
-                        cache,
-                        true,
-                        content,
-                    );
-                    for y in 0..output.height() {
-                        let source_y = usize::from(*skip_rows).saturating_add(usize::from(y));
-                        if source_y >= usize::from(painted.height()) {
-                            continue;
+                    let child_node = tree.node(child_id);
+                    if let LayoutContent::ContentHost {
+                        port_id,
+                        projection_revision,
+                    } = child_node.content
+                    {
+                        let ticket = crate::presentation::PreparedProjectionTicket {
+                            port_id,
+                            offered_width: child_node.content_rect.width,
+                            projection_revision,
+                        };
+                        let window = crate::presentation::ContentWindow {
+                            first_row: u64::from(*skip_rows),
+                            row_count: u32::from(output.height()),
+                        };
+                        let clip = Rect::new(0, 0, output.width(), output.height());
+                        content.paint_window(
+                            ticket,
+                            window,
+                            &mut output,
+                            (0, 0),
+                            clip,
+                            resolved,
+                        );
+                    } else {
+                        let painted = self.paint_node(
+                            compiler,
+                            tree,
+                            child_id,
+                            resolved,
+                            descendant_context.clone(),
+                            cache,
+                            true,
+                            content,
+                        );
+                        for y in 0..output.height() {
+                            let source_y = usize::from(*skip_rows).saturating_add(usize::from(y));
+                            if source_y >= usize::from(painted.height()) {
+                                continue;
+                            }
+                            for x in 0..output.width().min(painted.width()) {
+                                *output.get_mut(x, y) = painted.get(x, source_y as u16).clone();
+                                perf::inc(Counter::SurfaceCellsComposited);
+                            }
                         }
-                        for x in 0..output.width().min(painted.width()) {
-                            *output.get_mut(x, y) = painted.get(x, source_y as u16).clone();
-                            perf::inc(Counter::SurfaceCellsComposited);
-                        }
+                        output.physically_complete = painted.physically_complete;
                     }
-                    output.physically_complete = painted.physically_complete;
                 }
             }
         }
@@ -665,7 +704,7 @@ impl ViewPainter {
     }
 }
 
-fn apply_content_style(surface: &mut Surface, inherited: PhysicalStyle) {
+pub(crate) fn apply_content_style(surface: &mut Surface, inherited: PhysicalStyle) {
     for cell in &mut surface.cells {
         if !cell.painted {
             continue;
@@ -837,5 +876,90 @@ mod tests {
         let wide_surface = paint(&wide, Size::new(6, 1), &theme, &compiler, &mut cache);
         assert_eq!(narrow_surface.width(), 2);
         assert_eq!(wide_surface.width(), 6);
+    }
+
+    #[test]
+    fn row_viewport_paints_content_host_window_directly() {
+        use crate::presentation::{ContentMeasurement, ContentWindow, PreparedProjectionTicket};
+
+        struct TestProvider {
+            calls: std::sync::Arc<std::sync::Mutex<Vec<(u64, u32)>>>,
+        }
+        impl ContentProvider for TestProvider {
+            fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
+                1
+            }
+            fn measure(
+                &mut self,
+                _port_id: u64,
+                _offered_width: u16,
+                _width_rule: crate::presentation::WidthRule,
+            ) -> ContentMeasurement {
+                ContentMeasurement {
+                    intrinsic_size: Size::new(10, 100),
+                    physically_complete: true,
+                    projection_revision: 1,
+                    metric_revision: 1,
+                    paint_revision: 1,
+                }
+            }
+            fn paint(
+                &self,
+                _port_id: u64,
+                _offered_width: u16,
+                _allocated_height: u16,
+            ) -> Option<std::sync::Arc<Surface>> {
+                panic!("paint() must not be called when windowed paint is used");
+            }
+            fn paint_window(
+                &self,
+                _ticket: PreparedProjectionTicket,
+                window: ContentWindow,
+                target: &mut Surface,
+                target_origin: (u16, u16),
+                _clip: crate::geometry::Rect,
+                _style: crate::physical::PhysicalStyle,
+            ) {
+                self.calls.lock().unwrap().push((window.first_row, window.row_count));
+                for r in 0..window.row_count {
+                    let y = target_origin.1 + r as u16;
+                    if y < target.height() {
+                        let cell = target.get_mut(target_origin.0, y);
+                        cell.grapheme = Some(format!("{}", window.first_row + r as u64));
+                        cell.painted = true;
+                    }
+                }
+            }
+        }
+
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut provider = TestProvider {
+            calls: std::sync::Arc::clone(&calls),
+        };
+        let content = View::content_host(42);
+        let viewport = View::row_viewport(content, 10);
+        let theme = Theme::default();
+        let compiler = ViewCompiler::new(&theme);
+        let mut cache = PaintCache::default();
+        let mut layout_cache = crate::presentation::layout::LayoutCache::default();
+        let tree = crate::presentation::layout::layout_view_with_overlay_and_cache_and_content(
+            &viewport,
+            LayoutConstraints::bounded(Size::new(10, 3)),
+            &crate::scene::ResolutionOverlay::default(),
+            None,
+            &mut layout_cache,
+            &mut provider,
+        );
+        let surface = ViewPainter.paint_tree_with_content(
+            &compiler,
+            &tree,
+            &mut cache,
+            &provider,
+        );
+
+        assert_eq!(*calls.lock().unwrap(), vec![(10, 3)]);
+        assert_eq!(surface.get(0, 0).grapheme.as_deref(), Some("10"));
+        assert_eq!(surface.get(0, 1).grapheme.as_deref(), Some("11"));
+        assert_eq!(surface.get(0, 2).grapheme.as_deref(), Some("12"));
     }
 }

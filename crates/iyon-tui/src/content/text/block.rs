@@ -480,6 +480,10 @@ impl fmt::Debug for Block {
 }
 
 impl Block {
+    pub(crate) fn identity_ptr(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+
     #[must_use]
     pub fn new(kind: BlockKind) -> Self {
         Self(Arc::new(BlockData {

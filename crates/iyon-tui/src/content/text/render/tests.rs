@@ -492,3 +492,31 @@ fn superscript_subscript_and_small_caps_emit_without_framework_paint() {
     assert!(!style_at(&view, &theme, "sub").italic);
     assert!(!style_at(&view, &theme, "sc").underline);
 }
+
+#[test]
+fn block_lowering_reuses_cached_lowered_view() {
+    let renderer = TextRenderer::default();
+    let block = Block::paragraph("Hello world");
+    let context = super::identity::RenderContext::default();
+
+    let v1 = renderer.lower_block(&block, &context);
+    let v2 = renderer.lower_block(&block, &context);
+
+    assert_eq!(v1, v2);
+    let cache = renderer.cache.lock().unwrap();
+    assert_eq!(cache.len(), 1);
+}
+
+#[test]
+fn lower_semantic_iter_matches_slice_render() {
+    let renderer = TextRenderer::default();
+    let items = vec![
+        TextContent::raw("First line"),
+        TextContent::block(Block::paragraph("Second line")),
+    ];
+
+    let from_iter = renderer.lower_semantic_iter(items.iter());
+    let from_slice = renderer.render(&items[..]);
+
+    assert_eq!(from_iter, from_slice);
+}

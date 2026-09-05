@@ -12,6 +12,14 @@
 - Changes to public APIs.
 - Changes spanning multiple files.
 
+## Delegation and ownership
+- Use `delegate` on `openai-codex/gpt-5.6-luna` with `max` thinking for implementation and debugging; use `scout` on the same model with `high` thinking for read-only codebase investigation and research. Difficult scouting may use `xhigh` for that run. More expensive subagent models require explicit user approval.
+- Give capable, independent delegates a clear goal, relevant context, constraints, and success criteria, then autonomy to complete substantial or long-running work. An implementation assignment authorizes edits, debugging, checks, and local refinements within its approved scope; do not require approval for routine engineering choices. Existing Ask First rules still apply to work outside that approval.
+- The parent owns integration, final review, and delivery: inspect actual diffs, surrounding code, and validation evidence rather than relying on a subagent verdict. Use subagents for implementation and evidence gathering, not a separate reviewer/oracle tier.
+- Delegate handoffs should explain consequential choices, checks, uncertainties, and genuine blockers. Continue useful in-scope work rather than stopping for routine uncertainty.
+- Keep one writer per cwd/worktree and isolate concurrent writers. Only the parent spawns agents; children must never launch subagents or other agents through tools, CLI commands, or scripts.
+- Include the mandatory framework ownership boundary below in relevant assignments; delegation does not relax it.
+
 ## Implementation
 - Prefer the simplest solution that fits the existing design.
 - Avoid unnecessary refactors, abstractions, or formatting-only changes.

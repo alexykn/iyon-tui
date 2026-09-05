@@ -2436,20 +2436,26 @@ mod tests {
 
     #[test]
     fn post_acceptance_wake_failure_keeps_revision_authoritative() {
-        // L1-00 step 8: Source post-acceptance wake failure (§9.6). The
-        // poisoned subscriber is woken last, so the healthy host is already
-        // marked pending when the failure surfaces. The installed revision
-        // must remain authoritative and observable even though the append
-        // itself reports an error without the accepted revision.
+        // Source post-acceptance wake failure (§9.6). The poisoned subscriber
+        // is woken last, so the healthy host is already marked pending when
+        // the failure surfaces. The installed revision stays authoritative
+        // and observable, and the reported error carries the accepted
+        // revision instead of an ambiguous ordinary rejection that would
+        // invite a duplicating retry.
         let (first, second, source) = mounted_subscribed_pair();
         poison_host(&second);
         let revision_before = source.snapshot().unwrap().revision;
         let epoch_before = first.epochs().unwrap().pending_epoch;
 
         let result = source.append_utf8(b"wake-auth\n", &[], &[]);
+        let message = format!("{:?}", result.unwrap_err());
         assert!(
-            result.is_err(),
-            "poisoned subscriber wake must surface as an error, not vanish"
+            message.contains("SOURCE_WAKE_FAILED"),
+            "wake failure must report as wake failure, got: {message}"
+        );
+        assert!(
+            message.contains(&format!("revision {}", revision_before + 1)),
+            "wake failure must carry the accepted revision, got: {message}"
         );
 
         let snapshot = source.snapshot().unwrap();
@@ -2472,20 +2478,26 @@ mod tests {
     }
 
     #[test]
-    fn post_acceptance_wake_failure_aborts_later_subscriber_wakes() {
-        // L1-00 step 8: documents the current order-dependent gap behind the
-        // §9.6 target ("continue handling other eligible hosts") and the
-        // L1-12 "no lost wake" stop condition. The poisoned subscriber is
-        // woken first, so `finish_mutation` returns before reaching the
-        // healthy host: the revision is installed, but the later wake is
-        // lost. Any refactor that changes this must do so explicitly.
+    fn post_acceptance_wake_failure_still_wakes_later_subscribers() {
+        // Source post-acceptance wake failure (§9.6 "continue handling other
+        // eligible hosts", L1-12 "no lost wake"). The poisoned subscriber is
+        // woken first: every remaining host must still be woken, and the
+        // failure still reports the accepted revision.
         let (first, second, source) = mounted_subscribed_pair();
         poison_host(&first);
         let revision_before = source.snapshot().unwrap().revision;
         let epoch_before = second.epochs().unwrap().pending_epoch;
 
         let result = source.append_utf8(b"wake-auth\n", &[], &[]);
-        assert!(result.is_err(), "poisoned first wake must surface");
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("SOURCE_WAKE_FAILED"),
+            "wake failure must report as wake failure, got: {message}"
+        );
+        assert!(
+            message.contains(&format!("revision {}", revision_before + 1)),
+            "wake failure must carry the accepted revision, got: {message}"
+        );
 
         let snapshot = source.snapshot().unwrap();
         assert_eq!(
@@ -2493,10 +2505,10 @@ mod tests {
             revision_before + 1,
             "accepted revision must be installed despite the wake failure"
         );
-        assert_eq!(
+        assert_ne!(
             second.epochs().unwrap().pending_epoch,
             epoch_before,
-            "current code loses the later wake; record, do not silently fix"
+            "a failed subscriber must not cancel the remaining wakes"
         );
         second.close().unwrap();
         drop(first);

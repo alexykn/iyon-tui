@@ -1862,11 +1862,14 @@ impl HostContentSource {
                 ));
             }
             let retention = record.retention;
+            // Preflight the fallible revision arithmetic before installing
+            // candidate storage: a rejection must leave bytes, annotations,
+            // revision and accounting exactly as they were (§9.6).
+            let revision = next_revision(record.revision)?;
             let next = Arc::make_mut(&mut record.storage);
             next.append_bytes(bytes)?;
             next.annotations.extend(parsed);
             let (dropped, copied) = apply_retention(next, retention)?;
-            let revision = next_revision(record.revision)?;
             record.revision = revision;
             record.copied_bytes = record
                 .copied_bytes
@@ -1940,12 +1943,15 @@ impl HostContentSource {
                     ..ContentMutationResult::default()
                 });
             }
+            // Preflight both fallible counters before swapping in the empty
+            // root: a rejection must leave the retained bytes in place (§9.6).
             let revision = next_revision(record.revision)?;
-            record.storage = Arc::new(SourceStorage::empty());
-            record.content_generation = record
+            let content_generation = record
                 .content_generation
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("Source content generation exhausted"))?;
+            record.storage = Arc::new(SourceStorage::empty());
+            record.content_generation = content_generation;
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
@@ -1965,9 +1971,11 @@ impl HostContentSource {
             if record.storage.sealed {
                 return Err(anyhow!("SOURCE_ALREADY_SEALED: Source is already sealed"));
             }
+            // Preflight the revision before flipping the flag: a rejection
+            // must not report a sealed Source at a stale revision (§9.6).
+            let revision = next_revision(record.revision)?;
             let next = Arc::make_mut(&mut record.storage);
             next.sealed = true;
-            let revision = next_revision(record.revision)?;
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
@@ -1998,9 +2006,11 @@ impl HostContentSource {
                     ..ContentMutationResult::default()
                 });
             }
+            // Preflight the revision before dropping the head: a rejection
+            // must not move the retained range at a stale revision (§9.6).
+            let revision = next_revision(record.revision)?;
             let next = Arc::make_mut(&mut record.storage);
             let (dropped, copied) = next.truncate_head(offset);
-            let revision = next_revision(record.revision)?;
             record.revision = revision;
             record.copied_bytes = record.copied_bytes.saturating_add(copied);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
@@ -2034,19 +2044,40 @@ impl HostContentSource {
 
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
+        // A failed subscriber must not cancel the remaining wakes (§9.6):
+        // every eligible host is attempted, and a failure is reported
+        // afterwards with the accepted revision attached, never as an
+        // ambiguous ordinary rejection that invites a duplicating retry.
+        let mut wake_failures = 0u32;
+        let mut first_wake_error: Option<anyhow::Error> = None;
         for (host, tokens) in groups {
-            let mut host = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
-            let mut affected = false;
-            for (id, generation) in tokens {
-                affected |= host
-                    .content
-                    .source_subscription_is_live(id, generation, revision);
+            let wake_result = (|| {
+                let mut host = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+                let mut affected = false;
+                for (id, generation) in tokens {
+                    affected |= host
+                        .content
+                        .source_subscription_is_live(id, generation, revision);
+                }
+                if affected {
+                    let wake = host.mark_content_pending()?;
+                    schedule_environment_drain |= wake.schedule_environment_drain;
+                    environment_wake_epoch = host.environment_wake_epoch();
+                }
+                Ok(())
+            })();
+            if let Err(error) = wake_result {
+                wake_failures += 1;
+                if first_wake_error.is_none() {
+                    first_wake_error = Some(error);
+                }
             }
-            if affected {
-                let wake = host.mark_content_pending()?;
-                schedule_environment_drain |= wake.schedule_environment_drain;
-                environment_wake_epoch = host.environment_wake_epoch();
-            }
+        }
+        if let Some(error) = first_wake_error {
+            return Err(anyhow!(
+                "SOURCE_WAKE_FAILED: Source revision {revision} was accepted; \
+                 {wake_failures} subscriber host(s) failed to wake: {error:#}"
+            ));
         }
         Ok(ContentMutationResult {
             revision,
@@ -4441,16 +4472,12 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_source_revision_rejects_append_but_storage_already_grew() {
-        // L1-00 step 8: counter-exhaustion atomicity (§9.6). With the Source
-        // revision at its limit, the append fails with the exhaustion error
-        // and neither the revision nor any accounting advances — but the
-        // payload IS already installed in storage: `append_bytes` runs on
-        // the live record before `next_revision` is preflighted. A snapshot
-        // at the stale revision observes bytes that were never accepted.
-        // This is the exact gap the §9.6 preflight rule ("preflight fallible
-        // arithmetic before installing candidate storage") must close; any
-        // storage-tranche fix must change this fixture explicitly.
+    fn exhausted_source_revision_rejects_append_without_installing_anything() {
+        // Counter-exhaustion atomicity (§9.6): the revision preflight runs
+        // before candidate storage is installed, so a rejection leaves
+        // bytes, annotations, revision and accounting exactly as they were.
+        // A normal "not accepted" report after a partial install would invite
+        // a duplicating retry.
         let source = revision_pinned_source();
         let payload = b"exhaustion\x00probe";
         let result = source.append_utf8(b"atomic\n", &[tag_annotation(payload)], payload);
@@ -4467,13 +4494,11 @@ mod tests {
             stats.copied_bytes, 5,
             "setup accounting must not move on rejection"
         );
+        assert_eq!(stats.source_end, 5, "rejected bytes must not be installed");
         assert_eq!(
-            stats.source_end, 12,
-            "current code installs the bytes before the revision preflight"
-        );
-        assert!(
-            source.snapshot().unwrap().text().ends_with("atomic\n"),
-            "stale-revision snapshot observes never-accepted bytes"
+            source.snapshot().unwrap().text(),
+            "keep\n",
+            "no unaccepted bytes may be observable"
         );
     }
 
@@ -4507,10 +4532,9 @@ mod tests {
     }
 
     #[test]
-    fn exhausted_content_generation_rejects_clear_after_emptying_storage() {
-        // Clear checks the content generation AFTER swapping in the empty
-        // root: the bytes are gone while revision and generation stay stale.
-        // Same §9.6 preflight gap as append, on the generation counter.
+    fn exhausted_content_generation_rejects_clear_without_touching_storage() {
+        // Clear preflights both revision and generation before swapping in
+        // the empty root: rejection leaves the retained bytes in place.
         let source = revision_pinned_source();
         source
             .record
@@ -4528,16 +4552,16 @@ mod tests {
         );
         assert_eq!(
             source.snapshot().unwrap().text(),
-            "",
-            "current code empties storage before the generation preflight"
+            "keep\n",
+            "rejected clear must not drop retained bytes"
         );
         assert_eq!(source.stats().unwrap().revision, 1);
     }
 
     #[test]
-    fn exhausted_source_revision_rejects_seal_after_setting_sealed() {
-        // Seal flips the flag on the live record before the revision
-        // preflight: the Source reports sealed at a stale revision.
+    fn exhausted_source_revision_rejects_seal_without_setting_sealed() {
+        // Seal preflights the revision before flipping the flag: a rejected
+        // seal leaves the Source unsealed at the pinned revision.
         let source = revision_pinned_source();
         let result = source.seal();
         let message = format!("{:?}", result.unwrap_err());
@@ -4546,14 +4570,17 @@ mod tests {
             "exhaustion must report as exhaustion, got: {message}"
         );
         let snapshot = source.snapshot().unwrap();
-        assert!(snapshot.sealed, "sealed flag is set despite the rejection");
+        assert!(
+            !snapshot.sealed,
+            "rejected seal must not flip the sealed flag"
+        );
         assert_eq!(stats_revision(&source), u64::MAX);
     }
 
     #[test]
-    fn exhausted_source_revision_rejects_truncate_after_dropping_head() {
-        // Truncate drops the head on the live record before the revision
-        // preflight: the retained range moves while the revision stays stale.
+    fn exhausted_source_revision_rejects_truncate_without_moving_head() {
+        // Truncate preflights the revision before dropping the head: a
+        // rejected truncate leaves the retained range where it was.
         let environment = TuiEnvironment::new();
         let source = environment
             .create_content_source(TextSourceKind::Stream)
@@ -4572,8 +4599,8 @@ mod tests {
         );
         let stats = source.stats().unwrap();
         assert_eq!(
-            stats.source_base, 3,
-            "current code advances the head before the revision preflight"
+            stats.source_base, 0,
+            "rejected truncate must not advance the head"
         );
         assert_eq!(stats.revision, u64::MAX);
     }

@@ -7,13 +7,13 @@ use super::{
     grid::Grid,
     style::{
         BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleSpec,
-        StyleStateKey, StyleStateValue, StyleStates, TextAttribute,
+        StyleStateKey, StyleStateValue, StyleStates, TextAttribute, VerticalAlign,
     },
     text::{HorizontalAlign, Text, TextSpan, WrapMode},
 };
 use crate::presentation::ir::{
     ClampRowsView, ColumnChild, ColumnView, ContainerNode, Decoration, HangingView, HeightRule,
-    PersistentSeq, RowView, View, ViewKind, ViewNodeParts, WidthRule,
+    PersistentSeq, RowChild, RowView, View, ViewKind, ViewNodeParts, WidthRule,
 };
 
 /// Validated common-property candidate assembled by native ingress and
@@ -99,6 +99,32 @@ impl View {
 
         Self::new_kind(ViewKind::Column(Arc::new(ColumnView {
             children: PersistentSeq::from_vec(children),
+            gap,
+        })))
+    }
+
+    /// Direct row construction for built-in producers: moves already-built
+    /// children into content tracks with one root, matching the
+    /// [`Horizontal`](super::composition::Horizontal) defaults (zero gap is
+    /// the caller's choice; vertical alignment is top).
+    pub(crate) fn row_from_views(children: Vec<View>, gap: u16) -> Self {
+        Self::new_kind(ViewKind::Row(Arc::new(RowView {
+            children: PersistentSeq::from_vec(
+                children.into_iter().map(RowChild::content).collect(),
+            ),
+            gap,
+            vertical_align: VerticalAlign::Top,
+        })))
+    }
+
+    /// Direct column construction for built-in producers: moves already-built
+    /// children into content tracks with one root, matching the
+    /// [`Vertical`](super::composition::Vertical) defaults.
+    pub(crate) fn column_from_views(children: Vec<View>, gap: u16) -> Self {
+        Self::new_kind(ViewKind::Column(Arc::new(ColumnView {
+            children: PersistentSeq::from_vec(
+                children.into_iter().map(ColumnChild::content).collect(),
+            ),
             gap,
         })))
     }

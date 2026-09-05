@@ -30,26 +30,36 @@ impl TextInput {
 
         let size = self.inner_size(layout_size);
         if size.width == 0 {
-            return self.decorated(View::vertical(|_| {}).fill_width().fill_height());
+            // L1-04: the direct column factory replaces the empty closure.
+            return self.decorated(
+                View::column_from_views(Vec::new(), 0)
+                    .fill_width()
+                    .fill_height(),
+            );
         }
 
         let ranges = input_wrap_ranges(self.buffer.text(), size.width);
         let cursor = self.buffer.cursor_bytes();
         let cursor_row = super::cursor::wrapped_line_index_by_start(&ranges, cursor).unwrap_or(0);
-        let body = View::vertical(|column| {
-            for (row_index, range) in ranges.iter().enumerate() {
-                let row_text = self.buffer.text()[range.clone()].to_owned();
-                let row = if self.focused && row_index == cursor_row {
-                    View::text(row_text)
-                        .no_wrap()
-                        .cursor_at(cursor.saturating_sub(range.start))
-                        .into_view()
-                } else {
-                    View::text(row_text).no_wrap().into_view()
-                };
-                column.child(row);
-            }
-        })
+        // L1-04: moved children plus the direct column factory.
+        let body = View::column_from_views(
+            ranges
+                .iter()
+                .enumerate()
+                .map(|(row_index, range)| {
+                    let row_text = self.buffer.text()[range.clone()].to_owned();
+                    if self.focused && row_index == cursor_row {
+                        View::text(row_text)
+                            .no_wrap()
+                            .cursor_at(cursor.saturating_sub(range.start))
+                            .into_view()
+                    } else {
+                        View::text(row_text).no_wrap().into_view()
+                    }
+                })
+                .collect(),
+            0,
+        )
         .fill_width();
         // Border belongs on a parent. RowViewport copies from skip into its
         // own surface; a border on that node overwrites the first and last

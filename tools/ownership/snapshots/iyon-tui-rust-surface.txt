@@ -1218,6 +1218,7 @@ iyon-tui::presentation::ir::View::max_width
 iyon-tui::presentation::ir::View::min_height
 iyon-tui::presentation::ir::View::min_width
 iyon-tui::presentation::ir::View::native_component
+iyon-tui::presentation::ir::View::native_grid_final
 iyon-tui::presentation::ir::View::native_patched
 iyon-tui::presentation::ir::View::native_text_final
 iyon-tui::presentation::ir::View::padding
@@ -1230,6 +1231,7 @@ iyon-tui::presentation::ir::View::style_states
 iyon-tui::presentation::ir::View::styled_text
 iyon-tui::presentation::ir::View::text
 iyon-tui::presentation::ir::View::text_attribute
+iyon-tui::presentation::ir::View::try_replace_retained_children
 iyon-tui::presentation::ir::View::underline
 iyon-tui::presentation::ir::View::vertical
 iyon-tui::presentation::ir::View::view_plain_text

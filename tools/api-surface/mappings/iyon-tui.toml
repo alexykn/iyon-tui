@@ -16936,3 +16936,27 @@ typescript_export = "binding__View__native_text_final"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-03 one-root text factory; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::View::native_grid_final"
+path = "iyon-tui::binding::View::native_grid_final"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::View::native_grid_final"
+typescript_module = "iyon:tui"
+typescript_export = "binding__View__native_grid_final"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-04 final grid factory; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::View::try_replace_retained_children"
+path = "iyon-tui::binding::View::try_replace_retained_children"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::View::try_replace_retained_children"
+typescript_module = "iyon:tui"
+typescript_export = "binding__View__try_replace_retained_children"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-04 batched retained replace; unsupported, no TS projection"

@@ -56,7 +56,7 @@
 use std::{collections::HashMap, num::NonZeroU16, sync::Arc};
 
 use super::{style::VerticalAlign, text::HorizontalAlign, view::IntoView};
-use crate::presentation::ir::{GridCellView, GridView, PersistentSeq, TrackSize, View};
+use crate::presentation::ir::{GridCellView, GridView, PersistentSeq, TrackSize, View, ViewKind};
 
 /// A column or row track size. The underlying layout representation is private.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,16 +245,46 @@ impl GridRow {
 }
 
 fn lower_grid(grid: Grid) -> GridView {
-    let mut columns: Vec<TrackSize> = grid.columns.into_iter().map(|track| track.track).collect();
+    lower_grid_parts(
+        grid.columns.into_iter().map(|track| track.track).collect(),
+        grid.column_gap,
+        grid.row_gap,
+        grid.rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.track.track,
+                    row.cells
+                        .into_iter()
+                        .map(|cell| (cell.spec, cell.view))
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// The single shared grid placement/normalization algorithm. Every caller
+/// moves owned values in: explicit columns, gaps, and one
+/// `(track, cells)` pair per source row. Implicit tracks grow from cell
+/// placement; row spans past the last source row extend the row list.
+/// Exactly one [`GridView`] comes out; no caller replays cells through a
+/// second construction pass.
+fn lower_grid_parts(
+    mut columns: Vec<TrackSize>,
+    column_gap: u16,
+    row_gap: u16,
+    rows_in: Vec<(TrackSize, Vec<(GridCellSpec, View)>)>,
+) -> GridView {
     let mut occupied_until = vec![0usize; columns.len()];
-    let mut rows = Vec::with_capacity(grid.rows.len());
+    let mut rows = Vec::with_capacity(rows_in.len());
     let mut cells = Vec::new();
 
-    for (row_index, pending) in grid.rows.into_iter().enumerate() {
-        rows.push(pending.track.track);
-        for cell in pending.cells {
-            let column_span = usize::from(cell.spec.column_span.get());
-            let row_span = usize::from(cell.spec.row_span.get());
+    for (row_index, (track, pending_cells)) in rows_in.into_iter().enumerate() {
+        rows.push(track);
+        for (spec, view) in pending_cells {
+            let column_span = usize::from(spec.column_span.get());
+            let row_span = usize::from(spec.row_span.get());
             let column = place_cell(row_index, column_span, &mut columns, &mut occupied_until);
             for occupied in occupied_until.iter_mut().skip(column).take(column_span) {
                 *occupied = row_index.saturating_add(row_span);
@@ -262,11 +292,11 @@ fn lower_grid(grid: Grid) -> GridView {
             cells.push(GridCellView {
                 row: row_index,
                 column,
-                row_span: cell.spec.row_span.get(),
-                column_span: cell.spec.column_span.get(),
-                horizontal_align: cell.spec.horizontal_align,
-                vertical_align: cell.spec.vertical_align,
-                view: cell.view,
+                row_span: spec.row_span.get(),
+                column_span: spec.column_span.get(),
+                horizontal_align: spec.horizontal_align,
+                vertical_align: spec.vertical_align,
+                view,
             });
         }
     }
@@ -288,10 +318,45 @@ fn lower_grid(grid: Grid) -> GridView {
     GridView {
         columns: PersistentSeq::from_vec(columns),
         rows: PersistentSeq::from_vec(rows),
-        column_gap: grid.column_gap,
-        row_gap: grid.row_gap,
+        column_gap,
+        row_gap,
         cells: PersistentSeq::from_vec(cells),
         cell_indices,
+    }
+}
+
+impl View {
+    /// Direct grid construction for built-in producers: moves parsed rows
+    /// into final storage through the shared placement algorithm with
+    /// exactly one root.
+    pub(crate) fn grid_from_parts(
+        columns: Vec<GridTrack>,
+        column_gap: u16,
+        row_gap: u16,
+        rows: Vec<(GridTrack, Vec<(GridCellSpec, View)>)>,
+    ) -> Self {
+        Self::new_kind(ViewKind::Grid(Arc::new(lower_grid_parts(
+            columns.into_iter().map(|track| track.track).collect(),
+            column_gap,
+            row_gap,
+            rows.into_iter()
+                .map(|(track, cells)| (track.track, cells))
+                .collect(),
+        ))))
+    }
+
+    /// Direct final grid construction for native ingress: the already-parsed
+    /// rows move into final storage with no second collection and no
+    /// per-cell clone. Exactly one root per call.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_grid_final(
+        columns: Vec<GridTrack>,
+        column_gap: u16,
+        row_gap: u16,
+        rows: Vec<(GridTrack, Vec<(GridCellSpec, View)>)>,
+    ) -> Self {
+        Self::grid_from_parts(columns, column_gap, row_gap, rows)
     }
 }
 

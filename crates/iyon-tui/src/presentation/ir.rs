@@ -1435,16 +1435,46 @@ impl View {
         step: RetainedPathStep,
         child: Self,
     ) -> Result<Self, String> {
-        if view_kind_tag(self.kind()) != step.expected_view_kind {
-            return Err("retained path expected view kind does not match base".to_owned());
+        self.try_replace_retained_children(&[(step, child)])
+    }
+
+    /// Replaces several retained-path children of one parent with a single
+    /// rebuilt root. The native edit trie stages every changed child of a
+    /// parent first, then applies them together, so a parent with N changed
+    /// children costs one root instead of N sequential clone-and-replace
+    /// roots. Validation runs in order with the same errors as sequential
+    /// single replaces; only the root allocation is fused. Sequence-kind
+    /// parents chain `PersistentSeq::set` (path copies, never flat copies)
+    /// and still allocate exactly one root.
+    #[doc(hidden)]
+    pub fn try_replace_retained_children(
+        self,
+        replacements: &[(RetainedPathStep, Self)],
+    ) -> Result<Self, String> {
+        if replacements.is_empty() {
+            return Ok(self);
         }
-        match step.kind {
-            PATH_STEP_CONTAINER_CHILD => {
-                if step.selector != 0 {
-                    return Err("container path selector must be zero".to_owned());
+        for (step, _) in replacements {
+            if view_kind_tag(self.kind()) != step.expected_view_kind {
+                return Err("retained path expected view kind does not match base".to_owned());
+            }
+        }
+        match self.kind() {
+            ViewKind::Container(_) => {
+                // Single-child parents keep sequential last-wins semantics;
+                // every step is still validated in order first.
+                let mut staged: Option<Self> = None;
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_CONTAINER_CHILD {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    if step.selector != 0 {
+                        return Err("container path selector must be zero".to_owned());
+                    }
+                    staged = Some(replacement.clone());
                 }
-                let ViewKind::Container(_) = self.kind() else {
-                    return Err("container path step requires a container".to_owned());
+                let Some(child) = staged else {
+                    return Ok(self);
                 };
                 Ok(self.map_node(|node| {
                     let ViewKind::Container(container) = &mut node.kind else {
@@ -1453,12 +1483,19 @@ impl View {
                     Arc::make_mut(container).child = child;
                 }))
             }
-            PATH_STEP_CLAMP_CHILD => {
-                if step.selector != 0 {
-                    return Err("clamp path selector must be zero".to_owned());
+            ViewKind::ClampRows(_) => {
+                let mut staged: Option<Self> = None;
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_CLAMP_CHILD {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    if step.selector != 0 {
+                        return Err("clamp path selector must be zero".to_owned());
+                    }
+                    staged = Some(replacement.clone());
                 }
-                let ViewKind::ClampRows(_) = self.kind() else {
-                    return Err("clamp path step requires a clamp".to_owned());
+                let Some(child) = staged else {
+                    return Ok(self);
                 };
                 Ok(self.map_node(|node| {
                     let ViewKind::ClampRows(clamp) = &mut node.kind else {
@@ -1467,12 +1504,19 @@ impl View {
                     Arc::make_mut(clamp).child = child;
                 }))
             }
-            PATH_STEP_ROW_VIEWPORT_CHILD => {
-                if step.selector != 0 {
-                    return Err("row viewport path selector must be zero".to_owned());
+            ViewKind::RowViewport(_) => {
+                let mut staged: Option<Self> = None;
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_ROW_VIEWPORT_CHILD {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    if step.selector != 0 {
+                        return Err("row viewport path selector must be zero".to_owned());
+                    }
+                    staged = Some(replacement.clone());
                 }
-                let ViewKind::RowViewport(_) = self.kind() else {
-                    return Err("row viewport path step requires a viewport".to_owned());
+                let Some(child) = staged else {
+                    return Ok(self);
                 };
                 Ok(self.map_node(|node| {
                     let ViewKind::RowViewport(viewport) = &mut node.kind else {
@@ -1481,19 +1525,23 @@ impl View {
                     Arc::make_mut(viewport).child = child;
                 }))
             }
-            PATH_STEP_COLUMN_CHILD => {
-                let ViewKind::Column(column) = self.kind() else {
-                    return Err("column path step requires a column".to_owned());
-                };
-                let current = column
-                    .children
-                    .get(step.selector as usize)
-                    .ok_or_else(|| "column path selector is out of range".to_owned())?;
-                let replacement = ColumnChild {
-                    track: current.track,
-                    view: child,
-                };
-                let children = column.children.set(step.selector as usize, replacement);
+            ViewKind::Column(column) => {
+                let mut children = column.children.clone();
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_COLUMN_CHILD {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    let current = children
+                        .get(step.selector as usize)
+                        .ok_or_else(|| "column path selector is out of range".to_owned())?;
+                    children = children.set(
+                        step.selector as usize,
+                        ColumnChild {
+                            track: current.track,
+                            view: replacement.clone(),
+                        },
+                    );
+                }
                 Ok(self.map_node(|node| {
                     let ViewKind::Column(column) = &mut node.kind else {
                         unreachable!("validated column path")
@@ -1501,19 +1549,23 @@ impl View {
                     Arc::make_mut(column).children = children;
                 }))
             }
-            PATH_STEP_ROW_CHILD => {
-                let ViewKind::Row(row) = self.kind() else {
-                    return Err("row path step requires a row".to_owned());
-                };
-                let current = row
-                    .children
-                    .get(step.selector as usize)
-                    .ok_or_else(|| "row path selector is out of range".to_owned())?;
-                let replacement = RowChild {
-                    track: current.track,
-                    view: child,
-                };
-                let children = row.children.set(step.selector as usize, replacement);
+            ViewKind::Row(row) => {
+                let mut children = row.children.clone();
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_ROW_CHILD {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    let current = children
+                        .get(step.selector as usize)
+                        .ok_or_else(|| "row path selector is out of range".to_owned())?;
+                    children = children.set(
+                        step.selector as usize,
+                        RowChild {
+                            track: current.track,
+                            view: replacement.clone(),
+                        },
+                    );
+                }
                 Ok(self.map_node(|node| {
                     let ViewKind::Row(row) = &mut node.kind else {
                         unreachable!("validated row path")
@@ -1521,17 +1573,19 @@ impl View {
                     Arc::make_mut(row).children = children;
                 }))
             }
-            PATH_STEP_GRID_CELL => {
-                let ViewKind::Grid(grid) = self.kind() else {
-                    return Err("grid path step requires a grid".to_owned());
-                };
-                let current = grid
-                    .cells
-                    .get(step.selector as usize)
-                    .ok_or_else(|| "grid path selector is out of range".to_owned())?;
-                let mut replacement = current.clone();
-                replacement.view = child;
-                let cells = grid.cells.set(step.selector as usize, replacement);
+            ViewKind::Grid(grid) => {
+                let mut cells = grid.cells.clone();
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.kind != PATH_STEP_GRID_CELL {
+                        return Err("unknown retained path step".to_owned());
+                    }
+                    let current = cells
+                        .get(step.selector as usize)
+                        .ok_or_else(|| "grid path selector is out of range".to_owned())?;
+                    let mut cell = current.clone();
+                    cell.view = replacement.clone();
+                    cells = cells.set(step.selector as usize, cell);
+                }
                 Ok(self.map_node(|node| {
                     let ViewKind::Grid(grid) = &mut node.kind else {
                         unreachable!("validated grid path")
@@ -1539,26 +1593,62 @@ impl View {
                     Arc::make_mut(grid).cells = cells;
                 }))
             }
-            PATH_STEP_HANGING_PREFIX | PATH_STEP_HANGING_CONTINUATION | PATH_STEP_HANGING_BODY => {
-                let ViewKind::Hanging(_) = self.kind() else {
-                    return Err("hanging path step requires a hanging view".to_owned());
-                };
-                if step.selector != 0 {
-                    return Err("hanging path selector must be zero".to_owned());
+            ViewKind::Hanging(_) => {
+                let mut prefix: Option<Self> = None;
+                let mut continuation: Option<Self> = None;
+                let mut body: Option<Self> = None;
+                for (step, replacement) in replacements.iter().cloned() {
+                    if step.selector != 0 {
+                        return Err("hanging path selector must be zero".to_owned());
+                    }
+                    match step.kind {
+                        PATH_STEP_HANGING_PREFIX => prefix = Some(replacement.clone()),
+                        PATH_STEP_HANGING_CONTINUATION => {
+                            continuation = Some(replacement.clone());
+                        }
+                        PATH_STEP_HANGING_BODY => body = Some(replacement.clone()),
+                        _ => return Err("unknown retained path step".to_owned()),
+                    }
                 }
                 Ok(self.map_node(|node| {
                     let ViewKind::Hanging(hanging) = &mut node.kind else {
                         unreachable!("validated hanging path")
                     };
                     let hanging = Arc::make_mut(hanging);
-                    match step.kind {
-                        PATH_STEP_HANGING_PREFIX => hanging.prefix = child,
-                        PATH_STEP_HANGING_CONTINUATION => hanging.continuation_prefix = child,
-                        _ => hanging.body = child,
+                    if let Some(prefix) = prefix {
+                        hanging.prefix = prefix;
+                    }
+                    if let Some(continuation) = continuation {
+                        hanging.continuation_prefix = continuation;
+                    }
+                    if let Some(body) = body {
+                        hanging.body = body;
                     }
                 }))
             }
-            _ => Err("unknown retained path step".to_owned()),
+            _ => {
+                // Non-parent kinds reject exactly like the single replace:
+                // the first replacement decides the error.
+                let (step, _) = &replacements[0];
+                match step.kind {
+                    PATH_STEP_CONTAINER_CHILD => {
+                        Err("container path step requires a container".to_owned())
+                    }
+                    PATH_STEP_CLAMP_CHILD => Err("clamp path step requires a clamp".to_owned()),
+                    PATH_STEP_ROW_VIEWPORT_CHILD => {
+                        Err("row viewport path step requires a viewport".to_owned())
+                    }
+                    PATH_STEP_COLUMN_CHILD => Err("column path step requires a column".to_owned()),
+                    PATH_STEP_ROW_CHILD => Err("row path step requires a row".to_owned()),
+                    PATH_STEP_GRID_CELL => Err("grid path step requires a grid".to_owned()),
+                    PATH_STEP_HANGING_PREFIX
+                    | PATH_STEP_HANGING_CONTINUATION
+                    | PATH_STEP_HANGING_BODY => {
+                        Err("hanging path step requires a hanging view".to_owned())
+                    }
+                    _ => Err("unknown retained path step".to_owned()),
+                }
+            }
         }
     }
 }
@@ -2341,6 +2431,126 @@ mod tests {
             View::ptr_eq(&kept.view, &leaf),
             "patching must share the child payload, not rebuild it"
         );
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn final_grid_assembly_equals_closure_builder_with_one_root() {
+        use crate::{GridCellSpec, GridTrack, HorizontalAlign};
+
+        let leaf = |text: &str| View::text(text).into_view();
+        let parts = || {
+            (
+                vec![GridTrack::content(), GridTrack::fixed(4)],
+                vec![(
+                    GridTrack::content(),
+                    vec![
+                        (GridCellSpec::new(), leaf("a")),
+                        (
+                            GridCellSpec::new()
+                                .column_span(2)
+                                .horizontal_align(HorizontalAlign::Center),
+                            leaf("b"),
+                        ),
+                    ],
+                )],
+            )
+        };
+        let via_builder = View::grid(|grid| {
+            grid.columns([GridTrack::content(), GridTrack::fixed(4)]);
+            grid.column_gap(1);
+            grid.row(|row| {
+                row.cell(leaf("a"));
+                row.cell_with(
+                    GridCellSpec::new()
+                        .column_span(2)
+                        .horizontal_align(HorizontalAlign::Center),
+                    leaf("b"),
+                );
+            });
+        });
+        let (columns, rows) = parts();
+        let via_final = View::native_grid_final(columns, 1, 0, rows);
+        assert!(
+            via_final.inner.semantic_eq(&via_builder.inner),
+            "final grid assembly must equal the closure builder it replaces"
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            // The leaves already exist outside the measured region, so the
+            // reset below counts the grid root alone.
+            let (columns, rows) = parts();
+            let _guard = crate::perf::test_lock();
+            crate::perf::reset();
+            let _ = View::native_grid_final(columns, 1, 0, rows);
+            assert_eq!(
+                crate::perf::snapshot().value(crate::perf::Counter::ViewNodesConstructedRust),
+                1,
+                "one final root per grid, not one per cell"
+            );
+        }
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn batched_retained_replace_equals_sequential_singles() {
+        use super::{PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, RetainedPathStep};
+
+        let leaf = |text: &str| View::text(text).into_view();
+        let parent = View::column_from_views(vec![leaf("a"), leaf("b"), leaf("c")], 0);
+        let step =
+            |index: u32| RetainedPathStep::new(PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, index);
+        let replacements = vec![(step(0), leaf("A")), (step(2), leaf("C"))];
+        let batched = parent
+            .clone()
+            .try_replace_retained_children(&replacements)
+            .expect("in-range batch replaces");
+        let sequential = parent
+            .clone()
+            .try_replace_retained_child(step(0), leaf("A"))
+            .expect("first sequential replace")
+            .try_replace_retained_child(step(2), leaf("C"))
+            .expect("second sequential replace");
+        assert!(
+            batched.inner.semantic_eq(&sequential.inner),
+            "batched replace must equal sequential single replaces"
+        );
+        assert_ne!(
+            batched.id(),
+            parent.id(),
+            "batching still allocates the one fused root"
+        );
+        // Error parity: an out-of-range later step fails exactly like the
+        // sequential second replace, after the same first validation.
+        let bad = vec![
+            (step(0), leaf("A")),
+            (
+                RetainedPathStep::new(PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, 9),
+                leaf("Z"),
+            ),
+        ];
+        assert_eq!(
+            parent.clone().try_replace_retained_children(&bad),
+            Err("column path selector is out of range".to_owned())
+        );
+        assert_eq!(
+            parent
+                .clone()
+                .try_replace_retained_child(step(0), leaf("A"))
+                .and_then(|patched| patched.try_replace_retained_child(
+                    RetainedPathStep::new(PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, 9),
+                    leaf("Z")
+                )),
+            Err("column path selector is out of range".to_owned())
+        );
+        // Empty batches are a no-op returning the same root.
+        let untouched = parent.clone();
+        assert!(View::ptr_eq(
+            &untouched
+                .try_replace_retained_children(&[])
+                .expect("empty batch succeeds"),
+            &parent
+        ));
     }
 
     #[cfg(feature = "native-host")]

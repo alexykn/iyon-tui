@@ -70,36 +70,37 @@ impl Renderer<Block> for TextRenderer {
 
 impl Renderer<[TextContent]> for TextRenderer {
     fn render(&self, input: &[TextContent]) -> View {
-        View::vertical(|column| {
-            column.gap(0);
-            let mut previous = None;
-            for content in input {
-                let gap = previous
-                    .and_then(list_of)
-                    .zip(list_of(content))
-                    .map_or_else(
-                        || {
-                            if previous.is_some() {
-                                self.policy.block_gap()
-                            } else {
-                                0
-                            }
-                        },
-                        |(left, right)| {
-                            if same_list_kind(left.marker(), right.marker())
-                                && left.tight()
-                                && right.tight()
-                            {
-                                0
-                            } else {
-                                self.policy.block_gap()
-                            }
-                        },
-                    );
-                column.child(Renderer::render(self, content).padding(Insets::new(gap, 0, 0, 0)));
-                previous = Some(content);
-            }
-        })
+        // L1-04: moved children plus the direct column factory; the
+        // list-aware gap policy below is untouched.
+        let mut children = Vec::with_capacity(input.len());
+        let mut previous = None;
+        for content in input {
+            let gap = previous
+                .and_then(list_of)
+                .zip(list_of(content))
+                .map_or_else(
+                    || {
+                        if previous.is_some() {
+                            self.policy.block_gap()
+                        } else {
+                            0
+                        }
+                    },
+                    |(left, right)| {
+                        if same_list_kind(left.marker(), right.marker())
+                            && left.tight()
+                            && right.tight()
+                        {
+                            0
+                        } else {
+                            self.policy.block_gap()
+                        }
+                    },
+                );
+            children.push(Renderer::render(self, content).padding(Insets::new(gap, 0, 0, 0)));
+            previous = Some(content);
+        }
+        View::column_from_views(children, 0)
     }
 }
 

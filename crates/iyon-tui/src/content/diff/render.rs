@@ -13,20 +13,22 @@ impl DiffRenderer {
 
     #[must_use]
     pub fn render_hunk(&self, hunk: &DiffHunk) -> View {
-        View::vertical(|column| {
-            column.gap(0);
-            column.child(header(hunk.old_range(), hunk.new_range()));
-            for line in hunk.lines() {
-                column.child(render_line(line));
-                if line.termination() == DiffLineTermination::Unterminated {
-                    column.child(
-                        View::text("\\ No newline at end of file")
-                            .no_wrap()
-                            .style(StyleRef::theme("diff.meta")),
-                    );
-                }
+        // L1-04: moved children plus the direct column factory. The numeric
+        // hunk/line/termination metadata below is untouched.
+        let mut children = Vec::with_capacity(hunk.lines().len() + 1);
+        children.push(header(hunk.old_range(), hunk.new_range()));
+        for line in hunk.lines() {
+            children.push(render_line(line));
+            if line.termination() == DiffLineTermination::Unterminated {
+                children.push(
+                    View::text("\\ No newline at end of file")
+                        .no_wrap()
+                        .style(StyleRef::theme("diff.meta"))
+                        .into_view(),
+                );
             }
-        })
+        }
+        View::column_from_views(children, 0)
     }
 }
 
@@ -38,12 +40,8 @@ impl Renderer<DiffHunk> for DiffRenderer {
 
 impl Renderer<[DiffHunk]> for DiffRenderer {
     fn render(&self, input: &[DiffHunk]) -> View {
-        View::vertical(|column| {
-            column.gap(0);
-            for hunk in input {
-                column.child(self.render_hunk(hunk));
-            }
-        })
+        // L1-04: moved children plus the direct column factory.
+        View::column_from_views(input.iter().map(|hunk| self.render_hunk(hunk)).collect(), 0)
     }
 }
 

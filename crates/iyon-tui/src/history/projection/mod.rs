@@ -491,9 +491,8 @@ fn project_into_session_with_mode(
         slack,
     );
 
-    let mut root = View::vertical(|column| {
-        column.children(children);
-    });
+    // L1-04: moved children plus the direct column factory.
+    let mut root = View::column_from_views(children, 0);
     root = root.fill_width().fill_height().padding(Insets::new(
         0,
         layout.padding.right,

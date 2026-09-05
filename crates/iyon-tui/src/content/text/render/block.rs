@@ -6,7 +6,7 @@ use super::super::{
 use super::TextRenderer;
 use super::identity::{RenderContext, part_facts, semantic_view_facts, stamp_text, stamp_view};
 use super::policy::{CodeBlockLabelPolicy, TableColumnSizing, TaskListMarkerPolicy};
-use crate::{GridCellSpec, GridTrack, HorizontalAlign, View};
+use crate::{GridCellSpec, GridTrack, HorizontalAlign, IntoView, View};
 
 impl TextRenderer {
     pub(super) fn lower_block(&self, block: &Block, context: &RenderContext) -> View {
@@ -44,12 +44,14 @@ impl TextRenderer {
     }
 
     fn render_blocks_with_gap(&self, blocks: &[Block], context: &RenderContext, gap: u16) -> View {
-        View::vertical(|column| {
-            column.gap(gap);
-            for block in blocks {
-                column.child(self.lower_block(block, context));
-            }
-        })
+        // L1-04: moved children plus the direct column factory.
+        View::column_from_views(
+            blocks
+                .iter()
+                .map(|block| self.lower_block(block, context))
+                .collect(),
+            gap,
+        )
     }
 
     pub(super) fn render_paragraph(
@@ -101,24 +103,24 @@ impl TextRenderer {
         let facts =
             semantic_view_facts(context, TextRole::List, block.annotations()).list_kind(kind);
         let item_context = context.with_role(TextRole::List).with_list_kind(kind);
-        let items = View::vertical(|column| {
-            // Gap only exists between sibling items. A one-item list has none,
-            // so keep gap 0 even when the parent list was loose.
-            column.gap(if list.tight() || list.items().len() <= 1 {
-                0
-            } else {
-                self.policy.block_gap()
-            });
-            for (index, item) in list.items().iter().enumerate() {
-                column.child(self.render_list_item(
-                    list.marker(),
-                    index,
-                    item,
-                    list.tight(),
-                    &item_context,
-                ));
-            }
-        });
+        // Gap only exists between sibling items. A one-item list has none,
+        // so keep gap 0 even when the parent list was loose.
+        let gap = if list.tight() || list.items().len() <= 1 {
+            0
+        } else {
+            self.policy.block_gap()
+        };
+        // L1-04: moved children plus the direct column factory.
+        let items = View::column_from_views(
+            list.items()
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    self.render_list_item(list.marker(), index, item, list.tight(), &item_context)
+                })
+                .collect(),
+            gap,
+        );
         stamp_view(items, facts)
     }
 
@@ -179,10 +181,10 @@ impl TextRenderer {
         );
         match self.policy.task_list_marker() {
             TaskListMarkerPolicy::TaskOnly => task_marker,
-            TaskListMarkerPolicy::TaskAndList => View::horizontal(|row| {
-                row.child(task_marker);
-                row.child(list_marker);
-            }),
+            // L1-04: moved children plus the direct row factory.
+            TaskListMarkerPolicy::TaskAndList => {
+                View::row_from_views(vec![task_marker, list_marker], 0)
+            }
         }
     }
 
@@ -202,11 +204,14 @@ impl TextRenderer {
                 let label_context = context.with_language(code.language());
                 let label_facts =
                     part_facts(&label_context, TextPart::CodeLabel, block.annotations());
-                View::vertical(|column| {
-                    column.gap(self.policy.code_block_gap());
-                    column.child(stamp_text(View::text(label).no_wrap(), label_facts));
-                    column.child(body);
-                })
+                // L1-04: moved children plus the direct column factory.
+                View::column_from_views(
+                    vec![
+                        stamp_text(View::text(label).no_wrap(), label_facts),
+                        body.into_view(),
+                    ],
+                    self.policy.code_block_gap(),
+                )
             }
             None => body.container(),
         };
@@ -221,53 +226,58 @@ impl TextRenderer {
             TableColumnSizing::Content => GridTrack::content(),
             TableColumnSizing::Flex => GridTrack::flex(),
         };
-        let mut grid = View::grid(|grid| {
-            grid.columns(table.columns().iter().map(|_| track));
-            grid.column_gap(self.policy.table_column_gap());
-            grid.row_gap(self.policy.table_row_gap());
-            for (row_index, row) in table.rows().iter().enumerate() {
-                let section = if row_index < table.header_rows() {
-                    TextTableSection::Header
-                } else {
-                    TextTableSection::Body
-                };
-                let row_context = table_context
-                    .for_node(row.annotations())
-                    .with_table_section(section);
-                let row_facts =
-                    semantic_view_facts(&row_context, TextRole::TableRow, row.annotations());
-                grid.row(|grid_row| {
-                    for (cell_index, cell) in row.cells().iter().enumerate() {
-                        let logical_column = start_columns[row_index][cell_index];
-                        let cell_view = self.render_cell(
-                            cell,
-                            table,
-                            logical_column,
-                            &row_context.with_role(TextRole::TableRow),
-                        );
-                        let alignment = cell
-                            .alignment()
-                            .unwrap_or_else(|| table.columns()[logical_column].alignment());
-                        grid_row.cell_with(
-                            GridCellSpec::new()
-                                .row_span(cell.row_span().get())
-                                .column_span(cell.col_span().get())
-                                .horizontal_align(to_horizontal_align(alignment)),
-                            stamp_view(cell_view.container(), row_facts.clone()),
-                        );
-                    }
-                });
+        // L1-04: parsed rows move into final storage through the shared
+        // placement factory. Source rows use content tracks, matching the
+        // closure builder default.
+        let mut rows = Vec::with_capacity(table.rows().len());
+        for (row_index, row) in table.rows().iter().enumerate() {
+            let section = if row_index < table.header_rows() {
+                TextTableSection::Header
+            } else {
+                TextTableSection::Body
+            };
+            let row_context = table_context
+                .for_node(row.annotations())
+                .with_table_section(section);
+            let row_facts =
+                semantic_view_facts(&row_context, TextRole::TableRow, row.annotations());
+            let mut cells = Vec::with_capacity(row.cells().len());
+            for (cell_index, cell) in row.cells().iter().enumerate() {
+                let logical_column = start_columns[row_index][cell_index];
+                let cell_view = self.render_cell(
+                    cell,
+                    table,
+                    logical_column,
+                    &row_context.with_role(TextRole::TableRow),
+                );
+                let alignment = cell
+                    .alignment()
+                    .unwrap_or_else(|| table.columns()[logical_column].alignment());
+                cells.push((
+                    GridCellSpec::new()
+                        .row_span(cell.row_span().get())
+                        .column_span(cell.col_span().get())
+                        .horizontal_align(to_horizontal_align(alignment)),
+                    stamp_view(cell_view.container(), row_facts.clone()),
+                ));
             }
-        });
+            rows.push((GridTrack::content(), cells));
+        }
+        let mut grid = View::grid_from_parts(
+            vec![track; table.columns().len()],
+            self.policy.table_column_gap(),
+            self.policy.table_row_gap(),
+            rows,
+        );
         if matches!(self.policy.table_column_sizing(), TableColumnSizing::Flex) {
             grid = grid.fill_width();
         }
         let body = if let Some(caption) = table.caption() {
-            View::vertical(|column| {
-                column.gap(self.policy.block_gap());
-                column.child(self.render_blocks(caption, &table_context));
-                column.child(grid);
-            })
+            // L1-04: moved children plus the direct column factory.
+            View::column_from_views(
+                vec![self.render_blocks(caption, &table_context), grid],
+                self.policy.block_gap(),
+            )
         } else {
             grid
         };

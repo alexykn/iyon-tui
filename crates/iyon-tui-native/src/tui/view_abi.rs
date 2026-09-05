@@ -789,15 +789,20 @@ impl NativeViewRuntime {
         if node.children.is_empty() || node.node_id.is_none() {
             return Err(FAST_INVALID);
         }
-        let mut patched = view.clone();
+        // L1-04: every changed child of this parent is staged first, then
+        // all replacements apply in one batched rebuild. One root per
+        // changed parent instead of one per changed child; error order is
+        // unchanged because rebuilds still precede any replacement.
+        let mut replacements = Vec::with_capacity(node.children.len());
         for &child_index in &node.children {
             let step = trie[child_index].step.ok_or(FAST_INVALID)?;
             let child = view.try_retained_child(step).map_err(|_| FAST_INVALID)?;
             let rebuilt = self.stage_edit_trie(child, trie, child_index, staged)?;
-            patched = patched
-                .try_replace_retained_child(step, rebuilt)
-                .map_err(|_| FAST_INVALID)?;
+            replacements.push((step, rebuilt));
         }
+        let patched = view
+            .try_replace_retained_children(&replacements)
+            .map_err(|_| FAST_INVALID)?;
         staged.push((node.node_id.unwrap(), patched.clone()));
         Ok(patched)
     }
@@ -2931,8 +2936,9 @@ pub unsafe extern "Rust" fn view_grid_set_cell_impl(
 }
 
 /// PERF-12 T10 (§36): parses the flat u32 word buffer describing a new
-/// grid and constructs it through the semantic builder. Every read is
-/// bounds-checked; the buffer must be consumed exactly.
+/// grid and moves it into final storage through the shared placement
+/// factory. Every read is bounds-checked; the buffer must be consumed
+/// exactly.
 fn parse_and_build_grid(
     words: &[u32],
     resolve_child: &mut dyn FnMut(u32) -> Result<View, u32>,
@@ -3023,18 +3029,15 @@ fn parse_and_build_grid(
     if cursor != words.len() {
         return Err(FAST_INVALID);
     }
-    Ok(View::grid(|grid| {
-        grid.columns(column_tracks);
-        grid.column_gap(column_gap);
-        grid.row_gap(row_gap);
-        for (track, cells) in parsed_rows {
-            grid.row_with(track, |row| {
-                for (spec, view) in &cells {
-                    row.cell_with(*spec, view.clone());
-                }
-            });
-        }
-    }))
+    // L1-04: parsed rows move into final storage through the shared
+    // placement factory. No closure replay, no per-cell clone; exactly one
+    // root, with the same bounds-checked validation as before.
+    Ok(View::native_grid_final(
+        column_tracks,
+        column_gap,
+        row_gap,
+        parsed_rows,
+    ))
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
@@ -5433,6 +5436,63 @@ mod tests {
             )
         };
         assert_eq!(malformed, FAST_INVALID);
+    }
+
+    #[test]
+    fn grid_malformed_tail_publishes_nothing_and_leaves_no_lease() {
+        // L1-04: a truncated tail rejects with FAST_INVALID without
+        // publishing; the same NodeId stays unpublished, so a later valid
+        // buffer for it publishes cleanly and resolves normally.
+        let mut runtime = runtime();
+        let pointer = &mut runtime as *mut NativeViewRuntime;
+        let child =
+            unsafe { generated_exports::invoke_iyon_view_spacer_create_v1(pointer, 600, 0, 1) };
+        assert!(child < 0x8000_0000);
+        // One column track, one row, one three-word cell: 8 words whole.
+        let words: [u32; 8] = [
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            1,
+            GRID_TRACK_CONTENT_WORD,
+            1,
+            child,
+            1 | (1 << 16),
+            1 | (1 << 16),
+        ];
+        let truncated = unsafe {
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
+                pointer,
+                701,
+                0,
+                0,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                7,
+            )
+        };
+        assert_eq!(truncated, FAST_INVALID);
+        assert_eq!(
+            unsafe { generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 701, 0) },
+            FAST_CACHE_MISS,
+            "rejected tail must not publish the NodeId"
+        );
+        let grid = unsafe {
+            generated_exports::invoke_iyon_view_grid_create_buffer_v1(
+                pointer,
+                701,
+                0,
+                0,
+                0,
+                words.as_ptr(),
+                words.len() * 4,
+                words.len() as u32,
+            )
+        };
+        assert!(grid < 0x8000_0000);
+        assert_eq!(grid, unsafe {
+            generated_exports::invoke_iyon_view_ref_for_node_id_v1(pointer, 701, 0)
+        });
     }
 
     #[test]

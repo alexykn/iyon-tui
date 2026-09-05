@@ -227,6 +227,9 @@ pub use theme::Theme;
 #[cfg(feature = "native-host")]
 #[doc(hidden)]
 pub use presentation::api::NativeCommonPatch;
+#[cfg(feature = "native-host")]
+#[doc(hidden)]
+pub use presentation::api::NativeTextPage;
 pub use presentation::api::{
     AnsiColor, BorderEdges, BorderGlyphError, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec,
     Grid, GridCellSpec, GridRow, GridTrack, Horizontal, HorizontalAlign, Insets, IntoView,

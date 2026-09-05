@@ -22,7 +22,7 @@ const BLESSED_BINDING = new Set([
   "HostContentFunnel", "HostContentPort", "HostContentSource", "HostHistory",
   "HostScrollPane", "HostTextInput", "HostViewSlot", "HostViewState",
   "Insets", "IntoView", "Key", "KeyStroke", "LanguageId", "Modifiers",
-  "NativeCommonPatch", "Output", "OverflowIndicator", "Renderer",
+  "NativeCommonPatch", "NativeTextPage", "Output", "OverflowIndicator", "Renderer",
   "RetainedPathStep", "SemanticTag", "SmoothConfig",
   "StyleRef", "StyleSelector", "StyleSpec", "TextAttribute", "TextFunnelKind",
   "TextInput", "TextOrigin", "TextPart", "TextRole", "TextSelector",

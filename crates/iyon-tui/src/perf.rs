@@ -57,10 +57,11 @@ pub enum Counter {
     GlobalCacheClears,
     ContentSurfaceClones,
     ContentRegistryPortScans,
+    TextBytesCopied,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::ContentRegistryPortScans as usize + 1;
+    pub const COUNT: usize = Self::TextBytesCopied as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -112,6 +113,7 @@ const NAMES: [&str; Counter::COUNT] = [
     "global_cache_clears",
     "content_surface_clones",
     "content_registry_port_scans",
+    "text_bytes_copied",
 ];
 
 #[cfg(feature = "perf-counters")]

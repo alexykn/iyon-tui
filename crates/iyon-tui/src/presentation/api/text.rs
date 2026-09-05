@@ -4,9 +4,11 @@ use std::{fmt, str, sync::Arc};
 
 use super::style::{
     BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleStateKey,
-    StyleStateValue, TextAttribute,
+    StyleStateValue, StyleStates, TextAttribute,
 };
-use crate::presentation::ir::{TextView, View, ViewKind};
+use crate::presentation::ir::{
+    Decoration, HeightRule, TextView, View, ViewKind, ViewNodeParts, WidthRule,
+};
 
 const INLINE_TEXT_CAPACITY: usize = 12;
 
@@ -103,6 +105,48 @@ pub struct TextSpan {
     pub(crate) style_facts: StyleFacts,
 }
 
+/// One native-owned page shared by every span of a length-delimited ingress
+/// buffer. The page is built once from an owned `String` (already valid
+/// UTF-8 by construction); spans reference checked ranges instead of
+/// rehydrating one `String` per span.
+#[cfg(feature = "native-host")]
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct NativeTextPage {
+    page: Arc<NativeUtf8Page>,
+}
+
+#[cfg(feature = "native-host")]
+impl NativeTextPage {
+    /// Moves an owned buffer into a single shared page. No copy: the
+    /// caller's allocation becomes the page storage.
+    pub fn new(text: String) -> Self {
+        Self {
+            page: Arc::new(NativeUtf8Page {
+                text: text.into_boxed_str(),
+            }),
+        }
+    }
+
+    /// Borrows a checked range as a styled span. Returns `None` when the
+    /// range is out of bounds or splits a UTF-8 sequence; interior validity
+    /// holds by construction because the page was built from a `String`.
+    pub fn span(&self, offset: u32, len: u32, style: StyleRef) -> Option<TextSpan> {
+        let end = offset.checked_add(len)? as usize;
+        let offset = offset as usize;
+        self.page.text.get(offset..end)?;
+        Some(TextSpan {
+            text: TextStorage::PageSlice {
+                page: Arc::clone(&self.page),
+                offset: offset as u32,
+                len,
+            },
+            style,
+            style_facts: StyleFacts::default(),
+        })
+    }
+}
+
 impl TextSpan {
     #[must_use]
     pub fn text(&self) -> &str {
@@ -184,6 +228,32 @@ pub enum HorizontalAlign {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Text {
     view: View,
+}
+
+impl View {
+    /// Direct final text construction for native ingress: wrap and alignment
+    /// initialize the `TextView` fields before root allocation, and the
+    /// already-owned span vector moves into the payload with no second
+    /// collection. Exactly one root per call.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_text_final(spans: Vec<TextSpan>, wrap: WrapMode, align: HorizontalAlign) -> Self {
+        Self::from_node(ViewNodeParts {
+            width: WidthRule::Fit,
+            height: HeightRule::Fit,
+            decoration: Decoration::default(),
+            style_states: StyleStates::default(),
+            style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
+            kind: ViewKind::Text(Arc::new(TextView {
+                spans: spans.into(),
+                wrap,
+                align,
+                cursor: None,
+            })),
+        })
+    }
 }
 
 impl Text {
@@ -467,5 +537,81 @@ mod tests {
 
         assert!(matches!(container.kind(), ViewKind::Container(_)));
         assert!(matches!(clamp.kind(), ViewKind::ClampRows(_)));
+    }
+
+    #[test]
+    fn small_spans_stay_inline_without_a_page() {
+        let span = TextSpan::styled("hi", StyleRef::default());
+        assert!(
+            matches!(span.text, TextStorage::Inline { .. }),
+            "short ingress text must keep the small-text fast case"
+        );
+        assert_eq!(span.text(), "hi");
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn page_shared_spans_keep_old_roots_valid() {
+        use super::NativeTextPage;
+        use std::sync::Arc;
+
+        let page = NativeTextPage::new("hello world".to_owned());
+        let first = page
+            .span(0, 5, StyleRef::default())
+            .expect("in-bounds range");
+        let second = page
+            .span(6, 5, StyleRef::default())
+            .expect("in-bounds range");
+        assert_eq!(first.text(), "hello");
+        assert_eq!(second.text(), "world");
+        // Both spans borrow the single page: no per-span allocation.
+        let (page_of_first, page_of_second) = match (&first.text, &second.text) {
+            (
+                TextStorage::PageSlice { page: first, .. },
+                TextStorage::PageSlice { page: second, .. },
+            ) => (Arc::clone(first), Arc::clone(second)),
+            _ => panic!("length-delimited spans must borrow the shared page"),
+        };
+        assert!(Arc::ptr_eq(&page_of_first, &page_of_second));
+        // An old root stays valid after subsequent construction, sharing the
+        // page even once the ingress handle is gone.
+        let old = View::native_text_final(
+            vec![first],
+            WrapMode::WordThenGrapheme,
+            HorizontalAlign::Start,
+        );
+        drop(page);
+        let _newer = View::native_text_final(
+            vec![second],
+            WrapMode::WordThenGrapheme,
+            HorizontalAlign::Start,
+        );
+        let ViewKind::Text(retained) = old.kind() else {
+            panic!("expected text view");
+        };
+        assert_eq!(retained.spans[0].text(), "hello");
+    }
+
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn page_span_rejects_out_of_bounds_and_split_sequences() {
+        use super::NativeTextPage;
+
+        let page = NativeTextPage::new("héllo🌍".to_owned());
+        assert!(page.span(0, 100, StyleRef::default()).is_none());
+        assert!(page.span(1, 1, StyleRef::default()).is_none());
+        assert_eq!(
+            page.span(0, 1, StyleRef::default()).expect("ascii").text(),
+            "h"
+        );
+        // Trailing newlines are ordinary text, preserved byte for byte.
+        let lines = NativeTextPage::new("line\n".to_owned());
+        assert_eq!(
+            lines
+                .span(0, 5, StyleRef::default())
+                .expect("newline")
+                .text(),
+            "line\n"
+        );
     }
 }

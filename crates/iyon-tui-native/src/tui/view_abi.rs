@@ -3,9 +3,9 @@ use crate::NativeError;
 use iyon_tui::binding::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
     DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
-    GridTrack, HorizontalAlign, Insets, IntoView, NativeCommonPatch, OverflowIndicator, Renderer,
-    RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView,
-    WrapMode,
+    GridTrack, HorizontalAlign, Insets, NativeCommonPatch, NativeTextPage, OverflowIndicator,
+    Renderer, RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View,
+    WeakView, WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -3909,12 +3909,12 @@ fn parse_color_atom(value: &str) -> Result<ColorSpec, u32> {
 }
 
 fn text_view_from_spans(spans: Vec<TextSpan>, wrap: u32, align: u32) -> Result<View, u32> {
+    // L1-03: wrap/alignment decode before construction; the factory puts
+    // them in the final TextView fields with no modifier chain and no
+    // fluent Text wrapper on this path.
     let wrap = decode_wrap(wrap).map_err(|()| FAST_INVALID)?;
     let align = decode_align(align).map_err(|()| FAST_INVALID)?;
-    Ok(View::styled_text(spans)
-        .wrap(wrap)
-        .text_align(align)
-        .into_view())
+    Ok(View::native_text_final(spans, wrap, align))
 }
 
 fn text_view_from_owned(text: String, style: StyleRef, wrap: u32, align: u32) -> Result<View, u32> {
@@ -3926,23 +3926,30 @@ fn cstring_to_owned(pointer: *const std::ffi::c_char, maximum_bytes: u32) -> Res
     if bytes.len() > maximum_bytes as usize {
         return Err(FAST_REFUSED);
     }
-    str::from_utf8(bytes)
+    let text = str::from_utf8(bytes)
         .map(str::to_owned)
-        .map_err(|_| FAST_INVALID)
+        .map_err(|_| FAST_INVALID)?;
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::binding::add(
+        iyon_tui::binding::Counter::TextBytesCopied,
+        text.len() as u64,
+    );
+    Ok(text)
 }
 
 fn cstring_text_spans(
     runtime: &NativeViewRuntime,
     inputs: &[(*const std::ffi::c_char, u32)],
 ) -> Result<Vec<TextSpan>, u32> {
-    inputs
-        .iter()
-        .map(|(pointer, style_ref)| {
-            let text = cstring_to_owned(*pointer, MAX_NEW_TEXT_BYTES)?;
-            let style = runtime.style_for_ref(*style_ref)?;
-            Ok(TextSpan::styled(text, style))
-        })
-        .collect()
+    // Each CString is already its own allocation, so per-span inline/small
+    // storage stays the cheapest shape here; capacity is reserved up front.
+    let mut spans = Vec::with_capacity(inputs.len());
+    for (pointer, style_ref) in inputs {
+        let text = cstring_to_owned(*pointer, MAX_NEW_TEXT_BYTES)?;
+        let style = runtime.style_for_ref(*style_ref)?;
+        spans.push(TextSpan::styled(text, style));
+    }
+    Ok(spans)
 }
 
 fn publish_cstring_text(
@@ -4066,6 +4073,11 @@ pub unsafe extern "Rust" fn view_text_create_utf8_impl(
     let Ok(text) = str::from_utf8(bytes).map(str::to_owned) else {
         return record_result(runtime, FAST_INVALID);
     };
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::binding::add(
+        iyon_tui::binding::Counter::TextBytesCopied,
+        text.len() as u64,
+    );
     let result = runtime
         .style_for_ref(style_ref)
         .and_then(|style| text_view_from_owned(text, style, wrap, align))
@@ -4098,20 +4110,27 @@ fn utf8_text_spans(
         }
         unsafe { slice::from_raw_parts(bytes, total) }
     };
-    let mut offset = 0usize;
-    span_bytes
-        .iter()
-        .zip(style_refs)
-        .map(|(length, style_ref)| {
-            let end = offset.checked_add(*length as usize).ok_or(FAST_INVALID)?;
-            let text = str::from_utf8(&bytes[offset..end])
-                .map(str::to_owned)
-                .map_err(|_| FAST_INVALID)?;
-            offset = end;
-            let style = runtime.style_for_ref(*style_ref)?;
-            Ok(TextSpan::styled(text, style))
-        })
-        .collect()
+    // L1-03: one owned buffer and one shared page for all spans. The single
+    // validation below proves the whole buffer; each range is then
+    // boundary-checked by the page, so no span rehydrates its own String.
+    // All rejections stay FAST_INVALID, exactly as before.
+    let text = str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| FAST_INVALID)?;
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::binding::add(
+        iyon_tui::binding::Counter::TextBytesCopied,
+        text.len() as u64,
+    );
+    let page = NativeTextPage::new(text);
+    let mut spans = Vec::with_capacity(span_bytes.len());
+    let mut offset = 0u32;
+    for (length, style_ref) in span_bytes.iter().zip(style_refs) {
+        let style = runtime.style_for_ref(*style_ref)?;
+        spans.push(page.span(offset, *length, style).ok_or(FAST_INVALID)?);
+        offset = offset.checked_add(*length).ok_or(FAST_INVALID)?;
+    }
+    Ok(spans)
 }
 
 fn publish_utf8_text(
@@ -4409,23 +4428,28 @@ fn parse_and_build_text_buffer(
     if words.len() != 1 + framed {
         return Err(FAST_INVALID);
     }
+    // L1-03: one owned buffer and one shared page for all spans, mirroring
+    // the utf8 lane. Whole-buffer validation first, then boundary-checked
+    // ranges; framing and style errors keep their FAST_INVALID codes.
+    let text = str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| FAST_INVALID)?;
+    #[cfg(feature = "perf-counters")]
+    iyon_tui::binding::add(
+        iyon_tui::binding::Counter::TextBytesCopied,
+        text.len() as u64,
+    );
+    let page = NativeTextPage::new(text);
     let mut spans = Vec::with_capacity(span_count);
-    let mut offset = 0usize;
+    let mut offset = 0u32;
     for _ in 0..span_count {
         let style_ref = next_word()?;
-        let length = next_word()? as usize;
-        let end = offset.checked_add(length).ok_or(FAST_INVALID)?;
-        if end > bytes.len() {
-            return Err(FAST_INVALID);
-        }
-        let text = str::from_utf8(&bytes[offset..end])
-            .map(str::to_owned)
-            .map_err(|_| FAST_INVALID)?;
-        offset = end;
+        let length = next_word()?;
         let style = runtime.style_for_ref(style_ref)?;
-        spans.push(TextSpan::styled(text, style));
+        spans.push(page.span(offset, length, style).ok_or(FAST_INVALID)?);
+        offset = offset.checked_add(length).ok_or(FAST_INVALID)?;
     }
-    if offset != bytes.len() {
+    if offset as usize != bytes.len() {
         return Err(FAST_INVALID);
     }
     Ok(spans)
@@ -6086,5 +6110,109 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Acquire),
             FAST_INVALID
         );
+    }
+
+    #[test]
+    fn cstring_lane_truncates_at_embedded_nul_per_contract() {
+        // The CString contract is NUL-terminated: an embedded NUL ends the
+        // payload there. NUL-capable callers must use the length-delimited
+        // lane instead; the TS materializer already routes them there.
+        let mut bytes = b"ab\0cd".to_vec();
+        bytes.push(0);
+        let truncated = super::cstring_to_owned(bytes.as_ptr() as *const std::ffi::c_char, 64)
+            .expect("prefix decodes");
+        assert_eq!(truncated, "ab");
+    }
+
+    #[test]
+    fn utf8_lane_rejects_span_sum_mismatch_before_any_work() {
+        let runtime = NativeViewRuntime::new();
+        let bytes = "hello world";
+        // Declared span lengths (4 + 5 = 9) disagree with the used length.
+        let result = super::utf8_text_spans(&runtime, bytes.as_ptr(), 11, &[4, 5], &[0, 0]);
+        assert_eq!(result, Err(FAST_INVALID));
+        // Span/style count mismatch is rejected just as early.
+        let result = super::utf8_text_spans(&runtime, bytes.as_ptr(), 11, &[11], &[0, 0]);
+        assert_eq!(result, Err(FAST_INVALID));
+    }
+
+    #[test]
+    fn utf8_lane_rejects_split_multibyte_boundary() {
+        let runtime = NativeViewRuntime::new();
+        // "héllo" is 6 bytes (h + two-byte é at 1..3 + llo). Byte 1 is the
+        // é lead byte, still a valid boundary; byte 2 is its trail byte.
+        let bytes = "héllo";
+        assert_eq!(bytes.len(), 6);
+        let result = super::utf8_text_spans(&runtime, bytes.as_ptr(), 6, &[2, 4], &[0, 0]);
+        assert_eq!(result, Err(FAST_INVALID));
+        let ok = super::utf8_text_spans(&runtime, bytes.as_ptr(), 6, &[1, 5], &[0, 0])
+            .expect("lead-byte splits decode");
+        assert_eq!(ok.len(), 2);
+        assert_eq!(ok[0].text(), "h");
+        assert_eq!(ok[1].text(), "éllo");
+        let ok = super::utf8_text_spans(&runtime, bytes.as_ptr(), 6, &[3, 3], &[0, 0])
+            .expect("char-boundary splits decode");
+        assert_eq!(ok.len(), 2);
+        assert_eq!(ok[0].text(), "hé");
+        assert_eq!(ok[1].text(), "llo");
+    }
+
+    #[test]
+    fn utf8_lane_preserves_embedded_and_trailing_nul() {
+        let runtime = NativeViewRuntime::new();
+        let bytes = "a\0b\n";
+        let spans = super::utf8_text_spans(&runtime, bytes.as_ptr(), 4, &[4], &[0])
+            .expect("length-delimited NUL decodes");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text(), "a\0b\n");
+    }
+
+    #[test]
+    fn utf8_lane_distinguishes_empty_string_from_empty_span_list() {
+        let runtime = NativeViewRuntime::new();
+        // No spans at all: an empty span list, accepted with zero spans.
+        let empty_list = super::utf8_text_spans(&runtime, std::ptr::null(), 0, &[], &[])
+            .expect("empty span list decodes");
+        assert!(empty_list.is_empty());
+        // One zero-length span: an empty string, distinct from no spans.
+        let empty_string = super::utf8_text_spans(&runtime, std::ptr::null(), 0, &[0], &[0])
+            .expect("empty string span decodes");
+        assert_eq!(empty_string.len(), 1);
+        assert_eq!(empty_string[0].text(), "");
+    }
+
+    #[test]
+    fn utf8_lane_rejects_unknown_style_reference() {
+        let runtime = NativeViewRuntime::new();
+        let bytes = "plain";
+        let result = super::utf8_text_spans(&runtime, bytes.as_ptr(), 5, &[5], &[u32::MAX]);
+        assert_eq!(result, Err(FAST_INVALID));
+    }
+
+    #[test]
+    fn buffer_lane_rejects_bad_framing_and_split_boundaries() {
+        let runtime = NativeViewRuntime::new();
+        // Zero spans is a framing error on this lane (not an empty list).
+        assert_eq!(
+            super::parse_and_build_text_buffer(&runtime, &[0], b""),
+            Err(FAST_INVALID)
+        );
+        // Words must be exactly 1 + 2 per span.
+        assert_eq!(
+            super::parse_and_build_text_buffer(&runtime, &[1, 0], b""),
+            Err(FAST_INVALID)
+        );
+        // A span cut mid-sequence (byte 2 is the é trail byte) is rejected.
+        let bytes = "héllo".as_bytes();
+        assert_eq!(
+            super::parse_and_build_text_buffer(&runtime, &[1, 0, 2], bytes),
+            Err(FAST_INVALID)
+        );
+        // Boundary-aligned coverage of the whole buffer decodes.
+        let spans =
+            super::parse_and_build_text_buffer(&runtime, &[2, 0, 3, 0, 3], bytes).expect("decodes");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].text(), "hé");
+        assert_eq!(spans[1].text(), "llo");
     }
 }

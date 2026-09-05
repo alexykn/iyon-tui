@@ -16888,3 +16888,51 @@ typescript_export = "binding__View__native_patched"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-02 one-final-root constructor; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::NativeTextPage"
+path = "iyon-tui::binding::NativeTextPage"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::NativeTextPage"
+typescript_module = "iyon:tui"
+typescript_export = "binding__NativeTextPage"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-03 shared text page; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::NativeTextPage::new"
+path = "iyon-tui::binding::NativeTextPage::new"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::NativeTextPage::new"
+typescript_module = "iyon:tui"
+typescript_export = "binding__NativeTextPage__new"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-03 shared text page; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::NativeTextPage::span"
+path = "iyon-tui::binding::NativeTextPage::span"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::NativeTextPage::span"
+typescript_module = "iyon:tui"
+typescript_export = "binding__NativeTextPage__span"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-03 shared text page; unsupported, no TS projection"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::View::native_text_final"
+path = "iyon-tui::binding::View::native_text_final"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::View::native_text_final"
+typescript_module = "iyon:tui"
+typescript_export = "binding__View__native_text_final"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-03 one-root text factory; unsupported, no TS projection"

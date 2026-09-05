@@ -40,6 +40,10 @@ pub use crate::{
 // ingress to the one-root constructor without exposing size-rule vocabulary.
 #[cfg(feature = "native-host")]
 pub use crate::NativeCommonPatch;
+// Shared text pages. Length-delimited ingress moves one owned buffer into a
+// page; spans borrow checked ranges instead of rehydrating Strings.
+#[cfg(feature = "native-host")]
+pub use crate::NativeTextPage;
 
 // Native-host seam. These mirror the `native-host` gates on the crate root:
 // the native crate always enables the feature, while featureless core builds

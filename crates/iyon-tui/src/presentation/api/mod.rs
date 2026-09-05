@@ -18,6 +18,8 @@ pub use style::{
     TextAttribute, TextAttributeSpec, ThemeColor, ThemeKey, VerticalAlign,
 };
 pub(crate) use style::{StyleFacts, StyleStates};
+#[cfg(feature = "native-host")]
+pub use text::NativeTextPage;
 pub use text::{HorizontalAlign, Text, TextSpan, WrapMode};
 pub use view::IntoView;
 #[cfg(feature = "native-host")]

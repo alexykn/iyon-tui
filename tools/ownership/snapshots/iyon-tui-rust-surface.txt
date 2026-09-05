@@ -1143,6 +1143,9 @@ iyon-tui::presentation::api::text::HorizontalAlign
 iyon-tui::presentation::api::text::HorizontalAlign::Center
 iyon-tui::presentation::api::text::HorizontalAlign::End
 iyon-tui::presentation::api::text::HorizontalAlign::Start
+iyon-tui::presentation::api::text::NativeTextPage
+iyon-tui::presentation::api::text::NativeTextPage::new
+iyon-tui::presentation::api::text::NativeTextPage::span
 iyon-tui::presentation::api::text::Text
 iyon-tui::presentation::api::text::Text
 iyon-tui::presentation::api::text::Text::background
@@ -1216,6 +1219,7 @@ iyon-tui::presentation::ir::View::min_height
 iyon-tui::presentation::ir::View::min_width
 iyon-tui::presentation::ir::View::native_component
 iyon-tui::presentation::ir::View::native_patched
+iyon-tui::presentation::ir::View::native_text_final
 iyon-tui::presentation::ir::View::padding
 iyon-tui::presentation::ir::View::reversed
 iyon-tui::presentation::ir::View::spacer

@@ -4410,6 +4410,178 @@ mod tests {
     use crate::application::environment::TuiEnvironment;
     use crate::application::host::TuiHost;
 
+    /// Forced-boundary Source: accepted bytes installed at revision 1, then
+    /// the revision counter pinned to its limit. The returned source always
+    /// holds `"keep\n"` at revision 1 before pinning.
+    fn revision_pinned_source() -> HostContentSource {
+        let environment = TuiEnvironment::new();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"keep\n", &[], &[]).unwrap();
+        source
+            .record
+            .lock()
+            .map(|mut record| record.revision = u64::MAX)
+            .unwrap();
+        source
+    }
+
+    fn tag_annotation(payload: &[u8]) -> ContentAnnotationRecord {
+        ContentAnnotationRecord {
+            kind: CONTENT_ANNOTATION_KIND_TAG,
+            flags: 0,
+            start_byte: 0,
+            end_byte: 4,
+            payload_offset: 0,
+            payload_length: payload.len() as u32,
+            aux0: 0,
+            aux1: 0,
+        }
+    }
+
+    #[test]
+    fn exhausted_source_revision_rejects_append_but_storage_already_grew() {
+        // L1-00 step 8: counter-exhaustion atomicity (§9.6). With the Source
+        // revision at its limit, the append fails with the exhaustion error
+        // and neither the revision nor any accounting advances — but the
+        // payload IS already installed in storage: `append_bytes` runs on
+        // the live record before `next_revision` is preflighted. A snapshot
+        // at the stale revision observes bytes that were never accepted.
+        // This is the exact gap the §9.6 preflight rule ("preflight fallible
+        // arithmetic before installing candidate storage") must close; any
+        // storage-tranche fix must change this fixture explicitly.
+        let source = revision_pinned_source();
+        let payload = b"exhaustion\x00probe";
+        let result = source.append_utf8(b"atomic\n", &[tag_annotation(payload)], payload);
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+
+        let stats = source.stats().unwrap();
+        assert_eq!(stats.revision, u64::MAX, "revision must not advance");
+        assert_eq!(stats.accepted_bytes, 5, "accepted bytes must not move");
+        assert_eq!(
+            stats.copied_bytes, 5,
+            "setup accounting must not move on rejection"
+        );
+        assert_eq!(
+            stats.source_end, 12,
+            "current code installs the bytes before the revision preflight"
+        );
+        assert!(
+            source.snapshot().unwrap().text().ends_with("atomic\n"),
+            "stale-revision snapshot observes never-accepted bytes"
+        );
+    }
+
+    #[test]
+    fn exhausted_source_revision_rejects_replace_without_touching_storage() {
+        // Replace preflights the revision before installing the fresh root,
+        // so the old storage survives the rejection intact.
+        let source = revision_pinned_source();
+        let result = source.replace_utf8(b"new\n", &[], &[]);
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+        assert_eq!(source.snapshot().unwrap().text(), "keep\n");
+        assert_eq!(source.stats().unwrap().revision, u64::MAX);
+    }
+
+    #[test]
+    fn exhausted_source_revision_rejects_clear_without_touching_storage() {
+        // Clear also preflights the revision before swapping in the empty
+        // root: rejection leaves the retained bytes in place.
+        let source = revision_pinned_source();
+        let result = source.clear();
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+        assert_eq!(source.snapshot().unwrap().text(), "keep\n");
+    }
+
+    #[test]
+    fn exhausted_content_generation_rejects_clear_after_emptying_storage() {
+        // Clear checks the content generation AFTER swapping in the empty
+        // root: the bytes are gone while revision and generation stay stale.
+        // Same §9.6 preflight gap as append, on the generation counter.
+        let source = revision_pinned_source();
+        source
+            .record
+            .lock()
+            .map(|mut record| {
+                record.revision = 1;
+                record.content_generation = u64::MAX;
+            })
+            .unwrap();
+        let result = source.clear();
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source content generation exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+        assert_eq!(
+            source.snapshot().unwrap().text(),
+            "",
+            "current code empties storage before the generation preflight"
+        );
+        assert_eq!(source.stats().unwrap().revision, 1);
+    }
+
+    #[test]
+    fn exhausted_source_revision_rejects_seal_after_setting_sealed() {
+        // Seal flips the flag on the live record before the revision
+        // preflight: the Source reports sealed at a stale revision.
+        let source = revision_pinned_source();
+        let result = source.seal();
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+        let snapshot = source.snapshot().unwrap();
+        assert!(snapshot.sealed, "sealed flag is set despite the rejection");
+        assert_eq!(stats_revision(&source), u64::MAX);
+    }
+
+    #[test]
+    fn exhausted_source_revision_rejects_truncate_after_dropping_head() {
+        // Truncate drops the head on the live record before the revision
+        // preflight: the retained range moves while the revision stays stale.
+        let environment = TuiEnvironment::new();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"abcdefgh\n", &[], &[]).unwrap();
+        source
+            .record
+            .lock()
+            .map(|mut record| record.revision = u64::MAX)
+            .unwrap();
+        let result = source.truncate_head(3);
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("Source revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+        let stats = source.stats().unwrap();
+        assert_eq!(
+            stats.source_base, 3,
+            "current code advances the head before the revision preflight"
+        );
+        assert_eq!(stats.revision, u64::MAX);
+    }
+
+    fn stats_revision(source: &HostContentSource) -> u64 {
+        source.stats().map(|stats| stats.revision).unwrap_or(0)
+    }
+
     #[test]
     fn source_subscriptions_are_scoped_by_host() {
         let environment = TuiEnvironment::new();

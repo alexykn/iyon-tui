@@ -84,3 +84,30 @@ impl StreamRange {
         offset >= self.start && offset < self.end
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_offset_checked_add_reports_exhaustion_at_the_limit() {
+        // L1-00 step 8: counter-exhaustion atomicity for stream
+        // coordinates. The append path converts `None` into
+        // `INVALID_RANGE: Source coordinate exhausted` before installing
+        // anything; pin the arithmetic contract itself here.
+        assert_eq!(
+            StreamOffset::ZERO.checked_add(7),
+            Some(StreamOffset::new(7))
+        );
+        assert_eq!(
+            StreamOffset::new(u64::MAX - 5).checked_add(5),
+            Some(StreamOffset::new(u64::MAX))
+        );
+        assert_eq!(StreamOffset::new(u64::MAX - 5).checked_add(6), None);
+        assert_eq!(StreamOffset::new(u64::MAX).checked_add(1), None);
+        assert_eq!(
+            StreamOffset::new(u64::MAX).saturating_add(1),
+            StreamOffset::new(u64::MAX)
+        );
+    }
+}

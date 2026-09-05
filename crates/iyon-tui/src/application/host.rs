@@ -2389,4 +2389,190 @@ mod tests {
         first.close().unwrap();
         second.close().unwrap();
     }
+
+    /// Opens two headless hosts sharing one environment/Source registry and
+    /// subscribes one live connector on each host to a fresh stream Source.
+    /// Returns `(healthy_first, healthy_second, source)`; callers poison one
+    /// host to simulate a post-acceptance wake failure.
+    fn mounted_subscribed_pair() -> (TuiHost, TuiHost, crate::HostContentSource) {
+        use crate::{ContentFamily, HostContentFunnel, TextSourceKind, TextWrapMode};
+
+        let environment = TuiEnvironment::new();
+        let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        for host in [&first, &second] {
+            let port = host.create_content_port(ContentFamily::Text).unwrap();
+            let connector = port
+                .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
+                .unwrap();
+            host.set_desired_view(View::native_content_host(port.id()).unwrap())
+                .unwrap();
+            host.flush_pending_hosts(8, true).unwrap();
+            connector.activate().unwrap();
+        }
+        assert_eq!(
+            source.subscriber_count(),
+            2,
+            "both hosts must hold live Source subscriptions before poisoning"
+        );
+        (first, second, source)
+    }
+
+    /// Poisons a host's frame mutex, simulating a subscriber that becomes
+    /// unavailable after Source acceptance (lock poison surfaces exactly
+    /// where `finish_mutation` reports post-acceptance wake errors).
+    fn poison_host(host: &TuiHost) {
+        let inner = std::sync::Arc::clone(&host.inner);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = inner.lock().unwrap();
+            panic!("intentional host poison for post-acceptance wake fixture");
+        }));
+        assert!(result.is_err(), "poisoning panic must unwind");
+        assert!(inner.is_poisoned(), "host mutex must be poisoned");
+    }
+
+    #[test]
+    fn post_acceptance_wake_failure_keeps_revision_authoritative() {
+        // L1-00 step 8: Source post-acceptance wake failure (§9.6). The
+        // poisoned subscriber is woken last, so the healthy host is already
+        // marked pending when the failure surfaces. The installed revision
+        // must remain authoritative and observable even though the append
+        // itself reports an error without the accepted revision.
+        let (first, second, source) = mounted_subscribed_pair();
+        poison_host(&second);
+        let revision_before = source.snapshot().unwrap().revision;
+        let epoch_before = first.epochs().unwrap().pending_epoch;
+
+        let result = source.append_utf8(b"wake-auth\n", &[], &[]);
+        assert!(
+            result.is_err(),
+            "poisoned subscriber wake must surface as an error, not vanish"
+        );
+
+        let snapshot = source.snapshot().unwrap();
+        assert_eq!(
+            snapshot.revision,
+            revision_before + 1,
+            "accepted revision must be installed despite the wake failure"
+        );
+        assert!(
+            snapshot.text().contains("wake-auth"),
+            "accepted bytes must be readable after the wake failure"
+        );
+        assert_ne!(
+            first.epochs().unwrap().pending_epoch,
+            epoch_before,
+            "hosts woken before the failure must stay marked pending"
+        );
+        first.close().unwrap();
+        drop(second);
+    }
+
+    #[test]
+    fn post_acceptance_wake_failure_aborts_later_subscriber_wakes() {
+        // L1-00 step 8: documents the current order-dependent gap behind the
+        // §9.6 target ("continue handling other eligible hosts") and the
+        // L1-12 "no lost wake" stop condition. The poisoned subscriber is
+        // woken first, so `finish_mutation` returns before reaching the
+        // healthy host: the revision is installed, but the later wake is
+        // lost. Any refactor that changes this must do so explicitly.
+        let (first, second, source) = mounted_subscribed_pair();
+        poison_host(&first);
+        let revision_before = source.snapshot().unwrap().revision;
+        let epoch_before = second.epochs().unwrap().pending_epoch;
+
+        let result = source.append_utf8(b"wake-auth\n", &[], &[]);
+        assert!(result.is_err(), "poisoned first wake must surface");
+
+        let snapshot = source.snapshot().unwrap();
+        assert_eq!(
+            snapshot.revision,
+            revision_before + 1,
+            "accepted revision must be installed despite the wake failure"
+        );
+        assert_eq!(
+            second.epochs().unwrap().pending_epoch,
+            epoch_before,
+            "current code loses the later wake; record, do not silently fix"
+        );
+        second.close().unwrap();
+        drop(first);
+    }
+
+    #[test]
+    fn exhausted_desired_revision_rejects_publication_without_mutation() {
+        // L1-00 step 8: counter-exhaustion atomicity for the structural
+        // lane. The revision preflight runs before any state/content
+        // binding or body install, so rejection leaves the visible frame
+        // and the pending pipeline exactly as they were.
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_desired_view(View::text("settled").into_view())
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let settled_rows = host.screen_rows();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.desired_structural_revision = u64::MAX;
+        }
+
+        let result = host.set_desired_view(View::text("never").into_view());
+        let message = format!("{:?}", result.unwrap_err());
+        assert!(
+            message.contains("desired structural revision exhausted"),
+            "exhaustion must report as exhaustion, got: {message}"
+        );
+
+        host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(
+            host.screen_rows(),
+            settled_rows,
+            "rejected publication must not disturb the visible frame"
+        );
+        assert_eq!(
+            host.epochs().unwrap().desired_structural_revision,
+            u64::MAX,
+            "rejected publication must not consume the revision"
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn state_patch_leaves_desired_structural_revision_untouched() {
+        // L1-00 step 8: state/structural patch distinction. A retained-state
+        // patch travels the state lane only: no desired-revision bump and no
+        // structural republication. A structural publication consumes exactly
+        // one desired revision.
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let state = host.create_view_state().unwrap();
+        let view = View::text("lane")
+            .into_view()
+            .native_with_state_attachment(state.state_id())
+            .unwrap();
+        host.set_desired_view(view).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let baseline = host.epochs().unwrap();
+        assert_eq!(baseline.desired_structural_revision, 1);
+
+        let mut patch = ViewStatePresentationPatch::default();
+        patch.foreground = Some(Some(ColorSpec::ansi(6)));
+        state.set_presentation(&patch).unwrap();
+        let after_state_patch = host.epochs().unwrap();
+        assert_eq!(
+            after_state_patch.desired_structural_revision, baseline.desired_structural_revision,
+            "state patch must not consume a structural revision"
+        );
+
+        host.set_desired_view(View::text("lane").into_view())
+            .unwrap();
+        let after_structural = host.epochs().unwrap();
+        assert_eq!(
+            after_structural.desired_structural_revision,
+            baseline.desired_structural_revision + 1,
+            "structural publication must consume exactly one revision"
+        );
+        host.close().unwrap();
+    }
 }

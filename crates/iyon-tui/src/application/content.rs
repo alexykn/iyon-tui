@@ -271,6 +271,79 @@ struct HostContentProjection {
     stable_rows: usize,
 }
 
+/// Mutable delivery state that belongs to one smoothed Connector binding.
+/// Delivery tracks time advancement, grapheme indexing, and candidate frontiers
+/// without reconstructing raw Source projections or parsing syntax on pure ticks.
+#[derive(Debug)]
+struct ConnectorDelivery {
+    smoother: Smooth,
+    units: Projection<TextContent>,
+    indexed_generation: u32,
+    indexed_revision: u64,
+    indexed_sealed: bool,
+    candidate_frontier: StreamOffset,
+}
+
+impl ConnectorDelivery {
+    fn new(config: SmoothConfig) -> Self {
+        Self {
+            smoother: Smooth::new(config),
+            units: ProjectionBuilder::new(
+                StreamOffset::ZERO,
+                StreamOffset::ZERO,
+                StreamOffset::ZERO,
+                false,
+            )
+            .finish()
+            .expect("empty grapheme projection is valid"),
+            indexed_generation: u32::MAX,
+            indexed_revision: u64::MAX,
+            indexed_sealed: false,
+            candidate_frontier: StreamOffset::ZERO,
+        }
+    }
+
+    fn accept_input(&mut self, snapshot: &HostContentSourceSnapshot) -> Result<()> {
+        let changed = self.indexed_generation != snapshot.source_generation
+            || self.indexed_revision != snapshot.revision
+            || self.indexed_sealed != snapshot.sealed;
+        if !changed {
+            return Ok(());
+        }
+        let units = source_grapheme_projection(snapshot)
+            .map_err(|error| anyhow!("content smoothing input failed: {error}"))?;
+        let _ = self.smoother.project(&units);
+        self.units = units;
+        self.indexed_generation = snapshot.source_generation;
+        self.indexed_revision = snapshot.revision;
+        self.indexed_sealed = snapshot.sealed;
+        self.candidate_frontier = self.smoother.published_through();
+        Ok(())
+    }
+
+    fn advance(&mut self, now: Instant) -> bool {
+        let progressed = self.smoother.advance(now);
+        if progressed {
+            self.candidate_frontier = self.smoother.published_through();
+        }
+        progressed
+    }
+
+    fn next_wakeup(&self) -> Option<Instant> {
+        self.smoother.next_wakeup()
+    }
+
+    fn published_through(&self) -> StreamOffset {
+        self.smoother.published_through()
+    }
+
+    fn reveal_units(&self) -> usize {
+        let published = self.published_through();
+        let spans = self.units.spans();
+        spans.partition_point(|span| span.source().end() <= published)
+    }
+}
+
 /// Mutable execution state that belongs to one Connector binding. Funnels
 /// remain immutable specifications; inactive Connectors drop this value so
 /// inactive membership retains no parser, delivery, or projection work.
@@ -279,7 +352,7 @@ struct ConnectorExecution {
     markdown: Option<MarkdownProjector>,
     diff: Option<DiffProjector>,
     ansi: Option<AnsiProjector>,
-    smoother: Option<Smooth>,
+    delivery: Option<ConnectorDelivery>,
 }
 
 impl ConnectorExecution {
@@ -294,7 +367,7 @@ impl ConnectorExecution {
                     hyperlinks: funnel.hyperlinks,
                 })
             }),
-            smoother: funnel.smooth_config().map(Smooth::new),
+            delivery: funnel.smooth_config().map(ConnectorDelivery::new),
         }
     }
 }
@@ -642,6 +715,126 @@ fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
     )
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct VisibilityIndex {
+    pub(crate) row_glyphs: Vec<Vec<u16>>,
+    pub(crate) total_glyphs: usize,
+}
+
+impl VisibilityIndex {
+    pub(crate) fn from_surface(surface: &Surface) -> Self {
+        let mut row_glyphs = Vec::with_capacity(usize::from(surface.height()));
+        let mut total_glyphs = 0;
+        for row in 0..surface.height() {
+            let mut cols = Vec::new();
+            for col in 0..surface.width() {
+                let cell = surface.get(col, row);
+                if cell.painted && !cell.continuation {
+                    cols.push(col);
+                    total_glyphs += 1;
+                }
+            }
+            row_glyphs.push(cols);
+        }
+        Self {
+            row_glyphs,
+            total_glyphs,
+        }
+    }
+
+    pub(crate) fn apply_reveal(
+        &self,
+        surface: &Arc<Surface>,
+        units: usize,
+    ) -> (Size, Arc<Surface>, usize) {
+        if units == 0 || surface.width() == 0 || surface.height() == 0 || self.total_glyphs == 0 {
+            let empty = Surface::new(surface.width(), 0);
+            return (Size::new(surface.width(), 0), Arc::new(empty), 0);
+        }
+        if units >= self.total_glyphs {
+            let size = Size::new(surface.width(), surface.height());
+            return (size, Arc::clone(surface), self.row_glyphs.len());
+        }
+        let mut remaining = units;
+        let mut last_row = 0u16;
+        let mut saw_glyph = false;
+        let mut fully_revealed = 0usize;
+        let mut cut: Option<(u16, u16)> = None;
+
+        for (row_idx, cols) in self.row_glyphs.iter().enumerate() {
+            let row = row_idx as u16;
+            if cols.is_empty() {
+                fully_revealed = row_idx + 1;
+                continue;
+            }
+            if remaining < cols.len() {
+                let cut_col = cols[remaining];
+                cut = Some((row, cut_col));
+                if remaining > 0 {
+                    saw_glyph = true;
+                    last_row = row;
+                }
+                break;
+            }
+            remaining -= cols.len();
+            saw_glyph = true;
+            last_row = row;
+            fully_revealed = row_idx + 1;
+        }
+
+        if !saw_glyph {
+            let empty = Surface::new(surface.width(), 0);
+            return (Size::new(surface.width(), 0), Arc::new(empty), 0);
+        }
+
+        let target_height = if let Some((cut_row, cut_col)) = cut {
+            if cut_col > 0 {
+                last_row.max(cut_row).saturating_add(1)
+            } else {
+                last_row.saturating_add(1)
+            }
+        } else {
+            last_row.saturating_add(1)
+        };
+
+        let mut revealed = Surface::new(surface.width(), target_height);
+        revealed.physically_complete = surface.physically_complete;
+        for row in 0..target_height {
+            let max_col = if let Some((cut_row, cut_col)) = cut && row == cut_row {
+                cut_col
+            } else if let Some((cut_row, _)) = cut && row > cut_row {
+                0
+            } else {
+                surface.width()
+            };
+            for col in 0..max_col {
+                let cell = surface.get(col, row);
+                if cell.painted {
+                    *revealed.get_mut(col, row) = cell.clone();
+                }
+            }
+        }
+        let size = Size::new(revealed.width(), revealed.height());
+        (size, Arc::new(revealed), fully_revealed)
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PreparedPaintKey {
+    semantic_key: SemanticProjectionKey,
+    theme_revision: u64,
+    width: u16,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPaintProduct {
+    unmasked_surface: Arc<Surface>,
+    visibility: VisibilityIndex,
+    unmasked_stable_prefix_rows: usize,
+}
+
+type PreparedPaintCache = VecDeque<(PreparedPaintKey, Arc<PreparedPaintProduct>)>;
+
 fn project_text_snapshot(
     snapshot: &HostContentSourceSnapshot,
     funnel: HostContentFunnel,
@@ -651,6 +844,7 @@ fn project_text_snapshot(
     execution: &mut ConnectorExecution,
     delivery_revision: u64,
     semantic_cache: &mut SemanticProjectionCache,
+    prepared_paint_cache: &mut PreparedPaintCache,
 ) -> Result<HostContentProjection> {
     let key = TextProjectionKey {
         source_id: snapshot.source_id,
@@ -688,54 +882,92 @@ fn project_text_snapshot(
     // window resizes, and smooth timer delivery ticks hit the cache, while
     // source revisions or funnel kind changes rebuild.
     let semantic_key = SemanticProjectionKey::for_snapshot(snapshot, funnel);
-    let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
-        project_semantic_snapshot(snapshot, funnel, execution)
-    })?;
-    let reveal_units = if let Some(smoother) = execution.smoother.as_mut() {
-        let units = source_grapheme_projection(snapshot)
-            .map_err(|error| anyhow!("content smoothing input failed: {error}"))?;
-        smoother.project(&units);
-        Some(
-            units
-                .spans()
-                .iter()
-                .take_while(|span| span.source().end() <= smoother.published_through())
-                .count(),
-        )
-    } else {
-        None
+    let paint_key = PreparedPaintKey {
+        semantic_key: semantic_key.clone(),
+        theme_revision,
+        width: offered_width.max(1),
     };
+
+    let paint_product = if let Some(product) = prepared_paint_cache
+        .iter()
+        .find(|(k, _)| k == &paint_key)
+        .map(|(_, p)| Arc::clone(p))
+    {
+        product
+    } else {
+        let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
+            project_semantic_snapshot(snapshot, funnel, execution)
+        })?;
+        let (_unmasked_size, unmasked_surface, _) =
+            render_semantic_surface(&semantic, theme, offered_width, None)?;
+        let visibility = VisibilityIndex::from_surface(&unmasked_surface);
+        let unmasked_stable_prefix_rows = if snapshot.sealed {
+            usize::from(unmasked_surface.height())
+        } else {
+            snapshot
+                .stable_prefix()
+                .and_then(|prefix| {
+                    let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
+                    let mut prefix_exec = ConnectorExecution::new(&funnel);
+                    resolve_cached_semantic(semantic_cache, prefix_key, || {
+                        project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
+                    })
+                    .ok()
+                    .and_then(|prefix_semantic| {
+                        render_semantic_surface(&prefix_semantic, theme, offered_width, None)
+                            .ok()
+                            .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
+                    })
+                })
+                .unwrap_or(0)
+        };
+        let product = Arc::new(PreparedPaintProduct {
+            unmasked_surface: Arc::new(unmasked_surface),
+            visibility,
+            unmasked_stable_prefix_rows,
+        });
+        prepared_paint_cache.retain(|(k, _)| k != &paint_key);
+        prepared_paint_cache.push_front((paint_key, Arc::clone(&product)));
+        while prepared_paint_cache.len() > 4 {
+            prepared_paint_cache.pop_back();
+        }
+        product
+    };
+
     let (intrinsic_size, surface, fully_revealed_rows) =
-        render_semantic_surface(&semantic, theme, offered_width, reveal_units)?;
+        if let Some(delivery) = execution.delivery.as_mut() {
+            delivery.accept_input(snapshot)?;
+            let reveal_units = delivery.reveal_units();
+            paint_product
+                .visibility
+                .apply_reveal(&paint_product.unmasked_surface, reveal_units)
+        } else {
+            (
+                Size::new(
+                    paint_product.unmasked_surface.width(),
+                    paint_product.unmasked_surface.height(),
+                ),
+                Arc::clone(&paint_product.unmasked_surface),
+                paint_product.visibility.row_glyphs.len(),
+            )
+        };
+
     let stable_rows = if snapshot.sealed {
         surface.height() as usize
+    } else if execution.delivery.is_some() {
+        paint_product
+            .unmasked_stable_prefix_rows
+            .min(fully_revealed_rows)
     } else {
-        let stable_prefix_rows = snapshot
-            .stable_prefix()
-            .and_then(|prefix| {
-                let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
-                let mut prefix_exec = ConnectorExecution::new(&funnel);
-                resolve_cached_semantic(semantic_cache, prefix_key, || {
-                    project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
-                })
-                .ok()
-                .and_then(|prefix_semantic| {
-                    render_semantic_surface(&prefix_semantic, theme, offered_width, None)
-                        .ok()
-                        .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
-                })
-            })
-            .unwrap_or(0);
-        if reveal_units.is_some() {
-            stable_prefix_rows.min(fully_revealed_rows)
-        } else {
-            stable_prefix_rows.min(surface.height() as usize)
-        }
+        paint_product
+            .unmasked_stable_prefix_rows
+            .min(surface.height() as usize)
     };
+
     Ok(HostContentProjection {
         key,
         intrinsic_size,
-        surface: Arc::new(surface),
+        surface,
         stable_rows,
     })
 }
@@ -2158,6 +2390,9 @@ struct ConnectorRecord {
     /// Connector-local width-dependent derived projections. Inactive connectors
     /// clear this cache; the Source remains the authoritative store.
     projection_cache: VecDeque<(TextProjectionKey, Arc<HostContentProjection>)>,
+    /// Connector-local width-dependent unmasked paint cache and visibility index.
+    /// Reused across delivery ticks without reparsing or fresh View lowering.
+    prepared_paint_cache: PreparedPaintCache,
     /// Connector-local theme-independent semantic IR. A palette/presentation
     /// recolor reuses these products and repaints only; inactive connectors
     /// clear this cache alongside the surface products.
@@ -2167,6 +2402,8 @@ struct ConnectorRecord {
     projected_source_revision: Option<u64>,
     projection_failure_key: Option<TextProjectionKey>,
     delivery_revision: u64,
+    candidate_delivery_frontier: StreamOffset,
+    committed_delivery_frontier: StreamOffset,
     execution: Option<ConnectorExecution>,
 }
 
@@ -2202,6 +2439,9 @@ pub(crate) struct ContentHostRegistry {
     /// Candidate selection/projection is discarded on frame abort and
     /// promoted only after the backend receipt commits.
     candidate_selections: HashMap<u64, Option<u64>>,
+    /// Active due deadlines for smoothed connectors. Native ticks and wake
+    /// queries inspect this structure without scanning inactive registries.
+    active_deadlines: HashMap<u64, Instant>,
 }
 
 impl ContentHostRegistry {
@@ -2217,6 +2457,7 @@ impl ContentHostRegistry {
             connectors: HashMap::new(),
             in_flight_connectors: HashSet::new(),
             candidate_selections: HashMap::new(),
+            active_deadlines: HashMap::new(),
         }
     }
 
@@ -2329,12 +2570,15 @@ impl ContentHostRegistry {
             failed_source_revision: None,
             activation_failure: None,
             projection_cache: VecDeque::new(),
+            prepared_paint_cache: VecDeque::new(),
             semantic_cache: VecDeque::new(),
             committed_projection: None,
             candidate_projection: None,
             projected_source_revision: None,
             projection_failure_key: None,
             delivery_revision: 0,
+            candidate_delivery_frontier: StreamOffset::ZERO,
+            committed_delivery_frontier: StreamOffset::ZERO,
             execution: None,
         }));
         self.connectors
@@ -2419,47 +2663,141 @@ impl ContentHostRegistry {
     /// Source storage. A progressed smoother invalidates only its derived
     /// projection; the host frame commits the new visible frontier later.
     pub(crate) fn advance(&mut self, now: Instant) -> bool {
-        let connector_ids = self.connectors.keys().copied().collect::<Vec<_>>();
+        if self.active_deadlines.is_empty() {
+            let active_candidates: Vec<u64> = self
+                .connectors
+                .iter()
+                .filter_map(|(&id, c)| {
+                    let s = c.lock().ok()?;
+                    (s.visible || s.requested).then_some(id)
+                })
+                .collect();
+            for id in active_candidates {
+                self.sync_connector_deadline(id, Some(now));
+            }
+        }
+        if self.active_deadlines.is_empty() {
+            return false;
+        }
+        let due_ids: Vec<u64> = self
+            .active_deadlines
+            .iter()
+            .filter_map(|(&id, &deadline)| (deadline <= now).then_some(id))
+            .collect();
+        if due_ids.is_empty() {
+            return false;
+        }
         let mut changed = false;
-        for connector_id in connector_ids {
+        for connector_id in due_ids {
             let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+                self.active_deadlines.remove(&connector_id);
                 continue;
             };
             let Ok(mut state) = connector.lock() else {
                 continue;
             };
             if !state.visible && !state.requested {
+                self.active_deadlines.remove(&connector_id);
                 continue;
             }
             let progressed = state
                 .execution
                 .as_mut()
-                .and_then(|execution| execution.smoother.as_mut())
-                .is_some_and(|smoother| smoother.advance(now));
+                .and_then(|execution| execution.delivery.as_mut())
+                .is_some_and(|delivery| delivery.advance(now));
+            let next_dl = state
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.delivery.as_ref())
+                .and_then(|delivery| {
+                    if !delivery.smoother.has_pending_work() {
+                        None
+                    } else {
+                        delivery.smoother.next_wakeup().or(Some(now))
+                    }
+                });
+            if let Some(dl) = next_dl {
+                self.active_deadlines.insert(connector_id, dl);
+            } else {
+                self.active_deadlines.remove(&connector_id);
+            }
             if !progressed {
                 continue;
+            }
+            if let Some(delivery) = state.execution.as_ref().and_then(|e| e.delivery.as_ref()) {
+                state.candidate_delivery_frontier = delivery.candidate_frontier;
             }
             state.delivery_revision = state
                 .delivery_revision
                 .checked_add(1)
                 .expect("Connector delivery revision exhausted");
             state.candidate_projection = None;
-            state.projection_cache.clear();
+            // Delivery ticks do not clear projection_cache or prepared_paint_cache.
             changed = true;
         }
         changed
     }
 
     pub(crate) fn next_wakeup(&self) -> Option<Instant> {
-        self.connectors
-            .values()
-            .filter_map(|connector| {
-                let state = connector.lock().ok()?;
-                (state.visible || state.requested)
-                    .then(|| state.execution.as_ref()?.smoother.as_ref()?.next_wakeup())
-                    .flatten()
-            })
-            .min()
+        self.active_deadlines.values().copied().min()
+    }
+
+    pub(crate) fn sync_connector_deadline(&mut self, connector_id: u64, now: Option<Instant>) {
+        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+            self.active_deadlines.remove(&connector_id);
+            return;
+        };
+        let Ok(mut state) = connector.lock() else {
+            return;
+        };
+        if state.lifecycle == ConnectorLifecycle::Disposed || (!state.visible && !state.requested) {
+            self.active_deadlines.remove(&connector_id);
+            return;
+        }
+        if state.execution.is_none() && state.funnel.smooth_config().is_some() {
+            state.execution = Some(ConnectorExecution::new(&state.funnel));
+        }
+        if let Ok(snapshot) = state.source.snapshot()
+            && let Some(execution) = state.execution.as_mut()
+            && let Some(delivery) = execution.delivery.as_mut()
+        {
+            let _ = delivery.accept_input(&snapshot);
+            if !delivery.smoother.has_pending_work() {
+                self.active_deadlines.remove(&connector_id);
+            } else if let Some(dl) = delivery.smoother.next_wakeup() {
+                self.active_deadlines.insert(connector_id, dl);
+            } else if let Some(now) = now {
+                self.active_deadlines.insert(connector_id, now);
+            } else {
+                self.active_deadlines.insert(connector_id, Instant::now());
+            }
+        } else {
+            self.active_deadlines.remove(&connector_id);
+        }
+    }
+
+    pub(crate) fn connector_delivery_frontier(&self, id: u64) -> Result<StreamOffset> {
+        let connector = self
+            .connectors
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
+        let state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        Ok(state.committed_delivery_frontier)
+    }
+
+    pub(crate) fn connector_candidate_delivery_frontier(&self, id: u64) -> Result<StreamOffset> {
+        let connector = self
+            .connectors
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
+        let state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        Ok(state.candidate_delivery_frontier)
     }
 
     fn connector_projection_key(&self, connector_id: u64, width: u16) -> Result<TextProjectionKey> {
@@ -2620,16 +2958,19 @@ impl ContentHostRegistry {
                 state.error = None;
                 state.failed_source_revision = None;
                 state.projection_failure_key = None;
-                return Ok(projection.measurement());
+                let measurement = projection.measurement();
+                drop(state);
+                self.sync_connector_deadline(connector_id, None);
+                return Ok(measurement);
             }
         }
 
         // The snapshot owns immutable chunks; the Source lock is not held
         // while width-dependent projection allocates/compiles derived rows.
-        // Execution state is Connector-local. Take it and the semantic cache
-        // out while projecting so a parser/smoother can mutate without
-        // holding the Connector mutex.
-        let (mut execution, mut semantic_cache) = {
+        // Execution state is Connector-local. Take it, semantic cache, and
+        // prepared paint cache out while projecting so a parser/smoother can
+        // mutate without holding the Connector mutex.
+        let (mut execution, mut semantic_cache, mut prepared_paint_cache) = {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -2639,6 +2980,7 @@ impl ContentHostRegistry {
                     .take()
                     .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
                 std::mem::take(&mut state.semantic_cache),
+                std::mem::take(&mut state.prepared_paint_cache),
             )
         };
         let projection = match project_text_snapshot(
@@ -2650,6 +2992,7 @@ impl ContentHostRegistry {
             &mut execution,
             delivery_revision,
             &mut semantic_cache,
+            &mut prepared_paint_cache,
         ) {
             Ok(projection) => Arc::new(projection),
             Err(error) => {
@@ -2660,6 +3003,7 @@ impl ContentHostRegistry {
                 // products, so it is always safe to restore.
                 if let Ok(mut state) = connector.lock() {
                     state.semantic_cache = semantic_cache;
+                    state.prepared_paint_cache = prepared_paint_cache;
                 }
                 return Err(error);
             }
@@ -2668,8 +3012,12 @@ impl ContentHostRegistry {
         let mut state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        if let Some(delivery) = execution.delivery.as_ref() {
+            state.candidate_delivery_frontier = delivery.candidate_frontier;
+        }
         state.execution = Some(execution);
         state.semantic_cache = semantic_cache;
+        state.prepared_paint_cache = prepared_paint_cache;
         state
             .projection_cache
             .retain(|(candidate, _)| candidate != &key);
@@ -2683,6 +3031,8 @@ impl ContentHostRegistry {
         state.error = None;
         state.failed_source_revision = None;
         state.projection_failure_key = None;
+        drop(state);
+        self.sync_connector_deadline(connector_id, None);
         Ok(measurement)
     }
 
@@ -3076,6 +3426,7 @@ impl ContentHostRegistry {
             && let Some(projection) = state.candidate_projection.take()
         {
             state.projected_source_revision = Some(projection.key.source_revision);
+            state.committed_delivery_frontier = state.candidate_delivery_frontier;
             state.committed_projection = Some(projection);
         }
     }
@@ -3085,16 +3436,26 @@ impl ContentHostRegistry {
         for connector in self.connectors.values() {
             if let Ok(mut state) = connector.lock() {
                 state.candidate_projection = None;
+                state.candidate_delivery_frontier = state.committed_delivery_frontier;
                 if !state.visible {
                     state.committed_projection = None;
                     state.projection_cache.clear();
+                    state.prepared_paint_cache.clear();
                     state.semantic_cache.clear();
                     state.projected_source_revision = None;
                     state.execution = None;
                     state.delivery_revision = 0;
+                    state.candidate_delivery_frontier = StreamOffset::ZERO;
+                    state.committed_delivery_frontier = StreamOffset::ZERO;
                 }
             }
         }
+        self.active_deadlines.retain(|id, _| {
+            self.connectors
+                .get(id)
+                .and_then(|c| c.lock().ok())
+                .is_some_and(|s| s.visible || s.requested)
+        });
     }
 
     pub(crate) fn commit_visible(&mut self, bindings: &[ContentBinding]) {
@@ -3617,11 +3978,14 @@ impl ContentHostRegistry {
             state.committed_projection = None;
             state.candidate_projection = None;
             state.projection_cache.clear();
+            state.prepared_paint_cache.clear();
             state.semantic_cache.clear();
             state.projected_source_revision = None;
             state.projection_failure_key = None;
             state.execution = None;
             state.delivery_revision = 0;
+            state.candidate_delivery_frontier = StreamOffset::ZERO;
+            state.committed_delivery_frontier = StreamOffset::ZERO;
         }
         if !visible && state.lifecycle != ConnectorLifecycle::Disposing {
             state.phase = if state.error.is_some() && state.requested {
@@ -3633,12 +3997,16 @@ impl ContentHostRegistry {
             };
         }
         drop(state);
-        if !visible {
+        if visible {
+            self.sync_connector_deadline(connector_id, None);
+        } else {
+            self.active_deadlines.remove(&connector_id);
             self.unsubscribe_connector(&source, connector_id, generation);
         }
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
+        self.active_deadlines.remove(&connector_id);
         let Some(connector) = self.connectors.remove(&connector_id) else {
             return;
         };
@@ -3931,7 +4299,12 @@ impl ContentHostRegistry {
             state.projection_failure_key = None;
             state.phase = "activation-pending";
         }
-        state.visible || state.requested || self.in_flight_connectors.contains(&id)
+        let is_live = state.visible || state.requested || self.in_flight_connectors.contains(&id);
+        drop(state);
+        if is_live {
+            self.sync_connector_deadline(id, None);
+        }
+        is_live
     }
 
     pub(crate) fn connector_is_disposed(&self, id: u64) -> bool {
@@ -4276,6 +4649,22 @@ impl HostContentConnector {
         // its weak owner disappears. A live record with no owner is an
         // invariant failure, not a reason to fabricate a status.
         Err(anyhow!("HOST_DISPOSED: Connector host is gone"))
+    }
+
+    pub fn visible_delivery_frontier(&self) -> Result<StreamOffset> {
+        let state = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        Ok(state.committed_delivery_frontier)
+    }
+
+    pub fn candidate_delivery_frontier(&self) -> Result<StreamOffset> {
+        let state = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        Ok(state.candidate_delivery_frontier)
     }
 
     fn record_status(&self) -> Result<ContentConnectorStatus> {
@@ -5473,5 +5862,497 @@ mod tests {
             ) || outcome3.inserted > 0
         );
         assert!(history.is_empty(), "history completely drained");
+    }
+
+    #[test]
+    fn delivery_trace_parity_and_monotonicity() {
+        use std::time::Duration;
+
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let config =
+            SmoothConfig::try_from_parts(Duration::from_millis(16), 2.0, 10.0, 100.0).unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Smooth(config),
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Before any text is appended, no wakeup is scheduled
+        assert_eq!(registry.next_wakeup(), None);
+
+        // Append text: 50 characters
+        source
+            .append_utf8(
+                b"01234567890123456789012345678901234567890123456789",
+                &[],
+                &[],
+            )
+            .unwrap();
+        let t0 = Instant::now();
+        registry.sync_connector_deadline(connector.id(), Some(t0));
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        registry.advance(t0);
+        registry.promote_candidate_projection(connector.id());
+        assert!(registry.next_wakeup().is_some());
+
+        let mut now = t0;
+        let mut trace = Vec::new();
+
+        // Advance over multiple ticks
+        for i in 0..20 {
+            now += Duration::from_millis(16);
+            let progressed = registry.advance(now);
+            if progressed {
+                let candidate = registry
+                    .connector_candidate_delivery_frontier(connector.id())
+                    .unwrap();
+                let committed = registry
+                    .connector_delivery_frontier(connector.id())
+                    .unwrap();
+                trace.push((i, candidate.as_u64(), committed.as_u64()));
+                // Promote candidate simulating successful frame presentation
+                let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+                registry.promote_candidate_projection(connector.id());
+                let new_committed = registry
+                    .connector_delivery_frontier(connector.id())
+                    .unwrap();
+                assert_eq!(new_committed, candidate);
+            }
+        }
+
+        // Verify trace is strictly non-decreasing (monotonic progress)
+        assert!(!trace.is_empty(), "Smoother should have progressed over 20 ticks");
+        for window in trace.windows(2) {
+            assert!(
+                window[1].1 >= window[0].1,
+                "Candidate delivery frontier must be monotonic: {} >= {}",
+                window[1].1,
+                window[0].1
+            );
+        }
+
+        // Seal the source: completed stream publishes fully and cancels deadlines
+        source.seal().unwrap();
+        registry.sync_connector_deadline(connector.id(), Some(now));
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        registry.promote_candidate_projection(connector.id());
+
+        let final_frontier = registry
+            .connector_delivery_frontier(connector.id())
+            .unwrap();
+        assert_eq!(
+            final_frontier.as_u64(),
+            50,
+            "All 50 characters should be revealed after seal"
+        );
+        assert_eq!(
+            registry.next_wakeup(),
+            None,
+            "No active deadlines remain when stream is fully drained"
+        );
+    }
+
+    #[test]
+    fn two_connectors_independent_delivery_on_same_source() {
+        use std::time::Duration;
+
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+
+        // Port & Connector 1: Smooth
+        let port1 = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port1_id = port1.id();
+        let connector1 = registry
+            .connect(
+                &port1.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port1.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector1.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector1.id());
+        }
+        {
+            let record = registry.connectors.get(&connector1.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Port & Connector 2: Immediate
+        let port2 = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port2_id = port2.id();
+        let connector2 = registry
+            .connect(
+                &port2.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port2.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector2.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector2.id());
+        }
+        {
+            let record = registry.connectors.get(&connector2.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Append text
+        source
+            .append_utf8(b"Hello world from multi-connector test!\n", &[], &[])
+            .unwrap();
+        let text_len = 39u64;
+
+        // Connector 2 (Immediate) measurement immediately covers all rows/bytes
+        let m2 = registry.measure_content(port2_id, 40, crate::presentation::WidthRule::Fill);
+        assert!(m2.intrinsic_size.height > 0);
+        registry.promote_candidate_projection(connector2.id());
+
+        // Connector 2 has no active deadline in registry
+        assert!(
+            !registry.active_deadlines.contains_key(&connector2.id()),
+            "Immediate connector must not schedule timer deadlines"
+        );
+
+        // Connector 1 (Smooth) should have an active deadline
+        let t0 = Instant::now();
+        registry.sync_connector_deadline(connector1.id(), Some(t0));
+        assert!(
+            registry.active_deadlines.contains_key(&connector1.id()),
+            "Smooth connector must schedule timer deadline"
+        );
+
+        // Initial measure of connector 1 establishes preparation
+        let _ = registry.measure_content(port1_id, 40, crate::presentation::WidthRule::Fill);
+
+        // Ticking advances Connector 1 without affecting Connector 2
+        registry.advance(t0 + Duration::from_millis(16));
+        let _ = registry.measure_content(port1_id, 40, crate::presentation::WidthRule::Fill);
+        registry.promote_candidate_projection(connector1.id());
+
+        let frontier1 = registry
+            .connector_delivery_frontier(connector1.id())
+            .unwrap();
+        assert!(
+            frontier1.as_u64() < text_len,
+            "Smooth connector reveals incrementally, got {} < {}",
+            frontier1.as_u64(),
+            text_len
+        );
+
+        // Connector 2 remains completely immediate and unaffected
+        let m2_after = registry.measure_content(port2_id, 40, crate::presentation::WidthRule::Fill);
+        assert_eq!(m2.intrinsic_size, m2_after.intrinsic_size);
+    }
+
+    #[test]
+    fn native_ticks_perform_zero_parser_and_zero_surface_clones() {
+        use std::time::Duration;
+
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(
+                b"# Header\n\nSome paragraph text that spans multiple words and lines.\n",
+                &[],
+                &[],
+            )
+            .unwrap();
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Initial measurement and preparation
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let t0 = registry.next_wakeup().unwrap();
+        registry.advance(t0);
+        registry.promote_candidate_projection(connector.id());
+
+        let rebuilds_before =
+            crate::perf::snapshot().value(crate::perf::Counter::SemanticProjectionRebuilds);
+        let clones_before =
+            crate::perf::snapshot().value(crate::perf::Counter::ContentSurfaceClones);
+
+        // Advance 1 tick
+        let t1 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
+        let progressed = registry.advance(t1);
+        assert!(progressed, "Advance must progress delivery");
+
+        // Measure / project next frame
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        registry.promote_candidate_projection(connector.id());
+
+        let rebuilds_after =
+            crate::perf::snapshot().value(crate::perf::Counter::SemanticProjectionRebuilds);
+        let clones_after =
+            crate::perf::snapshot().value(crate::perf::Counter::ContentSurfaceClones);
+
+        if cfg!(feature = "perf-counters") {
+            assert_eq!(
+                rebuilds_after, rebuilds_before,
+                "Native delivery tick must perform zero semantic parser rebuilds"
+            );
+            assert_eq!(
+                clones_after, clones_before,
+                "Native delivery tick must perform zero whole-surface clones"
+            );
+        }
+    }
+
+    #[test]
+    fn visible_frontier_commit_separated_from_execution_progress() {
+        use std::time::Duration;
+
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"Line one of test text\nLine two of test text\n", &[], &[])
+            .unwrap();
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let t0 = registry.next_wakeup().unwrap();
+        registry.advance(t0);
+        registry.promote_candidate_projection(connector.id());
+
+        // Initial committed frontier is recorded
+        let initial_committed = registry
+            .connector_delivery_frontier(connector.id())
+            .unwrap()
+            .as_u64();
+
+        // Advance clock: candidate changes, committed does NOT change
+        let t1 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
+        let progressed = registry.advance(t1);
+        assert!(progressed);
+
+        let candidate_before_promote = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        let committed_before_promote = registry
+            .connector_delivery_frontier(connector.id())
+            .unwrap();
+        assert!(
+            candidate_before_promote.as_u64() > initial_committed,
+            "Candidate frontier must advance"
+        );
+        assert_eq!(
+            committed_before_promote.as_u64(),
+            initial_committed,
+            "Committed frontier must NOT advance before promotion"
+        );
+
+        // Simulate frame abortion: clear candidate projections
+        registry.clear_candidate_projections();
+        let candidate_after_abort = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        let committed_after_abort = registry
+            .connector_delivery_frontier(connector.id())
+            .unwrap();
+        assert_eq!(
+            candidate_after_abort, committed_after_abort,
+            "Candidate must roll back to committed on abort"
+        );
+        assert_eq!(committed_after_abort.as_u64(), initial_committed, "Committed remains initial");
+
+        // Now advance and successfully promote
+        let t2 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
+        registry.advance(t2);
+        let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
+        let candidate_ready = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        registry.promote_candidate_projection(connector.id());
+        let committed_promoted = registry
+            .connector_delivery_frontier(connector.id())
+            .unwrap();
+        assert_eq!(
+            committed_promoted, candidate_ready,
+            "Committed frontier matches candidate after promotion"
+        );
+        assert!(committed_promoted.as_u64() > candidate_before_promote.as_u64());
+    }
+
+    #[test]
+    fn cold_and_disposed_connectors_clean_up_deadlines() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"Some text for deadline test\n", &[], &[])
+            .unwrap();
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        registry.sync_connector_deadline(connector.id(), None);
+        assert!(
+            registry.next_wakeup().is_some(),
+            "Active smoothed connector has a deadline"
+        );
+
+        // Unmount connector (set invisible)
+        registry.set_connector_visible(connector.id(), false);
+        assert_eq!(
+            registry.next_wakeup(),
+            None,
+            "Invisible connector deadline must be removed"
+        );
+
+        // Remount connector
+        registry.set_connector_visible(connector.id(), true);
+        assert!(
+            registry.next_wakeup().is_some(),
+            "Remounted connector deadline must be restored"
+        );
+
+        // Dispose connector
+        registry.remove_connector(connector.id());
+        assert_eq!(
+            registry.next_wakeup(),
+            None,
+            "Disposed connector deadline must be removed"
+        );
     }
 }

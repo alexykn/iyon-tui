@@ -218,6 +218,11 @@ impl Smooth {
         self.published_end
     }
 
+    #[must_use]
+    pub fn has_pending_work(&self) -> bool {
+        !self.input_sealed && !self.pending.is_empty()
+    }
+
     pub fn advance(&mut self, now: Instant) -> bool {
         if self.input_sealed || self.pending.is_empty() {
             self.next_wakeup = None;

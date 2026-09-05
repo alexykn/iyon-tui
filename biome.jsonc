@@ -8,6 +8,7 @@
       "!**/target/**",
       "!**/target-direct-ffi/**",
       "!packages/iyon-tui/src/transport/abi/structural/generated/**",
+      "!packages/iyon-tui/src/transport/state/generated/**",
       "!packages/iyon-tui/tests/generated/**",
       "!packages/iyon-tui/bench/generated/**",
       "!bun.lock"

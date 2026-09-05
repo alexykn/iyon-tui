@@ -25,6 +25,14 @@ mod generated_view_abi_conformance {
     ));
 }
 
+#[allow(dead_code)]
+mod view_state_schema {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/generated/view_state_schema.rs"
+    ));
+}
+
 mod view_abi;
 mod view_state;
 
@@ -2188,26 +2196,11 @@ fn lower_border(value: &Value) -> Result<BorderSpec> {
     Ok(spec)
 }
 
-fn color_spec(value: &Value) -> Result<ColorSpec> {
-    if let Some(object) = value.as_object() {
-        let kind = object.get("type").and_then(Value::as_str).ok_or_else(|| {
-            crate::NativeError::invalid_input("color object type must be a string")
-        })?;
-        if kind == "ansi" {
-            let number = object.get("value").and_then(Value::as_u64).ok_or_else(|| {
-                crate::NativeError::invalid_input("ANSI color value must be an integer")
-            })?;
-            return Ok(ColorSpec::ansi(u8::try_from(number).map_err(|_| {
-                crate::NativeError::invalid_input("ANSI color value must fit in u8")
-            })?));
-        }
-        return Err(crate::NativeError::invalid_input(format!(
-            "unknown color object type `{kind}`"
-        )));
-    }
-    let value = value.as_str().ok_or_else(|| {
-        crate::NativeError::invalid_input("color must be a string or ANSI color object")
-    })?;
+/// String half of [`color_spec`], shared with the L1-05 state envelope
+/// string lane. The TS packer normalizes `{type: "ansi", value}` objects to
+/// `ansi:N` strings, so the envelope carries only strings; the canonical
+/// value decodes identically here.
+pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
     if let Some(value) = value.strip_prefix("theme:") {
         return Ok(ColorSpec::theme(value));
     }
@@ -2256,7 +2249,30 @@ fn color_spec(value: &Value) -> Result<ColorSpec> {
     Ok(ColorSpec::named(color))
 }
 
-fn text_attribute(value: &str) -> Option<TextAttribute> {
+fn color_spec(value: &Value) -> Result<ColorSpec> {
+    if let Some(object) = value.as_object() {
+        let kind = object.get("type").and_then(Value::as_str).ok_or_else(|| {
+            crate::NativeError::invalid_input("color object type must be a string")
+        })?;
+        if kind == "ansi" {
+            let number = object.get("value").and_then(Value::as_u64).ok_or_else(|| {
+                crate::NativeError::invalid_input("ANSI color value must be an integer")
+            })?;
+            return Ok(ColorSpec::ansi(u8::try_from(number).map_err(|_| {
+                crate::NativeError::invalid_input("ANSI color value must fit in u8")
+            })?));
+        }
+        return Err(crate::NativeError::invalid_input(format!(
+            "unknown color object type `{kind}`"
+        )));
+    }
+    let value = value.as_str().ok_or_else(|| {
+        crate::NativeError::invalid_input("color must be a string or ANSI color object")
+    })?;
+    color_spec_str(value)
+}
+
+pub(super) fn text_attribute(value: &str) -> Option<TextAttribute> {
     match value {
         "bold" => Some(TextAttribute::Bold),
         "dim" => Some(TextAttribute::Dim),

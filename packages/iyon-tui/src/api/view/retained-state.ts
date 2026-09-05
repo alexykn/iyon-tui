@@ -15,23 +15,23 @@ import type { ColorSpec } from "../presentation/theme.ts";
 import type { Insets, InsetsValue } from "./geometry.ts";
 import { SEMANTIC_VIEW_KIND } from "./semantic-node.ts";
 import {
-  normalizeClearGeometryProperties,
-  normalizeClearProperties,
-  normalizeGeometryPatch,
-  normalizePresentationPatch,
+  geometryClearEnvelope,
+  geometryEnvelope,
+  presentationClearEnvelope,
+  presentationEnvelope,
+  STATE_WAKE_DRAIN,
 } from "../../transport/state/control.ts";
 
-interface NativeStateWake {
-  readonly schedule_environment_drain: boolean;
-}
+/** Primitive wake disposition from the native state plane (§7.2). */
+type NativeStateWake = number;
 
 interface NativeViewStateResource {
   dispose(): void;
   validateNodeKind(targetNodeKind: number): void;
-  setGeometry(patch: object): NativeStateWake;
-  clearGeometry(properties?: readonly string[]): NativeStateWake;
-  setPresentation(patch: object): NativeStateWake;
-  clearPresentation(properties?: readonly string[]): NativeStateWake;
+  setGeometry(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): NativeStateWake;
+  clearGeometry(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): NativeStateWake;
+  setPresentation(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): NativeStateWake;
+  clearPresentation(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): NativeStateWake;
   setStyleState(key: string, value: string): NativeStateWake;
   clearStyleState(key: string): NativeStateWake;
 }
@@ -158,8 +158,8 @@ export class ViewState extends FrameworkHandle<"state"> {
 
   setGeometry(patch: ViewStateGeometryPatch): void {
     this.assertMutationAllowed();
-    const normalized = normalizeGeometryPatch(patch);
-    this.mutate((native) => native.setGeometry(normalized));
+    const envelope = geometryEnvelope(patch);
+    this.mutate((native) => native.setGeometry(envelope.setMask, envelope.nullMask, envelope.clearMask, envelope.words, envelope.strings));
   }
 
   clearGeometry(
@@ -169,16 +169,14 @@ export class ViewState extends FrameworkHandle<"state"> {
     const requested = properties.length === 0
       ? undefined
       : properties.flatMap((property) => Array.isArray(property) ? [...property] : [property]) as readonly ViewStateGeometryProperty[];
-    const normalized = normalizeClearGeometryProperties(requested);
-    this.mutate((native) => normalized === undefined
-      ? native.clearGeometry()
-      : native.clearGeometry(normalized));
+    const envelope = geometryClearEnvelope(requested);
+    this.mutate((native) => native.clearGeometry(0, 0, envelope.clearMask, envelope.clearAll));
   }
 
   setPresentation(patch: ViewStatePresentationPatch): void {
     this.assertMutationAllowed();
-    const normalized = normalizePresentationPatch(patch);
-    this.mutate((native) => native.setPresentation(normalized));
+    const envelope = presentationEnvelope(patch);
+    this.mutate((native) => native.setPresentation(envelope.setMask, envelope.nullMask, envelope.clearMask, envelope.words, envelope.strings));
   }
 
   clearPresentation(
@@ -188,10 +186,8 @@ export class ViewState extends FrameworkHandle<"state"> {
     const requested = properties.length === 0
       ? undefined
       : properties.flatMap((property) => Array.isArray(property) ? [...property] : [property]) as readonly ViewStatePresentationProperty[];
-    const normalized = normalizeClearProperties(requested);
-    this.mutate((native) => normalized === undefined
-      ? native.clearPresentation()
-      : native.clearPresentation(normalized));
+    const envelope = presentationClearEnvelope(requested);
+    this.mutate((native) => native.clearPresentation(0, 0, envelope.clearMask, envelope.clearAll));
   }
 
   setStyleState(key: string | StyleStateKey, value: string | StyleStateValue): void {
@@ -214,7 +210,7 @@ export class ViewState extends FrameworkHandle<"state"> {
 
   private mutate(operation: (native: NativeViewStateResource) => NativeStateWake): void {
     const wake = this.call(() => operation(this.nativeAs<NativeViewStateResource>()));
-    if (wake.schedule_environment_drain) this.requestWake();
+    if ((wake & STATE_WAKE_DRAIN) !== 0) this.requestWake();
   }
 }
 

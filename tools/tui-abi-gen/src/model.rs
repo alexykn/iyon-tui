@@ -57,6 +57,8 @@ pub struct AbiDocument {
     pub functions: Vec<FunctionSpec>,
     #[serde(rename = "conformance", default)]
     pub conformance: Vec<ConformanceSpec>,
+    #[serde(rename = "state_property", default)]
+    pub state_properties: Vec<StatePropertySpec>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -169,6 +171,25 @@ pub struct ConformanceSpec {
     pub operation: String,
     #[serde(default)]
     pub args: Vec<String>,
+}
+
+/// One L1-05 retained-state property (§7.1): stable per-domain bit id, TS
+/// patch key and diagnostic name, native value kind, nullability, clear
+/// support, capability rule, and value-lane layout (u32 words + strings).
+/// The envelope packers (TS) and mask/lane tables (Rust) generate from
+/// these rows; value semantics stay in hand-written readers.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatePropertySpec {
+    pub domain: String,
+    pub id: u32,
+    pub name: String,
+    pub value: String,
+    pub nullable: bool,
+    pub clearable: bool,
+    pub capability: String,
+    pub words: u32,
+    pub strings: u32,
 }
 
 pub fn load(path: &Path) -> Result<(AbiDocument, String, toml_edit::Document<String>), ModelError> {

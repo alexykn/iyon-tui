@@ -37,12 +37,12 @@ export interface NativeViewStateContract extends NativeStructuralAttachmentContr
   dispose(): void;
   stateId(): number;
   validateNodeKind(targetNodeKind: number): void;
-  setGeometry(patch: object): NativeStateWake;
-  clearGeometry(properties?: readonly string[]): NativeStateWake;
-  setPresentation(patch: object): NativeStateWake;
-  clearPresentation(properties?: readonly string[]): NativeStateWake;
-  setStyleState(key: string, value: string): NativeStateWake;
-  clearStyleState(key: string): NativeStateWake;
+  setGeometry(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): number;
+  clearGeometry(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): number;
+  setPresentation(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): number;
+  clearPresentation(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): number;
+  setStyleState(key: string, value: string): number;
+  clearStyleState(key: string): number;
 }
 
 export interface NativeTextInputContract {

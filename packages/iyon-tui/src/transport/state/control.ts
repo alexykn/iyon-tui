@@ -18,6 +18,18 @@ import type {
   ViewStatePresentationPatch,
   ViewStatePresentationProperty,
 } from "../../api/view/retained-state.ts";
+import {
+  encodeGeometryClearMask,
+  encodeGeometryEnvelope,
+  encodePresentationClearMask,
+  encodePresentationEnvelope,
+  type StateEnvelope,
+} from "./generated/state_envelope.ts";
+
+export {
+  STATE_WAKE_DRAIN,
+  type StateEnvelope,
+} from "./generated/state_envelope.ts";
 import { insets, type Insets, type InsetsValue } from "../../api/view/geometry.ts";
 import type { SemanticColor } from "../../api/view/semantic-node.ts";
 
@@ -312,3 +324,36 @@ const PRESENTATION_PROPERTIES = new Set<ViewStatePresentationProperty>([
   "textAttributes",
   "style",
 ]);
+
+export interface StateClearEnvelope {
+  readonly clearMask: number;
+  readonly clearAll: boolean;
+}
+
+/** Validates a geometry patch with the exact public errors, then packs the mask envelope. */
+export function geometryEnvelope(patch: ViewStateGeometryPatch): StateEnvelope {
+  return encodeGeometryEnvelope(normalizeGeometryPatch(patch) as Record<string, unknown>);
+}
+
+/** Validates a geometry clear list, then packs it; omitted means clear the whole domain. */
+export function geometryClearEnvelope(
+  properties: readonly ViewStateGeometryProperty[] | undefined,
+): StateClearEnvelope {
+  const normalized = normalizeClearGeometryProperties(properties);
+  if (normalized === undefined) return { clearMask: 0, clearAll: true };
+  return { clearMask: encodeGeometryClearMask(normalized), clearAll: false };
+}
+
+/** Validates a presentation patch with the exact public errors, then packs the mask envelope. */
+export function presentationEnvelope(patch: ViewStatePresentationPatch): StateEnvelope {
+  return encodePresentationEnvelope(normalizePresentationPatch(patch) as Record<string, unknown>);
+}
+
+/** Validates a presentation clear list, then packs it; omitted means clear the whole domain. */
+export function presentationClearEnvelope(
+  properties: readonly ViewStatePresentationProperty[] | undefined,
+): StateClearEnvelope {
+  const normalized = normalizeClearProperties(properties);
+  if (normalized === undefined) return { clearMask: 0, clearAll: true };
+  return { clearMask: encodePresentationClearMask(normalized), clearAll: false };
+}

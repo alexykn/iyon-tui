@@ -3471,3 +3471,203 @@ name = "cstring"
 return = "u32"
 operation = "cstring_hash"
 args = ["cstring"]
+
+# L1-05 retained-state property schema (§7.1). One row per settable/clearable
+# geometry or presentation property: stable per-domain bit id, TS patch key,
+# native value kind, nullability, clear support, capability rule, diagnostic
+# name, and value-lane layout (u32 words + strings). The generator emits the
+# TS envelope packers and the Rust mask/lane tables from these rows; value
+# semantics stay in hand-written readers. Bit ids are dense per domain so
+# masks fit u32; reordering rows never changes an id.
+#
+# value kinds: size_mode | u16 | insets | alignment | edges | color |
+#   border_style | glyphs | text_attrs | style
+# capability: node-kind (attach-time kind check, existing) |
+#   node-kind+axis (alignment axis legality in prepare, existing)
+
+[[state_property]]
+domain = "geometry"
+id = 0
+name = "width"
+value = "size_mode"
+nullable = false
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 1
+name = "height"
+value = "size_mode"
+nullable = false
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 2
+name = "padding"
+value = "insets"
+nullable = false
+clearable = true
+capability = "node-kind"
+words = 4
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 3
+name = "minWidth"
+value = "u16"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 4
+name = "maxWidth"
+value = "u16"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 5
+name = "minHeight"
+value = "u16"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 6
+name = "maxHeight"
+value = "u16"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 7
+name = "gap"
+value = "u16"
+nullable = false
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 8
+name = "alignment"
+value = "alignment"
+nullable = false
+clearable = true
+capability = "node-kind+axis"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "geometry"
+id = 9
+name = "borderEdges"
+value = "edges"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 2
+strings = 0
+
+[[state_property]]
+domain = "presentation"
+id = 0
+name = "foreground"
+value = "color"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 0
+strings = 1
+
+[[state_property]]
+domain = "presentation"
+id = 1
+name = "background"
+value = "color"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 0
+strings = 1
+
+[[state_property]]
+domain = "presentation"
+id = 2
+name = "borderColor"
+value = "color"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 0
+strings = 1
+
+[[state_property]]
+domain = "presentation"
+id = 3
+name = "borderStyle"
+value = "border_style"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 1
+strings = 0
+
+[[state_property]]
+domain = "presentation"
+id = 4
+name = "borderGlyphs"
+value = "glyphs"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 0
+strings = 8
+
+[[state_property]]
+domain = "presentation"
+id = 5
+name = "textAttributes"
+value = "text_attrs"
+nullable = false
+clearable = true
+capability = "node-kind"
+words = 2
+strings = 0
+
+[[state_property]]
+domain = "presentation"
+id = 6
+name = "style"
+value = "style"
+nullable = true
+clearable = true
+capability = "node-kind"
+words = 2
+strings = 3

@@ -2,6 +2,7 @@ mod model;
 mod render_header;
 mod render_manifest;
 mod render_rust;
+mod render_state;
 mod render_typescript;
 mod validate;
 
@@ -36,6 +37,8 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
     "docs/history/perf/PERF-11-generated-abi-reference.md",
+    "crates/iyon-tui-native/src/generated/view_state_schema.rs",
+    "packages/iyon-tui/src/transport/state/generated/state_envelope.ts",
 ];
 
 #[derive(Debug, Parser)]
@@ -243,6 +246,14 @@ fn render_outputs(
         GENERATOR_OUTPUTS[13].to_owned(),
         render_manifest::human_reference(&document, &schema_hash, &generator_hash),
     );
+    outputs.insert(
+        GENERATOR_OUTPUTS[14].to_owned(),
+        render_state::rust_schema(&document, &schema_hash, &generator_hash),
+    );
+    outputs.insert(
+        GENERATOR_OUTPUTS[15].to_owned(),
+        render_state::typescript_envelope(&document, &schema_hash, &generator_hash),
+    );
     Ok(outputs)
 }
 
@@ -319,6 +330,65 @@ mod tests {
             .iter()
             .collect::<std::collections::HashSet<_>>();
         assert_eq!(unique.len(), GENERATOR_OUTPUTS.len());
+    }
+
+    fn canonical_document() -> (
+        model::AbiDocument,
+        serde_json::Map<String, serde_json::Value>,
+    ) {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(DEFAULT_SCHEMA);
+        let (document, _, _) = model::load(&schema).expect("canonical schema parses");
+        let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
+            .expect("kind codes schema parses");
+        (document, kind_codes)
+    }
+
+    #[test]
+    fn validation_rejects_gapped_state_property_ids() {
+        let (mut document, kind_codes) = canonical_document();
+        document
+            .state_properties
+            .iter_mut()
+            .find(|property| property.domain == "geometry" && property.id == 9)
+            .expect("geometry bit 9 exists")
+            .id = 10;
+        assert!(validate::validate(&document, &kind_codes).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_unknown_state_value_kind() {
+        let (mut document, kind_codes) = canonical_document();
+        document
+            .state_properties
+            .iter_mut()
+            .find(|property| property.domain == "presentation" && property.id == 0)
+            .expect("presentation bit 0 exists")
+            .value = "gradient".to_owned();
+        assert!(validate::validate(&document, &kind_codes).is_err());
+    }
+
+    #[test]
+    fn state_envelope_outputs_cover_both_domains() {
+        let (document, _) = canonical_document();
+        for (path, body) in [
+            (
+                "view_state_schema.rs",
+                render_state::rust_schema(&document, "test", "test"),
+            ),
+            (
+                "state_envelope.ts",
+                render_state::typescript_envelope(&document, "test", "test"),
+            ),
+        ] {
+            assert!(body.contains("geometry"), "{path} covers geometry");
+            assert!(body.contains("presentation"), "{path} covers presentation");
+            assert!(body.contains("borderEdges"), "{path} covers object lanes");
+            assert!(
+                body.contains("textAttributes"),
+                "{path} covers attribute lanes"
+            );
+        }
     }
 
     #[test]

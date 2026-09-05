@@ -305,6 +305,98 @@ pub fn validate(
         }
     }
 
+    validate_state_properties(document)?;
+
+    Ok(())
+}
+
+/// L1-05 retained-state property schema (§7.1). Bit ids must be dense per
+/// domain starting at 0 so masks stay u32 and reordering rows never changes
+/// an id; value kinds and capabilities come from fixed vocabularies so the
+/// envelope renderers can match them exhaustively.
+fn validate_state_properties(document: &AbiDocument) -> Result<(), ValidationError> {
+    const DOMAINS: [&str; 2] = ["geometry", "presentation"];
+    const VALUES: [&str; 10] = [
+        "size_mode",
+        "u16",
+        "insets",
+        "alignment",
+        "edges",
+        "color",
+        "border_style",
+        "glyphs",
+        "text_attrs",
+        "style",
+    ];
+    const CAPABILITIES: [&str; 2] = ["node-kind", "node-kind+axis"];
+    for domain in DOMAINS {
+        let mut properties: Vec<&crate::model::StatePropertySpec> = document
+            .state_properties
+            .iter()
+            .filter(|property| property.domain == domain)
+            .collect();
+        if properties.is_empty() {
+            return invalid(format!(
+                "state domain `{domain}` must declare at least one property"
+            ));
+        }
+        if properties.len() > 32 {
+            return invalid(format!(
+                "state domain `{domain}` declares {} properties but masks are u32",
+                properties.len()
+            ));
+        }
+        properties.sort_by_key(|property| property.id);
+        let mut names = HashSet::new();
+        for (index, property) in properties.iter().enumerate() {
+            if property.id != index as u32 {
+                return invalid(format!(
+                    "state domain `{domain}` property ids must be dense from 0; expected id {index} for `{}`",
+                    property.name
+                ));
+            }
+            if property.name.is_empty() {
+                return invalid(format!(
+                    "state domain `{domain}` property id {} has an empty diagnostic name",
+                    property.id
+                ));
+            }
+            if !names.insert(property.name.as_str()) {
+                return invalid(format!(
+                    "state domain `{domain}` declares duplicate property `{}`",
+                    property.name
+                ));
+            }
+            if !VALUES.contains(&property.value.as_str()) {
+                return invalid(format!(
+                    "state property `{}.{}` has unknown native value kind `{}`",
+                    domain, property.name, property.value
+                ));
+            }
+            if !CAPABILITIES.contains(&property.capability.as_str()) {
+                return invalid(format!(
+                    "state property `{}.{}` has unknown capability rule `{}`",
+                    domain, property.name, property.capability
+                ));
+            }
+            if property.words > 8 || property.strings > 8 {
+                return invalid(format!(
+                    "state property `{}.{}` lanes are too wide (words={}, strings={})",
+                    domain, property.name, property.words, property.strings
+                ));
+            }
+        }
+    }
+    let mut domains = HashSet::new();
+    for property in &document.state_properties {
+        if !DOMAINS.contains(&property.domain.as_str()) {
+            return invalid(format!(
+                "state property `{}` has unknown domain `{}`",
+                property.name, property.domain
+            ));
+        }
+        domains.insert(property.domain.as_str());
+    }
     Ok(())
 }
 

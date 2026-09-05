@@ -1,5 +1,6 @@
 ---
 source: tools/tui-abi-gen/src/main.rs
+assertion_line: 320
 expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json\").expect(\"manifest output\")"
 ---
 {
@@ -4163,9 +4164,11 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
     "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
     "packages/iyon-tui/bench/generated/view_abi_cases.ts",
     "crates/iyon-tui-native/tests/generated_view_abi.rs",
-    "docs/history/perf/PERF-11-generated-abi-reference.md"
+    "docs/history/perf/PERF-11-generated-abi-reference.md",
+    "crates/iyon-tui-native/src/generated/view_state_schema.rs",
+    "packages/iyon-tui/src/transport/state/generated/state_envelope.ts"
   ],
-  "generator_blake3": "c929e3e1f77d78143cb66be8625c910e55d641010957aaa54beca3368dd956b7",
+  "generator_blake3": "5a6fc7adbab8648b16846c2fe9a1a24550929a9f53329a05e7b48274230b06b7",
   "handles": [
     {
       "kind": null,
@@ -4258,5 +4261,194 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
       "size": 8
     }
   ],
-  "schema_blake3": "90c4574d58806b37acee3d351b3059c11be2f0e023be8583d48fd9df6e008704"
+  "schema_blake3": "c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817",
+  "state_properties": [
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 0,
+      "name": "width",
+      "nullable": false,
+      "strings": 0,
+      "value": "size_mode",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 1,
+      "name": "height",
+      "nullable": false,
+      "strings": 0,
+      "value": "size_mode",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 2,
+      "name": "padding",
+      "nullable": false,
+      "strings": 0,
+      "value": "insets",
+      "words": 4
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 3,
+      "name": "minWidth",
+      "nullable": true,
+      "strings": 0,
+      "value": "u16",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 4,
+      "name": "maxWidth",
+      "nullable": true,
+      "strings": 0,
+      "value": "u16",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 5,
+      "name": "minHeight",
+      "nullable": true,
+      "strings": 0,
+      "value": "u16",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 6,
+      "name": "maxHeight",
+      "nullable": true,
+      "strings": 0,
+      "value": "u16",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 7,
+      "name": "gap",
+      "nullable": false,
+      "strings": 0,
+      "value": "u16",
+      "words": 1
+    },
+    {
+      "capability": "node-kind+axis",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 8,
+      "name": "alignment",
+      "nullable": false,
+      "strings": 0,
+      "value": "alignment",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "geometry",
+      "id": 9,
+      "name": "borderEdges",
+      "nullable": true,
+      "strings": 0,
+      "value": "edges",
+      "words": 2
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 0,
+      "name": "foreground",
+      "nullable": true,
+      "strings": 1,
+      "value": "color",
+      "words": 0
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 1,
+      "name": "background",
+      "nullable": true,
+      "strings": 1,
+      "value": "color",
+      "words": 0
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 2,
+      "name": "borderColor",
+      "nullable": true,
+      "strings": 1,
+      "value": "color",
+      "words": 0
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 3,
+      "name": "borderStyle",
+      "nullable": true,
+      "strings": 0,
+      "value": "border_style",
+      "words": 1
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 4,
+      "name": "borderGlyphs",
+      "nullable": true,
+      "strings": 8,
+      "value": "glyphs",
+      "words": 0
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 5,
+      "name": "textAttributes",
+      "nullable": false,
+      "strings": 0,
+      "value": "text_attrs",
+      "words": 2
+    },
+    {
+      "capability": "node-kind",
+      "clearable": true,
+      "domain": "presentation",
+      "id": 6,
+      "name": "style",
+      "nullable": true,
+      "strings": 3,
+      "value": "style",
+      "words": 2
+    }
+  ]
 }

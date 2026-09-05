@@ -8,6 +8,7 @@ const GENERATOR_SOURCES: &[&[u8]] = &[
     include_bytes!("model.rs"),
     include_bytes!("validate.rs"),
     include_bytes!("render_rust.rs"),
+    include_bytes!("render_state.rs"),
     include_bytes!("render_typescript.rs"),
     include_bytes!("render_header.rs"),
     include_bytes!("render_manifest.rs"),
@@ -197,6 +198,23 @@ pub fn manifest(
             })
         })
         .collect();
+    let state_properties: Vec<Value> = document
+        .state_properties
+        .iter()
+        .map(|property| {
+            json!({
+                "domain": property.domain,
+                "id": property.id,
+                "name": property.name,
+                "value": property.value,
+                "nullable": property.nullable,
+                "clearable": property.clearable,
+                "capability": property.capability,
+                "words": property.words,
+                "strings": property.strings,
+            })
+        })
+        .collect();
     let value = json!({
         "abi": {
             "name": document.abi.name,
@@ -213,6 +231,7 @@ pub fn manifest(
         "pods": document.pods,
         "functions": functions,
         "conformance": conformance,
+        "state_properties": state_properties,
         "generated_outputs": output_paths,
     });
     serde_json::to_string_pretty(&value).expect("ABI manifest is serializable") + "\n"

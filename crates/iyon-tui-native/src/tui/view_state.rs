@@ -1,22 +1,26 @@
 //! N-API control surface for the retained-state plane.
 //!
-//! This module owns only boundary parsing and native-wrapper lifecycle. State
-//! records, effective geometry/presentation, and host binding remain in iyon-tui's
-//! `retained_state` module; no structural View or frame code is implemented here.
+//! This module owns only envelope decoding and native-wrapper lifecycle.
+//! State records, effective geometry/presentation, and host binding remain in
+//! iyon-tui's `retained_state` module; no structural View or frame code is
+//! implemented here. The mask envelope (set/null/clear masks plus fixed
+//! value lanes) generates from the `state_property` schema rows; the readers
+//! below own value semantics and terminate directly in the canonical
+//! override patch structs.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use iyon_tui::binding::{
-    BorderEdges, BorderGlyphs, BorderStyle, ColorSpec, GeometryAlignment, HorizontalAlign,
-    HostViewState, Insets, StyleRef, VerticalAlign, ViewStateGeometryPatch,
-    ViewStateGeometryProperty, ViewStatePresentationPatch, ViewStatePresentationProperty,
-    ViewStateSizeMode, ViewStateTextAttributes, WakeDisposition,
+    BorderEdges, BorderGlyphs, BorderStyle, GeometryAlignment, HorizontalAlign, HostViewState,
+    Insets, StyleRef, StyleSpec, VerticalAlign, ViewStateGeometryPatch, ViewStateGeometryProperty,
+    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
+    ViewStateTextAttributes, WakeDisposition,
 };
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
-use serde_json::Value;
 
-use super::{color_spec, ensure_alive, lower_style_spec};
+use super::view_state_schema::{self, geometry, presentation};
+use super::{color_spec_str, ensure_alive, text_attribute};
 
 #[napi]
 pub struct NativeViewState {
@@ -61,10 +65,20 @@ impl NativeViewState {
             .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
     }
 
+    /// Applies a geometry envelope. Masks and lanes decode first; the record
+    /// mutates only after the complete patch validates, so a malformed
+    /// envelope never leaves a partial override behind.
     #[napi(js_name = "setGeometry")]
-    pub fn set_geometry(&self, value: Value) -> Result<Value> {
+    pub fn set_geometry(
+        &self,
+        set_mask: u32,
+        null_mask: u32,
+        clear_mask: u32,
+        words: Vec<u32>,
+        strings: Vec<String>,
+    ) -> Result<u32> {
         ensure_alive(&self.alive)?;
-        let patch = parse_geometry_patch(&value)?;
+        let patch = decode_geometry_envelope(set_mask, null_mask, clear_mask, &words, &strings)?;
         let wake = self
             .state
             .set_geometry(&patch)
@@ -73,12 +87,15 @@ impl NativeViewState {
     }
 
     #[napi(js_name = "clearGeometry")]
-    pub fn clear_geometry(&self, properties: Option<Vec<String>>) -> Result<Value> {
+    pub fn clear_geometry(
+        &self,
+        set_mask: u32,
+        null_mask: u32,
+        clear_mask: u32,
+        clear_all: bool,
+    ) -> Result<u32> {
         ensure_alive(&self.alive)?;
-        let properties = properties
-            .as_deref()
-            .map(parse_geometry_properties)
-            .transpose()?;
+        let properties = decode_geometry_clear(set_mask, null_mask, clear_mask, clear_all)?;
         let wake = self
             .state
             .clear_geometry(properties.as_deref())
@@ -87,9 +104,17 @@ impl NativeViewState {
     }
 
     #[napi(js_name = "setPresentation")]
-    pub fn set_presentation(&self, value: Value) -> Result<Value> {
+    pub fn set_presentation(
+        &self,
+        set_mask: u32,
+        null_mask: u32,
+        clear_mask: u32,
+        words: Vec<u32>,
+        strings: Vec<String>,
+    ) -> Result<u32> {
         ensure_alive(&self.alive)?;
-        let patch = parse_presentation_patch(&value)?;
+        let patch =
+            decode_presentation_envelope(set_mask, null_mask, clear_mask, &words, &strings)?;
         let wake = self
             .state
             .set_presentation(&patch)
@@ -98,12 +123,15 @@ impl NativeViewState {
     }
 
     #[napi(js_name = "clearPresentation")]
-    pub fn clear_presentation(&self, properties: Option<Vec<String>>) -> Result<Value> {
+    pub fn clear_presentation(
+        &self,
+        set_mask: u32,
+        null_mask: u32,
+        clear_mask: u32,
+        clear_all: bool,
+    ) -> Result<u32> {
         ensure_alive(&self.alive)?;
-        let properties = properties
-            .as_deref()
-            .map(parse_presentation_properties)
-            .transpose()?;
+        let properties = decode_presentation_clear(set_mask, null_mask, clear_mask, clear_all)?;
         let wake = self
             .state
             .clear_presentation(properties.as_deref())
@@ -111,8 +139,11 @@ impl NativeViewState {
         Ok(wake_value(wake))
     }
 
+    /// Dynamic style-state keys stay a separate typed operation (§7.1), not a
+    /// free-form property map. Owned strings move into state storage; no enum
+    /// ids are invented for application keys.
     #[napi(js_name = "setStyleState")]
-    pub fn set_style_state(&self, key: String, value: String) -> Result<Value> {
+    pub fn set_style_state(&self, key: String, value: String) -> Result<u32> {
         ensure_alive(&self.alive)?;
         let wake = self
             .state
@@ -122,7 +153,7 @@ impl NativeViewState {
     }
 
     #[napi(js_name = "clearStyleState")]
-    pub fn clear_style_state(&self, key: String) -> Result<Value> {
+    pub fn clear_style_state(&self, key: String) -> Result<u32> {
         ensure_alive(&self.alive)?;
         let wake = self
             .state
@@ -139,195 +170,312 @@ impl NativeViewState {
     }
 }
 
-fn wake_value(wake: WakeDisposition) -> Value {
-    serde_json::json!({
-        "schedule_environment_drain": wake.schedule_environment_drain,
-    })
+/// Primitive wake disposition (§7.2): one u32 bitmask, never a JSON object.
+fn wake_value(wake: WakeDisposition) -> u32 {
+    if wake.schedule_environment_drain {
+        view_state_schema::WAKE_SCHEDULE_ENVIRONMENT_DRAIN
+    } else {
+        0
+    }
 }
 
-fn parse_geometry_patch(value: &Value) -> Result<ViewStateGeometryPatch> {
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState geometry patch must be an object")
-    })?;
+fn decode_geometry_envelope(
+    set_mask: u32,
+    null_mask: u32,
+    clear_mask: u32,
+    words: &[u32],
+    strings: &[String],
+) -> Result<ViewStateGeometryPatch> {
+    geometry::check_envelope(
+        set_mask,
+        null_mask,
+        clear_mask,
+        true,
+        words.len(),
+        strings.len(),
+    )
+    .map_err(crate::NativeError::invalid_input)?;
     let mut patch = ViewStateGeometryPatch::default();
-    for (key, value) in object {
-        match key.as_str() {
-            "width" => patch.width = Some(parse_size_mode(value, "width")?),
-            "height" => patch.height = Some(parse_size_mode(value, "height")?),
-            "padding" => patch.padding = Some(parse_insets(value)?),
-            "minWidth" => patch.min_width = Some(parse_nullable_u16(value, "minWidth")?),
-            "maxWidth" => patch.max_width = Some(parse_nullable_u16(value, "maxWidth")?),
-            "minHeight" => patch.min_height = Some(parse_nullable_u16(value, "minHeight")?),
-            "maxHeight" => patch.max_height = Some(parse_nullable_u16(value, "maxHeight")?),
-            "gap" => patch.gap = Some(parse_u16(value, "gap")?),
-            "alignment" => patch.alignment = Some(parse_alignment(value)?),
-            "borderEdges" => patch.border_edges = Some(parse_nullable_border_edges(value)?),
-            other => {
-                return Err(crate::NativeError::invalid_input(format!(
-                    "unknown ViewState geometry property `{other}`"
-                )));
-            }
-        }
+    if set_mask & (1 << geometry::ID_WIDTH) != 0 {
+        patch.width = Some(read_size_mode(
+            words[geometry::WIDTH_WORD_OFFSET as usize],
+            geometry::WIDTH_NAME,
+        )?);
+    }
+    if set_mask & (1 << geometry::ID_HEIGHT) != 0 {
+        patch.height = Some(read_size_mode(
+            words[geometry::HEIGHT_WORD_OFFSET as usize],
+            geometry::HEIGHT_NAME,
+        )?);
+    }
+    if set_mask & (1 << geometry::ID_PADDING) != 0 {
+        let base = geometry::PADDING_WORD_OFFSET as usize;
+        patch.padding = Some(Insets::new(
+            read_u16(words[base], &format!("{} top", geometry::PADDING_NAME))?,
+            read_u16(
+                words[base + 1],
+                &format!("{} right", geometry::PADDING_NAME),
+            )?,
+            read_u16(
+                words[base + 2],
+                &format!("{} bottom", geometry::PADDING_NAME),
+            )?,
+            read_u16(words[base + 3], &format!("{} left", geometry::PADDING_NAME))?,
+        ));
+    }
+    if set_mask & (1 << geometry::ID_MIN_WIDTH) != 0 {
+        patch.min_width = Some(if null_mask & (1 << geometry::ID_MIN_WIDTH) != 0 {
+            None
+        } else {
+            Some(read_u16(
+                words[geometry::MIN_WIDTH_WORD_OFFSET as usize],
+                geometry::MIN_WIDTH_NAME,
+            )?)
+        });
+    }
+    if set_mask & (1 << geometry::ID_MAX_WIDTH) != 0 {
+        patch.max_width = Some(if null_mask & (1 << geometry::ID_MAX_WIDTH) != 0 {
+            None
+        } else {
+            Some(read_u16(
+                words[geometry::MAX_WIDTH_WORD_OFFSET as usize],
+                geometry::MAX_WIDTH_NAME,
+            )?)
+        });
+    }
+    if set_mask & (1 << geometry::ID_MIN_HEIGHT) != 0 {
+        patch.min_height = Some(if null_mask & (1 << geometry::ID_MIN_HEIGHT) != 0 {
+            None
+        } else {
+            Some(read_u16(
+                words[geometry::MIN_HEIGHT_WORD_OFFSET as usize],
+                geometry::MIN_HEIGHT_NAME,
+            )?)
+        });
+    }
+    if set_mask & (1 << geometry::ID_MAX_HEIGHT) != 0 {
+        patch.max_height = Some(if null_mask & (1 << geometry::ID_MAX_HEIGHT) != 0 {
+            None
+        } else {
+            Some(read_u16(
+                words[geometry::MAX_HEIGHT_WORD_OFFSET as usize],
+                geometry::MAX_HEIGHT_NAME,
+            )?)
+        });
+    }
+    if set_mask & (1 << geometry::ID_GAP) != 0 {
+        patch.gap = Some(read_u16(
+            words[geometry::GAP_WORD_OFFSET as usize],
+            geometry::GAP_NAME,
+        )?);
+    }
+    if set_mask & (1 << geometry::ID_ALIGNMENT) != 0 {
+        patch.alignment = Some(read_alignment(
+            words[geometry::ALIGNMENT_WORD_OFFSET as usize],
+        )?);
+    }
+    if set_mask & (1 << geometry::ID_BORDER_EDGES) != 0 {
+        patch.border_edges = Some(if null_mask & (1 << geometry::ID_BORDER_EDGES) != 0 {
+            None
+        } else {
+            let base = geometry::BORDER_EDGES_WORD_OFFSET as usize;
+            Some(read_border_edges(words[base], words[base + 1])?)
+        });
     }
     Ok(patch)
 }
 
-fn parse_size_mode(value: &Value, field: &str) -> Result<ViewStateSizeMode> {
-    match value.as_str() {
-        Some("fit") => Ok(ViewStateSizeMode::Fit),
-        Some("fill") => Ok(ViewStateSizeMode::Fill),
+fn decode_geometry_clear(
+    set_mask: u32,
+    null_mask: u32,
+    clear_mask: u32,
+    clear_all: bool,
+) -> Result<Option<Vec<ViewStateGeometryProperty>>> {
+    geometry::check_envelope(set_mask, null_mask, clear_mask, false, 0, 0)
+        .map_err(crate::NativeError::invalid_input)?;
+    if clear_all {
+        return Ok(None);
+    }
+    let mut properties = Vec::new();
+    for id in 0..geometry::PROPERTY_COUNT {
+        if clear_mask & (1 << id) == 0 {
+            continue;
+        }
+        properties.push(match id {
+            geometry::ID_WIDTH => ViewStateGeometryProperty::Width,
+            geometry::ID_HEIGHT => ViewStateGeometryProperty::Height,
+            geometry::ID_PADDING => ViewStateGeometryProperty::Padding,
+            geometry::ID_MIN_WIDTH => ViewStateGeometryProperty::MinWidth,
+            geometry::ID_MAX_WIDTH => ViewStateGeometryProperty::MaxWidth,
+            geometry::ID_MIN_HEIGHT => ViewStateGeometryProperty::MinHeight,
+            geometry::ID_MAX_HEIGHT => ViewStateGeometryProperty::MaxHeight,
+            geometry::ID_GAP => ViewStateGeometryProperty::Gap,
+            geometry::ID_ALIGNMENT => ViewStateGeometryProperty::Alignment,
+            geometry::ID_BORDER_EDGES => ViewStateGeometryProperty::BorderEdges,
+            _ => {
+                return Err(crate::NativeError::invalid_input(
+                    "ViewState geometry envelope clears unknown properties",
+                ));
+            }
+        });
+    }
+    Ok(Some(properties))
+}
+
+fn decode_presentation_envelope(
+    set_mask: u32,
+    null_mask: u32,
+    clear_mask: u32,
+    words: &[u32],
+    strings: &[String],
+) -> Result<ViewStatePresentationPatch> {
+    presentation::check_envelope(
+        set_mask,
+        null_mask,
+        clear_mask,
+        true,
+        words.len(),
+        strings.len(),
+    )
+    .map_err(crate::NativeError::invalid_input)?;
+    let mut patch = ViewStatePresentationPatch::default();
+    if set_mask & (1 << presentation::ID_FOREGROUND) != 0 {
+        patch.foreground = Some(if null_mask & (1 << presentation::ID_FOREGROUND) != 0 {
+            None
+        } else {
+            Some(color_spec_str(
+                &strings[presentation::FOREGROUND_STRING_OFFSET as usize],
+            )?)
+        });
+    }
+    if set_mask & (1 << presentation::ID_BACKGROUND) != 0 {
+        patch.background = Some(if null_mask & (1 << presentation::ID_BACKGROUND) != 0 {
+            None
+        } else {
+            Some(color_spec_str(
+                &strings[presentation::BACKGROUND_STRING_OFFSET as usize],
+            )?)
+        });
+    }
+    if set_mask & (1 << presentation::ID_BORDER_COLOR) != 0 {
+        patch.border_color = Some(if null_mask & (1 << presentation::ID_BORDER_COLOR) != 0 {
+            None
+        } else {
+            Some(color_spec_str(
+                &strings[presentation::BORDER_COLOR_STRING_OFFSET as usize],
+            )?)
+        });
+    }
+    if set_mask & (1 << presentation::ID_BORDER_STYLE) != 0 {
+        patch.border_style = Some(if null_mask & (1 << presentation::ID_BORDER_STYLE) != 0 {
+            None
+        } else {
+            Some(read_border_style(
+                words[presentation::BORDER_STYLE_WORD_OFFSET as usize],
+            )?)
+        });
+    }
+    if set_mask & (1 << presentation::ID_BORDER_GLYPHS) != 0 {
+        patch.border_glyphs = Some(if null_mask & (1 << presentation::ID_BORDER_GLYPHS) != 0 {
+            None
+        } else {
+            let base = presentation::BORDER_GLYPHS_STRING_OFFSET as usize;
+            Some(read_border_glyphs(&strings[base..base + 8])?)
+        });
+    }
+    if set_mask & (1 << presentation::ID_TEXT_ATTRIBUTES) != 0 {
+        let base = presentation::TEXT_ATTRIBUTES_WORD_OFFSET as usize;
+        patch.text_attributes = read_text_attributes(words[base], words[base + 1]);
+    }
+    if set_mask & (1 << presentation::ID_STYLE) != 0 {
+        patch.style = Some(if null_mask & (1 << presentation::ID_STYLE) != 0 {
+            None
+        } else {
+            let word_base = presentation::STYLE_WORD_OFFSET as usize;
+            let string_base = presentation::STYLE_STRING_OFFSET as usize;
+            Some(read_style(
+                &strings[string_base],
+                &strings[string_base + 1],
+                &strings[string_base + 2],
+                words[word_base],
+                words[word_base + 1],
+            )?)
+        });
+    }
+    Ok(patch)
+}
+
+fn decode_presentation_clear(
+    set_mask: u32,
+    null_mask: u32,
+    clear_mask: u32,
+    clear_all: bool,
+) -> Result<Option<Vec<ViewStatePresentationProperty>>> {
+    presentation::check_envelope(set_mask, null_mask, clear_mask, false, 0, 0)
+        .map_err(crate::NativeError::invalid_input)?;
+    if clear_all {
+        return Ok(None);
+    }
+    let mut properties = Vec::new();
+    for id in 0..presentation::PROPERTY_COUNT {
+        if clear_mask & (1 << id) == 0 {
+            continue;
+        }
+        properties.push(match id {
+            presentation::ID_FOREGROUND => ViewStatePresentationProperty::Foreground,
+            presentation::ID_BACKGROUND => ViewStatePresentationProperty::Background,
+            presentation::ID_BORDER_COLOR => ViewStatePresentationProperty::BorderColor,
+            presentation::ID_BORDER_STYLE => ViewStatePresentationProperty::BorderStyle,
+            presentation::ID_BORDER_GLYPHS => ViewStatePresentationProperty::BorderGlyphs,
+            presentation::ID_TEXT_ATTRIBUTES => ViewStatePresentationProperty::TextAttributes,
+            presentation::ID_STYLE => ViewStatePresentationProperty::Style,
+            _ => {
+                return Err(crate::NativeError::invalid_input(
+                    "ViewState presentation envelope clears unknown properties",
+                ));
+            }
+        });
+    }
+    Ok(Some(properties))
+}
+
+fn read_size_mode(word: u32, what: &str) -> Result<ViewStateSizeMode> {
+    match word {
+        geometry::SIZE_MODE_FIT => Ok(ViewStateSizeMode::Fit),
+        geometry::SIZE_MODE_FILL => Ok(ViewStateSizeMode::Fill),
         _ => Err(crate::NativeError::invalid_input(format!(
-            "ViewState {field} must be fit or fill"
+            "ViewState {what} must be fit or fill"
         ))),
     }
 }
 
-fn parse_insets(value: &Value) -> Result<Insets> {
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState padding must be an InsetsValue object")
-    })?;
-    for key in object.keys() {
-        if !matches!(key.as_str(), "top" | "right" | "bottom" | "left") {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown ViewState padding field `{key}`"
-            )));
+fn read_u16(word: u32, what: &str) -> Result<u16> {
+    u16::try_from(word)
+        .map_err(|_| crate::NativeError::invalid_input(format!("ViewState {what} must fit in u16")))
+}
+
+fn read_alignment(word: u32) -> Result<GeometryAlignment> {
+    let horizontal = match word & 0x7 {
+        0 => None,
+        geometry::ALIGN_H_START => Some(HorizontalAlign::Start),
+        geometry::ALIGN_H_CENTER => Some(HorizontalAlign::Center),
+        geometry::ALIGN_H_END => Some(HorizontalAlign::End),
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "ViewState horizontal alignment is invalid",
+            ));
         }
-    }
-    Ok(Insets::new(
-        parse_u16_from_object(object, "top")?,
-        parse_u16_from_object(object, "right")?,
-        parse_u16_from_object(object, "bottom")?,
-        parse_u16_from_object(object, "left")?,
-    ))
-}
-
-fn parse_u16(value: &Value, field: &str) -> Result<u16> {
-    let value = value.as_u64().ok_or_else(|| {
-        crate::NativeError::invalid_input(format!("ViewState {field} must be an integer"))
-    })?;
-    u16::try_from(value).map_err(|_| {
-        crate::NativeError::invalid_input(format!("ViewState {field} must fit in u16"))
-    })
-}
-
-fn parse_u16_from_object(object: &serde_json::Map<String, Value>, field: &str) -> Result<u16> {
-    parse_u16(
-        object.get(field).ok_or_else(|| {
-            crate::NativeError::invalid_input(format!(
-                "ViewState padding field `{field}` is required"
-            ))
-        })?,
-        &format!("padding {field}"),
-    )
-}
-
-fn parse_nullable_u16(value: &Value, field: &str) -> Result<Option<u16>> {
-    if value.is_null() {
-        Ok(None)
-    } else {
-        parse_u16(value, field).map(Some)
-    }
-}
-
-fn parse_nullable_border_edges(value: &Value) -> Result<Option<BorderEdges>> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    match value.as_str() {
-        Some("all") => return Ok(Some(BorderEdges::ALL)),
-        Some("topBottom") => return Ok(Some(BorderEdges::TOP_BOTTOM)),
-        _ => {}
-    }
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input(
-            "ViewState borderEdges must be all, topBottom, an edge object, or null",
-        )
-    })?;
-    for key in object.keys() {
-        if !matches!(key.as_str(), "top" | "right" | "bottom" | "left") {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown ViewState border edge `{key}`"
-            )));
-        }
-    }
-    let edge = |name: &str| {
-        object.get(name).and_then(Value::as_bool).ok_or_else(|| {
-            crate::NativeError::invalid_input(format!(
-                "ViewState border edge `{name}` must be boolean"
-            ))
-        })
     };
-    Ok(Some(BorderEdges::new(
-        edge("top")?,
-        edge("right")?,
-        edge("bottom")?,
-        edge("left")?,
-    )))
-}
-
-fn parse_alignment(value: &Value) -> Result<GeometryAlignment> {
-    if let Some(value) = value.as_str() {
-        return match value {
-            "start" => Ok(GeometryAlignment {
-                horizontal: Some(HorizontalAlign::Start),
-                vertical: None,
-            }),
-            "center" => Ok(GeometryAlignment {
-                horizontal: Some(HorizontalAlign::Center),
-                vertical: None,
-            }),
-            "end" => Ok(GeometryAlignment {
-                horizontal: Some(HorizontalAlign::End),
-                vertical: None,
-            }),
-            "top" => Ok(GeometryAlignment {
-                horizontal: None,
-                vertical: Some(VerticalAlign::Top),
-            }),
-            "bottom" => Ok(GeometryAlignment {
-                horizontal: None,
-                vertical: Some(VerticalAlign::Bottom),
-            }),
-            _ => Err(crate::NativeError::invalid_input(
-                "ViewState alignment is invalid",
-            )),
-        };
-    }
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState alignment must be a known alignment or object")
-    })?;
-    for key in object.keys() {
-        if !matches!(key.as_str(), "horizontal" | "vertical") {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown ViewState alignment field `{key}`"
-            )));
+    let vertical = match (word >> geometry::ALIGN_V_SHIFT) & 0x7 {
+        0 => None,
+        geometry::ALIGN_V_TOP => Some(VerticalAlign::Top),
+        geometry::ALIGN_V_CENTER => Some(VerticalAlign::Center),
+        geometry::ALIGN_V_BOTTOM => Some(VerticalAlign::Bottom),
+        _ => {
+            return Err(crate::NativeError::invalid_input(
+                "ViewState vertical alignment is invalid",
+            ));
         }
-    }
-    let horizontal = match object.get("horizontal") {
-        None => None,
-        Some(value) => match value.as_str() {
-            Some("start") => Some(HorizontalAlign::Start),
-            Some("center") => Some(HorizontalAlign::Center),
-            Some("end") => Some(HorizontalAlign::End),
-            Some(_) | None => {
-                return Err(crate::NativeError::invalid_input(
-                    "ViewState horizontal alignment is invalid",
-                ));
-            }
-        },
-    };
-    let vertical = match object.get("vertical") {
-        None => None,
-        Some(value) => match value.as_str() {
-            Some("top") => Some(VerticalAlign::Top),
-            Some("center") => Some(VerticalAlign::Center),
-            Some("bottom") => Some(VerticalAlign::Bottom),
-            Some(_) | None => {
-                return Err(crate::NativeError::invalid_input(
-                    "ViewState vertical alignment is invalid",
-                ));
-            }
-        },
     };
     if horizontal.is_none() && vertical.is_none() {
         return Err(crate::NativeError::invalid_input(
@@ -340,219 +488,314 @@ fn parse_alignment(value: &Value) -> Result<GeometryAlignment> {
     })
 }
 
-fn parse_geometry_properties(properties: &[String]) -> Result<Vec<ViewStateGeometryProperty>> {
-    let mut parsed = Vec::with_capacity(properties.len());
-    for property in properties {
-        let value = match property.as_str() {
-            "width" => ViewStateGeometryProperty::Width,
-            "height" => ViewStateGeometryProperty::Height,
-            "padding" => ViewStateGeometryProperty::Padding,
-            "minWidth" => ViewStateGeometryProperty::MinWidth,
-            "maxWidth" => ViewStateGeometryProperty::MaxWidth,
-            "minHeight" => ViewStateGeometryProperty::MinHeight,
-            "maxHeight" => ViewStateGeometryProperty::MaxHeight,
-            "gap" => ViewStateGeometryProperty::Gap,
-            "alignment" => ViewStateGeometryProperty::Alignment,
-            "borderEdges" => ViewStateGeometryProperty::BorderEdges,
-            other => {
-                return Err(crate::NativeError::invalid_input(format!(
-                    "unknown ViewState geometry clear property `{other}`"
-                )));
-            }
-        };
-        if parsed.contains(&value) {
-            return Err(crate::NativeError::invalid_input(format!(
-                "duplicate ViewState geometry clear property `{property}`"
-            )));
-        }
-        parsed.push(value);
+fn read_border_edges(kind: u32, bits: u32) -> Result<BorderEdges> {
+    match kind {
+        geometry::EDGE_KIND_ALL => Ok(BorderEdges::ALL),
+        geometry::EDGE_KIND_TOP_BOTTOM => Ok(BorderEdges::TOP_BOTTOM),
+        geometry::EDGE_KIND_OBJECT => Ok(BorderEdges::new(
+            bits & geometry::EDGE_BIT_TOP != 0,
+            bits & geometry::EDGE_BIT_RIGHT != 0,
+            bits & geometry::EDGE_BIT_BOTTOM != 0,
+            bits & geometry::EDGE_BIT_LEFT != 0,
+        )),
+        _ => Err(crate::NativeError::invalid_input(
+            "ViewState borderEdges kind is invalid",
+        )),
     }
-    Ok(parsed)
 }
 
-fn parse_presentation_patch(value: &Value) -> Result<ViewStatePresentationPatch> {
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState presentation patch must be an object")
-    })?;
-    let mut patch = ViewStatePresentationPatch::default();
-    for (key, value) in object {
-        match key.as_str() {
-            "foreground" => patch.foreground = Some(parse_nullable_color(value)?),
-            "background" => patch.background = Some(parse_nullable_color(value)?),
-            "borderColor" => patch.border_color = Some(parse_nullable_color(value)?),
-            "borderStyle" => patch.border_style = Some(parse_nullable_border_style(value)?),
-            "borderGlyphs" => patch.border_glyphs = Some(parse_nullable_border_glyphs(value)?),
-            "textAttributes" => patch.text_attributes = parse_text_attributes(value)?,
-            "style" => patch.style = Some(parse_nullable_style(value)?),
-            other => {
-                return Err(crate::NativeError::invalid_input(format!(
-                    "unknown ViewState presentation property `{other}`"
-                )));
-            }
-        }
-    }
-    Ok(patch)
-}
-
-fn parse_nullable_color(value: &Value) -> Result<Option<ColorSpec>> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    color_spec(value).map(Some)
-}
-
-fn parse_nullable_border_style(value: &Value) -> Result<Option<BorderStyle>> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    match value.as_str() {
-        Some("plain") => Ok(Some(BorderStyle::Plain)),
-        Some("rounded") => Ok(Some(BorderStyle::Rounded)),
-        Some("double") => Ok(Some(BorderStyle::Double)),
+fn read_border_style(word: u32) -> Result<BorderStyle> {
+    match word {
+        presentation::BORDER_STYLE_PLAIN => Ok(BorderStyle::Plain),
+        presentation::BORDER_STYLE_ROUNDED => Ok(BorderStyle::Rounded),
+        presentation::BORDER_STYLE_DOUBLE => Ok(BorderStyle::Double),
         _ => Err(crate::NativeError::invalid_input(
             "ViewState borderStyle must be plain, rounded, double, or null",
         )),
     }
 }
 
-fn parse_nullable_border_glyphs(value: &Value) -> Result<Option<BorderGlyphs>> {
-    if value.is_null() {
-        return Ok(None);
-    }
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState borderGlyphs must be an object or null")
-    })?;
-    for key in object.keys() {
-        if !matches!(
-            key.as_str(),
-            "top"
-                | "right"
-                | "bottom"
-                | "left"
-                | "topLeft"
-                | "topRight"
-                | "bottomLeft"
-                | "bottomRight"
-        ) {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown ViewState border glyph `{key}`"
-            )));
-        }
-    }
-    let field = |name: &str| {
-        object.get(name).and_then(Value::as_str).ok_or_else(|| {
-            crate::NativeError::invalid_input(format!(
-                "ViewState border glyph `{name}` must be a string"
-            ))
-        })
+fn read_border_glyphs(strings: &[String]) -> Result<BorderGlyphs> {
+    let [
+        top,
+        right,
+        bottom,
+        left,
+        top_left,
+        top_right,
+        bottom_left,
+        bottom_right,
+    ] = strings
+    else {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState borderGlyphs lane has the wrong length",
+        ));
     };
     BorderGlyphs::new(
-        field("top")?,
-        field("right")?,
-        field("bottom")?,
-        field("left")?,
-        field("topLeft")?,
-        field("topRight")?,
-        field("bottomLeft")?,
-        field("bottomRight")?,
+        top,
+        right,
+        bottom,
+        left,
+        top_left,
+        top_right,
+        bottom_left,
+        bottom_right,
     )
-    .map(Some)
     .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
 }
 
-fn parse_text_attributes(value: &Value) -> Result<ViewStateTextAttributes> {
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState textAttributes must be an object")
-    })?;
-    let mut attributes = ViewStateTextAttributes::default();
-    for (name, value) in object {
-        let enabled = value.as_bool().ok_or_else(|| {
-            crate::NativeError::invalid_input(format!(
-                "ViewState text attribute `{name}` must be boolean"
-            ))
-        })?;
-        match name.as_str() {
-            "bold" => attributes.bold = Some(enabled),
-            "dim" => attributes.dim = Some(enabled),
-            "italic" => attributes.italic = Some(enabled),
-            "underline" => attributes.underline = Some(enabled),
-            "reversed" => attributes.reversed = Some(enabled),
-            "strikethrough" => attributes.strikethrough = Some(enabled),
-            other => {
-                return Err(crate::NativeError::invalid_input(format!(
-                    "unknown ViewState text attribute `{other}`"
-                )));
-            }
+fn read_text_attributes(presence: u32, values: u32) -> ViewStateTextAttributes {
+    let attribute = |bit: u32| {
+        if presence & bit == 0 {
+            None
+        } else {
+            Some(values & bit != 0)
         }
+    };
+    ViewStateTextAttributes {
+        bold: attribute(presentation::TEXT_ATTR_BIT_BOLD),
+        dim: attribute(presentation::TEXT_ATTR_BIT_DIM),
+        italic: attribute(presentation::TEXT_ATTR_BIT_ITALIC),
+        underline: attribute(presentation::TEXT_ATTR_BIT_UNDERLINE),
+        reversed: attribute(presentation::TEXT_ATTR_BIT_REVERSED),
+        strikethrough: attribute(presentation::TEXT_ATTR_BIT_STRIKETHROUGH),
     }
-    Ok(attributes)
 }
 
-fn parse_nullable_style(value: &Value) -> Result<Option<StyleRef>> {
-    if value.is_null() {
-        return Ok(None);
+fn read_style(
+    theme: &str,
+    foreground: &str,
+    background: &str,
+    attr_presence: u32,
+    attr_values: u32,
+) -> Result<StyleRef> {
+    let mut style = StyleSpec::new();
+    if !foreground.is_empty() {
+        style = style.foreground(color_spec_str(foreground)?);
     }
-    let object = value.as_object().ok_or_else(|| {
-        crate::NativeError::invalid_input("ViewState style must be an object or null")
-    })?;
-    let style = lower_style_spec(value)?;
-    Ok(Some(match object.get("theme").and_then(Value::as_str) {
-        Some(theme) => StyleRef::themed(theme, style),
-        None => StyleRef::direct(style),
-    }))
-}
-
-fn parse_presentation_properties(
-    properties: &[String],
-) -> Result<Vec<ViewStatePresentationProperty>> {
-    let mut parsed = Vec::with_capacity(properties.len());
-    for property in properties {
-        let value = match property.as_str() {
-            "foreground" => ViewStatePresentationProperty::Foreground,
-            "background" => ViewStatePresentationProperty::Background,
-            "borderColor" => ViewStatePresentationProperty::BorderColor,
-            "borderStyle" => ViewStatePresentationProperty::BorderStyle,
-            "borderGlyphs" => ViewStatePresentationProperty::BorderGlyphs,
-            "textAttributes" => ViewStatePresentationProperty::TextAttributes,
-            "style" => ViewStatePresentationProperty::Style,
-            other => {
-                return Err(crate::NativeError::invalid_input(format!(
-                    "unknown ViewState clear property `{other}`"
-                )));
-            }
-        };
-        if parsed.contains(&value) {
-            return Err(crate::NativeError::invalid_input(format!(
-                "duplicate ViewState clear property `{property}`"
-            )));
+    if !background.is_empty() {
+        style = style.background(color_spec_str(background)?);
+    }
+    let attributes = read_text_attributes(attr_presence, attr_values);
+    let named = [
+        ("bold", attributes.bold),
+        ("dim", attributes.dim),
+        ("italic", attributes.italic),
+        ("underline", attributes.underline),
+        ("reversed", attributes.reversed),
+        ("strikethrough", attributes.strikethrough),
+    ];
+    for (name, enabled) in named {
+        if let Some(enabled) = enabled {
+            let attribute = text_attribute(name).ok_or_else(|| {
+                crate::NativeError::internal("state schema text attribute has no native kind")
+            })?;
+            style = style.attribute(attribute, enabled);
         }
-        parsed.push(value);
     }
-    Ok(parsed)
+    Ok(if theme.is_empty() {
+        StyleRef::direct(style)
+    } else {
+        StyleRef::themed(theme, style)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use iyon_tui::binding::{ColorSpec, StyleSpec, TextAttribute};
 
-    #[test]
-    fn parses_typed_presentation_patch() {
-        let patch = parse_presentation_patch(&json!({
-            "foreground": "ansi:3",
-            "background": null,
-            "textAttributes": {"bold": true},
-            "borderStyle": "rounded",
-        }))
-        .unwrap();
-        assert!(patch.foreground.is_some());
-        assert_eq!(patch.background, Some(None));
-        assert_eq!(patch.text_attributes.bold, Some(true));
-        assert_eq!(patch.border_style, Some(Some(BorderStyle::Rounded)));
+    fn geometry_lanes() -> (Vec<u32>, Vec<String>) {
+        (
+            vec![0; geometry::WORD_COUNT],
+            vec![String::new(); geometry::STRING_COUNT],
+        )
+    }
+
+    fn presentation_lanes() -> (Vec<u32>, Vec<String>) {
+        (
+            vec![0; presentation::WORD_COUNT],
+            vec![String::new(); presentation::STRING_COUNT],
+        )
     }
 
     #[test]
-    fn rejects_unknown_patch_fields() {
-        assert!(parse_presentation_patch(&json!({"padding": 1})).is_err());
+    fn schema_ids_are_stable_per_domain() {
+        // Bit ids are protocol: pin a sample so schema edits stay explicit.
+        assert_eq!(geometry::ID_WIDTH, 0);
+        assert_eq!(geometry::ID_BORDER_EDGES, 9);
+        assert_eq!(presentation::ID_FOREGROUND, 0);
+        assert_eq!(presentation::ID_STYLE, 6);
+        assert_eq!(geometry::WORD_COUNT, 14);
+        assert_eq!(presentation::STRING_COUNT, 14);
+    }
+
+    #[test]
+    fn decodes_full_geometry_envelope() {
+        let (mut words, strings) = geometry_lanes();
+        words[geometry::WIDTH_WORD_OFFSET as usize] = geometry::SIZE_MODE_FILL;
+        words[geometry::HEIGHT_WORD_OFFSET as usize] = geometry::SIZE_MODE_FIT;
+        let base = geometry::PADDING_WORD_OFFSET as usize;
+        words[base..base + 4].copy_from_slice(&[1, 2, 3, 4]);
+        words[geometry::MIN_WIDTH_WORD_OFFSET as usize] = 10;
+        words[geometry::GAP_WORD_OFFSET as usize] = 2;
+        words[geometry::ALIGNMENT_WORD_OFFSET as usize] =
+            geometry::ALIGN_H_CENTER | (geometry::ALIGN_V_BOTTOM << geometry::ALIGN_V_SHIFT);
+        let edge_base = geometry::BORDER_EDGES_WORD_OFFSET as usize;
+        words[edge_base] = geometry::EDGE_KIND_OBJECT;
+        words[edge_base + 1] = geometry::EDGE_BIT_TOP | geometry::EDGE_BIT_LEFT;
+        let set_mask = (1 << geometry::ID_WIDTH)
+            | (1 << geometry::ID_HEIGHT)
+            | (1 << geometry::ID_PADDING)
+            | (1 << geometry::ID_MIN_WIDTH)
+            | (1 << geometry::ID_GAP)
+            | (1 << geometry::ID_ALIGNMENT)
+            | (1 << geometry::ID_BORDER_EDGES);
+        // maxWidth arrives as semantic null while minWidth carries a value.
+        let null_mask = 1 << geometry::ID_MAX_WIDTH;
+        let set_mask = set_mask | (1 << geometry::ID_MAX_WIDTH);
+        let patch =
+            decode_geometry_envelope(set_mask, null_mask, 0, &words, &strings).expect("decodes");
+        assert_eq!(patch.width, Some(ViewStateSizeMode::Fill));
+        assert_eq!(patch.height, Some(ViewStateSizeMode::Fit));
+        assert_eq!(patch.padding, Some(Insets::new(1, 2, 3, 4)));
+        assert_eq!(patch.min_width, Some(Some(10)));
+        assert_eq!(patch.max_width, Some(None));
+        assert_eq!(patch.min_height, None);
+        assert_eq!(patch.gap, Some(2));
+        assert_eq!(
+            patch.alignment,
+            Some(GeometryAlignment {
+                horizontal: Some(HorizontalAlign::Center),
+                vertical: Some(VerticalAlign::Bottom),
+            })
+        );
+        assert_eq!(
+            patch.border_edges,
+            Some(Some(BorderEdges::new(true, false, false, true)))
+        );
+    }
+
+    #[test]
+    fn decodes_presentation_envelope_with_null_and_style() {
+        let (mut words, mut strings) = presentation_lanes();
+        strings[presentation::FOREGROUND_STRING_OFFSET as usize] = "ansi:3".to_owned();
+        strings[presentation::BORDER_COLOR_STRING_OFFSET as usize] = "#010203".to_owned();
+        words[presentation::BORDER_STYLE_WORD_OFFSET as usize] = presentation::BORDER_STYLE_ROUNDED;
+        let attr_base = presentation::TEXT_ATTRIBUTES_WORD_OFFSET as usize;
+        words[attr_base] = presentation::TEXT_ATTR_BIT_BOLD | presentation::TEXT_ATTR_BIT_ITALIC;
+        words[attr_base + 1] = presentation::TEXT_ATTR_BIT_BOLD;
+        let style_word = presentation::STYLE_WORD_OFFSET as usize;
+        let style_string = presentation::STYLE_STRING_OFFSET as usize;
+        strings[style_string] = "diff.addition".to_owned();
+        strings[style_string + 1] = "red".to_owned();
+        strings[style_string + 2] = String::new();
+        words[style_word] = presentation::TEXT_ATTR_BIT_BOLD;
+        words[style_word + 1] = presentation::TEXT_ATTR_BIT_BOLD;
+        let set_mask = (1 << presentation::ID_FOREGROUND)
+            | (1 << presentation::ID_BACKGROUND)
+            | (1 << presentation::ID_BORDER_COLOR)
+            | (1 << presentation::ID_BORDER_STYLE)
+            | (1 << presentation::ID_TEXT_ATTRIBUTES)
+            | (1 << presentation::ID_STYLE);
+        let null_mask = 1 << presentation::ID_BACKGROUND;
+        let patch = decode_presentation_envelope(set_mask, null_mask, 0, &words, &strings)
+            .expect("decodes");
+        assert_eq!(patch.foreground, Some(Some(ColorSpec::ansi(3))));
+        assert_eq!(patch.background, Some(None));
+        assert_eq!(patch.border_color, Some(Some(ColorSpec::rgb(1, 2, 3))));
+        assert_eq!(patch.border_style, Some(Some(BorderStyle::Rounded)));
+        assert_eq!(
+            patch.text_attributes,
+            ViewStateTextAttributes {
+                bold: Some(true),
+                italic: Some(false),
+                ..Default::default()
+            }
+        );
+        let Some(Some(style)) = patch.style else {
+            panic!("style must decode");
+        };
+        assert_eq!(
+            style,
+            StyleRef::themed(
+                "diff.addition",
+                StyleSpec::new()
+                    .foreground(ColorSpec::named(iyon_tui::binding::AnsiColor::Red))
+                    .attribute(TextAttribute::Bold, true)
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_envelope_header_violations() {
+        let (words, strings) = geometry_lanes();
+        // Unknown set bit.
+        assert!(decode_geometry_envelope(1 << 31, 0, 0, &words, &strings).is_err());
+        // Null mask escapes the set mask.
+        assert!(
+            decode_geometry_envelope(
+                1 << geometry::ID_MIN_WIDTH,
+                1 << geometry::ID_GAP,
+                0,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+        // Null on a non-nullable property (gap).
+        assert!(
+            decode_geometry_envelope(
+                1 << geometry::ID_GAP,
+                1 << geometry::ID_GAP,
+                0,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+        // Clear and set intersect.
+        assert!(
+            decode_geometry_envelope(
+                1 << geometry::ID_GAP,
+                0,
+                1 << geometry::ID_GAP,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+        // Short lanes.
+        assert!(decode_geometry_envelope(0, 0, 0, &words[..5], &strings).is_err());
+        // Clear path carries set values.
+        assert!(decode_geometry_clear(1, 0, 0, false).is_err());
+        // Malformed scalar still fails after a valid header: bad size mode.
+        let (mut words, strings) = geometry_lanes();
+        words[geometry::WIDTH_WORD_OFFSET as usize] = 9;
+        assert!(decode_geometry_envelope(1 << geometry::ID_WIDTH, 0, 0, &words, &strings).is_err());
+    }
+
+    #[test]
+    fn clear_distinguishes_all_from_list_and_empty() {
+        assert_eq!(
+            decode_geometry_clear(0, 0, 0, true).expect("clear all"),
+            None
+        );
+        assert_eq!(
+            decode_presentation_clear(0, 0, 0, true).expect("clear all"),
+            None
+        );
+        let mask = (1 << geometry::ID_WIDTH) | (1 << geometry::ID_GAP);
+        assert_eq!(
+            decode_geometry_clear(0, 0, mask, false).expect("clear list"),
+            Some(vec![
+                ViewStateGeometryProperty::Width,
+                ViewStateGeometryProperty::Gap
+            ])
+        );
+        assert_eq!(
+            decode_geometry_clear(0, 0, 0, false).expect("explicit empty clear"),
+            Some(Vec::new())
+        );
     }
 }

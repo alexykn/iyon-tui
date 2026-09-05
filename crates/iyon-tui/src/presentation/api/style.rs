@@ -572,8 +572,13 @@ impl ColorSpec {
 }
 
 /// Opaque semantic key resolved by the host theme.
+///
+/// The inner value is reference-counted: cloning a key (for example when a
+/// retained override or cached version shares it) bumps a counter instead of
+/// copying the string. Ingress paths intern through the shared style atom
+/// table so repeated parses of the same key share one allocation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ThemeKey(pub(crate) String);
+pub struct ThemeKey(pub(crate) std::sync::Arc<str>);
 
 impl ThemeKey {
     #[must_use]
@@ -590,12 +595,18 @@ impl std::borrow::Borrow<str> for ThemeKey {
 
 impl From<&str> for ThemeKey {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        Self(std::sync::Arc::from(value))
     }
 }
 
 impl From<String> for ThemeKey {
     fn from(value: String) -> Self {
+        Self(std::sync::Arc::from(value))
+    }
+}
+
+impl From<std::sync::Arc<str>> for ThemeKey {
+    fn from(value: std::sync::Arc<str>) -> Self {
         Self(value)
     }
 }
@@ -712,6 +723,18 @@ impl TextAttributeSpec {
         self
     }
 
+    #[must_use]
+    pub fn attribute_value(&self, attribute: TextAttribute) -> Option<bool> {
+        match attribute {
+            TextAttribute::Bold => self.bold,
+            TextAttribute::Dim => self.dim,
+            TextAttribute::Italic => self.italic,
+            TextAttribute::Underline => self.underline,
+            TextAttribute::Reversed => self.reversed,
+            TextAttribute::Strikethrough => self.strikethrough,
+        }
+    }
+
     pub(in crate::presentation::api) fn set(&mut self, attribute: TextAttribute, enabled: bool) {
         match attribute {
             TextAttribute::Bold => self.bold = Some(enabled),
@@ -723,7 +746,7 @@ impl TextAttributeSpec {
         }
     }
 
-    fn overlay(&mut self, incoming: Self) {
+    pub(crate) fn overlay(&mut self, incoming: Self) {
         if incoming.bold.is_some() {
             self.bold = incoming.bold;
         }
@@ -741,6 +764,24 @@ impl TextAttributeSpec {
         }
         if incoming.strikethrough.is_some() {
             self.strikethrough = incoming.strikethrough;
+        }
+    }
+
+    /// Applies every explicitly specified attribute to a resolved style,
+    /// leaving unspecified attributes inherited. This is the single sparse
+    /// attribute applicator for structural, state, and theme ingress.
+    pub(crate) fn apply_to(&self, style: &mut StyleRef) {
+        for (attribute, value) in [
+            (TextAttribute::Bold, self.bold),
+            (TextAttribute::Dim, self.dim),
+            (TextAttribute::Italic, self.italic),
+            (TextAttribute::Underline, self.underline),
+            (TextAttribute::Reversed, self.reversed),
+            (TextAttribute::Strikethrough, self.strikethrough),
+        ] {
+            if let Some(value) = value {
+                style.set_attribute(attribute, value);
+            }
         }
     }
 }

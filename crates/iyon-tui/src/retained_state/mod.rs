@@ -26,9 +26,7 @@ pub use geometry::{ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStateS
 pub(crate) use occurrence::OccurrenceBox;
 pub(crate) use presentation::ViewStateSnapshot;
 #[cfg(feature = "native-host")]
-pub use presentation::{
-    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateTextAttributes,
-};
+pub use presentation::{ViewStatePresentationPatch, ViewStatePresentationProperty};
 #[cfg(feature = "native-host")]
 pub(crate) use record::{ViewStateLifecycle, ViewStateRecord};
 #[cfg(feature = "native-host")]

@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use iyon_tui::binding::{
     BorderEdges, BorderGlyphs, BorderStyle, GeometryAlignment, HorizontalAlign, HostViewState,
-    Insets, StyleRef, StyleSpec, VerticalAlign, ViewStateGeometryPatch, ViewStateGeometryProperty,
-    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
-    ViewStateTextAttributes, WakeDisposition,
+    Insets, StyleRef, StyleSpec, TextAttribute, TextAttributeSpec, VerticalAlign,
+    ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStatePresentationPatch,
+    ViewStatePresentationProperty, ViewStateSizeMode, WakeDisposition,
 };
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -544,22 +544,30 @@ fn read_border_glyphs(strings: &[String]) -> Result<BorderGlyphs> {
     .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
 }
 
-fn read_text_attributes(presence: u32, values: u32) -> ViewStateTextAttributes {
-    let attribute = |bit: u32| {
-        if presence & bit == 0 {
-            None
-        } else {
-            Some(values & bit != 0)
+fn read_text_attributes(presence: u32, values: u32) -> TextAttributeSpec {
+    let mut spec = TextAttributeSpec::new();
+    for (bit, attribute) in [
+        (presentation::TEXT_ATTR_BIT_BOLD, TextAttribute::Bold),
+        (presentation::TEXT_ATTR_BIT_DIM, TextAttribute::Dim),
+        (presentation::TEXT_ATTR_BIT_ITALIC, TextAttribute::Italic),
+        (
+            presentation::TEXT_ATTR_BIT_UNDERLINE,
+            TextAttribute::Underline,
+        ),
+        (
+            presentation::TEXT_ATTR_BIT_REVERSED,
+            TextAttribute::Reversed,
+        ),
+        (
+            presentation::TEXT_ATTR_BIT_STRIKETHROUGH,
+            TextAttribute::Strikethrough,
+        ),
+    ] {
+        if presence & bit != 0 {
+            spec = spec.attribute(attribute, values & bit != 0);
         }
-    };
-    ViewStateTextAttributes {
-        bold: attribute(presentation::TEXT_ATTR_BIT_BOLD),
-        dim: attribute(presentation::TEXT_ATTR_BIT_DIM),
-        italic: attribute(presentation::TEXT_ATTR_BIT_ITALIC),
-        underline: attribute(presentation::TEXT_ATTR_BIT_UNDERLINE),
-        reversed: attribute(presentation::TEXT_ATTR_BIT_REVERSED),
-        strikethrough: attribute(presentation::TEXT_ATTR_BIT_STRIKETHROUGH),
     }
+    spec
 }
 
 fn read_style(
@@ -578,12 +586,21 @@ fn read_style(
     }
     let attributes = read_text_attributes(attr_presence, attr_values);
     let named = [
-        ("bold", attributes.bold),
-        ("dim", attributes.dim),
-        ("italic", attributes.italic),
-        ("underline", attributes.underline),
-        ("reversed", attributes.reversed),
-        ("strikethrough", attributes.strikethrough),
+        ("bold", attributes.attribute_value(TextAttribute::Bold)),
+        ("dim", attributes.attribute_value(TextAttribute::Dim)),
+        ("italic", attributes.attribute_value(TextAttribute::Italic)),
+        (
+            "underline",
+            attributes.attribute_value(TextAttribute::Underline),
+        ),
+        (
+            "reversed",
+            attributes.attribute_value(TextAttribute::Reversed),
+        ),
+        (
+            "strikethrough",
+            attributes.attribute_value(TextAttribute::Strikethrough),
+        ),
     ];
     for (name, enabled) in named {
         if let Some(enabled) = enabled {
@@ -707,11 +724,9 @@ mod tests {
         assert_eq!(patch.border_style, Some(Some(BorderStyle::Rounded)));
         assert_eq!(
             patch.text_attributes,
-            ViewStateTextAttributes {
-                bold: Some(true),
-                italic: Some(false),
-                ..Default::default()
-            }
+            TextAttributeSpec::new()
+                .attribute(TextAttribute::Bold, true)
+                .attribute(TextAttribute::Italic, false)
         );
         let Some(Some(style)) = patch.style else {
             panic!("style must decode");

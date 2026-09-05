@@ -3863,8 +3863,9 @@ fn style_from_bits(
         Ok(StyleRef::direct(local))
     } else {
         let theme = runtime.style_atom_value(theme_atom_ref)?;
+        let key = theme.strip_prefix("theme:").unwrap_or(theme);
         Ok(StyleRef::themed(
-            theme.strip_prefix("theme:").unwrap_or(theme),
+            iyon_tui::binding::intern_style_atom(key),
             local,
         ))
     }
@@ -3872,7 +3873,11 @@ fn style_from_bits(
 
 fn parse_color_atom(value: &str) -> Result<ColorSpec, u32> {
     if let Some(theme) = value.strip_prefix("theme:") {
-        return Ok(ColorSpec::theme(theme));
+        // Same canonical table as the state envelope path: one allocation
+        // per unique key, shared across every structural materialization.
+        return Ok(ColorSpec::theme(iyon_tui::binding::intern_style_atom(
+            theme,
+        )));
     }
     if let Some(ansi) = value.strip_prefix("ansi:") {
         return ansi

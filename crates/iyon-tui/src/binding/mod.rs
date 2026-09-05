@@ -19,7 +19,8 @@ pub use crate::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
     DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
     GridTrack, HorizontalAlign, Insets, IntoView, OverflowIndicator, Renderer, StyleRef, StyleSpec,
-    TextAttribute, TextSpan, Theme, ThemeColor, VerticalAlign, View, WrapMode,
+    TextAttribute, TextAttributeSpec, TextSpan, Theme, ThemeColor, ThemeKey, VerticalAlign, View,
+    WrapMode,
 };
 
 // STATE: validated property operations + retained state identity → canonical
@@ -55,11 +56,15 @@ pub use crate::{
     HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, HostViewState,
     RetainedPathStep, TextFunnelKind, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost,
     ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStatePresentationPatch,
-    ViewStatePresentationProperty, ViewStateSizeMode, ViewStateTextAttributes, WakeDisposition,
-    WeakView,
+    ViewStatePresentationProperty, ViewStateSizeMode, WakeDisposition, WeakView,
 };
 
 // Measurement seam. The native crate reports through these only; counters
 // themselves remain core-owned behind the same feature gate.
 #[cfg(feature = "perf-counters")]
 pub use crate::perf::{Counter, add, inc, reset, snapshot};
+
+// Style atom seam. Native ingress interns repeated color/key strings through
+// the canonical core table instead of re-allocating per materialization.
+#[cfg(feature = "native-host")]
+pub use crate::theme::intern_style_atom;

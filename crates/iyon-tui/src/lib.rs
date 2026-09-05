@@ -218,7 +218,6 @@ pub use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
 pub use retained_state::{
     GeometryAlignment, ViewStateGeometryPatch, ViewStateGeometryProperty,
     ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
-    ViewStateTextAttributes,
 };
 pub use scene::Scene;
 pub use scroll::ScrollPane;

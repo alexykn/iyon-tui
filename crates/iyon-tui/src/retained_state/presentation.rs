@@ -6,42 +6,18 @@ use crate::presentation::ir::{Decoration, HeightRule, WidthRule};
 
 use super::geometry::{EffectiveGeometry, GeometryAlignment, GeometryOverrides};
 use crate::presentation::{
-    BorderGlyphs, BorderStyle, ColorSpec, StyleRef, StyleSpec, StyleStates, TextAttribute,
+    BorderGlyphs, BorderStyle, ColorSpec, StyleRef, StyleSpec, StyleStates, TextAttributeSpec,
 };
-
-/// Typed sparse text-attribute values accepted by a presentation patch.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ViewStateTextAttributes {
-    pub bold: Option<bool>,
-    pub dim: Option<bool>,
-    pub italic: Option<bool>,
-    pub underline: Option<bool>,
-    pub reversed: Option<bool>,
-    pub strikethrough: Option<bool>,
-}
-
-impl ViewStateTextAttributes {
-    pub(crate) fn apply_to(&self, style: &mut StyleRef) {
-        for (attribute, value) in [
-            (TextAttribute::Bold, self.bold),
-            (TextAttribute::Dim, self.dim),
-            (TextAttribute::Italic, self.italic),
-            (TextAttribute::Underline, self.underline),
-            (TextAttribute::Reversed, self.reversed),
-            (TextAttribute::Strikethrough, self.strikethrough),
-        ] {
-            if let Some(value) = value {
-                style.set_attribute(attribute, value);
-            }
-        }
-    }
-}
 
 /// All presentation fields supported by PERF-13-B.
 ///
 /// `Some(Some(value))` is an explicit override, `Some(None)` is an explicit
 /// nullable semantic value, and `None` means that the retained override is
 /// absent. Clear operations restore the outer `None` state.
+///
+/// Sparse text attributes share the single [`TextAttributeSpec`]
+/// vocabulary with structural and theme ingress instead of a duplicate
+/// state-plane record.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ViewStatePresentationPatch {
     pub foreground: Option<Option<ColorSpec>>,
@@ -49,7 +25,7 @@ pub struct ViewStatePresentationPatch {
     pub border_color: Option<Option<ColorSpec>>,
     pub border_style: Option<Option<BorderStyle>>,
     pub border_glyphs: Option<Option<BorderGlyphs>>,
-    pub text_attributes: ViewStateTextAttributes,
+    pub text_attributes: TextAttributeSpec,
     pub style: Option<Option<StyleRef>>,
 }
 
@@ -72,7 +48,7 @@ pub(crate) struct PresentationOverrides {
     pub(crate) border_color: Option<Option<ColorSpec>>,
     pub(crate) border_style: Option<Option<BorderStyle>>,
     pub(crate) border_glyphs: Option<Option<BorderGlyphs>>,
-    pub(crate) text_attributes: ViewStateTextAttributes,
+    pub(crate) text_attributes: TextAttributeSpec,
     pub(crate) style: Option<Option<StyleRef>>,
 }
 
@@ -94,7 +70,7 @@ impl PresentationOverrides {
         if patch.border_glyphs.is_some() {
             self.border_glyphs = patch.border_glyphs.clone();
         }
-        apply_attribute_patch(&mut self.text_attributes, &patch.text_attributes);
+        self.text_attributes.overlay(patch.text_attributes);
         if patch.style.is_some() {
             self.style = patch.style.clone();
         }
@@ -115,33 +91,12 @@ impl PresentationOverrides {
                 ViewStatePresentationProperty::BorderStyle => self.border_style = None,
                 ViewStatePresentationProperty::BorderGlyphs => self.border_glyphs = None,
                 ViewStatePresentationProperty::TextAttributes => {
-                    self.text_attributes = ViewStateTextAttributes::default()
+                    self.text_attributes = TextAttributeSpec::default()
                 }
                 ViewStatePresentationProperty::Style => self.style = None,
             }
         }
         *self != before
-    }
-}
-
-fn apply_attribute_patch(target: &mut ViewStateTextAttributes, patch: &ViewStateTextAttributes) {
-    if patch.bold.is_some() {
-        target.bold = patch.bold;
-    }
-    if patch.dim.is_some() {
-        target.dim = patch.dim;
-    }
-    if patch.italic.is_some() {
-        target.italic = patch.italic;
-    }
-    if patch.underline.is_some() {
-        target.underline = patch.underline;
-    }
-    if patch.reversed.is_some() {
-        target.reversed = patch.reversed;
-    }
-    if patch.strikethrough.is_some() {
-        target.strikethrough = patch.strikethrough;
     }
 }
 
@@ -226,7 +181,7 @@ impl ViewStateSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::presentation::{BorderSpec, IntoView, View};
+    use crate::presentation::{BorderSpec, IntoView, TextAttribute, View};
 
     #[test]
     fn explicit_null_and_clear_are_distinct() {

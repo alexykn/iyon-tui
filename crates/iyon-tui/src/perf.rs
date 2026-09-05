@@ -58,10 +58,11 @@ pub enum Counter {
     ContentSurfaceClones,
     ContentRegistryPortScans,
     TextBytesCopied,
+    SemanticProjectionRebuilds,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::TextBytesCopied as usize + 1;
+    pub const COUNT: usize = Self::SemanticProjectionRebuilds as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -114,6 +115,7 @@ const NAMES: [&str; Counter::COUNT] = [
     "content_surface_clones",
     "content_registry_port_scans",
     "text_bytes_copied",
+    "semantic_projection_rebuilds",
 ];
 
 #[cfg(feature = "perf-counters")]

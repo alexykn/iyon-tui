@@ -3,12 +3,17 @@
 //! Themes contain named colors and sparse named text styles. They deliberately
 //! do not contain layout or terminal geometry.
 
+mod atoms;
+mod batch;
 mod framework;
 
+pub use atoms::intern_style_atom;
+pub(crate) use batch::ThemeBatch;
 pub(crate) use framework::framework_theme;
 
 use std::collections::HashMap;
 
+use crate::content::text::TextSelector;
 use crate::presentation::api::{
     StyleFacts, StyleSelector, StyleSpec, StyleStates, ThemeColor, ThemeKey,
 };
@@ -36,6 +41,26 @@ impl<T> Default for ThemeEntry<T> {
 }
 
 impl<T> ThemeEntry<T> {
+    /// Accumulates one variant without sorting. The batch sorter orders each
+    /// entry exactly once at finish; duplicate selectors replace in place
+    /// with the newest declaration order, matching `set_variant`.
+    fn push_variant(&mut self, selector: StyleSelector, value: T, declaration_order: u64) {
+        if let Some(variant) = self
+            .variants
+            .iter_mut()
+            .find(|variant| variant.selector == selector)
+        {
+            variant.declaration_order = declaration_order;
+            variant.value = value;
+        } else {
+            self.variants.push(ThemeVariant {
+                selector,
+                value,
+                declaration_order,
+            });
+        }
+    }
+
     fn set_variant(
         &mut self,
         selector: StyleSelector,
@@ -158,6 +183,24 @@ impl Theme {
             .entry(key.into())
             .or_default()
             .set_variant(selector, style, order)
+    }
+
+    /// Assembles a complete theme from payload-ordered parts with exactly
+    /// one variant sort per entry. Native ingress decodes into plain vectors
+    /// and calls this once, so theme construction never pays per-insertion
+    /// sorting. Duplicate selectors resolve exactly as the sequential
+    /// setters: last write wins with the newest declaration order.
+    #[must_use]
+    pub fn assemble_batched(
+        colors: Vec<(
+            ThemeKey,
+            Option<ThemeColor>,
+            Vec<(StyleSelector, ThemeColor)>,
+        )>,
+        styles: Vec<(ThemeKey, Option<StyleSpec>, Vec<(StyleSelector, StyleSpec)>)>,
+        text_styles: Vec<(TextSelector, StyleSpec)>,
+    ) -> Self {
+        ThemeBatch::build_from_parts(colors, styles, text_styles)
     }
 
     #[must_use]

@@ -313,7 +313,7 @@ impl TextSelector {
         }
     }
 
-    fn is_any(&self) -> bool {
+    pub(crate) fn is_any(&self) -> bool {
         self.inner.predicate_count() == 0
     }
 

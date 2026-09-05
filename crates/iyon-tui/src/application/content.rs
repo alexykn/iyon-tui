@@ -249,6 +249,74 @@ impl TextProjectionKey {
     }
 }
 
+/// Theme-independent semantic identity for one Connector projection input.
+/// A palette/presentation recolor changes the painted surface but never the
+/// semantic IR, so semantic products cache under this key while surfaces
+/// keep the full theme-qualified key. The source range is part of the key:
+/// stable-prefix snapshots share every other field with their full snapshot.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SemanticProjectionKey {
+    source_id: u64,
+    source_generation: u32,
+    content_generation: u64,
+    source_revision: u64,
+    source_base: u64,
+    source_end: u64,
+    width: u16,
+    wrap: TextWrapMode,
+    funnel_kind: TextFunnelKind,
+    delivery_revision: u64,
+}
+
+impl SemanticProjectionKey {
+    fn for_snapshot(
+        snapshot: &HostContentSourceSnapshot,
+        funnel: HostContentFunnel,
+        width: u16,
+        delivery_revision: u64,
+    ) -> Self {
+        Self {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+            source_revision: snapshot.revision,
+            source_base: snapshot.source_base,
+            source_end: snapshot.source_end,
+            width: width.max(1),
+            wrap: funnel.wrap,
+            funnel_kind: funnel.kind,
+            delivery_revision,
+        }
+    }
+}
+
+type SemanticProjectionCache = VecDeque<(SemanticProjectionKey, Arc<Projection<TextContent>>)>;
+
+/// Resolves one semantic projection through the Connector cache, building
+/// and retaining it only on a miss. Theme-only changes always hit: parsers
+/// never re-run for a recolor.
+fn resolve_cached_semantic(
+    cache: &mut SemanticProjectionCache,
+    key: SemanticProjectionKey,
+    build: impl FnOnce() -> Result<Projection<TextContent>>,
+) -> Result<Arc<Projection<TextContent>>> {
+    if let Some(hit) = cache
+        .iter()
+        .find(|(candidate, _)| candidate == &key)
+        .map(|(_, projection)| Arc::clone(projection))
+    {
+        return Ok(hit);
+    }
+    crate::perf::inc(crate::perf::Counter::SemanticProjectionRebuilds);
+    let built = Arc::new(build()?);
+    cache.retain(|(candidate, _)| candidate != &key);
+    cache.push_front((key, Arc::clone(&built)));
+    while cache.len() > 4 {
+        cache.pop_back();
+    }
+    Ok(built)
+}
+
 #[derive(Clone, Debug)]
 struct HostContentProjection {
     key: TextProjectionKey,
@@ -829,6 +897,7 @@ fn project_text_snapshot(
     theme_revision: u64,
     execution: &mut ConnectorExecution,
     delivery_revision: u64,
+    semantic_cache: &mut SemanticProjectionCache,
 ) -> Result<HostContentProjection> {
     let key = TextProjectionKey {
         source_id: snapshot.source_id,
@@ -862,7 +931,13 @@ fn project_text_snapshot(
         ));
     }
 
-    let semantic = project_semantic_snapshot(snapshot, funnel, execution)?;
+    // Semantic IR is theme-independent: a recolor hits the cache and
+    // repaints only, while source/delivery/width changes rebuild.
+    let semantic_key =
+        SemanticProjectionKey::for_snapshot(snapshot, funnel, offered_width, delivery_revision);
+    let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
+        project_semantic_snapshot(snapshot, funnel, execution)
+    })?;
     let reveal_units = if let Some(smoother) = execution.smoother.as_mut() {
         let units = source_grapheme_projection(snapshot)
             .map_err(|error| anyhow!("content smoothing input failed: {error}"))?;
@@ -885,14 +960,22 @@ fn project_text_snapshot(
         let stable_prefix_rows = snapshot
             .stable_prefix()
             .and_then(|prefix| {
+                let prefix_key = SemanticProjectionKey::for_snapshot(
+                    &prefix,
+                    funnel,
+                    offered_width,
+                    delivery_revision,
+                );
                 let mut prefix_exec = ConnectorExecution::new(&funnel);
-                project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
-                    .ok()
-                    .and_then(|prefix_semantic| {
-                        render_semantic_surface(&prefix_semantic, theme, offered_width, None)
-                            .ok()
-                            .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
-                    })
+                resolve_cached_semantic(semantic_cache, prefix_key, || {
+                    project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
+                })
+                .ok()
+                .and_then(|prefix_semantic| {
+                    render_semantic_surface(&prefix_semantic, theme, offered_width, None)
+                        .ok()
+                        .map(|(_, prefix_surface, _)| usize::from(prefix_surface.height()))
+                })
             })
             .unwrap_or(0);
         if reveal_units.is_some() {
@@ -2298,6 +2381,10 @@ struct ConnectorRecord {
     /// Connector-local width-dependent derived projections. Inactive connectors
     /// clear this cache; the Source remains the authoritative store.
     projection_cache: VecDeque<(TextProjectionKey, Arc<HostContentProjection>)>,
+    /// Connector-local theme-independent semantic IR. A palette/presentation
+    /// recolor reuses these products and repaints only; inactive connectors
+    /// clear this cache alongside the surface products.
+    semantic_cache: SemanticProjectionCache,
     committed_projection: Option<Arc<HostContentProjection>>,
     candidate_projection: Option<Arc<HostContentProjection>>,
     projected_source_revision: Option<u64>,
@@ -2328,7 +2415,7 @@ pub struct ContentConnectorStatus {
 pub(crate) struct ContentHostRegistry {
     source_registry: ContentSourceRegistry,
     owner_host: Weak<Mutex<HostInner>>,
-    theme: Theme,
+    theme: Arc<Theme>,
     theme_revision: u64,
     next_connector_id: u64,
     next_generation: u32,
@@ -2345,7 +2432,7 @@ impl ContentHostRegistry {
         Self {
             source_registry,
             owner_host: Weak::new(),
-            theme: Theme::new(),
+            theme: Arc::new(Theme::new()),
             theme_revision: 0,
             next_connector_id: 0,
             next_generation: 0,
@@ -2465,6 +2552,7 @@ impl ContentHostRegistry {
             failed_source_revision: None,
             activation_failure: None,
             projection_cache: VecDeque::new(),
+            semantic_cache: VecDeque::new(),
             committed_projection: None,
             candidate_projection: None,
             projected_source_revision: None,
@@ -2761,16 +2849,20 @@ impl ContentHostRegistry {
 
         // The snapshot owns immutable chunks; the Source lock is not held
         // while width-dependent projection allocates/compiles derived rows.
-        // Execution state is Connector-local. Take it out while projecting so
-        // a parser/smoother can mutate without holding the Connector mutex.
-        let mut execution = {
+        // Execution state is Connector-local. Take it and the semantic cache
+        // out while projecting so a parser/smoother can mutate without
+        // holding the Connector mutex.
+        let (mut execution, mut semantic_cache) = {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-            state
-                .execution
-                .take()
-                .unwrap_or_else(|| ConnectorExecution::new(&funnel))
+            (
+                state
+                    .execution
+                    .take()
+                    .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
+                std::mem::take(&mut state.semantic_cache),
+            )
         };
         let projection = match project_text_snapshot(
             &snapshot,
@@ -2780,12 +2872,18 @@ impl ContentHostRegistry {
             self.theme_revision,
             &mut execution,
             delivery_revision,
+            &mut semantic_cache,
         ) {
             Ok(projection) => Arc::new(projection),
             Err(error) => {
                 // A failed candidate must not retain partially advanced
                 // delivery/parser state. The next eligible revision or
                 // explicit retry starts from a clean Connector execution.
+                // The semantic cache holds only immutable completed
+                // products, so it is always safe to restore.
+                if let Ok(mut state) = connector.lock() {
+                    state.semantic_cache = semantic_cache;
+                }
                 return Err(error);
             }
         };
@@ -2794,6 +2892,7 @@ impl ContentHostRegistry {
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
         state.execution = Some(execution);
+        state.semantic_cache = semantic_cache;
         state
             .projection_cache
             .retain(|(candidate, _)| candidate != &key);
@@ -3212,6 +3311,7 @@ impl ContentHostRegistry {
                 if !state.visible {
                     state.committed_projection = None;
                     state.projection_cache.clear();
+                    state.semantic_cache.clear();
                     state.projected_source_revision = None;
                     state.execution = None;
                     state.delivery_revision = 0;
@@ -3740,6 +3840,7 @@ impl ContentHostRegistry {
             state.committed_projection = None;
             state.candidate_projection = None;
             state.projection_cache.clear();
+            state.semantic_cache.clear();
             state.projected_source_revision = None;
             state.projection_failure_key = None;
             state.execution = None;
@@ -4097,11 +4198,11 @@ impl ContentHostRegistry {
 }
 
 impl ContentProvider for ContentHostRegistry {
-    fn set_theme(&mut self, theme: &Theme) {
-        if self.theme == *theme {
+    fn set_theme(&mut self, theme: &Arc<Theme>) {
+        if Arc::ptr_eq(&self.theme, theme) || *self.theme == **theme {
             return;
         }
-        self.theme = theme.clone();
+        self.theme = Arc::clone(theme);
         self.theme_revision = self
             .theme_revision
             .checked_add(1)
@@ -5040,12 +5141,12 @@ mod tests {
         }
         let t1 = Theme::new().with_color("accent", ThemeColor::Indexed(1));
         let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
-        registry.set_theme(&t1);
+        registry.set_theme(&Arc::new(t1));
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
         let key1 = registry
             .connector_projection_key(connector.id(), 20)
             .unwrap();
-        registry.set_theme(&t2);
+        registry.set_theme(&Arc::new(t2));
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
         let key2 = registry
             .connector_projection_key(connector.id(), 20)
@@ -5054,6 +5155,81 @@ mod tests {
         assert_ne!(
             m1.projection_revision, m2.projection_revision,
             "ContentMeasurement projection_revision must change across themes to invalidate paint cache"
+        );
+    }
+
+    #[test]
+    fn theme_recolor_repaints_without_reparsing_semantic_content() {
+        use crate::TextFunnelKind;
+        let _perf_lock = crate::perf::test_lock();
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"# Title\n\nsome *emphasis* text\n", &[], &[])
+            .unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    false,
+                    ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let rebuilds =
+            || crate::perf::snapshot().value(crate::perf::Counter::SemanticProjectionRebuilds);
+        let t1 = Theme::new().with_color("accent", ThemeColor::Indexed(1));
+        let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
+        registry.set_theme(&Arc::new(t1));
+        let before = rebuilds();
+        let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert!(
+            rebuilds() > before,
+            "first projection must run the semantic parsers"
+        );
+        // A palette-only recolor invalidates the painted surface but must
+        // reuse the cached semantic IR: no parser runs again.
+        registry.set_theme(&Arc::new(t2));
+        let after_recolor = rebuilds();
+        let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert_eq!(
+            rebuilds(),
+            after_recolor,
+            "theme recolor must not reparse semantic content"
+        );
+        assert_ne!(
+            m1.projection_revision, m2.projection_revision,
+            "recolor must still invalidate the paint cache"
+        );
+        // New source bytes change the semantic key and rebuild exactly.
+        source.append_utf8(b"more text\n", &[], &[]).unwrap();
+        registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert!(
+            rebuilds() > after_recolor,
+            "source changes must rebuild semantic content"
         );
     }
 

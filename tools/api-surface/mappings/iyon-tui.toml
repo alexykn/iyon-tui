@@ -12675,6 +12675,18 @@ note = "baseline externally reachable API"
 
 [[records]]
 
+item_id = "iyon-tui::presentation::api::style::TextAttributeSpec::attribute_value"
+path = "iyon-tui::presentation::api::style::TextAttributeSpec::attribute_value"
+strategy = "NativeAsync"
+rust_path = "iyon-tui::presentation::api::style::TextAttributeSpec::attribute_value"
+typescript_module = "iyon:tui"
+typescript_export = "presentation__api__style__TextAttributeSpec__attribute_value"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-07 shared sparse-attribute reader"
+
+[[records]]
+
 item_id = "iyon-tui::presentation::api::style::TextAttributeSpec::new"
 path = "iyon-tui::presentation::api::style::TextAttributeSpec::new"
 strategy = "NativeAsync"
@@ -12828,6 +12840,18 @@ typescript_export = "presentation__api__style__ThemeKey"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::ThemeKey"
+path = "iyon-tui::binding::ThemeKey"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::ThemeKey"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ThemeKey"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-07 typed theme ingress; unsupported, no TS projection"
 
 [[records]]
 
@@ -15891,6 +15915,18 @@ note = "baseline externally reachable API"
 
 [[records]]
 
+item_id = "iyon-tui::theme::Theme::assemble_batched"
+path = "iyon-tui::theme::Theme::assemble_batched"
+strategy = "NativeAsync"
+rust_path = "iyon-tui::theme::Theme::assemble_batched"
+typescript_module = "iyon:tui"
+typescript_export = "theme__Theme__assemble_batched"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-07 single-sort batch theme assembler"
+
+[[records]]
+
 item_id = "iyon-tui::theme::Theme::with_text_style"
 path = "iyon-tui::theme::Theme::with_text_style"
 strategy = "NativeAsync"
@@ -16778,15 +16814,15 @@ status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
 [[records]]
 
-item_id = "iyon-tui::retained_state::presentation::ViewStateTextAttributes"
-path = "iyon-tui::binding::ViewStateTextAttributes"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStateTextAttributes"
+item_id = "iyon-tui::presentation::api::style::TextAttributeSpec"
+path = "iyon-tui::binding::TextAttributeSpec"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextAttributeSpec"
 typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStateTextAttributes"
+typescript_export = "binding__TextAttributeSpec"
 implementation_owner = "T5"
 status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
+note = "L1-07 single sparse-attribute vocabulary; replaces ViewStateTextAttributes"
 [[records]]
 
 item_id = "iyon-tui::application::environment::WakeDisposition"
@@ -16831,6 +16867,17 @@ typescript_export = "binding__inc"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::theme::atoms::intern_style_atom"
+path = "iyon-tui::binding::intern_style_atom"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::intern_style_atom"
+typescript_module = "iyon:tui"
+typescript_export = "binding__intern_style_atom"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-07 canonical style atom table; unsupported, no TS projection"
 [[records]]
 
 item_id = "iyon-tui::perf::reset"

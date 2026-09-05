@@ -50,8 +50,9 @@ pub(crate) struct HistoryContentRows {
 /// result. No method owns or mutates Source bytes or viewport state.
 pub(crate) trait ContentProvider {
     /// Supplies the host theme before the candidate layout/paint pass. The
-    /// content provider stores only semantic/theme data, never host-native IDs.
-    fn set_theme(&mut self, _theme: &Theme) {}
+    /// theme arrives shared: providers adopt the `Arc` instead of cloning
+    /// its maps, and compare by pointer before comparing by value.
+    fn set_theme(&mut self, _theme: &std::sync::Arc<Theme>) {}
 
     fn projection_revision(&self, port_id: u64, offered_width: u16) -> u64;
 

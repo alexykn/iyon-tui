@@ -922,6 +922,7 @@ iyon-tui::output::router::RouteConflict::fmt
 iyon-tui::perf::Counter
 iyon-tui::perf::add
 iyon-tui::perf::inc
+iyon-tui::theme::atoms::intern_style_atom
 iyon-tui::perf::reset
 iyon-tui::perf::snapshot
 iyon-tui::presentation::api::composition::Horizontal
@@ -1116,6 +1117,7 @@ iyon-tui::presentation::api::style::TextAttribute::Strikethrough
 iyon-tui::presentation::api::style::TextAttribute::Underline
 iyon-tui::presentation::api::style::TextAttributeSpec
 iyon-tui::presentation::api::style::TextAttributeSpec::attribute
+iyon-tui::presentation::api::style::TextAttributeSpec::attribute_value
 iyon-tui::presentation::api::style::TextAttributeSpec::new
 iyon-tui::presentation::api::style::ThemeColor
 iyon-tui::presentation::api::style::ThemeColor
@@ -1128,6 +1130,7 @@ iyon-tui::presentation::api::style::ThemeColor::Rgb
 iyon-tui::presentation::api::style::ThemeColor::Rgb::b
 iyon-tui::presentation::api::style::ThemeColor::Rgb::g
 iyon-tui::presentation::api::style::ThemeColor::Rgb::r
+iyon-tui::presentation::api::style::ThemeKey
 iyon-tui::presentation::api::style::ThemeKey
 iyon-tui::presentation::api::style::ThemeKey
 iyon-tui::presentation::api::style::ThemeKey::as_str
@@ -1363,7 +1366,7 @@ iyon-tui::retained_state::geometry::ViewStateGeometryProperty
 iyon-tui::retained_state::geometry::ViewStateSizeMode
 iyon-tui::retained_state::presentation::ViewStatePresentationPatch
 iyon-tui::retained_state::presentation::ViewStatePresentationProperty
-iyon-tui::retained_state::presentation::ViewStateTextAttributes
+iyon-tui::presentation::api::style::TextAttributeSpec
 iyon-tui::scene::root::Scene
 iyon-tui::scene::root::Scene::body
 iyon-tui::scene::root::Scene::history
@@ -1402,6 +1405,7 @@ iyon-tui::stream::coord::StreamRange::try_new
 iyon-tui::text
 iyon-tui::theme::Theme
 iyon-tui::theme::Theme
+iyon-tui::theme::Theme::assemble_batched
 iyon-tui::theme::Theme::color
 iyon-tui::theme::Theme::new
 iyon-tui::theme::Theme::set_color

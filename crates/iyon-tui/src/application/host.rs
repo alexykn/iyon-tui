@@ -2181,7 +2181,7 @@ fn prepare_frame_with_content(
     states: &StateFrameView<'_>,
     content: &mut dyn ContentProvider,
 ) -> Result<PreparedSceneFrame> {
-    content.set_theme(running.theme());
+    content.set_theme(running.theme_shared());
     match backend {
         HostBackend::Headless(sink) => running
             .prepare_frame_with_states(
@@ -2377,6 +2377,62 @@ mod tests {
             "retry must commit the newer state version"
         );
         host.close().unwrap();
+    }
+
+    #[test]
+    fn identical_themes_resolve_identically_across_hosts() {
+        use crate::{StyleRef, StyleSelector, StyleSpec, Theme, ThemeColor};
+        // Duplicate variants exercise declaration-order determinism: the
+        // last write wins on both hosts independently.
+        let theme = Theme::new()
+            .with_color("accent", ThemeColor::Indexed(1))
+            .with_color_variant(
+                "accent",
+                StyleSelector::state("mode", "error"),
+                ThemeColor::Indexed(2),
+            )
+            .with_color_variant(
+                "accent",
+                StyleSelector::state("mode", "error"),
+                ThemeColor::Indexed(3),
+            )
+            .with_style(
+                "emphasis",
+                StyleSpec::new()
+                    .foreground(crate::ColorSpec::theme("accent"))
+                    .bold(),
+            );
+        let first = TuiHost::open(20, 4, true).unwrap();
+        let second = TuiHost::open(20, 4, true).unwrap();
+        first.set_theme(theme.clone()).unwrap();
+        second.set_theme(theme).unwrap();
+        for host in [&first, &second] {
+            host.set_desired_view(
+                View::text("parity")
+                    .style(StyleRef::theme("emphasis"))
+                    .into_view(),
+            )
+            .unwrap();
+            host.flush_pending_hosts(8, true).unwrap();
+        }
+        assert_eq!(first.screen_rows(), second.screen_rows());
+        for row in 0..4 {
+            for column in 0..6 {
+                let left = first.style_at(row, column).map(|style| style.foreground);
+                let right = second.style_at(row, column).map(|style| style.foreground);
+                assert_eq!(left, right, "style diverged at {row}:{column}");
+            }
+        }
+        assert!(
+            first
+                .style_at(3, 0)
+                .and_then(|style| style.foreground)
+                .as_deref()
+                == Some("ansi:1"),
+            "themed foreground must resolve through the shared table"
+        );
+        first.close().unwrap();
+        second.close().unwrap();
     }
 
     #[test]

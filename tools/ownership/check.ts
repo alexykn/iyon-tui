@@ -1264,7 +1264,11 @@ function contractParityGate(): void {
     ["native-view-abi.ts", readFileSync(join(FRAMEWORK_SRC, "transport/structural/native-view-abi.ts"), "utf8")],
   ]);
   const index = readFileSync(join(FRAMEWORK_SRC, "index.ts"), "utf8");
-  const native = readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8");
+  // L1-07: theme/border lowering lives in the typed DTO module; parity
+  // scans cover both native ingress files.
+  const native =
+    readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui.rs"), "utf8") +
+    readFileSync(join(ROOT, "crates/iyon-tui-native/src/tui/theme_dto.rs"), "utf8");
   const rustOutput = readFileSync(join(ROOT, "crates/iyon-tui/src/output/handle.rs"), "utf8");
   const rustComponent = readFileSync(join(ROOT, "crates/iyon-tui/src/component/mod.rs"), "utf8");
   const runtime = sources.get("runtime/runtime.ts")!;

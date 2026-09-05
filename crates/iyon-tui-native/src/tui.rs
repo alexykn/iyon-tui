@@ -7,13 +7,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use iyon_tui::binding::{
-    AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, ContentDelivery, ContentFamily,
-    FormatId, History, HistoryLayout, HostCellStyle, HostContentConnector, HostContentFunnel,
-    HostContentPort, HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot,
-    Insets, IntoView, Key, KeyStroke, LanguageId, Modifiers, Output, SemanticTag, SmoothConfig,
-    StyleSelector, StyleSpec, TextAttribute, TextFunnelKind, TextInput, TextOrigin, TextPart,
-    TextRole, TextSelector, TextSourceKind, TextWrapMode, Theme, ThemeColor, TuiEnvironment,
-    TuiHost, View,
+    AnsiColor, ColorSpec, ContentDelivery, ContentFamily, History, HistoryLayout, HostCellStyle,
+    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource, HostHistory,
+    HostScrollPane, HostTextInput, HostViewSlot, Insets, IntoView, Key, KeyStroke, Modifiers,
+    Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind, TextWrapMode,
+    TuiEnvironment, TuiHost, View,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -33,6 +31,7 @@ mod view_state_schema {
     ));
 }
 
+mod theme_dto;
 mod view_abi;
 mod view_state;
 
@@ -738,7 +737,7 @@ impl NativeTuiHost {
     pub fn set_theme(&self, value: Value) -> Result<()> {
         ensure_alive(&self.alive)?;
         self.host
-            .set_theme(lower_theme(&value)?)
+            .set_theme(theme_dto::decode_theme(value)?)
             .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
@@ -833,7 +832,7 @@ impl NativeTuiHost {
         ensure_alive(&self.alive)?;
         // Validate and lower the border before registering the component so a
         // malformed option cannot leave an unreachable host component behind.
-        let border = border.map(|value| lower_border(&value)).transpose()?;
+        let border = border.map(theme_dto::build_border_spec).transpose()?;
         let input = self
             .host
             .create_text_input(multiline.unwrap_or(false))
@@ -1829,380 +1828,17 @@ fn cell_style_value(style: HostCellStyle) -> Value {
     })
 }
 
-/// Lowers a theme style value for the current theme pipeline
-/// (`set_theme` and theme-color/selector lowering below). This is not transport
-/// decoding: it serves the live theme N-API surface.
-fn lower_style_spec(value: &Value) -> Result<StyleSpec> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("style must be an object"))?;
-    let mut style = StyleSpec::new();
-    if let Some(color) = object.get("foreground") {
-        style = style.foreground(color_spec(color)?);
-    }
-    if let Some(color) = object.get("background") {
-        style = style.background(color_spec(color)?);
-    }
-    if let Some(attributes) = object.get("attributes").and_then(Value::as_object) {
-        for (name, enabled) in attributes {
-            let attribute = text_attribute(name).ok_or_else(|| {
-                crate::NativeError::invalid_input(format!("unknown text attribute `{name}`"))
-            })?;
-            let enabled = enabled.as_bool().ok_or_else(|| {
-                crate::NativeError::invalid_input("text attributes must be booleans")
-            })?;
-            style = style.attribute(attribute, enabled);
-        }
-    }
-    Ok(style)
-}
-
-fn lower_theme(value: &Value) -> Result<Theme> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("theme must be an object"))?;
-    let mut theme = Theme::new();
-    if let Some(colors) = object.get("colors").and_then(Value::as_object) {
-        for (key, entry) in colors {
-            let entry = entry.as_object().ok_or_else(|| {
-                crate::NativeError::invalid_input("theme color entry must be an object")
-            })?;
-            if let Some(base) = entry.get("base") {
-                theme.set_color(key.as_str(), lower_theme_color(base)?);
-            }
-            for variant in entry
-                .get("variants")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let variant = variant.as_object().ok_or_else(|| {
-                    crate::NativeError::invalid_input("theme color variant must be an object")
-                })?;
-                theme.set_color_variant(
-                    key.as_str(),
-                    lower_selector(variant.get("selector").ok_or_else(|| {
-                        crate::NativeError::invalid_input("theme color selector is required")
-                    })?)?,
-                    lower_theme_color(variant.get("value").ok_or_else(|| {
-                        crate::NativeError::invalid_input("theme color value is required")
-                    })?)?,
-                );
-            }
-        }
-    }
-    if let Some(styles) = object.get("styles").and_then(Value::as_object) {
-        for (key, entry) in styles {
-            let entry = entry.as_object().ok_or_else(|| {
-                crate::NativeError::invalid_input("theme style entry must be an object")
-            })?;
-            if let Some(base) = entry.get("base") {
-                theme.set_style(key.as_str(), lower_style_spec(base)?);
-            }
-            for variant in entry
-                .get("variants")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let variant = variant.as_object().ok_or_else(|| {
-                    crate::NativeError::invalid_input("theme style variant must be an object")
-                })?;
-                theme.set_style_variant(
-                    key.as_str(),
-                    lower_selector(variant.get("selector").ok_or_else(|| {
-                        crate::NativeError::invalid_input("theme style selector is required")
-                    })?)?,
-                    lower_style_spec(variant.get("value").ok_or_else(|| {
-                        crate::NativeError::invalid_input("theme style value is required")
-                    })?)?,
-                );
-            }
-        }
-    }
-    if let Some(text_styles) = object.get("textStyles").and_then(Value::as_array) {
-        for entry in text_styles {
-            let entry = entry.as_object().ok_or_else(|| {
-                crate::NativeError::invalid_input("theme text style entry must be an object")
-            })?;
-            let selector = lower_text_selector(entry.get("selector").ok_or_else(|| {
-                crate::NativeError::invalid_input("theme text style selector is required")
-            })?)?;
-            let style = lower_style_spec(entry.get("value").ok_or_else(|| {
-                crate::NativeError::invalid_input("theme text style value is required")
-            })?)?;
-            theme.set_text_style(selector, style);
-        }
-    }
-    Ok(theme)
-}
-
-fn lower_text_selector(value: &Value) -> Result<TextSelector> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("text selector must be an object"))?;
-    let mut selector = TextSelector::any();
-    if let Some(roles) = object.get("roles").and_then(Value::as_array) {
-        for role in roles {
-            selector = selector.and_role(lower_text_role(role.as_str().ok_or_else(|| {
-                crate::NativeError::invalid_input("text selector role must be a string")
-            })?)?);
-        }
-    }
-    if let Some(parts) = object.get("parts").and_then(Value::as_array) {
-        for part in parts {
-            selector = selector.and_part(lower_text_part(part.as_str().ok_or_else(|| {
-                crate::NativeError::invalid_input("text selector part must be a string")
-            })?)?);
-        }
-    }
-    if let Some(annotations) = object.get("annotations").and_then(Value::as_array) {
-        for annotation in annotations {
-            let annotation = annotation.as_object().ok_or_else(|| {
-                crate::NativeError::invalid_input("text selector annotation must be an object")
-            })?;
-            let namespace = annotation
-                .get("namespace")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    crate::NativeError::invalid_input(
-                        "text selector annotation namespace is required",
-                    )
-                })?;
-            let name = annotation
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    crate::NativeError::invalid_input("text selector annotation name is required")
-                })?;
-            let tag = SemanticTag::new(namespace, name)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-            selector = selector.and_annotation(&tag);
-        }
-    }
-    if let Some(language) = object.get("language").and_then(Value::as_str) {
-        let language = LanguageId::new(language)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        selector = selector.language(&language);
-    }
-    if let Some(origin) = object.get("origin").and_then(Value::as_str) {
-        let origin = TextOrigin::new(origin)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        selector = selector.origin(origin);
-    }
-    if let Some(format) = object.get("format").and_then(Value::as_str) {
-        let format = FormatId::new(format)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        selector = selector.format(&format);
-    }
-    if object
-        .get("focused")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        selector = selector.and_focused();
-    }
-    if object
-        .get("focusWithin")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        selector = selector.and_focus_within();
-    }
-    if let Some(states) = object.get("states").and_then(Value::as_object) {
-        for (key, value) in states {
-            selector = selector.and_state(
-                key.clone(),
-                value.as_str().ok_or_else(|| {
-                    crate::NativeError::invalid_input("text selector states must be strings")
-                })?,
-            );
-        }
-    }
-    Ok(selector)
-}
-
-fn lower_text_role(value: &str) -> Result<TextRole> {
-    let role = match value {
-        "paragraph" => TextRole::Paragraph,
-        "heading" => TextRole::Heading,
-        "blockQuote" => TextRole::BlockQuote,
-        "list" => TextRole::List,
-        "listItem" => TextRole::ListItem,
-        "codeBlock" => TextRole::CodeBlock,
-        "table" => TextRole::Table,
-        "tableRow" => TextRole::TableRow,
-        "tableCell" => TextRole::TableCell,
-        "thematicBreak" => TextRole::ThematicBreak,
-        "rawBlock" => TextRole::RawBlock,
-        "container" => TextRole::Container,
-        "strong" => TextRole::Strong,
-        "emphasis" => TextRole::Emphasis,
-        "strikethrough" => TextRole::Strikethrough,
-        "underline" => TextRole::Underline,
-        "superscript" => TextRole::Superscript,
-        "subscript" => TextRole::Subscript,
-        "smallCaps" => TextRole::SmallCaps,
-        "inlineCode" => TextRole::InlineCode,
-        "link" => TextRole::Link,
-        "image" => TextRole::Image,
-        "rawInline" => TextRole::RawInline,
-        _ => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown text selector role `{value}`"
-            )));
-        }
-    };
-    Ok(role)
-}
-
-fn lower_text_part(value: &str) -> Result<TextPart> {
-    let part = match value {
-        "listMarker" => TextPart::ListMarker,
-        "taskMarker" => TextPart::TaskMarker,
-        "quoteMarker" => TextPart::QuoteMarker,
-        "codeLabel" => TextPart::CodeLabel,
-        "tableRule" => TextPart::TableRule,
-        "thematicRule" => TextPart::ThematicRule,
-        "imageFallback" => TextPart::ImageFallback,
-        _ => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown text selector part `{value}`"
-            )));
-        }
-    };
-    Ok(part)
-}
-
-fn lower_selector(value: &Value) -> Result<StyleSelector> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("theme selector must be an object"))?;
-    let mut selector = StyleSelector::default();
-    if object
-        .get("focused")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        selector = selector.and_focused();
-    }
-    if object
-        .get("focusWithin")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        selector = selector.and_focus_within();
-    }
-    if let Some(states) = object.get("states").and_then(Value::as_object) {
-        for (key, value) in states {
-            selector = selector.and_state(
-                key.clone(),
-                value.as_str().ok_or_else(|| {
-                    crate::NativeError::invalid_input("theme selector states must be strings")
-                })?,
-            );
-        }
-    }
-    Ok(selector)
-}
-
-fn lower_theme_color(value: &Value) -> Result<ThemeColor> {
-    if value
-        .as_object()
-        .and_then(|object| object.get("type"))
-        .and_then(Value::as_str)
-        == Some("default")
-    {
-        return Ok(ThemeColor::Default);
-    }
-    match color_spec(value)? {
-        ColorSpec::Theme(_) => Err(crate::NativeError::invalid_input(
-            "theme colors cannot reference another theme color",
-        )),
-        ColorSpec::Named(color) => Ok(ThemeColor::Named(color)),
-        ColorSpec::Ansi(value) => Ok(ThemeColor::Indexed(value)),
-        ColorSpec::Rgb { r, g, b } => Ok(ThemeColor::Rgb { r, g, b }),
-    }
-}
-
-fn lower_border(value: &Value) -> Result<BorderSpec> {
-    let border = value
-        .as_object()
-        .ok_or_else(|| crate::NativeError::invalid_input("border must be an object"))?;
-    let mut spec = match border
-        .get("style")
-        .and_then(Value::as_str)
-        .unwrap_or("plain")
-    {
-        "plain" => BorderSpec::plain(),
-        "rounded" => BorderSpec::rounded(),
-        "double" => BorderSpec::double(),
-        other => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown border style `{other}`"
-            )));
-        }
-    };
-    let top_bottom = match border.get("edges").and_then(Value::as_str) {
-        None | Some("all") => false,
-        Some("topBottom") => true,
-        Some(other) => {
-            return Err(crate::NativeError::invalid_input(format!(
-                "unknown border edges `{other}`"
-            )));
-        }
-    };
-    if top_bottom {
-        spec = spec.edges(BorderEdges::TOP_BOTTOM);
-    }
-    if let Some(color) = border.get("color") {
-        spec = spec.color(color_spec(color)?);
-    }
-    if let Some(glyphs) = border.get("glyphs").and_then(Value::as_object) {
-        let fields = [
-            "top",
-            "right",
-            "bottom",
-            "left",
-            "topLeft",
-            "topRight",
-            "bottomLeft",
-            "bottomRight",
-        ];
-        let values = fields
-            .iter()
-            .map(|field| {
-                glyphs.get(*field).and_then(Value::as_str).ok_or_else(|| {
-                    crate::NativeError::invalid_input(format!(
-                        "border glyph `{field}` must be a string"
-                    ))
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        spec = BorderSpec::custom(
-            BorderGlyphs::new(
-                values[0], values[1], values[2], values[3], values[4], values[5], values[6],
-                values[7],
-            )
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?,
-        );
-        if border.get("edges").and_then(Value::as_str) == Some("topBottom") {
-            spec = spec.edges(BorderEdges::TOP_BOTTOM);
-        }
-        if let Some(color) = border.get("color") {
-            spec = spec.color(color_spec(color)?);
-        }
-    }
-    Ok(spec)
-}
-
-/// String half of [`color_spec`], shared with the L1-05 state envelope
+/// Canonical color-string decoder shared with the L1-05 state envelope
 /// string lane. The TS packer normalizes `{type: "ansi", value}` objects to
-/// `ansi:N` strings, so the envelope carries only strings; the canonical
-/// value decodes identically here.
+/// `ansi:N` strings, so the envelope carries only strings; the theme DTO
+/// handles object shapes separately and both terminate in identical values.
 pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
     if let Some(value) = value.strip_prefix("theme:") {
-        return Ok(ColorSpec::theme(value));
+        // Intern repeated theme keys once; identical strings share one
+        // allocation instead of re-allocating per materialization.
+        return Ok(ColorSpec::theme(iyon_tui::binding::intern_style_atom(
+            value,
+        )));
     }
     if let Some(value) = value.strip_prefix("ansi:") {
         return Ok(ColorSpec::ansi(value.parse::<u8>().map_err(|_| {
@@ -2247,29 +1883,6 @@ pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
         }
     };
     Ok(ColorSpec::named(color))
-}
-
-fn color_spec(value: &Value) -> Result<ColorSpec> {
-    if let Some(object) = value.as_object() {
-        let kind = object.get("type").and_then(Value::as_str).ok_or_else(|| {
-            crate::NativeError::invalid_input("color object type must be a string")
-        })?;
-        if kind == "ansi" {
-            let number = object.get("value").and_then(Value::as_u64).ok_or_else(|| {
-                crate::NativeError::invalid_input("ANSI color value must be an integer")
-            })?;
-            return Ok(ColorSpec::ansi(u8::try_from(number).map_err(|_| {
-                crate::NativeError::invalid_input("ANSI color value must fit in u8")
-            })?));
-        }
-        return Err(crate::NativeError::invalid_input(format!(
-            "unknown color object type `{kind}`"
-        )));
-    }
-    let value = value.as_str().ok_or_else(|| {
-        crate::NativeError::invalid_input("color must be a string or ANSI color object")
-    })?;
-    color_spec_str(value)
 }
 
 pub(super) fn text_attribute(value: &str) -> Option<TextAttribute> {

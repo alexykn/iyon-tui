@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, marker::PhantomData, time::Instant};
+use std::{collections::VecDeque, marker::PhantomData, sync::Arc, time::Instant};
 
 use tokio::sync::mpsc::{Receiver, error::TryRecvError};
 
@@ -41,7 +41,7 @@ pub(crate) struct ReadyStatus {
 pub(crate) struct RunningApp<State, Action, Error, Update, ViewFn> {
     pub(crate) state: State,
     scene: Scene,
-    theme: crate::Theme,
+    theme: Arc<crate::Theme>,
     components: ComponentRegistry,
     outputs: OutputRouter<Action>,
     scene_host: SceneHost,
@@ -384,7 +384,7 @@ where
     }
 
     pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
-        self.theme = theme;
+        self.theme = Arc::new(theme);
         self.scene_host.invalidate_root();
         self.invalidate_frame();
     }
@@ -429,7 +429,7 @@ where
             update,
             view,
             history,
-            mut theme,
+            theme,
             handle,
             ingress,
             marker: _,
@@ -445,6 +445,10 @@ where
         let mut paste_interceptors = PasteInterceptors::default();
         let mut deferred_pastes = VecDeque::new();
         let mut exit_requested = false;
+        // The kernel shares one immutable theme table with frame/content
+        // contexts. Lending it mutably to application code clones only when
+        // shared (copy-on-write); the common unshared case stays free.
+        let mut theme = Arc::new(theme);
         let state = {
             let mut cx = AppCx::new(
                 AppCxParts {
@@ -452,7 +456,7 @@ where
                     components: &mut components,
                     outputs: &mut outputs,
                     timers: &mut timers,
-                    theme: &mut theme,
+                    theme: Arc::make_mut(&mut theme),
                     global_bindings: &mut global_bindings,
                     paste_interceptors: &mut paste_interceptors,
                     deferred_pastes: &mut deferred_pastes,
@@ -571,7 +575,7 @@ where
                         components: &mut self.components,
                         outputs: &mut self.outputs,
                         timers: &mut self.timers,
-                        theme: &mut self.theme,
+                        theme: Arc::make_mut(&mut self.theme),
                         global_bindings: &mut self.global_bindings,
                         paste_interceptors: &mut self.paste_interceptors,
                         deferred_pastes: &mut self.deferred_pastes,
@@ -614,6 +618,12 @@ where
     }
 
     pub(crate) fn theme(&self) -> &crate::Theme {
+        &self.theme
+    }
+
+    /// Shared ownership of the active theme for frame/content contexts.
+    /// Readers share one immutable table instead of cloning its maps.
+    pub(crate) fn theme_shared(&self) -> &Arc<crate::Theme> {
         &self.theme
     }
 

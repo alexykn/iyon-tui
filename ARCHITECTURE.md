@@ -82,14 +82,19 @@ leases, or future state/content transport.
 
 ## Public API discipline
 
-The TypeScript facade surface and the mapped Rust public surface are frozen in
+The TypeScript facade surface and the mapped Rust surface are frozen in
 snapshots checked by `bun run check:ownership`
 (`tools/ownership/snapshots/iyon-tui-rust-surface.txt`,
 `docs/repository-separation/s0/api-surface.json`). Adding or removing a public
 export requires deliberately regenerating those snapshots in the same change;
 application-specific names (`Agent`, `Provider`, `ToolExecution`, `Approval`,
-`Transcript`, `KernelSession`, ...) are rejected outright. Public API parity
-between Rust, native, and TypeScript layers is mandatory.
+`Transcript`, `KernelSession`, ...) are rejected outright. Rust/TS authoring
+parity is explicitly not required: the core crate is unpublished runtime
+implementation (`publish = false`, no authoring prelude), and the native crate
+conforms to the internal ABI/runtime contract instead — the generated ABI
+checks plus the `iyon_tui::binding` seam pinned by `bun run check:tui-binding`.
+What stays mandatory is TypeScript public compatibility for application authors
+and internal ABI/runtime conformance for the binding.
 
 ## Machine checks
 
@@ -99,6 +104,7 @@ Run before completing any change:
 bun run check:tui-abi
 bun run typecheck
 bun run check:tui-declarations
+bun run check:tui-binding
 bun run check:ownership
 ```
 

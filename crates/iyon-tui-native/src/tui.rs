@@ -6,13 +6,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use iyon_tui::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
-use iyon_tui::{
-    BorderEdges, BorderGlyphs, BorderSpec, ContentDelivery, ContentFamily, History, HostCellStyle,
-    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource, HostHistory,
-    HostScrollPane, HostTextInput, HostViewSlot, IntoView, Key, KeyStroke, Modifiers, Output,
-    SmoothConfig, StyleSpec, TextFunnelKind, TextInput, TextPart, TextRole, TextSelector,
-    TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost, View,
+use iyon_tui::binding::{
+    AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, ContentDelivery, ContentFamily,
+    FormatId, History, HistoryLayout, HostCellStyle, HostContentConnector, HostContentFunnel,
+    HostContentPort, HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot,
+    Insets, IntoView, Key, KeyStroke, LanguageId, Modifiers, Output, SemanticTag, SmoothConfig,
+    StyleSelector, StyleSpec, TextAttribute, TextFunnelKind, TextInput, TextOrigin, TextPart,
+    TextRole, TextSelector, TextSourceKind, TextWrapMode, Theme, ThemeColor, TuiEnvironment,
+    TuiHost, View,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -202,14 +203,14 @@ pub fn tui_perf_abi_conformance_probe() -> Value {
 #[cfg(feature = "perf-counters")]
 #[napi(js_name = "tuiPerfReset")]
 pub fn tui_perf_reset() {
-    iyon_tui::perf::reset();
+    iyon_tui::binding::reset();
 }
 
 #[cfg(feature = "perf-counters")]
 #[napi(js_name = "tuiPerfSnapshot")]
 pub fn tui_perf_snapshot() -> Value {
     let mut counters = Map::new();
-    for (name, value) in iyon_tui::perf::snapshot().iter() {
+    for (name, value) in iyon_tui::binding::snapshot().iter() {
         counters.insert(name.to_owned(), Value::from(value));
     }
     Value::Object(counters)
@@ -321,8 +322,7 @@ impl NativeHistory {
             .ok_or_else(|| crate::NativeError::invalid_input("history layout must be an object"))?;
         let padding = u16_value(object, "padding")?;
         let gap = u16_value(object, "gap")?;
-        let layout =
-            iyon_tui::HistoryLayout::from_parts(iyon_tui::Insets::new(0, 0, padding, 0), gap);
+        let layout = HistoryLayout::from_parts(Insets::new(0, 0, padding, 0), gap);
         if let Some(host) = &self.host {
             return host
                 .set_layout(layout)
@@ -1849,11 +1849,11 @@ fn lower_style_spec(value: &Value) -> Result<StyleSpec> {
     Ok(style)
 }
 
-fn lower_theme(value: &Value) -> Result<iyon_tui::Theme> {
+fn lower_theme(value: &Value) -> Result<Theme> {
     let object = value
         .as_object()
         .ok_or_else(|| crate::NativeError::invalid_input("theme must be an object"))?;
-    let mut theme = iyon_tui::Theme::new();
+    let mut theme = Theme::new();
     if let Some(colors) = object.get("colors").and_then(Value::as_object) {
         for (key, entry) in colors {
             let entry = entry.as_object().ok_or_else(|| {
@@ -2066,11 +2066,11 @@ fn lower_text_part(value: &str) -> Result<TextPart> {
     Ok(part)
 }
 
-fn lower_selector(value: &Value) -> Result<iyon_tui::StyleSelector> {
+fn lower_selector(value: &Value) -> Result<StyleSelector> {
     let object = value
         .as_object()
         .ok_or_else(|| crate::NativeError::invalid_input("theme selector must be an object"))?;
-    let mut selector = iyon_tui::StyleSelector::default();
+    let mut selector = StyleSelector::default();
     if object
         .get("focused")
         .and_then(Value::as_bool)
@@ -2098,22 +2098,22 @@ fn lower_selector(value: &Value) -> Result<iyon_tui::StyleSelector> {
     Ok(selector)
 }
 
-fn lower_theme_color(value: &Value) -> Result<iyon_tui::ThemeColor> {
+fn lower_theme_color(value: &Value) -> Result<ThemeColor> {
     if value
         .as_object()
         .and_then(|object| object.get("type"))
         .and_then(Value::as_str)
         == Some("default")
     {
-        return Ok(iyon_tui::ThemeColor::Default);
+        return Ok(ThemeColor::Default);
     }
     match color_spec(value)? {
-        iyon_tui::ColorSpec::Theme(_) => Err(crate::NativeError::invalid_input(
+        ColorSpec::Theme(_) => Err(crate::NativeError::invalid_input(
             "theme colors cannot reference another theme color",
         )),
-        iyon_tui::ColorSpec::Named(color) => Ok(iyon_tui::ThemeColor::Named(color)),
-        iyon_tui::ColorSpec::Ansi(value) => Ok(iyon_tui::ThemeColor::Indexed(value)),
-        iyon_tui::ColorSpec::Rgb { r, g, b } => Ok(iyon_tui::ThemeColor::Rgb { r, g, b }),
+        ColorSpec::Named(color) => Ok(ThemeColor::Named(color)),
+        ColorSpec::Ansi(value) => Ok(ThemeColor::Indexed(value)),
+        ColorSpec::Rgb { r, g, b } => Ok(ThemeColor::Rgb { r, g, b }),
     }
 }
 
@@ -2188,7 +2188,7 @@ fn lower_border(value: &Value) -> Result<BorderSpec> {
     Ok(spec)
 }
 
-fn color_spec(value: &Value) -> Result<iyon_tui::ColorSpec> {
+fn color_spec(value: &Value) -> Result<ColorSpec> {
     if let Some(object) = value.as_object() {
         let kind = object.get("type").and_then(Value::as_str).ok_or_else(|| {
             crate::NativeError::invalid_input("color object type must be a string")
@@ -2197,9 +2197,9 @@ fn color_spec(value: &Value) -> Result<iyon_tui::ColorSpec> {
             let number = object.get("value").and_then(Value::as_u64).ok_or_else(|| {
                 crate::NativeError::invalid_input("ANSI color value must be an integer")
             })?;
-            return Ok(iyon_tui::ColorSpec::ansi(u8::try_from(number).map_err(
-                |_| crate::NativeError::invalid_input("ANSI color value must fit in u8"),
-            )?));
+            return Ok(ColorSpec::ansi(u8::try_from(number).map_err(|_| {
+                crate::NativeError::invalid_input("ANSI color value must fit in u8")
+            })?));
         }
         return Err(crate::NativeError::invalid_input(format!(
             "unknown color object type `{kind}`"
@@ -2209,12 +2209,12 @@ fn color_spec(value: &Value) -> Result<iyon_tui::ColorSpec> {
         crate::NativeError::invalid_input("color must be a string or ANSI color object")
     })?;
     if let Some(value) = value.strip_prefix("theme:") {
-        return Ok(iyon_tui::ColorSpec::theme(value));
+        return Ok(ColorSpec::theme(value));
     }
     if let Some(value) = value.strip_prefix("ansi:") {
-        return Ok(iyon_tui::ColorSpec::ansi(value.parse::<u8>().map_err(
-            |_| crate::NativeError::invalid_input("ANSI color must fit in u8"),
-        )?));
+        return Ok(ColorSpec::ansi(value.parse::<u8>().map_err(|_| {
+            crate::NativeError::invalid_input("ANSI color must fit in u8")
+        })?));
     }
     if let Some(value) = value.strip_prefix('#')
         && value.len() == 6
@@ -2228,42 +2228,42 @@ fn color_spec(value: &Value) -> Result<iyon_tui::ColorSpec> {
         let b = u8::from_str_radix(&value[4..6], 16).map_err(|_| {
             crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
         })?;
-        return Ok(iyon_tui::ColorSpec::rgb(r, g, b));
+        return Ok(ColorSpec::rgb(r, g, b));
     }
     let color = match value.to_ascii_lowercase().as_str() {
-        "black" => iyon_tui::AnsiColor::Black,
-        "red" => iyon_tui::AnsiColor::Red,
-        "green" => iyon_tui::AnsiColor::Green,
-        "yellow" => iyon_tui::AnsiColor::Yellow,
-        "blue" => iyon_tui::AnsiColor::Blue,
-        "magenta" => iyon_tui::AnsiColor::Magenta,
-        "cyan" => iyon_tui::AnsiColor::Cyan,
-        "gray" => iyon_tui::AnsiColor::Gray,
-        "darkgray" => iyon_tui::AnsiColor::DarkGray,
-        "lightred" => iyon_tui::AnsiColor::LightRed,
-        "lightgreen" => iyon_tui::AnsiColor::LightGreen,
-        "lightyellow" => iyon_tui::AnsiColor::LightYellow,
-        "lightblue" => iyon_tui::AnsiColor::LightBlue,
-        "lightmagenta" => iyon_tui::AnsiColor::LightMagenta,
-        "lightcyan" => iyon_tui::AnsiColor::LightCyan,
-        "white" => iyon_tui::AnsiColor::White,
+        "black" => AnsiColor::Black,
+        "red" => AnsiColor::Red,
+        "green" => AnsiColor::Green,
+        "yellow" => AnsiColor::Yellow,
+        "blue" => AnsiColor::Blue,
+        "magenta" => AnsiColor::Magenta,
+        "cyan" => AnsiColor::Cyan,
+        "gray" => AnsiColor::Gray,
+        "darkgray" => AnsiColor::DarkGray,
+        "lightred" => AnsiColor::LightRed,
+        "lightgreen" => AnsiColor::LightGreen,
+        "lightyellow" => AnsiColor::LightYellow,
+        "lightblue" => AnsiColor::LightBlue,
+        "lightmagenta" => AnsiColor::LightMagenta,
+        "lightcyan" => AnsiColor::LightCyan,
+        "white" => AnsiColor::White,
         _ => {
             return Err(crate::NativeError::invalid_input(format!(
                 "unknown color `{value}`"
             )));
         }
     };
-    Ok(iyon_tui::ColorSpec::named(color))
+    Ok(ColorSpec::named(color))
 }
 
-fn text_attribute(value: &str) -> Option<iyon_tui::TextAttribute> {
+fn text_attribute(value: &str) -> Option<TextAttribute> {
     match value {
-        "bold" => Some(iyon_tui::TextAttribute::Bold),
-        "dim" => Some(iyon_tui::TextAttribute::Dim),
-        "italic" => Some(iyon_tui::TextAttribute::Italic),
-        "underline" => Some(iyon_tui::TextAttribute::Underline),
-        "reversed" => Some(iyon_tui::TextAttribute::Reversed),
-        "strikethrough" => Some(iyon_tui::TextAttribute::Strikethrough),
+        "bold" => Some(TextAttribute::Bold),
+        "dim" => Some(TextAttribute::Dim),
+        "italic" => Some(TextAttribute::Italic),
+        "underline" => Some(TextAttribute::Underline),
+        "reversed" => Some(TextAttribute::Reversed),
+        "strikethrough" => Some(TextAttribute::Strikethrough),
         _ => None,
     }
 }

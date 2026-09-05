@@ -63,6 +63,7 @@ jobs:
         run: |
           bun run typecheck
           bun run check:tui-declarations
+          bun run check:tui-binding
           bun run check:ownership
 
       - name: Run default N-API tests

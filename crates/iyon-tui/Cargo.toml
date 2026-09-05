@@ -3,6 +3,10 @@ name = "iyon-tui"
 license = "MIT"
 version.workspace = true
 edition.workspace = true
+# L1-01: the core crate is runtime implementation for the in-tree native
+# binding, not a supported authoring package. External UI code authors
+# against the TypeScript `@iyon/tui` surface instead.
+publish = false
 
 [features]
 test-util = []

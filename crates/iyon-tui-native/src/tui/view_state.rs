@@ -6,11 +6,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use iyon_tui::{
-    BorderEdges, BorderGlyphs, BorderStyle, GeometryAlignment, HorizontalAlign, HostViewState,
-    Insets, StyleRef, VerticalAlign, ViewStateGeometryPatch, ViewStateGeometryProperty,
-    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
-    ViewStateTextAttributes,
+use iyon_tui::binding::{
+    BorderEdges, BorderGlyphs, BorderStyle, ColorSpec, GeometryAlignment, HorizontalAlign,
+    HostViewState, Insets, StyleRef, VerticalAlign, ViewStateGeometryPatch,
+    ViewStateGeometryProperty, ViewStatePresentationPatch, ViewStatePresentationProperty,
+    ViewStateSizeMode, ViewStateTextAttributes, WakeDisposition,
 };
 use napi::bindgen_prelude::Result;
 use napi_derive::napi;
@@ -139,7 +139,7 @@ impl NativeViewState {
     }
 }
 
-fn wake_value(wake: iyon_tui::WakeDisposition) -> Value {
+fn wake_value(wake: WakeDisposition) -> Value {
     serde_json::json!({
         "schedule_environment_drain": wake.schedule_environment_drain,
     })
@@ -394,7 +394,7 @@ fn parse_presentation_patch(value: &Value) -> Result<ViewStatePresentationPatch>
     Ok(patch)
 }
 
-fn parse_nullable_color(value: &Value) -> Result<Option<iyon_tui::ColorSpec>> {
+fn parse_nullable_color(value: &Value) -> Result<Option<ColorSpec>> {
     if value.is_null() {
         return Ok(None);
     }

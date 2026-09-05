@@ -51,5 +51,6 @@ jobs:
       - run: bun run typecheck
       - run: bun run check:tui-declarations
       - run: bun run native:stage
+      - run: bun run check:tui-binding
       - run: bun run check:ownership
       - run: git diff --check

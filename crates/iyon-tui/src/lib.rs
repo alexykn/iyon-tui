@@ -1,5 +1,13 @@
 //! Semantic terminal UI construction.
 //!
+//! This crate is runtime implementation for the in-tree native binding, not
+//! a supported authoring package: it is `publish = false`, carries no
+//! authoring prelude, and its root exports exist only until the interim
+//! migration out of them completes. External UI code authors against the TypeScript
+//! `@iyon/tui` surface. The single deliberately unsupported cross-crate seam
+//! is [`binding`]: opaque retained handles, passive typed records, and the
+//! host operations the native crate links against.
+//!
 //! [`View`] is an owned backend-neutral presentation value. [`Component`] adds
 //! retained mounted state, [`History`] owns ordered historical/live/stream
 //! content, and [`Scene`] is the terminal semantic root.
@@ -248,14 +256,9 @@ pub(crate) use projection::{
     validate_projection_transition,
 };
 
-/// Small, application-oriented import set.
-pub mod prelude {
-    pub use crate::{
-        App, AppCx, Block, Component, ComponentCx, DiffHunk, DiffLine, DiffLineKind,
-        DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, EventCx,
-        History, HistoryLayout, Inline, InlineContent, IntoView, MarkdownProjector, Output,
-        PlainTextProjector, Projection, Projector, ProjectorExt, Renderer, Scene, ScrollPane,
-        Smooth, TextContent, TextInput, TextOrigin, TextRenderPolicy, TextRenderer, TextSelector,
-        Theme, View,
-    };
-}
+/// Narrow, deliberately unsupported cross-crate seam for the in-tree native
+/// binding (`iyon-tui-native`). `pub` only because the native crate must link
+/// to it — not an invitation to author UI against Rust. The export set is
+/// exactly the runtime operations and passive types native callers need, and
+/// is pinned by `bun run check:tui-binding`. See the pre-V5 handoff §5.
+pub mod binding;

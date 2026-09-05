@@ -45,6 +45,7 @@ jobs:
       - run: bun run lint:ts
       - run: bun run check:tui-declarations
       - run: bun run native:stage
+      - run: bun run check:tui-binding
       - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
       - run: |

@@ -1,10 +1,10 @@
 use super::NativeTuiHost;
 use crate::NativeError;
-use iyon_tui::{
+use iyon_tui::binding::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
     DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
-    GridTrack, HorizontalAlign, Insets, IntoView, Renderer, RetainedPathStep, StyleRef, StyleSpec,
-    TextAttribute, TextSpan, VerticalAlign, View, WrapMode,
+    GridTrack, HorizontalAlign, Insets, IntoView, OverflowIndicator, Renderer, RetainedPathStep,
+    StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView, WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -113,7 +113,7 @@ enum NativeViewKindTag {
 
 struct NativeViewSlot {
     node_id: u64,
-    weak: iyon_tui::WeakView,
+    weak: WeakView,
     leased: Option<View>,
     js_lease_count: u32,
     kind: NativeViewKindTag,
@@ -356,7 +356,7 @@ pub(super) struct NativeViewRuntime {
     // The semantic cache is deliberately owned by the environment runtime,
     // not by a transport or host. All native View construction paths publish
     // through this map.
-    pub(super) nodes: HashMap<u64, iyon_tui::WeakView>,
+    pub(super) nodes: HashMap<u64, WeakView>,
     slots: NativeRefTable,
     node_refs: HashMap<u64, u32>,
     path_nodes: HashMap<u32, PathNode>,
@@ -818,10 +818,7 @@ impl NativeViewRuntime {
             if node_id == 0 || !unique.insert(node_id) {
                 return Err(FAST_INVALID);
             }
-            if let Some(existing) = self
-                .nodes
-                .get(&node_id)
-                .and_then(iyon_tui::WeakView::upgrade)
+            if let Some(existing) = self.nodes.get(&node_id).and_then(WeakView::upgrade)
                 && existing != view
             {
                 return Err(FAST_INVALID);
@@ -1036,11 +1033,7 @@ impl NativeViewRuntime {
                 Err(error) => return Err(error),
             }
         }
-        if let Some(existing) = self
-            .nodes
-            .get(&node_id)
-            .and_then(iyon_tui::WeakView::upgrade)
-        {
+        if let Some(existing) = self.nodes.get(&node_id).and_then(WeakView::upgrade) {
             if existing == *view {
                 return Ok(SemanticIdentityMatch::SameLiveWithoutRef);
             }
@@ -1165,9 +1158,7 @@ impl NativeViewRuntime {
 
     /// Live View for a `NodeId` from the shared semantic cache, if any.
     pub(super) fn live_cached_view(&self, node_id: u64) -> Option<View> {
-        self.nodes
-            .get(&node_id)
-            .and_then(iyon_tui::WeakView::upgrade)
+        self.nodes.get(&node_id).and_then(WeakView::upgrade)
     }
 
     /// Drops the cached weak entry for a `NodeId`. Callers invoke this on a
@@ -1948,10 +1939,7 @@ fn validate_path_publication(
         if !unique.insert(node_id) {
             return Err(FAST_INVALID);
         }
-        if let Some(existing) = runtime
-            .nodes
-            .get(&node_id)
-            .and_then(iyon_tui::WeakView::upgrade)
+        if let Some(existing) = runtime.nodes.get(&node_id).and_then(WeakView::upgrade)
             && existing != *view
         {
             return Err(FAST_INVALID);
@@ -3512,7 +3500,7 @@ pub unsafe extern "Rust" fn view_decorated_create_buffer_impl(
         Err(error) => return record_result(runtime, error),
     }
     #[cfg(feature = "perf-counters")]
-    iyon_tui::perf::inc(iyon_tui::perf::Counter::DecoratedNormalizedNodes);
+    iyon_tui::binding::inc(iyon_tui::binding::Counter::DecoratedNormalizedNodes);
     let word_slice = if used_word_count == 0 {
         &[]
     } else {
@@ -3653,9 +3641,9 @@ pub unsafe extern "Rust" fn view_clamp_create_impl(
         return record_result(runtime, FAST_INVALID);
     };
     let overflow = match overflow_kind {
-        0 => iyon_tui::OverflowIndicator::None,
+        0 => OverflowIndicator::None,
         1 => match runtime.style_for_ref(overflow_style_ref) {
-            Ok(style) => iyon_tui::OverflowIndicator::Ellipsis { style },
+            Ok(style) => OverflowIndicator::Ellipsis { style },
             Err(error) => return record_result(runtime, error),
         },
         2 => {
@@ -3663,7 +3651,7 @@ pub unsafe extern "Rust" fn view_clamp_create_impl(
                 return record_result(runtime, FAST_INVALID);
             };
             match runtime.style_for_ref(overflow_style_ref) {
-                Ok(style) => iyon_tui::OverflowIndicator::Footer { prefix, style },
+                Ok(style) => OverflowIndicator::Footer { prefix, style },
                 Err(error) => return record_result(runtime, error),
             }
         }
@@ -4501,7 +4489,7 @@ mod tests {
         NativeRefTable, NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF,
         STATUS_DETAIL_CHILD_INDEX, generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
-    use iyon_tui::{GridTrack, IntoView, TextSpan, View};
+    use iyon_tui::binding::{GridTrack, IntoView, TextSpan, View, WeakView};
     use std::ffi::CString;
     use std::time::Instant;
 
@@ -5071,20 +5059,8 @@ mod tests {
         };
         assert!(patched < 0x8000_0000);
         assert_ne!(patched, base);
-        assert!(
-            runtime
-                .nodes
-                .get(&2)
-                .and_then(iyon_tui::WeakView::upgrade)
-                .is_some()
-        );
-        assert!(
-            runtime
-                .nodes
-                .get(&3)
-                .and_then(iyon_tui::WeakView::upgrade)
-                .is_some()
-        );
+        assert!(runtime.nodes.get(&2).and_then(WeakView::upgrade).is_some());
+        assert!(runtime.nodes.get(&3).and_then(WeakView::upgrade).is_some());
         assert!(runtime.resolve_ref(patched).is_ok());
         let generic = unsafe {
             generated_exports::invoke_iyon_view_text_layout_patch_path_v1(
@@ -5092,20 +5068,8 @@ mod tests {
             )
         };
         assert!(generic < 0x8000_0000);
-        assert!(
-            runtime
-                .nodes
-                .get(&4)
-                .and_then(iyon_tui::WeakView::upgrade)
-                .is_some()
-        );
-        assert!(
-            runtime
-                .nodes
-                .get(&5)
-                .and_then(iyon_tui::WeakView::upgrade)
-                .is_some()
-        );
+        assert!(runtime.nodes.get(&4).and_then(WeakView::upgrade).is_some());
+        assert!(runtime.nodes.get(&5).and_then(WeakView::upgrade).is_some());
     }
 
     #[test]

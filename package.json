@@ -24,6 +24,7 @@
     "lint:ts": "bunx --package @biomejs/biome@2.5.12 biome lint packages tools",
     "lint:ts:complexity": "bunx --package @biomejs/biome@2.5.12 biome lint --only=lint/complexity/noExcessiveCognitiveComplexity packages tools",
     "check:tui-declarations": "bun run tools/api-surface/check-declaration-closure.ts",
+    "check:tui-binding": "bun run tools/api-surface/check-binding.ts",
     "rust:fmt": "cargo fmt --all -- --check",
     "rust:clippy": "sh tools/lint/clippy-gate.sh",
     "rust:test": "cargo test --workspace",

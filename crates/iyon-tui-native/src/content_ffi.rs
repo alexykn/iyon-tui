@@ -9,7 +9,7 @@ use std::mem::{align_of, size_of};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::slice;
 
-use iyon_tui::{ContentAnnotationRecord, ContentMutationResult, HostContentSource};
+use iyon_tui::binding::{ContentAnnotationRecord, ContentMutationResult, HostContentSource};
 
 use crate::tui::content_environment_for_identity;
 
@@ -228,8 +228,8 @@ fn source_for_identity(
 
 fn copy_records(records: &[IyonTuiAnnotationRecordV1]) -> Vec<ContentAnnotationRecord> {
     #[cfg(feature = "perf-counters")]
-    iyon_tui::perf::add(
-        iyon_tui::perf::Counter::AnnotationRecordsCopied,
+    iyon_tui::binding::add(
+        iyon_tui::binding::Counter::AnnotationRecordsCopied,
         records.len() as u64,
     );
     records

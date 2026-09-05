@@ -15,18 +15,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::application::app::App"
-path = "iyon-tui::prelude::App"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::App"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__App"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::application::app::App::handle"
 path = "iyon-tui::application::app::App::handle"
 strategy = "NativeAsync"
@@ -165,18 +153,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::AppCx"
 typescript_module = "iyon:tui"
 typescript_export = "AppCx"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::application::context::AppCx"
-path = "iyon-tui::prelude::AppCx"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::AppCx"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__AppCx"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -843,18 +819,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::component::Component"
-path = "iyon-tui::prelude::Component"
-strategy = "TraitAdapter"
-rust_path = "iyon-tui::prelude::Component"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Component"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::component::Component::capabilities"
 path = "iyon-tui::component::Component::capabilities"
 strategy = "NativeAsync"
@@ -963,18 +927,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::content::diff::model::DiffHunk"
-path = "iyon-tui::prelude::DiffHunk"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffHunk"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffHunk"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::content::diff::model::DiffHunk::lines"
 path = "iyon-tui::content::diff::model::DiffHunk::lines"
 strategy = "NativeAsync"
@@ -1041,18 +993,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::DiffLine"
 typescript_module = "iyon:tui"
 typescript_export = "DiffLine"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::diff::model::DiffLine"
-path = "iyon-tui::prelude::DiffLine"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffLine"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffLine"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -1179,18 +1119,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::content::diff::model::DiffLineKind"
-path = "iyon-tui::prelude::DiffLineKind"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffLineKind"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffLineKind"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::content::diff::model::DiffLineKind::Addition"
 path = "iyon-tui::content::diff::model::DiffLineKind::Addition"
 strategy = "MirrorValue"
@@ -1239,18 +1167,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::content::diff::model::DiffLineNumber"
-path = "iyon-tui::prelude::DiffLineNumber"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffLineNumber"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffLineNumber"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::content::diff::model::DiffLineNumber::as_u64"
 path = "iyon-tui::content::diff::model::DiffLineNumber::as_u64"
 strategy = "NativeAsync"
@@ -1281,18 +1197,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::DiffLineOffset"
 typescript_module = "iyon:tui"
 typescript_export = "DiffLineOffset"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::diff::model::DiffLineOffset"
-path = "iyon-tui::prelude::DiffLineOffset"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffLineOffset"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffLineOffset"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -1371,18 +1275,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::content::diff::model::DiffLineTermination"
-path = "iyon-tui::prelude::DiffLineTermination"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffLineTermination"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffLineTermination"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::content::diff::model::DiffLineTermination::Terminated"
 path = "iyon-tui::content::diff::model::DiffLineTermination::Terminated"
 strategy = "MirrorValue"
@@ -1413,18 +1305,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::DiffRange"
 typescript_module = "iyon:tui"
 typescript_export = "DiffRange"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::diff::model::DiffRange"
-path = "iyon-tui::prelude::DiffRange"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffRange"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffRange"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -1767,18 +1647,6 @@ note = "baseline externally reachable API"
 
 [[records]]
 
-item_id = "iyon-tui::content::diff::render::DiffRenderer"
-path = "iyon-tui::prelude::DiffRenderer"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::DiffRenderer"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__DiffRenderer"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::content::diff::render::DiffRenderer::new"
 path = "iyon-tui::content::diff::render::DiffRenderer::new"
 strategy = "NativeAsync"
@@ -1821,18 +1689,6 @@ strategy = "TraitAdapter"
 rust_path = "iyon-tui::Renderer"
 typescript_module = "iyon:tui"
 typescript_export = "Renderer"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::render::Renderer"
-path = "iyon-tui::prelude::Renderer"
-strategy = "TraitAdapter"
-rust_path = "iyon-tui::prelude::Renderer"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Renderer"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -2364,18 +2220,6 @@ typescript_export = "content__text__block__Block"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::block::Block"
-path = "iyon-tui::prelude::Block"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Block"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Block"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -4024,18 +3868,6 @@ note = "baseline externally reachable API"
 [[records]]
 
 item_id = "iyon-tui::content::text::content::TextContent"
-path = "iyon-tui::prelude::TextContent"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextContent"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextContent"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::content::TextContent"
 path = "iyon-tui::text::TextContent"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::text::TextContent"
@@ -4828,18 +4660,6 @@ note = "explicit public alias projection"
 [[records]]
 
 item_id = "iyon-tui::content::text::inline::Inline"
-path = "iyon-tui::prelude::Inline"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Inline"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Inline"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::inline::Inline"
 path = "iyon-tui::text::Inline"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::text::Inline"
@@ -5136,18 +4956,6 @@ typescript_export = "content__text__inline__InlineContent"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::inline::InlineContent"
-path = "iyon-tui::prelude::InlineContent"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::InlineContent"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__InlineContent"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -5944,18 +5752,6 @@ note = "baseline externally reachable API"
 [[records]]
 
 item_id = "iyon-tui::content::text::markdown::MarkdownProjector"
-path = "iyon-tui::prelude::MarkdownProjector"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::MarkdownProjector"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__MarkdownProjector"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::markdown::MarkdownProjector"
 path = "iyon-tui::text::MarkdownProjector"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::text::MarkdownProjector"
@@ -6256,18 +6052,6 @@ note = "baseline externally reachable API"
 [[records]]
 
 item_id = "iyon-tui::content::text::origin::TextOrigin"
-path = "iyon-tui::prelude::TextOrigin"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextOrigin"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextOrigin"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::origin::TextOrigin"
 path = "iyon-tui::text::TextOrigin"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::text::TextOrigin"
@@ -6432,18 +6216,6 @@ typescript_export = "content__text__plain__PlainTextProjector"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::plain::PlainTextProjector"
-path = "iyon-tui::prelude::PlainTextProjector"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::PlainTextProjector"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__PlainTextProjector"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -6868,18 +6640,6 @@ note = "baseline externally reachable API"
 [[records]]
 
 item_id = "iyon-tui::content::text::render::TextRenderer"
-path = "iyon-tui::prelude::TextRenderer"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextRenderer"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextRenderer"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::render::TextRenderer"
 path = "iyon-tui::text::TextRenderer"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::text::TextRenderer"
@@ -7176,18 +6936,6 @@ typescript_export = "content__text__render__policy__TextRenderPolicy"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::render::policy::TextRenderPolicy"
-path = "iyon-tui::prelude::TextRenderPolicy"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextRenderPolicy"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextRenderPolicy"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -7905,18 +7653,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::TextSelector"
 typescript_module = "iyon:tui"
 typescript_export = "TextSelector"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::content::text::style::TextSelector"
-path = "iyon-tui::prelude::TextSelector"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextSelector"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextSelector"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -8943,18 +8679,6 @@ note = "baseline externally reachable API"
 
 [[records]]
 
-item_id = "iyon-tui::controls::text_input::TextInput"
-path = "iyon-tui::prelude::TextInput"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::TextInput"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__TextInput"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::controls::text_input::TextInput::border"
 path = "iyon-tui::controls::text_input::TextInput::border"
 strategy = "NativeAsync"
@@ -9399,18 +9123,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::history::layout::HistoryLayout"
-path = "iyon-tui::prelude::HistoryLayout"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::HistoryLayout"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__HistoryLayout"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::history::layout::HistoryLayout::from_parts"
 path = "iyon-tui::history::layout::HistoryLayout::from_parts"
 strategy = "NativeAsync"
@@ -9504,18 +9216,6 @@ typescript_export = "history__model__History"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::history::model::History"
-path = "iyon-tui::prelude::History"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::History"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__History"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -9633,18 +9333,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::ComponentCx"
 typescript_module = "iyon:tui"
 typescript_export = "ComponentCx"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::interaction::command::ComponentCx"
-path = "iyon-tui::prelude::ComponentCx"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::ComponentCx"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__ComponentCx"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -10719,18 +10407,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::output::event::EventCx"
-path = "iyon-tui::prelude::EventCx"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::EventCx"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__EventCx"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::output::event::EventCx::emit"
 path = "iyon-tui::output::event::EventCx::emit"
 strategy = "NativeAsync"
@@ -10764,18 +10440,6 @@ typescript_export = "output__handle__Output"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::output::handle::Output"
-path = "iyon-tui::prelude::Output"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Output"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Output"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
 
 [[records]]
 
@@ -10917,18 +10581,6 @@ strategy = "NativeAsync"
 rust_path = "iyon-tui::output::router::RouteConflict::fmt"
 typescript_module = "iyon:tui"
 typescript_export = "output__router__RouteConflict__fmt"
-implementation_owner = "T5"
-status = "stub"
-note = "baseline externally reachable API"
-
-[[records]]
-
-item_id = "iyon-tui::prelude"
-path = "iyon-tui::prelude"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude"
-typescript_module = "iyon:tui"
-typescript_export = "prelude"
 implementation_owner = "T5"
 status = "stub"
 note = "baseline externally reachable API"
@@ -13767,18 +13419,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::presentation::api::view::IntoView"
-path = "iyon-tui::prelude::IntoView"
-strategy = "TraitAdapter"
-rust_path = "iyon-tui::prelude::IntoView"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__IntoView"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::presentation::api::view::IntoView::into_view"
 path = "iyon-tui::presentation::api::view::IntoView::into_view"
 strategy = "NativeAsync"
@@ -13797,18 +13437,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::View"
 typescript_module = "iyon:tui"
 typescript_export = "View"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::presentation::ir::View"
-path = "iyon-tui::prelude::View"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::View"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__View"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -14500,18 +14128,6 @@ note = "explicit public alias projection"
 [[records]]
 
 item_id = "iyon-tui::projection::projector::Projector"
-path = "iyon-tui::prelude::Projector"
-strategy = "TraitAdapter"
-rust_path = "iyon-tui::prelude::Projector"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Projector"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::projection::projector::Projector"
 path = "iyon-tui::projection::Projector"
 strategy = "TraitAdapter"
 rust_path = "iyon-tui::projection::Projector"
@@ -14608,18 +14224,6 @@ note = "explicit public alias projection"
 [[records]]
 
 item_id = "iyon-tui::projection::projector::ProjectorExt"
-path = "iyon-tui::prelude::ProjectorExt"
-strategy = "TraitAdapter"
-rust_path = "iyon-tui::prelude::ProjectorExt"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__ProjectorExt"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::projection::projector::ProjectorExt"
 path = "iyon-tui::projection::ProjectorExt"
 strategy = "TraitAdapter"
 rust_path = "iyon-tui::projection::ProjectorExt"
@@ -14649,18 +14253,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::Smooth"
 typescript_module = "iyon:tui"
 typescript_export = "Smooth"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::projection::smooth::Smooth"
-path = "iyon-tui::prelude::Smooth"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Smooth"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Smooth"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -15460,18 +15052,6 @@ note = "explicit public alias projection"
 [[records]]
 
 item_id = "iyon-tui::projection::value::Projection"
-path = "iyon-tui::prelude::Projection"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Projection"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Projection"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::projection::value::Projection"
 path = "iyon-tui::projection::Projection"
 strategy = "MirrorValue"
 rust_path = "iyon-tui::projection::Projection"
@@ -15735,18 +15315,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::scene::root::Scene"
-path = "iyon-tui::prelude::Scene"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Scene"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Scene"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::scene::root::Scene::body"
 path = "iyon-tui::scene::root::Scene::body"
 strategy = "NativeAsync"
@@ -15825,18 +15393,6 @@ strategy = "MirrorValue"
 rust_path = "iyon-tui::ScrollPane"
 typescript_module = "iyon:tui"
 typescript_export = "ScrollPane"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
-item_id = "iyon-tui::scroll::ScrollPane"
-path = "iyon-tui::prelude::ScrollPane"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::ScrollPane"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__ScrollPane"
 implementation_owner = "T5"
 status = "stub"
 note = "explicit public alias projection"
@@ -16191,18 +15747,6 @@ note = "explicit public alias projection"
 
 [[records]]
 
-item_id = "iyon-tui::theme::Theme"
-path = "iyon-tui::prelude::Theme"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::prelude::Theme"
-typescript_module = "iyon:tui"
-typescript_export = "prelude__Theme"
-implementation_owner = "T5"
-status = "stub"
-note = "explicit public alias projection"
-
-[[records]]
-
 item_id = "iyon-tui::theme::Theme::color"
 path = "iyon-tui::theme::Theme::color"
 strategy = "NativeAsync"
@@ -16419,3 +15963,905 @@ typescript_export = "presentation__ir__View__with_text_layout_patch"
 implementation_owner = "T5"
 status = "stub"
 note = "canonical retained text-layout helper"
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::AnsiColor"
+path = "iyon-tui::binding::AnsiColor"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::AnsiColor"
+typescript_module = "iyon:tui"
+typescript_export = "binding__AnsiColor"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::BorderEdges"
+path = "iyon-tui::binding::BorderEdges"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::BorderEdges"
+typescript_module = "iyon:tui"
+typescript_export = "binding__BorderEdges"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::BorderGlyphs"
+path = "iyon-tui::binding::BorderGlyphs"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::BorderGlyphs"
+typescript_module = "iyon:tui"
+typescript_export = "binding__BorderGlyphs"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::BorderSpec"
+path = "iyon-tui::binding::BorderSpec"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::BorderSpec"
+typescript_module = "iyon:tui"
+typescript_export = "binding__BorderSpec"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::BorderStyle"
+path = "iyon-tui::binding::BorderStyle"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::BorderStyle"
+typescript_module = "iyon:tui"
+typescript_export = "binding__BorderStyle"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::ColorSpec"
+path = "iyon-tui::binding::ColorSpec"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::ColorSpec"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ColorSpec"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffHunk"
+path = "iyon-tui::binding::DiffHunk"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffHunk"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffHunk"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffLine"
+path = "iyon-tui::binding::DiffLine"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffLine"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffLine"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffLineNumber"
+path = "iyon-tui::binding::DiffLineNumber"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffLineNumber"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffLineNumber"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffLineOffset"
+path = "iyon-tui::binding::DiffLineOffset"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffLineOffset"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffLineOffset"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffLineTermination"
+path = "iyon-tui::binding::DiffLineTermination"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffLineTermination"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffLineTermination"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::model::DiffRange"
+path = "iyon-tui::binding::DiffRange"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffRange"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffRange"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::diff::render::DiffRenderer"
+path = "iyon-tui::binding::DiffRenderer"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::DiffRenderer"
+typescript_module = "iyon:tui"
+typescript_export = "binding__DiffRenderer"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::inline::FormatId"
+path = "iyon-tui::binding::FormatId"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::FormatId"
+typescript_module = "iyon:tui"
+typescript_export = "binding__FormatId"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::grid::GridCellSpec"
+path = "iyon-tui::binding::GridCellSpec"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::GridCellSpec"
+typescript_module = "iyon:tui"
+typescript_export = "binding__GridCellSpec"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::grid::GridTrack"
+path = "iyon-tui::binding::GridTrack"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::GridTrack"
+typescript_module = "iyon:tui"
+typescript_export = "binding__GridTrack"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::history::model::History"
+path = "iyon-tui::binding::History"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::History"
+typescript_module = "iyon:tui"
+typescript_export = "binding__History"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::history::layout::HistoryLayout"
+path = "iyon-tui::binding::HistoryLayout"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::HistoryLayout"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HistoryLayout"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::HorizontalAlign"
+path = "iyon-tui::binding::HorizontalAlign"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::HorizontalAlign"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HorizontalAlign"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::Insets"
+path = "iyon-tui::binding::Insets"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::Insets"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Insets"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::view::IntoView"
+path = "iyon-tui::binding::IntoView"
+strategy = "TraitAdapter"
+rust_path = "iyon-tui::binding::IntoView"
+typescript_module = "iyon:tui"
+typescript_export = "binding__IntoView"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::interaction::key::Key"
+path = "iyon-tui::binding::Key"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::Key"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Key"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::interaction::key::KeyStroke"
+path = "iyon-tui::binding::KeyStroke"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::KeyStroke"
+typescript_module = "iyon:tui"
+typescript_export = "binding__KeyStroke"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::inline::LanguageId"
+path = "iyon-tui::binding::LanguageId"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::LanguageId"
+typescript_module = "iyon:tui"
+typescript_export = "binding__LanguageId"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::interaction::key::Modifiers"
+path = "iyon-tui::binding::Modifiers"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::Modifiers"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Modifiers"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::output::handle::Output"
+path = "iyon-tui::binding::Output"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::Output"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Output"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::OverflowIndicator"
+path = "iyon-tui::binding::OverflowIndicator"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::OverflowIndicator"
+typescript_module = "iyon:tui"
+typescript_export = "binding__OverflowIndicator"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::render::Renderer"
+path = "iyon-tui::binding::Renderer"
+strategy = "TraitAdapter"
+rust_path = "iyon-tui::binding::Renderer"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Renderer"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::StyleRef"
+path = "iyon-tui::binding::StyleRef"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::StyleRef"
+typescript_module = "iyon:tui"
+typescript_export = "binding__StyleRef"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::StyleSelector"
+path = "iyon-tui::binding::StyleSelector"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::StyleSelector"
+typescript_module = "iyon:tui"
+typescript_export = "binding__StyleSelector"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::StyleSpec"
+path = "iyon-tui::binding::StyleSpec"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::StyleSpec"
+typescript_module = "iyon:tui"
+typescript_export = "binding__StyleSpec"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::TextAttribute"
+path = "iyon-tui::binding::TextAttribute"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextAttribute"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextAttribute"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::controls::text_input::TextInput"
+path = "iyon-tui::binding::TextInput"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextInput"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextInput"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::origin::TextOrigin"
+path = "iyon-tui::binding::TextOrigin"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextOrigin"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextOrigin"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::style::TextPart"
+path = "iyon-tui::binding::TextPart"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextPart"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextPart"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::style::TextRole"
+path = "iyon-tui::binding::TextRole"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextRole"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextRole"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::content::text::style::TextSelector"
+path = "iyon-tui::binding::TextSelector"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextSelector"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextSelector"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::TextSpan"
+path = "iyon-tui::binding::TextSpan"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::TextSpan"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextSpan"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::theme::Theme"
+path = "iyon-tui::binding::Theme"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::Theme"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Theme"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::ThemeColor"
+path = "iyon-tui::binding::ThemeColor"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::ThemeColor"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ThemeColor"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::style::VerticalAlign"
+path = "iyon-tui::binding::VerticalAlign"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::VerticalAlign"
+typescript_module = "iyon:tui"
+typescript_export = "binding__VerticalAlign"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::View"
+path = "iyon-tui::binding::View"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::View"
+typescript_module = "iyon:tui"
+typescript_export = "binding__View"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::presentation::api::text::WrapMode"
+path = "iyon-tui::binding::WrapMode"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::WrapMode"
+typescript_module = "iyon:tui"
+typescript_export = "binding__WrapMode"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+
+[[records]]
+
+item_id = "iyon-tui::application::content::ContentAnnotationRecord"
+path = "iyon-tui::binding::ContentAnnotationRecord"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ContentAnnotationRecord"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ContentAnnotationRecord"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::ContentDelivery"
+path = "iyon-tui::binding::ContentDelivery"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ContentDelivery"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ContentDelivery"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::ContentFamily"
+path = "iyon-tui::binding::ContentFamily"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ContentFamily"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ContentFamily"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::ContentMutationResult"
+path = "iyon-tui::binding::ContentMutationResult"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ContentMutationResult"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ContentMutationResult"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::perf::Counter"
+path = "iyon-tui::binding::Counter"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::Counter"
+typescript_module = "iyon:tui"
+typescript_export = "binding__Counter"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::geometry::GeometryAlignment"
+path = "iyon-tui::binding::GeometryAlignment"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::GeometryAlignment"
+typescript_module = "iyon:tui"
+typescript_export = "binding__GeometryAlignment"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::HostCellStyle"
+path = "iyon-tui::binding::HostCellStyle"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostCellStyle"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostCellStyle"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::HostContentConnector"
+path = "iyon-tui::binding::HostContentConnector"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostContentConnector"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostContentConnector"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::HostContentFunnel"
+path = "iyon-tui::binding::HostContentFunnel"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostContentFunnel"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostContentFunnel"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::HostContentPort"
+path = "iyon-tui::binding::HostContentPort"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostContentPort"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostContentPort"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::HostContentSource"
+path = "iyon-tui::binding::HostContentSource"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostContentSource"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostContentSource"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::HostHistory"
+path = "iyon-tui::binding::HostHistory"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostHistory"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostHistory"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::HostScrollPane"
+path = "iyon-tui::binding::HostScrollPane"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostScrollPane"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostScrollPane"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::HostTextInput"
+path = "iyon-tui::binding::HostTextInput"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostTextInput"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostTextInput"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::HostViewSlot"
+path = "iyon-tui::binding::HostViewSlot"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostViewSlot"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostViewSlot"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::view_state::HostViewState"
+path = "iyon-tui::binding::HostViewState"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::HostViewState"
+typescript_module = "iyon:tui"
+typescript_export = "binding__HostViewState"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::RetainedPathStep"
+path = "iyon-tui::binding::RetainedPathStep"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::RetainedPathStep"
+typescript_module = "iyon:tui"
+typescript_export = "binding__RetainedPathStep"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::TextFunnelKind"
+path = "iyon-tui::binding::TextFunnelKind"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::TextFunnelKind"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextFunnelKind"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::TextSourceKind"
+path = "iyon-tui::binding::TextSourceKind"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::TextSourceKind"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextSourceKind"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::content::TextWrapMode"
+path = "iyon-tui::binding::TextWrapMode"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::TextWrapMode"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TextWrapMode"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::environment::TuiEnvironment"
+path = "iyon-tui::binding::TuiEnvironment"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::TuiEnvironment"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TuiEnvironment"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::host::TuiHost"
+path = "iyon-tui::binding::TuiHost"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::TuiHost"
+typescript_module = "iyon:tui"
+typescript_export = "binding__TuiHost"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::geometry::ViewStateGeometryPatch"
+path = "iyon-tui::binding::ViewStateGeometryPatch"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStateGeometryPatch"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStateGeometryPatch"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::geometry::ViewStateGeometryProperty"
+path = "iyon-tui::binding::ViewStateGeometryProperty"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStateGeometryProperty"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStateGeometryProperty"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::presentation::ViewStatePresentationPatch"
+path = "iyon-tui::binding::ViewStatePresentationPatch"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStatePresentationPatch"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStatePresentationPatch"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::presentation::ViewStatePresentationProperty"
+path = "iyon-tui::binding::ViewStatePresentationProperty"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStatePresentationProperty"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStatePresentationProperty"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::geometry::ViewStateSizeMode"
+path = "iyon-tui::binding::ViewStateSizeMode"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStateSizeMode"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStateSizeMode"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::retained_state::presentation::ViewStateTextAttributes"
+path = "iyon-tui::binding::ViewStateTextAttributes"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::ViewStateTextAttributes"
+typescript_module = "iyon:tui"
+typescript_export = "binding__ViewStateTextAttributes"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::application::environment::WakeDisposition"
+path = "iyon-tui::binding::WakeDisposition"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::WakeDisposition"
+typescript_module = "iyon:tui"
+typescript_export = "binding__WakeDisposition"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::presentation::ir::WeakView"
+path = "iyon-tui::binding::WeakView"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::WeakView"
+typescript_module = "iyon:tui"
+typescript_export = "binding__WeakView"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::perf::add"
+path = "iyon-tui::binding::add"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::add"
+typescript_module = "iyon:tui"
+typescript_export = "binding__add"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::perf::inc"
+path = "iyon-tui::binding::inc"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::inc"
+typescript_module = "iyon:tui"
+typescript_export = "binding__inc"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::perf::reset"
+path = "iyon-tui::binding::reset"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::reset"
+typescript_module = "iyon:tui"
+typescript_export = "binding__reset"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::perf::snapshot"
+path = "iyon-tui::binding::snapshot"
+strategy = "InternalBinding"
+rust_path = "iyon-tui::binding::snapshot"
+typescript_module = "iyon:tui"
+typescript_export = "binding__snapshot"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam; unsupported, no TS projection"
+[[records]]
+
+item_id = "iyon-tui::content::text::annotations::SemanticTag"
+path = "iyon-tui::binding::SemanticTag"
+strategy = "MirrorValue"
+rust_path = "iyon-tui::binding::SemanticTag"
+typescript_module = "iyon:tui"
+typescript_export = "binding__SemanticTag"
+implementation_owner = "T5"
+status = "stub"
+note = "L1-01 internal binding seam projection (unsupported)"
+

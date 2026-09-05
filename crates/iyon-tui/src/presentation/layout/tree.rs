@@ -36,6 +36,8 @@ pub(crate) enum LayoutContent {
         metric_revision: u64,
         paint_revision: u64,
         projection_identity: u64,
+        physically_complete: bool,
+        intrinsic_size: Size,
     },
     Children,
     Clamp {
@@ -122,6 +124,11 @@ pub(crate) struct LayoutTree {
     pub(crate) component_roots: HashMap<ComponentId, LayoutNodeId>,
     pub(crate) parents: Vec<Option<LayoutNodeId>>,
     pub(crate) state_roots: HashMap<u64, LayoutNodeId>,
+    /// ContentPort occurrence lookup built with the retained tree indexes.
+    /// Content attachment validation normally makes each port unique in a
+    /// scene, but the value is a vector so the index remains correct for
+    /// generic callers that intentionally reuse an attachment.
+    pub(crate) content_roots: HashMap<u64, Vec<LayoutNodeId>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,6 +249,7 @@ impl LayoutTree {
     pub(crate) fn index_component_roots(&mut self) {
         self.component_roots.clear();
         self.state_roots.clear();
+        self.content_roots.clear();
         self.parents = vec![None; self.nodes.len()];
         self.collect_component_roots(self.root, None);
     }
@@ -254,6 +262,9 @@ impl LayoutTree {
         }
         if let Some(state) = node.occurrence.state_attachment {
             self.state_roots.insert(state, id);
+        }
+        if let LayoutContent::ContentHost { port_id, .. } = &node.content {
+            self.content_roots.entry(*port_id).or_default().push(id);
         }
         let children = node.children.clone();
         for child in children {
@@ -299,6 +310,89 @@ impl LayoutTree {
         }
         path.reverse();
         path
+    }
+
+    /// Returns the retained dependency frontier for one ContentPort.  The
+    /// path is derived from the committed parent index, so an isolated Source
+    /// update can invalidate the ContentHost and the ancestors whose metrics
+    /// depend on it without clearing unrelated layout entries.
+    pub(crate) fn content_dependency_view_ids(
+        &self,
+        port_id: u64,
+    ) -> Option<std::collections::HashSet<ViewId>> {
+        let nodes = self.content_roots.get(&port_id)?;
+        let mut view_ids = std::collections::HashSet::new();
+        for node in nodes {
+            for ancestor in self.path_to_root(*node) {
+                view_ids.insert(self.node(ancestor).view_id);
+            }
+        }
+        Some(view_ids)
+    }
+
+    /// Returns the smallest retained paint roots that can safely repaint one
+    /// content occurrence.  A ContentHost below a RowViewport must repaint
+    /// the viewport root so the row translation is applied; ordinary content
+    /// leaves can be repainted directly.
+    pub(crate) fn content_repaint_roots(&self, port_id: u64) -> Option<Vec<LayoutNodeId>> {
+        let nodes = self.content_roots.get(&port_id)?;
+        let mut roots = std::collections::HashSet::new();
+        for node in nodes {
+            let path = self.path_to_root(*node);
+            let root = path
+                .iter()
+                .copied()
+                .find(|ancestor| {
+                    matches!(
+                        &self.node(*ancestor).content,
+                        LayoutContent::RowViewport { .. }
+                    )
+                })
+                .unwrap_or(*node);
+            roots.insert(root);
+        }
+        let mut roots = roots.into_iter().collect::<Vec<_>>();
+        roots.sort_unstable_by_key(|root| root.0);
+        Some(roots)
+    }
+
+    /// Refreshes the prepared paint identity for one ContentPort without
+    /// changing its retained rectangles.  Presentation-only changes (such as
+    /// a palette revision) use this after the provider prepares a new paint
+    /// product; metric revisions are returned to the caller for observability.
+    pub(crate) fn update_content_measurement(
+        &mut self,
+        port_id: u64,
+        measurement: &crate::presentation::ContentMeasurement,
+    ) -> bool {
+        let Some(nodes) = self.content_roots.get(&port_id).cloned() else {
+            return false;
+        };
+        let mut metric_changed = false;
+        for node_id in nodes {
+            let LayoutContent::ContentHost {
+                connector_id,
+                projection_revision,
+                metric_revision,
+                paint_revision,
+                projection_identity,
+                physically_complete,
+                intrinsic_size,
+                ..
+            } = &mut self.nodes[node_id.0].content
+            else {
+                continue;
+            };
+            metric_changed |= *metric_revision != measurement.metric_revision;
+            *connector_id = measurement.connector_id;
+            *projection_revision = measurement.projection_revision;
+            *metric_revision = measurement.metric_revision;
+            *paint_revision = measurement.paint_revision;
+            *projection_identity = measurement.projection_identity;
+            *physically_complete = measurement.physically_complete;
+            *intrinsic_size = measurement.intrinsic_size;
+        }
+        metric_changed
     }
 
     /// Returns the vertical translation and effective ancestor clip needed to
@@ -578,10 +672,25 @@ impl LayoutTree {
             inherited_clip,
             &mut geometry.entries,
         );
-        geometry.content_extents.clear();
-        for (component, root) in &self.component_roots {
-            if let Some(extent) = self.content_extent_in_subtree(*root) {
-                geometry.content_extents.insert(*component, extent);
+        // Only components in the patched subtree and component ancestors can
+        // have changed content extents. Preserve clean sibling extents rather
+        // than rebuilding the complete component-extent map on one content
+        // leaf update.
+        let mut affected_components = std::collections::HashSet::new();
+        for ancestor in self.path_to_root(subtree_root) {
+            if let Some(component) = self.node(ancestor).component {
+                affected_components.insert(component);
+            }
+        }
+        affected_components.extend(self.component_ids_in_subtree(subtree_root));
+        for component in affected_components {
+            let Some(root) = self.component_roots.get(&component).copied() else {
+                continue;
+            };
+            if let Some(extent) = self.content_extent_in_subtree(root) {
+                geometry.content_extents.insert(component, extent);
+            } else {
+                geometry.content_extents.remove(&component);
             }
         }
         true

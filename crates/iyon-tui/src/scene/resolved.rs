@@ -37,6 +37,16 @@ pub(crate) struct ResolvedScene {
     pub(crate) mounts: MountGraph,
     pub(crate) capabilities: MountedCapabilities,
     pub(crate) overlay: ResolutionOverlay,
+    /// Retained semantic paths for ContentHost occurrences. Content updates
+    /// use this occurrence index rather than recursively searching sibling
+    /// Views on every dirty notification.
+    pub(crate) content_paths: HashMap<u64, Vec<View>>,
+    /// Retained semantic paths to component-slot occurrences. Structural
+    /// component replacement uses these prefixes to update only affected
+    /// content paths without another whole-scene DFS.
+    pub(crate) component_paths: HashMap<ComponentId, Vec<View>>,
+    /// Reverse index from component-slot identity to affected ContentPorts.
+    pub(crate) content_path_components: HashMap<ComponentId, Vec<u64>>,
 }
 
 impl PartialEq for ResolvedScene {

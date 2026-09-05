@@ -50,6 +50,28 @@ fn content_environments() -> &'static Mutex<HashMap<u32, TuiEnvironment>> {
     CONTENT_ENVIRONMENTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn content_connector_status_value(
+    phase: String,
+    requested: bool,
+    visible: bool,
+    projected_source_revision: Option<u64>,
+    operating_error: Option<Value>,
+    cleanup_error: Option<Value>,
+) -> Value {
+    // Keep the supported native/TypeScript status shape stable: deferred
+    // Source cleanup uses the existing error lane, with cleanup taking
+    // precedence over an older operating diagnostic.  The Rust core keeps
+    // the two causes distinct, but consumers do not need new TS fields to
+    // diagnose and explicitly retry the accepted operation.
+    serde_json::json!({
+        "phase": phase,
+        "requested": requested,
+        "visible": visible,
+        "projectedSourceRevision": projected_source_revision.map(|revision| revision.to_string()),
+        "error": cleanup_error.or(operating_error),
+    })
+}
+
 fn register_content_environment(environment: &TuiEnvironment) -> Result<()> {
     content_environments()
         .lock()
@@ -1372,16 +1394,26 @@ impl NativeContentConnector {
             .connector
             .status()
             .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(serde_json::json!({
-            "phase": status.phase,
-            "requested": status.requested,
-            "visible": status.visible,
-            "projectedSourceRevision": status.projected_source_revision.map(|revision| revision.to_string()),
-            "error": status.error.map(|error| serde_json::json!({
+        let operating_error = status.error.map(|error| {
+            serde_json::json!({
                 "code": error.code,
                 "diagnostic": error.diagnostic,
-            })),
-        }))
+            })
+        });
+        let cleanup_error = status.cleanup_error.map(|error| {
+            serde_json::json!({
+                "code": error.code,
+                "diagnostic": error.diagnostic,
+            })
+        });
+        Ok(content_connector_status_value(
+            status.phase,
+            status.requested,
+            status.visible,
+            status.projected_source_revision,
+            operating_error,
+            cleanup_error,
+        ))
     }
 }
 
@@ -1913,5 +1945,45 @@ mod tests {
         assert_eq!(input.cursor_bytes().unwrap(), "hello 🌍".len() as i64);
         input.dispose();
         assert!(input.text().is_err());
+    }
+
+    #[test]
+    fn content_connector_status_maps_cleanup_through_the_existing_error_lane() {
+        let cleanup_error = serde_json::json!({
+            "code": "SOURCE_CLEANUP_PENDING",
+            "diagnostic": "Source membership is retained until retry",
+        });
+        let pending = content_connector_status_value(
+            "active".to_owned(),
+            false,
+            false,
+            Some(7),
+            None,
+            Some(cleanup_error.clone()),
+        );
+        let pending_object = pending.as_object().expect("status must be an object");
+        assert_eq!(pending_object.get("error"), Some(&cleanup_error));
+        assert!(!pending_object.contains_key("cleanupPending"));
+        assert!(!pending_object.contains_key("cleanupError"));
+
+        let operating_error = serde_json::json!({
+            "code": "PROJECTION_FAILED",
+            "diagnostic": "projection failed",
+        });
+        let operating = content_connector_status_value(
+            "failed".to_owned(),
+            true,
+            false,
+            None,
+            Some(operating_error.clone()),
+            None,
+        );
+        assert_eq!(
+            operating
+                .as_object()
+                .expect("status must be an object")
+                .get("error"),
+            Some(&operating_error)
+        );
     }
 }

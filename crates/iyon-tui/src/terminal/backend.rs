@@ -5,6 +5,28 @@ use crate::{backend::NativeHistorySink, geometry::Size, scene::PreparedSceneFram
 
 pub(crate) type PresentReceipt = oneshot::Receiver<Result<()>>;
 
+/// Typed terminal-worker lifecycle failure. Host recovery must classify this
+/// before formatting diagnostics; matching human-readable error strings in a
+/// frame hot path is both brittle and observability-hostile.
+#[derive(Debug)]
+pub(crate) struct TerminalWorkerStopped;
+
+impl std::fmt::Display for TerminalWorkerStopped {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("terminal worker stopped")
+    }
+}
+
+impl std::error::Error for TerminalWorkerStopped {}
+
+pub(crate) fn terminal_worker_stopped() -> anyhow::Error {
+    anyhow::Error::new(TerminalWorkerStopped)
+}
+
+pub(crate) fn is_terminal_worker_stopped(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<TerminalWorkerStopped>().is_some()
+}
+
 /// Semantic terminal input understood by the runtime driver.
 #[derive(Debug)]
 pub(crate) enum TerminalEvent {

@@ -111,13 +111,118 @@ impl<'a> ResolveSession<'a> {
     }
 
     pub(crate) fn finish(self, view: View) -> ResolvedScene {
+        let overlay = self.resolver.overlay;
+        let mut content_paths = HashMap::new();
+        let mut component_paths = HashMap::new();
+        index_content_paths(
+            &view,
+            &overlay,
+            &mut Vec::new(),
+            &mut content_paths,
+            &mut component_paths,
+        );
+        let content_path_components = reverse_content_path_components(&content_paths);
         ResolvedScene {
             view,
             mounts: MountGraph::new(self.resolver.mounts),
             capabilities: self.resolver.capabilities,
-            overlay: self.resolver.overlay,
+            overlay,
+            content_paths,
+            component_paths,
+            content_path_components,
         }
     }
+}
+
+/// Builds the retained semantic occurrence index once per resolved branch.
+/// The index stores cheap `View` Arc clones along the affected path; it is not
+/// a second semantic tree. Later content dirtiness resolves a direct path
+/// lookup instead of walking unrelated siblings to rediscover the occurrence.
+fn index_content_paths(
+    view: &View,
+    overlay: &ResolutionOverlay,
+    path: &mut Vec<View>,
+    paths: &mut HashMap<u64, Vec<View>>,
+    component_paths: &mut HashMap<ComponentId, Vec<View>>,
+) {
+    if !view.contains_content_identity() && !view.contains_component_identity() {
+        return;
+    }
+    crate::perf::inc(crate::perf::Counter::ContentPathIndexNodesVisited);
+    path.push(view.clone());
+    if let Some(port_id) = view.content_attachment_id() {
+        paths.entry(port_id).or_insert_with(|| path.clone());
+    }
+    if let ViewKind::ComponentSlot(slot) = view.kind() {
+        component_paths
+            .entry(slot.id)
+            .or_insert_with(|| path.clone());
+    }
+    match view.kind() {
+        ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ContentHost => {}
+        ViewKind::ComponentSlot(slot) => {
+            if let Some(snapshot) = overlay.component(slot.id) {
+                index_content_paths(&snapshot.view, overlay, path, paths, component_paths);
+            }
+        }
+        ViewKind::Column(column) => {
+            for child in column.children.iter() {
+                index_content_paths(&child.view, overlay, path, paths, component_paths);
+            }
+        }
+        ViewKind::Row(row) => {
+            for child in row.children.iter() {
+                index_content_paths(&child.view, overlay, path, paths, component_paths);
+            }
+        }
+        ViewKind::Grid(grid) => {
+            for cell in grid.cells.iter() {
+                index_content_paths(&cell.view, overlay, path, paths, component_paths);
+            }
+        }
+        ViewKind::Hanging(hanging) => {
+            index_content_paths(&hanging.prefix, overlay, path, paths, component_paths);
+            index_content_paths(
+                &hanging.continuation_prefix,
+                overlay,
+                path,
+                paths,
+                component_paths,
+            );
+            index_content_paths(&hanging.body, overlay, path, paths, component_paths);
+        }
+        ViewKind::Container(container) => {
+            index_content_paths(&container.child, overlay, path, paths, component_paths);
+        }
+        ViewKind::ClampRows(clamp) => {
+            index_content_paths(&clamp.child, overlay, path, paths, component_paths);
+        }
+        ViewKind::RowViewport(viewport) => {
+            index_content_paths(&viewport.child, overlay, path, paths, component_paths);
+        }
+    }
+    path.pop();
+}
+
+fn reverse_content_path_components(
+    content_paths: &HashMap<u64, Vec<View>>,
+) -> HashMap<ComponentId, Vec<u64>> {
+    let mut reverse = HashMap::new();
+    for (port_id, path) in content_paths {
+        for view in path {
+            if let ViewKind::ComponentSlot(slot) = view.kind() {
+                reverse
+                    .entry(slot.id)
+                    .or_insert_with(Vec::new)
+                    .push(*port_id);
+            }
+        }
+    }
+    for ports in reverse.values_mut() {
+        ports.sort_unstable();
+        ports.dedup();
+    }
+    reverse
 }
 
 /// Collects retained-state attachments from a resolved semantic graph. The

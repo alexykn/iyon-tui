@@ -1,6 +1,9 @@
 //! Public semantic terminal-root composition.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::presentation::{ContentProvider, EmptyContentProvider, StyleFacts, StyleStates};
 use crate::{History, IntoView, View};
@@ -295,11 +298,30 @@ pub(crate) fn merge_root_scene(
     layout_root: &View,
 ) -> Result<ResolvedScene, ResolveError> {
     let Some(history) = history else {
+        let root_view = layout_root.clone();
+        let mut content_paths = HashMap::with_capacity(body.content_paths.len());
+        for (port_id, path) in body.content_paths {
+            let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+            root_path.push(root_view.clone());
+            root_path.extend(path);
+            content_paths.insert(port_id, root_path);
+        }
+        let mut component_paths = HashMap::with_capacity(body.component_paths.len());
+        for (component_id, path) in body.component_paths {
+            let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+            root_path.push(root_view.clone());
+            root_path.extend(path);
+            component_paths.insert(component_id, root_path);
+        }
+        let content_path_components = body.content_path_components;
         return Ok(ResolvedScene {
-            view: layout_root.clone(),
+            view: root_view,
             mounts: body.mounts,
             capabilities: body.capabilities,
             overlay: body.overlay,
+            content_paths,
+            component_paths,
+            content_path_components,
         });
     };
 
@@ -312,12 +334,63 @@ pub(crate) fn merge_root_scene(
     capabilities.entries.extend(body.capabilities.entries);
     let mut overlay = history.overlay;
     overlay.components.extend(body.overlay.components);
+    let root_view = root_view(Some(history_view), body_view);
+    let mut content_paths = HashMap::with_capacity(
+        history
+            .content_paths
+            .len()
+            .saturating_add(body.content_paths.len()),
+    );
+    for (port_id, path) in history.content_paths {
+        let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+        root_path.push(root_view.clone());
+        root_path.extend(path);
+        content_paths.insert(port_id, root_path);
+    }
+    for (port_id, path) in body.content_paths {
+        let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+        root_path.push(root_view.clone());
+        root_path.extend(path);
+        content_paths.insert(port_id, root_path);
+    }
+    let mut component_paths = HashMap::with_capacity(
+        history
+            .component_paths
+            .len()
+            .saturating_add(body.component_paths.len()),
+    );
+    for (component_id, path) in history.component_paths {
+        let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+        root_path.push(root_view.clone());
+        root_path.extend(path);
+        component_paths.insert(component_id, root_path);
+    }
+    for (component_id, path) in body.component_paths {
+        let mut root_path = Vec::with_capacity(path.len().saturating_add(1));
+        root_path.push(root_view.clone());
+        root_path.extend(path);
+        component_paths.insert(component_id, root_path);
+    }
+    let mut content_path_components = history.content_path_components;
+    for (component_id, ports) in body.content_path_components {
+        content_path_components
+            .entry(component_id)
+            .or_default()
+            .extend(ports);
+    }
+    for ports in content_path_components.values_mut() {
+        ports.sort_unstable();
+        ports.dedup();
+    }
 
     Ok(ResolvedScene {
-        view: root_view(Some(history_view), body_view),
+        view: root_view,
         mounts: crate::component::MountGraph::new(mounts),
         capabilities,
         overlay,
+        content_paths,
+        component_paths,
+        content_path_components,
     })
 }
 

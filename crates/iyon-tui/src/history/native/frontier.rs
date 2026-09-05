@@ -54,14 +54,30 @@ pub(crate) struct FrozenContentRemainder {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) struct NativeFrontier {
     pub(crate) physical_rows_inserted: u64,
+    /// Set when a native sink reports an error after a write may have begun.
+    /// Logical frontiers are never rewound; the host must perform its normal
+    /// synchronization recovery before attempting another transfer.
+    pub(crate) synchronization_unknown: bool,
     pub(crate) last_native_unit: Option<HistoryUnitId>,
     pub(crate) top_padding: SpacingTransferState,
     pub(crate) leading_gap: Option<SpacingTransferState>,
     pub(crate) frozen_static: Option<FrozenStaticRemainder>,
     pub(crate) frozen_content: Option<FrozenContentRemainder>,
+    /// Retirements recorded by one transfer attempt. The outer adapter drains
+    /// this list even when a later sink operation fails, so content ownership
+    /// cannot leak after an irreversible semantic retirement.
+    pub(crate) retired_units: Vec<HistoryUnitId>,
 }
 
 impl NativeFrontier {
+    pub(crate) fn mark_synchronization_unknown(&mut self) {
+        self.synchronization_unknown = true;
+    }
+
+    pub(crate) fn recover_synchronization(&mut self) {
+        self.synchronization_unknown = false;
+    }
+
     pub(crate) fn has_physical_rows(&self) -> bool {
         self.physical_rows_inserted != 0
     }

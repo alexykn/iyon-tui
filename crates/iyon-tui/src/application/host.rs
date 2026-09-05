@@ -14,7 +14,7 @@ use anyhow::Result;
 
 use crate::controls::text_input::command::TextInputCommand;
 
-use super::content::{ContentBinding, ContentFamily, ContentHostRegistry, HostContentPort};
+use super::content::{ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
@@ -138,7 +138,9 @@ pub(super) struct HostInner {
     /// Candidate content bindings are captured with the candidate frame so a
     /// control mutation accepted while presentation is in flight cannot be
     /// promoted into that older frame by accident.
-    candidate_content_bindings: Option<Vec<ContentBinding>>,
+    candidate_content_commit: Option<PreparedContentCommit>,
+    candidate_state_commit: Option<crate::retained_state::PreparedStateCommit>,
+    candidate_content_dirty_epoch: Option<u64>,
     /// Attempt metadata retained long enough for the environment to report a
     /// failed in-flight candidate rather than a newer pending epoch.
     failed_attempt: Option<(u64, u64)>,
@@ -155,6 +157,14 @@ pub(super) struct HostInner {
     /// A Source/control mutation requires content-derived layout/paint cache
     /// invalidation. It remains set until the corresponding frame commits.
     content_dirty: bool,
+    /// Physical terminal/History state may be unknown after a sink or
+    /// presentation failure. The next successful candidate is a recovery
+    /// frame; this marker is never cleared by logical candidate rollback.
+    physical_sync_unknown: bool,
+    /// Reused per-host affected content worklist used to coalesce one Source
+    /// wake group into one pending epoch without allocating a temporary fanout
+    /// vector for every mutation.
+    pub(super) content_dirty_scratch: Vec<crate::presentation::ContentDirty>,
     #[cfg(test)]
     fail_next_frame: Option<String>,
     view_states: ViewStateRegistry,
@@ -995,7 +1005,9 @@ impl TuiHost {
                 frame_pending: true,
                 candidate_epoch: None,
                 candidate_structural_revision: None,
-                candidate_content_bindings: None,
+                candidate_content_commit: None,
+                candidate_state_commit: None,
+                candidate_content_dirty_epoch: None,
                 failed_attempt: None,
                 now,
                 headless,
@@ -1008,6 +1020,8 @@ impl TuiHost {
                 pending_epoch: 0,
                 committed_epoch: 0,
                 content_dirty: false,
+                physical_sync_unknown: false,
+                content_dirty_scratch: Vec::new(),
                 #[cfg(test)]
                 fail_next_frame: None,
                 view_states: ViewStateRegistry::new(),
@@ -1627,7 +1641,7 @@ fn physical_color(color: crate::physical::PhysicalColor) -> String {
 fn ignore_terminal_shutdown_error(result: Result<()>) -> Result<()> {
     match result {
         Ok(()) => Ok(()),
-        Err(error) if error.to_string().contains("terminal worker stopped") => Ok(()),
+        Err(error) if crate::terminal::is_terminal_worker_stopped(&error) => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -1653,7 +1667,9 @@ impl HostInner {
     }
 
     pub(super) fn environment_pending_epoch(&mut self) -> Result<u64> {
-        if self.pending_epoch == self.committed_epoch && self.running.is_dirty() {
+        if self.pending_epoch == self.committed_epoch
+            && (self.running.is_dirty() || self.content.has_pending_source_cleanup())
+        {
             self.ensure_pending()?;
         }
         Ok(self.pending_epoch)
@@ -1713,25 +1729,31 @@ impl HostInner {
         self.content.set_desired(&content_targets)
     }
 
-    fn candidate_content_bindings(&mut self) -> Result<Vec<ContentBinding>> {
-        let targets = self.running.host_current_content_attachment_targets()?;
-        self.content.candidate_bindings(&targets)
+    fn candidate_content_commit(&mut self) -> Result<PreparedContentCommit> {
+        // H3 already validated the complete attachment list before desired
+        // acceptance. The content commit plan needs only the changed-record
+        // set populated by that acceptance and the current candidate measure;
+        // unchanged visible bindings are not copied into another table.
+        self.content.prepare_content_commit()
     }
 
-    /// Prepares the visible binding changes before commit. Validation runs
-    /// first so a failed commit never installs a partial binding set; the
-    /// in-flight pins stay held until the caller explicitly clears them
-    /// after the visible swap.
-    fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
-        self.view_states.set_visible(targets)
-    }
-
-    fn set_in_flight_state_bindings(&mut self, ids: &[u64]) {
-        self.view_states.set_in_flight(ids);
+    /// Prepares the visible/in-flight state tables before backend submission.
+    /// The returned candidate owns every allocation needed by receipt-time
+    /// state promotion.
+    fn candidate_state_commit(
+        &mut self,
+        targets: &[(u64, StateNodeKind)],
+    ) -> Result<crate::retained_state::PreparedStateCommit> {
+        self.view_states.prepare_candidate(targets)
     }
 
     fn clear_in_flight_state_bindings(&mut self) {
-        self.view_states.clear_in_flight();
+        let prepared = self
+            .candidate_state_commit
+            .as_ref()
+            .expect("candidate state commit must exist while clearing in-flight state");
+        self.view_states
+            .clear_in_flight_prepared(&prepared.in_flight_ids);
     }
 
     pub(super) fn content_port_is_mounted(&self, id: u64) -> Result<bool> {
@@ -1782,7 +1804,20 @@ impl HostInner {
         }
     }
 
-    pub(super) fn mark_content_pending(&mut self) -> anyhow::Result<WakeDisposition> {
+    pub(super) fn mark_content_pending(
+        &mut self,
+        dirty: crate::presentation::ContentDirty,
+    ) -> anyhow::Result<WakeDisposition> {
+        self.mark_content_pending_batch(std::slice::from_ref(&dirty))
+    }
+
+    pub(super) fn mark_content_pending_batch(
+        &mut self,
+        dirty: &[crate::presentation::ContentDirty],
+    ) -> anyhow::Result<WakeDisposition> {
+        for item in dirty {
+            self.running.host_invalidate_content(*item);
+        }
         self.content_dirty = true;
         self.mark_pending()
     }
@@ -1819,9 +1854,6 @@ impl HostInner {
         let target_epoch = self.pending_epoch;
         let target_structural_revision = self.desired_structural_revision;
         self.content.begin_projection_candidate();
-        if self.content_dirty {
-            self.running.host_invalidate_content();
-        }
         // One candidate overlay over the committed version table replaces the
         // old whole-registry snapshot. Failed preparation keeps the committed
         // versions untouched: the overlay owns its `Arc` pins, and the scene
@@ -1840,36 +1872,45 @@ impl HostInner {
                 // SceneHost may have staged derived layout/surface state before
                 // a late preparation error. Keep the HostInner frame as the
                 // sole visible authority and rebuild the candidate on retry.
+                self.note_physical_sync_failure(&error);
                 self.failed_attempt = Some((target_epoch, target_structural_revision));
                 self.content.abort_candidate();
                 self.running.host_discard_candidate();
                 return Err(error);
             }
         };
-        let state_ids = candidate
-            .state_bindings
-            .iter()
-            .map(|(id, _)| *id)
-            .collect::<Vec<_>>();
-        let content_bindings = match self.candidate_content_bindings() {
-            Ok(bindings) => bindings,
+        let state_commit = match self.candidate_state_commit(&candidate.state_bindings) {
+            Ok(commit) => commit,
             Err(error) => {
                 self.content.abort_candidate();
                 self.running.host_discard_candidate();
+                self.running.host_abort_content_candidate();
                 return Err(error);
             }
         };
-        self.set_in_flight_state_bindings(&state_ids);
+        let content_commit = match self.candidate_content_commit() {
+            Ok(commit) => commit,
+            Err(error) => {
+                self.view_states
+                    .clear_in_flight_prepared(&state_commit.in_flight_ids);
+                self.content.abort_candidate();
+                self.running.host_discard_candidate();
+                self.running.host_abort_content_candidate();
+                return Err(error);
+            }
+        };
         let previous_pending = self.frame_pending;
         debug_assert!(self.candidate_frame.is_none());
         self.candidate_frame = Some(candidate);
         self.candidate_epoch = Some(target_epoch);
         self.candidate_structural_revision = Some(target_structural_revision);
-        self.candidate_content_bindings = Some(content_bindings);
-        self.content.begin_candidate(
-            self.candidate_content_bindings
-                .as_deref()
-                .unwrap_or_default(),
+        self.candidate_content_dirty_epoch = Some(self.running.host_content_candidate_epoch());
+        self.candidate_content_commit = Some(content_commit);
+        self.candidate_state_commit = Some(state_commit);
+        self.content.begin_prepared_candidate(
+            self.candidate_content_commit
+                .as_ref()
+                .expect("content commit plan must be present before in-flight pin"),
         );
         self.frame_pending = true;
         if let Err(error) = self.present_frame() {
@@ -1896,19 +1937,23 @@ impl HostInner {
     fn present_frame(&mut self) -> Result<()> {
         if let Some(mut receipt) = self.presentation.take() {
             match receipt.try_recv() {
-                Ok(result) => result.map_err(|error| {
-                    host_attempt_error(
-                        "backend",
-                        "BACKEND_IO_FAILED",
-                        true,
-                        format!("terminal presentation failed: {error}"),
-                    )
-                })?,
+                Ok(result) => {
+                    if let Err(error) = result {
+                        self.physical_sync_unknown = true;
+                        return Err(host_attempt_error(
+                            "backend",
+                            "BACKEND_IO_FAILED",
+                            true,
+                            format!("terminal presentation failed: {error}"),
+                        ));
+                    }
+                }
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
                     self.presentation = Some(receipt);
                     return Ok(());
                 }
                 Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    self.physical_sync_unknown = true;
                     return Err(host_attempt_error(
                         "backend",
                         "BACKEND_NOT_READY",
@@ -1928,8 +1973,9 @@ impl HostInner {
                     self.presentation = Some(receipt);
                     self.frame_pending = false;
                 }
-                Err(error) if error.to_string().contains("terminal worker stopped") => {
+                Err(error) if crate::terminal::is_terminal_worker_stopped(&error) => {
                     self.closed = true;
+                    self.physical_sync_unknown = true;
                     return Err(host_attempt_error(
                         "backend",
                         "BACKEND_NOT_READY",
@@ -1938,6 +1984,7 @@ impl HostInner {
                     ));
                 }
                 Err(error) => {
+                    self.physical_sync_unknown = true;
                     return Err(host_attempt_error(
                         "backend",
                         "BACKEND_IO_FAILED",
@@ -1953,55 +2000,82 @@ impl HostInner {
     }
 
     fn commit_frame(&mut self) -> Result<HostFlushOutcome> {
-        // All normal fallibility must be checked before promoting any
-        // candidate-owned state/content/frame authority.  In particular, a
-        // revision exhaustion error must not leave a partially visible
-        // candidate behind an otherwise failed commit.
+        // All normal preconditions are checked before entering the
+        // environment-owned completion authority. The environment mutex then
+        // remains held across content/state/frame promotion and its queue
+        // completion, so no independently poisonable lock is reacquired after
+        // visible authority changes.
         let next_visible_frame_revision = self
             .visible_frame_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
-        let candidate = self
-            .candidate_frame
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("missing candidate frame"))?;
-        let content_bindings = self
-            .candidate_content_bindings
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("missing candidate content bindings"))?;
+        if self.candidate_frame.is_none() {
+            return Err(anyhow::anyhow!("missing candidate frame"));
+        }
         let candidate_epoch = self
             .candidate_epoch
-            .take()
             .ok_or_else(|| anyhow::anyhow!("missing candidate frame epoch"))?;
         let candidate_structural_revision = self
             .candidate_structural_revision
-            .take()
             .ok_or_else(|| anyhow::anyhow!("missing candidate structural revision"))?;
-        let state_bindings = candidate.state_bindings.clone();
-        self.commit_visible_state_bindings(&state_bindings)?;
-        self.content.commit_visible(&content_bindings);
-        self.content.end_candidate();
-        self.clear_in_flight_state_bindings();
-        self.frame = candidate;
-        self.frame_pending = false;
-        self.visible_structural_revision = candidate_structural_revision;
-        self.visible_frame_revision = next_visible_frame_revision;
-        self.committed_epoch = candidate_epoch;
-        if self.pending_epoch == candidate_epoch {
-            self.content_dirty = false;
+        let content_dirty_epoch = self
+            .candidate_content_dirty_epoch
+            .ok_or_else(|| anyhow::anyhow!("missing candidate content epoch"))?;
+        if self.candidate_state_commit.is_none() {
+            return Err(anyhow::anyhow!("missing candidate state commit"));
         }
-        self.environment.complete_host(
-            self.host_id,
-            self.pending_epoch,
-            self.committed_epoch,
-            true,
-            false,
-        )?;
-        Ok(HostFlushOutcome {
-            committed: true,
-            waiting_for_presentation: false,
-            committed_epoch: Some(candidate_epoch),
-            visible_structural_revision: Some(candidate_structural_revision),
+        let environment = self.environment.clone();
+        environment.with_host_completion(self.host_id, candidate_epoch, true, false, || {
+            let deferred_source_cleanup = {
+                let content_commit = self
+                    .candidate_content_commit
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("missing candidate content commit"))?;
+                self.content.commit_prepared(content_commit)?
+            };
+            let candidate = self
+                .candidate_frame
+                .take()
+                .expect("candidate frame must remain present during commit");
+            self.candidate_content_commit
+                .take()
+                .expect("candidate content commit must remain present during commit");
+            let state_commit = self
+                .candidate_state_commit
+                .take()
+                .expect("candidate state commit must remain present during commit");
+            self.view_states.commit_prepared(&state_commit);
+            self.content.end_candidate();
+            self.running
+                .host_commit_content_candidate(content_dirty_epoch);
+            self.candidate_epoch = None;
+            self.candidate_structural_revision = None;
+            self.candidate_content_dirty_epoch = None;
+            self.candidate_state_commit = None;
+            let block_for_deferred_cleanup =
+                deferred_source_cleanup && self.pending_epoch == candidate_epoch;
+            if self.physical_sync_unknown {
+                self.running.host_recover_native_history_synchronization();
+                self.physical_sync_unknown = false;
+            }
+            self.frame = candidate;
+            self.frame_pending = false;
+            self.visible_structural_revision = candidate_structural_revision;
+            self.visible_frame_revision = next_visible_frame_revision;
+            self.committed_epoch = candidate_epoch;
+            if self.pending_epoch == candidate_epoch {
+                self.content_dirty = false;
+            }
+            Ok((
+                HostFlushOutcome {
+                    committed: true,
+                    waiting_for_presentation: false,
+                    committed_epoch: Some(candidate_epoch),
+                    visible_structural_revision: Some(candidate_structural_revision),
+                },
+                self.pending_epoch,
+                block_for_deferred_cleanup,
+            ))
         })
     }
 
@@ -2013,14 +2087,26 @@ impl HostInner {
         }
     }
 
+    fn note_physical_sync_failure(&mut self, error: &anyhow::Error) {
+        if error
+            .downcast_ref::<super::environment::HostAttemptError>()
+            .is_some_and(|failure| failure.code == "HISTORY_TRANSFER_FAILED")
+        {
+            self.physical_sync_unknown = true;
+        }
+    }
+
     fn discard_candidate_frame(&mut self) {
         self.content.abort_candidate();
         self.candidate_frame = None;
         self.candidate_epoch = None;
         self.candidate_structural_revision = None;
-        self.candidate_content_bindings = None;
+        self.candidate_content_commit = None;
+        self.candidate_content_dirty_epoch = None;
         self.frame_pending = false;
         self.clear_in_flight_state_bindings();
+        self.candidate_state_commit = None;
+        self.running.host_abort_content_candidate();
     }
 
     fn poll_presentation(&mut self) -> Result<Option<HostFlushOutcome>> {
@@ -2053,6 +2139,7 @@ impl HostInner {
         loop {
             let result = super::run::wait_for_present_blocking(&mut self.presentation);
             if let Err(error) = result {
+                self.physical_sync_unknown = true;
                 self.capture_failed_candidate();
                 self.discard_candidate_frame();
                 self.running.host_discard_candidate();
@@ -2082,6 +2169,13 @@ impl HostInner {
         if self.closed {
             return Err(anyhow::anyhow!("host is closed"));
         }
+        if self.pending_epoch == self.committed_epoch && self.content.has_pending_source_cleanup() {
+            // Deferred Source cleanup is blocked after its successful logical
+            // promotion. An explicit barrier or a newly queued Source wake
+            // admits one retry candidate; persistent poison is then reported
+            // and blocked by the environment rather than requeued forever.
+            self.ensure_pending()?;
+        }
         self.failed_attempt = None;
         #[cfg(test)]
         if let Some(diagnostic) = self.fail_next_frame.take() {
@@ -2092,10 +2186,16 @@ impl HostInner {
                 diagnostic,
             ));
         }
-        let content_advanced = self.content.advance(self.now);
-        if content_advanced {
-            self.content_dirty = true;
-            self.ensure_pending()?;
+        let content_dirty = self.content.advance(self.now).map_err(|error| {
+            host_attempt_error(
+                "content",
+                "CONTENT_SCHEDULER_FAILED",
+                true,
+                format!("content delivery advance failed: {error}"),
+            )
+        })?;
+        for dirty in content_dirty {
+            self.mark_content_pending(dirty)?;
         }
         let status = self.running.advance_ready(self.now).map_err(|error| {
             host_attempt_error(
@@ -2148,6 +2248,13 @@ impl HostInner {
             }
         }
 
+        // A receipt may have completed while visible commit was blocked by a
+        // poisoned prepared record. Keep that exact candidate for retry; do
+        // not start a new preparation pass over an uncommitted frame.
+        if self.candidate_epoch.is_some() && self.candidate_frame.is_some() {
+            return self.commit_frame();
+        }
+
         if self.pending_epoch != self.committed_epoch {
             // Content control and Source mutations do not invalidate the
             // semantic kernel. They still require a real candidate frame so
@@ -2197,10 +2304,10 @@ fn prepare_frame_with_content(
                 content,
             )
             .map_err(|error| {
-                let (code, retryable) = if matches!(error, SceneHostError::DidNotConverge) {
-                    ("LAYOUT_DID_NOT_CONVERGE", false)
-                } else {
-                    ("FRAME_PREPARATION_FAILED", true)
+                let (code, retryable) = match error {
+                    SceneHostError::DidNotConverge => ("LAYOUT_DID_NOT_CONVERGE", false),
+                    SceneHostError::Transfer(_) => ("HISTORY_TRANSFER_FAILED", true),
+                    _ => ("FRAME_PREPARATION_FAILED", true),
                 };
                 host_attempt_error(
                     "frame",
@@ -2218,10 +2325,10 @@ fn prepare_frame_with_content(
                 content,
             )
             .map_err(|error| {
-                let (code, retryable) = if matches!(error, SceneHostError::DidNotConverge) {
-                    ("LAYOUT_DID_NOT_CONVERGE", false)
-                } else {
-                    ("FRAME_PREPARATION_FAILED", true)
+                let (code, retryable) = match error {
+                    SceneHostError::DidNotConverge => ("LAYOUT_DID_NOT_CONVERGE", false),
+                    SceneHostError::Transfer(_) => ("HISTORY_TRANSFER_FAILED", true),
+                    _ => ("FRAME_PREPARATION_FAILED", true),
                 };
                 host_attempt_error(
                     "frame",
@@ -2272,7 +2379,7 @@ mod tests {
         let host = TuiHost::open(20, 4, true).unwrap();
         host.set_desired_view(View::text("old").into_view())
             .unwrap();
-        host.flush_pending_hosts(8, false).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
         let old_rows = host.screen_rows();
 
         host.fail_next_frame_for_test("injected frame preparation failure")
@@ -2457,18 +2564,18 @@ mod tests {
                 } = &mut *inner;
                 super::prepare_frame(running, backend, *now, &StateFrameView::empty()).unwrap()
             };
-            let state_ids = candidate
-                .state_bindings
-                .iter()
-                .map(|(id, _)| *id)
-                .collect::<Vec<_>>();
-            let content_bindings = inner.candidate_content_bindings().unwrap();
-            inner.set_in_flight_state_bindings(&state_ids);
-            inner.content.begin_candidate(&content_bindings);
+            let state_commit = inner
+                .candidate_state_commit(&candidate.state_bindings)
+                .unwrap();
+            let content_commit = inner.candidate_content_commit().unwrap();
+            inner.content.begin_prepared_candidate(&content_commit);
             inner.candidate_frame = Some(candidate);
             inner.candidate_epoch = Some(inner.pending_epoch);
             inner.candidate_structural_revision = Some(inner.desired_structural_revision);
-            inner.candidate_content_bindings = Some(content_bindings);
+            inner.candidate_content_dirty_epoch =
+                Some(inner.running.host_content_candidate_epoch());
+            inner.candidate_content_commit = Some(content_commit);
+            inner.candidate_state_commit = Some(state_commit);
             inner.frame_pending = false;
             inner.presentation = Some(receiver);
         }
@@ -2485,6 +2592,399 @@ mod tests {
                 .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
         );
         assert!(host.epochs().unwrap().pending_epoch == host.epochs().unwrap().committed_epoch);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn failed_presentation_marks_physical_sync_unknown_until_recovery_frame() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_desired_view(View::text("receipt-failure").into_view())
+            .unwrap();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame(running, backend, *now, &StateFrameView::empty()).unwrap()
+            };
+            let state_commit = inner
+                .candidate_state_commit(&candidate.state_bindings)
+                .unwrap();
+            let content_commit = inner.candidate_content_commit().unwrap();
+            inner.content.begin_prepared_candidate(&content_commit);
+            inner.candidate_frame = Some(candidate);
+            inner.candidate_epoch = Some(inner.pending_epoch);
+            inner.candidate_structural_revision = Some(inner.desired_structural_revision);
+            inner.candidate_content_dirty_epoch =
+                Some(inner.running.host_content_candidate_epoch());
+            inner.candidate_content_commit = Some(content_commit);
+            inner.candidate_state_commit = Some(state_commit);
+            inner.frame_pending = false;
+            inner.presentation = Some(receiver);
+        }
+        sender
+            .send(Err(anyhow::anyhow!("simulated partial presentation")))
+            .unwrap();
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code, "BACKEND_IO_FAILED");
+        {
+            let inner = host.inner.lock().unwrap();
+            assert!(inner.physical_sync_unknown);
+        }
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(!host.inner.lock().unwrap().physical_sync_unknown);
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("receipt-failure"))
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn poisoned_content_commit_keeps_state_content_and_frame_authority_unchanged() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"before", &[], &[]).unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        let connector_id = connector.id();
+        connector.activate().unwrap();
+        let state = host.create_view_state().unwrap();
+        let body = View::native_content_host(port.id())
+            .unwrap()
+            .native_with_state_attachment(state.state_id())
+            .unwrap();
+        host.set_desired_view(body).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let before_rows = host.screen_rows();
+        let before_epochs = host.epochs().unwrap();
+
+        source.append_utf8(b"-new", &[], &[]).unwrap();
+        let (sender, receiver) = oneshot::channel::<Result<(), anyhow::Error>>();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.content.begin_projection_candidate();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    content,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame_with_content(
+                    running,
+                    backend,
+                    *now,
+                    &StateFrameView::empty(),
+                    content,
+                )
+                .unwrap()
+            };
+            let state_commit = inner
+                .candidate_state_commit(&candidate.state_bindings)
+                .unwrap();
+            let content_commit = inner.candidate_content_commit().unwrap();
+            inner.content.begin_prepared_candidate(&content_commit);
+            inner.candidate_frame = Some(candidate);
+            inner.candidate_epoch = Some(inner.pending_epoch);
+            inner.candidate_structural_revision = Some(inner.desired_structural_revision);
+            inner.candidate_content_dirty_epoch =
+                Some(inner.running.host_content_candidate_epoch());
+            inner.candidate_content_commit = Some(content_commit);
+            inner.candidate_state_commit = Some(state_commit);
+            inner.frame_pending = false;
+            inner.presentation = Some(receiver);
+            inner
+                .content
+                .poison_connector_for_test(connector_id)
+                .unwrap();
+        }
+        sender.send(Ok(())).unwrap();
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code, "INTERNAL_INVARIANT");
+        let after_error = host.epochs().unwrap();
+        assert_eq!(
+            after_error.visible_frame_revision,
+            before_epochs.visible_frame_revision
+        );
+        assert_eq!(
+            after_error.visible_structural_revision,
+            before_epochs.visible_structural_revision
+        );
+        assert_eq!(host.screen_rows(), before_rows);
+        assert!(port.is_mounted().unwrap());
+        assert!(
+            state.dispose().is_err(),
+            "visible state must remain bound after poison"
+        );
+
+        {
+            let inner = host.inner.lock().unwrap();
+            inner
+                .content
+                .clear_connector_poison_for_test(connector_id)
+                .unwrap();
+        }
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("before-new"))
+        );
+        host.close().unwrap();
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn delayed_content_receipt_preserves_newer_source_work_for_next_candidate() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"before", &[], &[]).unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        connector.activate().unwrap();
+        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        source.append_utf8(b"-candidate", &[], &[]).unwrap();
+        let (sender, receiver) = oneshot::channel::<Result<(), anyhow::Error>>();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.content.begin_projection_candidate();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    content,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame_with_content(
+                    running,
+                    backend,
+                    *now,
+                    &StateFrameView::empty(),
+                    content,
+                )
+                .unwrap()
+            };
+            let state_commit = inner
+                .candidate_state_commit(&candidate.state_bindings)
+                .unwrap();
+            let content_commit = inner.candidate_content_commit().unwrap();
+            inner.content.begin_prepared_candidate(&content_commit);
+            inner.candidate_frame = Some(candidate);
+            inner.candidate_epoch = Some(inner.pending_epoch);
+            inner.candidate_structural_revision = Some(inner.desired_structural_revision);
+            inner.candidate_content_dirty_epoch =
+                Some(inner.running.host_content_candidate_epoch());
+            inner.candidate_content_commit = Some(content_commit);
+            inner.candidate_state_commit = Some(state_commit);
+            inner.frame_pending = false;
+            inner.presentation = Some(receiver);
+        }
+
+        // This mutation is accepted while the old candidate's backend receipt
+        // is outstanding. Its dirty epoch must survive the old commit and
+        // force a fresh Source snapshot/product on the next candidate.
+        source.append_utf8(b"-new", &[], &[]).unwrap();
+        sender.send(Ok(())).unwrap();
+        let committed_old = host.flush_pending_hosts(8, false).unwrap();
+        let epochs_after_old = host.epochs().unwrap();
+        assert!(
+            committed_old
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
+        );
+        assert!(
+            committed_old.rearm,
+            "newer Source work must keep the environment queue rearmed"
+        );
+        assert!(
+            epochs_after_old.pending_epoch > epochs_after_old.committed_epoch,
+            "the newer Source epoch must remain pending after the old receipt"
+        );
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("-candidate"))
+        );
+        assert!(!host.screen_rows().iter().any(|row| row.contains("-new")));
+
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(host.screen_rows().iter().any(|row| row.contains("-new")));
+        assert_eq!(
+            connector.status().unwrap().projected_source_revision,
+            Some(3),
+            "the newer Source revision must be promoted by its own candidate"
+        );
+        host.close().unwrap();
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn host_source_cleanup_failure_preserves_membership_until_retry() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(24, 6, true, environment.clone()).unwrap();
+        let first_source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        let second_source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        first_source.append_utf8(b"first", &[], &[]).unwrap();
+        second_source.append_utf8(b"second", &[], &[]).unwrap();
+        let first_port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let second_port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let first = first_port
+            .connect(
+                &first_source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        let second = second_port
+            .connect(
+                &second_source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        first.activate().unwrap();
+        second.activate().unwrap();
+        host.set_desired_view(View::horizontal(|row| {
+            row.child(View::native_content_host(first_port.id()).unwrap());
+            row.child(View::native_content_host(second_port.id()).unwrap());
+        }))
+        .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(first.status().unwrap().visible);
+        assert!(second.status().unwrap().visible);
+        assert_eq!(first_source.subscriber_count(), 1);
+        assert_eq!(second_source.subscriber_count(), 1);
+
+        first.deactivate().unwrap();
+        second.deactivate().unwrap();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner
+                .content
+                .poison_source_after_first_cleanup_for_test(second_source.id());
+        }
+        let committed = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(committed.errors, []);
+        assert_eq!(committed.commits.len(), 1);
+        assert!(!committed.rearm, "a poisoned Source cleanup must not spin");
+        let (_, reserved_capacity, after_capacity) = environment
+            .take_last_completion_capacities()
+            .expect("completion capacity sample must be available");
+        assert_eq!(
+            reserved_capacity, after_capacity,
+            "deferred cleanup completion must not grow environment tables after promotion"
+        );
+        let pending_status = second.status().unwrap();
+        assert!(pending_status.cleanup_pending);
+        assert_eq!(
+            pending_status
+                .cleanup_error
+                .as_ref()
+                .map(|error| error.code.as_str()),
+            Some("SOURCE_CLEANUP_PENDING")
+        );
+        assert_eq!(
+            host.inner
+                .lock()
+                .unwrap()
+                .content
+                .pending_source_cleanup_count(),
+            1,
+            "cleanup failure must become an explicit pending retry"
+        );
+        assert_eq!(first_source.subscriber_count(), 0);
+        let peer = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        peer.set_desired_view(View::text("peer").into_view())
+            .unwrap();
+        let fair = host.flush_pending_hosts(8, false).unwrap();
+        assert!(
+            fair.commits
+                .iter()
+                .any(|commit| commit.host_id == peer.epochs().unwrap().host_id),
+            "a deferred-cleanup Host must not starve an unrelated Host"
+        );
+        assert!(!fair.rearm);
+        peer.close().unwrap();
+        // A poisoned Source cannot be read until the test clears its poison;
+        // the retained token is then observable and membership remains live.
+        {
+            let inner = host.inner.lock().unwrap();
+            inner.content.clear_source_poison_for_test(&second_source);
+        }
+        assert_eq!(second_source.subscriber_count(), 1);
+        assert!(
+            second_source.dispose().is_err(),
+            "deferred cleanup must retain Source membership"
+        );
+        assert!(!first.status().unwrap().visible);
+        assert!(!second.status().unwrap().visible);
+
+        let recovered = host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(recovered.commits.len(), 1);
+        assert!(!recovered.rearm);
+        assert_eq!(
+            host.inner
+                .lock()
+                .unwrap()
+                .content
+                .pending_source_cleanup_count(),
+            0
+        );
+        assert_eq!(second_source.subscriber_count(), 0);
+        assert!(!second.status().unwrap().cleanup_pending);
+        first.dispose().unwrap();
+        second.dispose().unwrap();
+        assert!(first_source.dispose().is_ok());
+        assert!(second_source.dispose().is_ok());
         host.close().unwrap();
     }
 
@@ -2515,6 +3015,48 @@ mod tests {
         );
         first.close().unwrap();
         second.close().unwrap();
+    }
+
+    #[test]
+    fn poisoned_host_does_not_drop_unrelated_pending_hosts_from_fair_drain() {
+        let environment = TuiEnvironment::new();
+        let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        first
+            .set_desired_view(View::text("poisoned").into_view())
+            .unwrap();
+        second
+            .set_desired_view(View::text("healthy").into_view())
+            .unwrap();
+        let first_host_id = first.epochs().unwrap().host_id;
+        let second_host_id = second.epochs().unwrap().host_id;
+        {
+            let first_inner = first.inner.clone();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = first_inner.lock().unwrap();
+                panic!("intentional fair-drain host poison");
+            }));
+        }
+
+        let report = second.flush_pending_hosts(8, false).unwrap();
+        assert!(
+            report.errors.iter().any(|error| {
+                error.code == "HOST_LOCK_POISONED" && error.host_id == first_host_id
+            })
+        );
+        assert!(
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == second_host_id),
+            "a poisoned host must not discard unrelated pending work"
+        );
+        assert!(
+            second
+                .screen_rows()
+                .iter()
+                .any(|row| row.contains("healthy"))
+        );
     }
 
     /// Opens two headless hosts sharing one environment/Source registry and
@@ -2713,5 +3255,463 @@ mod tests {
             "structural publication must consume exactly one revision"
         );
         host.close().unwrap();
+    }
+
+    #[test]
+    fn source_wake_repaints_only_the_affected_content_port() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(32, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        connector.activate().unwrap();
+        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        source.append_utf8(b"target\n", &[], &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(host.screen_rows().iter().any(|row| row.contains("target")));
+        assert_eq!(
+            connector.status().unwrap().projected_source_revision,
+            Some(1),
+            "a content-only receipt must promote the prepared Source revision"
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::GlobalCacheClears),
+                0,
+                "an isolated Source wake must not clear every host cache"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::ContentDirtyRecordsMarked) > 0,
+                "the wake must carry a typed affected-ID dirty record"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::ContentMetricEvaluations) > 0,
+                "Source input must be evaluated for actual metrics"
+            );
+        }
+        host.close().unwrap();
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn content_metric_growth_reflows_following_siblings() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(32, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"first", &[], &[]).unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        connector.activate().unwrap();
+        host.set_desired_view(
+            View::vertical(|column| {
+                column.child(View::native_content_host(port.id()).unwrap());
+                column.child(View::text("following"));
+            })
+            .fill_width(),
+        )
+        .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let before = host.screen_rows();
+        let before_first = before
+            .iter()
+            .position(|row| row.contains("first"))
+            .expect("content must be visible before growth");
+        let before_following = before
+            .iter()
+            .position(|row| row.contains("following"))
+            .expect("following sibling must be visible before growth");
+
+        source.append_utf8(b"\nsecond", &[], &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let after = host.screen_rows();
+        let after_first = after
+            .iter()
+            .position(|row| row.contains("first"))
+            .expect("content must remain visible after growth");
+        let after_following = after
+            .iter()
+            .position(|row| row.contains("following"))
+            .expect("following sibling must remain visible after growth");
+        assert_eq!(
+            after_following, before_following,
+            "root follow-end anchoring must preserve the following sibling position"
+        );
+        assert_eq!(
+            after_first + 1,
+            before_first,
+            "content metric growth must reflow the content occurrence"
+        );
+        assert!(after.iter().any(|row| row.contains("second")));
+        host.close().unwrap();
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn content_dirty_work_is_local_to_one_of_many_ports() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(32, 6, true, environment.clone()).unwrap();
+        let first_source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        let second_source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        first_source.append_utf8(b"first", &[], &[]).unwrap();
+        second_source.append_utf8(b"second", &[], &[]).unwrap();
+        let first_port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let second_port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let first_connector = first_port
+            .connect(
+                &first_source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        let second_connector = second_port
+            .connect(
+                &second_source,
+                super::super::content::HostContentFunnel::plain(
+                    super::super::content::TextWrapMode::Word,
+                ),
+            )
+            .unwrap();
+        first_connector.activate().unwrap();
+        second_connector.activate().unwrap();
+        host.set_desired_view(
+            View::vertical(|column| {
+                column.child(
+                    View::native_content_host(first_port.id())
+                        .unwrap()
+                        .fill_width(),
+                );
+                column.child(
+                    View::native_content_host(second_port.id())
+                        .unwrap()
+                        .fill_width(),
+                );
+            })
+            .fill_width(),
+        )
+        .unwrap();
+        host.flush_pending_hosts(16, true).unwrap();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        first_source.append_utf8(b"-update", &[], &[]).unwrap();
+        host.flush_pending_hosts(16, true).unwrap();
+        let rows = host.screen_rows();
+        assert!(rows.iter().any(|row| row.contains("first-update")));
+        assert!(rows.iter().any(|row| row.contains("second")));
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::GlobalCacheClears),
+                0,
+                "isolated content changes must not globally flush caches"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentPaintPropagations),
+                1,
+                "one Source update must schedule one content paint root"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentPathIndexNodesVisited),
+                0,
+                "local content refresh must use the retained semantic path index"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::MeasureNodeCalls) < 6,
+                "unrelated content nodes should remain cache hits"
+            );
+        }
+        host.close().unwrap();
+        first_source.dispose().unwrap();
+        second_source.dispose().unwrap();
+    }
+
+    #[test]
+    fn one_of_hundreds_of_ports_has_constant_targeted_prepare_work() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        const PORT_COUNT: usize = 512;
+        let environment = TuiEnvironment::new();
+        let host =
+            TuiHost::open_in_environment(32, PORT_COUNT as u16, true, environment.clone()).unwrap();
+        let mut sources = Vec::with_capacity(PORT_COUNT);
+        let mut ports = Vec::with_capacity(PORT_COUNT);
+        let mut connectors = Vec::with_capacity(PORT_COUNT);
+        for _ in 0..PORT_COUNT {
+            let source = environment
+                .create_content_source(super::super::content::TextSourceKind::Stream)
+                .unwrap();
+            source.append_utf8(b"x", &[], &[]).unwrap();
+            let port = host
+                .create_content_port(super::super::content::ContentFamily::Text)
+                .unwrap();
+            let connector = port
+                .connect(
+                    &source,
+                    super::super::content::HostContentFunnel::plain(
+                        super::super::content::TextWrapMode::Word,
+                    ),
+                )
+                .unwrap();
+            connector.activate().unwrap();
+            sources.push(source);
+            ports.push(port);
+            connectors.push(connector);
+        }
+        host.set_desired_view(
+            View::vertical(|column| {
+                for port in &ports {
+                    column.child(View::native_content_host(port.id()).unwrap().fill_width());
+                }
+            })
+            .fill_width(),
+        )
+        .unwrap();
+        host.flush_pending_hosts(PORT_COUNT, true).unwrap();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+
+        // The first fixed-width leaf changes while the other 511 ports stay
+        // resident and unchanged. Its Source has a distinct subscription,
+        // so wake, measure, placement and commit records should scale with
+        // the one affected occurrence rather than the registry size.
+        sources[0].append_utf8(b"-", &[], &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(host.screen_rows().iter().any(|row| row.contains("x-")));
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentRegistryPortScans),
+                0,
+                "a local Source wake must not scan every registered Port"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentWakeGroups),
+                1,
+                "one distinct Source subscription group must wake once"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentDirtyRecordsMarked),
+                1,
+                "only the changed ContentPort receives a dirty record"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::ContentCandidateRecordsPrepared)
+                    < (PORT_COUNT / 2) as u64,
+                "prepared commit records must remain changed-record data"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::MeasureNodeCalls) < (PORT_COUNT / 2) as u64,
+                "fixed-width content mutation must not rematerialize the full layout"
+            );
+            assert!(
+                counters.value(crate::perf::Counter::LayoutNodesEmitted) < (PORT_COUNT / 2) as u64,
+                "placement work must remain bounded to the affected path"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentPaintPropagations),
+                1,
+                "one affected ContentHost must receive one paint propagation"
+            );
+        }
+        host.close().unwrap();
+        drop(connectors);
+        drop(ports);
+        for source in sources {
+            source.dispose().unwrap();
+        }
+    }
+
+    #[test]
+    fn content_path_index_keeps_first_middle_and_last_updates_bounded() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+
+        const SIZES: [usize; 3] = [8, 64, 512];
+        const MAX_LOCAL_MEASURE_NODES: u64 = 32;
+        const MAX_LOCAL_LAYOUT_NODES: u64 = 32;
+        const MAX_LOCAL_COMMIT_RECORDS: u64 = 8;
+
+        for port_count in SIZES {
+            let environment = TuiEnvironment::new();
+            let host = TuiHost::open_in_environment(
+                32,
+                u16::try_from(port_count).expect("test size fits terminal height"),
+                true,
+                environment.clone(),
+            )
+            .unwrap();
+            let mut sources = Vec::with_capacity(port_count);
+            let mut ports = Vec::with_capacity(port_count);
+            let mut connectors = Vec::with_capacity(port_count);
+            for _ in 0..port_count {
+                let source = environment
+                    .create_content_source(super::super::content::TextSourceKind::Stream)
+                    .unwrap();
+                source.append_utf8(b"x", &[], &[]).unwrap();
+                let port = host
+                    .create_content_port(super::super::content::ContentFamily::Text)
+                    .unwrap();
+                let connector = port
+                    .connect(
+                        &source,
+                        super::super::content::HostContentFunnel::plain(
+                            super::super::content::TextWrapMode::Word,
+                        ),
+                    )
+                    .unwrap();
+                connector.activate().unwrap();
+                sources.push(source);
+                ports.push(port);
+                connectors.push(connector);
+            }
+            host.set_desired_view(
+                View::vertical(|column| {
+                    for port in &ports {
+                        column.child(View::native_content_host(port.id()).unwrap().fill_width());
+                    }
+                })
+                .fill_width(),
+            )
+            .unwrap();
+            host.flush_pending_hosts(port_count, true).unwrap();
+
+            for index in [0, port_count / 2, port_count - 1] {
+                #[cfg(feature = "perf-counters")]
+                crate::perf::reset();
+                sources[index].append_utf8(b"-", &[], &[]).unwrap();
+                host.flush_pending_hosts(8, true).unwrap();
+                assert!(
+                    host.screen_rows().iter().any(|row| row.contains("x-")),
+                    "updated port {index} should be visible in size {port_count}"
+                );
+                #[cfg(feature = "perf-counters")]
+                {
+                    let counters = crate::perf::snapshot();
+                    assert_eq!(
+                        counters.value(crate::perf::Counter::ContentPathIndexNodesVisited),
+                        0,
+                        "semantic path lookup scanned siblings for size {port_count}, index {index}: {counters:?}"
+                    );
+                    assert!(
+                        counters.value(crate::perf::Counter::MeasureNodeCalls)
+                            <= MAX_LOCAL_MEASURE_NODES,
+                        "local measure exceeded bound for size {port_count}, index {index}: {counters:?}"
+                    );
+                    assert!(
+                        counters.value(crate::perf::Counter::LayoutNodesEmitted)
+                            <= MAX_LOCAL_LAYOUT_NODES,
+                        "local placement exceeded bound for size {port_count}, index {index}: {counters:?}"
+                    );
+                    assert!(
+                        counters.value(crate::perf::Counter::ContentCandidateRecordsPrepared)
+                            <= MAX_LOCAL_COMMIT_RECORDS,
+                        "local commit preparation exceeded bound for size {port_count}, index {index}: {counters:?}"
+                    );
+                    assert_eq!(
+                        counters.value(crate::perf::Counter::ContentRegistryPortScans),
+                        0,
+                        "local update scanned the Port registry for size {port_count}, index {index}: {counters:?}"
+                    );
+                }
+            }
+            host.close().unwrap();
+            drop(connectors);
+            drop(ports);
+            for source in sources {
+                source.dispose().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn theme_recolor_refreshes_content_paint_without_rebuilding_layout() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(32, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"# heading\n", &[], &[]).unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::new(
+                    super::super::content::TextFunnelKind::Markdown,
+                    super::super::content::TextWrapMode::Word,
+                    true,
+                    super::super::content::ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        connector.activate().unwrap();
+        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let first_theme = crate::Theme::new().with_text_style(
+            crate::TextSelector::heading(),
+            crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(1)),
+        );
+        let second_theme = crate::Theme::new().with_text_style(
+            crate::TextSelector::heading(),
+            crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(2)),
+        );
+        host.set_theme(first_theme).unwrap();
+        let row = (0..4)
+            .find(|row| host.screen_rows()[*row as usize].contains("heading"))
+            .expect("content heading must be visible");
+        let first = host.style_at(row, 0).and_then(|style| style.foreground);
+        host.set_theme(second_theme).unwrap();
+        let second = host.style_at(row, 0).and_then(|style| style.foreground);
+        assert_ne!(
+            first, second,
+            "theme-only content repaint must resolve new styles"
+        );
+        host.close().unwrap();
+        source.dispose().unwrap();
     }
 }

@@ -209,6 +209,8 @@ fn layout_content(prepared: &PreparedNode) -> LayoutContent {
             metric_revision: measurement.metric_revision,
             paint_revision: measurement.paint_revision,
             projection_identity: measurement.projection_identity,
+            physically_complete: measurement.physically_complete,
+            intrinsic_size: measurement.intrinsic_size,
         },
         (MeasuredKind::ClampRows { overflow, .. }, PreparedKind::Clamp { .. }) => {
             LayoutContent::Clamp {

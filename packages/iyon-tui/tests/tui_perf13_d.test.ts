@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 
 import {
+  ContentConnector,
   TextFunnel,
   TextStreamSource,
   Tui,
   View,
 } from "../src/index.ts";
 import { nativeResourceOf } from "../src/transport/native/resources.ts";
+import { runtimeResourceRegistry } from "../src/transport/native/resource-registry.ts";
 
 const PERF13D = "PERF-13-D content identities";
 
@@ -116,5 +118,54 @@ test(`${PERF13D} exposes stable native lifecycle error codes`, async () => {
   } finally {
     tui.close();
     source.dispose();
+  }
+});
+
+test(`${PERF13D} maps deferred cleanup through the supported error status lane`, () => {
+  let phase: "active" | "disposed" = "active";
+  let error: { readonly code: string; readonly diagnostic: string } | undefined = {
+    code: "SOURCE_CLEANUP_PENDING",
+    diagnostic: "Source membership is retained until an explicit retry",
+  };
+  const resource = {
+    activate: () => ({ schedule_environment_drain: false }),
+    deactivate: () => ({ schedule_environment_drain: false }),
+    dispose: () => {
+      phase = "disposed";
+      return { schedule_environment_drain: false };
+    },
+    status: () => ({
+      phase,
+      requested: false,
+      visible: false,
+      error,
+    }),
+  };
+  const connector = ContentConnector.create(
+    resource,
+    { environment: runtimeResourceRegistry().environment, host: {} },
+    () => {},
+    () => {},
+    { forgetConnector: () => {} } as never,
+    undefined as never,
+  );
+  try {
+    const pending = connector.status();
+    expect(pending).toEqual({
+      phase: "active",
+      requested: false,
+      visible: false,
+      error,
+    });
+    expect("cleanup_pending" in pending).toBe(false);
+    expect("cleanup_error" in pending).toBe(false);
+
+    // A normal operating failure continues to use the same supported field;
+    // callers can distinguish it by code without double-applying the
+    // already-accepted Source operation.
+    error = { code: "PROJECTION_FAILED", diagnostic: "projection failed" };
+    expect(connector.status().error).toEqual(error);
+  } finally {
+    connector.dispose();
   }
 });

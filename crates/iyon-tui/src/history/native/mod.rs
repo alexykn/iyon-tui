@@ -46,6 +46,7 @@ pub(crate) struct NativeTransferOutcome {
 pub(crate) enum NativeTransferError<E> {
     Sink(E),
     InvalidAcknowledgement { requested: usize, accepted: usize },
+    SynchronizationUnknown,
 }
 
 #[cfg(test)]
@@ -84,26 +85,48 @@ pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink
     theme: &crate::Theme,
     content: &mut dyn ContentProvider,
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let before = history
-        .units
-        .iter()
-        .map(|unit| unit.id.value())
-        .collect::<std::collections::HashSet<_>>();
-    let outcome = transfer_native_prefix_inner(history, sink, width, max_rows, theme, content)?;
-    let after = history
-        .units
-        .iter()
-        .map(|unit| unit.id.value())
-        .collect::<std::collections::HashSet<_>>();
-    for unit_id in before.difference(&after) {
-        content.history_unit_retired(*unit_id);
+    if history.native.synchronization_unknown {
+        return Err(NativeTransferError::SynchronizationUnknown);
+    }
+    let result = transfer_native_prefix_inner(history, sink, width, max_rows, theme, content);
+    // Retirements are recorded by the native frontier itself. Drain them
+    // before interpreting the transfer result so a later sink error cannot
+    // strand a retired ContentHost binding.
+    let mut retired_units = std::mem::take(&mut history.native.retired_units);
+    let retired = !retired_units.is_empty();
+    for unit_id in retired_units.drain(..) {
+        content.history_unit_retired(unit_id.value());
+    }
+    history.native.retired_units = retired_units;
+    let mut outcome = match result {
+        Ok(outcome) => outcome,
+        Err(
+            error @ (NativeTransferError::Sink(_)
+            | NativeTransferError::InvalidAcknowledgement { .. }),
+        ) => {
+            // A sink may have performed a partial physical write before
+            // returning its error. Do not rewind accepted logical rows or
+            // claim that the previous physical screen remains intact.
+            history.native.mark_synchronization_unknown();
+            return Err(error);
+        }
+        Err(error @ NativeTransferError::SynchronizationUnknown) => return Err(error),
+    };
+    if retired && outcome.inserted == 0 && !matches!(outcome.status, NativeTransferStatus::Progress)
+    {
+        // A zero-row retirement can recurse into a blocked/live successor and
+        // therefore return a non-progress status even though the History
+        // frontier changed. Expose that semantic transition so SceneHost
+        // re-resolves instead of painting a candidate that still contains the
+        // retired unit.
+        outcome.status = NativeTransferStatus::Progress;
     }
     history.native.record_physical_rows(outcome.inserted);
     // Native promotion changes the display frontier even when it inserts no
     // physical rows (for example, retiring a zero-row stream/unit). Keep that
     // revision separate from semantic History revision so retained SceneHost
     // frames can refresh the History branch without rebuilding the body.
-    if outcome.inserted > 0 || matches!(outcome.status, NativeTransferStatus::Progress) {
+    if outcome.inserted > 0 || retired || matches!(outcome.status, NativeTransferStatus::Progress) {
         history.bump_native_revision();
     }
     Ok(outcome)
@@ -526,10 +549,11 @@ fn retire_front(history: &mut History) {
         .units
         .pop_front()
         .expect("retiring nonempty History");
-    // A zero-row unit can be retired through the recursive transfer path
-    // without any accepted physical row and therefore without a Progress
-    // outcome at the outer call. Record that frontier transition explicitly.
-    history.bump_native_revision();
+    history.native.retired_units.push(unit.id);
+    // The outer transfer adapter records one native revision for the whole
+    // successful receipt. A zero-row retirement is carried through
+    // `retired_units` so it still invalidates the History branch without
+    // double-bumping a transfer that also accepted physical rows.
     history.native.last_native_unit = Some(unit.id);
     history.native.reset_unit_state();
 }

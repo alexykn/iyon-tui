@@ -32,4 +32,4 @@ pub(crate) use presentation::{ViewStatePresentationPatch, ViewStatePresentationP
 #[cfg(feature = "native-host")]
 pub(crate) use record::{ViewStateLifecycle, ViewStateRecord};
 #[cfg(feature = "native-host")]
-pub(crate) use registry::ViewStateRegistry;
+pub(crate) use registry::{PreparedStateCommit, ViewStateRegistry};

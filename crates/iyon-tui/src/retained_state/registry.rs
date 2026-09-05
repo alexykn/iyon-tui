@@ -36,6 +36,16 @@ pub(crate) struct ViewStateRegistry {
     in_flight: HashSet<u64>,
 }
 
+/// Candidate-owned visible/in-flight transitions. The vectors are prepared
+/// before a backend receipt; receipt-time promotion only applies those
+/// precomputed transitions and never builds a replacement HashSet/Vec.
+#[derive(Debug)]
+pub(crate) struct PreparedStateCommit {
+    pub(crate) visible_targets: Vec<(u64, StateNodeKind)>,
+    pub(crate) removed_visible: Vec<u64>,
+    pub(crate) in_flight_ids: Vec<u64>,
+}
+
 impl ViewStateRegistry {
     pub(crate) fn new() -> Self {
         Self {
@@ -176,16 +186,83 @@ impl ViewStateRegistry {
     /// before any binding mutates, so a failed commit never installs a
     /// partial or ghost binding set.
     pub(crate) fn set_visible(&mut self, targets: &[(u64, StateNodeKind)]) -> anyhow::Result<()> {
-        self.validate_targets(targets)?;
-        let next = targets.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
-        for id in self.visible.difference(&next).copied().collect::<Vec<_>>() {
-            self.set_bound(&id, false, false, None);
-        }
-        for (id, kind) in targets {
-            self.set_bound(id, true, false, Some(*kind));
-        }
-        self.visible = next;
+        let prepared = self.prepare_visible(targets)?;
+        self.commit_visible_prepared(&prepared);
         Ok(())
+    }
+
+    /// Prepares visible transitions and reserves the only shared-set growth
+    /// required by the eventual commit. The returned table is independent of
+    /// newer desired operations accepted while the backend receipt is pending.
+    pub(crate) fn prepare_visible(
+        &mut self,
+        targets: &[(u64, StateNodeKind)],
+    ) -> anyhow::Result<PreparedStateCommit> {
+        self.validate_targets(targets)?;
+        let mut target_ids = HashSet::with_capacity(targets.len());
+        for (id, _) in targets {
+            target_ids.insert(*id);
+        }
+        let mut removed_visible = self
+            .visible
+            .iter()
+            .filter(|id| !target_ids.contains(id))
+            .copied()
+            .collect::<Vec<_>>();
+        removed_visible.sort_unstable();
+        let added_visible = targets
+            .iter()
+            .filter(|(id, _)| !self.visible.contains(id))
+            .count();
+        self.visible.reserve(added_visible);
+        Ok(PreparedStateCommit {
+            visible_targets: targets.to_vec(),
+            removed_visible,
+            in_flight_ids: Vec::new(),
+        })
+    }
+
+    /// Prepares a complete frame state transition, including the in-flight
+    /// lifecycle pin. All allocations and validation occur before receipt.
+    pub(crate) fn prepare_candidate(
+        &mut self,
+        targets: &[(u64, StateNodeKind)],
+    ) -> anyhow::Result<PreparedStateCommit> {
+        let mut prepared = self.prepare_visible(targets)?;
+        prepared.in_flight_ids = targets.iter().map(|(id, _)| *id).collect();
+        self.set_in_flight(&prepared.in_flight_ids);
+        Ok(prepared)
+    }
+
+    /// Applies the prevalidated visible table without allocating. The visible
+    /// set capacity was reserved by `prepare_visible`, and no other operation
+    /// mutates visible membership while a candidate receipt is outstanding.
+    pub(crate) fn commit_visible_prepared(&mut self, prepared: &PreparedStateCommit) {
+        for id in &prepared.removed_visible {
+            self.set_bound(id, false, false, None);
+            self.visible.remove(id);
+        }
+        for (id, kind) in &prepared.visible_targets {
+            self.set_bound(id, true, false, Some(*kind));
+            self.visible.insert(*id);
+        }
+    }
+
+    /// Commits a complete frame state transition without constructing any
+    /// receipt-time collections.
+    pub(crate) fn commit_prepared(&mut self, prepared: &PreparedStateCommit) {
+        self.commit_visible_prepared(prepared);
+        self.clear_in_flight_prepared(&prepared.in_flight_ids);
+    }
+
+    /// Clears exactly the in-flight IDs captured by one candidate. HashSet
+    /// removal does not grow or allocate, and newer desired state remains
+    /// independent in its own table.
+    pub(crate) fn clear_in_flight_prepared(&mut self, ids: &[u64]) {
+        for id in ids {
+            self.set_in_flight_bound(id, false);
+            self.in_flight.remove(id);
+        }
     }
 
     pub(crate) fn set_in_flight(&mut self, ids: &[u64]) {

@@ -78,7 +78,7 @@ impl TermwizBackend {
     fn send<T>(&self, command: TerminalCommand, receiver: mpsc::Receiver<Result<T>>) -> Result<T> {
         self.commands
             .send(command)
-            .context("terminal worker stopped")?;
+            .map_err(|_| crate::terminal::backend::terminal_worker_stopped())?;
         receiver.recv().context("terminal worker reply lost")?
     }
 
@@ -145,7 +145,7 @@ impl TerminalBackend for TermwizBackend {
         let desired = super::lower::desired_surface(frame);
         self.commands
             .send(TerminalCommand::Present { desired, reply })
-            .context("terminal worker stopped")?;
+            .map_err(|_| crate::terminal::backend::terminal_worker_stopped())?;
         Ok(receiver)
     }
 

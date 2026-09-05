@@ -10,6 +10,65 @@ use crate::{
     physical::{PhysicalRow, Surface},
 };
 
+/// A content invalidation is deliberately narrower than a host-wide frame
+/// invalidation.  The application/content registry records the affected
+/// destination identity and the reason; SceneHost uses the committed layout
+/// indexes to invalidate only the corresponding occurrence/dependency path.
+///
+/// These are framework mechanics, not application policy.  In particular,
+/// delivery is a generic visibility frontier and does not imply any product
+/// notion of status or completion.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum ContentDirtyReason {
+    SourceInput,
+    DeliveryVisibility,
+    WidthOrMeasurement,
+    Presentation,
+    Viewport,
+    SelectionLifecycle,
+}
+
+impl ContentDirtyReason {
+    pub(crate) const fn requires_measurement(self) -> bool {
+        matches!(
+            self,
+            Self::SourceInput
+                | Self::DeliveryVisibility
+                | Self::WidthOrMeasurement
+                | Self::SelectionLifecycle
+        )
+    }
+
+    pub(crate) const fn is_paint_only(self) -> bool {
+        matches!(self, Self::Presentation | Self::Viewport)
+    }
+}
+
+/// Typed affected-ID content work item shared by the native content owner and
+/// the retained Scene host.  `connector_id` is optional because a destination
+/// may be invalidated by a viewport/theme change before a connector is
+/// selected.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ContentDirty {
+    pub(crate) port_id: u64,
+    pub(crate) connector_id: Option<u64>,
+    pub(crate) reason: ContentDirtyReason,
+}
+
+impl ContentDirty {
+    pub(crate) const fn new(
+        port_id: u64,
+        connector_id: Option<u64>,
+        reason: ContentDirtyReason,
+    ) -> Self {
+        Self {
+            port_id,
+            connector_id,
+            reason,
+        }
+    }
+}
+
 /// Viewport row window requested during content painting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ContentWindow {

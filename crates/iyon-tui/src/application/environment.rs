@@ -152,6 +152,8 @@ struct EnvironmentInner {
     wake_latched: bool,
     wake_epoch: u64,
     content_sources: ContentSourceRegistry,
+    #[cfg(test)]
+    last_completion_capacities: Option<([usize; 4], [usize; 4], [usize; 4])>,
 }
 
 impl TuiEnvironment {
@@ -169,6 +171,8 @@ impl TuiEnvironment {
             wake_latched: false,
             wake_epoch: 0,
             content_sources: ContentSourceRegistry::with_identity(identity),
+            #[cfg(test)]
+            last_completion_capacities: None,
         }));
         Self { inner }
     }
@@ -320,7 +324,122 @@ impl TuiEnvironment {
         if !environment.hosts.contains_key(&host_id) {
             return Ok(());
         }
-        if pending_epoch == committed_epoch {
+        Self::complete_host_locked(
+            &mut environment,
+            host_id,
+            pending_epoch,
+            committed_epoch,
+            requeue_if_pending,
+            waiting_for_presentation,
+            false,
+        );
+        Ok(())
+    }
+
+    /// Holds the environment authority across one Host's final visible
+    /// promotion. Queue capacity is reserved while the mutex is held, the
+    /// caller's commit closure runs without reacquiring this lock, and the
+    /// completion bookkeeping is applied before the guard is released. Thus
+    /// no independently poisonable environment lock is taken after visible
+    /// mutation and no other Host can consume the reserved queue capacity.
+    pub(super) fn with_host_completion<R>(
+        &self,
+        host_id: u64,
+        committed_epoch: u64,
+        requeue_if_pending: bool,
+        waiting_for_presentation: bool,
+        commit: impl FnOnce() -> anyhow::Result<(R, u64, bool)>,
+    ) -> anyhow::Result<R> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        if !environment.hosts.contains_key(&host_id) {
+            return Err(anyhow::anyhow!(
+                "host is no longer registered with its environment"
+            ));
+        }
+        #[cfg(test)]
+        let before_capacity = [
+            environment.pending.capacity(),
+            environment.pending_set.capacity(),
+            environment.queued.capacity(),
+            environment.retry_blocked.capacity(),
+        ];
+        if requeue_if_pending && !waiting_for_presentation {
+            // A newer operation accepted during a delayed receipt already
+            // normally queued this Host. Reserve defensively for both that
+            // race and a post-promotion deferred cleanup retry, whose epoch
+            // is returned by the commit closure only after visible mutation.
+            environment.pending.reserve(1);
+            environment.queued.reserve(1);
+            environment.pending_set.reserve(1);
+            environment.retry_blocked.reserve(1);
+        }
+        #[cfg(test)]
+        let reserved_capacity = [
+            environment.pending.capacity(),
+            environment.pending_set.capacity(),
+            environment.queued.capacity(),
+            environment.retry_blocked.capacity(),
+        ];
+        let result = commit();
+        let outcome = match result {
+            Ok((value, completion_pending_epoch, block_for_retry)) => {
+                Self::complete_host_locked(
+                    &mut environment,
+                    host_id,
+                    completion_pending_epoch,
+                    committed_epoch,
+                    requeue_if_pending,
+                    waiting_for_presentation,
+                    block_for_retry,
+                );
+                Ok(value)
+            }
+            Err(error) => Err(error),
+        };
+        #[cfg(test)]
+        {
+            let after_capacity = [
+                environment.pending.capacity(),
+                environment.pending_set.capacity(),
+                environment.queued.capacity(),
+                environment.retry_blocked.capacity(),
+            ];
+            environment.last_completion_capacities =
+                Some((before_capacity, reserved_capacity, after_capacity));
+        }
+        outcome
+    }
+
+    #[cfg(test)]
+    pub(super) fn take_last_completion_capacities(
+        &self,
+    ) -> Option<([usize; 4], [usize; 4], [usize; 4])> {
+        self.inner.lock().ok()?.last_completion_capacities
+    }
+
+    fn complete_host_locked(
+        environment: &mut EnvironmentInner,
+        host_id: u64,
+        pending_epoch: u64,
+        committed_epoch: u64,
+        requeue_if_pending: bool,
+        waiting_for_presentation: bool,
+        block_for_retry: bool,
+    ) {
+        if block_for_retry && pending_epoch == committed_epoch {
+            // Deferred Source cleanup is observable pending work, but must
+            // not continuously requeue a host while the same Source remains
+            // poisoned.  Explicit retry, a new Source mutation, or another
+            // independent host operation removes this block.
+            environment.pending_set.insert(host_id);
+            environment.retry_blocked.insert(host_id);
+            environment.waiting_for_presentation.remove(&host_id);
+            environment.queued.remove(&host_id);
+            environment.pending.retain(|id| *id != host_id);
+        } else if pending_epoch == committed_epoch {
             environment.pending_set.remove(&host_id);
             environment.retry_blocked.remove(&host_id);
             environment.waiting_for_presentation.remove(&host_id);
@@ -334,7 +453,7 @@ impl TuiEnvironment {
             environment.pending_set.insert(host_id);
             environment.waiting_for_presentation.remove(&host_id);
             if requeue_if_pending {
-                Self::queue_host(&mut environment, host_id);
+                Self::queue_host(environment, host_id);
             } else if !environment.queued.contains(&host_id) {
                 environment.queued.remove(&host_id);
                 environment.pending.retain(|id| *id != host_id);
@@ -343,7 +462,6 @@ impl TuiEnvironment {
         if environment.pending.is_empty() {
             environment.wake_latched = false;
         }
-        Ok(())
     }
 
     fn block_host(&self, host_id: u64) -> anyhow::Result<()> {
@@ -464,9 +582,29 @@ impl TuiEnvironment {
                 self.unregister_host(host_id);
                 continue;
             };
-            let mut host = host
-                .lock()
-                .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+            let mut host = match host.lock() {
+                Ok(host) => host,
+                Err(_) => {
+                    // A poisoned host must not abort the entire fair drain:
+                    // `candidates` already owns the remaining IDs, and
+                    // returning here would silently drop those pending
+                    // hosts. Report this identity as a blocked attempt and
+                    // continue draining unrelated hosts; explicit retry can
+                    // still re-attempt the poisoned owner without an
+                    // automatic spin loop.
+                    report.errors.push(HostFrameError {
+                        host_id,
+                        attempted_epoch: 0,
+                        desired_revision: 0,
+                        phase: "host".to_owned(),
+                        code: "HOST_LOCK_POISONED".to_owned(),
+                        retryable: false,
+                        diagnostic: "host lock is poisoned".to_owned(),
+                    });
+                    self.block_host(host_id)?;
+                    continue;
+                }
+            };
             let queued_epoch = host.environment_pending_epoch()?;
             let result = host.flush_for_environment(force_retry);
             match result {
@@ -485,13 +623,15 @@ impl TuiEnvironment {
                     // Keep the host lock held through the environment queue
                     // update. A concurrent producer must not advance the host
                     // epoch between the frame result and this reconciliation.
-                    self.complete_host(
-                        host_id,
-                        pending_epoch,
-                        committed_epoch,
-                        !outcome.waiting_for_presentation,
-                        outcome.waiting_for_presentation,
-                    )?;
+                    if !outcome.committed {
+                        self.complete_host(
+                            host_id,
+                            pending_epoch,
+                            committed_epoch,
+                            !outcome.waiting_for_presentation,
+                            outcome.waiting_for_presentation,
+                        )?;
+                    }
                 }
                 Err(error) => {
                     let failure = error.downcast_ref::<HostAttemptError>();

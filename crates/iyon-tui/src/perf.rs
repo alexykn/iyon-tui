@@ -59,10 +59,18 @@ pub enum Counter {
     ContentRegistryPortScans,
     TextBytesCopied,
     SemanticProjectionRebuilds,
+    ContentDirtyRecordsMarked,
+    ContentMetricEvaluations,
+    ContentMetricChanges,
+    ContentPaintPropagations,
+    ContentWakeGroups,
+    ContentDueConnectors,
+    ContentCandidateRecordsPrepared,
+    ContentPathIndexNodesVisited,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::SemanticProjectionRebuilds as usize + 1;
+    pub const COUNT: usize = Self::ContentPathIndexNodesVisited as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -116,6 +124,14 @@ const NAMES: [&str; Counter::COUNT] = [
     "content_registry_port_scans",
     "text_bytes_copied",
     "semantic_projection_rebuilds",
+    "content_dirty_records_marked",
+    "content_metric_evaluations",
+    "content_metric_changes",
+    "content_paint_propagations",
+    "content_wake_groups",
+    "content_due_connectors",
+    "content_candidate_records_prepared",
+    "content_path_index_nodes_visited",
 ];
 
 #[cfg(feature = "perf-counters")]

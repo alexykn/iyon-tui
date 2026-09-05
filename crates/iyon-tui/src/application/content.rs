@@ -21,8 +21,8 @@ use crate::{
     geometry::Size,
     physical::{PhysicalCell, PhysicalRow, Surface},
     presentation::{
-        ContentMeasurement, ContentProvider, ContentWindow, HistoryContentRows,
-        PreparedProjectionTicket,
+        ContentDirty, ContentDirtyReason, ContentMeasurement, ContentProvider, ContentWindow,
+        HistoryContentRows, PreparedProjectionTicket,
     },
     projection::{Projection, ProjectionBuilder, Projector, Smooth, SmoothConfig},
     stream::{StreamOffset, StreamRange},
@@ -40,9 +40,6 @@ use super::host::HostInner;
 use super::source_store::{
     ChunkView, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
 };
-#[cfg(test)]
-use crate::geometry::Rect;
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ContentFamily {
     Text,
@@ -468,6 +465,37 @@ const MAX_CONTENT_PROJECTION_ROWS: u64 = u16::MAX as u64;
 const MAX_SOURCE_ANNOTATIONS: usize = 16 * 1024;
 const MAX_ANNOTATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContentProjectionFailureKind {
+    LimitExceeded,
+    RetentionIncompatible,
+    Projection,
+}
+
+impl ContentProjectionFailureKind {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::LimitExceeded => "LIMIT_EXCEEDED",
+            Self::RetentionIncompatible => "RETENTION_INCOMPATIBLE",
+            Self::Projection => "PROJECTION_FAILED",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ContentProjectionFailure {
+    kind: ContentProjectionFailureKind,
+    diagnostic: String,
+}
+
+impl std::fmt::Display for ContentProjectionFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.diagnostic)
+    }
+}
+
+impl std::error::Error for ContentProjectionFailure {}
+
 static NEXT_CONTENT_PROJECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_content_projection_id() -> u64 {
@@ -707,54 +735,6 @@ fn compile_semantic_content(
         compiler.compile_tree_with_text_cache(&tree, text_geometry),
         tree,
     ))
-}
-
-#[cfg(test)]
-fn reveal_surface(surface: &Surface, mut units: usize) -> (Surface, usize) {
-    if units == 0 || surface.width() == 0 || surface.height() == 0 {
-        return (Surface::new(surface.width(), 0), 0);
-    }
-    crate::perf::inc(crate::perf::Counter::ContentSurfaceClones);
-    let mut revealed = surface.clone();
-    let mut last_row = 0u16;
-    let mut saw_glyph = false;
-    let mut fully_revealed = 0usize;
-    for row in 0..surface.height() {
-        let mut cut = None;
-        for column in 0..surface.width() {
-            let cell = surface.get(column, row);
-            if !cell.painted || cell.continuation {
-                continue;
-            }
-            if units == 0 {
-                cut = Some(column);
-                break;
-            }
-            units -= 1;
-            saw_glyph = true;
-            last_row = row;
-        }
-        if let Some(column) = cut {
-            revealed.clear_rect(Rect::new(
-                column,
-                row,
-                surface.width().saturating_sub(column),
-                1,
-            ));
-            if column > 0 {
-                last_row = last_row.max(row);
-            }
-            break;
-        }
-        fully_revealed = usize::from(row) + 1;
-    }
-    if !saw_glyph {
-        return (Surface::new(surface.width(), 0), 0);
-    }
-    (
-        revealed.crop_to(surface.width(), last_row.saturating_add(1)),
-        fully_revealed,
-    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1016,14 +996,20 @@ fn project_text_snapshot(
 
     let (row_bound, max_line_bytes) = projected_bounds(snapshot, funnel.wrap, offered_width);
     if row_bound > MAX_CONTENT_PROJECTION_ROWS {
-        return Err(anyhow!(
-            "LIMIT_EXCEEDED: content projection requires {row_bound} rows, exceeding the terminal row limit"
-        ));
+        return Err(anyhow::Error::new(ContentProjectionFailure {
+            kind: ContentProjectionFailureKind::LimitExceeded,
+            diagnostic: format!(
+                "LIMIT_EXCEEDED: content projection requires {row_bound} rows, exceeding the terminal row limit"
+            ),
+        }));
     }
     if max_line_bytes > MAX_CONTENT_PROJECTION_ROWS {
-        return Err(anyhow!(
-            "LIMIT_EXCEEDED: content projection has a {max_line_bytes}-byte logical line, exceeding the terminal line limit"
-        ));
+        return Err(anyhow::Error::new(ContentProjectionFailure {
+            kind: ContentProjectionFailureKind::LimitExceeded,
+            diagnostic: format!(
+                "LIMIT_EXCEEDED: content projection has a {max_line_bytes}-byte logical line, exceeding the terminal line limit"
+            ),
+        }));
     }
 
     // Semantic IR is theme-independent and layout-independent: recolors,
@@ -1476,6 +1462,23 @@ enum ConnectorLifecycle {
 struct SourceSubscriptionGroup {
     host: Weak<Mutex<HostInner>>,
     tokens: Vec<(u64, u32)>,
+    wake_tokens: Vec<(u64, u32)>,
+}
+
+struct CapturedSubscriberGroup {
+    host_key: usize,
+    host: Weak<Mutex<HostInner>>,
+    tokens: Vec<(u64, u32)>,
+}
+
+impl std::fmt::Debug for CapturedSubscriberGroup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CapturedSubscriberGroup")
+            .field("host_key", &self.host_key)
+            .field("tokens", &self.tokens)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -1497,6 +1500,10 @@ struct ContentSourceRecord {
     /// an in-process map key; each value retains a Weak host and generation-
     /// checked Connector tokens for validation when a mutation is drained.
     subscribers: HashMap<usize, SourceSubscriptionGroup>,
+    /// Reused outer wake batch storage. The Source lock is released before
+    /// hosts are touched, so the batch is recycled only after every eligible
+    /// host has been attempted.
+    subscriber_wake_scratch: Vec<CapturedSubscriberGroup>,
 }
 
 #[derive(Debug, Default)]
@@ -1570,6 +1577,7 @@ impl ContentSourceRegistry {
             accepted_bytes: 0,
             connector_count: 0,
             subscribers: HashMap::new(),
+            subscriber_wake_scratch: Vec::new(),
         }));
         registry.sources.insert(id, Arc::clone(&record));
         Ok(HostContentSource {
@@ -1984,22 +1992,23 @@ fn apply_retention(
     Ok((next, dropped))
 }
 
-type CapturedSubscriberGroup = (Arc<Mutex<HostInner>>, Vec<(u64, u32)>);
-
 fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<CapturedSubscriberGroup> {
+    let mut captured = std::mem::take(&mut record.subscriber_wake_scratch);
+    captured.clear();
     record
         .subscribers
         .retain(|_, group| group.host.strong_count() != 0 && !group.tokens.is_empty());
-    record
-        .subscribers
-        .values()
-        .filter_map(|group| {
-            group
-                .host
-                .upgrade()
-                .map(|host| (host, group.tokens.clone()))
-        })
-        .collect()
+    for (&host_key, group) in record.subscribers.iter_mut() {
+        let mut tokens = std::mem::take(&mut group.wake_tokens);
+        tokens.clear();
+        tokens.extend(group.tokens.iter().copied());
+        captured.push(CapturedSubscriberGroup {
+            host_key,
+            host: group.host.clone(),
+            tokens,
+        });
+    }
+    captured
 }
 
 impl HostContentSource {
@@ -2311,7 +2320,7 @@ impl HostContentSource {
     fn finish_mutation(
         &self,
         revision: u64,
-        groups: Vec<CapturedSubscriberGroup>,
+        mut groups: Vec<CapturedSubscriberGroup>,
     ) -> Result<ContentMutationResult> {
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
@@ -2319,28 +2328,60 @@ impl HostContentSource {
         // every eligible host is attempted, and a failure is reported
         // afterwards with the accepted revision attached, never as an
         // ambiguous ordinary rejection that invites a duplicating retry.
+        crate::perf::add(crate::perf::Counter::ContentWakeGroups, groups.len() as u64);
         let mut wake_failures = 0u32;
         let mut first_wake_error: Option<anyhow::Error> = None;
-        for (host, tokens) in groups {
+        for group in &groups {
+            let Some(host) = group.host.upgrade() else {
+                continue;
+            };
+            let tokens = &group.tokens;
             let wake_result = (|| {
                 let mut host = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
-                let mut affected = false;
-                for (id, generation) in tokens {
-                    affected |= host
+                let mut dirty = std::mem::take(&mut host.content_dirty_scratch);
+                dirty.clear();
+                for (id, generation) in tokens.iter().copied() {
+                    let Some(dirty_item) = host
                         .content
-                        .source_subscription_is_live(id, generation, revision);
+                        .source_subscription_is_live(id, generation, revision)?
+                    else {
+                        continue;
+                    };
+                    dirty.push(dirty_item);
                 }
-                if affected {
-                    let wake = host.mark_content_pending()?;
+                if !dirty.is_empty() {
+                    let wake = host.mark_content_pending_batch(&dirty)?;
                     schedule_environment_drain |= wake.schedule_environment_drain;
                     environment_wake_epoch = host.environment_wake_epoch();
                 }
+                host.content_dirty_scratch = dirty;
                 Ok(())
             })();
             if let Err(error) = wake_result {
                 wake_failures += 1;
                 if first_wake_error.is_none() {
                     first_wake_error = Some(error);
+                }
+            }
+        }
+        // Reuse the per-Source outer batch allocation on the next mutation;
+        // the Source mutex is reacquired only after all host locks have been
+        // released, preserving the no-Source-lock→Host-lock ordering.
+        match self.record.lock() {
+            Ok(mut record) => {
+                for group in &mut groups {
+                    if let Some(subscriber) = record.subscribers.get_mut(&group.host_key) {
+                        subscriber.wake_tokens = std::mem::take(&mut group.tokens);
+                    }
+                }
+                record.subscriber_wake_scratch = groups;
+            }
+            Err(_) => {
+                wake_failures += 1;
+                if first_wake_error.is_none() {
+                    first_wake_error = Some(anyhow!(
+                        "content Source lock is poisoned while recycling wake storage"
+                    ));
                 }
             }
         }
@@ -2461,13 +2502,16 @@ impl HostContentSource {
         Ok(())
     }
 
-    fn release_connector(&self) {
-        if let Ok(mut record) = self.record.lock() {
-            record.connector_count = record.connector_count.saturating_sub(1);
-            if record.connector_count == 0 {
-                record.subscribers.clear();
-            }
+    fn release_connector(&self) -> Result<()> {
+        let mut record = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+        record.connector_count = record.connector_count.saturating_sub(1);
+        if record.connector_count == 0 {
+            record.subscribers.clear();
         }
+        Ok(())
     }
 
     fn subscribe(
@@ -2493,6 +2537,7 @@ impl HostContentSource {
             .or_insert_with(|| SourceSubscriptionGroup {
                 host: host.clone(),
                 tokens: Vec::new(),
+                wake_tokens: Vec::new(),
             });
         group
             .tokens
@@ -2506,19 +2551,22 @@ impl HostContentSource {
         host: &Weak<Mutex<HostInner>>,
         connector_id: u64,
         connector_generation: u32,
-    ) {
-        if let Ok(mut record) = self.record.lock() {
-            let host_key = host.as_ptr() as usize;
-            let remove_group = record.subscribers.get_mut(&host_key).is_some_and(|group| {
-                group
-                    .tokens
-                    .retain(|token| *token != (connector_id, connector_generation));
-                group.tokens.is_empty()
-            });
-            if remove_group {
-                record.subscribers.remove(&host_key);
-            }
+    ) -> Result<()> {
+        let mut record = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+        let host_key = host.as_ptr() as usize;
+        let remove_group = record.subscribers.get_mut(&host_key).is_some_and(|group| {
+            group
+                .tokens
+                .retain(|token| *token != (connector_id, connector_generation));
+            group.tokens.is_empty()
+        });
+        if remove_group {
+            record.subscribers.remove(&host_key);
         }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -2531,12 +2579,6 @@ impl HostContentSource {
                 .sum()
         })
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ContentBinding {
-    pub port_id: u64,
-    pub connector_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2552,6 +2594,7 @@ pub(crate) struct HistoryPortState {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HistoryTerminalAdapter {
     ports: HashMap<u64, HistoryPortState>,
+    unit_ports: HashMap<u64, HashSet<u64>>,
 }
 
 impl HistoryTerminalAdapter {
@@ -2565,6 +2608,12 @@ impl HistoryTerminalAdapter {
         unit_id: u64,
         insets: crate::presentation::Insets,
     ) {
+        if let Some(Some(old_unit)) = self.ports.get(&port_id).map(|state| state.history_unit)
+            && old_unit != unit_id
+            && let Some(ports) = self.unit_ports.get_mut(&old_unit)
+        {
+            ports.remove(&port_id);
+        }
         self.ports.insert(
             port_id,
             HistoryPortState {
@@ -2576,6 +2625,7 @@ impl HistoryTerminalAdapter {
                 history_trailing_padding_rows: 0,
             },
         );
+        self.unit_ports.entry(unit_id).or_default().insert(port_id);
     }
 
     pub(crate) fn unit_id(&self, port_id: u64) -> Option<u64> {
@@ -2635,25 +2685,29 @@ impl HistoryTerminalAdapter {
     }
 
     pub(crate) fn clear_unit(&mut self, unit_id: u64) {
-        for state in self.ports.values_mut() {
-            if state.history_unit == Some(unit_id) {
-                state.history_unit = None;
-                state.history_committed_rows = 0;
-                state.history_committed_content_rows = 0;
-                state.history_leading_padding_rows = 0;
-                state.history_trailing_padding_rows = 0;
+        if let Some(port_ids) = self.unit_ports.remove(&unit_id) {
+            for port_id in port_ids {
+                if let Some(state) = self.ports.get_mut(&port_id) {
+                    if state.history_unit != Some(unit_id) {
+                        continue;
+                    }
+                    state.history_unit = None;
+                    state.history_committed_rows = 0;
+                    state.history_committed_content_rows = 0;
+                    state.history_leading_padding_rows = 0;
+                    state.history_trailing_padding_rows = 0;
+                }
             }
         }
     }
 
     pub(crate) fn retire_unit(&mut self, unit_id: u64) -> Vec<u64> {
-        let matching: Vec<u64> = self
-            .ports
-            .iter()
-            .filter_map(|(&port_id, state)| {
-                (state.history_unit == Some(unit_id)).then_some(port_id)
-            })
-            .collect();
+        let matching = self
+            .unit_ports
+            .remove(&unit_id)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<_>>();
         for port_id in &matching {
             self.ports.remove(port_id);
         }
@@ -2696,6 +2750,14 @@ struct ConnectorRecord {
     requested: bool,
     visible: bool,
     subscribed: bool,
+    /// Source membership is independent from wake subscription. This receipt
+    /// bit makes disposal/retry release the Source membership exactly once.
+    membership_released: bool,
+    /// A post-promotion Source cleanup that could not acquire its Source lock.
+    /// This status is distinct from projection/activation failure: the
+    /// logical frame is already visible and the Source membership remains
+    /// retained until the cleanup succeeds.
+    cleanup_error: Option<Arc<ContentConnectorError>>,
     phase: &'static str,
     error: Option<ContentConnectorError>,
     /// Source revision observed at the start of the last failed candidate.
@@ -2719,10 +2781,189 @@ struct ConnectorRecord {
     candidate_projection: Option<Arc<HostContentProjection>>,
     projected_source_revision: Option<u64>,
     projection_failure_key: Option<TextProjectionKey>,
+    /// Monotonic control revision used to keep newer requested selection
+    /// changes independent from an older in-flight candidate cleanup.
+    control_revision: u64,
     delivery_revision: u64,
     candidate_delivery_frontier: StreamOffset,
     committed_delivery_frontier: StreamOffset,
     execution: Option<ConnectorExecution>,
+}
+
+/// A prevalidated visible-association change.  The Arc records are captured
+/// while the candidate is prepared, so receipt-time promotion never resolves
+/// a handle through the live registries or builds a replacement collection.
+#[derive(Debug)]
+struct PreparedContentPort {
+    id: u64,
+    record: Arc<Mutex<PortRecord>>,
+    mounted: bool,
+    old_connector_id: Option<u64>,
+    old_connector_index: Option<usize>,
+    old_control_revision: Option<u64>,
+    next_connector_id: Option<u64>,
+    next_connector_index: Option<usize>,
+    retry_selection: bool,
+}
+
+#[derive(Debug)]
+struct PreparedContentConnector {
+    id: u64,
+    record: Arc<Mutex<ConnectorRecord>>,
+    source: HostContentSource,
+    source_id: u64,
+    generation: u32,
+    requested: bool,
+    subscribed: bool,
+    control_revision: u64,
+    deadline: Option<Instant>,
+    visible: bool,
+    delivery_frontier: StreamOffset,
+    delivery_input: Option<(u32, u64, bool)>,
+    delivery_revision: u64,
+}
+
+#[derive(Debug)]
+struct PreparedContentSource {
+    id: u64,
+    source: HostContentSource,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PreparedContentBindingChange {
+    port_index: usize,
+    revision: u64,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedSourceCleanup {
+    source: HostContentSource,
+    source_id: u64,
+    record: Arc<Mutex<ConnectorRecord>>,
+    connector_id: u64,
+    connector_generation: u32,
+    unsubscribe: bool,
+    error: Arc<ContentConnectorError>,
+}
+
+/// Candidate-owned content commit data.  It is deliberately separate from
+/// the mutable desired Port/Connector tables: operations accepted while a
+/// backend receipt is outstanding cannot consume or overwrite this plan.
+#[derive(Debug)]
+pub(crate) struct PreparedContentCommit {
+    ports: Vec<PreparedContentPort>,
+    connectors: Vec<PreparedContentConnector>,
+    sources: Vec<PreparedContentSource>,
+    source_cleanups: Vec<PreparedSourceCleanup>,
+    binding_changes: Vec<PreparedContentBindingChange>,
+}
+
+fn remove_source_subscription_locked(
+    source: &mut ContentSourceRecord,
+    host: &Weak<Mutex<HostInner>>,
+    connector_id: u64,
+    connector_generation: u32,
+) {
+    let host_key = host.as_ptr() as usize;
+    let remove_group = source.subscribers.get_mut(&host_key).is_some_and(|group| {
+        group
+            .tokens
+            .retain(|token| *token != (connector_id, connector_generation));
+        group.tokens.is_empty()
+    });
+    if remove_group {
+        source.subscribers.remove(&host_key);
+    }
+}
+
+fn release_source_membership_locked(source: &mut ContentSourceRecord) {
+    source.connector_count = source.connector_count.saturating_sub(1);
+    if source.connector_count == 0 {
+        source.subscribers.clear();
+    }
+}
+
+fn set_connector_visible_committed(
+    active_deadlines: &mut HashMap<u64, Instant>,
+    active_connectors: &mut HashSet<u64>,
+    connector: &PreparedContentConnector,
+    visible: bool,
+    preserve_newer_control: bool,
+) {
+    let connector_id = connector.id;
+    let mut state = connector
+        .record
+        .lock()
+        .expect("prepared Connector lock must remain usable during visible commit");
+    state.visible = visible;
+    if visible {
+        state.phase = if state.lifecycle == ConnectorLifecycle::Disposing {
+            "disposing"
+        } else {
+            "active"
+        };
+        return;
+    }
+    if !preserve_newer_control {
+        state.committed_projection = None;
+        state.candidate_projection = None;
+        state.projection_cache.clear();
+        state.prepared_paint_cache.clear();
+        state.semantic_cache.clear();
+        state.prefix_proof_cache.clear();
+        state.projected_source_revision = None;
+        state.projection_failure_key = None;
+        state.execution = None;
+        state.delivery_revision = 0;
+        state.candidate_delivery_frontier = StreamOffset::ZERO;
+        state.committed_delivery_frontier = StreamOffset::ZERO;
+    }
+    if state.lifecycle != ConnectorLifecycle::Disposing {
+        state.phase = if state.error.is_some() && state.requested {
+            "failed"
+        } else if state.requested {
+            "activation-pending"
+        } else {
+            "idle"
+        };
+    }
+    active_deadlines.remove(&connector_id);
+    active_connectors.remove(&connector_id);
+}
+
+fn remove_prepared_connector_committed(
+    connectors: &mut HashMap<u64, Arc<Mutex<ConnectorRecord>>>,
+    connector: &PreparedContentConnector,
+) {
+    let mut state = connector
+        .record
+        .lock()
+        .expect("prepared Connector lock must remain usable before removal");
+    if state.lifecycle != ConnectorLifecycle::Disposing || state.visible {
+        return;
+    }
+    let _owned = connectors
+        .remove(&connector.id)
+        .expect("prepared Connector must still be owned at commit");
+    let port = state.port.upgrade();
+    state.lifecycle = ConnectorLifecycle::Disposed;
+    state.phase = "disposed";
+    state.visible = false;
+    state.requested = false;
+    state.subscribed = false;
+    state.cleanup_error = None;
+    if let Some(port) = port {
+        let mut port_guard = port
+            .lock()
+            .expect("prepared ContentPort lock must remain usable during removal");
+        port_guard.connector_ids.remove(&connector.id);
+        if port_guard.desired_connector == Some(connector.id) {
+            port_guard.desired_connector = None;
+        }
+        if port_guard.visible_connector == Some(connector.id) {
+            port_guard.visible_connector = None;
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2738,6 +2979,8 @@ pub struct ContentConnectorStatus {
     pub visible: bool,
     pub projected_source_revision: Option<u64>,
     pub error: Option<ContentConnectorError>,
+    pub cleanup_pending: bool,
+    pub cleanup_error: Option<ContentConnectorError>,
 }
 
 /// Host-owned Port/Connector registries. The registry is intentionally
@@ -2757,6 +3000,14 @@ pub(crate) struct ContentHostRegistry {
     /// Candidate selection/projection is discarded on frame abort and
     /// promoted only after the backend receipt commits.
     candidate_selections: HashMap<u64, Option<u64>>,
+    /// Desired association changes accepted outside a candidate. They are
+    /// moved into `candidate_binding_changes` at attempt start and remain
+    /// independent from newer changes while a receipt is in flight.
+    pending_binding_changes: HashSet<u64>,
+    pending_binding_revisions: HashMap<u64, u64>,
+    next_binding_revision: u64,
+    candidate_binding_changes: HashSet<u64>,
+    candidate_binding_revisions: HashMap<u64, u64>,
     /// Active due deadlines for smoothed connectors. Native ticks and wake
     /// queries inspect this structure without scanning inactive registries.
     active_deadlines: HashMap<u64, Instant>,
@@ -2764,15 +3015,22 @@ pub(crate) struct ContentHostRegistry {
     /// index is maintained with lifecycle transitions, so an empty deadline
     /// map never requires walking every inactive Connector.
     active_connectors: HashSet<u64>,
+    /// Reused worklists for the active/deadline indexes. They contain only
+    /// currently eligible Connector IDs and never require a registry scan.
+    active_sync_scratch: Vec<u64>,
+    due_connector_scratch: Vec<u64>,
     /// Connector/Port records touched while preparing the current candidate.
     /// Candidate cleanup and visible promotion consume these sets instead of
     /// scanning unrelated inactive registry entries.
     candidate_touched_connectors: HashSet<u64>,
     candidate_touched_ports: HashSet<u64>,
-    /// Committed visible Ports are the only records that need implicit
-    /// removal when a candidate binding list omits them.  This replaces the
-    /// previous all-Port registry scan in `commit_visible`.
-    visible_ports: HashSet<u64>,
+    /// Source association cleanup that could not acquire its Source lock
+    /// after a successful logical frame promotion.  Membership/subscription
+    /// stays retained until a later candidate can release it safely.
+    pending_source_cleanups: Vec<PreparedSourceCleanup>,
+    pending_source_cleanup_ids: HashSet<u64>,
+    #[cfg(test)]
+    test_poison_source_after_first_cleanup: Option<u64>,
     /// Attempt-local immutable Source captures.  The map is populated lazily
     /// by the first demanded Connector and shared by all later key/history
     /// lookups in that candidate.  Interior mutability keeps the read-only
@@ -2780,6 +3038,7 @@ pub(crate) struct ContentHostRegistry {
     /// second Source authority.
     candidate_source_snapshots: RefCell<HashMap<u64, HostContentSourceSnapshot>>,
     candidate_capture_active: bool,
+    candidate_commit_prepared: bool,
     history_adapter: HistoryTerminalAdapter,
 }
 
@@ -2796,23 +3055,58 @@ impl ContentHostRegistry {
             connectors: HashMap::new(),
             in_flight_connectors: HashSet::new(),
             candidate_selections: HashMap::new(),
+            pending_binding_changes: HashSet::new(),
+            pending_binding_revisions: HashMap::new(),
+            next_binding_revision: 0,
+            candidate_binding_changes: HashSet::new(),
+            candidate_binding_revisions: HashMap::new(),
             active_deadlines: HashMap::new(),
             active_connectors: HashSet::new(),
+            active_sync_scratch: Vec::new(),
+            due_connector_scratch: Vec::new(),
             candidate_touched_connectors: HashSet::new(),
             candidate_touched_ports: HashSet::new(),
-            visible_ports: HashSet::new(),
+            pending_source_cleanups: Vec::new(),
+            pending_source_cleanup_ids: HashSet::new(),
+            #[cfg(test)]
+            test_poison_source_after_first_cleanup: None,
             candidate_source_snapshots: RefCell::new(HashMap::new()),
             candidate_capture_active: false,
+            candidate_commit_prepared: false,
             history_adapter: HistoryTerminalAdapter::new(),
         }
     }
 
     fn touch_connector(&mut self, connector_id: u64) {
+        if self.candidate_commit_prepared {
+            return;
+        }
         self.candidate_touched_connectors.insert(connector_id);
     }
 
     fn touch_port(&mut self, port_id: u64) {
+        if self.candidate_commit_prepared {
+            return;
+        }
         self.candidate_touched_ports.insert(port_id);
+    }
+
+    fn mark_binding_change(&mut self, port_id: u64) {
+        self.next_binding_revision = self
+            .next_binding_revision
+            .checked_add(1)
+            .expect("ContentPort binding revision exhausted");
+        self.pending_binding_revisions
+            .insert(port_id, self.next_binding_revision);
+        if self.candidate_commit_prepared {
+            self.pending_binding_changes.insert(port_id);
+        } else if self.candidate_capture_active {
+            self.candidate_binding_changes.insert(port_id);
+            self.candidate_binding_revisions
+                .insert(port_id, self.next_binding_revision);
+        } else {
+            self.pending_binding_changes.insert(port_id);
+        }
     }
 
     pub(crate) fn create_port(
@@ -2843,7 +3137,13 @@ impl ContentHostRegistry {
             visible_connector: None,
         }));
         self.ports.insert(port_id, Arc::clone(&record));
-        Ok(HostContentPort { record, host })
+        Ok(HostContentPort {
+            id: port_id,
+            generation: self.next_generation,
+            family,
+            record,
+            host,
+        })
     }
 
     fn connect(
@@ -2892,14 +3192,18 @@ impl ContentHostRegistry {
         self.next_connector_id = match self.next_connector_id.checked_add(1) {
             Some(id) => id,
             None => {
-                source.release_connector();
+                source
+                    .release_connector()
+                    .expect("Connector rollback must release Source membership");
                 return Err(anyhow!("Connector identity exhausted"));
             }
         };
         self.next_generation = match self.next_generation.checked_add(1) {
             Some(generation) => generation,
             None => {
-                source.release_connector();
+                source
+                    .release_connector()
+                    .expect("Connector rollback must release Source membership");
                 return Err(anyhow!("Connector generation exhausted"));
             }
         };
@@ -2913,6 +3217,8 @@ impl ContentHostRegistry {
             requested: false,
             visible: false,
             subscribed: false,
+            membership_released: false,
+            cleanup_error: None,
             phase: "idle",
             error: None,
             failed_source_revision: None,
@@ -2925,6 +3231,7 @@ impl ContentHostRegistry {
             candidate_projection: None,
             projected_source_revision: None,
             projection_failure_key: None,
+            control_revision: 0,
             delivery_revision: 0,
             candidate_delivery_frontier: StreamOffset::ZERO,
             committed_delivery_frontier: StreamOffset::ZERO,
@@ -2937,6 +3244,9 @@ impl ContentHostRegistry {
             .connector_ids
             .insert(self.next_connector_id);
         Ok(HostContentConnector {
+            id: self.next_connector_id,
+            generation: self.next_generation,
+            source_id: source.id(),
             record,
             host: Weak::new(),
         })
@@ -2988,6 +3298,7 @@ impl ContentHostRegistry {
                 let host = port_state.host.clone();
                 drop(port_state);
                 if was_mounted != desired_mounted {
+                    self.mark_binding_change(port_id);
                     self.touch_port(port_id);
                 }
                 if let Some(connector_id) = desired_connector {
@@ -3000,6 +3311,15 @@ impl ContentHostRegistry {
                         self.ensure_requested_subscription(connector_id, &host)?;
                     } else {
                         self.unsubscribe_requested_if_not_visible(connector_id)?;
+                        let visible = self
+                            .connectors
+                            .get(&connector_id)
+                            .and_then(|connector| connector.lock().ok())
+                            .is_some_and(|state| state.visible);
+                        if !visible {
+                            self.active_deadlines.remove(&connector_id);
+                            self.active_connectors.remove(&connector_id);
+                        }
                     }
                 }
             }
@@ -3009,42 +3329,82 @@ impl ContentHostRegistry {
 
     pub(crate) fn begin_projection_candidate(&mut self) {
         self.candidate_capture_active = true;
+        self.candidate_commit_prepared = false;
+        self.candidate_binding_changes.clear();
+        self.candidate_binding_changes
+            .extend(self.pending_binding_changes.iter().copied());
+        self.candidate_binding_revisions.clear();
+        for port_id in &self.candidate_binding_changes {
+            if let Some(revision) = self.pending_binding_revisions.get(port_id) {
+                self.candidate_binding_revisions.insert(*port_id, *revision);
+            }
+        }
         self.candidate_source_snapshots.borrow_mut().clear();
+        self.candidate_touched_connectors.extend(
+            self.pending_source_cleanups
+                .iter()
+                .map(|cleanup| cleanup.connector_id),
+        );
         self.clear_candidate_projections();
     }
 
     /// Advances Connector-local delivery clocks without parsing or touching
     /// Source storage. A progressed smoother invalidates only its derived
     /// projection; the host frame commits the new visible frontier later.
-    pub(crate) fn advance(&mut self, now: Instant) -> bool {
+    pub(crate) fn advance(&mut self, now: Instant) -> Result<Vec<ContentDirty>> {
         if self.active_deadlines.is_empty() {
-            let active_candidates = self.active_connectors.iter().copied().collect::<Vec<_>>();
-            for id in active_candidates {
-                self.sync_connector_deadline(id, Some(now));
+            let mut active_candidates = std::mem::take(&mut self.active_sync_scratch);
+            active_candidates.clear();
+            active_candidates.extend(self.active_connectors.iter().copied());
+            for id in active_candidates.drain(..) {
+                self.sync_connector_deadline(id, Some(now))?;
             }
+            self.active_sync_scratch = active_candidates;
         }
         if self.active_deadlines.is_empty() {
-            return false;
+            return Ok(Vec::new());
         }
-        let due_ids: Vec<u64> = self
-            .active_deadlines
-            .iter()
-            .filter_map(|(&id, &deadline)| (deadline <= now).then_some(id))
-            .collect();
+        let mut due_ids = std::mem::take(&mut self.due_connector_scratch);
+        due_ids.clear();
+        due_ids.extend(
+            self.active_deadlines
+                .iter()
+                .filter_map(|(&id, &deadline)| (deadline <= now).then_some(id)),
+        );
+        crate::perf::add(
+            crate::perf::Counter::ContentDueConnectors,
+            due_ids.len() as u64,
+        );
         if due_ids.is_empty() {
-            return false;
+            self.due_connector_scratch = due_ids;
+            return Ok(Vec::new());
         }
-        let mut changed = false;
-        for connector_id in due_ids {
+        let mut changed = Vec::new();
+        for connector_id in due_ids.iter().copied() {
             let Some(connector) = self.connectors.get(&connector_id).cloned() else {
                 self.active_deadlines.remove(&connector_id);
+                self.active_connectors.remove(&connector_id);
                 continue;
             };
-            let Ok(mut state) = connector.lock() else {
-                continue;
+            let mut state = match connector.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    // A poisoned Connector must not remain in the due index:
+                    // otherwise every native tick retries the same failed
+                    // lock forever without producing a report. Remove its
+                    // clock membership before returning the typed scheduler
+                    // failure; an explicit readiness/control signal can
+                    // re-admit it after the owner repairs the record.
+                    self.active_deadlines.remove(&connector_id);
+                    self.active_connectors.remove(&connector_id);
+                    return Err(anyhow!(
+                        "Connector lock is poisoned during delivery advance"
+                    ));
+                }
             };
             if !state.visible && !state.requested {
                 self.active_deadlines.remove(&connector_id);
+                self.active_connectors.remove(&connector_id);
                 continue;
             }
             let progressed = state
@@ -3082,36 +3442,74 @@ impl ContentHostRegistry {
                 .expect("Connector delivery revision exhausted");
             state.candidate_projection = None;
             // Delivery ticks do not clear projection_cache or prepared_paint_cache.
-            changed = true;
+            let port_id = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .id;
+            changed.push(ContentDirty::new(
+                port_id,
+                Some(connector_id),
+                ContentDirtyReason::DeliveryVisibility,
+            ));
         }
-        changed
+        self.due_connector_scratch = due_ids;
+        Ok(changed)
     }
 
     pub(crate) fn next_wakeup(&self) -> Option<Instant> {
         self.active_deadlines.values().copied().min()
     }
 
-    pub(crate) fn sync_connector_deadline(&mut self, connector_id: u64, now: Option<Instant>) {
+    pub(crate) fn sync_connector_deadline(
+        &mut self,
+        connector_id: u64,
+        now: Option<Instant>,
+    ) -> Result<()> {
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             self.active_deadlines.remove(&connector_id);
-            return;
+            self.active_connectors.remove(&connector_id);
+            return Ok(());
         };
-        let Ok(mut state) = connector.lock() else {
-            return;
-        };
+        let mut state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
         if state.lifecycle == ConnectorLifecycle::Disposed || (!state.visible && !state.requested) {
             self.active_deadlines.remove(&connector_id);
             self.active_connectors.remove(&connector_id);
-            return;
+            return Ok(());
+        }
+        let port = state
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+        let port_mounted = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned during deadline sync"))?
+            .desired_mounted;
+        if !state.visible && (!state.requested || !port_mounted) {
+            // A requested Connector may remain a cold binding while its Port
+            // is unmounted, but it must not index a delivery clock or perform
+            // source/smoothing work until the destination is resident again.
+            self.active_deadlines.remove(&connector_id);
+            self.active_connectors.remove(&connector_id);
+            return Ok(());
+        }
+        if state.funnel.smooth_config().is_none() {
+            self.active_deadlines.remove(&connector_id);
+            self.active_connectors.remove(&connector_id);
+            return Ok(());
         }
         if state.execution.is_none() && state.funnel.smooth_config().is_some() {
             state.execution = Some(ConnectorExecution::new(&state.funnel));
         }
-        if let Ok(snapshot) = self.source_snapshot_for(&state.source)
-            && let Some(execution) = state.execution.as_mut()
+        let snapshot = self.source_snapshot_for(&state.source)?;
+        if let Some(execution) = state.execution.as_mut()
             && let Some(delivery) = execution.delivery.as_mut()
         {
-            let _ = delivery.accept_input(&snapshot);
+            delivery.accept_input(&snapshot)?;
             if !delivery.smoother.has_pending_work() {
                 self.active_deadlines.remove(&connector_id);
                 self.active_connectors.remove(&connector_id);
@@ -3131,6 +3529,7 @@ impl ContentHostRegistry {
                 self.active_connectors.remove(&connector_id);
             }
         }
+        Ok(())
     }
 
     pub(crate) fn connector_delivery_frontier(&self, id: u64) -> Result<StreamOffset> {
@@ -3302,9 +3701,11 @@ impl ContentHostRegistry {
         crate::perf::inc(crate::perf::Counter::SemanticPreparations);
         let snapshot = self.source_snapshot_for(&source)?;
         if funnel.kind == TextFunnelKind::Markdown && snapshot.source_base != 0 {
-            return Err(anyhow!(
-                "RETENTION_INCOMPATIBLE: Markdown requires an untruncated Source from its logical start"
-            ));
+            return Err(anyhow::Error::new(ContentProjectionFailure {
+                kind: ContentProjectionFailureKind::RetentionIncompatible,
+                diagnostic: "RETENTION_INCOMPATIBLE: Markdown requires an untruncated Source from its logical start"
+                    .to_owned(),
+            }));
         }
         let key = TextProjectionKey {
             source_id: snapshot.source_id,
@@ -3337,7 +3738,7 @@ impl ContentHostRegistry {
                 state.projection_failure_key = None;
                 let measurement = projection.measurement(connector_id);
                 drop(state);
-                self.sync_connector_deadline(connector_id, None);
+                self.sync_connector_deadline(connector_id, None)?;
                 return Ok(measurement);
             }
         }
@@ -3413,7 +3814,7 @@ impl ContentHostRegistry {
         state.failed_source_revision = None;
         state.projection_failure_key = None;
         drop(state);
-        self.sync_connector_deadline(connector_id, None);
+        self.sync_connector_deadline(connector_id, None)?;
         Ok(measurement)
     }
 
@@ -3454,27 +3855,49 @@ impl ContentHostRegistry {
         &mut self,
         connector_id: u64,
         key: TextProjectionKey,
-        diagnostic: String,
+        error: &anyhow::Error,
     ) {
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return;
         };
-        if let Ok(mut state) = connector.lock() {
-            let code = if diagnostic.starts_with("LIMIT_EXCEEDED:") {
-                "LIMIT_EXCEEDED"
-            } else if diagnostic.starts_with("RETENTION_INCOMPATIBLE:") {
-                "RETENTION_INCOMPATIBLE"
-            } else {
-                "PROJECTION_FAILED"
-            };
-            state.error = Some(ContentConnectorError {
-                code: code.to_owned(),
-                diagnostic,
+        let mut state = connector
+            .lock()
+            .expect("Connector lock must remain usable while recording a failure");
+        let code = error
+            .downcast_ref::<ContentProjectionFailure>()
+            .map_or(ContentProjectionFailureKind::Projection.code(), |failure| {
+                failure.kind.code()
             });
-            state.failed_source_revision = Some(key.source_revision);
-            state.projection_failure_key = Some(key);
-            state.phase = if state.visible { "active" } else { "failed" };
-        }
+        state.error = Some(ContentConnectorError {
+            code: code.to_owned(),
+            diagnostic: error.to_string(),
+        });
+        state.failed_source_revision = Some(key.source_revision);
+        state.projection_failure_key = Some(key);
+        state.phase = if state.visible { "active" } else { "failed" };
+    }
+
+    fn record_connector_operating_failure(
+        &mut self,
+        connector_id: u64,
+        error: anyhow::Error,
+    ) -> Result<()> {
+        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+            return Err(anyhow!(
+                "INTERNAL_INVARIANT: Connector {connector_id} disappeared while recording an operating failure"
+            ));
+        };
+        let mut state = connector.lock().map_err(|_| {
+            anyhow!("Connector lock is poisoned while recording an operating failure")
+        })?;
+        state.error = Some(ContentConnectorError {
+            code: "CONTENT_OPERATING_FAILED".to_owned(),
+            diagnostic: error.to_string(),
+        });
+        state.failed_source_revision = None;
+        state.projection_failure_key = None;
+        state.phase = if state.visible { "active" } else { "failed" };
+        Ok(())
     }
 
     fn refine_fit_measurement(
@@ -3490,8 +3913,13 @@ impl ContentHostRegistry {
         {
             return measurement;
         }
-        self.prepare_connector_projection(connector_id, measurement.intrinsic_size.width)
-            .unwrap_or(measurement)
+        match self.prepare_connector_projection(connector_id, measurement.intrinsic_size.width) {
+            Ok(measurement) => measurement,
+            Err(error) => {
+                let _ = self.record_connector_operating_failure(connector_id, error);
+                measurement
+            }
+        }
     }
 
     fn adjust_history_measurement(
@@ -3541,10 +3969,20 @@ impl ContentHostRegistry {
 
             // Keep the native/unit failure fixture on the same candidate-rollback
             // boundary as real projection failures.
-            if self
-                .prepare_activation_candidate(connector_id, offered_width)
-                .unwrap_or(false)
-            {
+            let activation_failed =
+                match self.prepare_activation_candidate(connector_id, offered_width) {
+                    Ok(failed) => failed,
+                    Err(error) => {
+                        if self
+                            .record_connector_operating_failure(connector_id, error)
+                            .is_err()
+                        {
+                            return ContentMeasurement::default();
+                        }
+                        false
+                    }
+                };
+            if activation_failed {
                 let rollback = visible.and_then(|id| {
                     self.prepare_connector_projection(id, offered_width)
                         .ok()
@@ -3570,7 +4008,7 @@ impl ContentHostRegistry {
                         if let Ok(key) = self.connector_projection_key(connector_id, offered_width)
                             && !self.projection_failure_is_recorded(connector_id, key)
                         {
-                            self.record_projection_failure(connector_id, key, error.to_string());
+                            self.record_projection_failure(connector_id, key, &error);
                         }
                         let rollback = visible.and_then(|id| {
                             self.prepare_connector_projection(id, offered_width)
@@ -3783,54 +4221,390 @@ impl ContentHostRegistry {
             .cloned()
     }
 
-    pub(crate) fn candidate_bindings(&mut self, targets: &[u64]) -> Result<Vec<ContentBinding>> {
-        // Ordinary target validation belongs to H3 prepare; Repeating it here
-        // would let the fallible frame path report stale/duplicate/wrong-host
-        // attachment errors after the desired publication has already been
-        // accepted. The owner registry and H3 lease keep this lookup valid;
-        // disappearance is an internal invariant failure instead.
-        targets
-            .iter()
-            .map(|port_id| {
-                self.touch_port(*port_id);
-                let port = self.ports.get(port_id).cloned().ok_or_else(|| {
-                    anyhow!(
-                        "INTERNAL_INVARIANT: ContentPort {port_id} disappeared after H3 prepare"
-                    )
-                })?;
-                let (desired_connector, visible_connector, port_mounted) = {
-                    let port = port.lock().map_err(|_| {
-                        anyhow!("INTERNAL_INVARIANT: ContentPort {port_id} lock is poisoned")
-                    })?;
+    fn prepare_connector_commit(
+        &self,
+        connector_id: u64,
+        visible: bool,
+    ) -> Result<PreparedContentConnector> {
+        let record = self
+            .connectors
+            .get(&connector_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "INTERNAL_INVARIANT: Connector {connector_id} disappeared during candidate preparation"
+                )
+            })?;
+        let (
+            source,
+            source_id,
+            generation,
+            requested,
+            subscribed,
+            control_revision,
+            deadline,
+            delivery_frontier,
+            delivery_input,
+            delivery_revision,
+        ) = {
+            let state = record
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned during candidate preparation"))?;
+            if state.lifecycle == ConnectorLifecycle::Disposed {
+                return Err(anyhow!(
+                    "INTERNAL_INVARIANT: Connector {connector_id} was disposed during candidate preparation"
+                ));
+            }
+            let deadline = state
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.delivery.as_ref())
+                .and_then(|delivery| {
+                    delivery
+                        .smoother
+                        .has_pending_work()
+                        .then(|| delivery.smoother.next_wakeup())
+                        .flatten()
+                });
+            let delivery_input = state.execution.as_ref().and_then(|execution| {
+                execution.delivery.as_ref().map(|delivery| {
                     (
-                        port.desired_connector,
-                        port.visible_connector,
-                        port.desired_mounted,
+                        delivery.indexed_generation,
+                        delivery.indexed_revision,
+                        delivery.indexed_sealed,
                     )
-                };
-                let connector_id = if let Some(selection) = self.candidate_selections.get(port_id) {
-                    *selection
-                } else {
-                    match desired_connector {
-                        None => None,
-                        // Projection/activation belongs to the measure pass;
-                        // this final selection step must not retry a failed
-                        // candidate with an arbitrary width after layout.
-                        Some(id) if port_mounted && self.connector_is_candidate_ready(id) => {
-                            Some(id)
-                        }
-                        Some(_) => visible_connector,
-                    }
-                };
-                if let Some(connector_id) = connector_id {
-                    self.touch_connector(connector_id);
-                }
-                Ok(ContentBinding {
-                    port_id: *port_id,
-                    connector_id,
                 })
+            });
+            let port = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+            let _port = port
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
+            (
+                state.source.clone(),
+                state.source.id(),
+                state.generation,
+                state.requested,
+                state.subscribed,
+                state.control_revision,
+                deadline,
+                state.candidate_delivery_frontier,
+                delivery_input,
+                state.delivery_revision,
+            )
+        };
+        Ok(PreparedContentConnector {
+            id: connector_id,
+            record,
+            source,
+            source_id,
+            generation,
+            requested,
+            subscribed,
+            control_revision,
+            deadline,
+            visible,
+            delivery_frontier,
+            delivery_input,
+            delivery_revision,
+        })
+    }
+
+    /// Captures only the changed Port/Connector records needed to promote one
+    /// prepared content candidate. This is the only place where the live
+    /// Port/Connector maps are resolved for the commit. Receipt-time code
+    /// consumes the resulting Arc-backed plan and performs no handle lookup,
+    /// validity rediscovery, or temporary registry-wide scan.
+    pub(crate) fn prepare_content_commit(&mut self) -> Result<PreparedContentCommit> {
+        let mut changed_port_ids = self
+            .candidate_binding_changes
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        changed_port_ids.sort_unstable();
+        let changed_port_count = changed_port_ids.len();
+        let mut ports = Vec::with_capacity(changed_port_count);
+        let mut changed_ports = Vec::with_capacity(changed_port_count);
+        for port_id in changed_port_ids {
+            let port = self.ports.get(&port_id).cloned().ok_or_else(|| {
+                anyhow!(
+                    "INTERNAL_INVARIANT: ContentPort {port_id} disappeared during candidate preparation"
+                )
+            })?;
+            let (mounted, desired_connector) = {
+                let state = port.lock().map_err(|_| {
+                    anyhow!("ContentPort lock is poisoned during candidate preparation")
+                })?;
+                (state.desired_mounted, state.desired_connector)
+            };
+            let next_connector = if mounted {
+                self.candidate_selections
+                    .get(&port_id)
+                    .copied()
+                    .unwrap_or(desired_connector)
+            } else {
+                None
+            };
+            changed_ports.push((port_id, mounted, next_connector));
+        }
+        let mut connector_ids = HashSet::with_capacity(changed_port_count * 2);
+        let mut add_port = |port_id: u64, mounted: bool, next_id: Option<u64>| -> Result<()> {
+            let record = self.ports.get(&port_id).cloned().ok_or_else(|| {
+                anyhow!(
+                    "INTERNAL_INVARIANT: ContentPort {port_id} disappeared during candidate preparation"
+                )
+            })?;
+            let (old_id, port_live) = {
+                let state = record.lock().map_err(|_| {
+                    anyhow!("ContentPort lock is poisoned during candidate preparation")
+                })?;
+                (
+                    state.visible_connector,
+                    state.lifecycle == PortLifecycle::Live,
+                )
+            };
+            if !port_live {
+                return Err(anyhow!(
+                    "INTERNAL_INVARIANT: ContentPort {port_id} became disposed during candidate preparation"
+                ));
+            }
+            if !mounted && next_id.is_some() {
+                return Err(anyhow!(
+                    "INTERNAL_INVARIANT: unmounted ContentPort {port_id} has a visible candidate"
+                ));
+            }
+            let old_control_revision = if let Some(id) = old_id {
+                let connector = self.connectors.get(&id).cloned().ok_or_else(|| {
+                        anyhow!(
+                            "INTERNAL_INVARIANT: visible Connector {id} disappeared during candidate preparation"
+                        )
+                    })?;
+                let control_revision = connector
+                    .lock()
+                    .map_err(|_| {
+                        anyhow!("Connector lock is poisoned during candidate preparation")
+                    })?
+                    .control_revision;
+                Some(control_revision)
+            } else {
+                None
+            };
+            if let Some(id) = old_id {
+                connector_ids.insert(id);
+            }
+            if let Some(id) = next_id {
+                let connector = self.connectors.get(&id).cloned().ok_or_else(|| {
+                        anyhow!(
+                            "INTERNAL_INVARIANT: candidate Connector {id} disappeared during preparation"
+                        )
+                    })?;
+                let belongs = connector
+                    .lock()
+                    .map_err(|_| {
+                        anyhow!("Connector lock is poisoned during candidate preparation")
+                    })?
+                    .port
+                    .upgrade()
+                    .is_some_and(|owner| Arc::ptr_eq(&owner, &record));
+                if !belongs {
+                    return Err(anyhow!(
+                        "INTERNAL_INVARIANT: Connector {id} does not belong to ContentPort {port_id}"
+                    ));
+                }
+                if Some(id) != old_id
+                    && !self.connector_is_candidate_ready(id)?
+                    && !self.in_flight_connectors.contains(&id)
+                {
+                    return Err(anyhow!(
+                        "INTERNAL_INVARIANT: Connector {id} was not prepared for visible commit"
+                    ));
+                }
+                connector_ids.insert(id);
+            }
+            self.candidate_touched_ports.insert(port_id);
+            ports.push(PreparedContentPort {
+                id: port_id,
+                record,
+                mounted,
+                old_connector_id: old_id,
+                old_connector_index: None,
+                old_control_revision,
+                next_connector_id: next_id,
+                next_connector_index: None,
+                retry_selection: false,
+            });
+            Ok(())
+        };
+
+        for (port_id, mounted, next_connector) in changed_ports {
+            add_port(port_id, mounted, next_connector)?;
+        }
+
+        // A content-only candidate has no binding change, but its touched
+        // Connector still owns the prepared projection/frontier that must be
+        // promoted by the receipt rather than discarded by cleanup.
+        connector_ids.extend(self.candidate_touched_connectors.iter().copied());
+        let mut connector_ids = connector_ids.into_iter().collect::<Vec<_>>();
+        connector_ids.sort_unstable();
+        let mut connectors = Vec::with_capacity(connector_ids.len());
+        let visible_connector_ids = ports
+            .iter()
+            .filter(|port| port.mounted)
+            .filter_map(|port| port.next_connector_id)
+            .collect::<HashSet<_>>();
+        let hidden_connector_ids = ports
+            .iter()
+            .filter_map(|port| {
+                port.old_connector_id
+                    .filter(|id| Some(*id) != port.next_connector_id)
             })
-            .collect()
+            .collect::<HashSet<_>>();
+        for connector_id in connector_ids {
+            self.candidate_touched_connectors.insert(connector_id);
+            let visible = if visible_connector_ids.contains(&connector_id) {
+                true
+            } else if hidden_connector_ids.contains(&connector_id) {
+                false
+            } else {
+                self.connectors
+                    .get(&connector_id)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "INTERNAL_INVARIANT: touched Connector {connector_id} disappeared during candidate preparation"
+                        )
+                    })?
+                    .lock()
+                    .map_err(|_| {
+                        anyhow!(
+                            "Connector lock is poisoned during candidate preparation"
+                        )
+                    })?
+                    .visible
+            };
+            connectors.push(self.prepare_connector_commit(connector_id, visible)?);
+        }
+        // Keep Connector records in the same Source-ID order used by the
+        // merged lock plan. Port records retain direct prepared indexes, so
+        // receipt-time association never searches this vector.
+        connectors.sort_unstable_by_key(|connector| (connector.source_id, connector.id));
+        // Ensure every prepared visible deadline has an owned slot before the
+        // backend receipt. Receipt-time promotion only updates/removes these
+        // existing entries; newer control operations may consume capacity
+        // without making the old candidate depend on spare shared space.
+        for connector in &connectors {
+            if connector.visible
+                && let Some(deadline) = connector.deadline
+            {
+                self.active_connectors.insert(connector.id);
+                self.active_deadlines.insert(connector.id, deadline);
+            }
+        }
+        let mut sources = Vec::with_capacity(connectors.len());
+        for connector in &connectors {
+            sources.push(PreparedContentSource {
+                id: connector.source_id,
+                source: connector.source.clone(),
+            });
+        }
+        sources.sort_unstable_by_key(|source| source.id);
+        sources.dedup_by_key(|source| source.id);
+        // Preflight the merged Source lock plan in global Source-ID order.
+        // Receipt-time code uses the same candidate-owned order and never
+        // deduplicates Source Arcs with a linear pointer scan.
+        for source in &sources {
+            let _guard = source.source.record.lock().map_err(|_| {
+                anyhow!("content Source lock is poisoned during candidate preparation")
+            })?;
+        }
+        let mut source_cleanups = Vec::with_capacity(connectors.len());
+        for connector in &connectors {
+            // Keep one candidate-owned cleanup slot for every Connector that
+            // this candidate hides. A newer disposal can arrive while the
+            // receipt is pending even when the Connector was already
+            // unsubscribed at capture; the commit then recomputes membership
+            // release from the current lifecycle without rediscovering the
+            // record through a registry scan.
+            if !connector.visible {
+                source_cleanups.push(PreparedSourceCleanup {
+                    source: connector.source.clone(),
+                    source_id: connector.source_id,
+                    record: connector.record.clone(),
+                    connector_id: connector.id,
+                    connector_generation: connector.generation,
+                    unsubscribe: connector.subscribed,
+                    error: Arc::new(ContentConnectorError {
+                        code: "SOURCE_CLEANUP_PENDING".to_owned(),
+                        diagnostic: format!(
+                            "Source {} cleanup for Connector {} was deferred",
+                            connector.source_id, connector.id
+                        ),
+                    }),
+                });
+            }
+        }
+        source_cleanups.sort_unstable_by_key(|cleanup| (cleanup.source_id, cleanup.connector_id));
+        // A Source lock can become poisoned after preparation but before the
+        // logical frame receipt commits.  Reserve the deferred-cleanup
+        // capacity now so conservative post-promotion retention cannot make
+        // receipt completion fallible through vector/table growth.
+        self.pending_source_cleanups.reserve(source_cleanups.len());
+        self.pending_source_cleanup_ids
+            .reserve(source_cleanups.len());
+
+        let connector_indexes = connectors
+            .iter()
+            .enumerate()
+            .map(|(index, connector)| (connector.id, index))
+            .collect::<HashMap<_, _>>();
+        for port in &mut ports {
+            port.old_connector_index = port.old_connector_id.map(|id| {
+                *connector_indexes
+                    .get(&id)
+                    .expect("prepared old Connector must be indexed")
+            });
+            port.next_connector_index = port.next_connector_id.map(|id| {
+                *connector_indexes
+                    .get(&id)
+                    .expect("prepared next Connector must be indexed")
+            });
+            let desired = port
+                .record
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned during candidate preparation"))?
+                .desired_connector;
+            let active_desired = desired.filter(|desired_id| {
+                connector_indexes
+                    .get(desired_id)
+                    .is_some_and(|index| connectors[*index].requested || connectors[*index].visible)
+            });
+            port.retry_selection = port.next_connector_id != active_desired;
+        }
+        let mut binding_changes = Vec::with_capacity(self.candidate_binding_changes.len());
+        for (port_index, port) in ports.iter().enumerate() {
+            let revision = self
+                .candidate_binding_revisions
+                .get(&port.id)
+                .copied()
+                .unwrap_or(0);
+            binding_changes.push(PreparedContentBindingChange {
+                port_index,
+                revision,
+            });
+        }
+        crate::perf::add(
+            crate::perf::Counter::ContentCandidateRecordsPrepared,
+            (ports.len() + connectors.len() + sources.len()) as u64,
+        );
+        self.candidate_commit_prepared = true;
+        Ok(PreparedContentCommit {
+            ports,
+            connectors,
+            sources,
+            source_cleanups,
+            binding_changes,
+        })
     }
 
     /// Applies the native/unit-only operational failure hook at candidate
@@ -3851,13 +4625,24 @@ impl ContentHostRegistry {
         let mut state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-        if state.activation_failure.is_none() {
-            return Ok(false);
-        }
         if state.lifecycle != ConnectorLifecycle::Live || !state.requested || state.visible {
+            if state.activation_failure.is_none() {
+                return Ok(false);
+            }
             return Err(anyhow!(
                 "INTERNAL_INVARIANT: activation failure targeted a non-candidate Connector {connector_id}"
             ));
+        }
+        if state.error.is_some() && state.projection_failure_key.is_some() {
+            // One candidate may measure the same Connector at several widths
+            // (for example an unconstrained probe followed by the committed
+            // width). Preserve the failed attempt across those probes instead
+            // of consuming a synthetic failure once and accidentally selecting
+            // the Connector on a later width pass in the same frame.
+            return Ok(true);
+        }
+        if state.activation_failure.is_none() {
+            return Ok(false);
         }
         // Capture the revision and input key at the start of the failed
         // attempt. A concurrent Source mutation may commit while the host is
@@ -3894,17 +4679,11 @@ impl ContentHostRegistry {
     /// Retains the Connector IDs referenced by a candidate frame. Control
     /// mutations accepted while a backend receipt is in flight must not
     /// destroy or detach an identity that the captured candidate still uses.
-    pub(crate) fn begin_candidate(&mut self, bindings: &[ContentBinding]) {
-        for binding in bindings {
-            self.touch_port(binding.port_id);
-            if let Some(connector_id) = binding.connector_id {
-                self.touch_connector(connector_id);
-            }
+    pub(crate) fn begin_prepared_candidate(&mut self, plan: &PreparedContentCommit) {
+        self.in_flight_connectors.clear();
+        for connector in &plan.connectors {
+            self.in_flight_connectors.insert(connector.id);
         }
-        self.in_flight_connectors = bindings
-            .iter()
-            .filter_map(|binding| binding.connector_id)
-            .collect();
     }
 
     /// Releases the candidate lease after its logical frame commit. A
@@ -3913,10 +4692,17 @@ impl ContentHostRegistry {
     /// disposal semantics.
     pub(crate) fn end_candidate(&mut self) {
         self.in_flight_connectors.clear();
-        self.clear_candidate_projections();
+        // Candidate projection cleanup is staged in PreparedContentCommit and
+        // runs before this receipt-time lease release.  Keeping this method
+        // to constant-time ownership flags avoids a post-receipt registry scan
+        // and cannot consume newer desired operations.
+        self.candidate_selections.clear();
+        self.candidate_binding_changes.clear();
+        self.candidate_binding_revisions.clear();
         self.candidate_touched_connectors.clear();
         self.candidate_touched_ports.clear();
         self.candidate_capture_active = false;
+        self.candidate_commit_prepared = false;
         self.candidate_source_snapshots.borrow_mut().clear();
     }
 
@@ -3937,7 +4723,10 @@ impl ContentHostRegistry {
         self.finalize_disposed_connectors(&touched);
         self.candidate_touched_connectors.clear();
         self.candidate_touched_ports.clear();
+        self.candidate_binding_changes.clear();
+        self.candidate_binding_revisions.clear();
         self.candidate_capture_active = false;
+        self.candidate_commit_prepared = false;
         self.candidate_source_snapshots.borrow_mut().clear();
     }
 
@@ -3945,24 +4734,26 @@ impl ContentHostRegistry {
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return;
         };
-        let Ok(state) = connector.lock() else {
-            return;
-        };
+        let state = connector
+            .lock()
+            .expect("Connector lock must remain usable while aborting a candidate");
         let source = state.source.clone();
         let generation = state.generation;
         let visible = state.visible;
         let requested = state.requested;
-        let port_mounted = state
-            .port
-            .upgrade()
-            .and_then(|port| port.lock().ok().map(|port| port.desired_mounted))
-            .unwrap_or(false);
+        let port_mounted = state.port.upgrade().is_some_and(|port| {
+            port.lock()
+                .expect("ContentPort lock must remain usable while aborting a candidate")
+                .desired_mounted
+        });
         drop(state);
         if !visible && (!requested || !port_mounted) {
-            self.unsubscribe_connector(&source, connector_id, generation);
+            self.unsubscribe_connector(&source, connector_id, generation)
+                .expect("aborted candidate Source unsubscribe must be valid");
         }
     }
 
+    #[cfg(test)]
     fn promote_candidate_projection(&mut self, connector_id: u64) {
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return;
@@ -3978,16 +4769,337 @@ impl ContentHostRegistry {
 
     fn clear_candidate_projections(&mut self) {
         self.candidate_selections.clear();
-        let connector_ids = self
-            .candidate_touched_connectors
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        for connector_id in connector_ids {
-            if let Some(connector) = self.connectors.get(&connector_id).cloned()
-                && let Ok(mut state) = connector.lock()
+        for connector_id in self.candidate_touched_connectors.iter() {
+            let Some(connector) = self.connectors.get(connector_id).cloned() else {
+                continue;
+            };
+            let mut state = connector
+                .lock()
+                .expect("Connector lock must remain usable during candidate cleanup");
+            state.candidate_projection = None;
+            state.candidate_delivery_frontier = state.committed_delivery_frontier;
+            if !state.visible {
+                state.committed_projection = None;
+                state.projection_cache.clear();
+                state.prepared_paint_cache.clear();
+                state.semantic_cache.clear();
+                state.prefix_proof_cache.clear();
+                state.projected_source_revision = None;
+                state.execution = None;
+                state.delivery_revision = 0;
+                state.candidate_delivery_frontier = StreamOffset::ZERO;
+                state.committed_delivery_frontier = StreamOffset::ZERO;
+            }
+        }
+        for connector_id in &self.candidate_touched_connectors {
+            let active = self.connectors.get(connector_id).is_some_and(|connector| {
+                let state = connector
+                    .lock()
+                    .expect("Connector lock must remain usable during candidate cleanup");
+                state.visible || state.requested
+            });
+            if !active {
+                self.active_deadlines.remove(connector_id);
+                self.active_connectors.remove(connector_id);
+            }
+        }
+    }
+
+    fn defer_source_cleanup(&mut self, cleanup: &PreparedSourceCleanup) {
+        // `prepare_content_commit` reserves both candidate-owned tables
+        // before the backend handoff.  Receipt-time deferral therefore keeps
+        // the old Source membership without growing a shared table.
+        if self.pending_source_cleanup_ids.insert(cleanup.connector_id) {
+            self.pending_source_cleanups.push(cleanup.clone());
+        }
+    }
+
+    fn finish_source_cleanup(&mut self, connector_id: u64) {
+        if self.pending_source_cleanup_ids.remove(&connector_id) {
+            self.pending_source_cleanups
+                .retain(|cleanup| cleanup.connector_id != connector_id);
+        }
+    }
+
+    /// Promotes a candidate association using only the records captured by
+    /// `PreparedContentCommit`. All potentially poisonable locks are checked
+    /// before the first visible mutation. Receipt-time work uses the
+    /// candidate's indexed records and preallocated vectors; it does not build
+    /// guard arrays, resolve handles, scan registries, or grow shared
+    /// association tables. Returns `true` when a Source cleanup was deferred
+    /// after logical promotion and therefore requires another host candidate.
+    pub(crate) fn commit_prepared(&mut self, plan: &PreparedContentCommit) -> Result<bool> {
+        // Preflight every independently poisonable record without retaining a
+        // guard collection across the backend receipt. Host serialization plus
+        // this complete pass ensures the body below has no ordinary fallible
+        // operation after the first visible mutation.
+        for port in &plan.ports {
+            let _guard = port
+                .record
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned during visible commit"))?;
+        }
+        for connector in &plan.connectors {
+            let _guard = connector
+                .record
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned during visible commit"))?;
+        }
+        // Source records are shared and independently mutable.  Preflight the
+        // merged candidate-owned lock plan before any visible association
+        // mutation.  Cleanup itself is intentionally deferred until after the
+        // logical promotion: a Source that becomes poisoned between this
+        // check and cleanup must retain its old membership/subscription rather
+        // than partially tearing down an old-visible Connector.
+        for source in &plan.sources {
+            let _guard =
+                source.source.record.lock().map_err(|_| {
+                    anyhow!("content Source lock is poisoned during visible commit")
+                })?;
+        }
+
+        // --- all ordinary pre-promotion fallibility ends above this line ---
+        for connector in &plan.connectors {
+            let mut state = connector
+                .record
+                .lock()
+                .expect("prepared Connector lock must remain usable after preflight");
+            if connector.visible
+                && let Some(projection) = state.candidate_projection.take()
             {
-                state.candidate_projection = None;
+                state.projected_source_revision = Some(projection.key.source_revision);
+                let current_delivery_input = state.execution.as_ref().and_then(|execution| {
+                    execution.delivery.as_ref().map(|delivery| {
+                        (
+                            delivery.indexed_generation,
+                            delivery.indexed_revision,
+                            delivery.indexed_sealed,
+                        )
+                    })
+                });
+                if current_delivery_input == connector.delivery_input
+                    && state.delivery_revision == connector.delivery_revision
+                {
+                    state.committed_delivery_frontier = connector.delivery_frontier;
+                }
+                state.committed_projection = Some(projection);
+            }
+        }
+
+        for port in &plan.ports {
+            if let Some(old_index) = port.old_connector_index
+                && Some(old_index) != port.next_connector_index
+            {
+                let old = &plan.connectors[old_index];
+                let preserve_newer_control = port.old_control_revision.is_some_and(|revision| {
+                    old.record
+                        .lock()
+                        .expect("prepared old Connector lock must remain usable")
+                        .control_revision
+                        != revision
+                });
+                set_connector_visible_committed(
+                    &mut self.active_deadlines,
+                    &mut self.active_connectors,
+                    old,
+                    false,
+                    preserve_newer_control,
+                );
+            }
+            let mut state = port
+                .record
+                .lock()
+                .expect("prepared ContentPort lock must remain usable after preflight");
+            state.visible_mounted = port.mounted;
+            state.visible_connector = if port.mounted {
+                port.next_connector_id
+            } else {
+                None
+            };
+            drop(state);
+            if let Some(next_index) = port.next_connector_index {
+                set_connector_visible_committed(
+                    &mut self.active_deadlines,
+                    &mut self.active_connectors,
+                    &plan.connectors[next_index],
+                    true,
+                    false,
+                );
+            }
+        }
+        for change in &plan.binding_changes {
+            let port = &plan.ports[change.port_index];
+            let unresolved = {
+                let state = port
+                    .record
+                    .lock()
+                    .expect("prepared ContentPort lock must remain usable after preflight");
+                let mounted_unresolved = state.desired_mounted != state.visible_mounted;
+                let selection_unresolved =
+                    state.desired_connector != state.visible_connector && port.retry_selection;
+                mounted_unresolved || selection_unresolved
+            };
+            if !unresolved
+                && self.pending_binding_revisions.get(&port.id).copied() == Some(change.revision)
+            {
+                self.pending_binding_changes.remove(&port.id);
+                self.pending_binding_revisions.remove(&port.id);
+            }
+        }
+
+        // Deadline membership is promoted from the same prepared connector
+        // records. Newer desired operations retain their own pending epoch;
+        // no current Source lookup is needed at receipt time.
+        for connector in &plan.connectors {
+            let state = connector
+                .record
+                .lock()
+                .expect("prepared Connector lock must remain usable after preflight");
+            let current_delivery_input = state.execution.as_ref().and_then(|execution| {
+                execution.delivery.as_ref().map(|delivery| {
+                    (
+                        delivery.indexed_generation,
+                        delivery.indexed_revision,
+                        delivery.indexed_sealed,
+                    )
+                })
+            });
+            let current_delivery_revision = state.delivery_revision;
+            let current_control_revision = state.control_revision;
+            drop(state);
+            if connector.visible {
+                if current_delivery_input != connector.delivery_input
+                    || current_delivery_revision != connector.delivery_revision
+                    || current_control_revision != connector.control_revision
+                {
+                    // A newer Source wake advanced this Connector while the
+                    // old receipt was outstanding. Its newer deadline/index
+                    // is already authoritative and must not be overwritten
+                    // by the old candidate's schedule.
+                    continue;
+                }
+                if let Some(deadline) = connector.deadline {
+                    if let Some(current) = self.active_deadlines.get_mut(&connector.id) {
+                        *current = deadline;
+                    }
+                } else {
+                    self.active_deadlines.remove(&connector.id);
+                    self.active_connectors.remove(&connector.id);
+                }
+            } else {
+                self.active_deadlines.remove(&connector.id);
+                self.active_connectors.remove(&connector.id);
+            }
+        }
+
+        for connector in &plan.connectors {
+            let mut state = connector
+                .record
+                .lock()
+                .expect("prepared Connector lock must remain usable after preflight");
+            if state.lifecycle == ConnectorLifecycle::Disposed {
+                continue;
+            }
+            if state.visible {
+                state.cleanup_error = None;
+                state.phase = if state.lifecycle == ConnectorLifecycle::Disposing {
+                    "disposing"
+                } else {
+                    "active"
+                };
+            } else if state.lifecycle == ConnectorLifecycle::Disposing {
+                state.phase = "disposing";
+            } else if state.requested {
+                state.phase = if state.error.is_some() {
+                    "failed"
+                } else if connector.visible {
+                    "activation-pending"
+                } else {
+                    "waiting-for-mount"
+                };
+            } else {
+                state.phase = "idle";
+            }
+        }
+        // A Connector reactivated while its older cleanup was pending no
+        // longer needs that cleanup.  It was included in this candidate via
+        // the pending ID table, so cancel the stale deferred entry without a
+        // registry scan.
+        for connector in &plan.connectors {
+            if connector.visible {
+                self.finish_source_cleanup(connector.id);
+            }
+        }
+
+        // Source association cleanup is deliberately after logical
+        // promotion.  If a Source becomes poisoned in this narrow window,
+        // retain both its membership and wake subscription and retry from a
+        // later candidate; do not report the already-promoted frame as an
+        // aborted commit or partially tear down an old-visible Connector.
+        #[cfg(test)]
+        let mut source_cleanup_completed = false;
+        for cleanup in &plan.source_cleanups {
+            #[cfg(test)]
+            if source_cleanup_completed
+                && self.test_poison_source_after_first_cleanup == Some(cleanup.source_id)
+            {
+                self.test_poison_source_after_first_cleanup = None;
+                let source_record = cleanup.source.record.clone();
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _guard = source_record.lock().unwrap();
+                    panic!("intentional post-promotion Source cleanup failure");
+                }));
+            }
+            let Ok(mut state) = cleanup.record.lock() else {
+                self.defer_source_cleanup(cleanup);
+                continue;
+            };
+            let unsubscribe = cleanup.unsubscribe && !state.requested && state.subscribed;
+            let release_membership =
+                !state.membership_released && state.lifecycle == ConnectorLifecycle::Disposing;
+            if !unsubscribe && !release_membership {
+                state.cleanup_error = None;
+                drop(state);
+                self.finish_source_cleanup(cleanup.connector_id);
+                continue;
+            }
+            let Ok(mut source) = cleanup.source.record.lock() else {
+                state.cleanup_error = Some(Arc::clone(&cleanup.error));
+                drop(state);
+                self.defer_source_cleanup(cleanup);
+                continue;
+            };
+            if unsubscribe {
+                remove_source_subscription_locked(
+                    &mut source,
+                    &self.owner_host,
+                    cleanup.connector_id,
+                    cleanup.connector_generation,
+                );
+                state.subscribed = false;
+            }
+            if release_membership {
+                release_source_membership_locked(&mut source);
+                state.membership_released = true;
+            }
+            drop(source);
+            state.cleanup_error = None;
+            drop(state);
+            self.finish_source_cleanup(cleanup.connector_id);
+            #[cfg(test)]
+            {
+                source_cleanup_completed = true;
+            }
+        }
+        for connector in &plan.connectors {
+            let mut state = connector
+                .record
+                .lock()
+                .expect("prepared Connector lock must remain usable during cleanup");
+            state.candidate_projection = None;
+            if state.control_revision == connector.control_revision
+                && state.delivery_revision == connector.delivery_revision
+            {
                 state.candidate_delivery_frontier = state.committed_delivery_frontier;
                 if !state.visible {
                     state.committed_projection = None;
@@ -4002,117 +5114,22 @@ impl ContentHostRegistry {
                     state.committed_delivery_frontier = StreamOffset::ZERO;
                 }
             }
-        }
-        for connector_id in &self.candidate_touched_connectors {
-            let active = self
-                .connectors
-                .get(connector_id)
-                .and_then(|connector| connector.lock().ok())
-                .is_some_and(|state| state.visible || state.requested);
+            let active = state.visible || state.requested;
             if !active {
-                self.active_deadlines.remove(connector_id);
-                self.active_connectors.remove(connector_id);
+                self.active_deadlines.remove(&connector.id);
+                self.active_connectors.remove(&connector.id);
             }
         }
-    }
-
-    pub(crate) fn commit_visible(&mut self, bindings: &[ContentBinding]) {
-        for binding in bindings {
-            self.touch_port(binding.port_id);
-            if let Some(connector_id) = binding.connector_id {
-                self.touch_connector(connector_id);
-                self.promote_candidate_projection(connector_id);
-            }
-        }
-        let mut port_ids = self
-            .candidate_touched_ports
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        if port_ids.is_empty() {
-            port_ids.extend(self.visible_ports.iter().copied());
-        }
-        crate::perf::add(
-            crate::perf::Counter::ContentRegistryPortScans,
-            port_ids.len() as u64,
-        );
-        for port_id in port_ids {
-            let Some(port) = self.ports.get(&port_id).cloned() else {
-                continue;
-            };
-            let old_visible = port.lock().ok().and_then(|port| port.visible_connector);
-            let binding = bindings.iter().find(|binding| binding.port_id == port_id);
-            let mounted = binding.is_some();
-            let next_visible = binding.and_then(|binding| binding.connector_id);
-            if let Some(old_id) = old_visible {
-                self.touch_connector(old_id);
-            }
-            if let Some(old_id) = old_visible
-                && Some(old_id) != next_visible
-            {
-                self.set_connector_visible(old_id, false);
-            }
-            if let Ok(mut port_state) = port.lock() {
-                port_state.visible_mounted = mounted;
-                port_state.visible_connector = if port_state.visible_mounted {
-                    next_visible
-                } else {
-                    None
-                };
-            }
-            if mounted {
-                self.visible_ports.insert(port_id);
-            } else {
-                self.visible_ports.remove(&port_id);
-            }
-            if let Some(next_id) = next_visible
-                && mounted
-            {
-                self.touch_connector(next_id);
-                self.set_connector_visible(next_id, true);
-            }
-        }
-        let connector_ids = self
-            .candidate_touched_connectors
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        for connector_id in &connector_ids {
-            let Some(connector) = self.connectors.get(connector_id).cloned() else {
-                continue;
-            };
-            let Ok(mut state) = connector.lock() else {
-                continue;
-            };
-            if state.lifecycle == ConnectorLifecycle::Disposed {
+        for connector in &plan.connectors {
+            if self.pending_source_cleanup_ids.contains(&connector.id) {
                 continue;
             }
-            let port_mounted = state
-                .port
-                .upgrade()
-                .and_then(|port| port.lock().ok().map(|port| port.visible_mounted))
-                .unwrap_or(false);
-            if state.visible {
-                state.phase = if state.lifecycle == ConnectorLifecycle::Disposing {
-                    "disposing"
-                } else {
-                    "active"
-                };
-            } else if state.lifecycle == ConnectorLifecycle::Disposing {
-                state.phase = "disposing";
-            } else if state.requested {
-                state.phase = if state.error.is_some() && port_mounted {
-                    "failed"
-                } else if port_mounted {
-                    "activation-pending"
-                } else {
-                    "waiting-for-mount"
-                };
-            } else {
-                state.phase = "idle";
-            }
+            remove_prepared_connector_committed(&mut self.connectors, connector);
         }
-        self.finalize_disposed_connectors(&connector_ids);
+        self.candidate_binding_changes.clear();
+        self.candidate_binding_revisions.clear();
+        self.candidate_commit_prepared = false;
+        Ok(!self.pending_source_cleanup_ids.is_empty())
     }
 
     pub(crate) fn fail_next_activation(
@@ -4154,7 +5171,16 @@ impl ContentHostRegistry {
             .get(&connector_id)
             .cloned()
             .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {connector_id} is unavailable"))?;
-        let (port, generation, source, was_requested, was_selected, port_mounted, was_failed) = {
+        let (
+            port,
+            generation,
+            source,
+            was_requested,
+            was_selected,
+            port_mounted,
+            was_failed,
+            smooth,
+        ) = {
             let state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -4182,6 +5208,7 @@ impl ContentHostRegistry {
                 was_selected,
                 port_mounted,
                 state.error.is_some(),
+                state.funnel.smooth_config().is_some(),
             )
         };
         if was_requested && was_selected && !was_failed {
@@ -4207,10 +5234,19 @@ impl ContentHostRegistry {
                 .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
             port_state.desired_connector = Some(connector_id);
         }
+        self.mark_binding_change(
+            port.lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .id,
+        );
         {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            state.control_revision = state
+                .control_revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("Connector control revision exhausted"))?;
             state.requested = true;
             state.error = None;
             state.failed_source_revision = None;
@@ -4221,14 +5257,24 @@ impl ContentHostRegistry {
                 "waiting-for-mount"
             };
         }
-        self.active_connectors.insert(connector_id);
+        if smooth && port_mounted {
+            self.active_connectors.insert(connector_id);
+        } else {
+            // Immediate delivery has no native deadline, and a smooth
+            // Connector selected before its Port is mounted is cold. Keep
+            // this index reserved for mounted connectors whose clock can
+            // actually advance so unrelated host work cannot trigger parser
+            // or delivery work for a cold destination.
+            self.active_connectors.remove(&connector_id);
+        }
         if port_mounted {
             self.subscribe_connector(connector_id, &source, generation, host)?;
         }
         // The request itself is not the activation/projection operation. A
-        // mounted candidate is processed by candidate_bindings inside the
-        // frame transaction, where injected/real operational failure can fall
-        // back to the committed Connector without changing the visible frame.
+        // A mounted candidate is processed during content measurement inside
+        // the frame transaction, where injected/real operational failure can
+        // fall back to the committed Connector without changing the visible
+        // frame.
         Ok(port_mounted)
     }
 
@@ -4278,6 +5324,7 @@ impl ContentHostRegistry {
         if !was_requested && !was_visible && !in_flight {
             return Ok(false);
         }
+        self.mark_binding_change(port_id);
         if was_selected
             && port
                 .lock()
@@ -4294,9 +5341,16 @@ impl ContentHostRegistry {
         // until that receipt commits or aborts; otherwise the old candidate
         // can resurrect a deactivated Connector without a follow-up epoch.
         if !was_visible && !in_flight {
-            self.unsubscribe_connector(&source, connector_id, generation);
+            self.unsubscribe_connector(&source, connector_id, generation)?;
         }
-        if let Ok(mut state) = connector.lock() {
+        let mut state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        state.control_revision = state
+            .control_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("Connector control revision exhausted"))?;
+        {
             state.requested = false;
             state.phase = if state.visible { "active" } else { "idle" };
         }
@@ -4331,6 +5385,10 @@ impl ContentHostRegistry {
                 return Ok(false);
             }
             state.lifecycle = ConnectorLifecycle::Disposing;
+            state.control_revision = state
+                .control_revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("Connector control revision exhausted"))?;
             state.requested = false;
             state.phase = "disposing";
             let port = state
@@ -4360,8 +5418,9 @@ impl ContentHostRegistry {
             .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
             .id;
         self.touch_port(port_id);
+        self.mark_binding_change(port_id);
         if !visible && !in_flight {
-            self.unsubscribe_connector(&source, connector_id, generation);
+            self.unsubscribe_connector(&source, connector_id, generation)?;
             self.active_connectors.remove(&connector_id);
         }
         if desired.is_some()
@@ -4405,7 +5464,6 @@ impl ContentHostRegistry {
             state.lifecycle = PortLifecycle::Disposed;
         }
         self.ports.remove(&id);
-        self.visible_ports.remove(&id);
         Ok(())
     }
 
@@ -4425,8 +5483,26 @@ impl ContentHostRegistry {
             }
         }
         self.ports.clear();
-        self.visible_ports.clear();
         self.active_connectors.clear();
+        self.active_sync_scratch.clear();
+        self.due_connector_scratch.clear();
+        self.candidate_selections.clear();
+        self.pending_binding_changes.clear();
+        self.pending_binding_revisions.clear();
+        self.candidate_binding_changes.clear();
+        self.candidate_binding_revisions.clear();
+        self.candidate_touched_connectors.clear();
+        self.candidate_touched_ports.clear();
+        self.pending_source_cleanups.clear();
+        self.pending_source_cleanup_ids.clear();
+        #[cfg(test)]
+        {
+            self.test_poison_source_after_first_cleanup = None;
+        }
+        self.candidate_source_snapshots.borrow_mut().clear();
+        self.candidate_capture_active = false;
+        self.candidate_commit_prepared = false;
+        self.history_adapter = HistoryTerminalAdapter::new();
     }
 
     fn refresh_requested_phase(
@@ -4451,6 +5527,10 @@ impl ContentHostRegistry {
             state.error = None;
             state.failed_source_revision = None;
             state.projection_failure_key = None;
+        }
+        if !mounted && !state.visible {
+            self.active_deadlines.remove(&connector_id);
+            self.active_connectors.remove(&connector_id);
         }
         state.phase = if state.error.is_some() && mounted {
             "failed"
@@ -4499,7 +5579,7 @@ impl ContentHostRegistry {
             (state.source.clone(), state.generation, state.visible)
         };
         if !visible && !self.in_flight_connectors.contains(&connector_id) {
-            self.unsubscribe_connector(&source, connector_id, generation);
+            self.unsubscribe_connector(&source, connector_id, generation)?;
         }
         Ok(())
     }
@@ -4512,6 +5592,10 @@ impl ContentHostRegistry {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            state.control_revision = state
+                .control_revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("Connector control revision exhausted"))?;
             state.requested = false;
             if !state.visible {
                 state.phase = "idle";
@@ -4519,7 +5603,7 @@ impl ContentHostRegistry {
             (state.source.clone(), state.generation, state.visible)
         };
         if !visible && !self.in_flight_connectors.contains(&connector_id) {
-            self.unsubscribe_connector(&source, connector_id, generation);
+            self.unsubscribe_connector(&source, connector_id, generation)?;
         }
         Ok(())
     }
@@ -4549,23 +5633,33 @@ impl ContentHostRegistry {
         Ok(())
     }
 
-    fn unsubscribe_connector(&mut self, source: &HostContentSource, id: u64, generation: u32) {
-        source.unsubscribe(&self.owner_host, id, generation);
-        if let Some(connector) = self.connectors.get(&id)
-            && let Ok(mut state) = connector.lock()
-        {
-            state.subscribed = false;
+    fn unsubscribe_connector(
+        &mut self,
+        source: &HostContentSource,
+        id: u64,
+        generation: u32,
+    ) -> Result<()> {
+        source.unsubscribe(&self.owner_host, id, generation)?;
+        if let Some(connector) = self.connectors.get(&id) {
+            connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?
+                .subscribed = false;
         }
+        Ok(())
     }
 
-    fn set_connector_visible(&mut self, connector_id: u64, visible: bool) {
-        self.touch_connector(connector_id);
-        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
-            return;
-        };
-        let Ok(mut state) = connector.lock() else {
-            return;
-        };
+    fn set_connector_visible_record(
+        &mut self,
+        connector_id: u64,
+        connector: &Arc<Mutex<ConnectorRecord>>,
+        visible: bool,
+        synchronize_deadline: bool,
+        preserve_newer_control: bool,
+    ) -> Result<()> {
+        let mut state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned during visibility update"))?;
         state.visible = visible;
         let source = state.source.clone();
         let generation = state.generation;
@@ -4575,7 +5669,7 @@ impl ContentHostRegistry {
             } else {
                 "active"
             };
-        } else {
+        } else if !preserve_newer_control {
             state.committed_projection = None;
             state.candidate_projection = None;
             state.projection_cache.clear();
@@ -4601,54 +5695,94 @@ impl ContentHostRegistry {
         let requested = state.requested;
         drop(state);
         if visible {
-            self.sync_connector_deadline(connector_id, None);
+            if synchronize_deadline {
+                self.sync_connector_deadline(connector_id, None)?;
+            }
         } else {
             self.active_deadlines.remove(&connector_id);
+            self.active_connectors.remove(&connector_id);
             if !requested {
-                self.active_connectors.remove(&connector_id);
+                source.unsubscribe(&self.owner_host, connector_id, generation)?;
+                connector
+                    .lock()
+                    .map_err(|_| anyhow!("Connector lock is poisoned after unsubscribe"))?
+                    .subscribed = false;
             }
-            self.unsubscribe_connector(&source, connector_id, generation);
         }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn set_connector_visible(&mut self, connector_id: u64, visible: bool) {
+        self.touch_connector(connector_id);
+        let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+            return;
+        };
+        self.set_connector_visible_record(connector_id, &connector, visible, visible, false)
+            .expect("test connector visibility update must succeed");
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
+        self.finish_source_cleanup(connector_id);
         self.active_deadlines.remove(&connector_id);
         self.active_connectors.remove(&connector_id);
         let Some(connector) = self.connectors.remove(&connector_id) else {
             return;
         };
-        if let Ok(mut state) = connector.lock() {
-            state
-                .source
-                .unsubscribe(&self.owner_host, connector_id, state.generation);
-            state.source.release_connector();
-            state.lifecycle = ConnectorLifecycle::Disposed;
-            state.phase = "disposed";
-            state.visible = false;
-            state.requested = false;
-            if let Some(port) = state.port.upgrade()
-                && let Ok(mut port_state) = port.lock()
-            {
-                port_state.connector_ids.remove(&connector_id);
-                if port_state.desired_connector == Some(connector_id) {
-                    port_state.desired_connector = None;
-                }
-                if port_state.visible_connector == Some(connector_id) {
-                    port_state.visible_connector = None;
-                }
+        let mut state = connector
+            .lock()
+            .expect("Connector lock must remain usable during removal");
+        let source = state.source.clone();
+        let generation = state.generation;
+        let subscribed = state.subscribed;
+        let membership_released = state.membership_released;
+        let mut source_guard = source
+            .record
+            .lock()
+            .expect("connector Source lock must remain usable during removal");
+        if subscribed {
+            remove_source_subscription_locked(
+                &mut source_guard,
+                &self.owner_host,
+                connector_id,
+                generation,
+            );
+            state.subscribed = false;
+        }
+        if !membership_released {
+            release_source_membership_locked(&mut source_guard);
+            state.membership_released = true;
+        }
+        drop(source_guard);
+        state.lifecycle = ConnectorLifecycle::Disposed;
+        state.phase = "disposed";
+        state.visible = false;
+        state.requested = false;
+        state.cleanup_error = None;
+        let port = state.port.upgrade();
+        drop(state);
+        if let Some(port) = port {
+            let mut port_state = port
+                .lock()
+                .expect("ContentPort lock must remain usable during removal");
+            port_state.connector_ids.remove(&connector_id);
+            if port_state.desired_connector == Some(connector_id) {
+                port_state.desired_connector = None;
+            }
+            if port_state.visible_connector == Some(connector_id) {
+                port_state.visible_connector = None;
             }
         }
     }
 
     fn finalize_disposed_connectors(&mut self, candidate_ids: &[u64]) {
         for id in candidate_ids.iter().copied() {
-            let removable = self
-                .connectors
-                .get(&id)
-                .and_then(|connector| connector.lock().ok())
-                .is_some_and(|state| {
-                    state.lifecycle == ConnectorLifecycle::Disposing && !state.visible
-                });
+            let removable = self.connectors.get(&id).is_some_and(|connector| {
+                let state = connector
+                    .lock()
+                    .expect("Connector lock must remain usable during finalization");
+                state.lifecycle == ConnectorLifecycle::Disposing && !state.visible
+            });
             if removable {
                 self.remove_connector(id);
             }
@@ -4670,6 +5804,8 @@ impl ContentHostRegistry {
             visible: state.visible,
             projected_source_revision: state.projected_source_revision,
             error: state.error.clone(),
+            cleanup_pending: state.cleanup_error.is_some(),
+            cleanup_error: state.cleanup_error.as_deref().cloned(),
         })
     }
 
@@ -4682,6 +5818,32 @@ impl ContentHostRegistry {
             .lock()
             .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
             .visible_mounted)
+    }
+
+    fn dirty_for_port(&self, port_id: u64, reason: ContentDirtyReason) -> ContentDirty {
+        ContentDirty::new(port_id, None, reason)
+    }
+
+    fn dirty_for_connector(
+        &self,
+        connector_id: u64,
+        reason: ContentDirtyReason,
+    ) -> Result<ContentDirty> {
+        let connector = self
+            .connectors
+            .get(&connector_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {connector_id} is unavailable"))?;
+        let port_id = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
+        Ok(ContentDirty::new(port_id, Some(connector_id), reason))
     }
 
     pub(crate) fn set_history_unit(
@@ -4818,7 +5980,11 @@ impl ContentHostRegistry {
     pub(crate) fn history_unit_retired(&mut self, unit_id: u64) {
         let ports = self.history_adapter.retire_unit(unit_id);
         for port_id in ports {
-            self.visible_ports.remove(&port_id);
+            self.pending_binding_changes.remove(&port_id);
+            self.pending_binding_revisions.remove(&port_id);
+            self.candidate_binding_changes.remove(&port_id);
+            self.candidate_binding_revisions.remove(&port_id);
+            self.candidate_touched_ports.remove(&port_id);
             let connector_ids = if let Some(port) = self.ports.remove(&port_id) {
                 if let Ok(mut state) = port.lock() {
                     state.desired_mounted = false;
@@ -4834,21 +6000,23 @@ impl ContentHostRegistry {
                 HashSet::new()
             };
             for connector_id in connector_ids {
+                self.candidate_touched_connectors.remove(&connector_id);
                 self.remove_connector(connector_id);
             }
         }
     }
 
-    fn connector_is_candidate_ready(&self, id: u64) -> bool {
-        self.connectors
-            .get(&id)
-            .and_then(|connector| connector.lock().ok())
-            .is_some_and(|state| {
-                state.lifecycle == ConnectorLifecycle::Live
-                    && state.requested
-                    && state.error.is_none()
-                    && state.candidate_projection.is_some()
-            })
+    fn connector_is_candidate_ready(&self, id: u64) -> Result<bool> {
+        let Some(connector) = self.connectors.get(&id) else {
+            return Ok(false);
+        };
+        let state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        Ok(state.lifecycle == ConnectorLifecycle::Live
+            && state.requested
+            && state.error.is_none()
+            && state.candidate_projection.is_some())
     }
 
     pub(super) fn source_subscription_is_live(
@@ -4856,18 +6024,18 @@ impl ContentHostRegistry {
         id: u64,
         generation: u32,
         source_revision: u64,
-    ) -> bool {
+    ) -> Result<Option<ContentDirty>> {
         let Some(connector) = self.connectors.get(&id).cloned() else {
-            return false;
+            return Ok(None);
         };
-        let Ok(mut state) = connector.lock() else {
-            return false;
-        };
+        let mut state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
         if state.generation != generation
             || !state.subscribed
             || state.lifecycle == ConnectorLifecycle::Disposed
         {
-            return false;
+            return Ok(None);
         }
         if state.error.is_some()
             && state.requested
@@ -4881,12 +6049,35 @@ impl ContentHostRegistry {
             state.projection_failure_key = None;
             state.phase = "activation-pending";
         }
-        let is_live = state.visible || state.requested || self.in_flight_connectors.contains(&id);
+        let in_flight = self.in_flight_connectors.contains(&id);
+        let cleanup_pending = self.pending_source_cleanup_ids.contains(&id);
+        let port = state
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+        let (port_id, port_mounted) = {
+            let port = port
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
+            (port.id, port.desired_mounted)
+        };
+        let is_live = state.visible
+            || (state.requested && port_mounted)
+            || in_flight
+            // A Source mutation is an independent readiness signal for a
+            // deferred cleanup. It admits exactly one retry candidate; a
+            // persistently poisoned Source is then blocked by the normal
+            // environment failure path rather than spinning on every tick.
+            || cleanup_pending;
         drop(state);
         if is_live {
-            self.sync_connector_deadline(id, None);
+            self.sync_connector_deadline(id, None)?;
         }
-        is_live
+        Ok(is_live.then_some(ContentDirty::new(
+            port_id,
+            Some(id),
+            ContentDirtyReason::SourceInput,
+        )))
     }
 
     pub(crate) fn connector_is_disposed(&self, id: u64) -> bool {
@@ -4894,6 +6085,52 @@ impl ContentHostRegistry {
             .get(&id)
             .and_then(|connector| connector.lock().ok())
             .is_none_or(|state| state.lifecycle == ConnectorLifecycle::Disposed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_connector_for_test(&self, id: u64) -> Result<()> {
+        let connector = self
+            .connectors
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = connector
+                .lock()
+                .expect("Connector must be healthy before poison");
+            panic!("intentional Connector lock poison");
+        }));
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_connector_poison_for_test(&self, id: u64) -> Result<()> {
+        let connector = self
+            .connectors
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| anyhow!("STALE_HANDLE: Connector {id} is unavailable"))?;
+        connector.clear_poison();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_source_after_first_cleanup_for_test(&mut self, source_id: u64) {
+        self.test_poison_source_after_first_cleanup = Some(source_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_source_poison_for_test(&self, source: &HostContentSource) {
+        source.record.clear_poison();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_source_cleanup_count(&self) -> usize {
+        self.pending_source_cleanups.len()
+    }
+
+    pub(crate) fn has_pending_source_cleanup(&self) -> bool {
+        !self.pending_source_cleanup_ids.is_empty()
     }
 
     fn deactivate_port(&mut self, port_id: u64) -> Result<bool> {
@@ -5070,6 +6307,9 @@ impl ContentProvider for ContentHostRegistry {
 
 #[derive(Clone, Debug)]
 pub struct HostContentPort {
+    id: u64,
+    generation: u32,
+    family: ContentFamily,
     record: Arc<Mutex<PortRecord>>,
     host: Weak<Mutex<HostInner>>,
 }
@@ -5077,19 +6317,17 @@ pub struct HostContentPort {
 impl HostContentPort {
     #[must_use]
     pub fn id(&self) -> u64 {
-        self.record.lock().map_or(0, |record| record.id)
+        self.id
     }
 
     #[must_use]
     pub fn generation(&self) -> u32 {
-        self.record.lock().map_or(0, |record| record.generation)
+        self.generation
     }
 
     #[must_use]
     pub fn family(&self) -> ContentFamily {
-        self.record
-            .lock()
-            .map_or(ContentFamily::Text, |record| record.family)
+        self.family
     }
 
     pub fn deactivate(&self) -> Result<WakeDisposition> {
@@ -5098,9 +6336,12 @@ impl HostContentPort {
             .upgrade()
             .ok_or_else(|| anyhow!("HOST_DISPOSED: ContentPort host is gone"))?;
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        let dirty = inner
+            .content
+            .dirty_for_port(self.id(), ContentDirtyReason::SelectionLifecycle);
         let needs_frame = inner.content.deactivate_port(self.id())?;
         if needs_frame {
-            return inner.mark_content_pending();
+            return inner.mark_content_pending(dirty);
         }
         Ok(WakeDisposition::default())
     }
@@ -5137,15 +6378,22 @@ impl HostContentPort {
     }
 
     pub fn is_mounted(&self) -> Result<bool> {
-        self.record
-            .lock()
-            .map(|record| record.visible_mounted)
-            .map_err(|_| anyhow!("ContentPort lock is poisoned"))
+        let host = self
+            .host
+            .upgrade()
+            .ok_or_else(|| anyhow!("HOST_DISPOSED: ContentPort host is gone"))?;
+        host.lock()
+            .map_err(|_| anyhow!("host lock is poisoned"))?
+            .content
+            .port_status(self.id)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct HostContentConnector {
+    id: u64,
+    generation: u32,
+    source_id: u64,
     record: Arc<Mutex<ConnectorRecord>>,
     host: Weak<Mutex<HostInner>>,
 }
@@ -5153,17 +6401,17 @@ pub struct HostContentConnector {
 impl HostContentConnector {
     #[must_use]
     pub fn id(&self) -> u64 {
-        self.record.lock().map_or(0, |record| record.id)
+        self.id
     }
 
     #[must_use]
     pub fn generation(&self) -> u32 {
-        self.record.lock().map_or(0, |record| record.generation)
+        self.generation
     }
 
     #[must_use]
     pub fn source_id(&self) -> u64 {
-        self.record.lock().map_or(0, |record| record.source.id())
+        self.source_id
     }
 
     pub fn activate(&self) -> Result<WakeDisposition> {
@@ -5173,11 +6421,14 @@ impl HostContentConnector {
             .ok_or_else(|| anyhow!("HOST_DISPOSED: Connector host is gone"))?;
         let host_weak = Arc::downgrade(&host);
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        let dirty = inner
+            .content
+            .dirty_for_connector(self.id(), ContentDirtyReason::SelectionLifecycle)?;
         let needs_frame = inner
             .content
             .request_connector_activation(self.id(), &host_weak)?;
         if needs_frame {
-            return inner.mark_content_pending();
+            return inner.mark_content_pending(dirty);
         }
         Ok(WakeDisposition::default())
     }
@@ -5188,9 +6439,12 @@ impl HostContentConnector {
             .upgrade()
             .ok_or_else(|| anyhow!("HOST_DISPOSED: Connector host is gone"))?;
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        let dirty = inner
+            .content
+            .dirty_for_connector(self.id(), ContentDirtyReason::SelectionLifecycle)?;
         let needs_frame = inner.content.request_connector_deactivation(self.id())?;
         if needs_frame {
-            return inner.mark_content_pending();
+            return inner.mark_content_pending(dirty);
         }
         Ok(WakeDisposition::default())
     }
@@ -5201,9 +6455,12 @@ impl HostContentConnector {
             .upgrade()
             .ok_or_else(|| anyhow!("HOST_DISPOSED: Connector host is gone"))?;
         let mut inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        let dirty = inner
+            .content
+            .dirty_for_connector(self.id(), ContentDirtyReason::SelectionLifecycle)?;
         let needs_frame = inner.content.request_connector_dispose(self.id())?;
         if needs_frame {
-            return inner.mark_content_pending();
+            return inner.mark_content_pending(dirty);
         }
         Ok(WakeDisposition::default())
     }
@@ -5223,44 +6480,94 @@ impl HostContentConnector {
     }
 
     pub fn status(&self) -> Result<ContentConnectorStatus> {
-        let disposed = self
-            .record
-            .lock()
-            .map_err(|_| anyhow!("Connector lock is poisoned"))?
-            .lifecycle
-            == ConnectorLifecycle::Disposed;
-        if disposed {
-            return self.record_status();
-        }
         if let Some(host) = self.host.upgrade() {
-            return host
-                .lock()
-                .map_err(|_| anyhow!("host lock is poisoned"))?
-                .content
-                .connector_status(self.id());
+            let inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+            return match inner.content.connector_status(self.id) {
+                Ok(status) => Ok(status),
+                Err(error) => {
+                    // A disposed Connector is removed from the live registry
+                    // but detached handles retain its final record. Read that
+                    // record only while the owning Host lock is held so live
+                    // status never races an in-flight commit.
+                    let state = self
+                        .record
+                        .lock()
+                        .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+                    if state.lifecycle == ConnectorLifecycle::Disposed {
+                        Ok(ContentConnectorStatus {
+                            phase: "disposed".to_owned(),
+                            requested: state.requested,
+                            visible: state.visible,
+                            projected_source_revision: state.projected_source_revision,
+                            error: state.error.clone(),
+                            cleanup_pending: state.cleanup_error.is_some(),
+                            cleanup_error: state.cleanup_error.as_deref().cloned(),
+                        })
+                    } else {
+                        Err(error)
+                    }
+                }
+            };
         }
         // HostInner::drop() marks retained Connector records disposed before
         // its weak owner disappears. A live record with no owner is an
         // invariant failure, not a reason to fabricate a status.
-        Err(anyhow!("HOST_DISPOSED: Connector host is gone"))
+        self.record_status()
     }
 
     pub fn visible_delivery_frontier(&self) -> Result<StreamOffset> {
-        let state = self
-            .record
-            .lock()
-            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-        Ok(state.committed_delivery_frontier)
+        let Some(host) = self.host.upgrade() else {
+            return self.record_frontier(false);
+        };
+        let inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        match inner.content.connector_delivery_frontier(self.id) {
+            Ok(frontier) => Ok(frontier),
+            Err(error) => {
+                let state = self
+                    .record
+                    .lock()
+                    .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+                (state.lifecycle == ConnectorLifecycle::Disposed)
+                    .then_some(state.committed_delivery_frontier)
+                    .ok_or(error)
+            }
+        }
     }
 
     pub fn candidate_delivery_frontier(&self) -> Result<StreamOffset> {
+        let Some(host) = self.host.upgrade() else {
+            return self.record_frontier(true);
+        };
+        let inner = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
+        match inner.content.connector_candidate_delivery_frontier(self.id) {
+            Ok(frontier) => Ok(frontier),
+            Err(error) => {
+                let state = self
+                    .record
+                    .lock()
+                    .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+                (state.lifecycle == ConnectorLifecycle::Disposed)
+                    .then_some(state.candidate_delivery_frontier)
+                    .ok_or(error)
+            }
+        }
+    }
+
+    fn record_frontier(&self, candidate: bool) -> Result<StreamOffset> {
         let state = self
             .record
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-        Ok(state.candidate_delivery_frontier)
+        if candidate {
+            Ok(state.candidate_delivery_frontier)
+        } else {
+            Ok(state.committed_delivery_frontier)
+        }
     }
 
+    /// Final detached-handle readback is valid only after the owning HostInner
+    /// has gone away; while the host is live, `status` routes through its
+    /// serialized registry owner.
     fn record_status(&self) -> Result<ContentConnectorStatus> {
         let state = self
             .record
@@ -5276,11 +6583,19 @@ impl HostContentConnector {
             visible: state.visible,
             projected_source_revision: state.projected_source_revision,
             error: state.error.clone(),
+            cleanup_pending: state.cleanup_error.is_some(),
+            cleanup_error: state.cleanup_error.as_deref().cloned(),
         })
     }
 
     #[must_use]
     pub fn is_disposed(&self) -> bool {
+        if let Some(host) = self.host.upgrade() {
+            return host
+                .lock()
+                .ok()
+                .is_none_or(|inner| inner.content.connector_is_disposed(self.id));
+        }
         self.record
             .lock()
             .is_ok_and(|state| state.lifecycle == ConnectorLifecycle::Disposed)
@@ -5766,6 +7081,54 @@ mod tests {
     }
 
     #[test]
+    fn mounting_unactivated_connector_does_not_requeue_forever() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"not active", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+
+        // Mounting is intentionally distinct from activation. The candidate
+        // may commit the destination mount while leaving the unrequested
+        // Connector cold, but it must not keep re-queuing the unresolved
+        // desired selection on every drain.
+        registry.set_desired(&[port.id()]).unwrap();
+        registry.begin_projection_candidate();
+        let measurement =
+            registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert_eq!(measurement.connector_id, None);
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+
+        let port_state = port.record.lock().unwrap();
+        assert!(port_state.visible_mounted);
+        assert_eq!(port_state.visible_connector, None);
+        drop(port_state);
+        assert!(registry.pending_binding_changes.is_empty());
+        assert_eq!(
+            registry
+                .connectors
+                .get(&connector.id())
+                .unwrap()
+                .lock()
+                .unwrap()
+                .phase,
+            "idle"
+        );
+    }
+
+    #[test]
     fn connector_status_survives_native_host_drop_as_disposed() {
         let environment = TuiEnvironment::new();
         let source = environment
@@ -5778,6 +7141,45 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(connector.status().unwrap().phase, "disposed");
+        assert_eq!(
+            connector.visible_delivery_frontier().unwrap(),
+            StreamOffset::ZERO
+        );
+        assert_eq!(
+            connector.candidate_delivery_frontier().unwrap(),
+            StreamOffset::ZERO
+        );
+        assert!(connector.is_disposed());
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn disposed_connector_handle_keeps_status_and_frontiers_while_host_lives() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        let port = host.create_content_port(ContentFamily::Text).unwrap();
+        let connector = port
+            .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
+            .unwrap();
+        connector.dispose().unwrap();
+
+        let status = connector.status().unwrap();
+        assert_eq!(status.phase, "disposed");
+        assert!(!status.requested);
+        assert!(!status.visible);
+        assert_eq!(
+            connector.visible_delivery_frontier().unwrap(),
+            StreamOffset::ZERO
+        );
+        assert_eq!(
+            connector.candidate_delivery_frontier().unwrap(),
+            StreamOffset::ZERO
+        );
+        assert!(connector.is_disposed());
+        host.close().unwrap();
         source.dispose().unwrap();
     }
 
@@ -5802,11 +7204,7 @@ mod tests {
             state.desired_mounted = true;
             state.desired_connector = Some(connector_id);
         }
-        let binding = ContentBinding {
-            port_id: port.id(),
-            connector_id: Some(connector_id),
-        };
-        registry.begin_candidate(&[binding]);
+        registry.in_flight_connectors.insert(connector_id);
 
         assert!(registry.request_deactivation(connector_id).unwrap());
         assert!(registry.connectors.contains_key(&connector_id));
@@ -5818,10 +7216,15 @@ mod tests {
             let mut state = port.record.lock().unwrap();
             state.desired_connector = Some(connector_id);
         }
-        registry.begin_candidate(&[binding]);
+        registry.in_flight_connectors.insert(connector_id);
         assert!(registry.request_connector_disposal(connector_id).unwrap());
         assert!(registry.connectors.contains_key(&connector_id));
-        registry.commit_visible(&[binding]);
+        registry.candidate_binding_changes.insert(port.id());
+        registry
+            .candidate_selections
+            .insert(port.id(), Some(connector_id));
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.commit_prepared(&plan).unwrap();
         registry.end_candidate();
         assert!(
             registry
@@ -5830,8 +7233,630 @@ mod tests {
                 .and_then(|record| record.lock().ok())
                 .is_some_and(|state| state.visible)
         );
-        registry.commit_visible(&[]);
+        registry.candidate_binding_changes.insert(port.id());
+        registry.candidate_selections.insert(port.id(), None);
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.commit_prepared(&plan).unwrap();
         assert!(!registry.connectors.contains_key(&connector_id));
+    }
+
+    #[test]
+    fn newer_disposal_releases_membership_after_an_older_hidden_plan() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let connector_id = connector.id();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector_id);
+            port_state.visible_connector = Some(connector_id);
+        }
+        {
+            let record = registry.connectors.get(&connector_id).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        let host = Weak::new();
+        registry
+            .subscribe_connector(connector_id, &source, connector.generation(), &host)
+            .unwrap();
+        assert_eq!(source.subscriber_count(), 1);
+
+        registry.begin_projection_candidate();
+        assert!(registry.request_deactivation(connector_id).unwrap());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+
+        // Disposal is newer than the hidden/deactivation plan. The old plan
+        // must still remove the identity, but it must also release the Source
+        // membership exactly once even though that release was not present at
+        // the plan's original capture boundary.
+        assert!(registry.request_connector_disposal(connector_id).unwrap());
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+        assert!(!registry.connectors.contains_key(&connector_id));
+        assert_eq!(source.subscriber_count(), 0);
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn newer_disposal_releases_already_unsubscribed_membership() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let connector_id = connector.id();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector_id);
+            port_state.visible_connector = Some(connector_id);
+        }
+        {
+            let record = registry.connectors.get(&connector_id).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+            // The Connector remains a Source member even when its wake
+            // subscription has already been removed.
+            assert!(!state.subscribed);
+        }
+
+        registry.begin_projection_candidate();
+        assert!(registry.request_deactivation(connector_id).unwrap());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        assert!(registry.request_connector_disposal(connector_id).unwrap());
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+        assert!(!registry.connectors.contains_key(&connector_id));
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn source_cleanup_failure_after_first_receipt_is_exactly_once() {
+        let source_registry = ContentSourceRegistry::new();
+        let first_source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let second_source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let first_port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let second_port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let first = registry
+            .connect(
+                &first_port.record,
+                &first_source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let second = registry
+            .connect(
+                &second_port.record,
+                &second_source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        for (port, connector, source) in [
+            (&first_port, &first, &first_source),
+            (&second_port, &second, &second_source),
+        ] {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+            drop(port_state);
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+            drop(state);
+            registry
+                .subscribe_connector(connector.id(), source, connector.generation(), &Weak::new())
+                .unwrap();
+        }
+        assert_eq!(first_source.subscriber_count(), 1);
+        assert_eq!(second_source.subscriber_count(), 1);
+
+        registry.begin_projection_candidate();
+        assert!(registry.request_deactivation(first.id()).unwrap());
+        assert!(registry.request_deactivation(second.id()).unwrap());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+
+        // Poison the second Source after preparation. Commit preflight must
+        // fail before any Source cleanup or visible association mutation;
+        // retrying the same plan must preserve both old-visible memberships
+        // and must not release either membership twice.
+        let second_record = second_source.record.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = second_record.lock().unwrap();
+            panic!("intentional second Source cleanup failure");
+        }));
+        let error = registry.commit_prepared(&plan).unwrap_err();
+        assert!(error.to_string().contains("Source lock is poisoned"));
+        assert_eq!(first_source.subscriber_count(), 1);
+        second_record.clear_poison();
+        assert_eq!(second_source.subscriber_count(), 1);
+        for (port, connector) in [(&first_port, &first), (&second_port, &second)] {
+            assert_eq!(
+                port.record.lock().unwrap().visible_connector,
+                Some(connector.id()),
+                "failed Source preflight must preserve the old visible binding"
+            );
+            assert!(connector.record.lock().unwrap().subscribed);
+        }
+        assert!(
+            first_source.dispose().is_err(),
+            "membership must remain until connector removal"
+        );
+
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+        assert_eq!(first_source.subscriber_count(), 0);
+        assert_eq!(second_source.subscriber_count(), 0);
+        registry.remove_connector(first.id());
+        registry.remove_connector(second.id());
+        assert!(registry.connectors.is_empty());
+        first_source.dispose().unwrap();
+        second_source.dispose().unwrap();
+    }
+
+    #[test]
+    fn post_promotion_source_cleanup_failure_retains_membership_for_retry() {
+        let source_registry = ContentSourceRegistry::new();
+        let first_source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let second_source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let first_port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let second_port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let first = registry
+            .connect(
+                &first_port.record,
+                &first_source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let second = registry
+            .connect(
+                &second_port.record,
+                &second_source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        for (port, connector, source) in [
+            (&first_port, &first, &first_source),
+            (&second_port, &second, &second_source),
+        ] {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+            drop(port_state);
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+            drop(state);
+            registry
+                .subscribe_connector(connector.id(), source, connector.generation(), &Weak::new())
+                .unwrap();
+        }
+
+        registry.begin_projection_candidate();
+        assert!(registry.request_deactivation(first.id()).unwrap());
+        assert!(registry.request_deactivation(second.id()).unwrap());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        // The test hook poisons the second Source only after the first cleanup
+        // has succeeded, reproducing the race window after logical promotion.
+        registry.poison_source_after_first_cleanup_for_test(second_source.id());
+        assert!(registry.commit_prepared(&plan).unwrap());
+
+        assert_eq!(first_source.subscriber_count(), 0);
+        let second_record = second_source.record.clone();
+        second_record.clear_poison();
+        assert_eq!(second_source.subscriber_count(), 1);
+        assert_eq!(
+            first_port.record.lock().unwrap().visible_connector,
+            None,
+            "logical promotion must complete even when cleanup is deferred"
+        );
+        assert_eq!(
+            second_port.record.lock().unwrap().visible_connector,
+            None,
+            "logical promotion must complete even when cleanup is deferred"
+        );
+        assert!(registry.pending_source_cleanup_ids.contains(&second.id()));
+        assert!(registry.connectors.contains_key(&second.id()));
+        registry.end_candidate();
+
+        // The first Connector has no deferred Source operation; explicit
+        // removal releases its retained membership exactly once. The second
+        // Connector remains owned until its deferred cleanup succeeds.
+        registry.remove_connector(first.id());
+        assert!(first_source.dispose().is_ok());
+        registry.begin_projection_candidate();
+        let retry = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&retry);
+        assert!(!registry.commit_prepared(&retry).unwrap());
+        registry.end_candidate();
+        assert_eq!(second_source.subscriber_count(), 0);
+        registry.remove_connector(second.id());
+        assert!(registry.connectors.is_empty());
+        second_source.dispose().unwrap();
+    }
+
+    #[test]
+    fn prepared_content_commit_preserves_newer_requested_selection() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"old\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let first = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let second = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.visible_mounted = true;
+            state.desired_connector = Some(first.id());
+            state.visible_connector = Some(first.id());
+        }
+        registry
+            .connectors
+            .get(&first.id())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .requested = true;
+        registry
+            .connectors
+            .get(&first.id())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .visible = true;
+
+        registry.begin_projection_candidate();
+        registry
+            .prepare_connector_projection(first.id(), 20)
+            .unwrap();
+        registry.candidate_binding_changes.insert(port.id());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        #[cfg(feature = "perf-counters")]
+        let prepared_records =
+            crate::perf::snapshot().value(crate::perf::Counter::ContentCandidateRecordsPrepared);
+
+        // A newer request arrives while the old candidate is in flight. The
+        // plan owns the old binding and must not be consumed or rewritten.
+        assert!(
+            registry
+                .request_activation(second.id(), &Weak::new())
+                .unwrap()
+        );
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+
+        let port_state = port.record.lock().unwrap();
+        assert_eq!(port_state.visible_connector, Some(first.id()));
+        assert_eq!(port_state.desired_connector, Some(second.id()));
+        drop(port_state);
+        assert!(
+            registry
+                .connectors
+                .get(&first.id())
+                .unwrap()
+                .lock()
+                .unwrap()
+                .visible
+        );
+        assert!(
+            registry
+                .connectors
+                .get(&second.id())
+                .unwrap()
+                .lock()
+                .unwrap()
+                .requested
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentCandidateRecordsPrepared),
+                prepared_records,
+                "newer desired work must not expand the delayed receipt's candidate plan"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentRegistryPortScans),
+                0,
+                "delayed content commit must not scan the Port registry"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_many_records_preserve_newer_pending_binding_without_receipt_growth() {
+        #[cfg(feature = "perf-counters")]
+        let _perf_lock = crate::perf::test_lock();
+        #[cfg(feature = "perf-counters")]
+        crate::perf::reset();
+        const CONNECTOR_COUNT: usize = 128;
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"shared", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let mut ports = Vec::with_capacity(CONNECTOR_COUNT);
+        let mut connectors = Vec::with_capacity(CONNECTOR_COUNT);
+        for _ in 0..CONNECTOR_COUNT {
+            let port = registry
+                .create_port(Weak::new(), ContentFamily::Text)
+                .unwrap();
+            let connector = registry
+                .connect(
+                    &port.record,
+                    &source,
+                    HostContentFunnel::plain(TextWrapMode::Word),
+                )
+                .unwrap();
+            {
+                let mut port_state = port.record.lock().unwrap();
+                port_state.desired_mounted = true;
+                port_state.visible_mounted = true;
+                port_state.desired_connector = Some(connector.id());
+                port_state.visible_connector = Some(connector.id());
+            }
+            {
+                let record = registry.connectors.get(&connector.id()).unwrap();
+                let mut state = record.lock().unwrap();
+                state.requested = true;
+                state.visible = true;
+            }
+            ports.push(port);
+            connectors.push(connector);
+        }
+
+        registry.begin_projection_candidate();
+        for connector in &connectors {
+            registry
+                .prepare_connector_projection(connector.id(), 20)
+                .unwrap();
+        }
+        for port in &ports {
+            registry.candidate_binding_changes.insert(port.id());
+        }
+        let plan = registry.prepare_content_commit().unwrap();
+        assert_eq!(plan.ports.len(), CONNECTOR_COUNT);
+        assert_eq!(plan.connectors.len(), CONNECTOR_COUNT);
+        assert_eq!(
+            plan.sources.len(),
+            1,
+            "all connectors share one Source lock entry"
+        );
+        let plan_capacities = (
+            plan.ports.capacity(),
+            plan.connectors.capacity(),
+            plan.sources.capacity(),
+            plan.binding_changes.capacity(),
+        );
+        #[cfg(feature = "perf-counters")]
+        let prepared_records =
+            crate::perf::snapshot().value(crate::perf::Counter::ContentCandidateRecordsPrepared);
+        registry.begin_prepared_candidate(&plan);
+
+        // Accept newer control work while this large plan is held. The old
+        // receipt must keep its captured association, while the newer pending
+        // revision remains available for the next candidate without expanding
+        // the old plan.
+        let first_port_id = ports[0].id();
+        registry.request_deactivation(connectors[0].id()).unwrap();
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+        let first_state = ports[0].record.lock().unwrap();
+        assert_eq!(first_state.desired_connector, None);
+        assert_eq!(first_state.visible_connector, Some(connectors[0].id()));
+        drop(first_state);
+        assert!(registry.pending_binding_changes.contains(&first_port_id));
+        assert_eq!(
+            (
+                plan.ports.capacity(),
+                plan.connectors.capacity(),
+                plan.sources.capacity(),
+                plan.binding_changes.capacity(),
+            ),
+            plan_capacities,
+            "receipt commit must not grow candidate-owned record tables"
+        );
+        #[cfg(feature = "perf-counters")]
+        {
+            let counters = crate::perf::snapshot();
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentCandidateRecordsPrepared),
+                prepared_records,
+                "newer pending work must not grow the captured large plan: {counters:?}"
+            );
+            assert_eq!(
+                counters.value(crate::perf::Counter::ContentRegistryPortScans),
+                0,
+                "receipt commit must not scan the registry: {counters:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_content_commit_rejects_a_poisoned_record_before_swapping() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"poison\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let connector_id = connector.id();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.begin_projection_candidate();
+        registry
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+        registry.candidate_binding_changes.insert(port.id());
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        let record = registry.connectors.get(&connector.id()).unwrap().clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = record.lock().unwrap();
+            panic!("intentional connector poison");
+        }));
+        let error = registry.commit_prepared(&plan).unwrap_err();
+        assert!(error.to_string().contains("Connector lock is poisoned"));
+        assert_eq!(
+            port.record.lock().unwrap().visible_connector,
+            Some(connector_id),
+            "poison validation must happen before visible association swaps"
+        );
+    }
+
+    #[test]
+    fn prepared_content_commit_preserves_a_newer_delivery_tick() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"a long enough stream for delivery pacing\n", &[], &[])
+            .unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Plain,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.begin_projection_candidate();
+        registry
+            .prepare_connector_projection(connector.id(), 32)
+            .unwrap();
+        registry.candidate_binding_changes.insert(port.id());
+        let initial = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        let plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&plan);
+        let deadline = registry
+            .next_wakeup()
+            .expect("smooth content must have a deadline");
+        let _ = registry
+            .advance(deadline + std::time::Duration::from_secs(5))
+            .unwrap();
+        let newer = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        registry.commit_prepared(&plan).unwrap();
+        registry.end_candidate();
+        assert!(newer >= initial);
+        assert_eq!(
+            registry
+                .connector_delivery_frontier(connector.id())
+                .unwrap(),
+            initial,
+            "an older receipt must not publish a newer delivery frontier"
+        );
+        assert_eq!(
+            registry
+                .connector_candidate_delivery_frontier(connector.id())
+                .unwrap(),
+            newer,
+            "newer delivery progress must remain pending"
+        );
     }
 
     #[test]
@@ -5943,46 +7968,6 @@ mod tests {
             "retired History port must be removed from ContentHostRegistry to prevent memory leaks"
         );
         assert!(!registry.connectors.contains_key(&connector.id()));
-    }
-
-    #[test]
-    fn reveal_surface_cut_at_row_boundary_does_not_add_blank_trailing_row() {
-        #[cfg(feature = "perf-counters")]
-        let _perf_lock = crate::perf::test_lock();
-        #[cfg(feature = "perf-counters")]
-        crate::perf::reset();
-        let mut surface = Surface::new(10, 2);
-        for column in 0..3 {
-            let cell = crate::physical::PhysicalCell {
-                grapheme: Some("a".to_owned()),
-                style: crate::physical::PhysicalStyle::default(),
-                painted: true,
-                continuation: false,
-            };
-            *surface.get_mut(column, 0) = cell;
-        }
-        for column in 0..3 {
-            let cell = crate::physical::PhysicalCell {
-                grapheme: Some("b".to_owned()),
-                style: crate::physical::PhysicalStyle::default(),
-                painted: true,
-                continuation: false,
-            };
-            *surface.get_mut(column, 1) = cell;
-        }
-        // Exactly 3 units -> reveals only the 3 cells in row 0
-        let (revealed, fully_revealed) = reveal_surface(&surface, 3);
-        #[cfg(feature = "perf-counters")]
-        assert_eq!(
-            crate::perf::snapshot().value(crate::perf::Counter::ContentSurfaceClones),
-            1
-        );
-        assert_eq!(
-            revealed.height(),
-            1,
-            "revealed surface should only have 1 row when all cells of row 1 are unrevealed"
-        );
-        assert_eq!(fully_revealed, 1);
     }
 
     #[test]
@@ -6223,6 +8208,133 @@ mod tests {
             self.rows.extend(rows[..accepted].iter().cloned());
             Ok(accepted)
         }
+    }
+
+    struct PartialErrorSink {
+        rows: Vec<PhysicalRow>,
+        fail: bool,
+    }
+
+    impl crate::backend::NativeHistorySink for PartialErrorSink {
+        type Error = &'static str;
+
+        fn insert_history_rows(&mut self, rows: &[PhysicalRow]) -> Result<usize, Self::Error> {
+            if self.fail {
+                let accepted = rows.len().min(1);
+                self.rows.extend(rows[..accepted].iter().cloned());
+                return Err("simulated partial native write");
+            }
+            self.rows.extend(rows.iter().cloned());
+            Ok(rows.len())
+        }
+    }
+
+    struct SuccessThenErrorSink {
+        rows: Vec<PhysicalRow>,
+        calls: usize,
+    }
+
+    impl crate::backend::NativeHistorySink for SuccessThenErrorSink {
+        type Error = &'static str;
+
+        fn insert_history_rows(&mut self, rows: &[PhysicalRow]) -> Result<usize, Self::Error> {
+            self.calls += 1;
+            if self.calls == 1 {
+                let accepted = rows.len().min(1);
+                self.rows.extend(rows[..accepted].iter().cloned());
+                return Ok(accepted);
+            }
+            if let Some(row) = rows.first() {
+                self.rows.push(row.clone());
+            }
+            Err("simulated later native write failure")
+        }
+    }
+
+    #[test]
+    fn native_sink_failure_marks_synchronization_unknown_without_rewinding_history() {
+        let mut history = crate::History::new();
+        history.push("one\ntwo").unwrap();
+        let mut sink = PartialErrorSink {
+            rows: Vec::new(),
+            fail: true,
+        };
+        let error = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            8,
+            &Theme::new(),
+            &mut crate::presentation::EmptyContentProvider,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::history::NativeTransferError::Sink("simulated partial native write")
+        ));
+        assert!(history.native_synchronization_unknown());
+        let rows_after_failure = sink.rows.len();
+        let retry = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            8,
+            &Theme::new(),
+            &mut crate::presentation::EmptyContentProvider,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            retry,
+            crate::history::NativeTransferError::SynchronizationUnknown
+        ));
+        assert_eq!(sink.rows.len(), rows_after_failure);
+        history.recover_native_synchronization();
+        sink.fail = false;
+        let _ = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            8,
+            &Theme::new(),
+            &mut crate::presentation::EmptyContentProvider,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn history_marker_preserves_prior_acknowledged_rows_after_later_failure() {
+        let mut history = crate::History::new();
+        history.push("one\ntwo\nthree").unwrap();
+        let mut sink = SuccessThenErrorSink {
+            rows: Vec::new(),
+            calls: 0,
+        };
+        let first = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            1,
+            &Theme::new(),
+            &mut crate::presentation::EmptyContentProvider,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
+        assert_eq!(history.physical_rows_inserted(), 1);
+        let _ = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            1,
+            &Theme::new(),
+            &mut crate::presentation::EmptyContentProvider,
+        )
+        .unwrap_err();
+        assert!(history.native_synchronization_unknown());
+        assert_eq!(
+            history.physical_rows_inserted(),
+            1,
+            "a later failed receipt must not rewind or overcount the earlier acknowledgement"
+        );
     }
 
     fn sealed_markdown_history_rows(text: &str, width: u16) -> Vec<PhysicalRow> {
@@ -6738,9 +8850,9 @@ mod tests {
 
         // Advance smoother enough to reveal all rows
         let t0 = std::time::Instant::now();
-        registry.advance(t0);
+        registry.advance(t0).unwrap();
         let t1 = t0 + std::time::Duration::from_secs(2);
-        registry.advance(t1);
+        registry.advance(t1).unwrap();
 
         let measurement =
             registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
@@ -6861,7 +8973,7 @@ mod tests {
                 break;
             };
             now = deadline + Duration::from_millis(250);
-            registry.advance(now);
+            registry.advance(now).unwrap();
         }
         assert!(
             observed_rows >= 2,
@@ -6915,7 +9027,7 @@ mod tests {
         let sealed_baseline = sealed_markdown_history_rows(fixture, width);
         for _ in 0..8 {
             now += Duration::from_secs(1);
-            registry.advance(now);
+            registry.advance(now).unwrap();
             registry.measure_content(port_id, width, crate::presentation::WidthRule::Fill);
             let committed = registry.history_adapter.committed_content_rows(port_id);
             if let Some(rows) = registry.history_rows(port_id, width) {
@@ -7060,9 +9172,9 @@ mod tests {
         // Advance smoother
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
         let t0 = std::time::Instant::now();
-        registry.advance(t0);
+        registry.advance(t0).unwrap();
         let t1 = t0 + std::time::Duration::from_secs(2);
-        registry.advance(t1);
+        registry.advance(t1).unwrap();
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
 
         let mut sink = LocalSink::default();
@@ -7172,9 +9284,11 @@ mod tests {
             )
             .unwrap();
         let t0 = Instant::now();
-        registry.sync_connector_deadline(connector.id(), Some(t0));
+        registry
+            .sync_connector_deadline(connector.id(), Some(t0))
+            .unwrap();
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
-        registry.advance(t0);
+        registry.advance(t0).unwrap();
         registry.promote_candidate_projection(connector.id());
         assert!(registry.next_wakeup().is_some());
 
@@ -7184,8 +9298,8 @@ mod tests {
         // Advance over multiple ticks
         for i in 0..20 {
             now += Duration::from_millis(16);
-            let progressed = registry.advance(now);
-            if progressed {
+            let progressed = registry.advance(now).unwrap();
+            if !progressed.is_empty() {
                 let candidate = registry
                     .connector_candidate_delivery_frontier(connector.id())
                     .unwrap();
@@ -7219,7 +9333,9 @@ mod tests {
 
         // Seal the source: completed stream publishes fully and cancels deadlines
         source.seal().unwrap();
-        registry.sync_connector_deadline(connector.id(), Some(now));
+        registry
+            .sync_connector_deadline(connector.id(), Some(now))
+            .unwrap();
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
         registry.promote_candidate_projection(connector.id());
 
@@ -7327,7 +9443,9 @@ mod tests {
 
         // Connector 1 (Smooth) should have an active deadline
         let t0 = Instant::now();
-        registry.sync_connector_deadline(connector1.id(), Some(t0));
+        registry
+            .sync_connector_deadline(connector1.id(), Some(t0))
+            .unwrap();
         assert!(
             registry.active_deadlines.contains_key(&connector1.id()),
             "Smooth connector must schedule timer deadline"
@@ -7337,7 +9455,7 @@ mod tests {
         let _ = registry.measure_content(port1_id, 40, crate::presentation::WidthRule::Fill);
 
         // Ticking advances Connector 1 without affecting Connector 2
-        registry.advance(t0 + Duration::from_millis(16));
+        registry.advance(t0 + Duration::from_millis(16)).unwrap();
         let _ = registry.measure_content(port1_id, 40, crate::presentation::WidthRule::Fill);
         registry.promote_candidate_projection(connector1.id());
 
@@ -7409,7 +9527,7 @@ mod tests {
         // Initial measurement and preparation
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
         let t0 = registry.next_wakeup().unwrap();
-        registry.advance(t0);
+        registry.advance(t0).unwrap();
         registry.promote_candidate_projection(connector.id());
 
         let rebuilds_before =
@@ -7419,8 +9537,8 @@ mod tests {
 
         // Advance 1 tick
         let t1 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
-        let progressed = registry.advance(t1);
-        assert!(progressed, "Advance must progress delivery");
+        let progressed = registry.advance(t1).unwrap();
+        assert!(!progressed.is_empty(), "Advance must progress delivery");
 
         // Measure / project next frame
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
@@ -7486,7 +9604,7 @@ mod tests {
 
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
         let t0 = registry.next_wakeup().unwrap();
-        registry.advance(t0);
+        registry.advance(t0).unwrap();
         registry.promote_candidate_projection(connector.id());
 
         // Initial committed frontier is recorded
@@ -7497,8 +9615,8 @@ mod tests {
 
         // Advance clock: candidate changes, committed does NOT change
         let t1 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
-        let progressed = registry.advance(t1);
-        assert!(progressed);
+        let progressed = registry.advance(t1).unwrap();
+        assert!(!progressed.is_empty());
 
         let candidate_before_promote = registry
             .connector_candidate_delivery_frontier(connector.id())
@@ -7536,7 +9654,7 @@ mod tests {
 
         // Now advance and successfully promote
         let t2 = registry.next_wakeup().unwrap() + Duration::from_millis(100);
-        registry.advance(t2);
+        registry.advance(t2).unwrap();
         let _ = registry.measure_content(port_id, 40, crate::presentation::WidthRule::Fill);
         let candidate_ready = registry
             .connector_candidate_delivery_frontier(connector.id())
@@ -7590,7 +9708,9 @@ mod tests {
             state.visible = true;
         }
 
-        registry.sync_connector_deadline(connector.id(), None);
+        registry
+            .sync_connector_deadline(connector.id(), None)
+            .unwrap();
         assert!(
             registry.next_wakeup().is_some(),
             "Active smoothed connector has a deadline"

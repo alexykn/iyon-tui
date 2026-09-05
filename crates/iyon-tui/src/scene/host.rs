@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::Result;
 
-use crate::presentation::{ContentProvider, EmptyContentProvider};
+use crate::presentation::{ContentDirty, ContentProvider, EmptyContentProvider};
 use crate::{
     Theme,
     backend::NativeHistorySink,
@@ -169,6 +169,13 @@ struct StableScene {
     native_history_revision: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct ContentDirtyRecord {
+    epoch: u64,
+    measurement: bool,
+    paint: bool,
+}
+
 pub(crate) struct SceneHost {
     mounted: MountedComponents,
     synchronizer: LayoutSynchronizer,
@@ -200,9 +207,20 @@ pub(crate) struct SceneHost {
     /// branch without re-resolving the body branch.
     history_only_refresh: bool,
     /// Source revisions change descendant layout/paint products without
-    /// changing semantic View identity. This flag prevents a coalesced
-    /// state-only refresh from committing a stale content projection.
-    content_invalidated: bool,
+    /// changing semantic View identity. Each record is keyed by the affected
+    /// ContentPort, and the retained layout tree supplies the dependency
+    /// frontier for targeted invalidation.
+    content_dirty: HashMap<u64, ContentDirtyRecord>,
+    content_dirty_epoch: u64,
+    content_prepared_epoch: Option<u64>,
+    /// ContentPort IDs whose physical subtree needs repainting in the current
+    /// candidate. This is separate from measurement dirtiness: a palette or
+    /// delivery paint change must not force a layout walk when metrics match.
+    incremental_paint_content: Vec<u64>,
+    /// A palette/presentation-only change reuses the retained geometry and
+    /// semantic products. Paint cache entries are discarded, but layout cache
+    /// and the retained scene remain valid.
+    theme_invalidated: bool,
     /// A body geometry/topology change has been prepared, but native History
     /// promotion may require another retained History refresh before painting.
     /// Keep the final paint whole so that refresh cannot leave moved body rows
@@ -258,7 +276,11 @@ impl Default for SceneHost {
             state_only_refresh: false,
             incremental_paint_history: false,
             history_only_refresh: false,
-            content_invalidated: false,
+            content_dirty: HashMap::new(),
+            content_dirty_epoch: 0,
+            content_prepared_epoch: None,
+            incremental_paint_content: Vec::new(),
+            theme_invalidated: false,
             full_paint_pending: false,
             pending_damage: None,
             #[cfg(test)]
@@ -286,10 +308,14 @@ impl SceneHost {
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
         self.incremental_paint_states.clear();
+        self.incremental_paint_content.clear();
+        self.theme_invalidated = false;
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
-        self.content_invalidated = false;
+        self.content_dirty.clear();
+        self.content_dirty_epoch = 0;
+        self.content_prepared_epoch = None;
         self.full_paint_pending = false;
         self.pending_damage = None;
     }
@@ -316,15 +342,247 @@ impl SceneHost {
             .or_insert(effects);
     }
 
-    /// Content revisions are not semantic View revisions, so descendant
-    /// layout/paint cache entries cannot be invalidated by `ViewId` alone. Clear
-    /// derived caches before a content candidate is measured; the immutable
-    /// semantic Scene and component graph remain retained.
-    pub(crate) fn invalidate_content(&mut self) {
-        self.content_invalidated = true;
-        crate::perf::inc(crate::perf::Counter::GlobalCacheClears);
-        self.layout_cache.clear();
+    /// Records one affected ContentPort and invalidates only its retained
+    /// dependency frontier.  Measurement dirtiness and paint propagation are
+    /// tracked independently: a presentation-only update never discards
+    /// width-dependent layout products, while a Source/delivery update always
+    /// reaches the ContentHost and its metric ancestors before cache lookup.
+    pub(crate) fn invalidate_content(&mut self, dirty: ContentDirty) {
+        crate::perf::inc(crate::perf::Counter::ContentDirtyRecordsMarked);
+        let epoch = self.content_dirty_epoch.saturating_add(1);
+        self.content_dirty_epoch = epoch;
+        let entry = self
+            .content_dirty
+            .entry(dirty.port_id)
+            .or_insert(ContentDirtyRecord {
+                epoch,
+                ..ContentDirtyRecord::default()
+            });
+        entry.epoch = epoch;
+        entry.measurement |= dirty.reason.requires_measurement();
+        entry.paint |= dirty.reason.requires_measurement() || dirty.reason.is_paint_only();
+
+        let Some(retained) = self.retained.as_ref() else {
+            return;
+        };
+        let Some(view_ids) = retained
+            .layout
+            .tree
+            .content_dependency_view_ids(dirty.port_id)
+        else {
+            return;
+        };
+        if dirty.reason.requires_measurement() {
+            self.layout_cache.invalidate_view_ids(&view_ids);
+        }
+        if entry.paint {
+            self.paint_cache.invalidate_view_ids(&view_ids);
+        }
+    }
+
+    /// Invalidates only resolved presentation. Theme changes do not alter
+    /// terminal metrics in the current engine, so retaining layout avoids a
+    /// registry-wide measure/prepare flush while the next candidate repaints
+    /// all visible rows with the new palette.
+    pub(crate) fn invalidate_theme(&mut self) {
         self.paint_cache.clear();
+        self.theme_invalidated = true;
+        if let Some(retained) = self.retained.as_ref() {
+            let epoch = self.content_dirty_epoch.saturating_add(1);
+            self.content_dirty_epoch = epoch;
+            let ports = retained
+                .layout
+                .tree
+                .content_roots
+                .keys()
+                .copied()
+                .collect::<Vec<_>>();
+            // Theme revisions are intentionally absent from the content
+            // layout-input key because they do not alter intrinsic metrics.
+            // Invalidate only the affected ContentHost measurement entries
+            // nevertheless: if another structural invalidation forces a full
+            // pass before the paint-only path runs, it must not reuse a ticket
+            // for the previous theme after ContentHostRegistry drops its old
+            // paint products.
+            let mut content_view_ids = HashSet::new();
+            for port_id in ports {
+                if let Some(nodes) = retained.layout.tree.content_roots.get(&port_id) {
+                    content_view_ids.extend(
+                        nodes
+                            .iter()
+                            .map(|node_id| retained.layout.tree.node(*node_id).view_id),
+                    );
+                }
+                let entry = self.content_dirty.entry(port_id).or_default();
+                entry.epoch = epoch;
+                entry.paint = true;
+            }
+            self.layout_cache.invalidate_view_ids(&content_view_ids);
+        }
+        self.full_paint_pending = true;
+        crate::perf::inc(crate::perf::Counter::ContentPaintPropagations);
+    }
+
+    fn has_unprepared_content(&self) -> bool {
+        self.content_dirty_epoch != self.content_prepared_epoch.unwrap_or(0)
+    }
+
+    fn content_requires_measurement(&self) -> bool {
+        self.content_dirty.values().any(|record| record.measurement)
+    }
+
+    /// Re-lays out only the affected ContentHost path. The first successful
+    /// bounded replacement is the narrowest fixed-allocation boundary: a
+    /// ContentHost that grows climbs to its parent dependency, while a host
+    /// with a stable allocation patches only its own retained node. `true`
+    /// means a parent frontier was patched and a complete paint is required
+    /// because siblings may have moved; `false` means the content leaf can be
+    /// repainted in isolation.
+    fn try_local_content_refresh(
+        &mut self,
+        retained: &mut StableScene,
+        ports: &[u64],
+        content: &mut dyn ContentProvider,
+    ) -> Option<bool> {
+        self.layout_cache.begin_epoch();
+        let mut parent_frontier = false;
+        for port_id in ports {
+            let node_id = retained
+                .layout
+                .tree
+                .content_roots
+                .get(port_id)
+                .and_then(|nodes| nodes.first().copied())?;
+            let layout_path = retained.layout.tree.path_to_root(node_id);
+            let semantic_path = retained.root.scene.content_paths.get(port_id)?;
+            if layout_path.len() != semantic_path.len() {
+                return None;
+            }
+            let old_metric_revision = match &retained.layout.tree.node(node_id).content {
+                crate::presentation::layout::LayoutContent::ContentHost {
+                    metric_revision, ..
+                } => *metric_revision,
+                _ => return None,
+            };
+            let old_physical_completeness = match &retained.layout.tree.node(node_id).content {
+                crate::presentation::layout::LayoutContent::ContentHost {
+                    physically_complete,
+                    ..
+                } => *physically_complete,
+                _ => return None,
+            };
+            // A bounded local patch can refresh a changed paint product, but
+            // it cannot discover a new intrinsic height: applying the old
+            // ContentHost allocation as a height bound would hide that metric
+            // change and leave following siblings at stale positions. Probe
+            // the affected leaf once against its committed width; a height
+            // change escalates to the normal dependency-aware root pass.
+            let content_width = retained.layout.tree.node(node_id).content_rect.width;
+            let content_width_rule = semantic_path
+                .last()
+                .map(View::width)
+                .unwrap_or(crate::presentation::WidthRule::Fill);
+            let current_measurement = content.measure(*port_id, content_width, content_width_rule);
+            let (old_content_width, old_content_height) =
+                match &retained.layout.tree.node(node_id).content {
+                    crate::presentation::layout::LayoutContent::ContentHost {
+                        intrinsic_size,
+                        ..
+                    } => (intrinsic_size.width, intrinsic_size.height),
+                    _ => return None,
+                };
+            let height_changed = current_measurement.intrinsic_size.height != old_content_height;
+            let width_changed = content_width_rule == crate::presentation::WidthRule::Fit
+                && current_measurement.intrinsic_size.width != old_content_width;
+            let parent_uses_width = layout_path.windows(2).any(|path| {
+                retained
+                    .layout
+                    .tree
+                    .child_dependency(path[0], path[1])
+                    .is_none_or(|dependency| dependency.parent_uses_child_width())
+            });
+            if height_changed
+                || current_measurement.physically_complete != old_physical_completeness
+                || (width_changed && parent_uses_width)
+            {
+                crate::perf::inc(crate::perf::Counter::ContentMetricChanges);
+                return None;
+            }
+            let mut patched = false;
+            let mut patch_root = node_id;
+            for index in (0..layout_path.len()).rev() {
+                let target = layout_path[index];
+                let rect = retained.layout.tree.node(target).rect;
+                if rect.is_empty() {
+                    // An empty committed ContentHost has no fixed allocation
+                    // to patch. Escalate to the nearest non-empty ancestor so
+                    // the first visible append can establish geometry.
+                    continue;
+                }
+                let replacement = layout_view_with_overlay_and_cache_and_content(
+                    &semantic_path[index],
+                    LayoutConstraints::bounded(rect.size()),
+                    &retained.root.scene.overlay,
+                    None,
+                    &mut self.layout_cache,
+                    content,
+                );
+                if replacement.size != rect.size()
+                    || !retained.layout.tree.patch_subtree(target, &replacement)
+                {
+                    continue;
+                }
+                patched = true;
+                patch_root = target;
+                parent_frontier |= index != layout_path.len().saturating_sub(1);
+                break;
+            }
+            if !patched
+                || !retained
+                    .layout
+                    .tree
+                    .patch_component_geometry_subtree(patch_root, &mut retained.layout.components)
+            {
+                return None;
+            }
+            let new_metric_revision = match &retained.layout.tree.node(node_id).content {
+                crate::presentation::layout::LayoutContent::ContentHost {
+                    metric_revision, ..
+                } => *metric_revision,
+                _ => return None,
+            };
+            if old_metric_revision != new_metric_revision {
+                crate::perf::inc(crate::perf::Counter::ContentMetricChanges);
+            }
+        }
+        Some(parent_frontier)
+    }
+
+    fn pending_content_ports(&self) -> Vec<u64> {
+        let mut ports = self.content_dirty.keys().copied().collect::<Vec<_>>();
+        ports.sort_unstable();
+        ports
+    }
+
+    pub(crate) fn content_candidate_epoch(&self) -> u64 {
+        self.content_dirty_epoch
+    }
+
+    /// Marks the current content candidate's dirtiness as presented. Newer
+    /// records (accepted while an older backend receipt was in flight) remain
+    /// queued for the next candidate.
+    pub(crate) fn commit_content_candidate(&mut self, epoch: u64) {
+        self.content_dirty.retain(|_, record| record.epoch > epoch);
+        if self.content_dirty.is_empty() {
+            self.content_prepared_epoch = Some(epoch);
+        }
+    }
+
+    /// Candidate preparation failed or its physical receipt failed. Retain
+    /// all dirty records and force the next attempt to evaluate them again.
+    pub(crate) fn abort_content_candidate(&mut self) {
+        self.content_prepared_epoch = None;
+        self.incremental_paint_content.clear();
     }
 
     /// Re-lays out only fixed-allocation state subtrees. If a geometry change
@@ -479,7 +737,7 @@ impl SceneHost {
         Some(changed_components)
     }
 
-    /// Invalidates the retained scene root for body/history/theme changes.
+    /// Invalidates the retained scene root for body/history/topology changes.
     pub(crate) fn invalidate_root(&mut self) {
         // A root/theme replacement may leave the semantic ViewId unchanged,
         // but measured ContentHost tickets carry theme/product identities.
@@ -502,7 +760,8 @@ impl SceneHost {
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
-        self.content_invalidated = false;
+        self.content_prepared_epoch = None;
+        self.incremental_paint_content.clear();
         self.full_paint_pending = false;
         self.pending_damage = None;
     }
@@ -514,6 +773,7 @@ impl SceneHost {
         self.invalidate_root();
         self.layout_cache.clear();
         self.paint_cache.clear();
+        self.abort_content_candidate();
     }
 
     /// Applies revisions/capabilities for a topology-preserving candidate to
@@ -709,6 +969,18 @@ impl SceneHost {
                 content,
             )?;
 
+            // A previous native sink error may have left physical scrollback
+            // partially applied.  The transfer marker is irreversible, so
+            // skip another emission until the host paints its recovery frame;
+            // retrying the same rows here would duplicate output.
+            if scene
+                .history()
+                .is_some_and(crate::History::native_synchronization_unknown)
+            {
+                crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
+                return Ok(self.paint_with_content(resolved, theme, content));
+            }
+
             let front_content_blocked = scene
                 .history()
                 .and_then(crate::History::front_content_attachment_id)
@@ -810,6 +1082,7 @@ impl SceneHost {
         let mut force_full = false;
         let mut layout_epoch_started = false;
         for _ in 0..MAX_LAYOUT_PASSES {
+            let content_epoch = self.content_dirty_epoch;
             let resolved = if !force_full {
                 match self.try_incremental_stable(scene, registry, size, anchor, states, content) {
                     Ok(Some(resolved)) => resolved,
@@ -867,6 +1140,24 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_content.clear();
+                self.incremental_paint_history = false;
+                self.history_only_refresh = false;
+                continue;
+            }
+
+            // A Source mutation may be accepted by a synchronous callback
+            // while this candidate is being measured or synchronized.  Its
+            // snapshot must be deferred to a fresh pass rather than silently
+            // claiming that the older candidate represented the new epoch.
+            if content_epoch != self.content_dirty_epoch {
+                force_full = true;
+                self.retained = None;
+                self.incremental_sync_components.clear();
+                self.incremental_topology_changed = false;
+                self.incremental_requires_full_sync = false;
+                self.incremental_paint_components.clear();
+                self.incremental_paint_content.clear();
                 self.incremental_paint_history = false;
                 self.history_only_refresh = false;
                 continue;
@@ -916,6 +1207,7 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
+                self.incremental_paint_content.clear();
                 self.incremental_paint_history = false;
                 self.history_only_refresh = false;
                 continue;
@@ -928,6 +1220,8 @@ impl SceneHost {
             self.incremental_requires_full_sync = false;
             self.state_only_refresh = false;
             self.history_only_refresh = false;
+            self.content_prepared_epoch = Some(content_epoch);
+            self.theme_invalidated = false;
             #[cfg(test)]
             {
                 self.resolve_count += 1;
@@ -946,6 +1240,12 @@ impl SceneHost {
         states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
+        if self.has_unprepared_content() && self.content_requires_measurement() {
+            crate::perf::add(
+                crate::perf::Counter::ContentMetricEvaluations,
+                self.content_dirty.len() as u64,
+            );
+        }
         if !self.invalidated_states.is_empty() {
             // Parent cache entries do not encode every descendant state
             // revision. A state mutation combined with a structural/component
@@ -976,10 +1276,10 @@ impl SceneHost {
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
         self.incremental_paint_states.clear();
+        self.incremental_paint_content.clear();
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
-        self.content_invalidated = false;
         #[cfg(test)]
         {
             self.full_resolves += 1;
@@ -1022,14 +1322,48 @@ impl SceneHost {
             retained_state.root.scene.mounts.contains(*component)
                 && !retained_state.root.history_components.contains(component)
         });
-        if self.content_invalidated {
-            // Content changes do not alter the resolved semantic scene. When
-            // there is no separate History branch to refresh, retain that
-            // scene and rebuild only its derived layout with the new content
-            // provider. This preserves the three-plane boundary while still
-            // allowing fit-content metrics to propagate through the full
-            // layout dependency graph.
-            if scene.history().is_none()
+        if self.theme_invalidated
+            && self.invalidated_components.is_empty()
+            && self.invalidated_states.is_empty()
+            && !self.has_unprepared_content()
+            && !body_changed
+            && !body_invalidated
+            && !history_changed
+            && !native_history_changed
+        {
+            let retained = self
+                .retained
+                .take()
+                .expect("retained state was checked above");
+            self.incremental_sync_components.clear();
+            self.incremental_topology_changed = false;
+            self.incremental_requires_full_sync = false;
+            self.incremental_paint_components.clear();
+            self.incremental_paint_states.clear();
+            self.incremental_paint_content.clear();
+            self.state_only_refresh = false;
+            self.incremental_paint_history = false;
+            self.history_only_refresh = false;
+            self.pending_damage = None;
+            return Ok(Some(retained));
+        }
+        if self.has_unprepared_content() {
+            // Content changes do not alter the resolved semantic scene.  A
+            // body-only host can therefore retain its scene and evaluate
+            // only the affected layout dependency frontier.  History has a
+            // separate projection/receipt owner, so it conservatively takes
+            // the normal root path while still reusing the targeted caches.
+            let content_in_history =
+                retained_state
+                    .root
+                    .history_scene
+                    .as_ref()
+                    .is_some_and(|history| {
+                        self.pending_content_ports()
+                            .iter()
+                            .any(|port_id| history.content_paths.contains_key(port_id))
+                    });
+            if !content_in_history
                 && self.invalidated_components.is_empty()
                 && self.invalidated_states.is_empty()
                 && !body_changed
@@ -1041,14 +1375,49 @@ impl SceneHost {
                     .retained
                     .take()
                     .expect("retained state was checked above");
-                self.layout_cache.begin_epoch();
-                retained.layout = layout_resolved_scene_with_cache_and_content(
-                    &retained.root.scene,
-                    size,
-                    &mut self.layout_cache,
-                    content,
-                );
-                self.content_invalidated = false;
+                let pending_ports = self.pending_content_ports();
+                if self.content_requires_measurement() {
+                    crate::perf::add(
+                        crate::perf::Counter::ContentMetricEvaluations,
+                        self.content_dirty.len() as u64,
+                    );
+                    let Some(parent_frontier) =
+                        self.try_local_content_refresh(&mut retained, &pending_ports, content)
+                    else {
+                        self.retained = Some(retained);
+                        return Ok(None);
+                    };
+                    if parent_frontier {
+                        self.full_paint_pending = true;
+                    }
+                } else {
+                    // Presentation/viewport-only records still need a fresh
+                    // prepared paint identity (for example after a theme
+                    // swap), but their intrinsic metrics are not a reason to
+                    // relayout ancestors.  Evaluate the affected leaves and
+                    // patch only their retained content records.
+                    for port_id in &pending_ports {
+                        let Some(nodes) = retained.layout.tree.content_roots.get(port_id) else {
+                            continue;
+                        };
+                        let Some(node_id) = nodes.first().copied() else {
+                            continue;
+                        };
+                        let width = retained.layout.tree.node(node_id).content_rect.width;
+                        let measurement =
+                            content.measure(*port_id, width, crate::presentation::WidthRule::Fill);
+                        if retained
+                            .layout
+                            .tree
+                            .update_content_measurement(*port_id, &measurement)
+                        {
+                            crate::perf::inc(crate::perf::Counter::ContentMetricChanges);
+                            self.retained = Some(retained);
+                            return Ok(None);
+                        }
+                    }
+                }
+                self.incremental_paint_content = pending_ports;
                 self.incremental_sync_components.clear();
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
@@ -1608,11 +1977,24 @@ impl SceneHost {
                 .filter_map(|id| retained.layout.tree.incremental_paint_rect(id)),
             retained.layout.tree.size,
         );
+        let content_damage = DamageRegion::from_rects(
+            self.incremental_paint_content.iter().flat_map(|port_id| {
+                retained
+                    .layout
+                    .tree
+                    .content_repaint_roots(*port_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|id| retained.layout.tree.incremental_paint_rect(id))
+            }),
+            retained.layout.tree.size,
+        );
         let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
         if !self.full_paint_pending
             && (self.incremental_paint_history
                 || !self.incremental_paint_components.is_empty()
-                || !self.incremental_paint_states.is_empty())
+                || !self.incremental_paint_states.is_empty()
+                || !self.incremental_paint_content.is_empty())
         {
             if let Some(mut surface) = self.last_surface.take() {
                 let mut incremental = true;
@@ -1674,9 +2056,36 @@ impl SceneHost {
                         }
                     }
                 }
+                if incremental {
+                    for port_id in self.incremental_paint_content.iter().copied() {
+                        crate::perf::inc(crate::perf::Counter::ContentPaintPropagations);
+                        let Some(roots) = retained.layout.tree.content_repaint_roots(port_id)
+                        else {
+                            incremental = false;
+                            break;
+                        };
+                        for root in roots {
+                            if !ViewPainter.paint_subtree_into_with_content(
+                                &compiler,
+                                &retained.layout.tree,
+                                root,
+                                &mut surface,
+                                &mut incremental_cache,
+                                content,
+                            ) {
+                                incremental = false;
+                                break;
+                            }
+                        }
+                        if !incremental {
+                            break;
+                        }
+                    }
+                }
                 self.incremental_paint_history = false;
                 self.incremental_paint_components.clear();
                 self.incremental_paint_states.clear();
+                self.incremental_paint_content.clear();
                 self.state_only_refresh = false;
                 if incremental {
                     crate::perf::inc(crate::perf::Counter::ViewStateIncrementalPaints);
@@ -1687,10 +2096,12 @@ impl SceneHost {
                         surface: output,
                         history_overlay: retained.root.history_overlay.clone(),
                         damage: self.pending_damage.take().unwrap_or_else(|| {
-                            if state_damage.rects.is_empty() {
+                            let mut rects = state_damage.rects.clone();
+                            rects.extend(content_damage.rects.iter().copied());
+                            if rects.is_empty() {
                                 DamageRegion::full(retained.layout.tree.size)
                             } else {
-                                state_damage
+                                DamageRegion::from_rects(rects, retained.layout.tree.size)
                             }
                         }),
                         state_bindings,
@@ -1700,11 +2111,13 @@ impl SceneHost {
             self.incremental_paint_history = false;
             self.incremental_paint_components.clear();
             self.incremental_paint_states.clear();
+            self.incremental_paint_content.clear();
             self.state_only_refresh = false;
         }
         self.incremental_paint_history = false;
         self.incremental_paint_components.clear();
         self.incremental_paint_states.clear();
+        self.incremental_paint_content.clear();
         self.state_only_refresh = false;
         #[cfg(test)]
         {
@@ -1969,6 +2382,88 @@ fn apply_component_subtree_update_to_scene(
         .capabilities
         .entries
         .extend(subtree.capabilities.entries.clone());
+    update_component_content_path_index(scene, id, subtree, old_ids);
+}
+
+/// Replaces only the semantic path/index records owned by one component
+/// occurrence. The component prefix is retained, while old nested component
+/// and ContentPort paths are removed before new subtree paths are installed.
+/// This keeps Source-only refreshes on the retained index and releases stale
+/// component-produced `View` Arc owners after a structural replacement.
+fn update_component_content_path_index(
+    scene: &mut ResolvedScene,
+    component: ComponentId,
+    subtree: &ResolvedScene,
+    old_components: &[ComponentId],
+) {
+    let prefix = scene.component_paths.get(&component).cloned();
+    let mut old_ports = Vec::new();
+    let mut affected_component_ids = HashSet::new();
+    for old_component in old_components {
+        scene.component_paths.remove(old_component);
+        if let Some(ports) = scene.content_path_components.remove(old_component) {
+            old_ports.extend(ports);
+        }
+    }
+    old_ports.sort_unstable();
+    old_ports.dedup();
+    for port_id in &old_ports {
+        if let Some(path) = scene.content_paths.get(port_id) {
+            for view in path {
+                if let ViewKind::ComponentSlot(slot) = view.kind() {
+                    affected_component_ids.insert(slot.id);
+                }
+            }
+        }
+    }
+    for port_id in &old_ports {
+        scene.content_paths.remove(port_id);
+    }
+    // Ancestor reverse buckets also referenced the removed ports. Remove only
+    // those IDs from the affected buckets; scanning/normalizing every bucket
+    // would turn a local component replacement into a registry-wide walk.
+    for component_id in &affected_component_ids {
+        if let Some(ports) = scene.content_path_components.get_mut(component_id) {
+            ports.retain(|port_id| !old_ports.contains(port_id));
+        }
+    }
+
+    let Some(prefix) = prefix else {
+        debug_assert!(
+            false,
+            "component content path prefix must be indexed before incremental replacement"
+        );
+        return;
+    };
+    scene.component_paths.insert(component, prefix.clone());
+    for (nested_component, path) in &subtree.component_paths {
+        let mut full_path = Vec::with_capacity(prefix.len().saturating_add(path.len()));
+        full_path.extend(prefix.iter().cloned());
+        full_path.extend(path.iter().cloned());
+        scene.component_paths.insert(*nested_component, full_path);
+    }
+    for (port_id, path) in &subtree.content_paths {
+        let mut full_path = Vec::with_capacity(prefix.len().saturating_add(path.len()));
+        full_path.extend(prefix.iter().cloned());
+        full_path.extend(path.iter().cloned());
+        for view in &full_path {
+            if let ViewKind::ComponentSlot(slot) = view.kind() {
+                affected_component_ids.insert(slot.id);
+                scene
+                    .content_path_components
+                    .entry(slot.id)
+                    .or_default()
+                    .push(*port_id);
+            }
+        }
+        scene.content_paths.insert(*port_id, full_path);
+    }
+    for component_id in affected_component_ids {
+        if let Some(ports) = scene.content_path_components.get_mut(&component_id) {
+            ports.sort_unstable();
+            ports.dedup();
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2039,6 +2534,64 @@ mod tests {
     #[derive(Debug)]
     struct TickingLeaf {
         frame: usize,
+    }
+
+    #[derive(Default)]
+    struct IndexedContentProvider {
+        revisions: HashMap<u64, u64>,
+    }
+
+    impl ContentProvider for IndexedContentProvider {
+        fn projection_revision(&self, port_id: u64, _offered_width: u16) -> u64 {
+            self.revisions.get(&port_id).copied().unwrap_or(0)
+        }
+
+        fn measure(
+            &mut self,
+            port_id: u64,
+            _offered_width: u16,
+            _width_rule: crate::presentation::WidthRule,
+        ) -> crate::presentation::ContentMeasurement {
+            let revision = self.revisions.get(&port_id).copied().unwrap_or(0);
+            crate::presentation::ContentMeasurement {
+                intrinsic_size: Size::new(1, 1),
+                physically_complete: true,
+                projection_revision: revision,
+                metric_revision: 1,
+                paint_revision: revision,
+                connector_id: (revision != 0).then_some(port_id),
+                projection_identity: revision,
+            }
+        }
+
+        fn paint_window(
+            &self,
+            _ticket: crate::presentation::PreparedProjectionTicket,
+            _window: crate::presentation::ContentWindow,
+            _target: &mut Surface,
+            _target_origin: (u16, u16),
+            _clip: crate::geometry::Rect,
+            _style: crate::physical::PhysicalStyle,
+        ) {
+        }
+    }
+
+    #[derive(Debug)]
+    struct IndexedContentComponent {
+        view: View,
+    }
+
+    impl Component for IndexedContentComponent {
+        fn view(&self) -> View {
+            self.view.clone()
+        }
+    }
+
+    fn indexed_content_view(port_id: u64, padding: u16) -> View {
+        View::native_content_host(port_id)
+            .expect("test ContentHost port must be positive")
+            .padding(crate::Insets::all(padding))
+            .background(ColorSpec::ansi(1))
     }
 
     impl Component for TickingLeaf {
@@ -2346,6 +2899,187 @@ mod tests {
         let lines = frame.screen_lines();
         assert!(lines.iter().any(|line| line.starts_with("history-new")));
         assert!(lines.iter().any(|line| line.starts_with("body-new")));
+    }
+
+    #[test]
+    fn component_content_path_index_updates_same_and_switched_ports() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(IndexedContentComponent {
+            view: indexed_content_view(101, 1),
+        });
+        let scene = Scene::new(View::component(handle));
+        let size = Size::new(16, 4);
+        let now = Instant::now();
+        let mut host = SceneHost::default();
+        let mut content = IndexedContentProvider {
+            revisions: HashMap::from([(101, 1), (202, 1)]),
+        };
+        let initial = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        assert!(initial.root.scene.content_paths.contains_key(&101));
+        assert_eq!(
+            initial.root.scene.content_path_components.get(&handle.id()),
+            Some(&vec![101]),
+            "initial reverse index must name the nested ContentPort once"
+        );
+        host.paint_with_content(initial, &Theme::default(), &content);
+
+        // Replace the same Port with a differently decorated component View.
+        registry
+            .with_mut(handle, |component| {
+                component.view = indexed_content_view(101, 2);
+            })
+            .unwrap();
+        host.invalidate_component(handle.id());
+        let same_port = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        let same_path = same_port
+            .root
+            .scene
+            .content_paths
+            .get(&101)
+            .expect("same Port path must survive component replacement");
+        assert_eq!(
+            same_path.last().and_then(View::content_attachment_id),
+            Some(101)
+        );
+        assert_eq!(
+            same_port
+                .root
+                .scene
+                .content_path_components
+                .get(&handle.id()),
+            Some(&vec![101]),
+            "same-Port replacement must not duplicate the reverse owner"
+        );
+        host.paint_with_content(same_port, &Theme::default(), &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+
+        // A later Source/recolor invalidation must use the retained updated
+        // path rather than rediscovering the old component sibling path.
+        content.revisions.insert(101, 2);
+        host.invalidate_content(ContentDirty::new(
+            101,
+            None,
+            crate::presentation::ContentDirtyReason::Presentation,
+        ));
+        let recolored = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        assert!(recolored.root.scene.content_paths.contains_key(&101));
+        host.paint_with_content(recolored, &Theme::default(), &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+
+        // Switch the component to another Port. The old path owner is
+        // released from the retained index and the new path is indexed.
+        registry
+            .with_mut(handle, |component| {
+                component.view = indexed_content_view(202, 3);
+            })
+            .unwrap();
+        host.invalidate_component(handle.id());
+        let switched = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        assert!(!switched.root.scene.content_paths.contains_key(&101));
+        assert!(switched.root.scene.content_paths.contains_key(&202));
+        assert_eq!(
+            switched
+                .root
+                .scene
+                .content_path_components
+                .get(&handle.id()),
+            Some(&vec![202]),
+            "switch replacement must remove the old reverse owner"
+        );
+        host.paint_with_content(switched, &Theme::default(), &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+
+        content.revisions.insert(202, 2);
+        host.invalidate_content(ContentDirty::new(
+            202,
+            None,
+            crate::presentation::ContentDirtyReason::SourceInput,
+        ));
+        let source_update = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        assert!(source_update.root.scene.content_paths.contains_key(&202));
+        assert!(!source_update.root.scene.content_paths.contains_key(&101));
+
+        for (iteration, port_id) in [101_u64, 202, 101, 202, 101, 202].into_iter().enumerate() {
+            registry
+                .with_mut(handle, |component| {
+                    component.view = indexed_content_view(port_id, (iteration as u16) + 4);
+                })
+                .unwrap();
+            host.invalidate_component(handle.id());
+            let replaced = host
+                .resolve_stable_at_with_anchor::<()>(
+                    &scene,
+                    &mut registry,
+                    size,
+                    now,
+                    HistoryViewportAnchor::FollowEnd,
+                    &StateFrameView::empty(),
+                    &mut content,
+                )
+                .unwrap();
+            assert_eq!(
+                replaced
+                    .root
+                    .scene
+                    .content_path_components
+                    .get(&handle.id()),
+                Some(&vec![port_id]),
+                "iteration {iteration} must retain exactly one reverse ContentPort owner"
+            );
+            assert_eq!(replaced.root.scene.content_paths.len(), 1);
+            host.paint_with_content(replaced, &Theme::default(), &content);
+            host.commit_content_candidate(host.content_candidate_epoch());
+        }
     }
 
     #[test]

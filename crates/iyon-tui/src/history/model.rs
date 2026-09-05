@@ -294,6 +294,17 @@ impl History {
         self.native.physical_rows_inserted
     }
 
+    /// Reports whether a native sink failure may have left physical
+    /// scrollback/screen state only partially synchronized. This is a
+    /// recovery marker, never permission to replay or roll back History.
+    pub(crate) fn native_synchronization_unknown(&self) -> bool {
+        self.native.synchronization_unknown
+    }
+
+    pub(crate) fn recover_native_synchronization(&mut self) {
+        self.native.recover_synchronization();
+    }
+
     pub fn set_layout(&mut self, layout: HistoryLayout) {
         if self.layout == layout {
             return;

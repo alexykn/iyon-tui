@@ -160,9 +160,31 @@ where
     }
 
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_invalidate_content(&mut self) {
-        self.scene_host.invalidate_content();
+    pub(crate) fn host_invalidate_content(&mut self, dirty: crate::presentation::ContentDirty) {
+        self.scene_host.invalidate_content(dirty);
         self.invalidate_frame();
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_content_candidate_epoch(&self) -> u64 {
+        self.scene_host.content_candidate_epoch()
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_commit_content_candidate(&mut self, epoch: u64) {
+        self.scene_host.commit_content_candidate(epoch);
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_abort_content_candidate(&mut self) {
+        self.scene_host.abort_content_candidate();
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_recover_native_history_synchronization(&mut self) {
+        if let Some(history) = self.scene.history_mut() {
+            history.recover_native_synchronization();
+        }
     }
 
     #[cfg(feature = "native-host")]
@@ -385,7 +407,7 @@ where
 
     pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
         self.theme = Arc::new(theme);
-        self.scene_host.invalidate_root();
+        self.scene_host.invalidate_theme();
         self.invalidate_frame();
     }
 

@@ -107,17 +107,25 @@ impl<T: SequenceAggregate + Clone> PersistentSeq<T> {
     const BRANCH: usize = 32;
 
     pub(crate) fn from_vec(values: Vec<T>) -> Self {
-        let mut level: Vec<Arc<SeqNode<T>>> = values
-            .chunks(Self::BRANCH)
-            .map(|items| {
-                Arc::new(SeqNode::Leaf {
-                    items: items.to_vec().into(),
-                    flags: items
-                        .iter()
-                        .fold(0, |flags, item| flags | item.sequence_flags()),
-                })
-            })
-            .collect();
+        // This constructor consumes its input.  Collecting `chunks()` with
+        // `to_vec()` needlessly cloned every child/handle before it entered
+        // the immutable leaf, which made a large freshly lowered axis scale
+        // with an avoidable second ownership pass.
+        let mut values = values.into_iter();
+        let mut level = Vec::new();
+        loop {
+            let items = values.by_ref().take(Self::BRANCH).collect::<Vec<_>>();
+            if items.is_empty() {
+                break;
+            }
+            let flags = items
+                .iter()
+                .fold(0, |flags, item| flags | item.sequence_flags());
+            level.push(Arc::new(SeqNode::Leaf {
+                items: items.into(),
+                flags,
+            }));
+        }
         if level.is_empty() {
             level.push(Arc::new(SeqNode::Leaf {
                 items: Arc::new([]),

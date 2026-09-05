@@ -31,7 +31,11 @@ pub(crate) enum LayoutContent {
     },
     ContentHost {
         port_id: u64,
+        connector_id: Option<u64>,
         projection_revision: u64,
+        metric_revision: u64,
+        paint_revision: u64,
+        projection_identity: u64,
     },
     Children,
     Clamp {

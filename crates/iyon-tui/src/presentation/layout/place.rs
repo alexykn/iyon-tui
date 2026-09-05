@@ -204,7 +204,11 @@ fn layout_content(prepared: &PreparedNode) -> LayoutContent {
             _,
         ) => LayoutContent::ContentHost {
             port_id: *port_id,
+            connector_id: measurement.connector_id,
             projection_revision: measurement.projection_revision,
+            metric_revision: measurement.metric_revision,
+            paint_revision: measurement.paint_revision,
+            projection_identity: measurement.projection_identity,
         },
         (MeasuredKind::ClampRows { overflow, .. }, PreparedKind::Clamp { .. }) => {
             LayoutContent::Clamp {

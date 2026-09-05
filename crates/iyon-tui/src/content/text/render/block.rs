@@ -16,7 +16,17 @@ pub(crate) struct BlockCacheKey {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct BlockLoweringCache {
-    entries: std::collections::HashMap<BlockCacheKey, View>,
+    entries: std::collections::HashMap<BlockCacheKey, BlockLoweringEntry>,
+}
+
+/// A cache hit must retain the immutable Block owner that supplied the key.
+/// The address is only an efficient lookup key; without this owner a dropped
+/// `Arc<BlockData>` could let the allocator reuse the address for a different
+/// block while the stale View remained in the cache.
+#[derive(Clone, Debug)]
+pub(crate) struct BlockLoweringEntry {
+    pub(crate) owner: Block,
+    pub(crate) view: View,
 }
 
 impl BlockLoweringCache {
@@ -26,15 +36,15 @@ impl BlockLoweringCache {
         }
     }
 
-    pub(crate) fn get(&self, key: &BlockCacheKey) -> Option<&View> {
+    pub(crate) fn get(&self, key: &BlockCacheKey) -> Option<&BlockLoweringEntry> {
         self.entries.get(key)
     }
 
-    pub(crate) fn insert(&mut self, key: BlockCacheKey, view: View) {
+    pub(crate) fn insert(&mut self, key: BlockCacheKey, owner: Block, view: View) {
         if self.entries.len() >= 1024 {
             self.entries.clear();
         }
-        self.entries.insert(key, view);
+        self.entries.insert(key, BlockLoweringEntry { owner, view });
     }
 
     pub(crate) fn clear(&mut self) {
@@ -54,13 +64,14 @@ impl TextRenderer {
             context: context.cache_key(),
         };
         if let Ok(cache) = self.cache.lock()
-            && let Some(view) = cache.get(&key)
+            && let Some(entry) = cache.get(&key)
         {
-            return view.clone();
+            debug_assert_eq!(entry.owner.identity_ptr(), block_ptr);
+            return entry.view.clone();
         }
         let view = self.lower_block_uncached(block, context);
         if let Ok(mut cache) = self.cache.lock() {
-            cache.insert(key, view.clone());
+            cache.insert(key, block.clone(), view.clone());
         }
         view
     }

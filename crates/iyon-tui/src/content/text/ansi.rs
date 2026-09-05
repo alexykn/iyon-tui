@@ -194,13 +194,14 @@ impl AnsiProjector {
             self.completed_end = domain.source_base();
         }
 
-        let parse_slice = if self.completed_end > domain.source_base() && resume_offset < domain.len() {
-            domain.suffix(resume_offset)?
-        } else if self.completed_end <= domain.source_base() {
-            domain.clone()
-        } else {
-            domain.suffix(domain.len())?
-        };
+        let parse_slice =
+            if self.completed_end > domain.source_base() && resume_offset < domain.len() {
+                domain.suffix(resume_offset)?
+            } else if self.completed_end <= domain.source_base() {
+                domain.clone()
+            } else {
+                domain.suffix(domain.len())?
+            };
 
         let text = parse_slice.text().as_bytes();
         let mut state = self.completed_state.clone();
@@ -221,7 +222,7 @@ impl AnsiProjector {
                     trailing_inlines.push(Inline::break_(BreakKind::Hard));
                     cursor += 2;
                     segment_start = cursor;
-                    self.completed_inlines.extend(trailing_inlines.drain(..));
+                    self.completed_inlines.append(&mut trailing_inlines);
                     self.completed_end = parse_slice.source_base().saturating_add(cursor as u64);
                     self.completed_state = state.clone();
                 }
@@ -236,7 +237,7 @@ impl AnsiProjector {
                     trailing_inlines.push(Inline::break_(BreakKind::Hard));
                     cursor += 1;
                     segment_start = cursor;
-                    self.completed_inlines.extend(trailing_inlines.drain(..));
+                    self.completed_inlines.append(&mut trailing_inlines);
                     self.completed_end = parse_slice.source_base().saturating_add(cursor as u64);
                     self.completed_state = state.clone();
                 }
@@ -255,7 +256,7 @@ impl AnsiProjector {
                         state = next_state;
                         cursor = new_cursor;
                         segment_start = cursor;
-                        self.completed_inlines.extend(trailing_inlines.drain(..));
+                        self.completed_inlines.append(&mut trailing_inlines);
                         self.completed_end =
                             parse_slice.source_base().saturating_add(cursor as u64);
                         self.completed_state = state.clone();
@@ -293,7 +294,7 @@ impl AnsiProjector {
                         state = next_state;
                         cursor = new_cursor;
                         segment_start = cursor;
-                        self.completed_inlines.extend(trailing_inlines.drain(..));
+                        self.completed_inlines.append(&mut trailing_inlines);
                         self.completed_end =
                             parse_slice.source_base().saturating_add(cursor as u64);
                         self.completed_state = state.clone();
@@ -333,7 +334,7 @@ impl AnsiProjector {
         }
 
         if is_sealed {
-            self.completed_inlines.extend(trailing_inlines.drain(..));
+            self.completed_inlines.append(&mut trailing_inlines);
             self.completed_end = domain.source_end();
             self.completed_state = state;
             Ok(

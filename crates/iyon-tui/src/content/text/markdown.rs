@@ -386,8 +386,7 @@ impl MarkdownProjector {
             .caches
             .iter()
             .find(|cache| {
-                cache.source_base == domain.source_base()
-                    && cache.stable_end <= domain.source_end()
+                cache.source_base == domain.source_base() && cache.stable_end <= domain.source_end()
             })
             .cloned()
             && cache.stable_end > domain.source_base()

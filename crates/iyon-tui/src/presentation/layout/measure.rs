@@ -220,7 +220,10 @@ pub(super) fn measure_node(
     if matches!(view.kind(), ViewKind::ContentHost)
         && let Some(port_id) = view.content_attachment_id()
     {
-        key.content_revision = content.projection_revision(port_id, width);
+        // Measurement depends on whether content layout inputs changed, not
+        // on palette/delivery paint revisions.  The provider still evaluates
+        // a dirty input before deciding whether metric propagation is needed.
+        key.content_revision = content.layout_input_revision(port_id, width);
     }
     if cacheable && let Some(measured) = cache.measured(key) {
         return measured;

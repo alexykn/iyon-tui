@@ -24,16 +24,125 @@ pub(crate) use block::BlockLoweringCache;
 
 use std::sync::{Arc, Mutex};
 
-use super::{Block, BlockKind, ListMarker, TextContent, text_style_ref};
+use super::{Block, BlockKind, ListMarker, RawText, TextContent, text_style_ref};
 use crate::content::Renderer;
-use crate::{Insets, IntoView, View};
+use crate::presentation::ir::{ColumnChild, PersistentSeq, ViewId};
+use crate::{HorizontalAlign, Insets, StyleRef, TextSpan, View, WrapMode};
 use identity::RenderContext;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct RawCacheKey {
+    page_ptr: usize,
+    start: u32,
+    len: u32,
+}
+
+#[derive(Clone, Debug)]
+struct RawCacheEntry {
+    /// Keep the page alive for as long as the address-based key is resident.
+    owner: Arc<str>,
+    view: View,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct EdgeCacheKey {
+    child: ViewId,
+    gap: u16,
+    predecessor: Option<(ListMarker, bool)>,
+}
+
+#[derive(Clone, Debug)]
+enum SemanticItemKey {
+    Raw {
+        page_ptr: usize,
+        start: u32,
+        len: u32,
+    },
+    Block {
+        block_ptr: usize,
+    },
+}
+
+impl PartialEq for SemanticItemKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Raw {
+                    page_ptr: left_page,
+                    start: left_start,
+                    len: left_len,
+                },
+                Self::Raw {
+                    page_ptr: right_page,
+                    start: right_start,
+                    len: right_len,
+                },
+            ) => (left_page, left_start, left_len) == (right_page, right_start, right_len),
+            (Self::Block { block_ptr: left }, Self::Block { block_ptr: right }) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SemanticItemKey {}
+
+impl std::hash::Hash for SemanticItemKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Raw {
+                page_ptr,
+                start,
+                len,
+            } => {
+                0u8.hash(state);
+                page_ptr.hash(state);
+                start.hash(state);
+                len.hash(state);
+            }
+            Self::Block { block_ptr } => {
+                1u8.hash(state);
+                block_ptr.hash(state);
+            }
+        }
+    }
+}
+
+impl crate::presentation::ir::SequenceAggregate for SemanticItemKey {
+    fn sequence_flags(&self) -> u8 {
+        0
+    }
+}
+
+impl crate::presentation::ir::SequenceAggregate for EdgeCacheKey {
+    fn sequence_flags(&self) -> u8 {
+        0
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SemanticSequenceEntry {
+    items: PersistentSeq<SemanticItemKey>,
+    edges: PersistentSeq<EdgeCacheKey>,
+    sequence: PersistentSeq<ColumnChild>,
+    view: View,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SemanticLoweringCache {
+    raw: std::collections::HashMap<RawCacheKey, RawCacheEntry>,
+    edges: std::collections::HashMap<EdgeCacheKey, View>,
+    sequences: Vec<SemanticSequenceEntry>,
+}
 
 /// The one generic renderer for the frozen text IR.
 #[derive(Clone, Debug)]
 pub struct TextRenderer {
     policy: TextRenderPolicy,
     cache: Arc<Mutex<BlockLoweringCache>>,
+    /// Connector-local semantic lowering owns this cache through the
+    /// TextRenderer value.  It is deliberately not global: inherited style
+    /// context and renderer policy are part of the keys/owner.
+    lowering_cache: Arc<Mutex<SemanticLoweringCache>>,
 }
 
 impl Default for TextRenderer {
@@ -41,6 +150,7 @@ impl Default for TextRenderer {
         Self {
             policy: TextRenderPolicy::default(),
             cache: Arc::new(Mutex::new(BlockLoweringCache::new())),
+            lowering_cache: Arc::new(Mutex::new(SemanticLoweringCache::default())),
         }
     }
 }
@@ -56,6 +166,7 @@ impl TextRenderer {
         Self {
             policy,
             cache: Arc::new(Mutex::new(BlockLoweringCache::new())),
+            lowering_cache: Arc::new(Mutex::new(SemanticLoweringCache::default())),
         }
     }
 
@@ -73,10 +184,18 @@ impl TextRenderer {
     where
         I: IntoIterator<Item = &'a TextContent>,
     {
-        let mut children = Vec::new();
         let mut previous: Option<&'a TextContent> = None;
         let context = RenderContext::default();
+        let mut candidate = None;
+        let mut sequence = None;
+        let mut rebuilding = false;
+        let mut item_keys = None;
+        let mut edge_keys = None;
+        let mut index = 0usize;
         for content in input {
+            let predecessor = previous
+                .and_then(list_of)
+                .map(|list| (list.marker(), list.tight()));
             let gap = previous
                 .and_then(list_of)
                 .zip(list_of(content))
@@ -99,23 +218,281 @@ impl TextRenderer {
                         }
                     },
                 );
-            let child = match content {
-                TextContent::Raw(raw) => {
-                    View::text(raw.text()).style(text_style_ref()).into_view()
+            let item_key = semantic_item_key(content);
+            if candidate.is_none() && index == 0 {
+                candidate = self.find_sequence_candidate(&item_key);
+            }
+            if !rebuilding
+                && let Some(candidate_index) = candidate
+                && let Some(cached) =
+                    self.cached_sequence_item(candidate_index, index, &item_key, gap, predecessor)
+            {
+                if sequence.is_none() {
+                    sequence = Some(cached.0);
                 }
+                if item_keys.is_none() {
+                    item_keys = Some(cached.1);
+                }
+                if edge_keys.is_none() {
+                    edge_keys = Some(cached.2);
+                }
+                index += 1;
+                previous = Some(content);
+                continue;
+            }
+            if !rebuilding {
+                let (prefix_sequence, prefix_items, prefix_edges) = candidate
+                    .and_then(|candidate_index| self.sequence_prefix(candidate_index, index))
+                    .unwrap_or_else(|| {
+                        (
+                            PersistentSeq::from_vec(Vec::new()),
+                            PersistentSeq::from_vec(Vec::new()),
+                            PersistentSeq::from_vec(Vec::new()),
+                        )
+                    });
+                sequence = Some(prefix_sequence);
+                item_keys = Some(prefix_items);
+                edge_keys = Some(prefix_edges);
+                rebuilding = true;
+            }
+            let child = match content {
+                TextContent::Raw(raw) => self.lower_raw(raw),
                 TextContent::Block(block) => self.lower_block(block, &context),
             };
-            children.push(child.padding(Insets::new(gap, 0, 0, 0)));
+            let child = self.lower_edge(child, gap, predecessor);
+            let edge_key = EdgeCacheKey {
+                child: child.id(),
+                gap,
+                predecessor,
+            };
+            sequence = Some(
+                sequence
+                    .take()
+                    .expect("semantic sequence initialized")
+                    .insert(index, ColumnChild::content(child)),
+            );
+            item_keys = Some(
+                item_keys
+                    .take()
+                    .expect("semantic item sequence initialized")
+                    .insert(index, item_key),
+            );
+            edge_keys = Some(
+                edge_keys
+                    .take()
+                    .expect("semantic edge sequence initialized")
+                    .insert(index, edge_key),
+            );
             previous = Some(content);
+            index += 1;
         }
-        View::column_from_views(children, 0)
+        if !rebuilding
+            && let Some(candidate_index) = candidate
+            && let Some(view) = self.cached_sequence_view(candidate_index, index)
+        {
+            return view;
+        }
+        if !rebuilding
+            && let Some(candidate_index) = candidate
+            && index < self.cached_sequence_len(candidate_index)
+        {
+            // Every input item matched the beginning of a longer cached
+            // sequence.  The cached sequence itself is not a valid result:
+            // finalized-prefix updates may legitimately shorten the stream,
+            // and returning its root would leak the old tail into the new
+            // view.  Keep the persistent prefix roots and materialize/cache
+            // exactly the requested length.
+            if let Some((prefix_sequence, prefix_items, prefix_edges)) =
+                self.sequence_prefix(candidate_index, index)
+            {
+                sequence = Some(prefix_sequence);
+                item_keys = Some(prefix_items);
+                edge_keys = Some(prefix_edges);
+            }
+        }
+        let sequence = sequence.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
+        let item_keys = item_keys.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
+        let edge_keys = edge_keys.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
+        let view = View::column_from_persistent(sequence.clone(), 0);
+        if let Ok(mut cache) = self.lowering_cache.lock() {
+            if cache.sequences.len() >= 256 {
+                cache.sequences.remove(0);
+            }
+            cache.sequences.push(SemanticSequenceEntry {
+                items: item_keys,
+                edges: edge_keys,
+                sequence,
+                view: view.clone(),
+            });
+        }
+        view
+    }
+
+    fn find_sequence_candidate(&self, first: &SemanticItemKey) -> Option<usize> {
+        self.lowering_cache
+            .lock()
+            .ok()?
+            .sequences
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.items.get(0) == Some(first))
+            .max_by_key(|(_, entry)| entry.items.len())
+            .map(|(index, _)| index)
+    }
+
+    fn cached_sequence_item(
+        &self,
+        candidate: usize,
+        index: usize,
+        item: &SemanticItemKey,
+        gap: u16,
+        predecessor: Option<(ListMarker, bool)>,
+    ) -> Option<(
+        PersistentSeq<ColumnChild>,
+        PersistentSeq<SemanticItemKey>,
+        PersistentSeq<EdgeCacheKey>,
+    )> {
+        let cache = self.lowering_cache.lock().ok()?;
+        let entry = cache.sequences.get(candidate)?;
+        if entry.items.get(index)? != item {
+            return None;
+        }
+        let child = entry.sequence.get(index)?.view.clone();
+        let expected = EdgeCacheKey {
+            child: child.id(),
+            gap,
+            predecessor,
+        };
+        if entry.edges.get(index)? != &expected {
+            return None;
+        }
+        Some((
+            entry.sequence.clone(),
+            entry.items.clone(),
+            entry.edges.clone(),
+        ))
+    }
+
+    fn sequence_prefix(
+        &self,
+        candidate: usize,
+        index: usize,
+    ) -> Option<(
+        PersistentSeq<ColumnChild>,
+        PersistentSeq<SemanticItemKey>,
+        PersistentSeq<EdgeCacheKey>,
+    )> {
+        let cache = self.lowering_cache.lock().ok()?;
+        let entry = cache.sequences.get(candidate)?;
+        Some((
+            entry.sequence.split(index).0,
+            entry.items.split(index).0,
+            entry.edges.split(index).0,
+        ))
+    }
+
+    fn cached_sequence_view(&self, candidate: usize, len: usize) -> Option<View> {
+        let cache = self.lowering_cache.lock().ok()?;
+        let entry = cache.sequences.get(candidate)?;
+        (entry.items.len() == len).then(|| entry.view.clone())
+    }
+
+    fn cached_sequence_len(&self, candidate: usize) -> usize {
+        self.lowering_cache
+            .lock()
+            .ok()
+            .and_then(|cache| {
+                cache
+                    .sequences
+                    .get(candidate)
+                    .map(|entry| entry.items.len())
+            })
+            .unwrap_or(0)
+    }
+
+    fn lower_raw(&self, raw: &RawText) -> View {
+        let key = RawCacheKey {
+            page_ptr: Arc::as_ptr(raw.page()) as *const () as usize,
+            start: raw.page_start(),
+            len: raw.len() as u32,
+        };
+        if let Ok(cache) = self.lowering_cache.lock()
+            && let Some(entry) = cache.raw.get(&key)
+        {
+            debug_assert_eq!(
+                Arc::as_ptr(&entry.owner) as *const () as usize,
+                key.page_ptr
+            );
+            return entry.view.clone();
+        }
+        let view = View::text_from_spans(
+            vec![TextSpan::from_source_page(
+                Arc::clone(raw.page()),
+                raw.page_start(),
+                raw.len() as u32,
+                StyleRef::default(),
+            )],
+            WrapMode::WordThenGrapheme,
+            HorizontalAlign::Start,
+            text_style_ref(),
+        );
+        if let Ok(mut cache) = self.lowering_cache.lock() {
+            if cache.raw.len() >= 1024 {
+                cache.raw.clear();
+            }
+            cache.raw.insert(
+                key,
+                RawCacheEntry {
+                    owner: Arc::clone(raw.page()),
+                    view: view.clone(),
+                },
+            );
+        }
+        view
+    }
+
+    fn lower_edge(&self, child: View, gap: u16, predecessor: Option<(ListMarker, bool)>) -> View {
+        if gap == 0 {
+            return child;
+        }
+        let key = EdgeCacheKey {
+            child: child.id(),
+            gap,
+            predecessor,
+        };
+        if let Ok(cache) = self.lowering_cache.lock()
+            && let Some(view) = cache.edges.get(&key)
+        {
+            return view.clone();
+        }
+        let view = child.padding(Insets::new(gap, 0, 0, 0));
+        if let Ok(mut cache) = self.lowering_cache.lock() {
+            if cache.edges.len() >= 2048 {
+                cache.edges.clear();
+            }
+            cache.edges.insert(key, view.clone());
+        }
+        view
+    }
+}
+
+fn semantic_item_key(content: &TextContent) -> SemanticItemKey {
+    match content {
+        TextContent::Raw(raw) => SemanticItemKey::Raw {
+            page_ptr: Arc::as_ptr(raw.page()) as *const () as usize,
+            start: raw.page_start(),
+            len: raw.len() as u32,
+        },
+        TextContent::Block(block) => SemanticItemKey::Block {
+            block_ptr: block.identity_ptr(),
+        },
     }
 }
 
 impl Renderer<TextContent> for TextRenderer {
     fn render(&self, input: &TextContent) -> View {
         match input {
-            TextContent::Raw(raw) => View::text(raw.text()).style(text_style_ref()).into_view(),
+            TextContent::Raw(raw) => self.lower_raw(raw),
             TextContent::Block(block) => self.lower_block(block, &RenderContext::default()),
         }
     }

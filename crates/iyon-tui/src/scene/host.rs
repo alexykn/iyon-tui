@@ -481,6 +481,14 @@ impl SceneHost {
 
     /// Invalidates the retained scene root for body/history/theme changes.
     pub(crate) fn invalidate_root(&mut self) {
+        // A root/theme replacement may leave the semantic ViewId unchanged,
+        // but measured ContentHost tickets carry theme/product identities.
+        // Drop derived layout/paint entries before rebuilding so painting
+        // cannot retain a ticket for the previous presentation environment.
+        // Connector semantic products remain owned by the content registry
+        // and are reused without reparsing.
+        self.layout_cache.clear();
+        self.paint_cache.clear();
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();

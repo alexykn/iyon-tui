@@ -14,13 +14,14 @@
 
 // STRUCTURE: validated kind + immutable fields + resolved retained handles
 // → canonical retained nodes and persistent derivations.
+#[cfg(feature = "native-host")]
+pub use crate::content::diff::lower_diff_hunks;
 pub use crate::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
 pub use crate::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
-    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
-    GridTrack, HorizontalAlign, Insets, IntoView, OverflowIndicator, Renderer, StyleRef, StyleSpec,
-    TextAttribute, TextAttributeSpec, TextSpan, Theme, ThemeColor, ThemeKey, VerticalAlign, View,
-    WrapMode,
+    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, GridCellSpec, GridTrack,
+    HorizontalAlign, Insets, OverflowIndicator, StyleRef, StyleSpec, TextAttribute,
+    TextAttributeSpec, TextSpan, Theme, ThemeColor, ThemeKey, VerticalAlign, View, WrapMode,
 };
 
 // STATE: validated property operations + retained state identity → canonical

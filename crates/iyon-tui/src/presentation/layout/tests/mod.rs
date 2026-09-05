@@ -11,8 +11,8 @@ use crate::presentation::api::style::{
 use crate::presentation::ir::ViewKind;
 use crate::presentation::ir::{Decoration, RowChild, ViewNodeParts};
 use crate::presentation::{
-    ColorSpec, HorizontalAlign, Insets, IntoView, StyleRef, StyleSpec, TextSpan, ThemeKey,
-    VerticalAlign, View, WidthRule, WrapMode,
+    ColorSpec, EmptyContentProvider, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView,
+    StyleRef, StyleSpec, TextSpan, ThemeKey, VerticalAlign, View, WidthRule, WrapMode,
 };
 use crate::{StyleSelector, Theme};
 
@@ -139,6 +139,163 @@ fn layout_stage_counters_match_semantic_nodes() {
     assert!(hanging_counters.0 <= hanging_counters.1);
     assert!(hanging_counters.1 <= hanging_counters.2);
     assert_eq!(hanging_counters.2, hanging_tree.nodes.len());
+}
+
+#[test]
+fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
+    let decorated = box_view(
+        View::text("inside box").into_view(),
+        background_with_padding(ColorSpec::ansi(4), Insets::new(1, 1, 1, 1)),
+    );
+    let views = [
+        View::text("one two three").fill_width().into_view(),
+        View::vertical(|column| {
+            column.child(View::text("first"));
+            column.child(View::text("second").fill_width());
+        }),
+        View::horizontal(|row| {
+            row.fixed(4, View::text("left"));
+            row.flex(View::text("right"));
+        }),
+        View::horizontal(|row| {
+            row.fixed(10, View::text("tall\nline 2\nline 3"));
+            row.fixed(10, View::text("short"));
+        }),
+        View::grid(|grid| {
+            grid.columns([GridTrack::fixed(10), GridTrack::fixed(10)]);
+            grid.row(|row| {
+                row.cell_with(
+                    GridCellSpec::new().row_span(2),
+                    View::text("tall\nline 2\nline 3"),
+                );
+                row.cell("short");
+            });
+            grid.row(|row| {
+                row.cell("next");
+            });
+        }),
+        View::row_viewport(
+            View::vertical(|column| {
+                column.children(["row 0", "row 1", "row 2"]);
+            }),
+            1,
+        ),
+        decorated,
+    ];
+
+    for view in views {
+        let compiler = ViewCompiler::default();
+        let tree = compiler.layout_tree(&view, LayoutConstraints::width_only(20));
+        let expected = lower_surface(ViewPainter.paint_tree(&compiler, &tree));
+        let (actual, complete) =
+            ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+        assert_eq!(actual, expected, "row lowering diverged for {view:#?}");
+        assert_eq!(complete, tree.physically_complete);
+    }
+
+    // The viewport and its child are deliberately offset below a preceding
+    // row.  This exercises the global-to-local clip transform used by the
+    // direct row compositor rather than only the zero-origin fast path.
+    let nested_viewport = View::vertical(|column| {
+        column.fixed(1, View::text("header"));
+        column.flex(
+            View::row_viewport(
+                View::vertical(|body| {
+                    body.children(["source 0", "source 1", "source 2"]);
+                }),
+                1,
+            )
+            .fill_width()
+            .fill_height(),
+        );
+    });
+    let compiler = ViewCompiler::default();
+    let tree = compiler.layout_tree(
+        &nested_viewport,
+        LayoutConstraints::bounded(Size::new(20, 5)),
+    );
+    let expected = lower_surface(ViewPainter.paint_tree(&compiler, &tree));
+    let (actual, _) =
+        ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+    assert_eq!(actual, expected, "offset viewport row lowering diverged");
+
+    // Keep the semantic span lookup linear in the number of graphemes rather
+    // than rescanning every span for each grapheme. Empty spans and a
+    // combining mark split across style boundaries exercise the same
+    // first-span selection as the canonical full compositor.
+    let mut spans = vec![TextSpan::plain("")];
+    for index in 0..256 {
+        spans.push(TextSpan::styled(
+            format!("word-{index} "),
+            if index % 2 == 0 {
+                StyleSpec::new().bold()
+            } else {
+                StyleSpec::new().italic()
+            },
+        ));
+    }
+    spans.push(TextSpan::styled("e", StyleSpec::new().bold()));
+    spans.push(TextSpan::styled("\u{301}", StyleSpec::new().italic()));
+    spans.push(TextSpan::plain(""));
+    let styled_many = View::styled_text(spans).fill_width().into_view();
+    let compiler = ViewCompiler::default();
+    let tree = compiler.layout_tree(&styled_many, LayoutConstraints::width_only(20));
+    let expected = lower_surface(ViewPainter.paint_tree(&compiler, &tree));
+    let (actual, _) =
+        ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+    assert_eq!(actual, expected, "many-span geometry/style lookup diverged");
+
+    let labeled = View::text("x")
+        .border(BorderSpec::plain().top_label("🐕x"))
+        .into_view();
+    for width in [3, 4] {
+        let compiler = ViewCompiler::default();
+        let tree = compiler.layout_tree(&labeled, LayoutConstraints::bounded(Size::new(width, 3)));
+        let expected = lower_surface(ViewPainter.paint_tree(&compiler, &tree));
+        let (actual, _) =
+            ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+        assert_eq!(
+            actual, expected,
+            "wide border label clipping diverged at width {width}"
+        );
+        assert!(
+            actual
+                .iter()
+                .all(|row| row.validate_cell_geometry().is_ok())
+        );
+    }
+}
+
+#[cfg(feature = "perf-counters")]
+#[test]
+fn row_paint_prunes_disjoint_column_children_before_allocating_rows() {
+    let _lock = crate::perf::test_lock();
+    let view = View::vertical(|column| {
+        for index in 0..4_096 {
+            column.child(View::text(format!("row {index}")));
+        }
+    });
+    let compiler = ViewCompiler::default();
+    let tree = compiler.layout_tree(&view, LayoutConstraints::bounded(Size::new(20, 1)));
+    crate::perf::reset();
+    let (rows, _) =
+        ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+    let counters = crate::perf::snapshot();
+    eprintln!(
+        "row-paint-prune counters: visited={} allocated_cells={}",
+        counters.value(crate::perf::Counter::PaintNodesVisited),
+        counters.value(crate::perf::Counter::PaintCellsAllocated),
+    );
+
+    assert_eq!(rows.len(), 1);
+    assert!(
+        counters.value(crate::perf::Counter::PaintNodesVisited) < 16,
+        "offscreen siblings must be pruned before row painting, counters={counters:?}"
+    );
+    assert!(
+        counters.value(crate::perf::Counter::PaintCellsAllocated) < 256,
+        "small viewport must allocate only row-sized surfaces, counters={counters:?}"
+    );
 }
 
 #[cfg(feature = "perf-counters")]

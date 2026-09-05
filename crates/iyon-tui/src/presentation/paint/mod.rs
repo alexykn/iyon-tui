@@ -5,8 +5,9 @@ mod text;
 mod theme;
 mod view;
 
-pub(crate) use decoration::paint_border;
+pub(crate) use decoration::{paint_border, paint_border_at};
+pub(crate) use text::TextGeometryCache;
 #[cfg(test)]
-pub(crate) use text::row_from_string;
+pub(crate) use text::{reset_text_geometry_builds, row_from_string, text_geometry_builds};
 pub(crate) use theme::{StyleContext, ThemeResolver};
-pub(crate) use view::{PaintCache, ViewPainter, apply_content_style};
+pub(crate) use view::{PaintCache, ViewPainter};

@@ -505,12 +505,45 @@ fn block_lowering_reuses_cached_lowered_view() {
     assert_eq!(v1, v2);
     let cache = renderer.cache.lock().unwrap();
     assert_eq!(cache.len(), 1);
+    let entry = cache
+        .get(&super::block::BlockCacheKey {
+            block_ptr: block.identity_ptr(),
+            context: context.cache_key(),
+        })
+        .expect("cached block entry");
+    assert_eq!(entry.owner.identity_ptr(), block.identity_ptr());
+}
+
+#[test]
+fn block_cache_context_carries_roles_origin_and_language() {
+    let renderer = TextRenderer::default();
+    let block = Block::code(CodeBlock::new(
+        Some(LanguageId::new("rust").unwrap()),
+        Some("rust"),
+        "let value = 1;",
+    ));
+    let role_a = super::identity::RenderContext::default().with_role(TextRole::BlockQuote);
+    let role_b = super::identity::RenderContext::default().with_role(TextRole::List);
+    let origin = super::identity::RenderContext::default()
+        .for_node(&Annotations::new().with_origin(TextOrigin::MARKDOWN));
+    let language = super::identity::RenderContext::default()
+        .with_language(Some(&LanguageId::new("rust").unwrap()));
+
+    let first = renderer.lower_block(&block, &role_a);
+    let second = renderer.lower_block(&block, &role_b);
+    let third = renderer.lower_block(&block, &origin);
+    let fourth = renderer.lower_block(&block, &language);
+
+    assert!(!View::ptr_eq(&first, &second));
+    assert!(!View::ptr_eq(&first, &third));
+    assert!(!View::ptr_eq(&first, &fourth));
+    assert_eq!(renderer.cache.lock().unwrap().len(), 4);
 }
 
 #[test]
 fn lower_semantic_iter_matches_slice_render() {
     let renderer = TextRenderer::default();
-    let items = vec![
+    let items = [
         TextContent::raw("First line"),
         TextContent::block(Block::paragraph("Second line")),
     ];
@@ -519,4 +552,90 @@ fn lower_semantic_iter_matches_slice_render() {
     let from_slice = renderer.render(&items[..]);
 
     assert_eq!(from_iter, from_slice);
+}
+
+#[test]
+fn semantic_lowering_reuses_cached_spacing_edges_and_sequence() {
+    let renderer = TextRenderer::default();
+    let items = [
+        TextContent::block(Block::paragraph("first")),
+        TextContent::block(Block::paragraph("second")),
+    ];
+    let first = renderer.lower_semantic_iter(items.iter());
+    let second = renderer.lower_semantic_iter(items.iter());
+
+    assert!(View::ptr_eq(&first, &second));
+}
+
+#[test]
+fn semantic_append_updates_only_the_tail_of_the_persistent_sequence() {
+    let renderer = TextRenderer::default();
+    let first_items = [
+        TextContent::block(Block::paragraph("first")),
+        TextContent::block(Block::paragraph("second")),
+    ];
+    let mut appended_items = first_items.to_vec();
+    appended_items.push(TextContent::block(Block::paragraph("third")));
+
+    let first = renderer.lower_semantic_iter(first_items.iter());
+    let appended = renderer.lower_semantic_iter(appended_items.iter());
+    let crate::presentation::ir::ViewKind::Column(first_column) = first.kind() else {
+        panic!("semantic lowering must produce a column");
+    };
+    let crate::presentation::ir::ViewKind::Column(appended_column) = appended.kind() else {
+        panic!("semantic lowering must produce a column");
+    };
+    assert_eq!(
+        first_column.children.len() + 1,
+        appended_column.children.len()
+    );
+    for index in 0..first_column.children.len() {
+        assert!(View::ptr_eq(
+            &first_column.children[index].view,
+            &appended_column.children[index].view,
+        ));
+    }
+}
+
+#[test]
+fn semantic_shorten_drops_the_cached_tail_instead_of_returning_stale_blocks() {
+    let renderer = TextRenderer::default();
+    let full_items = [
+        TextContent::block(Block::paragraph("first")),
+        TextContent::block(Block::paragraph("second")),
+        TextContent::block(Block::paragraph("stale tail")),
+    ];
+    let full = renderer.lower_semantic_iter(full_items.iter());
+    let shortened = renderer.lower_semantic_iter(full_items[..2].iter());
+
+    let crate::presentation::ir::ViewKind::Column(full_column) = full.kind() else {
+        panic!("semantic lowering must produce a column");
+    };
+    let crate::presentation::ir::ViewKind::Column(shortened_column) = shortened.kind() else {
+        panic!("semantic lowering must produce a column");
+    };
+    assert_eq!(full_column.children.len(), 3);
+    assert_eq!(shortened_column.children.len(), 2);
+    for index in 0..shortened_column.children.len() {
+        assert!(View::ptr_eq(
+            &full_column.children[index].view,
+            &shortened_column.children[index].view,
+        ));
+    }
+}
+
+#[test]
+fn raw_semantic_lowering_retains_the_source_page_range() {
+    let renderer = TextRenderer::default();
+    let raw = crate::RawText::new("raw source text");
+    let expected_page = std::sync::Arc::as_ptr(raw.page()) as *const () as usize;
+    let view = renderer.lower_semantic_iter([TextContent::from(raw.clone())].iter());
+    let crate::presentation::ir::ViewKind::Column(column) = view.kind() else {
+        panic!("raw semantic lowering must produce a column");
+    };
+    let crate::presentation::ir::ViewKind::Text(text) = column.children[0].view.kind() else {
+        panic!("raw semantic lowering must produce text");
+    };
+    assert_eq!(text.spans[0].source_page_ptr(), Some(expected_page));
+    assert_eq!(text.spans[0].text(), "raw source text");
 }

@@ -7,11 +7,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use iyon_tui::binding::{
-    AnsiColor, ColorSpec, ContentDelivery, ContentFamily, History, HistoryLayout, HostCellStyle,
-    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource, HostHistory,
-    HostScrollPane, HostTextInput, HostViewSlot, Insets, IntoView, Key, KeyStroke, Modifiers,
-    Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind, TextWrapMode,
-    TuiEnvironment, TuiHost, View,
+    AnsiColor, ColorSpec, ContentDelivery, ContentFamily, History, HistoryLayout, HorizontalAlign,
+    HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
+    HostHistory, HostScrollPane, HostTextInput, HostViewSlot, Insets, Key, KeyStroke, Modifiers,
+    Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind, TextSpan,
+    TextWrapMode, TuiEnvironment, TuiHost, View, WrapMode,
 };
 use serde_json::Map;
 use serde_json::Value;
@@ -115,7 +115,11 @@ fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
 /// it. The native boundary must not duplicate or serialize the TUI renderer.
 #[napi(js_name = "tuiSmoke")]
 pub fn tui_smoke() -> Result<String> {
-    let _view = View::text("iyon-tui/t1").into_view();
+    let _view = View::native_text_final(
+        vec![TextSpan::plain("iyon-tui/t1")],
+        WrapMode::default(),
+        HorizontalAlign::Start,
+    );
     Ok("iyon-tui/t1".to_owned())
 }
 

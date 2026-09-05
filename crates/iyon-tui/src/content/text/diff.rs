@@ -51,8 +51,12 @@ impl DiffProjector {
         is_sealed: bool,
     ) -> Result<super::Block, TextProjectionError> {
         let resume_offset = if self.completed_end > domain.source_base() {
-            usize::try_from(self.completed_end.as_u64().saturating_sub(domain.source_base().as_u64()))
-                .unwrap_or(0)
+            usize::try_from(
+                self.completed_end
+                    .as_u64()
+                    .saturating_sub(domain.source_base().as_u64()),
+            )
+            .unwrap_or(0)
         } else {
             0
         };
@@ -63,13 +67,14 @@ impl DiffProjector {
             self.completed_end = domain.source_base();
         }
 
-        let parse_slice = if self.completed_end > domain.source_base() && resume_offset < domain.len() {
-            domain.suffix(resume_offset)?
-        } else if self.completed_end <= domain.source_base() {
-            domain.clone()
-        } else {
-            domain.suffix(domain.len())?
-        };
+        let parse_slice =
+            if self.completed_end > domain.source_base() && resume_offset < domain.len() {
+                domain.suffix(resume_offset)?
+            } else if self.completed_end <= domain.source_base() {
+                domain.clone()
+            } else {
+                domain.suffix(domain.len())?
+            };
 
         let text = parse_slice.text();
         let ranges = line_ranges(text);
@@ -79,12 +84,8 @@ impl DiffProjector {
             let has_newline = range.end > range.start && text.as_bytes()[range.end - 1] == b'\n';
             let is_completed = has_newline || is_sealed;
 
-            let inlines = parse_single_diff_line(
-                &parse_slice,
-                text,
-                range.clone(),
-                &mut self.in_hunk,
-            )?;
+            let inlines =
+                parse_single_diff_line(&parse_slice, text, range.clone(), &mut self.in_hunk)?;
 
             if is_completed {
                 self.completed_inlines.extend(inlines);
@@ -289,12 +290,18 @@ mod tests {
 
         // Second chunk completes the line and adds another
         let p2 = incremental
-            .project(&raw_projection("@@ -1,1 +1,1 @@\n+hello world\n-goodbye\n", true))
+            .project(&raw_projection(
+                "@@ -1,1 +1,1 @@\n+hello world\n-goodbye\n",
+                true,
+            ))
             .unwrap();
 
         let mut one_shot = DiffProjector::new();
         let expected = one_shot
-            .project(&raw_projection("@@ -1,1 +1,1 @@\n+hello world\n-goodbye\n", true))
+            .project(&raw_projection(
+                "@@ -1,1 +1,1 @@\n+hello world\n-goodbye\n",
+                true,
+            ))
             .unwrap();
 
         assert_eq!(p2.spans().len(), expected.spans().len());

@@ -53,6 +53,34 @@ impl View {
         })
     }
 
+    /// Internal final text constructor used by semantic content lowering.
+    /// Common text metadata and sparse style are installed before the single
+    /// retained root allocation; source-backed spans remain range views.
+    pub(crate) fn text_from_spans(
+        spans: Vec<TextSpan>,
+        wrap: WrapMode,
+        align: HorizontalAlign,
+        style: StyleRef,
+    ) -> Self {
+        let mut decoration = Decoration::default();
+        decoration.text_style = style;
+        Self::from_node(ViewNodeParts {
+            width: WidthRule::Fit,
+            height: HeightRule::Fit,
+            decoration,
+            style_states: StyleStates::default(),
+            style_facts: StyleFacts::default(),
+            state_attachment: None,
+            content_attachment: None,
+            kind: ViewKind::Text(Arc::new(crate::presentation::ir::TextView {
+                spans: spans.into(),
+                wrap,
+                align,
+                cursor: None,
+            })),
+        })
+    }
+
     fn wrap_structural(self, make_kind: impl FnOnce(View) -> ViewKind) -> Self {
         let width = self.width();
         let height = self.height();
@@ -127,6 +155,13 @@ impl View {
             ),
             gap,
         })))
+    }
+
+    /// Builds a column from an already retained persistent child sequence.
+    /// Content lowering uses this when an append extends a cached semantic
+    /// prefix, so unchanged predecessor/edge records remain shared.
+    pub(crate) fn column_from_persistent(children: PersistentSeq<ColumnChild>, gap: u16) -> Self {
+        Self::new_kind(ViewKind::Column(Arc::new(ColumnView { children, gap })))
     }
 
     /// Constructs two-dimensional composition immediately with `Fit` width and
@@ -521,6 +556,15 @@ impl View {
             parts.decoration.bounds.height.max = max;
         }
         Self::from_node(parts)
+    }
+
+    /// Native-ingress spelling for an undecorated structural boundary.  It
+    /// keeps the operation-specific binding independent of the fluent
+    /// authoring modifier while preserving the canonical node representation.
+    #[cfg(feature = "native-host")]
+    #[doc(hidden)]
+    pub fn native_container(base: View) -> Self {
+        base.wrap_structural(|child| ViewKind::Container(Arc::new(ContainerNode { child })))
     }
 
     /// Applies text layout metadata while retaining the existing text payload.

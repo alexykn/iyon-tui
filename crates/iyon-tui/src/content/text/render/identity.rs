@@ -6,10 +6,15 @@ use crate::{IntoView, Text, View};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct RenderContextKey {
-    pub(super) role_depth: usize,
+    /// The complete inherited role path is part of the cache key.  A depth
+    /// alone is not enough: selectors can distinguish two paths with the
+    /// same number of ancestors.
+    pub(super) ancestor_roles: Vec<TextRole>,
+    pub(super) origin: Option<TextOrigin>,
     pub(super) list_kind: Option<TextListKind>,
     pub(super) task_state: Option<TextTaskState>,
     pub(super) table_section: Option<TextTableSection>,
+    pub(super) language: Option<LanguageId>,
     pub(super) format: Option<FormatId>,
 }
 
@@ -28,10 +33,12 @@ pub(super) struct RenderContext {
 impl RenderContext {
     pub(super) fn cache_key(&self) -> RenderContextKey {
         RenderContextKey {
-            role_depth: self.ancestor_roles.len(),
+            ancestor_roles: self.ancestor_roles.clone(),
+            origin: self.origin.clone(),
             list_kind: self.list_kind,
             task_state: self.task_state,
             table_section: self.table_section,
+            language: self.language.clone(),
             format: self.format.clone(),
         }
     }

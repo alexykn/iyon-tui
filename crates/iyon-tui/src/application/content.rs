@@ -5,6 +5,7 @@
 //! owned Sources, host-owned Ports and Connectors, desired/visible mount state,
 //! weak subscription bookkeeping, and the plain-text Connector projection.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
 use std::sync::{
@@ -17,7 +18,7 @@ use anyhow::{Result, anyhow};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    geometry::{Rect, Size},
+    geometry::Size,
     physical::{PhysicalCell, PhysicalRow, Surface},
     presentation::{
         ContentMeasurement, ContentProvider, ContentWindow, HistoryContentRows,
@@ -39,6 +40,8 @@ use super::host::HostInner;
 use super::source_store::{
     ChunkView, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
 };
+#[cfg(test)]
+use crate::geometry::Rect;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ContentFamily {
@@ -209,9 +212,6 @@ impl TextProjectionKey {
     fn metric_revision(self, size: Size, complete: bool) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.source_id.hash(&mut hasher);
-        self.source_generation.hash(&mut hasher);
-        self.source_revision.hash(&mut hasher);
         self.width.hash(&mut hasher);
         self.wrap.hash(&mut hasher);
         self.funnel_kind.hash(&mut hasher);
@@ -230,6 +230,11 @@ impl TextProjectionKey {
         self.width.hash(&mut hasher);
         self.wrap.hash(&mut hasher);
         self.funnel_kind.hash(&mut hasher);
+        // Delivery can change the visible intrinsic height even when Source
+        // bytes and width are unchanged. It is a layout input, while the
+        // metric revision below still records whether geometry actually
+        // changed after evaluation.
+        self.delivery_revision.hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -244,15 +249,13 @@ struct SemanticProjectionKey {
     source_revision: u64,
     source_base: u64,
     source_end: u64,
+    sealed: bool,
     funnel_kind: TextFunnelKind,
     hyperlinks: bool,
 }
 
 impl SemanticProjectionKey {
-    fn for_snapshot(
-        snapshot: &HostContentSourceSnapshot,
-        funnel: HostContentFunnel,
-    ) -> Self {
+    fn for_snapshot(snapshot: &HostContentSourceSnapshot, funnel: HostContentFunnel) -> Self {
         Self {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
@@ -260,6 +263,7 @@ impl SemanticProjectionKey {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
+            sealed: snapshot.sealed,
             funnel_kind: funnel.kind,
             hyperlinks: funnel.hyperlinks,
         }
@@ -295,10 +299,18 @@ fn resolve_cached_semantic(
 
 #[derive(Clone, Debug)]
 struct HostContentProjection {
+    /// Monotonic product identity used by prepared tickets.  This is not an
+    /// allocator address and therefore cannot suffer pointer ABA after cache
+    /// eviction/reuse.
+    identity: u64,
     key: TextProjectionKey,
     intrinsic_size: Size,
     physically_complete: bool,
     rows: Arc<Vec<PhysicalRow>>,
+    /// Physical rows produced by the established finalized-prefix proof.
+    /// This is a distinct product from the open document rows: Markdown may
+    /// render a prefix differently while its trailing block remains open.
+    finalized_prefix: Option<Arc<FinalizedPrefixProduct>>,
     stable_rows: usize,
     visible_row_count: usize,
     cut: Option<(u16, u16)>,
@@ -386,6 +398,10 @@ struct ConnectorExecution {
     diff: Option<DiffProjector>,
     ansi: Option<AnsiProjector>,
     delivery: Option<ConnectorDelivery>,
+    /// Text lowering is connector-local just like parser and delivery state.
+    /// Keeping this renderer alive makes its immutable block/edge products
+    /// reusable across source appends, theme changes, and delivery ticks.
+    renderer: TextRenderer,
 }
 
 impl ConnectorExecution {
@@ -401,18 +417,23 @@ impl ConnectorExecution {
                 })
             }),
             delivery: funnel.smooth_config().map(ConnectorDelivery::new),
+            renderer: content_text_renderer(),
         }
     }
 }
 
 impl HostContentProjection {
-    fn measurement(&self) -> ContentMeasurement {
+    fn measurement(&self, connector_id: u64) -> ContentMeasurement {
         ContentMeasurement {
             intrinsic_size: self.intrinsic_size,
             physically_complete: self.physically_complete,
             projection_revision: self.key.revision(),
-            metric_revision: self.key.metric_revision(self.intrinsic_size, self.physically_complete),
+            metric_revision: self
+                .key
+                .metric_revision(self.intrinsic_size, self.physically_complete),
             paint_revision: self.key.revision(),
+            connector_id: Some(connector_id),
+            projection_identity: self.identity,
         }
     }
 }
@@ -447,6 +468,16 @@ const MAX_CONTENT_PROJECTION_ROWS: u64 = u16::MAX as u64;
 const MAX_SOURCE_ANNOTATIONS: usize = 16 * 1024;
 const MAX_ANNOTATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
+static NEXT_CONTENT_PROJECTION_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_content_projection_id() -> u64 {
+    NEXT_CONTENT_PROJECTION_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .expect("content projection identity exhausted")
+}
+
 /// Initial annotation kinds are deliberately closed and host-independent.
 /// More consumer-specific kinds can be added by a generated sidecar later;
 /// unknown kinds never silently enter the Source store.
@@ -461,7 +492,6 @@ enum AnnotationTruncationPolicy {
     Drop,
     Point,
 }
-
 
 fn projected_bounds(
     snapshot: &HostContentSourceSnapshot,
@@ -642,22 +672,41 @@ fn content_text_renderer() -> TextRenderer {
 }
 
 fn compile_semantic_content(
+    renderer: &TextRenderer,
     semantic: &Projection<TextContent>,
     theme: &Theme,
     offered_width: u16,
-) -> Result<crate::presentation::layout::LayoutBlock> {
+    text_geometry: &mut crate::presentation::paint::TextGeometryCache,
+) -> Result<(
+    crate::presentation::layout::LayoutBlock,
+    Arc<crate::presentation::layout::LayoutTree>,
+)> {
     if semantic.spans().is_empty() {
-        return Ok(crate::presentation::layout::LayoutBlock {
-            width: 0,
-            rows: Vec::new(),
-            physically_complete: true,
-        });
+        let view = renderer.lower_semantic_iter(std::iter::empty());
+        let compiler = crate::presentation::layout::ViewCompiler::new(theme);
+        let tree = Arc::new(compiler.layout_tree(
+            &view,
+            crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+        ));
+        return Ok((
+            crate::presentation::layout::LayoutBlock {
+                width: 0,
+                rows: Vec::new(),
+                physically_complete: true,
+            },
+            tree,
+        ));
     }
-    let renderer = content_text_renderer();
     let view = renderer.lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values()));
-    let compiled =
-        crate::presentation::layout::ViewCompiler::new(theme).compile(&view, offered_width.max(1));
-    Ok(compiled)
+    let compiler = crate::presentation::layout::ViewCompiler::new(theme);
+    let tree = Arc::new(compiler.layout_tree(
+        &view,
+        crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+    ));
+    Ok((
+        compiler.compile_tree_with_text_cache(&tree, text_geometry),
+        tree,
+    ))
 }
 
 #[cfg(test)]
@@ -807,102 +856,6 @@ impl VisibilityIndex {
             cut,
         }
     }
-
-    pub(crate) fn from_surface(surface: &Surface) -> Self {
-        let mut row_glyphs = Vec::with_capacity(usize::from(surface.height()));
-        let mut total_glyphs = 0;
-        for row in 0..surface.height() {
-            let mut cols = Vec::new();
-            for col in 0..surface.width() {
-                let cell = surface.get(col, row);
-                if cell.painted && !cell.continuation {
-                    cols.push(col);
-                    total_glyphs += 1;
-                }
-            }
-            row_glyphs.push(cols);
-        }
-        Self {
-            row_glyphs,
-            total_glyphs,
-        }
-    }
-
-    pub(crate) fn apply_reveal(
-        &self,
-        surface: &Arc<Surface>,
-        units: usize,
-    ) -> (Size, Arc<Surface>, usize) {
-        if units == 0 || surface.width() == 0 || surface.height() == 0 || self.total_glyphs == 0 {
-            let empty = Surface::new(surface.width(), 0);
-            return (Size::new(surface.width(), 0), Arc::new(empty), 0);
-        }
-        if units >= self.total_glyphs {
-            let size = Size::new(surface.width(), surface.height());
-            return (size, Arc::clone(surface), self.row_glyphs.len());
-        }
-        let mut remaining = units;
-        let mut last_row = 0u16;
-        let mut saw_glyph = false;
-        let mut fully_revealed = 0usize;
-        let mut cut: Option<(u16, u16)> = None;
-
-        for (row_idx, cols) in self.row_glyphs.iter().enumerate() {
-            let row = row_idx as u16;
-            if cols.is_empty() {
-                fully_revealed = row_idx + 1;
-                continue;
-            }
-            if remaining < cols.len() {
-                let cut_col = cols[remaining];
-                cut = Some((row, cut_col));
-                if remaining > 0 {
-                    saw_glyph = true;
-                    last_row = row;
-                }
-                break;
-            }
-            remaining -= cols.len();
-            saw_glyph = true;
-            last_row = row;
-            fully_revealed = row_idx + 1;
-        }
-
-        if !saw_glyph {
-            let empty = Surface::new(surface.width(), 0);
-            return (Size::new(surface.width(), 0), Arc::new(empty), 0);
-        }
-
-        let target_height = if let Some((cut_row, cut_col)) = cut {
-            if cut_col > 0 {
-                last_row.max(cut_row).saturating_add(1)
-            } else {
-                last_row.saturating_add(1)
-            }
-        } else {
-            last_row.saturating_add(1)
-        };
-
-        let mut revealed = Surface::new(surface.width(), target_height);
-        revealed.physically_complete = surface.physically_complete;
-        for row in 0..target_height {
-            let max_col = if let Some((cut_row, cut_col)) = cut && row == cut_row {
-                cut_col
-            } else if let Some((cut_row, _)) = cut && row > cut_row {
-                0
-            } else {
-                surface.width()
-            };
-            for col in 0..max_col {
-                let cell = surface.get(col, row);
-                if cell.painted {
-                    *revealed.get_mut(col, row) = cell.clone();
-                }
-            }
-        }
-        let size = Size::new(revealed.width(), revealed.height());
-        (size, Arc::new(revealed), fully_revealed)
-    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -914,15 +867,115 @@ struct PreparedPaintKey {
 
 #[derive(Clone, Debug)]
 struct PreparedPaintProduct {
+    /// Width-dependent layout geometry is palette-independent and survives a
+    /// theme-only repaint.  The physical rows below are the theme-resolved
+    /// paint product layered on top of this retained tree.
+    layout: Arc<crate::presentation::layout::LayoutTree>,
+    text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
     rows: Arc<Vec<PhysicalRow>>,
     width: u16,
     height: u16,
     physically_complete: bool,
     visibility: VisibilityIndex,
-    unmasked_stable_prefix_rows: usize,
+    /// The current finalized-prefix policy is retained as an immutable row
+    /// product. It is intentionally allowed to differ from the open document
+    /// until the existing parser/History policy says the prefix is finalized.
+    finalized_prefix: Option<Arc<FinalizedPrefixProduct>>,
 }
 
+#[derive(Clone, Debug)]
+struct FinalizedPrefixProduct {
+    rows: Arc<Vec<PhysicalRow>>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PrefixProofKey {
+    semantic: SemanticProjectionKey,
+    source_end: u64,
+    width: u16,
+}
+
+#[derive(Clone, Debug)]
+struct PrefixProof {
+    source_end: u64,
+    layout: Arc<crate::presentation::layout::LayoutTree>,
+    text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
+}
+
+type PrefixProofCache = VecDeque<(PrefixProofKey, Arc<PrefixProof>)>;
+
 type PreparedPaintCache = VecDeque<(PreparedPaintKey, Arc<PreparedPaintProduct>)>;
+
+fn prove_finalized_prefix(
+    snapshot: &HostContentSourceSnapshot,
+    semantic_key: &SemanticProjectionKey,
+    funnel: HostContentFunnel,
+    theme: &Theme,
+    offered_width: u16,
+    semantic_cache: &mut SemanticProjectionCache,
+    prefix_proof_cache: &mut PrefixProofCache,
+) -> Option<Arc<FinalizedPrefixProduct>> {
+    // This is the pre-L11 finalized-prefix policy. It deliberately renders
+    // an immutable sealed range rather than slicing the open projection; the
+    // existing parser/restart behavior remains authoritative.
+    let prefix = snapshot.stable_prefix()?;
+    let stable_end = prefix.source_end;
+    let key = PrefixProofKey {
+        semantic: semantic_key.clone(),
+        source_end: stable_end,
+        width: offered_width.max(1),
+    };
+    let (proof, initial_rows) = if let Some(proof) = prefix_proof_cache
+        .iter()
+        .find(|(candidate, _)| candidate == &key)
+        .map(|(_, proof)| Arc::clone(proof))
+    {
+        (proof, None)
+    } else {
+        let mut prefix_execution = ConnectorExecution::new(&funnel);
+        let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
+        let prefix_semantic = resolve_cached_semantic(semantic_cache, prefix_key, || {
+            project_semantic_snapshot(&prefix, funnel, &mut prefix_execution)
+        })
+        .ok()?;
+        let text_geometry = Arc::new(Mutex::new(
+            crate::presentation::paint::TextGeometryCache::new(),
+        ));
+        let (compiled, layout) = {
+            let mut text_geometry_guard = text_geometry.lock().ok()?;
+            compile_semantic_content(
+                &prefix_execution.renderer,
+                &prefix_semantic,
+                theme,
+                offered_width,
+                &mut text_geometry_guard,
+            )
+            .ok()?
+        };
+        let proof = Arc::new(PrefixProof {
+            source_end: stable_end,
+            layout,
+            text_geometry,
+        });
+        if prefix_proof_cache.len() >= 8 {
+            prefix_proof_cache.pop_back();
+        }
+        prefix_proof_cache.push_front((key, Arc::clone(&proof)));
+        (proof, Some(compiled.rows))
+    };
+    debug_assert_eq!(proof.source_end, stable_end);
+    let rows = if let Some(rows) = initial_rows {
+        rows
+    } else {
+        let mut text_geometry = proof.text_geometry.lock().ok()?;
+        crate::presentation::layout::ViewCompiler::new(theme)
+            .compile_tree_with_text_cache(&proof.layout, &mut text_geometry)
+            .rows
+    };
+    Some(Arc::new(FinalizedPrefixProduct {
+        rows: Arc::new(rows),
+    }))
+}
 
 fn project_text_snapshot(
     snapshot: &HostContentSourceSnapshot,
@@ -933,6 +986,7 @@ fn project_text_snapshot(
     execution: &mut ConnectorExecution,
     delivery_revision: u64,
     semantic_cache: &mut SemanticProjectionCache,
+    prefix_proof_cache: &mut PrefixProofCache,
     prepared_paint_cache: &mut PreparedPaintCache,
 ) -> Result<HostContentProjection> {
     let key = TextProjectionKey {
@@ -948,10 +1002,12 @@ fn project_text_snapshot(
     };
     if snapshot.source_base == snapshot.source_end {
         return Ok(HostContentProjection {
+            identity: next_content_projection_id(),
             key,
             intrinsic_size: Size::new(0, 0),
             physically_complete: true,
             rows: Arc::new(Vec::new()),
+            finalized_prefix: None,
             stable_rows: 0,
             visible_row_count: 0,
             cut: None,
@@ -987,40 +1043,73 @@ fn project_text_snapshot(
     {
         product
     } else {
-        let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
+        let semantic = resolve_cached_semantic(semantic_cache, semantic_key.clone(), || {
             project_semantic_snapshot(snapshot, funnel, execution)
         })?;
-        let compiled = compile_semantic_content(&semantic, theme, offered_width)?;
-        let width = compiled.width;
-        let height = compiled.rows.len().min(usize::from(u16::MAX)) as u16;
-        let visibility = VisibilityIndex::from_rows(&compiled.rows);
-        let unmasked_stable_prefix_rows = if snapshot.sealed {
-            usize::from(height)
+        let reusable_product = prepared_paint_cache
+            .iter()
+            .find(|(candidate, _)| {
+                candidate.semantic_key == semantic_key && candidate.width == offered_width.max(1)
+            })
+            .map(|(_, product)| Arc::clone(product));
+        let (compiled, layout, text_geometry) = if let Some(product) = reusable_product {
+            let compiler = crate::presentation::layout::ViewCompiler::new(theme);
+            let layout = Arc::clone(&product.layout);
+            let text_geometry = Arc::clone(&product.text_geometry);
+            let compiled = {
+                let mut text_geometry_guard = text_geometry
+                    .lock()
+                    .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
+                compiler.compile_tree_with_text_cache(&layout, &mut text_geometry_guard)
+            };
+            (compiled, layout, text_geometry)
         } else {
-            snapshot
-                .stable_prefix()
-                .and_then(|prefix| {
-                    let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
-                    let mut prefix_exec = ConnectorExecution::new(&funnel);
-                    resolve_cached_semantic(semantic_cache, prefix_key, || {
-                        project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
-                    })
-                    .ok()
-                    .and_then(|prefix_semantic| {
-                        compile_semantic_content(&prefix_semantic, theme, offered_width)
-                            .ok()
-                            .map(|prefix_block| prefix_block.rows.len())
-                    })
-                })
-                .unwrap_or(0)
+            let text_geometry = Arc::new(Mutex::new(
+                crate::presentation::paint::TextGeometryCache::new(),
+            ));
+            let (compiled, layout) = {
+                let mut text_geometry_guard = text_geometry
+                    .lock()
+                    .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
+                compile_semantic_content(
+                    &execution.renderer,
+                    &semantic,
+                    theme,
+                    offered_width,
+                    &mut text_geometry_guard,
+                )?
+            };
+            (compiled, layout, text_geometry)
+        };
+        let width = compiled.width;
+        let physically_complete = compiled.physically_complete;
+        let rows = Arc::new(compiled.rows);
+        let height = rows.len().min(usize::from(u16::MAX)) as u16;
+        let visibility = VisibilityIndex::from_rows(&rows);
+        let finalized_prefix = if snapshot.sealed {
+            Some(Arc::new(FinalizedPrefixProduct {
+                rows: Arc::clone(&rows),
+            }))
+        } else {
+            prove_finalized_prefix(
+                snapshot,
+                &semantic_key,
+                funnel,
+                theme,
+                offered_width,
+                semantic_cache,
+                prefix_proof_cache,
+            )
         };
         let product = Arc::new(PreparedPaintProduct {
-            rows: Arc::new(compiled.rows),
+            layout,
+            text_geometry,
+            rows,
             width,
             height,
-            physically_complete: compiled.physically_complete,
+            physically_complete,
             visibility,
-            unmasked_stable_prefix_rows,
+            finalized_prefix,
         });
         prepared_paint_cache.retain(|(k, _)| k != &paint_key);
         prepared_paint_cache.push_front((paint_key, Arc::clone(&product)));
@@ -1030,13 +1119,15 @@ fn project_text_snapshot(
         product
     };
 
-    let (intrinsic_size, visible_row_count, cut, fully_revealed_rows) =
+    let (intrinsic_size, visible_row_count, cut, _fully_revealed_rows) =
         if let Some(delivery) = execution.delivery.as_mut() {
             delivery.accept_input(snapshot)?;
             let reveal_units = delivery.reveal_units();
-            let bounds = paint_product
-                .visibility
-                .reveal_bounds(reveal_units, paint_product.width, paint_product.height);
+            let bounds = paint_product.visibility.reveal_bounds(
+                reveal_units,
+                paint_product.width,
+                paint_product.height,
+            );
             (
                 Size::new(paint_product.width, bounds.revealed_height),
                 usize::from(bounds.revealed_height),
@@ -1052,23 +1143,25 @@ fn project_text_snapshot(
             )
         };
 
-    let stable_rows = if snapshot.sealed {
-        usize::from(paint_product.height)
-    } else if execution.delivery.is_some() {
-        paint_product
-            .unmasked_stable_prefix_rows
-            .min(fully_revealed_rows)
-    } else {
-        paint_product
-            .unmasked_stable_prefix_rows
-            .min(usize::from(paint_product.height))
-    };
+    let stable_rows = paint_product.finalized_prefix.as_ref().map_or(0, |prefix| {
+        if execution.delivery.is_some() {
+            // Preserve the established row-granular Smooth policy: History
+            // may transfer the finalized product incrementally as the same
+            // number of open rows become fully revealed.  In particular, a
+            // sealed source can still have a partial sink-visible backlog.
+            prefix.rows.len().min(_fully_revealed_rows)
+        } else {
+            prefix.rows.len()
+        }
+    });
 
     Ok(HostContentProjection {
+        identity: next_content_projection_id(),
         key,
         intrinsic_size,
         physically_complete: paint_product.physically_complete,
         rows: Arc::clone(&paint_product.rows),
+        finalized_prefix: paint_product.finalized_prefix.clone(),
         stable_rows,
         visible_row_count,
         cut,
@@ -1128,11 +1221,7 @@ impl<'a> SourceAnnotationRewriter<'a> {
                     }
                 })
             });
-            if let Some(style) = overlapping
-                .iter()
-                .rev()
-                .find_map(|overlap| overlap.style())
-            {
+            if let Some(style) = overlapping.iter().rev().find_map(|overlap| overlap.style()) {
                 piece = piece.with_style(style);
             }
             return Ok(vec![piece]);
@@ -1165,11 +1254,7 @@ impl<'a> SourceAnnotationRewriter<'a> {
                         }
                     })
                 });
-                if let Some(style) = active
-                    .iter()
-                    .rev()
-                    .find_map(|overlap| overlap.style())
-                {
+                if let Some(style) = active.iter().rev().find_map(|overlap| overlap.style()) {
                     piece = piece.with_style(style);
                 }
             }
@@ -1388,10 +1473,9 @@ enum ConnectorLifecycle {
 }
 
 #[derive(Clone, Debug)]
-struct SourceSubscription {
+struct SourceSubscriptionGroup {
     host: Weak<Mutex<HostInner>>,
-    connector_id: u64,
-    connector_generation: u32,
+    tokens: Vec<(u64, u32)>,
 }
 
 #[derive(Debug)]
@@ -1409,7 +1493,10 @@ struct ContentSourceRecord {
     dropped_head_bytes: u64,
     accepted_bytes: u64,
     connector_count: usize,
-    subscribers: Vec<SourceSubscription>,
+    /// Host-grouped wake subscriptions.  The host allocation pointer is only
+    /// an in-process map key; each value retains a Weak host and generation-
+    /// checked Connector tokens for validation when a mutation is drained.
+    subscribers: HashMap<usize, SourceSubscriptionGroup>,
 }
 
 #[derive(Debug, Default)]
@@ -1482,7 +1569,7 @@ impl ContentSourceRegistry {
             dropped_head_bytes: 0,
             accepted_bytes: 0,
             connector_count: 0,
-            subscribers: Vec::new(),
+            subscribers: HashMap::new(),
         }));
         registry.sources.insert(id, Arc::clone(&record));
         Ok(HostContentSource {
@@ -1897,11 +1984,22 @@ fn apply_retention(
     Ok((next, dropped))
 }
 
-fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<SourceSubscription> {
+type CapturedSubscriberGroup = (Arc<Mutex<HostInner>>, Vec<(u64, u32)>);
+
+fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<CapturedSubscriberGroup> {
     record
         .subscribers
-        .retain(|subscriber| subscriber.host.strong_count() != 0);
-    record.subscribers.clone()
+        .retain(|_, group| group.host.strong_count() != 0 && !group.tokens.is_empty());
+    record
+        .subscribers
+        .values()
+        .filter_map(|group| {
+            group
+                .host
+                .upgrade()
+                .map(|host| (host, group.tokens.clone()))
+        })
+        .collect()
 }
 
 impl HostContentSource {
@@ -1947,8 +2045,8 @@ impl HostContentSource {
         if funnel != TextFunnelKind::Markdown {
             return Ok(true);
         }
-        let truncated = record.retention.is_some_and(|policy| policy.drop_oldest)
-            || record.storage.base() != 0;
+        let truncated =
+            record.retention.is_some_and(|policy| policy.drop_oldest) || record.storage.base() != 0;
         Ok(!truncated)
     }
 
@@ -2062,9 +2160,7 @@ impl HostContentSource {
             let (next, dropped) = apply_retention(next, retention)?;
             record.storage = Arc::new(next);
             record.revision = revision;
-            record.copied_bytes = record
-                .copied_bytes
-                .saturating_add(input.len() as u64);
+            record.copied_bytes = record.copied_bytes.saturating_add(input.len() as u64);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
             record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
@@ -2104,9 +2200,7 @@ impl HostContentSource {
             record.storage = Arc::new(next);
             record.content_generation = content_generation;
             record.revision = revision;
-            record.copied_bytes = record
-                .copied_bytes
-                .saturating_add(input.len() as u64);
+            record.copied_bytes = record.copied_bytes.saturating_add(input.len() as u64);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
             record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
@@ -2217,26 +2311,8 @@ impl HostContentSource {
     fn finish_mutation(
         &self,
         revision: u64,
-        subscribers: Vec<SourceSubscription>,
+        groups: Vec<CapturedSubscriberGroup>,
     ) -> Result<ContentMutationResult> {
-        let mut groups: Vec<(Arc<Mutex<HostInner>>, Vec<(u64, u32)>)> = Vec::new();
-        for subscriber in subscribers {
-            let Some(host) = subscriber.host.upgrade() else {
-                continue;
-            };
-            if let Some((_, tokens)) = groups
-                .iter_mut()
-                .find(|(candidate, _)| Arc::ptr_eq(candidate, &host))
-            {
-                tokens.push((subscriber.connector_id, subscriber.connector_generation));
-            } else {
-                groups.push((
-                    host,
-                    vec![(subscriber.connector_id, subscriber.connector_generation)],
-                ));
-            }
-        }
-
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
         // A failed subscriber must not cancel the remaining wakes (§9.6):
@@ -2360,8 +2436,7 @@ impl HostContentSource {
             max_lines,
             drop_oldest,
         };
-        if !drop_oldest
-            && retention_head(&record.storage, Some(retention)) > record.storage.base()
+        if !drop_oldest && retention_head(&record.storage, Some(retention)) > record.storage.base()
         {
             return Err(anyhow!(
                 "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
@@ -2408,17 +2483,21 @@ impl HostContentSource {
         if record.lifecycle != SourceLifecycle::Live {
             return Err(anyhow!("SOURCE_DISPOSED: Source is disposed"));
         }
-        record.subscribers.retain(|subscriber| {
-            subscriber.host.strong_count() != 0
-                && !(Weak::ptr_eq(&subscriber.host, host)
-                    && subscriber.connector_id == connector_id
-                    && subscriber.connector_generation == connector_generation)
-        });
-        record.subscribers.push(SourceSubscription {
-            host: host.clone(),
-            connector_id,
-            connector_generation,
-        });
+        record
+            .subscribers
+            .retain(|_, subscriber| subscriber.host.strong_count() != 0);
+        let host_key = host.as_ptr() as usize;
+        let group = record
+            .subscribers
+            .entry(host_key)
+            .or_insert_with(|| SourceSubscriptionGroup {
+                host: host.clone(),
+                tokens: Vec::new(),
+            });
+        group
+            .tokens
+            .retain(|token| *token != (connector_id, connector_generation));
+        group.tokens.push((connector_id, connector_generation));
         Ok(())
     }
 
@@ -2429,19 +2508,28 @@ impl HostContentSource {
         connector_generation: u32,
     ) {
         if let Ok(mut record) = self.record.lock() {
-            record.subscribers.retain(|subscriber| {
-                !Weak::ptr_eq(&subscriber.host, host)
-                    || subscriber.connector_id != connector_id
-                    || subscriber.connector_generation != connector_generation
+            let host_key = host.as_ptr() as usize;
+            let remove_group = record.subscribers.get_mut(&host_key).is_some_and(|group| {
+                group
+                    .tokens
+                    .retain(|token| *token != (connector_id, connector_generation));
+                group.tokens.is_empty()
             });
+            if remove_group {
+                record.subscribers.remove(&host_key);
+            }
         }
     }
 
     #[cfg(test)]
     pub(crate) fn subscriber_count(&self) -> usize {
-        self.record
-            .lock()
-            .map_or(0, |record| record.subscribers.len())
+        self.record.lock().map_or(0, |record| {
+            record
+                .subscribers
+                .values()
+                .map(|group| group.tokens.len())
+                .sum()
+        })
     }
 }
 
@@ -2495,23 +2583,33 @@ impl HistoryTerminalAdapter {
     }
 
     pub(crate) fn committed_rows(&self, port_id: u64) -> usize {
-        self.ports.get(&port_id).map_or(0, |s| s.history_committed_rows)
+        self.ports
+            .get(&port_id)
+            .map_or(0, |s| s.history_committed_rows)
     }
 
     pub(crate) fn committed_content_rows(&self, port_id: u64) -> usize {
-        self.ports.get(&port_id).map_or(0, |s| s.history_committed_content_rows)
+        self.ports
+            .get(&port_id)
+            .map_or(0, |s| s.history_committed_content_rows)
     }
 
     pub(crate) fn leading_padding_rows(&self, port_id: u64) -> usize {
-        self.ports.get(&port_id).map_or(0, |s| s.history_leading_padding_rows)
+        self.ports
+            .get(&port_id)
+            .map_or(0, |s| s.history_leading_padding_rows)
     }
 
     pub(crate) fn trailing_padding_rows(&self, port_id: u64) -> usize {
-        self.ports.get(&port_id).map_or(0, |s| s.history_trailing_padding_rows)
+        self.ports
+            .get(&port_id)
+            .map_or(0, |s| s.history_trailing_padding_rows)
     }
 
     pub(crate) fn insets(&self, port_id: u64) -> crate::presentation::Insets {
-        self.ports.get(&port_id).map_or(crate::presentation::Insets::ZERO, |s| s.history_insets)
+        self.ports
+            .get(&port_id)
+            .map_or(crate::presentation::Insets::ZERO, |s| s.history_insets)
     }
 
     pub(crate) fn record_committed(
@@ -2552,7 +2650,9 @@ impl HistoryTerminalAdapter {
         let matching: Vec<u64> = self
             .ports
             .iter()
-            .filter_map(|(&port_id, state)| (state.history_unit == Some(unit_id)).then_some(port_id))
+            .filter_map(|(&port_id, state)| {
+                (state.history_unit == Some(unit_id)).then_some(port_id)
+            })
             .collect();
         for port_id in &matching {
             self.ports.remove(port_id);
@@ -2614,6 +2714,7 @@ struct ConnectorRecord {
     /// recolor reuses these products and repaints only; inactive connectors
     /// clear this cache alongside the surface products.
     semantic_cache: SemanticProjectionCache,
+    prefix_proof_cache: PrefixProofCache,
     committed_projection: Option<Arc<HostContentProjection>>,
     candidate_projection: Option<Arc<HostContentProjection>>,
     projected_source_revision: Option<u64>,
@@ -2659,6 +2760,26 @@ pub(crate) struct ContentHostRegistry {
     /// Active due deadlines for smoothed connectors. Native ticks and wake
     /// queries inspect this structure without scanning inactive registries.
     active_deadlines: HashMap<u64, Instant>,
+    /// Connector IDs eligible for deadline synchronization.  This recovery
+    /// index is maintained with lifecycle transitions, so an empty deadline
+    /// map never requires walking every inactive Connector.
+    active_connectors: HashSet<u64>,
+    /// Connector/Port records touched while preparing the current candidate.
+    /// Candidate cleanup and visible promotion consume these sets instead of
+    /// scanning unrelated inactive registry entries.
+    candidate_touched_connectors: HashSet<u64>,
+    candidate_touched_ports: HashSet<u64>,
+    /// Committed visible Ports are the only records that need implicit
+    /// removal when a candidate binding list omits them.  This replaces the
+    /// previous all-Port registry scan in `commit_visible`.
+    visible_ports: HashSet<u64>,
+    /// Attempt-local immutable Source captures.  The map is populated lazily
+    /// by the first demanded Connector and shared by all later key/history
+    /// lookups in that candidate.  Interior mutability keeps the read-only
+    /// provider revision queries on the existing seam without making the map a
+    /// second Source authority.
+    candidate_source_snapshots: RefCell<HashMap<u64, HostContentSourceSnapshot>>,
+    candidate_capture_active: bool,
     history_adapter: HistoryTerminalAdapter,
 }
 
@@ -2676,8 +2797,22 @@ impl ContentHostRegistry {
             in_flight_connectors: HashSet::new(),
             candidate_selections: HashMap::new(),
             active_deadlines: HashMap::new(),
+            active_connectors: HashSet::new(),
+            candidate_touched_connectors: HashSet::new(),
+            candidate_touched_ports: HashSet::new(),
+            visible_ports: HashSet::new(),
+            candidate_source_snapshots: RefCell::new(HashMap::new()),
+            candidate_capture_active: false,
             history_adapter: HistoryTerminalAdapter::new(),
         }
+    }
+
+    fn touch_connector(&mut self, connector_id: u64) {
+        self.candidate_touched_connectors.insert(connector_id);
+    }
+
+    fn touch_port(&mut self, port_id: u64) {
+        self.candidate_touched_ports.insert(port_id);
     }
 
     pub(crate) fn create_port(
@@ -2785,6 +2920,7 @@ impl ContentHostRegistry {
             projection_cache: VecDeque::new(),
             prepared_paint_cache: VecDeque::new(),
             semantic_cache: VecDeque::new(),
+            prefix_proof_cache: VecDeque::new(),
             committed_projection: None,
             candidate_projection: None,
             projected_source_revision: None,
@@ -2851,6 +2987,9 @@ impl ContentHostRegistry {
                 let desired_connector = port_state.desired_connector;
                 let host = port_state.host.clone();
                 drop(port_state);
+                if was_mounted != desired_mounted {
+                    self.touch_port(port_id);
+                }
                 if let Some(connector_id) = desired_connector {
                     self.refresh_requested_phase(
                         connector_id,
@@ -2869,6 +3008,8 @@ impl ContentHostRegistry {
     }
 
     pub(crate) fn begin_projection_candidate(&mut self) {
+        self.candidate_capture_active = true;
+        self.candidate_source_snapshots.borrow_mut().clear();
         self.clear_candidate_projections();
     }
 
@@ -2877,14 +3018,7 @@ impl ContentHostRegistry {
     /// projection; the host frame commits the new visible frontier later.
     pub(crate) fn advance(&mut self, now: Instant) -> bool {
         if self.active_deadlines.is_empty() {
-            let active_candidates: Vec<u64> = self
-                .connectors
-                .iter()
-                .filter_map(|(&id, c)| {
-                    let s = c.lock().ok()?;
-                    (s.visible || s.requested).then_some(id)
-                })
-                .collect();
+            let active_candidates = self.active_connectors.iter().copied().collect::<Vec<_>>();
             for id in active_candidates {
                 self.sync_connector_deadline(id, Some(now));
             }
@@ -2930,9 +3064,11 @@ impl ContentHostRegistry {
                     }
                 });
             if let Some(dl) = next_dl {
+                self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, dl);
             } else {
                 self.active_deadlines.remove(&connector_id);
+                self.active_connectors.remove(&connector_id);
             }
             if !progressed {
                 continue;
@@ -2965,27 +3101,35 @@ impl ContentHostRegistry {
         };
         if state.lifecycle == ConnectorLifecycle::Disposed || (!state.visible && !state.requested) {
             self.active_deadlines.remove(&connector_id);
+            self.active_connectors.remove(&connector_id);
             return;
         }
         if state.execution.is_none() && state.funnel.smooth_config().is_some() {
             state.execution = Some(ConnectorExecution::new(&state.funnel));
         }
-        if let Ok(snapshot) = state.source.snapshot()
+        if let Ok(snapshot) = self.source_snapshot_for(&state.source)
             && let Some(execution) = state.execution.as_mut()
             && let Some(delivery) = execution.delivery.as_mut()
         {
             let _ = delivery.accept_input(&snapshot);
             if !delivery.smoother.has_pending_work() {
                 self.active_deadlines.remove(&connector_id);
+                self.active_connectors.remove(&connector_id);
             } else if let Some(dl) = delivery.smoother.next_wakeup() {
+                self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, dl);
             } else if let Some(now) = now {
+                self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, now);
             } else {
+                self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, Instant::now());
             }
         } else {
             self.active_deadlines.remove(&connector_id);
+            if state.funnel.smooth_config().is_none() || (!state.visible && !state.requested) {
+                self.active_connectors.remove(&connector_id);
+            }
         }
     }
 
@@ -3021,7 +3165,7 @@ impl ContentHostRegistry {
         let state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-        let snapshot = state.source.snapshot()?;
+        let snapshot = self.source_snapshot_for(&state.source)?;
         Ok(TextProjectionKey {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
@@ -3033,6 +3177,25 @@ impl ContentHostRegistry {
             delivery_revision: state.delivery_revision,
             theme_revision: self.theme_revision,
         })
+    }
+
+    fn source_snapshot_for(&self, source: &HostContentSource) -> Result<HostContentSourceSnapshot> {
+        if !self.candidate_capture_active {
+            return source.snapshot();
+        }
+        if let Some(snapshot) = self
+            .candidate_source_snapshots
+            .borrow()
+            .get(&source.id())
+            .cloned()
+        {
+            return Ok(snapshot);
+        }
+        let snapshot = source.snapshot()?;
+        self.candidate_source_snapshots
+            .borrow_mut()
+            .insert(source.id(), snapshot.clone());
+        Ok(snapshot)
     }
 
     fn connector_revision(&self, connector_id: u64, offered_width: u16) -> u64 {
@@ -3122,6 +3285,7 @@ impl ContentHostRegistry {
         connector_id: u64,
         offered_width: u16,
     ) -> Result<ContentMeasurement> {
+        self.touch_connector(connector_id);
         let connector =
             self.connectors.get(&connector_id).cloned().ok_or_else(|| {
                 anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
@@ -3136,7 +3300,7 @@ impl ContentHostRegistry {
             (state.source.clone(), state.funnel, state.delivery_revision)
         };
         crate::perf::inc(crate::perf::Counter::SemanticPreparations);
-        let snapshot = source.snapshot()?;
+        let snapshot = self.source_snapshot_for(&source)?;
         if funnel.kind == TextFunnelKind::Markdown && snapshot.source_base != 0 {
             return Err(anyhow!(
                 "RETENTION_INCOMPATIBLE: Markdown requires an untruncated Source from its logical start"
@@ -3171,7 +3335,7 @@ impl ContentHostRegistry {
                 state.error = None;
                 state.failed_source_revision = None;
                 state.projection_failure_key = None;
-                let measurement = projection.measurement();
+                let measurement = projection.measurement(connector_id);
                 drop(state);
                 self.sync_connector_deadline(connector_id, None);
                 return Ok(measurement);
@@ -3183,7 +3347,7 @@ impl ContentHostRegistry {
         // Execution state is Connector-local. Take it, semantic cache, and
         // prepared paint cache out while projecting so a parser/smoother can
         // mutate without holding the Connector mutex.
-        let (mut execution, mut semantic_cache, mut prepared_paint_cache) = {
+        let (mut execution, mut semantic_cache, mut prefix_proof_cache, mut prepared_paint_cache) = {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -3193,6 +3357,7 @@ impl ContentHostRegistry {
                     .take()
                     .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
                 std::mem::take(&mut state.semantic_cache),
+                std::mem::take(&mut state.prefix_proof_cache),
                 std::mem::take(&mut state.prepared_paint_cache),
             )
         };
@@ -3205,6 +3370,7 @@ impl ContentHostRegistry {
             &mut execution,
             delivery_revision,
             &mut semantic_cache,
+            &mut prefix_proof_cache,
             &mut prepared_paint_cache,
         ) {
             Ok(projection) => Arc::new(projection),
@@ -3216,12 +3382,13 @@ impl ContentHostRegistry {
                 // products, so it is always safe to restore.
                 if let Ok(mut state) = connector.lock() {
                     state.semantic_cache = semantic_cache;
+                    state.prefix_proof_cache = prefix_proof_cache;
                     state.prepared_paint_cache = prepared_paint_cache;
                 }
                 return Err(error);
             }
         };
-        let measurement = projection.measurement();
+        let measurement = projection.measurement(connector_id);
         let mut state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -3230,6 +3397,7 @@ impl ContentHostRegistry {
         }
         state.execution = Some(execution);
         state.semantic_cache = semantic_cache;
+        state.prefix_proof_cache = prefix_proof_cache;
         state.prepared_paint_cache = prepared_paint_cache;
         state
             .projection_cache
@@ -3263,16 +3431,16 @@ impl ContentHostRegistry {
             .as_ref()
             .filter(|projection| projection.key == key)
         {
-            return Some(projection.measurement());
+            return Some(projection.measurement(connector_id));
         }
         if let Some(projection) = Self::cached_projection(&connector, &key) {
-            return Some(projection.measurement());
+            return Some(projection.measurement(connector_id));
         }
         connector
             .committed_projection
             .as_ref()
-            .filter(|projection| projection.key.width == key.width)
-            .map(|projection| projection.measurement())
+            .filter(|projection| projection.key == key)
+            .map(|projection| projection.measurement(connector_id))
     }
 
     fn projection_failure_is_recorded(&self, connector_id: u64, key: TextProjectionKey) -> bool {
@@ -3348,6 +3516,7 @@ impl ContentHostRegistry {
         offered_width: u16,
         width_rule: crate::presentation::WidthRule,
     ) -> ContentMeasurement {
+        self.touch_port(port_id);
         let Some(port) = self.ports.get(&port_id).cloned() else {
             return ContentMeasurement::default();
         };
@@ -3414,7 +3583,7 @@ impl ContentHostRegistry {
                                         width_rule,
                                         measurement,
                                     )
-                                    })
+                                })
                         });
                         self.candidate_selections.insert(port_id, visible);
                         rollback.unwrap_or_default()
@@ -3423,58 +3592,6 @@ impl ContentHostRegistry {
             }
         };
         self.adjust_history_measurement(port_id, measurement)
-    }
-
-    fn paint_content(&self, port_id: u64, offered_width: u16) -> Option<Arc<Surface>> {
-        let connector_id = self.selected_connector_id(port_id)?;
-        let projection = self.connector_projection(connector_id, offered_width)?;
-        let committed_rows = self.history_adapter.committed_content_rows(port_id);
-        let rows = &projection.rows[..];
-        let available_rows = if committed_rows >= rows.len() {
-            &[][..]
-        } else {
-            &rows[committed_rows..]
-        };
-        let max_visible = projection.visible_row_count.saturating_sub(committed_rows);
-        let visible_len = available_rows.len().min(max_visible);
-        let visible_rows = &available_rows[..visible_len];
-
-        let width = offered_width.max(1);
-        let height = visible_rows.len().min(usize::from(u16::MAX)) as u16;
-        let mut surface = Surface::new(width, height);
-        surface.physically_complete = projection.physically_complete;
-
-        for (i, row) in visible_rows.iter().enumerate() {
-            let dest_row = surface.row_cells_mut(i as u16);
-            let src_cells = row.cells();
-            let projection_row_idx = committed_rows + i;
-            let max_col = if let Some((cut_row, cut_col)) = projection.cut
-                && projection_row_idx == usize::from(cut_row)
-            {
-                usize::from(cut_col)
-            } else if let Some((cut_row, _)) = projection.cut
-                && projection_row_idx > usize::from(cut_row)
-            {
-                0
-            } else {
-                usize::from(width)
-            };
-            for glyph in row.glyphs() {
-                if !glyph.leader.painted || glyph.start >= max_col {
-                    continue;
-                }
-                if glyph.start + glyph.width <= usize::from(width) {
-                    crate::physical::write_glyph_span(
-                        dest_row,
-                        glyph.start,
-                        src_cells,
-                        glyph.start,
-                        glyph.width,
-                    );
-                }
-            }
-        }
-        Some(Arc::new(surface))
     }
 
     fn paint_window_direct(
@@ -3486,10 +3603,11 @@ impl ContentHostRegistry {
         clip: crate::geometry::Rect,
         style: crate::physical::PhysicalStyle,
     ) {
-        let Some(connector_id) = self.selected_connector_id(ticket.port_id) else {
-            return;
-        };
-        let Some(projection) = self.connector_projection(connector_id, ticket.offered_width) else {
+        // The ticket is the product selected during preparation.  Never
+        // substitute the newest same-width projection: a Source append,
+        // delivery tick, Connector switch, or theme change may have created
+        // another candidate while this frame is still being painted.
+        let Some(projection) = self.projection_for_ticket(ticket) else {
             return;
         };
         if !projection.physically_complete {
@@ -3603,8 +3721,37 @@ impl ContentHostRegistry {
                     }
                 }
             }
-            debug_assert!(crate::physical::validate_cells(target.row_cells(target_y as u16)).is_ok());
+            debug_assert!(
+                crate::physical::validate_cells(target.row_cells(target_y as u16)).is_ok()
+            );
         }
+    }
+
+    fn projection_for_ticket(
+        &self,
+        ticket: PreparedProjectionTicket,
+    ) -> Option<Arc<HostContentProjection>> {
+        let connector_id = ticket.connector_id?;
+        if ticket.projection_identity == 0 {
+            return None;
+        }
+        let connector = self.connectors.get(&connector_id)?.lock().ok()?;
+        let matches = |projection: &Arc<HostContentProjection>| {
+            projection.identity == ticket.projection_identity
+                && projection.key.width == ticket.offered_width.max(1)
+                && projection.key.revision() == ticket.projection_revision
+        };
+        if connector.candidate_projection.as_ref().is_some_and(matches) {
+            return connector.candidate_projection.as_ref().cloned();
+        }
+        if connector.committed_projection.as_ref().is_some_and(matches) {
+            return connector.committed_projection.as_ref().cloned();
+        }
+        connector
+            .projection_cache
+            .iter()
+            .find(|(_, projection)| matches(projection))
+            .map(|(_, projection)| Arc::clone(projection))
     }
 
     fn connector_projection(
@@ -3619,7 +3766,7 @@ impl ContentHostRegistry {
         if let Some(projection) = connector
             .candidate_projection
             .as_ref()
-            .filter(|projection| projection.key.width == key.width)
+            .filter(|projection| projection.key == key)
         {
             // The candidate owns the immutable Source snapshot captured for
             // this frame. A concurrent Source revision is left for the next
@@ -3632,7 +3779,7 @@ impl ContentHostRegistry {
         connector
             .committed_projection
             .as_ref()
-            .filter(|projection| projection.key.width == key.width)
+            .filter(|projection| projection.key == key)
             .cloned()
     }
 
@@ -3645,6 +3792,7 @@ impl ContentHostRegistry {
         targets
             .iter()
             .map(|port_id| {
+                self.touch_port(*port_id);
                 let port = self.ports.get(port_id).cloned().ok_or_else(|| {
                     anyhow!(
                         "INTERNAL_INVARIANT: ContentPort {port_id} disappeared after H3 prepare"
@@ -3674,6 +3822,9 @@ impl ContentHostRegistry {
                         Some(_) => visible_connector,
                     }
                 };
+                if let Some(connector_id) = connector_id {
+                    self.touch_connector(connector_id);
+                }
                 Ok(ContentBinding {
                     port_id: *port_id,
                     connector_id,
@@ -3691,6 +3842,7 @@ impl ContentHostRegistry {
         connector_id: u64,
         offered_width: u16,
     ) -> Result<bool> {
+        self.touch_connector(connector_id);
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return Err(anyhow!(
                 "INTERNAL_INVARIANT: activation candidate {connector_id} disappeared"
@@ -3712,7 +3864,7 @@ impl ContentHostRegistry {
         // still preparing this candidate; recording the pre-attempt revision
         // and exact width prevents a second layout measurement in this same
         // frame from retrying the identical failed input.
-        let snapshot = state.source.snapshot()?;
+        let snapshot = self.source_snapshot_for(&state.source)?;
         let key = TextProjectionKey {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
@@ -3743,6 +3895,12 @@ impl ContentHostRegistry {
     /// mutations accepted while a backend receipt is in flight must not
     /// destroy or detach an identity that the captured candidate still uses.
     pub(crate) fn begin_candidate(&mut self, bindings: &[ContentBinding]) {
+        for binding in bindings {
+            self.touch_port(binding.port_id);
+            if let Some(connector_id) = binding.connector_id {
+                self.touch_connector(connector_id);
+            }
+        }
         self.in_flight_connectors = bindings
             .iter()
             .filter_map(|binding| binding.connector_id)
@@ -3756,6 +3914,10 @@ impl ContentHostRegistry {
     pub(crate) fn end_candidate(&mut self) {
         self.in_flight_connectors.clear();
         self.clear_candidate_projections();
+        self.candidate_touched_connectors.clear();
+        self.candidate_touched_ports.clear();
+        self.candidate_capture_active = false;
+        self.candidate_source_snapshots.borrow_mut().clear();
     }
 
     /// Aborts a candidate without changing visible bindings. Deferred control
@@ -3764,10 +3926,19 @@ impl ContentHostRegistry {
     pub(crate) fn abort_candidate(&mut self) {
         self.clear_candidate_projections();
         let connector_ids = self.in_flight_connectors.drain().collect::<Vec<_>>();
-        for connector_id in connector_ids {
+        for connector_id in connector_ids.iter().copied() {
             self.cleanup_aborted_candidate(connector_id);
         }
-        self.finalize_disposed_connectors();
+        let touched = self
+            .candidate_touched_connectors
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        self.finalize_disposed_connectors(&touched);
+        self.candidate_touched_connectors.clear();
+        self.candidate_touched_ports.clear();
+        self.candidate_capture_active = false;
+        self.candidate_source_snapshots.borrow_mut().clear();
     }
 
     fn cleanup_aborted_candidate(&mut self, connector_id: u64) {
@@ -3807,8 +3978,15 @@ impl ContentHostRegistry {
 
     fn clear_candidate_projections(&mut self) {
         self.candidate_selections.clear();
-        for connector in self.connectors.values() {
-            if let Ok(mut state) = connector.lock() {
+        let connector_ids = self
+            .candidate_touched_connectors
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        for connector_id in connector_ids {
+            if let Some(connector) = self.connectors.get(&connector_id).cloned()
+                && let Ok(mut state) = connector.lock()
+            {
                 state.candidate_projection = None;
                 state.candidate_delivery_frontier = state.committed_delivery_frontier;
                 if !state.visible {
@@ -3816,6 +3994,7 @@ impl ContentHostRegistry {
                     state.projection_cache.clear();
                     state.prepared_paint_cache.clear();
                     state.semantic_cache.clear();
+                    state.prefix_proof_cache.clear();
                     state.projected_source_revision = None;
                     state.execution = None;
                     state.delivery_revision = 0;
@@ -3824,29 +4003,35 @@ impl ContentHostRegistry {
                 }
             }
         }
-        self.active_deadlines.retain(|id, _| {
-            self.connectors
-                .get(id)
-                .and_then(|c| c.lock().ok())
-                .is_some_and(|s| s.visible || s.requested)
-        });
+        for connector_id in &self.candidate_touched_connectors {
+            let active = self
+                .connectors
+                .get(connector_id)
+                .and_then(|connector| connector.lock().ok())
+                .is_some_and(|state| state.visible || state.requested);
+            if !active {
+                self.active_deadlines.remove(connector_id);
+                self.active_connectors.remove(connector_id);
+            }
+        }
     }
 
     pub(crate) fn commit_visible(&mut self, bindings: &[ContentBinding]) {
         for binding in bindings {
+            self.touch_port(binding.port_id);
             if let Some(connector_id) = binding.connector_id {
+                self.touch_connector(connector_id);
                 self.promote_candidate_projection(connector_id);
             }
         }
-        let mounted = bindings
+        let mut port_ids = self
+            .candidate_touched_ports
             .iter()
-            .map(|binding| binding.port_id)
-            .collect::<HashSet<_>>();
-        let selected = bindings
-            .iter()
-            .map(|binding| (binding.port_id, binding.connector_id))
-            .collect::<HashMap<_, _>>();
-        let port_ids = self.ports.keys().copied().collect::<Vec<_>>();
+            .copied()
+            .collect::<Vec<_>>();
+        if port_ids.is_empty() {
+            port_ids.extend(self.visible_ports.iter().copied());
+        }
         crate::perf::add(
             crate::perf::Counter::ContentRegistryPortScans,
             port_ids.len() as u64,
@@ -3856,29 +4041,44 @@ impl ContentHostRegistry {
                 continue;
             };
             let old_visible = port.lock().ok().and_then(|port| port.visible_connector);
-            let next_visible = selected.get(&port_id).copied().flatten();
+            let binding = bindings.iter().find(|binding| binding.port_id == port_id);
+            let mounted = binding.is_some();
+            let next_visible = binding.and_then(|binding| binding.connector_id);
+            if let Some(old_id) = old_visible {
+                self.touch_connector(old_id);
+            }
             if let Some(old_id) = old_visible
                 && Some(old_id) != next_visible
             {
                 self.set_connector_visible(old_id, false);
             }
             if let Ok(mut port_state) = port.lock() {
-                port_state.visible_mounted = mounted.contains(&port_id);
+                port_state.visible_mounted = mounted;
                 port_state.visible_connector = if port_state.visible_mounted {
                     next_visible
                 } else {
                     None
                 };
             }
+            if mounted {
+                self.visible_ports.insert(port_id);
+            } else {
+                self.visible_ports.remove(&port_id);
+            }
             if let Some(next_id) = next_visible
-                && mounted.contains(&port_id)
+                && mounted
             {
+                self.touch_connector(next_id);
                 self.set_connector_visible(next_id, true);
             }
         }
-        let connector_ids = self.connectors.keys().copied().collect::<Vec<_>>();
-        for connector_id in connector_ids {
-            let Some(connector) = self.connectors.get(&connector_id).cloned() else {
+        let connector_ids = self
+            .candidate_touched_connectors
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        for connector_id in &connector_ids {
+            let Some(connector) = self.connectors.get(connector_id).cloned() else {
                 continue;
             };
             let Ok(mut state) = connector.lock() else {
@@ -3912,7 +4112,7 @@ impl ContentHostRegistry {
                 state.phase = "idle";
             }
         }
-        self.finalize_disposed_connectors();
+        self.finalize_disposed_connectors(&connector_ids);
     }
 
     pub(crate) fn fail_next_activation(
@@ -3948,6 +4148,7 @@ impl ContentHostRegistry {
         connector_id: u64,
         host: &Weak<Mutex<HostInner>>,
     ) -> Result<bool> {
+        self.touch_connector(connector_id);
         let connector = self
             .connectors
             .get(&connector_id)
@@ -3990,6 +4191,11 @@ impl ContentHostRegistry {
             .lock()
             .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
             .desired_connector;
+        self.touch_port(
+            port.lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .id,
+        );
         if let Some(old_id) = old_selected
             && old_id != connector_id
         {
@@ -4015,6 +4221,7 @@ impl ContentHostRegistry {
                 "waiting-for-mount"
             };
         }
+        self.active_connectors.insert(connector_id);
         if port_mounted {
             self.subscribe_connector(connector_id, &source, generation, host)?;
         }
@@ -4026,6 +4233,7 @@ impl ContentHostRegistry {
     }
 
     fn request_deactivation(&mut self, connector_id: u64) -> Result<bool> {
+        self.touch_connector(connector_id);
         let connector = self
             .connectors
             .get(&connector_id)
@@ -4061,6 +4269,11 @@ impl ContentHostRegistry {
                 visible_connector,
             )
         };
+        let port_id = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
+        self.touch_port(port_id);
         let in_flight = self.in_flight_connectors.contains(&connector_id);
         if !was_requested && !was_visible && !in_flight {
             return Ok(false);
@@ -4087,6 +4300,9 @@ impl ContentHostRegistry {
             state.requested = false;
             state.phase = if state.visible { "active" } else { "idle" };
         }
+        if !was_visible {
+            self.active_connectors.remove(&connector_id);
+        }
         // A failed switch keeps the old visible Connector (rollback)
         // while the requested candidate remains selected. Deactivating that
         // candidate must still schedule the removal of the rolled-back visible;
@@ -4098,6 +4314,7 @@ impl ContentHostRegistry {
     }
 
     fn request_connector_disposal(&mut self, connector_id: u64) -> Result<bool> {
+        self.touch_connector(connector_id);
         let connector = self
             .connectors
             .get(&connector_id)
@@ -4138,8 +4355,14 @@ impl ContentHostRegistry {
                 visible_connector,
             )
         };
+        let port_id = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
+        self.touch_port(port_id);
         if !visible && !in_flight {
             self.unsubscribe_connector(&source, connector_id, generation);
+            self.active_connectors.remove(&connector_id);
         }
         if desired.is_some()
             && let Ok(mut port_state) = port.lock()
@@ -4182,6 +4405,7 @@ impl ContentHostRegistry {
             state.lifecycle = PortLifecycle::Disposed;
         }
         self.ports.remove(&id);
+        self.visible_ports.remove(&id);
         Ok(())
     }
 
@@ -4201,6 +4425,8 @@ impl ContentHostRegistry {
             }
         }
         self.ports.clear();
+        self.visible_ports.clear();
+        self.active_connectors.clear();
     }
 
     fn refresh_requested_phase(
@@ -4333,6 +4559,7 @@ impl ContentHostRegistry {
     }
 
     fn set_connector_visible(&mut self, connector_id: u64, visible: bool) {
+        self.touch_connector(connector_id);
         let Some(connector) = self.connectors.get(&connector_id).cloned() else {
             return;
         };
@@ -4354,6 +4581,7 @@ impl ContentHostRegistry {
             state.projection_cache.clear();
             state.prepared_paint_cache.clear();
             state.semantic_cache.clear();
+            state.prefix_proof_cache.clear();
             state.projected_source_revision = None;
             state.projection_failure_key = None;
             state.execution = None;
@@ -4370,17 +4598,22 @@ impl ContentHostRegistry {
                 "idle"
             };
         }
+        let requested = state.requested;
         drop(state);
         if visible {
             self.sync_connector_deadline(connector_id, None);
         } else {
             self.active_deadlines.remove(&connector_id);
+            if !requested {
+                self.active_connectors.remove(&connector_id);
+            }
             self.unsubscribe_connector(&source, connector_id, generation);
         }
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
         self.active_deadlines.remove(&connector_id);
+        self.active_connectors.remove(&connector_id);
         let Some(connector) = self.connectors.remove(&connector_id) else {
             return;
         };
@@ -4407,17 +4640,18 @@ impl ContentHostRegistry {
         }
     }
 
-    fn finalize_disposed_connectors(&mut self) {
-        let ids = self
-            .connectors
-            .iter()
-            .filter_map(|(id, connector)| {
-                let state = connector.lock().ok()?;
-                (state.lifecycle == ConnectorLifecycle::Disposing && !state.visible).then_some(*id)
-            })
-            .collect::<Vec<_>>();
-        for id in ids {
-            self.remove_connector(id);
+    fn finalize_disposed_connectors(&mut self, candidate_ids: &[u64]) {
+        for id in candidate_ids.iter().copied() {
+            let removable = self
+                .connectors
+                .get(&id)
+                .and_then(|connector| connector.lock().ok())
+                .is_some_and(|state| {
+                    state.lifecycle == ConnectorLifecycle::Disposing && !state.visible
+                });
+            if removable {
+                self.remove_connector(id);
+            }
         }
     }
 
@@ -4477,28 +4711,39 @@ impl ContentHostRegistry {
         let insets = self.history_adapter.insets(port_id);
         let committed_rows = self.history_adapter.committed_rows(port_id);
         let connector = self.connectors.get(&connector_id)?.lock().ok()?;
-        let snapshot = connector.source.snapshot().ok()?;
+        let snapshot = self.source_snapshot_for(&connector.source).ok()?;
         let sealed = snapshot.sealed;
         drop(connector);
         let content_width =
             offered_width.saturating_sub(insets.left().saturating_add(insets.right()));
         let projection = self.connector_projection(connector_id, content_width)?;
-        let content_rows = &projection.rows[..];
+        // History consumes the separately proved finalized-prefix product,
+        // not a row-count slice of the open document.  An open Markdown tail
+        // can be reinterpreted as more bytes arrive, so slicing
+        // `projection.rows` would export rows that were never finalized (and
+        // could disagree with the sealed-prefix rendering).
+        let content_rows = projection
+            .finalized_prefix
+            .as_ref()
+            .map_or(&[][..], |prefix| &prefix.rows[..]);
         let top_padding = usize::from(insets.top());
-        let bottom_padding = if sealed { usize::from(insets.bottom()) } else { 0 };
+        // History is irreversible.  Only rows that have crossed the same
+        // finalized/delivered frontier used by the screen may be transferred;
+        // a sealed Source can still have Smooth backlog.  In particular, do
+        // not treat sealing as permission to export the unmasked tail.
+        let transferable_content_rows = projection.stable_rows.min(content_rows.len());
+        let complete_content = sealed && transferable_content_rows >= content_rows.len();
+        let bottom_padding = complete_content
+            .then_some(usize::from(insets.bottom()))
+            .unwrap_or(0);
         let total_height = top_padding
-            .saturating_add(content_rows.len())
+            .saturating_add(transferable_content_rows)
             .saturating_add(bottom_padding);
         let content_start = top_padding;
         let content_end = content_start.saturating_add(content_rows.len());
-        let stable_end = if sealed {
-            total_height
-        } else {
-            projection
-                .stable_rows
-                .min(content_rows.len())
-                .saturating_add(content_start)
-        };
+        let stable_end = content_start
+            .saturating_add(transferable_content_rows)
+            .saturating_add(bottom_padding);
         let start = committed_rows.min(total_height);
         let end = stable_end.min(total_height);
 
@@ -4508,9 +4753,19 @@ impl ContentHostRegistry {
                     if row_idx < top_padding || row_idx >= content_end {
                         let cells = vec![PhysicalCell::transparent(); usize::from(offered_width)];
                         PhysicalRow::from_cells(cells)
-                    } else {
+                    } else if row_idx - top_padding < transferable_content_rows {
                         let content_row = &content_rows[row_idx - top_padding];
-                        content_row.placed(offered_width, insets.left())
+                        let placed = content_row.placed(offered_width, insets.left());
+                        // Finalized-prefix rows are whole compiled rows.  A
+                        // Smooth cut belongs to the open paint product and
+                        // must never be applied to this independent History
+                        // product.
+                        placed
+                    } else {
+                        PhysicalRow::from_cells(vec![
+                            PhysicalCell::transparent();
+                            usize::from(offered_width)
+                        ])
                     }
                 })
                 .collect()
@@ -4531,7 +4786,7 @@ impl ContentHostRegistry {
         };
         Some(HistoryContentRows {
             rows,
-            complete: sealed && end >= total_height,
+            complete: complete_content && end >= total_height,
             content_start: payload_content_start.min(payload_content_end),
             content_end: payload_content_end.max(payload_content_start),
             leading_padding,
@@ -4563,6 +4818,7 @@ impl ContentHostRegistry {
     pub(crate) fn history_unit_retired(&mut self, unit_id: u64) {
         let ports = self.history_adapter.retire_unit(unit_id);
         for port_id in ports {
+            self.visible_ports.remove(&port_id);
             let connector_ids = if let Some(port) = self.ports.remove(&port_id) {
                 if let Ok(mut state) = port.lock() {
                     state.desired_mounted = false;
@@ -4726,15 +4982,6 @@ impl ContentProvider for ContentHostRegistry {
         self.measure_content(port_id, offered_width, width_rule)
     }
 
-    fn paint(
-        &self,
-        port_id: u64,
-        offered_width: u16,
-        _allocated_height: u16,
-    ) -> Option<Arc<Surface>> {
-        self.paint_content(port_id, offered_width)
-    }
-
     fn paint_window(
         &self,
         ticket: PreparedProjectionTicket,
@@ -4782,7 +5029,16 @@ impl ContentProvider for ContentHostRegistry {
         if insets == view.decoration().padding {
             return view.clone();
         }
-        view.clone().padding(insets)
+        // History has already acknowledged the removed padding rows.  Apply
+        // the replacement decoration as one final semantic root instead of
+        // replaying a public fluent modifier chain during every projection.
+        crate::presentation::api::View::native_patched(
+            view.clone(),
+            &crate::presentation::api::NativeCommonPatch {
+                padding: Some(insets),
+                ..Default::default()
+            },
+        )
     }
 
     fn history_unit_retired(&mut self, unit_id: u64) {
@@ -5292,7 +5548,8 @@ mod tests {
         // Now append to the source. The source revision MUST advance and be accepted,
         // while finish_mutation reports SOURCE_WAKE_FAILED with the accepted revision.
         let result = source.append_utf8(b"hello\n", &[], &[]);
-        let err = result.expect_err("mutation should report wake failure when subscriber is poisoned");
+        let err =
+            result.expect_err("mutation should report wake failure when subscriber is poisoned");
         let err_str = err.to_string();
         assert!(
             err_str.contains("SOURCE_WAKE_FAILED"),
@@ -5358,12 +5615,8 @@ mod tests {
         assert_eq!(latest.retained_lines(), 51); // 50 newlines + base line = 51
 
         // 4. Test atomic retention + annotations
-        source
-            .configure_retention(Some(30), None, true)
-            .unwrap();
-        source
-            .append_utf8(b"tail-item\n", &[], &[])
-            .unwrap();
+        source.configure_retention(Some(30), None, true).unwrap();
+        source.append_utf8(b"tail-item\n", &[], &[]).unwrap();
         let stats = source.stats().unwrap();
         // Base advanced to keep within 30 bytes
         assert!(stats.source_base > 0);
@@ -5768,11 +6021,41 @@ mod tests {
         let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
         registry.set_theme(&Arc::new(t1));
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let first_layout = registry
+            .connectors
+            .get(&connector.id())
+            .and_then(|record| record.lock().ok())
+            .and_then(|state| {
+                state
+                    .prepared_paint_cache
+                    .iter()
+                    .find(|(key, _)| key.width == 20)
+                    .map(|(_, product)| Arc::clone(&product.layout))
+            })
+            .expect("first measurement must retain a layout product");
         let key1 = registry
             .connector_projection_key(connector.id(), 20)
             .unwrap();
         registry.set_theme(&Arc::new(t2));
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let second_layout = registry
+            .connectors
+            .get(&connector.id())
+            .and_then(|record| record.lock().ok())
+            .and_then(|state| {
+                state
+                    .prepared_paint_cache
+                    .iter()
+                    .find(|(key, _)| {
+                        key.width == 20 && key.theme_revision == registry.theme_revision
+                    })
+                    .map(|(_, product)| Arc::clone(&product.layout))
+            })
+            .expect("recolor must retain a replacement paint product");
+        assert!(
+            Arc::ptr_eq(&first_layout, &second_layout),
+            "theme-only repaint must reuse width-dependent layout geometry"
+        );
         let key2 = registry
             .connector_projection_key(connector.id(), 20)
             .unwrap();
@@ -5780,6 +6063,14 @@ mod tests {
         assert_ne!(
             m1.projection_revision, m2.projection_revision,
             "ContentMeasurement projection_revision must change across themes to invalidate paint cache"
+        );
+        assert_eq!(
+            m1.metric_revision, m2.metric_revision,
+            "palette-only changes must preserve the metric revision"
+        );
+        assert_ne!(
+            m1.paint_revision, m2.paint_revision,
+            "palette-only changes must advance the paint revision"
         );
     }
 
@@ -5830,8 +6121,14 @@ mod tests {
         let t1 = Theme::new().with_color("accent", ThemeColor::Indexed(1));
         let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
         registry.set_theme(&Arc::new(t1));
+        crate::presentation::paint::reset_text_geometry_builds();
         let before = rebuilds();
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let geometry_after_first = crate::presentation::paint::text_geometry_builds();
+        assert!(
+            geometry_after_first > 0,
+            "first content preparation must build text row geometry"
+        );
         if cfg!(feature = "perf-counters") {
             assert!(
                 rebuilds() > before,
@@ -5843,6 +6140,11 @@ mod tests {
         registry.set_theme(&Arc::new(t2));
         let after_recolor = rebuilds();
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert_eq!(
+            crate::presentation::paint::text_geometry_builds(),
+            geometry_after_first,
+            "theme-only repaint must reuse cached text wrapping geometry"
+        );
         if cfg!(feature = "perf-counters") {
             assert_eq!(
                 rebuilds(),
@@ -5889,6 +6191,412 @@ mod tests {
             self.rows.extend(rows.iter().cloned());
             Ok(rows.len())
         }
+    }
+
+    #[derive(Debug)]
+    struct BudgetSink {
+        budgets: VecDeque<usize>,
+        rows: Vec<crate::physical::PhysicalRow>,
+    }
+
+    impl BudgetSink {
+        fn new(budgets: impl IntoIterator<Item = usize>) -> Self {
+            Self {
+                budgets: budgets.into_iter().collect(),
+                rows: Vec::new(),
+            }
+        }
+    }
+
+    impl crate::backend::NativeHistorySink for BudgetSink {
+        type Error = ();
+
+        fn insert_history_rows(
+            &mut self,
+            rows: &[crate::physical::PhysicalRow],
+        ) -> Result<usize, Self::Error> {
+            let accepted = self
+                .budgets
+                .pop_front()
+                .unwrap_or(rows.len())
+                .min(rows.len());
+            self.rows.extend(rows[..accepted].iter().cloned());
+            Ok(accepted)
+        }
+    }
+
+    fn sealed_markdown_history_rows(text: &str, width: u16) -> Vec<PhysicalRow> {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(text.as_bytes(), &[], &[]).unwrap();
+        source.seal().unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.measure_content(port.id(), width, crate::presentation::WidthRule::Fill);
+        registry
+            .history_rows(port.id(), width)
+            .map_or_else(Vec::new, |rows| rows.rows)
+    }
+
+    #[test]
+    fn finalized_prefix_rows_match_sealed_baseline_at_each_append_and_partial_receipt() {
+        // The open projection and the sealed prefix intentionally use
+        // different Markdown parser states.  Compare the complete physical
+        // row products (including styles and wide-cell geometry), not merely
+        // whether either side is empty.  One-row acknowledgements and a zero
+        // receipt then prove that History transfers this exact product once.
+        let fixtures = [
+            "~~~rust\nlet value = 1;\n~~~\nopen paragraph",
+            "1. first\n2. second\n3. third\nopen paragraph",
+            "Title\n=====\nopen paragraph",
+            "[label][ref]\n\n[ref]: https://example.test\nopen paragraph",
+            "| left | right |\n| --- | --- |\n| a | b |\nopen paragraph",
+            "open paragraph without a trailing newline",
+        ];
+        let width = 40;
+        let mut exercised_partial_receipt = false;
+
+        for fixture in fixtures {
+            let source_registry = ContentSourceRegistry::new();
+            let source = source_registry.create(TextSourceKind::Stream).unwrap();
+            let mut registry = ContentHostRegistry::new(source_registry);
+            let port = registry
+                .create_port(Weak::new(), ContentFamily::Text)
+                .unwrap();
+            let port_id = port.id();
+            let connector = registry
+                .connect(
+                    &port.record,
+                    &source,
+                    HostContentFunnel::new(
+                        TextFunnelKind::Markdown,
+                        TextWrapMode::Word,
+                        true,
+                        ContentDelivery::Immediate,
+                    ),
+                )
+                .unwrap();
+            let view = View::native_content_host(port_id).unwrap();
+            let mut history = crate::History::new();
+            let unit_id = history.push(view).unwrap();
+            registry
+                .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
+                .unwrap();
+            {
+                let mut state = port.record.lock().unwrap();
+                state.desired_mounted = true;
+                state.desired_connector = Some(connector.id());
+                state.visible_mounted = true;
+                state.visible_connector = Some(connector.id());
+            }
+            {
+                let record = registry.connectors.get(&connector.id()).unwrap();
+                let mut state = record.lock().unwrap();
+                state.requested = true;
+                state.visible = true;
+            }
+
+            let bytes = fixture.as_bytes();
+            let mut cursor = 0;
+            let mut final_rows = Vec::new();
+            for (next, _) in fixture.char_indices().skip(1) {
+                source.append_utf8(&bytes[cursor..next], &[], &[]).unwrap();
+                cursor = next;
+                registry.measure_content(port_id, width, crate::presentation::WidthRule::Fill);
+                let actual = registry.history_rows(port_id, width).unwrap();
+                let prefix = source.snapshot().unwrap().stable_prefix();
+                let expected = prefix
+                    .as_ref()
+                    .map(|prefix| sealed_markdown_history_rows(&prefix.text(), width))
+                    .unwrap_or_default();
+                assert_eq!(
+                    actual.rows, expected,
+                    "finalized rows diverged for fixture {fixture:?} at byte prefix {cursor}"
+                );
+                final_rows = actual.rows;
+            }
+            if cursor < bytes.len() {
+                source.append_utf8(&bytes[cursor..], &[], &[]).unwrap();
+                registry.measure_content(port_id, width, crate::presentation::WidthRule::Fill);
+                let actual = registry.history_rows(port_id, width).unwrap();
+                let prefix = source.snapshot().unwrap().stable_prefix();
+                let expected = prefix
+                    .as_ref()
+                    .map(|prefix| sealed_markdown_history_rows(&prefix.text(), width))
+                    .unwrap_or_default();
+                assert_eq!(
+                    actual.rows, expected,
+                    "final append mismatch for {fixture:?}"
+                );
+                final_rows = actual.rows;
+            }
+
+            if !final_rows.is_empty() {
+                let mut sink = BudgetSink::new([1, 0, usize::MAX]);
+                let first = crate::history::transfer_native_prefix_with_theme_and_content(
+                    &mut history,
+                    &mut sink,
+                    width,
+                    usize::MAX,
+                    &Theme::new(),
+                    &mut registry,
+                )
+                .unwrap();
+                assert_eq!(first.inserted, 1, "first receipt must accept one row");
+                let blocked = crate::history::transfer_native_prefix_with_theme_and_content(
+                    &mut history,
+                    &mut sink,
+                    width,
+                    usize::MAX,
+                    &Theme::new(),
+                    &mut registry,
+                )
+                .unwrap();
+                assert_eq!(blocked.inserted, 0, "zero receipt must not advance History");
+                assert_eq!(
+                    registry.history_adapter.committed_rows(port_id),
+                    1,
+                    "zero receipt must not advance the committed row frontier"
+                );
+                let _ = crate::history::transfer_native_prefix_with_theme_and_content(
+                    &mut history,
+                    &mut sink,
+                    width,
+                    usize::MAX,
+                    &Theme::new(),
+                    &mut registry,
+                )
+                .unwrap();
+                assert_eq!(
+                    sink.rows, final_rows,
+                    "partial receipt duplicated/lost rows"
+                );
+                exercised_partial_receipt = true;
+            }
+        }
+        assert!(
+            exercised_partial_receipt,
+            "fixtures must expose a stable row"
+        );
+    }
+
+    #[test]
+    fn history_partial_and_zero_receipts_preserve_frozen_rows_across_resize() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"first\nsecond\nthird\n", &[], &[])
+            .unwrap();
+        source.seal().unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let view = View::native_content_host(port_id).unwrap();
+        let mut history = crate::History::new();
+        let unit_id = history.push(view).unwrap();
+        registry
+            .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.measure_content(port_id, 12, crate::presentation::WidthRule::Fill);
+
+        // Accept one content row, then a zero receipt must not advance any
+        // content/frontier counters or manufacture a new remainder.
+        let mut sink = BudgetSink::new([1, 0, 1, 1]);
+        let theme = crate::Theme::new();
+        let first = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            12,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
+        assert_eq!(registry.history_adapter.committed_rows(port_id), 1);
+        let blocked = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            12,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(blocked.inserted, 0);
+        assert!(matches!(
+            blocked.status,
+            crate::history::NativeTransferStatus::SinkBlocked
+        ));
+        assert_eq!(registry.history_adapter.committed_rows(port_id), 1);
+
+        // The remainder is frozen from this exact width; changing width
+        // cannot regenerate or duplicate the already acknowledged prefix.
+        let before_resize = sink.rows.clone();
+        let third = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            20,
+            10,
+            &theme,
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(third.inserted, 1);
+        assert_eq!(registry.history_adapter.committed_rows(port_id), 2);
+        assert_eq!(sink.rows.len(), before_resize.len() + 1);
+
+        while !history.is_empty() {
+            crate::history::transfer_native_prefix_with_theme_and_content(
+                &mut history,
+                &mut sink,
+                20,
+                10,
+                &theme,
+                &mut registry,
+            )
+            .unwrap();
+        }
+        assert!(!sink.rows.is_empty());
+        assert!(!registry.ports.contains_key(&port_id));
+    }
+
+    #[test]
+    fn prepared_content_ticket_never_selects_a_newer_same_width_projection() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"first\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_mounted = true;
+            port_state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        let first = registry
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+        let ticket = PreparedProjectionTicket {
+            port_id: port.id(),
+            connector_id: first.connector_id,
+            offered_width: 20,
+            projection_revision: first.projection_revision,
+            projection_identity: first.projection_identity,
+        };
+
+        source.append_utf8(b"second\n", &[], &[]).unwrap();
+        let second = registry
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+        assert_ne!(first.projection_identity, second.projection_identity);
+        let selected = registry
+            .projection_for_ticket(ticket)
+            .expect("the prepared first product remains pinned in cache");
+        assert_eq!(selected.identity, first.projection_identity);
+    }
+
+    #[test]
+    fn candidate_reuses_one_source_snapshot_for_revision_queries() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"before\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+
+        registry.begin_projection_candidate();
+        let before = registry
+            .connector_projection_key(connector.id(), 20)
+            .unwrap();
+        source.append_utf8(b"after\n", &[], &[]).unwrap();
+        let during = registry
+            .connector_projection_key(connector.id(), 20)
+            .unwrap();
+        assert_eq!(before.source_revision, during.source_revision);
+        assert_eq!(
+            registry.candidate_source_snapshots.borrow().len(),
+            1,
+            "shared Source captures are keyed once per candidate"
+        );
+        registry.abort_candidate();
     }
 
     #[test]
@@ -6081,21 +6789,236 @@ mod tests {
     }
 
     #[test]
-    fn history_transfer_tool_and_unsealed_markdown_stream_does_not_block() {
-        let mut history = crate::History::new();
-        // Unit 1: A completed/frozen tool call unit
-        let tool_view = View::text("Tool: execute_command -> success");
-        let _ = history.push(tool_view).unwrap();
+    fn smooth_history_matches_finalized_rows_through_ticks_and_receipts() {
+        use std::time::Duration;
 
-        // Unit 2: An unsealed Markdown assistant stream
+        let fixture = "# Header\n\nfirst line\nsecond line\n\nthird line\nopen tail";
+        let width = 40;
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(fixture.as_bytes(), &[], &[]).unwrap();
+        let open_prefix = source
+            .snapshot()
+            .unwrap()
+            .stable_prefix()
+            .map(|prefix| prefix.text())
+            .unwrap_or_default();
+        let open_baseline = sealed_markdown_history_rows(&open_prefix, width);
+        assert!(
+            open_baseline.len() >= 2,
+            "multirow fixture must expose a finalized baseline"
+        );
+
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let port_id = port.id();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Smooth(SmoothConfig::default()),
+                ),
+            )
+            .unwrap();
+        let mut history = crate::History::new();
+        let unit_id = history
+            .push(View::native_content_host(port_id).unwrap())
+            .unwrap();
+        registry
+            .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_mounted = true;
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        let mut now = Instant::now();
+        let mut observed_rows = 0;
+        for _ in 0..8 {
+            registry.measure_content(port_id, width, crate::presentation::WidthRule::Fill);
+            let rows = registry.history_rows(port_id, width).unwrap();
+            let committed = registry.history_adapter.committed_content_rows(port_id);
+            let end = committed.saturating_add(rows.rows.len());
+            assert!(end <= open_baseline.len());
+            assert_eq!(rows.rows, open_baseline[committed..end]);
+            observed_rows = observed_rows.max(rows.rows.len());
+            let Some(deadline) = registry.next_wakeup() else {
+                break;
+            };
+            now = deadline + Duration::from_millis(250);
+            registry.advance(now);
+        }
+        assert!(
+            observed_rows >= 2,
+            "Smooth should expose multiple finalized rows incrementally"
+        );
+
+        let available = registry.history_rows(port_id, width).unwrap();
+        let available_count = available.rows.len();
+        let mut sink = BudgetSink::new([1, 0, usize::MAX]);
+        let first = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            width,
+            usize::MAX,
+            &Theme::new(),
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(first.inserted, 1);
+        let committed_after_first = registry.history_adapter.committed_content_rows(port_id);
+        assert_eq!(committed_after_first, 1);
+        let blocked = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            width,
+            usize::MAX,
+            &Theme::new(),
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(blocked.inserted, 0);
+        assert_eq!(
+            registry.history_adapter.committed_content_rows(port_id),
+            committed_after_first
+        );
+        let _ = crate::history::transfer_native_prefix_with_theme_and_content(
+            &mut history,
+            &mut sink,
+            width,
+            usize::MAX,
+            &Theme::new(),
+            &mut registry,
+        )
+        .unwrap();
+        assert_eq!(
+            sink.rows,
+            open_baseline[..available_count.min(open_baseline.len())]
+        );
+
+        source.seal().unwrap();
+        let sealed_baseline = sealed_markdown_history_rows(fixture, width);
+        for _ in 0..8 {
+            now += Duration::from_secs(1);
+            registry.advance(now);
+            registry.measure_content(port_id, width, crate::presentation::WidthRule::Fill);
+            let committed = registry.history_adapter.committed_content_rows(port_id);
+            if let Some(rows) = registry.history_rows(port_id, width) {
+                let end = committed.saturating_add(rows.rows.len());
+                assert!(end <= sealed_baseline.len());
+                assert_eq!(rows.rows, sealed_baseline[committed..end]);
+                if !rows.rows.is_empty() {
+                    crate::history::transfer_native_prefix_with_theme_and_content(
+                        &mut history,
+                        &mut sink,
+                        width,
+                        usize::MAX,
+                        &Theme::new(),
+                        &mut registry,
+                    )
+                    .unwrap();
+                }
+            }
+            if history.is_empty() {
+                break;
+            }
+        }
+        assert!(
+            history.is_empty(),
+            "sealed Smooth History must eventually drain"
+        );
+        assert_eq!(sink.rows, sealed_baseline);
+    }
+
+    #[test]
+    fn open_markdown_finalized_prefix_matches_current_policy() {
+        for input in [
+            "```rust\nlet value = 1;\n",
+            "[label]\n\n[label]: https://example.test\n",
+            "| left | right |\n| --- | --- |\n| a | b |\n",
+            "- first\n\n- second\n",
+        ] {
+            let source_registry = ContentSourceRegistry::new();
+            let source = source_registry.create(TextSourceKind::Stream).unwrap();
+            source.append_utf8(input.as_bytes(), &[], &[]).unwrap();
+            let mut registry = ContentHostRegistry::new(source_registry);
+            let port = registry
+                .create_port(Weak::new(), ContentFamily::Text)
+                .unwrap();
+            let connector = registry
+                .connect(
+                    &port.record,
+                    &source,
+                    HostContentFunnel::new(
+                        TextFunnelKind::Markdown,
+                        TextWrapMode::Word,
+                        true,
+                        ContentDelivery::Immediate,
+                    ),
+                )
+                .unwrap();
+            let unit_view = View::native_content_host(port.id()).unwrap();
+            let mut history = crate::History::new();
+            let unit_id = history.push(unit_view).unwrap();
+            registry
+                .set_history_unit(port.id(), unit_id.value(), crate::Insets::ZERO)
+                .unwrap();
+            {
+                let mut state = port.record.lock().unwrap();
+                state.desired_mounted = true;
+                state.desired_connector = Some(connector.id());
+                state.visible_mounted = true;
+                state.visible_connector = Some(connector.id());
+            }
+            {
+                let record = registry.connectors.get(&connector.id()).unwrap();
+                let mut state = record.lock().unwrap();
+                state.requested = true;
+                state.visible = true;
+            }
+            registry.measure_content(port.id(), 40, crate::presentation::WidthRule::Fill);
+            let rows = registry.history_rows(port.id(), 40).unwrap();
+            let expected_prefix_end = source
+                .snapshot()
+                .unwrap()
+                .stable_prefix()
+                .map(|prefix| prefix.source_end);
+            assert_eq!(rows.complete, false, "open Source cannot complete History");
+            assert_eq!(
+                rows.rows.is_empty(),
+                expected_prefix_end.is_none(),
+                "History must follow the current finalized-prefix policy: {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn history_transfer_static_and_unsealed_markdown_stream_does_not_block() {
+        let mut history = crate::History::new();
+        // Unit 1: A completed/frozen static unit
+        let static_view = View::text("Command output: success");
+        let _ = history.push(static_view).unwrap();
+
+        // Unit 2: An unsealed Markdown text stream
         let source_registry = ContentSourceRegistry::new();
         let source = source_registry.create(TextSourceKind::Stream).unwrap();
         source
-            .append_utf8(
-                b"Assistant response line 1\nAssistant response line 2\n",
-                &[],
-                &[],
-            )
+            .append_utf8(b"Output line 1\nOutput line 2\n", &[], &[])
             .unwrap();
 
         let mut registry = ContentHostRegistry::new(source_registry);
@@ -6145,7 +7068,7 @@ mod tests {
         let mut sink = LocalSink::default();
         let theme = crate::Theme::new();
 
-        // First transfer: transfers the tool call!
+        // First transfer: transfers the static unit.
         let outcome1 = crate::history::transfer_native_prefix_with_theme_and_content(
             &mut history,
             &mut sink,
@@ -6157,13 +7080,9 @@ mod tests {
         .unwrap();
         assert!(
             outcome1.inserted > 0,
-            "tool call unit must transfer to native scrollback"
+            "static unit must transfer to native scrollback"
         );
-        assert_eq!(
-            history.len(),
-            1,
-            "tool call unit retired; stream unit remains"
-        );
+        assert_eq!(history.len(), 1, "static unit retired; stream unit remains");
 
         // Second transfer: transfers the stable rows of the unsealed stream!
         let outcome2 = crate::history::transfer_native_prefix_with_theme_and_content(
@@ -6285,7 +7204,10 @@ mod tests {
         }
 
         // Verify trace is strictly non-decreasing (monotonic progress)
-        assert!(!trace.is_empty(), "Smoother should have progressed over 20 ticks");
+        assert!(
+            !trace.is_empty(),
+            "Smoother should have progressed over 20 ticks"
+        );
         for window in trace.windows(2) {
             assert!(
                 window[1].1 >= window[0].1,
@@ -6606,7 +7528,11 @@ mod tests {
             candidate_after_abort, committed_after_abort,
             "Candidate must roll back to committed on abort"
         );
-        assert_eq!(committed_after_abort.as_u64(), initial_committed, "Committed remains initial");
+        assert_eq!(
+            committed_after_abort.as_u64(),
+            initial_committed,
+            "Committed remains initial"
+        );
 
         // Now advance and successfully promote
         let t2 = registry.next_wakeup().unwrap() + Duration::from_millis(100);

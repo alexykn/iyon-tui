@@ -1,7 +1,7 @@
 //! Generic content inputs shared by retained layout and paint.
 //!
 //! The application/content registry implements this boundary. Presentation
-//! code consumes only immutable measurements and derived surfaces; it never
+//! code consumes only immutable measurements and prepared row products; it never
 //! reaches into Source/Port/Connector lifecycle or scheduling state.
 
 use crate::{
@@ -30,8 +30,16 @@ impl ContentWindow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PreparedProjectionTicket {
     pub(crate) port_id: u64,
+    /// Connector identity is part of the prepared product.  A Port can have
+    /// several Connectors with identical widths, so width is never a safe
+    /// selector during paint.
+    pub(crate) connector_id: Option<u64>,
     pub(crate) offered_width: u16,
     pub(crate) projection_revision: u64,
+    /// Monotonic identity of the immutable prepared product retained by the
+    /// candidate.  It is an identity witness only; the provider validates it
+    /// while the owning product remains live and fails closed when unavailable.
+    pub(crate) projection_identity: u64,
 }
 
 /// Intrinsic metrics returned by a Connector projection for one offered width.
@@ -47,6 +55,10 @@ pub(crate) struct ContentMeasurement {
     pub(crate) metric_revision: u64,
     /// Paint revision: changes when colors, theme, or delivery frontier change.
     pub(crate) paint_revision: u64,
+    /// Exact Connector/product identity used to derive this measurement.
+    /// These fields stay private to the presentation/content seam.
+    pub(crate) connector_id: Option<u64>,
+    pub(crate) projection_identity: u64,
 }
 
 impl Default for ContentMeasurement {
@@ -57,13 +69,16 @@ impl Default for ContentMeasurement {
             projection_revision: 0,
             metric_revision: 0,
             paint_revision: 0,
+            connector_id: None,
+            projection_identity: 0,
         }
     }
 }
 
 /// Physical rows that a `ContentHost` can transfer into native History. Open
-/// content may expose only a stable prefix; sealed content marks its rows as
-/// complete so the semantic unit can be retired after receipt.
+/// content may expose only a finalized prefix, and a sealed smoothed Source
+/// may still expose only the delivered prefix; the unit is complete only when
+/// that receipt reaches the delivered sealed end.
 #[derive(Debug)]
 pub(crate) struct HistoryContentRows {
     pub(crate) rows: Vec<PhysicalRow>,
@@ -97,13 +112,6 @@ pub(crate) trait ContentProvider {
         width_rule: crate::presentation::WidthRule,
     ) -> ContentMeasurement;
 
-    fn paint(
-        &self,
-        port_id: u64,
-        offered_width: u16,
-        allocated_height: u16,
-    ) -> Option<std::sync::Arc<Surface>>;
-
     /// Direct row-window paint contract. Writes directly into `target` at
     /// `target_origin` clipped to `clip` without full offscreen surface allocation.
     fn paint_window(
@@ -114,13 +122,7 @@ pub(crate) trait ContentProvider {
         target_origin: (u16, u16),
         clip: crate::geometry::Rect,
         style: crate::physical::PhysicalStyle,
-    ) {
-        if let Some(surface) = self.paint(ticket.port_id, ticket.offered_width, window.row_count as u16) {
-            let mut painted = (*surface).clone();
-            crate::presentation::paint::apply_content_style(&mut painted, style);
-            target.composite_clipped(&painted, i32::from(target_origin.0), i32::from(target_origin.1), clip);
-        }
-    }
+    );
 
     /// Returns committed/candidate physical rows for a History `ContentHost`.
     /// Open content may return only a stable prefix; `complete` is true when
@@ -176,15 +178,6 @@ impl ContentProvider for EmptyContentProvider {
         _width_rule: crate::presentation::WidthRule,
     ) -> ContentMeasurement {
         ContentMeasurement::default()
-    }
-
-    fn paint(
-        &self,
-        _port_id: u64,
-        _offered_width: u16,
-        _allocated_height: u16,
-    ) -> Option<std::sync::Arc<Surface>> {
-        None
     }
 
     fn paint_window(

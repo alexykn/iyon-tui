@@ -37,6 +37,30 @@ impl PhysicalRow {
         (Self { cells }, complete)
     }
 
+    /// Returns a glyph-safe prefix while preserving the row width.  A smooth
+    /// frontier may end in the middle of a row; clearing the whole intersected
+    /// glyph avoids leaving a leader/continuation orphan in History payloads.
+    pub(crate) fn clipped_after(&self, end: usize) -> Self {
+        let mut cells = self.cells.clone();
+        let ranges = glyphs(&cells)
+            .filter_map(|glyph| {
+                (glyph.start >= end || glyph.start.saturating_add(glyph.width) > end)
+                    .then_some(glyph.start..glyph.start.saturating_add(glyph.width))
+            })
+            .collect::<Vec<_>>();
+        let cell_count = cells.len();
+        for range in ranges {
+            for cell in cells
+                .get_mut(range.start..range.end.min(cell_count))
+                .into_iter()
+                .flatten()
+            {
+                *cell = PhysicalCell::transparent();
+            }
+        }
+        Self::from_cells(cells)
+    }
+
     pub(crate) fn empty() -> Self {
         Self::from_cells(Vec::new())
     }

@@ -1,11 +1,29 @@
 //! Physical border and surface decoration painting.
 
+#[cfg(test)]
+use std::cell::Cell;
+
 use crate::{
     physical::{PhysicalStyle, Surface},
     presentation::{BorderSpec, WidthRule, WrapMode, ir::TextView, layout::ViewCompiler},
 };
 
 use super::{StyleContext, ThemeResolver};
+
+#[cfg(test)]
+thread_local! {
+    static BORDER_CELLS_VISITED: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_border_work() {
+    BORDER_CELLS_VISITED.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn border_work() -> usize {
+    BORDER_CELLS_VISITED.with(Cell::get)
+}
 
 pub(crate) fn paint_border(
     surface: &mut Surface,
@@ -14,71 +32,148 @@ pub(crate) fn paint_border(
     inherited: PhysicalStyle,
     context: &StyleContext,
 ) {
-    if surface.width() == 0 || surface.height() == 0 {
+    let size = (surface.width(), surface.height());
+    paint_border_at(
+        surface,
+        border,
+        theme,
+        inherited,
+        context,
+        (0, 0),
+        size,
+        crate::geometry::Rect::new(0, 0, size.0, size.1),
+    );
+}
+
+/// Paints a decoration at a signed origin without allocating a temporary
+/// content-sized surface.  RowViewport uses this for a decorated ContentHost
+/// whose full allocation is larger than the visible window.
+pub(crate) fn paint_border_at(
+    surface: &mut Surface,
+    border: &BorderSpec,
+    theme: &ThemeResolver,
+    inherited: PhysicalStyle,
+    context: &StyleContext,
+    origin: (i32, i32),
+    size: (u16, u16),
+    clip: crate::geometry::Rect,
+) {
+    if size.0 == 0 || size.1 == 0 {
         return;
     }
 
     let style = border_style(border, theme, inherited, context);
     let edges = border.edges;
     let glyphs = &border.glyphs;
-    let last_x = surface.width().saturating_sub(1);
-    let last_y = surface.height().saturating_sub(1);
+    let last_x = origin.0.saturating_add(i32::from(size.0).saturating_sub(1));
+    let last_y = origin.1.saturating_add(i32::from(size.1).saturating_sub(1));
+    let horizontal = visible_range(origin.0, size.0, clip.x, clip.right(), surface.width());
+    let vertical = visible_range(origin.1, size.1, clip.y, clip.bottom(), surface.height());
 
-    if edges.top {
-        for x in 0..surface.width() {
-            set_cell(surface, x, 0, glyphs.top.clone(), style);
+    if edges.top
+        && visible_point(origin.1, clip.y, clip.bottom(), surface.height())
+        && let Some(range) = horizontal.clone()
+    {
+        for x in range {
+            note_border_cell();
+            set_cell_at(surface, x, origin.1, glyphs.top.clone(), style, clip);
         }
     }
-    if edges.bottom {
-        for x in 0..surface.width() {
-            set_cell(surface, x, last_y, glyphs.bottom.clone(), style);
+    if edges.bottom
+        && visible_point(last_y, clip.y, clip.bottom(), surface.height())
+        && let Some(range) = horizontal
+    {
+        for x in range {
+            note_border_cell();
+            set_cell_at(surface, x, last_y, glyphs.bottom.clone(), style, clip);
         }
     }
-    if edges.left {
-        for y in 0..surface.height() {
-            set_cell(surface, 0, y, glyphs.left.clone(), style);
+    if edges.left
+        && let Some(range) = vertical.clone()
+    {
+        for y in range {
+            note_border_cell();
+            set_cell_at(surface, origin.0, y, glyphs.left.clone(), style, clip);
         }
     }
-    if edges.right {
-        for y in 0..surface.height() {
-            set_cell(surface, last_x, y, glyphs.right.clone(), style);
+    if edges.right
+        && let Some(range) = vertical
+    {
+        for y in range {
+            note_border_cell();
+            set_cell_at(surface, last_x, y, glyphs.right.clone(), style, clip);
         }
     }
 
     if edges.top && edges.left {
-        set_cell(surface, 0, 0, glyphs.top_left.clone(), style);
+        set_cell_at(
+            surface,
+            origin.0,
+            origin.1,
+            glyphs.top_left.clone(),
+            style,
+            clip,
+        );
     }
 
     if edges.top
+        && visible_point(origin.1, clip.y, clip.bottom(), surface.height())
         && let Some(label) = &border.top_label
     {
         let mut text = TextView::plain(label.clone());
         text.wrap = WrapMode::NoWrap;
         let painted = ViewCompiler::with_resolver(theme).paint_text(
             &text,
-            surface.width(),
+            size.0,
             WidthRule::Fill,
             style,
             context,
         );
-        for x in 0..surface.width() {
-            let label_cell = painted.get(x, 0);
-            if !label_cell.painted {
+        let mut label_surface = painted;
+        for x in 0..label_surface.width() {
+            let target_x = origin.0.saturating_add(i32::from(x));
+            if target_x < 0
+                || target_x >= i32::from(surface.width())
+                || !label_surface.get(x, 0).painted
+            {
                 continue;
             }
-            let mut cell = label_cell.clone();
-            cell.style.background = surface.get(x, 0).style.background;
-            *surface.get_mut(x, 0) = cell;
+            label_surface.get_mut(x, 0).style.background = surface
+                .get(target_x as u16, origin.1 as u16)
+                .style
+                .background;
         }
+        surface.composite_clipped(&label_surface, origin.0, origin.1, clip);
     }
     if edges.top && edges.right {
-        set_cell(surface, last_x, 0, glyphs.top_right.clone(), style);
+        set_cell_at(
+            surface,
+            last_x,
+            origin.1,
+            glyphs.top_right.clone(),
+            style,
+            clip,
+        );
     }
     if edges.bottom && edges.left {
-        set_cell(surface, 0, last_y, glyphs.bottom_left.clone(), style);
+        set_cell_at(
+            surface,
+            origin.0,
+            last_y,
+            glyphs.bottom_left.clone(),
+            style,
+            clip,
+        );
     }
     if edges.bottom && edges.right {
-        set_cell(surface, last_x, last_y, glyphs.bottom_right.clone(), style);
+        set_cell_at(
+            surface,
+            last_x,
+            last_y,
+            glyphs.bottom_right.clone(),
+            style,
+            clip,
+        );
     }
 }
 
@@ -101,14 +196,114 @@ fn border_style(
     style
 }
 
-fn set_cell(surface: &mut Surface, x: u16, y: u16, grapheme: String, mut style: PhysicalStyle) {
-    if x >= surface.width() || y >= surface.height() {
+fn set_cell_at(
+    surface: &mut Surface,
+    x: i32,
+    y: i32,
+    grapheme: String,
+    mut style: PhysicalStyle,
+    clip: crate::geometry::Rect,
+) {
+    if x < i32::from(clip.x)
+        || x >= i32::from(clip.right())
+        || y < i32::from(clip.y)
+        || y >= i32::from(clip.bottom())
+        || x < 0
+        || y < 0
+        || x >= i32::from(surface.width())
+        || y >= i32::from(surface.height())
+    {
         return;
     }
+    let x = x as u16;
+    let y = y as u16;
     style.background = surface.get(x, y).style.background;
     let cell = surface.get_mut(x, y);
     cell.grapheme = Some(grapheme);
     cell.style = style;
     cell.painted = true;
     cell.continuation = false;
+}
+
+fn visible_range(
+    origin: i32,
+    len: u16,
+    clip_start: u16,
+    clip_end: u16,
+    surface_len: u16,
+) -> Option<std::ops::Range<i32>> {
+    let start = origin.max(i32::from(clip_start)).max(0);
+    let end = origin
+        .saturating_add(i32::from(len))
+        .min(i32::from(clip_end))
+        .min(i32::from(surface_len));
+    (start < end).then_some(start..end)
+}
+
+fn visible_point(point: i32, clip_start: u16, clip_end: u16, surface_len: u16) -> bool {
+    point >= i32::from(clip_start)
+        && point < i32::from(clip_end)
+        && point >= 0
+        && point < i32::from(surface_len)
+}
+
+#[inline]
+fn note_border_cell() {
+    #[cfg(test)]
+    BORDER_CELLS_VISITED.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BorderEdges, Theme, geometry::Rect};
+
+    #[test]
+    fn tall_border_edges_visit_only_the_visible_intersection() {
+        let mut surface = Surface::new(20, 1);
+        let theme = ThemeResolver::new(&Theme::default());
+        reset_border_work();
+        paint_border_at(
+            &mut surface,
+            &BorderSpec::plain(),
+            &theme,
+            PhysicalStyle::default(),
+            &StyleContext::default(),
+            (0, -10_000),
+            (20, 20_001),
+            Rect::new(0, 0, 20, 1),
+        );
+        assert_eq!(border_work(), 2, "only left/right edge cells intersect row");
+    }
+
+    #[test]
+    fn clipped_wide_top_label_never_leaves_an_orphan_cell() {
+        let mut clipped = Surface::new(3, 1);
+        let theme = ThemeResolver::new(&Theme::default());
+        let edges = BorderEdges::new(true, false, false, false);
+        paint_border_at(
+            &mut clipped,
+            &BorderSpec::plain().edges(edges).top_label("🐕"),
+            &theme,
+            PhysicalStyle::default(),
+            &StyleContext::default(),
+            (-1, 0),
+            (4, 1),
+            Rect::new(0, 0, 3, 1),
+        );
+
+        let mut expected = Surface::new(3, 1);
+        paint_border_at(
+            &mut expected,
+            &BorderSpec::plain().edges(edges),
+            &theme,
+            PhysicalStyle::default(),
+            &StyleContext::default(),
+            (-1, 0),
+            (4, 1),
+            Rect::new(0, 0, 3, 1),
+        );
+        assert_eq!(clipped, expected);
+        assert!(crate::physical::validate_cells(clipped.row_cells(0)).is_ok());
+    }
 }

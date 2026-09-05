@@ -96,6 +96,20 @@ fn placed_omits_a_wide_glyph_that_would_not_fully_fit() {
 }
 
 #[test]
+fn clipped_row_prefix_drops_an_intersecting_wide_glyph() {
+    let row = row_for("A界B");
+    let clipped = row.clipped_after(2);
+    assert!(clipped.validate_cell_geometry().is_ok());
+    assert_eq!(clipped.plain_text(), "A");
+    assert!(!clipped.cells()[1].painted);
+    assert!(!clipped.cells()[2].painted);
+
+    let complete = row.clipped_after(3);
+    assert!(complete.validate_cell_geometry().is_ok());
+    assert_eq!(complete.plain_text(), "A界");
+}
+
+#[test]
 fn composite_clears_the_whole_glyph_when_overwriting_a_continuation() {
     let mut parent = Surface::new(2, 1);
     let wide = row_for("界");

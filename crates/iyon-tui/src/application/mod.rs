@@ -8,8 +8,6 @@
 mod app;
 #[cfg(feature = "native-host")]
 mod content;
-#[cfg(feature = "native-host")]
-mod source_store;
 mod context;
 #[cfg(feature = "native-host")]
 mod environment;
@@ -20,6 +18,8 @@ mod host;
 mod input;
 mod kernel;
 mod run;
+#[cfg(feature = "native-host")]
+mod source_store;
 mod timer;
 #[cfg(feature = "native-host")]
 mod view_state;

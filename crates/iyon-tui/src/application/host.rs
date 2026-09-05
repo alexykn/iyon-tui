@@ -1953,6 +1953,14 @@ impl HostInner {
     }
 
     fn commit_frame(&mut self) -> Result<HostFlushOutcome> {
+        // All normal fallibility must be checked before promoting any
+        // candidate-owned state/content/frame authority.  In particular, a
+        // revision exhaustion error must not leave a partially visible
+        // candidate behind an otherwise failed commit.
+        let next_visible_frame_revision = self
+            .visible_frame_revision
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
         let candidate = self
             .candidate_frame
             .take()
@@ -1977,10 +1985,7 @@ impl HostInner {
         self.frame = candidate;
         self.frame_pending = false;
         self.visible_structural_revision = candidate_structural_revision;
-        self.visible_frame_revision = self
-            .visible_frame_revision
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("visible frame revision exhausted"))?;
+        self.visible_frame_revision = next_visible_frame_revision;
         self.committed_epoch = candidate_epoch;
         if self.pending_epoch == candidate_epoch {
             self.content_dirty = false;

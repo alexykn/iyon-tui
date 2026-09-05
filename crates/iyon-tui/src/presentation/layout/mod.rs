@@ -30,7 +30,7 @@ use crate::{
     Theme,
     component::{ComponentId, MountGraph},
     geometry::LayoutConstraints,
-    physical::{PhysicalRow, Surface},
+    physical::PhysicalRow,
     presentation::View,
 };
 
@@ -49,8 +49,10 @@ pub(crate) use tree::{ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNod
 
 #[cfg(test)]
 use crate::geometry::Size;
+#[cfg(test)]
+use crate::physical::Surface;
 
-use super::paint::{StyleContext, ThemeResolver, ViewPainter};
+use super::paint::{StyleContext, TextGeometryCache, ThemeResolver, ViewPainter};
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -142,12 +144,34 @@ impl<'a> ViewCompiler<'a> {
 
     pub(crate) fn compile(&self, view: &View, max_width: u16) -> LayoutBlock {
         let tree = self.layout_tree(view, LayoutConstraints::width_only(max_width));
-        let surface = ViewPainter.paint_tree(self, &tree);
-        let physically_complete = surface.physically_complete;
+        self.compile_tree(&tree)
+    }
+
+    /// Paints an already measured/prepared layout tree under this compiler's
+    /// theme.  The tree contains no resolved palette values, so callers can
+    /// retain it across theme-only repaint revisions and avoid rebuilding the
+    /// layout universe.
+    pub(crate) fn compile_tree(&self, tree: &LayoutTree) -> LayoutBlock {
+        let mut text_geometry = TextGeometryCache::new();
+        self.compile_tree_with_text_cache(tree, &mut text_geometry)
+    }
+
+    pub(crate) fn compile_tree_with_text_cache(
+        &self,
+        tree: &LayoutTree,
+        text_geometry: &mut TextGeometryCache,
+    ) -> LayoutBlock {
+        let content = crate::presentation::EmptyContentProvider;
+        let (rows, physically_complete) = ViewPainter.paint_tree_rows_with_content_and_text_cache(
+            self,
+            tree,
+            &content,
+            text_geometry,
+        );
         LayoutBlock {
-            width: surface.width(),
-            rows: lower_surface(surface),
-            physically_complete,
+            width: tree.size.width,
+            rows,
+            physically_complete: tree.physically_complete && physically_complete,
         }
     }
 
@@ -169,12 +193,13 @@ pub(crate) fn compile_view_with_overlay(
 ) -> LayoutBlock {
     let compiler = ViewCompiler::default();
     let tree = layout_view_with_overlay(view, LayoutConstraints::width_only(width), overlay);
-    let surface = ViewPainter.paint_tree(&compiler, &tree);
-    let physically_complete = surface.physically_complete;
+    let content = crate::presentation::EmptyContentProvider;
+    let (rows, physically_complete) =
+        ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &content);
     LayoutBlock {
-        width: surface.width(),
-        rows: lower_surface(surface),
-        physically_complete,
+        width: tree.size.width,
+        rows,
+        physically_complete: tree.physically_complete && physically_complete,
     }
 }
 
@@ -195,26 +220,26 @@ pub(crate) fn compile_bounded_view_with_overlay(
 ) -> LayoutBlock {
     let compiler = ViewCompiler::default();
     let tree = layout_view_with_overlay(view, LayoutConstraints::bounded(size), overlay);
-    let surface = ViewPainter.paint_tree(&compiler, &tree);
-    let height = surface.height().min(size.height);
-    let cropped = surface.crop_to(surface.width().min(size.width), height);
-    let mut bounded = cropped;
-    bounded.physically_complete = tree.physically_complete && bounded.physically_complete;
-    let physically_complete = bounded.physically_complete;
+    let content = crate::presentation::EmptyContentProvider;
+    let (mut rows, mut physically_complete) =
+        ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &content);
+    rows.truncate(usize::from(size.height));
+    physically_complete &= tree.physically_complete;
     LayoutBlock {
-        width: bounded.width(),
-        rows: lower_surface(bounded),
+        width: tree.size.width.min(size.width),
+        rows,
         physically_complete,
     }
 }
 
+#[cfg(test)]
 fn lower_surface(surface: Surface) -> Vec<PhysicalRow> {
-    (0..surface.height())
-        .map(|y| {
-            let cells = (0..surface.width())
-                .map(|x| surface.get(x, y).clone())
-                .collect();
-            let row = PhysicalRow::from_cells(cells);
+    let width = usize::from(surface.width());
+    let height = usize::from(surface.height());
+    let mut cells = surface.cells.into_iter();
+    (0..height)
+        .map(|_| {
+            let row = PhysicalRow::from_cells(cells.by_ref().take(width).collect());
             debug_assert!(row.validate_cell_geometry().is_ok());
             row
         })

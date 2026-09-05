@@ -2,10 +2,10 @@ use super::NativeTuiHost;
 use crate::NativeError;
 use iyon_tui::binding::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
-    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, DiffRenderer, GridCellSpec,
-    GridTrack, HorizontalAlign, Insets, NativeCommonPatch, NativeTextPage, OverflowIndicator,
-    Renderer, RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View,
-    WeakView, WrapMode,
+    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, GridCellSpec, GridTrack,
+    HorizontalAlign, Insets, NativeCommonPatch, NativeTextPage, OverflowIndicator,
+    RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView,
+    WrapMode,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -3106,7 +3106,7 @@ pub unsafe extern "Rust" fn view_grid_create_buffer_impl(
 }
 
 /// PERF-12 T11 (§41): parses the framed words+bytes payload describing a new
-/// Diff view and constructs it through the semantic `DiffRenderer` lowering
+/// Diff view and constructs it through the operation-specific semantic lowering
 /// used by the direct materializer. Every read is bounds-checked; the word buffer
 /// must be consumed exactly and byte lengths must sum to the byte buffer.
 fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
@@ -3198,7 +3198,7 @@ fn parse_and_build_diff(words: &[u32], bytes: &[u8]) -> Result<View, u32> {
     if word_cursor != words.len() || byte_cursor != bytes.len() {
         return Err(FAST_INVALID);
     }
-    Ok(DiffRenderer::new().render(hunks.as_slice()))
+    Ok(iyon_tui::binding::lower_diff_hunks(hunks.as_slice()))
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
@@ -3618,7 +3618,7 @@ pub unsafe extern "Rust" fn view_container_create_impl(
     let outcome = runtime
         .resolve_ref(child_ref)
         .map(|(child, _)| child)
-        .and_then(|child| runtime.publish(node_id, child.container()));
+        .and_then(|child| runtime.publish(node_id, View::native_container(child)));
     match outcome {
         Ok(reference) => record_result(runtime, reference),
         Err(FAST_CACHE_MISS) => {
@@ -4531,9 +4531,25 @@ mod tests {
         NativeRefTable, NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF,
         STATUS_DETAIL_CHILD_INDEX, generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
-    use iyon_tui::binding::{GridTrack, IntoView, TextSpan, View, WeakView};
+    use iyon_tui::binding::{GridTrack, HorizontalAlign, TextSpan, View, WeakView, WrapMode};
     use std::ffi::CString;
     use std::time::Instant;
+
+    fn text_view(text: impl Into<String>) -> View {
+        View::native_text_final(
+            vec![TextSpan::plain(text)],
+            WrapMode::default(),
+            HorizontalAlign::Start,
+        )
+    }
+
+    fn styled_text_view(spans: impl IntoIterator<Item = TextSpan>) -> View {
+        View::native_text_final(
+            spans.into_iter().collect(),
+            WrapMode::default(),
+            HorizontalAlign::Start,
+        )
+    }
 
     fn slot_for(node_id: u64) -> NativeViewSlot {
         let view = View::spacer(1);
@@ -4759,7 +4775,7 @@ mod tests {
                 1,
             )
         };
-        let expected_cstring = View::styled_text([TextSpan::plain("héllo ✓")]).into_view();
+        let expected_cstring = styled_text_view([TextSpan::plain("héllo ✓")]);
         assert_eq!(
             runtime.resolve_ref(cstring_ref).map(|(view, _)| view),
             Ok(expected_cstring)
@@ -4779,7 +4795,7 @@ mod tests {
                 1,
             )
         };
-        let expected_buffer = View::styled_text([TextSpan::plain("left\0right")]).into_view();
+        let expected_buffer = styled_text_view([TextSpan::plain("left\0right")]);
         assert_eq!(
             runtime.resolve_ref(buffer_ref).map(|(view, _)| view),
             Ok(expected_buffer)
@@ -4803,7 +4819,7 @@ mod tests {
             )
         };
         let expected_multi =
-            View::styled_text([TextSpan::plain("left\0"), TextSpan::plain("right\0✓")]).into_view();
+            styled_text_view([TextSpan::plain("left\0"), TextSpan::plain("right\0✓")]);
         assert_eq!(
             runtime.resolve_ref(multi_ref).map(|(view, _)| view),
             Ok(expected_multi)
@@ -4963,9 +4979,7 @@ mod tests {
         let mut runtime = runtime();
         let temps = [
             runtime.publish(61, View::spacer(1)).expect("t1"),
-            runtime
-                .publish(62, View::text("failed-tx").into_view())
-                .expect("t2"),
+            runtime.publish(62, text_view("failed-tx")).expect("t2"),
             runtime.publish(63, View::spacer(4)).expect("t3"),
         ];
         scratch_release(&mut runtime, &temps);
@@ -5061,9 +5075,7 @@ mod tests {
     #[test]
     fn generated_text_and_common_patches_publish_new_node_ids() {
         let mut runtime = runtime();
-        let base = runtime
-            .publish(1, View::text("hello").into_view())
-            .expect("base ref");
+        let base = runtime.publish(1, text_view("hello")).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let patched = unsafe {
             generated_exports::invoke_iyon_view_text_layout_patch_root_v1(pointer, base, 2, 0, 3, 2)
@@ -5084,8 +5096,7 @@ mod tests {
         let mut runtime = runtime();
         let base_view = View::vertical(|column| {
             column.child(View::text("hello"));
-        })
-        .into_view();
+        });
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
@@ -5122,8 +5133,7 @@ mod tests {
                 1,
                 View::vertical(|column| {
                     column.child(View::text("hello"));
-                })
-                .into_view(),
+                }),
             )
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
@@ -5143,8 +5153,7 @@ mod tests {
                 1,
                 View::vertical(|column| {
                     column.child(View::text("hello"));
-                })
-                .into_view(),
+                }),
             )
             .expect("recovered base ref");
         let patched = unsafe {
@@ -5163,8 +5172,7 @@ mod tests {
         let base_view = View::vertical(|column| {
             column.child(View::text("left"));
             column.child(View::text("right"));
-        })
-        .into_view();
+        });
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let path_root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
@@ -5207,9 +5215,7 @@ mod tests {
     #[test]
     fn edit_transaction_abort_and_limits_leave_no_staged_state() {
         let mut runtime = runtime();
-        let base = runtime
-            .publish(1, View::text("base").into_view())
-            .expect("base ref");
+        let base = runtime.publish(1, text_view("base")).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         assert_eq!(
             unsafe { generated_exports::invoke_iyon_edit_txn_begin_v1(pointer, base, 0) },
@@ -5245,9 +5251,8 @@ mod tests {
             for index in 0..2_048 {
                 column.child(View::text(format!("axis-{index}")));
             }
-        })
-        .into_view();
-        let child = View::text("replacement").into_view();
+        });
+        let child = text_view("replacement");
         let base_axis = runtime.publish(1, axis.clone()).expect("axis base ref");
         let child_ref = runtime.publish(2, child.clone()).expect("child ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
@@ -5283,8 +5288,7 @@ mod tests {
             grid.row(|row| {
                 row.cell(View::text("grid-cell"));
             });
-        })
-        .into_view();
+        });
         let base_grid = runtime.publish(5, grid.clone()).expect("grid base ref");
         let grid_replaced = unsafe {
             generated_exports::invoke_iyon_view_grid_set_cell_v1(
@@ -6137,8 +6141,7 @@ mod tests {
                 1,
                 View::vertical(|column| {
                     column.child(View::text("hello"));
-                })
-                .into_view(),
+                }),
             )
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;

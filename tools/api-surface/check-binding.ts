@@ -16,13 +16,13 @@ const BLESSED_BINDING = new Set([
   "AnsiColor", "BorderEdges", "BorderGlyphs", "BorderSpec", "BorderStyle",
   "ColorSpec", "ContentAnnotationRecord", "ContentDelivery", "ContentFamily",
   "ContentMutationResult", "Counter", "DiffHunk", "DiffLine", "DiffLineNumber",
-  "DiffLineOffset", "DiffLineTermination", "DiffRange", "DiffRenderer",
+  "DiffLineOffset", "DiffLineTermination", "DiffRange", "lower_diff_hunks",
   "FormatId", "GeometryAlignment", "GridCellSpec", "GridTrack", "History",
   "HistoryLayout", "HorizontalAlign", "HostCellStyle", "HostContentConnector",
   "HostContentFunnel", "HostContentPort", "HostContentSource", "HostHistory",
   "HostScrollPane", "HostTextInput", "HostViewSlot", "HostViewState",
-  "Insets", "IntoView", "Key", "KeyStroke", "LanguageId", "Modifiers", "intern_style_atom",
-  "NativeCommonPatch", "NativeTextPage", "Output", "OverflowIndicator", "Renderer",
+  "Insets", "Key", "KeyStroke", "LanguageId", "Modifiers", "intern_style_atom",
+  "NativeCommonPatch", "NativeTextPage", "Output", "OverflowIndicator",
   "RetainedPathStep", "SemanticTag", "SmoothConfig",
   "StyleRef", "StyleSelector", "StyleSpec", "TextAttribute", "TextAttributeSpec", "TextFunnelKind",
   "TextInput", "TextOrigin", "TextPart", "TextRole", "TextSelector",
@@ -84,6 +84,18 @@ if (added.length > 0 || removed.length > 0) {
   fail("binding-surface", `drift — added [${added}] removed [${removed}]; amend the blessed list deliberately`);
 } else {
   pass("binding-surface", `${exported.size} binding exports match the blessed list`);
+}
+
+// The unsupported seam must not accidentally grow back into the removed
+// authoring facade.  Operation-specific native constructors remain allowed;
+// these names are the old trait/renderer entry points themselves.
+const forbiddenAuthoring = ["IntoView", "Renderer", "DiffRenderer"].filter((name) =>
+  exported.has(name),
+);
+if (forbiddenAuthoring.length > 0) {
+  fail("binding-no-authoring-names", `forbidden exports remain: ${forbiddenAuthoring.join(", ")}`);
+} else {
+  pass("binding-no-authoring-names", "removed Rust authoring traits/renderers are not exported");
 }
 
 // 3. Forbidden authoring posture on the core crate.

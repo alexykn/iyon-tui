@@ -13,23 +13,41 @@ impl DiffRenderer {
 
     #[must_use]
     pub fn render_hunk(&self, hunk: &DiffHunk) -> View {
-        // L1-04: moved children plus the direct column factory. The numeric
-        // hunk/line/termination metadata below is untouched.
-        let mut children = Vec::with_capacity(hunk.lines().len() + 1);
-        children.push(header(hunk.old_range(), hunk.new_range()));
-        for line in hunk.lines() {
-            children.push(render_line(line));
-            if line.termination() == DiffLineTermination::Unterminated {
-                children.push(
-                    View::text("\\ No newline at end of file")
-                        .no_wrap()
-                        .style(StyleRef::theme("diff.meta"))
-                        .into_view(),
-                );
-            }
-        }
-        View::column_from_views(children, 0)
+        lower_hunk(hunk)
     }
+
+    #[must_use]
+    pub(crate) fn render_hunks(&self, hunks: &[DiffHunk]) -> View {
+        lower_diff_hunks(hunks)
+    }
+}
+
+/// Direct native-ingress lowering for validated static diff records.  The
+/// operation-specific function keeps the formatting algorithm on the same
+/// retained path without making the native boundary depend on the public
+/// renderer/extension trait.
+#[doc(hidden)]
+pub fn lower_diff_hunks(hunks: &[DiffHunk]) -> View {
+    View::column_from_views(hunks.iter().map(lower_hunk).collect(), 0)
+}
+
+fn lower_hunk(hunk: &DiffHunk) -> View {
+    // L1-04: moved children plus the direct column factory. The numeric
+    // hunk/line/termination metadata below is untouched.
+    let mut children = Vec::with_capacity(hunk.lines().len() + 1);
+    children.push(header(hunk.old_range(), hunk.new_range()));
+    for line in hunk.lines() {
+        children.push(render_line(line));
+        if line.termination() == DiffLineTermination::Unterminated {
+            children.push(
+                View::text("\\ No newline at end of file")
+                    .no_wrap()
+                    .style(StyleRef::theme("diff.meta"))
+                    .into_view(),
+            );
+        }
+    }
+    View::column_from_views(children, 0)
 }
 
 impl Renderer<DiffHunk> for DiffRenderer {
@@ -40,8 +58,7 @@ impl Renderer<DiffHunk> for DiffRenderer {
 
 impl Renderer<[DiffHunk]> for DiffRenderer {
     fn render(&self, input: &[DiffHunk]) -> View {
-        // L1-04: moved children plus the direct column factory.
-        View::column_from_views(input.iter().map(|hunk| self.render_hunk(hunk)).collect(), 0)
+        self.render_hunks(input)
     }
 }
 

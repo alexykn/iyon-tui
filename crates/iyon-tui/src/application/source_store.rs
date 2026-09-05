@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::text::SemanticTag;
 use crate::StyleRef;
+use crate::text::SemanticTag;
 
 pub(crate) const SOURCE_CHUNK_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_SOURCE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -50,8 +50,8 @@ pub(crate) struct ValidatedInput<'a> {
 
 impl<'a> ValidatedInput<'a> {
     pub(crate) fn from_bytes(bytes: &'a [u8]) -> Result<Self> {
-        let text =
-            str::from_utf8(bytes).map_err(|_| anyhow::anyhow!("INVALID_UTF8: Source payload is not UTF-8"))?;
+        let text = str::from_utf8(bytes)
+            .map_err(|_| anyhow::anyhow!("INVALID_UTF8: Source payload is not UTF-8"))?;
         Ok(Self {
             bytes,
             text,
@@ -63,7 +63,11 @@ impl<'a> ValidatedInput<'a> {
         Self {
             bytes: text.as_bytes(),
             text,
-            newlines: text.as_bytes().iter().filter(|byte| **byte == b'\n').count(),
+            newlines: text
+                .as_bytes()
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count(),
         }
     }
 
@@ -353,7 +357,10 @@ impl ChunkTree {
 
     /// Inserts on the right edge; returns the rebuilt node plus an optional
     /// split sibling to link above.
-    fn insert_right(node: Arc<ChunkNode>, desc: ChunkDesc) -> (Arc<ChunkNode>, Option<Arc<ChunkNode>>) {
+    fn insert_right(
+        node: Arc<ChunkNode>,
+        desc: ChunkDesc,
+    ) -> (Arc<ChunkNode>, Option<Arc<ChunkNode>>) {
         match node.as_ref() {
             ChunkNode::Leaf { descs, .. } => {
                 let mut descs = descs.clone();
@@ -403,10 +410,7 @@ impl ChunkTree {
         // Splits compare absolute offsets: descriptors keep their original
         // absolute starts, so shared subtrees stay valid under any base.
         let (left, right) = Self::split_node(&root, base, offset);
-        (
-            Self { root: left },
-            Self { root: right },
-        )
+        (Self { root: left }, Self { root: right })
     }
 
     fn split_node(
@@ -437,8 +441,7 @@ impl ChunkTree {
                 }
                 (
                     (!left.is_empty()).then(|| ChunkNode::leaf_node(left)),
-                    (!right.is_empty())
-                        .then(|| ChunkNode::leaf_node(right.into_iter().collect())),
+                    (!right.is_empty()).then(|| ChunkNode::leaf_node(right.into_iter().collect())),
                 )
             }
             ChunkNode::Branch { children, .. } => {
@@ -471,9 +474,8 @@ impl ChunkTree {
                 }
                 (
                     (!left_children.is_empty()).then(|| ChunkNode::branch_node(left_children)),
-                    (!right_children.is_empty()).then(|| {
-                        ChunkNode::branch_node(right_children.into_iter().collect())
-                    }),
+                    (!right_children.is_empty())
+                        .then(|| ChunkNode::branch_node(right_children.into_iter().collect())),
                 )
             }
         }
@@ -594,8 +596,8 @@ impl ChunkTree {
                         if prev_opens_line {
                             return Some(desc.abs_start);
                         }
-                        prev_opens_line = self.byte_at(base, desc.abs_start.saturating_sub(1))
-                            == Some(b'\n');
+                        prev_opens_line =
+                            self.byte_at(base, desc.abs_start.saturating_sub(1)) == Some(b'\n');
                         if prev_opens_line {
                             return Some(desc.abs_start);
                         }
@@ -705,7 +707,9 @@ pub(crate) struct SourceAnnotation {
 
 /// Deterministic treap priority from the index key (no RNG needed).
 fn annotation_priority(start: u64, seqno: u64) -> u64 {
-    let mut key = start.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(seqno);
+    let mut key = start
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(seqno);
     key ^= key >> 30;
     key = key.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     key ^= key >> 27;
@@ -790,10 +794,7 @@ impl AnnotationTree {
         let (left, right) = Self::split_key(&self.root, key);
         let node = AnnotationNode::new(key.0, key.1, value);
         Self {
-            root: Self::merge(
-                Self::merge(left, Some(node)),
-                right,
-            ),
+            root: Self::merge(Self::merge(left, Some(node)), right),
             count: self.count.saturating_add(1),
         }
     }
@@ -1030,11 +1031,17 @@ impl std::fmt::Display for ContentError {
             Self::Sealed => write!(f, "SOURCE_SEALED: Source is sealed"),
             Self::AlreadySealed => write!(f, "SOURCE_ALREADY_SEALED: Source is already sealed"),
             Self::InvalidByteRange { .. } => {
-                write!(f, "INVALID_RANGE: Source head is outside the retained range")
+                write!(
+                    f,
+                    "INVALID_RANGE: Source head is outside the retained range"
+                )
             }
             Self::LengthOverflow => write!(f, "INVALID_RANGE: Source coordinate exhausted"),
             Self::RetentionOverflow => {
-                write!(f, "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded")
+                write!(
+                    f,
+                    "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
+                )
             }
         }
     }
@@ -1291,8 +1298,7 @@ impl StoredSource {
         let (chunks, dropped) = self.chunks.truncated_head(base, offset);
         let annotations = self.annotations.truncate_head(offset);
         let partial = offset < self.end
-            && (offset != 0
-                && self.chunks.byte_at(base, offset.saturating_sub(1)) != Some(b'\n'));
+            && (offset != 0 && self.chunks.byte_at(base, offset.saturating_sub(1)) != Some(b'\n'));
         let ordered_annotations = Arc::from(annotations.in_application_order());
         Ok((
             Self {
@@ -1476,9 +1482,14 @@ impl StoredSource {
             .unwrap_or_else(|| self.next_boundary(target))
     }
 
-    pub(crate) fn stable_prefix(&self) -> Option<Self> {
-        let end = self.last_line_start(self.base);
+    /// Returns an immutable prefix range without choosing a stability policy.
+    /// The caller supplies a boundary proved by its semantic projector; this
+    /// keeps storage from smuggling in a generic "last newline" proof.
+    pub(crate) fn prefix_at(&self, end: u64) -> Option<Self> {
         if end <= self.base || end > self.end {
+            return None;
+        }
+        if !self.is_boundary(end) {
             return None;
         }
         let (chunks, _) = self.chunks.split_at(self.base, end);
@@ -1489,6 +1500,15 @@ impl StoredSource {
             }
             let mut anno = anno.clone();
             if anno.end_byte > end {
+                // Atomic annotations cannot be represented truthfully after
+                // clipping their payload range.  Semantic/style annotations
+                // are range decorations and retain the established clip
+                // policy; unknown kinds fail closed like the ingress policy.
+                if anno.kind != CONTENT_ANNOTATION_KIND_TAG
+                    && anno.kind != CONTENT_ANNOTATION_KIND_STYLE
+                {
+                    continue;
+                }
                 anno.end_byte = end;
             }
             if anno.kind == CONTENT_ANNOTATION_KIND_POINT || anno.start_byte < anno.end_byte {
@@ -1508,6 +1528,16 @@ impl StoredSource {
             sealed: true,
             sealed_at: Some(end),
         })
+    }
+
+    /// Current finalized-prefix policy for open terminal History units.  This
+    /// is deliberately kept as the existing policy boundary: it may render a
+    /// finalized prefix differently from the open document.  Callers cache
+    /// and transfer the resulting product; they must not infer equivalence
+    /// from a scalar row count or replace this with a generic newline rule.
+    pub(crate) fn stable_prefix(&self) -> Option<Self> {
+        let end = self.last_line_start(self.base);
+        self.prefix_at(end)
     }
 
     /// Indexed overlap lookup (§9.7): intersecting annotations ordered by
@@ -1607,7 +1637,10 @@ impl ChunkView {
 
     pub(crate) fn bytes(&self) -> &[u8] {
         let start = self.page_start as usize;
-        self.page.as_bytes().get(start..start + self.len as usize).unwrap_or_default()
+        self.page
+            .as_bytes()
+            .get(start..start + self.len as usize)
+            .unwrap_or_default()
     }
 }
 
@@ -1707,7 +1740,10 @@ mod tests {
         assert_eq!(cursor, 1000 + text.len() as u64);
         // Every line entry resolves through the tree.
         let newlines = text.bytes().filter(|b| *b == b'\n').count() as u64;
-        assert_eq!(tree.line_entry(1000, newlines), Some(1000 + text.len() as u64));
+        assert_eq!(
+            tree.line_entry(1000, newlines),
+            Some(1000 + text.len() as u64)
+        );
         assert_eq!(tree.line_entry(1000, newlines + 1), None);
         // Seams land inside lines without duplicating entries.
         let mut entries = Vec::new();
@@ -1752,7 +1788,13 @@ mod tests {
         let mut store = StoredSource::empty();
         let mut base = 0u64;
         let mut model = Vec::new();
-        let pieces = ["alpha\n", "beta\nbeta2\n", "gamma", "\ndelta\nepsilon\n", "zeta"];
+        let pieces = [
+            "alpha\n",
+            "beta\nbeta2\n",
+            "gamma",
+            "\ndelta\nepsilon\n",
+            "zeta",
+        ];
         let mut rev = 1u64;
         for piece in pieces {
             store = store.apply_append(piece, rev, Vec::new()).unwrap();
@@ -1794,10 +1836,7 @@ mod tests {
             store.first_line_at_or_after(0, SOURCE_CHUNK_BYTES as u64),
             Some(SOURCE_CHUNK_BYTES as u64)
         );
-        assert_eq!(
-            store.last_line_start(0),
-            SOURCE_CHUNK_BYTES as u64
-        );
+        assert_eq!(store.last_line_start(0), SOURCE_CHUNK_BYTES as u64);
     }
 
     #[test]
@@ -1852,8 +1891,12 @@ mod tests {
         let store = StoredSource::empty()
             .apply_append("0123456789abcdef", 1, Vec::new())
             .unwrap();
-        let store = store.apply_annotation(anno(2, 12), 2, 1024, u64::MAX).unwrap();
-        let store = store.apply_annotation(style_anno(3, 14), 3, 1024, u64::MAX).unwrap();
+        let store = store
+            .apply_annotation(anno(2, 12), 2, 1024, u64::MAX)
+            .unwrap();
+        let store = store
+            .apply_annotation(style_anno(3, 14), 3, 1024, u64::MAX)
+            .unwrap();
         let store = store.apply_annotation(point(4), 4, 1024, u64::MAX).unwrap();
         let store = store.apply_annotation(point(8), 5, 1024, u64::MAX).unwrap();
         let (next, _) = store.apply_truncate(0, 8, 6).unwrap();
@@ -1878,16 +1921,37 @@ mod tests {
     }
 
     #[test]
+    fn semantic_prefix_drops_atomic_crossing_annotations_but_clips_ranges() {
+        let store = StoredSource::empty()
+            .apply_append("abc\ndef", 1, Vec::new())
+            .unwrap()
+            .apply_annotation(
+                ValidatedAnnotation {
+                    kind: CONTENT_ANNOTATION_KIND_ATOMIC,
+                    ..anno(2, 6)
+                },
+                2,
+                1024,
+                u64::MAX,
+            )
+            .unwrap()
+            .apply_annotation(style_anno(2, 6), 3, 1024, u64::MAX)
+            .unwrap();
+        let prefix = store.prefix_at(4).expect("newline is a valid boundary");
+        let records = prefix.annotations_in_order();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].kind, CONTENT_ANNOTATION_KIND_STYLE);
+        assert_eq!((records[0].start_byte, records[0].end_byte), (2, 4));
+        assert_eq!(prefix.text(), "abc\n");
+    }
+
+    #[test]
     fn retention_keeps_window_then_newest() {
         let mut store = StoredSource::empty()
             .apply_append("0123456789", 1, Vec::new())
             .unwrap();
-        let mut rev = 2u64;
-        for i in 0..6 {
-            store = store
-                .apply_annotation(anno(i, i + 1), rev, 4, 100)
-                .unwrap();
-            rev += 1;
+        for (i, rev) in (0..6).zip(2u64..) {
+            store = store.apply_annotation(anno(i, i + 1), rev, 4, 100).unwrap();
         }
         // Six records against a cap of four: the two oldest drain first.
         let ordered = store.annotations_in_order();
@@ -1905,9 +1969,7 @@ mod tests {
         // at the floor survives while older spans drain.
         let mut rev = 2u64;
         for i in 0..2 {
-            store = store
-                .apply_annotation(anno(i, i + 1), rev, 3, 4)
-                .unwrap();
+            store = store.apply_annotation(anno(i, i + 1), rev, 3, 4).unwrap();
             rev += 1;
         }
         store = store.apply_annotation(anno(6, 7), rev, 3, 4).unwrap();
@@ -2024,13 +2086,8 @@ mod tests {
                     } else {
                         a + next_rand() % (len + 1 - (a - base)).max(1)
                     };
-                    let record = ValidatedAnnotation {
-                        kind,
-                        ..anno(a, b)
-                    };
-                    store = store
-                        .apply_annotation(record, rev, 4096, u64::MAX)
-                        .unwrap();
+                    let record = ValidatedAnnotation { kind, ..anno(a, b) };
+                    store = store.apply_annotation(record, rev, 4096, u64::MAX).unwrap();
                     rev += 1;
                     model_annos.push((kind, a, b, seqno));
                     seqno += 1;
@@ -2050,7 +2107,9 @@ mod tests {
                         if *a >= cut {
                             return true;
                         }
-                        (*kind == CONTENT_ANNOTATION_KIND_TAG || *kind == CONTENT_ANNOTATION_KIND_STYLE) && *b > cut
+                        (*kind == CONTENT_ANNOTATION_KIND_TAG
+                            || *kind == CONTENT_ANNOTATION_KIND_STYLE)
+                            && *b > cut
                     });
                     for record in model_annos.iter_mut() {
                         if record.1 < cut {
@@ -2102,7 +2161,9 @@ mod tests {
 
     fn check_treap(tree: &AnnotationTree) {
         // Returns (min key, max key, subtree max_end, node count).
-        fn visit(node: &Option<Arc<AnnotationNode>>) -> (Option<(u64, u64)>, Option<(u64, u64)>, u64, usize) {
+        fn visit(
+            node: &Option<Arc<AnnotationNode>>,
+        ) -> (Option<(u64, u64)>, Option<(u64, u64)>, u64, usize) {
             let Some(node) = node else {
                 return (None, None, 0, 0);
             };

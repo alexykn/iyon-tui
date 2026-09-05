@@ -4,11 +4,9 @@ use std::{fmt, str, sync::Arc};
 
 use super::style::{
     BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleStateKey,
-    StyleStateValue, StyleStates, TextAttribute,
+    StyleStateValue, TextAttribute,
 };
-use crate::presentation::ir::{
-    Decoration, HeightRule, TextView, View, ViewKind, ViewNodeParts, WidthRule,
-};
+use crate::presentation::ir::{TextView, View, ViewKind};
 
 const INLINE_TEXT_CAPACITY: usize = 12;
 
@@ -28,6 +26,14 @@ pub(crate) enum TextStorage {
         offset: u32,
         len: u32,
     },
+    /// Borrowed semantic Source page retained by an immutable text View.
+    /// Unlike `Owned`, this representation does not copy a raw projection
+    /// merely to lower it into terminal layout.
+    SourcePage {
+        page: Arc<str>,
+        offset: u32,
+        len: u32,
+    },
     Owned(String),
 }
 
@@ -39,6 +45,11 @@ impl Clone for TextStorage {
                 len: *len,
             },
             Self::PageSlice { page, offset, len } => Self::PageSlice {
+                page: Arc::clone(page),
+                offset: *offset,
+                len: *len,
+            },
+            Self::SourcePage { page, offset, len } => Self::SourcePage {
                 page: Arc::clone(page),
                 offset: *offset,
                 len: *len,
@@ -91,6 +102,9 @@ impl TextStorage {
             },
             Self::PageSlice { page, offset, len } => {
                 &page.text[*offset as usize..(*offset + *len) as usize]
+            }
+            Self::SourcePage { page, offset, len } => {
+                &page[*offset as usize..(*offset + *len) as usize]
             }
             Self::Owned(text) => text,
         }
@@ -188,6 +202,25 @@ impl TextSpan {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn source_page_ptr(&self) -> Option<usize> {
+        match &self.text {
+            TextStorage::SourcePage { page, .. } => Some(Arc::as_ptr(page) as *const () as usize),
+            _ => None,
+        }
+    }
+
+    /// Internal page-backed source lowering.  The page owner is retained by
+    /// the resulting semantic View, so its range remains valid across cache
+    /// eviction and later Source snapshots.
+    pub(crate) fn from_source_page(page: Arc<str>, offset: u32, len: u32, style: StyleRef) -> Self {
+        Self {
+            text: TextStorage::SourcePage { page, offset, len },
+            style,
+            style_facts: StyleFacts::default(),
+        }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn style_fact(
         mut self,
@@ -238,21 +271,7 @@ impl View {
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
     pub fn native_text_final(spans: Vec<TextSpan>, wrap: WrapMode, align: HorizontalAlign) -> Self {
-        Self::from_node(ViewNodeParts {
-            width: WidthRule::Fit,
-            height: HeightRule::Fit,
-            decoration: Decoration::default(),
-            style_states: StyleStates::default(),
-            style_facts: StyleFacts::default(),
-            state_attachment: None,
-            content_attachment: None,
-            kind: ViewKind::Text(Arc::new(TextView {
-                spans: spans.into(),
-                wrap,
-                align,
-                cursor: None,
-            })),
-        })
+        View::text_from_spans(spans, wrap, align, StyleRef::default())
     }
 }
 

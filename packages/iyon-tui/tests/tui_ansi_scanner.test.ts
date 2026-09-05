@@ -75,13 +75,11 @@ test(`${ANSI} SGR intent reaches styles while unsafe sequences are consumed`, as
   expect(st).toEqual(bel);
 });
 
-test(`${ANSI} a UTF-8 continuation byte matching C1 CSI blanks new output until removed`, async () => {
-  // U+00DB "Û" is bytes C3 9B: the 0x9B trail byte hits the scanner's C1-CSI
-  // arm even in plain text with no escape anywhere nearby. The projection
-  // fails safely (no panic, no corruption) but the connector holds its last
-  // committed frame, so every newer revision is suppressed while the byte
-  // remains in the domain. Any scanner repair must change this fixture
-  // explicitly; do not "fix" it by weakening the assertions.
+test(`${ANSI} UTF-8 continuation bytes are text even when they match C1 CSI`, async () => {
+  // U+00DB "Û" is bytes C3 9B. Source payloads are validated UTF-8, so a
+  // lone 0x9B byte can only ever be a continuation byte — never an
+  // independent C1 control. The scanner reads it as text; only the genuine
+  // two-byte C1 CSI (U+009B, encoded C2 9B) drives control handling.
   const harness = await AppHarness.open({ width: 40, height: 8 });
   const source = TextStreamSource.create({
     retention: { maxBytes: 64 * 1024, overflow: "drop-oldest" },
@@ -94,25 +92,22 @@ test(`${ANSI} a UTF-8 continuation byte matching C1 CSI blanks new output until 
     const visible = (): string[] =>
       harness.screenRows().map((row) => row.trimEnd()).filter((row) => row.length > 0);
 
-    // Control without a 0x9B byte renders normally.
-    source.append("\x1b[1mé\x1b[0m\n");
+    // Trail byte inside and outside SGR spans renders as ordinary text.
+    source.append("\x1b[1mÛmlaut\x1b[0m ok\n");
     harness.flush();
-    expect(visible()).toEqual(["é"]);
+    expect(visible()).toEqual(["Ûmlaut ok"]);
 
-    // The poison byte suppresses the new revision; committed output holds.
-    source.append("Û bad\n");
+    // Later revisions keep flowing; nothing latches a failure.
+    source.append("fine\n");
     harness.flush();
-    expect(visible()).toEqual(["é"]);
-
-    // A clean revision (poison byte gone) recovers the connector.
-    source.replace("healed\n");
-    harness.flush();
-    expect(visible()).toEqual(["healed"]);
+    expect(visible()).toEqual(["Ûmlaut ok", "fine"]);
   } finally {
     harness.close();
     source.dispose();
   }
 
-  // A domain whose first content carries the byte never commits anything.
-  expect(await renderParts(["Û\n"])).toEqual(["", "", "", "", "", "", "", ""]);
+  // Lone trail byte with no escape anywhere nearby is still just text.
+  expect(await renderParts(["Û\n"])).toContain("Û");
+  // A genuine C1 CSI character still opens a control sequence.
+  expect(await renderParts(["\u009b1mBOLD\u009b0m\n"])).toContain("BOLD");
 });

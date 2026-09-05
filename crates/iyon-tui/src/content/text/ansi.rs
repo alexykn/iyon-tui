@@ -166,12 +166,13 @@ fn parse_domain(
                 cursor = consume_escape(text, cursor + 1, &mut state, options);
                 segment_start = cursor;
             }
-            0x9b => {
-                // C1 CSI is a control sequence too. It has no display
-                // semantics unless it is an SGR sequence, which is parsed
-                // using the same bounded parameter handling below.
+            0xc2 if text.get(cursor + 1) == Some(&0x9b) => {
+                // A genuine C1 CSI in UTF-8 text is the two-byte sequence
+                // C2 9B. A lone 0x9B byte is always a UTF-8 continuation
+                // byte and must never be read as an independent C1 control
+                // (§11.5); it falls through to ordinary text below.
                 push_segment(domain, segment_start..cursor, &state, options, &mut inlines)?;
-                cursor = consume_csi(text, cursor + 1, &mut state);
+                cursor = consume_csi(text, cursor + 2, &mut state);
                 segment_start = cursor;
             }
             _ => cursor += 1,

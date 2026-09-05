@@ -197,21 +197,7 @@ unsafe fn input_records<'a>(
     Ok(unsafe { slice::from_raw_parts(ptr, count as usize) })
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct IyonTuiAnnotationRecordV1 {
-    pub kind: u32,
-    pub flags: u32,
-    pub start_byte: u32,
-    pub end_byte: u32,
-    pub payload_offset: u32,
-    pub payload_length: u32,
-    pub aux0: u32,
-    pub aux1: u32,
-}
-
-const _: () = assert!(size_of::<IyonTuiAnnotationRecordV1>() == 32);
-const _: () = assert!(align_of::<IyonTuiAnnotationRecordV1>() == 4);
+pub type IyonTuiAnnotationRecordV1 = ContentAnnotationRecord;
 
 fn source_for_identity(
     environment_slot: u32,
@@ -224,27 +210,6 @@ fn source_for_identity(
     environment
         .lookup_content_source(u64::from(source_slot), source_generation)
         .map_err(|error| status_for_diagnostic(&error.to_string()))
-}
-
-fn copy_records(records: &[IyonTuiAnnotationRecordV1]) -> Vec<ContentAnnotationRecord> {
-    #[cfg(feature = "perf-counters")]
-    iyon_tui::binding::add(
-        iyon_tui::binding::Counter::AnnotationRecordsCopied,
-        records.len() as u64,
-    );
-    records
-        .iter()
-        .map(|record| ContentAnnotationRecord {
-            kind: record.kind,
-            flags: record.flags,
-            start_byte: record.start_byte,
-            end_byte: record.end_byte,
-            payload_offset: record.payload_offset,
-            payload_length: record.payload_length,
-            aux0: record.aux0,
-            aux1: record.aux1,
-        })
-        .collect()
 }
 
 unsafe fn run_payload_mutation(
@@ -296,8 +261,7 @@ unsafe fn run_payload_mutation(
         Ok(payload) => payload,
         Err(status) => return status,
     };
-    let records = copy_records(records_slice);
-    match operation(&source, bytes, &records, annotation_payload) {
+    match operation(&source, bytes, records_slice, annotation_payload) {
         Ok(result) => {
             write_mutation_result(out, result);
             CONTENT_STATUS_OK

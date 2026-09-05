@@ -938,7 +938,7 @@ impl HostHistory {
 /// Native retained interaction host used by language bindings.
 #[derive(Clone)]
 pub struct TuiHost {
-    inner: Arc<Mutex<HostInner>>,
+    pub(crate) inner: Arc<Mutex<HostInner>>,
 }
 
 // The host is the single owner of the retained native runtime. All access to

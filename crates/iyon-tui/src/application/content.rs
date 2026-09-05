@@ -33,6 +33,9 @@ use crate::{
 
 use super::environment::{EnvironmentIdentity, WakeDisposition};
 use super::host::HostInner;
+use super::source_store::{
+    SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ContentFamily {
@@ -69,6 +72,7 @@ pub enum TextWrapMode {
 /// Fixed-width annotation envelope shared by the direct data ABI and the
 /// native Source store. Offsets are operation-local UTF-8 byte coordinates;
 /// the Source converts them to absolute coordinates while holding its mutex.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ContentAnnotationRecord {
     pub kind: u32,
@@ -80,6 +84,9 @@ pub struct ContentAnnotationRecord {
     pub aux0: u32,
     pub aux1: u32,
 }
+
+const _: () = assert!(std::mem::size_of::<ContentAnnotationRecord>() == 32);
+const _: () = assert!(std::mem::align_of::<ContentAnnotationRecord>() == 4);
 
 /// Read-only annotation data exposed by a diagnostic Source snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,7 +113,7 @@ pub struct HostContentSourceSnapshot {
     pub source_end: u64,
     pub sealed: bool,
     pub head_partial: bool,
-    storage: Arc<SourceStorage>,
+    storage: Arc<StoredSource>,
 }
 
 impl HostContentSourceSnapshot {
@@ -118,7 +125,7 @@ impl HostContentSourceSnapshot {
     #[must_use]
     pub fn annotations(&self) -> Vec<ContentAnnotationSnapshot> {
         self.storage
-            .annotations
+            .annotations_in_order()
             .iter()
             .map(|annotation| ContentAnnotationSnapshot {
                 kind: annotation.kind,
@@ -139,89 +146,33 @@ impl HostContentSourceSnapshot {
 
     #[must_use]
     pub fn retained_lines(&self) -> u64 {
-        self.storage.line_starts.len() as u64
+        self.storage.line_count() as u64
     }
 
     #[must_use]
     pub fn chunk_count(&self) -> usize {
-        self.storage.chunks.len()
+        self.storage.chunk_count()
     }
 
     fn chunks(&self) -> impl Iterator<Item = (&[u8], u64)> {
-        self.storage
-            .chunks
-            .iter()
-            .map(|chunk| (chunk.bytes.as_ref(), chunk.start))
+        self.storage.iter_chunks()
     }
 
     fn annotations_for_projection(&self) -> &[SourceAnnotation] {
-        &self.storage.annotations
+        self.storage.annotations_in_order()
     }
 
     fn stable_prefix(&self) -> Option<Self> {
-        let end = self.storage.line_starts.back().copied()?;
-        if end <= self.source_base || end > self.source_end {
-            return None;
-        }
-        let chunks = self
-            .storage
-            .chunks
-            .iter()
-            .filter_map(|chunk| {
-                if chunk.start >= end {
-                    return None;
-                }
-                let length = usize::try_from(end.saturating_sub(chunk.start))
-                    .ok()?
-                    .min(chunk.bytes.len());
-                (length > 0).then(|| SourceChunk {
-                    start: chunk.start,
-                    bytes: Arc::from(&chunk.bytes[..length]),
-                })
-            })
-            .collect::<VecDeque<_>>();
-        let line_starts = self
-            .storage
-            .line_starts
-            .iter()
-            .copied()
-            .filter(|line_start| *line_start <= end)
-            .collect::<VecDeque<_>>();
-        let annotations = self
-            .storage
-            .annotations
-            .iter()
-            .filter_map(|annotation| {
-                if annotation.start_byte >= end {
-                    return None;
-                }
-                let mut annotation = annotation.clone();
-                if annotation.end_byte > end {
-                    annotation.end_byte = end;
-                }
-                (annotation.kind == CONTENT_ANNOTATION_KIND_POINT
-                    || annotation.start_byte < annotation.end_byte)
-                    .then_some(annotation)
-            })
-            .collect();
-        let storage = SourceStorage {
-            source_base: self.source_base,
-            source_end: end,
-            chunks,
-            line_starts,
-            annotations,
-            sealed: true,
-            head_partial: false,
-        };
+        let storage = self.storage.stable_prefix()?;
         Some(Self {
             source_id: self.source_id,
             source_generation: self.source_generation,
             content_generation: self.content_generation,
             revision: self.revision,
-            source_base: self.source_base,
-            source_end: end,
-            sealed: true,
-            head_partial: false,
+            source_base: storage.base(),
+            source_end: storage.end(),
+            sealed: storage.sealed(),
+            head_partial: storage.head_partial(),
             storage: Arc::new(storage),
         })
     }
@@ -400,213 +351,6 @@ enum AnnotationTruncationPolicy {
     Point,
 }
 
-#[derive(Clone, Debug)]
-struct SourceAnnotation {
-    kind: u32,
-    flags: u32,
-    start_byte: u64,
-    end_byte: u64,
-    payload: Arc<[u8]>,
-    aux0: u32,
-    aux1: u32,
-    tag: Option<crate::text::SemanticTag>,
-    style: Option<StyleRef>,
-}
-
-#[derive(Clone, Debug)]
-struct SourceChunk {
-    start: u64,
-    bytes: Arc<[u8]>,
-}
-
-#[derive(Clone, Debug)]
-struct SourceStorage {
-    source_base: u64,
-    source_end: u64,
-    chunks: VecDeque<SourceChunk>,
-    line_starts: VecDeque<u64>,
-    annotations: Vec<SourceAnnotation>,
-    sealed: bool,
-    head_partial: bool,
-}
-
-impl SourceStorage {
-    fn empty() -> Self {
-        let mut line_starts = VecDeque::new();
-        line_starts.push_back(0);
-        Self {
-            source_base: 0,
-            source_end: 0,
-            chunks: VecDeque::new(),
-            line_starts,
-            annotations: Vec::new(),
-            sealed: false,
-            head_partial: false,
-        }
-    }
-
-    fn text(&self) -> String {
-        let mut text = String::with_capacity(
-            usize::try_from(self.source_end.saturating_sub(self.source_base)).unwrap_or(0),
-        );
-        for chunk in &self.chunks {
-            text.push_str(str::from_utf8(&chunk.bytes).expect("Source chunks are valid UTF-8"));
-        }
-        text
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        let mut cursor = 0;
-        let mut absolute = self.source_end;
-        while cursor < bytes.len() {
-            let mut end = (cursor + SOURCE_CHUNK_BYTES).min(bytes.len());
-            while end < bytes.len() && (bytes[end] & 0xc0) == 0x80 {
-                end -= 1;
-            }
-            if end == cursor {
-                end = (cursor + SOURCE_CHUNK_BYTES).min(bytes.len());
-            }
-            let part = &bytes[cursor..end];
-            for (index, byte) in part.iter().enumerate() {
-                if *byte == b'\n' {
-                    let line_start = absolute
-                        .checked_add(index as u64)
-                        .and_then(|value| value.checked_add(1))
-                        .ok_or_else(|| anyhow!("INVALID_RANGE: Source coordinate exhausted"))?;
-                    self.line_starts.push_back(line_start);
-                }
-            }
-            self.chunks.push_back(SourceChunk {
-                start: absolute,
-                bytes: Arc::from(part),
-            });
-            absolute = absolute
-                .checked_add(part.len() as u64)
-                .ok_or_else(|| anyhow!("INVALID_RANGE: Source coordinate exhausted"))?;
-            cursor = end;
-        }
-        self.source_end = absolute;
-        Ok(())
-    }
-
-    fn is_boundary(&self, offset: u64) -> bool {
-        if offset == self.source_base || offset == self.source_end {
-            return true;
-        }
-        self.chunks.iter().find_map(|chunk| {
-            let end = chunk.start.checked_add(chunk.bytes.len() as u64)?;
-            if !(chunk.start..end).contains(&offset) {
-                return None;
-            }
-            let local = usize::try_from(offset - chunk.start).ok()?;
-            Some(str::from_utf8(&chunk.bytes).is_ok_and(|text| text.is_char_boundary(local)))
-        }) == Some(true)
-    }
-
-    fn next_boundary(&self, offset: u64) -> u64 {
-        if self.is_boundary(offset) {
-            return offset;
-        }
-        self.chunks
-            .iter()
-            .find_map(|chunk| {
-                let end = chunk.start.checked_add(chunk.bytes.len() as u64)?;
-                if !(chunk.start..end).contains(&offset) {
-                    return None;
-                }
-                let local = usize::try_from(offset - chunk.start).ok()?;
-                let text = str::from_utf8(&chunk.bytes).ok()?;
-                let next = text
-                    .char_indices()
-                    .map(|(index, _)| index)
-                    .find(|index| *index > local)
-                    .unwrap_or(text.len());
-                Some(chunk.start + next as u64)
-            })
-            .unwrap_or(self.source_end)
-    }
-
-    fn offset_for_max_bytes(&self, max_bytes: u64) -> u64 {
-        let target = self.source_end.saturating_sub(max_bytes);
-        self.line_starts
-            .iter()
-            .copied()
-            .find(|line_start| *line_start >= target)
-            .unwrap_or_else(|| self.next_boundary(target))
-    }
-
-    fn line_count(&self) -> usize {
-        self.line_starts.len().max(1)
-    }
-
-    fn truncate_head(&mut self, offset: u64) -> (u64, u64) {
-        if offset <= self.source_base {
-            return (0, 0);
-        }
-        let dropped = offset.saturating_sub(self.source_base);
-        let mut chunks = VecDeque::new();
-        let mut copied: u64 = 0;
-        for chunk in &self.chunks {
-            let end = chunk.start + chunk.bytes.len() as u64;
-            if end <= offset {
-                continue;
-            }
-            if chunk.start < offset {
-                let local = usize::try_from(offset - chunk.start).expect("chunk offset fits usize");
-                let suffix = &chunk.bytes[local..];
-                copied = copied.saturating_add(suffix.len() as u64);
-                chunks.push_back(SourceChunk {
-                    start: offset,
-                    bytes: Arc::from(suffix),
-                });
-            } else {
-                chunks.push_back(chunk.clone());
-            }
-        }
-        let partial = offset < self.source_end
-            && !self
-                .line_starts
-                .iter()
-                .any(|line_start| *line_start == offset);
-        let mut line_starts = self
-            .line_starts
-            .iter()
-            .copied()
-            .filter(|line_start| *line_start >= offset)
-            .collect::<VecDeque<_>>();
-        if line_starts.front().copied() != Some(offset) {
-            line_starts.push_front(offset);
-        }
-        let annotations = self
-            .annotations
-            .iter()
-            .filter_map(|annotation| match annotation_policy(annotation.kind) {
-                AnnotationTruncationPolicy::Point => {
-                    (annotation.start_byte >= offset).then(|| annotation.clone())
-                }
-                AnnotationTruncationPolicy::Drop => (annotation.start_byte >= offset
-                    && annotation.end_byte > offset)
-                    .then(|| annotation.clone()),
-                AnnotationTruncationPolicy::Clip => {
-                    if annotation.end_byte <= offset {
-                        return None;
-                    }
-                    let mut annotation = annotation.clone();
-                    if annotation.start_byte < offset {
-                        annotation.start_byte = offset;
-                    }
-                    (annotation.start_byte < annotation.end_byte).then_some(annotation)
-                }
-            })
-            .collect();
-        self.chunks = chunks;
-        self.line_starts = line_starts;
-        self.annotations = annotations;
-        self.source_base = offset;
-        self.head_partial = partial && offset < self.source_end;
-        (dropped, copied)
-    }
-}
 
 fn projected_bounds(
     snapshot: &HostContentSourceSnapshot,
@@ -1301,7 +1045,7 @@ struct ContentSourceRecord {
     kind: TextSourceKind,
     lifecycle: SourceLifecycle,
     retention: Option<SourceRetentionPolicy>,
-    storage: Arc<SourceStorage>,
+    storage: Arc<StoredSource>,
     copied_bytes: u64,
     dropped_head_bytes: u64,
     accepted_bytes: u64,
@@ -1374,7 +1118,7 @@ impl ContentSourceRegistry {
             kind,
             lifecycle: SourceLifecycle::Live,
             retention: None,
-            storage: Arc::new(SourceStorage::empty()),
+            storage: Arc::new(StoredSource::empty()),
             copied_bytes: 0,
             dropped_head_bytes: 0,
             accepted_bytes: 0,
@@ -1450,11 +1194,11 @@ fn validate_payload_size(length: usize) -> Result<()> {
 }
 
 fn decode_annotations(
-    bytes: &[u8],
+    input: &ValidatedInput<'_>,
     absolute_base: u64,
     records: &[ContentAnnotationRecord],
     payload: &[u8],
-) -> Result<Vec<SourceAnnotation>> {
+) -> Result<Vec<ValidatedAnnotation>> {
     if records.len() > MAX_SOURCE_ANNOTATIONS {
         return Err(anyhow!(
             "LIMIT_EXCEEDED: annotation count exceeds the configured limit"
@@ -1465,8 +1209,8 @@ fn decode_annotations(
             "PAYLOAD_TOO_LARGE: annotation payload exceeds the configured limit"
         ));
     }
-    let text =
-        str::from_utf8(bytes).map_err(|_| anyhow!("INVALID_UTF8: Source payload is not UTF-8"))?;
+    let text = input.text();
+    let bytes = input.bytes();
     records
         .iter()
         .map(|record| {
@@ -1534,12 +1278,12 @@ fn decode_annotations(
             let absolute_end = absolute_base
                 .checked_add(record.end_byte as u64)
                 .ok_or_else(|| anyhow!("INVALID_RANGE: annotation coordinate exhausted"))?;
-            Ok(SourceAnnotation {
+            Ok(ValidatedAnnotation {
                 kind: record.kind,
                 flags: record.flags,
                 start_byte: absolute_start,
                 end_byte: absolute_end,
-                payload: Arc::from(&payload[record.payload_offset as usize..payload_end as usize]),
+                payload: payload[record.payload_offset as usize..payload_end as usize].to_vec(),
                 aux0: record.aux0,
                 aux1: record.aux1,
                 tag,
@@ -1729,13 +1473,13 @@ fn read_ansi_color(payload: &[u8], cursor: &mut usize, field: &str) -> Result<An
     Ok(color)
 }
 
-fn retention_head(storage: &SourceStorage, retention: Option<SourceRetentionPolicy>) -> u64 {
+fn retention_head(storage: &StoredSource, retention: Option<SourceRetentionPolicy>) -> u64 {
     let Some(retention) = retention else {
-        return storage.source_base;
+        return storage.base();
     };
-    let mut head = storage.source_base;
+    let mut head = storage.base();
     if let Some(max_bytes) = retention.max_bytes
-        && storage.source_end.saturating_sub(storage.source_base) > max_bytes
+        && storage.end().saturating_sub(storage.base()) > max_bytes
     {
         head = head.max(storage.offset_for_max_bytes(max_bytes));
     }
@@ -1744,7 +1488,7 @@ fn retention_head(storage: &SourceStorage, retention: Option<SourceRetentionPoli
     {
         let keep = usize::try_from(max_lines).unwrap_or(usize::MAX);
         let index = storage.line_count().saturating_sub(keep);
-        if let Some(line_start) = storage.line_starts.get(index).copied() {
+        if let Some(line_start) = storage.line_entry(storage.base(), index as u64) {
             head = head.max(line_start);
         }
     }
@@ -1752,7 +1496,7 @@ fn retention_head(storage: &SourceStorage, retention: Option<SourceRetentionPoli
 }
 
 fn retention_would_overflow(
-    storage: &SourceStorage,
+    storage: &StoredSource,
     retention: Option<SourceRetentionPolicy>,
     appended_bytes: usize,
     appended_newlines: usize,
@@ -1763,8 +1507,8 @@ fn retention_would_overflow(
     (!policy.drop_oldest
         && policy.max_bytes.is_some_and(|limit| {
             storage
-                .source_end
-                .saturating_sub(storage.source_base)
+                .end()
+                .saturating_sub(storage.base())
                 .saturating_add(appended_bytes as u64)
                 > limit
         }))
@@ -1775,12 +1519,12 @@ fn retention_would_overflow(
 }
 
 fn apply_retention(
-    storage: &mut SourceStorage,
+    storage: StoredSource,
     retention: Option<SourceRetentionPolicy>,
-) -> Result<(u64, u64)> {
-    let head = retention_head(storage, retention);
-    if head == storage.source_base {
-        return Ok((0, 0));
+) -> Result<(StoredSource, u64)> {
+    let head = retention_head(&storage, retention);
+    if head == storage.base() {
+        return Ok((storage, 0));
     }
     let policy = retention.expect("retention head requires a policy");
     if !policy.drop_oldest {
@@ -1788,7 +1532,10 @@ fn apply_retention(
             "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
         ));
     }
-    Ok(storage.truncate_head(head))
+    let (next, dropped) = storage
+        .apply_truncate(storage.base(), head, storage.revision())
+        .map_err(|err| anyhow!("{err}"))?;
+    Ok((next, dropped))
 }
 
 fn capture_subscribers(record: &mut ContentSourceRecord) -> Vec<SourceSubscription> {
@@ -1842,7 +1589,7 @@ impl HostContentSource {
             return Ok(true);
         }
         let truncated = record.retention.is_some_and(|policy| policy.drop_oldest)
-            || record.storage.source_base != 0;
+            || record.storage.base() != 0;
         Ok(!truncated)
     }
 
@@ -1872,10 +1619,10 @@ impl HostContentSource {
             source_generation: record.generation,
             content_generation: record.content_generation,
             revision: record.revision,
-            source_base: storage.source_base,
-            source_end: storage.source_end,
-            sealed: storage.sealed,
-            head_partial: storage.head_partial,
+            source_base: storage.base(),
+            source_end: storage.end(),
+            sealed: storage.sealed(),
+            head_partial: storage.head_partial(),
             storage,
         })
     }
@@ -1889,13 +1636,13 @@ impl HostContentSource {
         let storage = &record.storage;
         Ok(HostContentSourceStats {
             revision: record.revision,
-            source_base: storage.source_base,
-            source_end: storage.source_end,
-            retained_bytes: storage.source_end.saturating_sub(storage.source_base),
-            retained_lines: storage.line_starts.len() as u64,
-            chunk_count: storage.chunks.len(),
-            sealed: storage.sealed,
-            head_partial: storage.head_partial,
+            source_base: storage.base(),
+            source_end: storage.end(),
+            retained_bytes: storage.retained_bytes(),
+            retained_lines: storage.line_count() as u64,
+            chunk_count: storage.chunk_count(),
+            sealed: storage.sealed(),
+            head_partial: storage.head_partial(),
             accepted_bytes: record.accepted_bytes,
             copied_bytes: record.copied_bytes,
             dropped_head_bytes: record.dropped_head_bytes,
@@ -1919,26 +1666,26 @@ impl HostContentSource {
             if record.kind != TextSourceKind::Stream {
                 return Err(anyhow!("INVALID_ARGUMENT: append requires a stream Source"));
             }
-            if record.storage.sealed {
+            if record.storage.sealed() {
                 return Err(anyhow!("SOURCE_SEALED: Source is sealed"));
             }
             validate_payload_size(bytes.len())?;
-            let base = record.storage.source_end;
-            base.checked_add(bytes.len() as u64)
+            let input = ValidatedInput::from_bytes(bytes)?;
+            let base = record.storage.end();
+            base.checked_add(input.len() as u64)
                 .ok_or_else(|| anyhow!("INVALID_RANGE: Source coordinate exhausted"))?;
-            let parsed = decode_annotations(bytes, base, annotations, annotation_payload)?;
-            if bytes.is_empty() && parsed.is_empty() {
+            let parsed = decode_annotations(&input, base, annotations, annotation_payload)?;
+            if input.is_empty() && parsed.is_empty() {
                 return Ok(ContentMutationResult {
                     revision: record.revision,
                     ..ContentMutationResult::default()
                 });
             }
-            let appended_newlines = bytes.iter().filter(|byte| **byte == b'\n').count();
             if retention_would_overflow(
                 &record.storage,
                 record.retention,
-                bytes.len(),
-                appended_newlines,
+                input.len(),
+                input.newlines(),
             ) {
                 return Err(anyhow!(
                     "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
@@ -1949,17 +1696,18 @@ impl HostContentSource {
             // candidate storage: a rejection must leave bytes, annotations,
             // revision and accounting exactly as they were (§9.6).
             let revision = next_revision(record.revision)?;
-            let next = Arc::make_mut(&mut record.storage);
-            next.append_bytes(bytes)?;
-            next.annotations.extend(parsed);
-            let (dropped, copied) = apply_retention(next, retention)?;
+            let next = record
+                .storage
+                .apply_append(input.text(), revision, parsed)
+                .map_err(|err| anyhow!("{err}"))?;
+            let (next, dropped) = apply_retention(next, retention)?;
+            record.storage = Arc::new(next);
             record.revision = revision;
             record.copied_bytes = record
                 .copied_bytes
-                .saturating_add(bytes.len() as u64)
-                .saturating_add(copied);
+                .saturating_add(input.len() as u64);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
-            record.accepted_bytes = record.accepted_bytes.saturating_add(bytes.len() as u64);
+            record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
         };
         self.finish_mutation(revision, subscribers)
@@ -1979,29 +1727,29 @@ impl HostContentSource {
                 .lock()
                 .map_err(|_| anyhow!("content Source lock is poisoned"))?;
             ensure_source_live(&record)?;
-            if record.kind == TextSourceKind::Stream && record.storage.sealed {
+            if record.kind == TextSourceKind::Stream && record.storage.sealed() {
                 return Err(anyhow!("SOURCE_SEALED: Source is sealed"));
             }
             validate_payload_size(bytes.len())?;
-            let parsed = decode_annotations(bytes, 0, annotations, annotation_payload)?;
-            let mut next = SourceStorage::empty();
-            next.append_bytes(bytes)?;
-            next.annotations = parsed;
-            let (dropped, copied) = apply_retention(&mut next, record.retention)?;
+            let input = ValidatedInput::from_bytes(bytes)?;
+            let parsed = decode_annotations(&input, 0, annotations, annotation_payload)?;
             let revision = next_revision(record.revision)?;
             let content_generation = record
                 .content_generation
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("Source content generation exhausted"))?;
+            let next = StoredSource::empty()
+                .apply_append(input.text(), revision, parsed)
+                .map_err(|err| anyhow!("{err}"))?;
+            let (next, dropped) = apply_retention(next, record.retention)?;
             record.storage = Arc::new(next);
             record.content_generation = content_generation;
             record.revision = revision;
             record.copied_bytes = record
                 .copied_bytes
-                .saturating_add(bytes.len() as u64)
-                .saturating_add(copied);
+                .saturating_add(input.len() as u64);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
-            record.accepted_bytes = record.accepted_bytes.saturating_add(bytes.len() as u64);
+            record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
         };
         self.finish_mutation(revision, subscribers)
@@ -2014,12 +1762,12 @@ impl HostContentSource {
                 .lock()
                 .map_err(|_| anyhow!("content Source lock is poisoned"))?;
             ensure_source_live(&record)?;
-            if record.kind == TextSourceKind::Stream && record.storage.sealed {
+            if record.kind == TextSourceKind::Stream && record.storage.sealed() {
                 return Err(anyhow!("SOURCE_SEALED: Source is sealed"));
             }
-            if record.storage.source_base == 0
-                && record.storage.source_end == 0
-                && record.storage.annotations.is_empty()
+            if record.storage.base() == 0
+                && record.storage.end() == 0
+                && record.storage.annotations_in_order().is_empty()
             {
                 return Ok(ContentMutationResult {
                     revision: record.revision,
@@ -2033,7 +1781,7 @@ impl HostContentSource {
                 .content_generation
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("Source content generation exhausted"))?;
-            record.storage = Arc::new(SourceStorage::empty());
+            record.storage = Arc::new(StoredSource::empty());
             record.content_generation = content_generation;
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
@@ -2051,14 +1799,17 @@ impl HostContentSource {
             if record.kind != TextSourceKind::Stream {
                 return Err(anyhow!("INVALID_ARGUMENT: seal requires a stream Source"));
             }
-            if record.storage.sealed {
+            if record.storage.sealed() {
                 return Err(anyhow!("SOURCE_ALREADY_SEALED: Source is already sealed"));
             }
             // Preflight the revision before flipping the flag: a rejection
             // must not report a sealed Source at a stale revision (§9.6).
             let revision = next_revision(record.revision)?;
-            let next = Arc::make_mut(&mut record.storage);
-            next.sealed = true;
+            let next = record
+                .storage
+                .apply_seal(record.storage.base(), record.storage.end(), revision, None)
+                .map_err(|err| anyhow!("{err}"))?;
+            record.storage = Arc::new(next);
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
@@ -2073,7 +1824,7 @@ impl HostContentSource {
                 .lock()
                 .map_err(|_| anyhow!("content Source lock is poisoned"))?;
             ensure_source_live(&record)?;
-            if offset < record.storage.source_base || offset > record.storage.source_end {
+            if offset < record.storage.base() || offset > record.storage.end() {
                 return Err(anyhow!(
                     "INVALID_RANGE: Source head is outside the retained range"
                 ));
@@ -2083,7 +1834,7 @@ impl HostContentSource {
                     "INVALID_RANGE: Source head must be a UTF-8 scalar boundary"
                 ));
             }
-            if offset == record.storage.source_base {
+            if offset == record.storage.base() {
                 return Ok(ContentMutationResult {
                     revision: record.revision,
                     ..ContentMutationResult::default()
@@ -2092,10 +1843,12 @@ impl HostContentSource {
             // Preflight the revision before dropping the head: a rejection
             // must not move the retained range at a stale revision (§9.6).
             let revision = next_revision(record.revision)?;
-            let next = Arc::make_mut(&mut record.storage);
-            let (dropped, copied) = next.truncate_head(offset);
+            let (next, dropped) = record
+                .storage
+                .apply_truncate(record.storage.base(), offset, revision)
+                .map_err(|err| anyhow!("{err}"))?;
+            record.storage = Arc::new(next);
             record.revision = revision;
-            record.copied_bytes = record.copied_bytes.saturating_add(copied);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
             (revision, capture_subscribers(&mut record))
         };
@@ -2249,7 +2002,7 @@ impl HostContentSource {
             drop_oldest,
         };
         if !drop_oldest
-            && retention_head(&record.storage, Some(retention)) > record.storage.source_base
+            && retention_head(&record.storage, Some(retention)) > record.storage.base()
         {
             return Err(anyhow!(
                 "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
@@ -4751,6 +4504,127 @@ mod tests {
     }
 
     #[test]
+    fn poisoned_subscriber_wake_reports_source_wake_failed_with_accepted_revision() {
+        let environment = TuiEnvironment::new();
+        let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        let funnel = HostContentFunnel::plain(TextWrapMode::Word);
+
+        let first_port = first.create_content_port(ContentFamily::Text).unwrap();
+        let first_conn = first_port.connect(&source, funnel).unwrap();
+        first_conn.activate().unwrap();
+        first
+            .set_desired_view(View::native_content_host(first_port.id()).unwrap())
+            .unwrap();
+        first.flush_pending_hosts(32, true).unwrap();
+
+        let second_port = second.create_content_port(ContentFamily::Text).unwrap();
+        let second_conn = second_port.connect(&source, funnel).unwrap();
+        second_conn.activate().unwrap();
+        second
+            .set_desired_view(View::native_content_host(second_port.id()).unwrap())
+            .unwrap();
+        second.flush_pending_hosts(32, true).unwrap();
+
+        assert_eq!(source.subscriber_count(), 2);
+
+        // Deliberately poison first host's mutex
+        let inner_clone = first.inner.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = inner_clone.lock().unwrap();
+            panic!("deliberate host lock poisoning for test");
+        }));
+
+        // Now append to the source. The source revision MUST advance and be accepted,
+        // while finish_mutation reports SOURCE_WAKE_FAILED with the accepted revision.
+        let result = source.append_utf8(b"hello\n", &[], &[]);
+        let err = result.expect_err("mutation should report wake failure when subscriber is poisoned");
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("SOURCE_WAKE_FAILED"),
+            "error must identify wake failure, got: {err_str}"
+        );
+        assert!(
+            err_str.contains("Source revision 1 was accepted"),
+            "error must report accepted revision to prevent retry duplicates, got: {err_str}"
+        );
+
+        // State is authoritative and NOT rolled back:
+        let stats = source.stats().unwrap();
+        assert_eq!(stats.revision, 1);
+        assert_eq!(stats.accepted_bytes, 6);
+        assert_eq!(source.snapshot().unwrap().text(), "hello\n");
+    }
+
+    #[test]
+    fn stop_condition_persistent_sharing_across_repeated_appends() {
+        let environment = TuiEnvironment::new();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+
+        // 1. Snapshot taken before appends
+        let snap0 = source.snapshot().unwrap();
+        assert_eq!(snap0.text(), "");
+        assert_eq!(snap0.retained_bytes(), 0);
+
+        // 2. Perform repeated tiny appends with annotations
+        let mut snapshots = Vec::new();
+        for i in 0..50 {
+            let payload = format!("item {i:03}\n");
+            let anno_payload = format!("tag-{i}\x00val-{i}");
+            let records = [ContentAnnotationRecord {
+                kind: CONTENT_ANNOTATION_KIND_TAG,
+                flags: 0,
+                start_byte: 0,
+                end_byte: payload.len() as u32,
+                payload_offset: 0,
+                payload_length: anno_payload.len() as u32,
+                aux0: 0,
+                aux1: 0,
+            }];
+            source
+                .append_utf8(payload.as_bytes(), &records, anno_payload.as_bytes())
+                .unwrap();
+            if i % 10 == 0 {
+                snapshots.push(source.snapshot().unwrap());
+            }
+        }
+
+        // 3. Old snapshots remain completely unchanged
+        assert_eq!(snap0.text(), "");
+        assert_eq!(snap0.annotations().len(), 0);
+
+        let snap_i0 = &snapshots[0];
+        assert_eq!(snap_i0.text(), "item 000\n");
+        assert_eq!(snap_i0.annotations().len(), 1);
+
+        let latest = source.snapshot().unwrap();
+        assert_eq!(latest.annotations().len(), 50);
+        assert_eq!(latest.retained_lines(), 51); // 50 newlines + base line = 51
+
+        // 4. Test atomic retention + annotations
+        source
+            .configure_retention(Some(30), None, true)
+            .unwrap();
+        source
+            .append_utf8(b"tail-item\n", &[], &[])
+            .unwrap();
+        let stats = source.stats().unwrap();
+        // Base advanced to keep within 30 bytes
+        assert!(stats.source_base > 0);
+        let snap_retained = source.snapshot().unwrap();
+        assert!(snap_retained.retained_bytes() <= 30);
+        // Annotations were atomically pruned/clipped with the head truncation
+        for anno in snap_retained.annotations() {
+            assert!(anno.end_byte > stats.source_base);
+        }
+    }
+
+    #[test]
     fn inactive_membership_blocks_source_disposal_until_connector_release() {
         let source_registry = ContentSourceRegistry::new();
         let source = source_registry.create(TextSourceKind::Stream).unwrap();
@@ -5161,6 +5035,7 @@ mod tests {
     #[test]
     fn theme_recolor_repaints_without_reparsing_semantic_content() {
         use crate::TextFunnelKind;
+        #[cfg(feature = "perf-counters")]
         let _perf_lock = crate::perf::test_lock();
         let source_registry = ContentSourceRegistry::new();
         let source = source_registry.create(TextSourceKind::Stream).unwrap();
@@ -5206,20 +5081,24 @@ mod tests {
         registry.set_theme(&Arc::new(t1));
         let before = rebuilds();
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        assert!(
-            rebuilds() > before,
-            "first projection must run the semantic parsers"
-        );
+        if cfg!(feature = "perf-counters") {
+            assert!(
+                rebuilds() > before,
+                "first projection must run the semantic parsers"
+            );
+        }
         // A palette-only recolor invalidates the painted surface but must
         // reuse the cached semantic IR: no parser runs again.
         registry.set_theme(&Arc::new(t2));
         let after_recolor = rebuilds();
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        assert_eq!(
-            rebuilds(),
-            after_recolor,
-            "theme recolor must not reparse semantic content"
-        );
+        if cfg!(feature = "perf-counters") {
+            assert_eq!(
+                rebuilds(),
+                after_recolor,
+                "theme recolor must not reparse semantic content"
+            );
+        }
         assert_ne!(
             m1.projection_revision, m2.projection_revision,
             "recolor must still invalidate the paint cache"
@@ -5227,10 +5106,12 @@ mod tests {
         // New source bytes change the semantic key and rebuild exactly.
         source.append_utf8(b"more text\n", &[], &[]).unwrap();
         registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        assert!(
-            rebuilds() > after_recolor,
-            "source changes must rebuild semantic content"
-        );
+        if cfg!(feature = "perf-counters") {
+            assert!(
+                rebuilds() > after_recolor,
+                "source changes must rebuild semantic content"
+            );
+        }
     }
 
     #[derive(Default)]

@@ -8,6 +8,8 @@
 mod app;
 #[cfg(feature = "native-host")]
 mod content;
+#[cfg(feature = "native-host")]
+mod source_store;
 mod context;
 #[cfg(feature = "native-host")]
 mod environment;

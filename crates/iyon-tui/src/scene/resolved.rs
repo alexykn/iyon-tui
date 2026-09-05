@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::{
     component::{ComponentId, ComponentSnapshot, MountGraph},
@@ -12,9 +13,11 @@ use crate::{
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ResolutionOverlay {
     pub(crate) components: HashMap<ComponentId, ComponentSnapshot>,
-    /// Current immutable copies of host-owned retained presentation state,
+    /// Immutable shared versions of host-owned retained presentation state,
     /// keyed by the native attachment identity carried by a semantic View.
-    pub(crate) states: HashMap<u64, ViewStateSnapshot>,
+    /// Sharing the frame's `Arc` versions removes the repeated map and
+    /// decoration copies of the old per-branch snapshot clones.
+    pub(crate) states: HashMap<u64, Arc<ViewStateSnapshot>>,
 }
 
 impl ResolutionOverlay {
@@ -23,7 +26,7 @@ impl ResolutionOverlay {
     }
 
     pub(crate) fn state(&self, id: u64) -> Option<&ViewStateSnapshot> {
-        self.states.get(&id)
+        self.states.get(&id).map(Arc::as_ref)
     }
 }
 

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::Arc,
 };
 
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
         View,
         ir::{ViewId, ViewKind},
     },
-    retained_state::{StateNodeKind, state_node_kind},
+    retained_state::{StateFrameView, StateNodeKind, state_node_kind},
 };
 
 use super::{ResolutionOverlay, ResolvedScene};
@@ -91,11 +92,17 @@ impl<'a> ResolveSession<'a> {
         &self.resolver.overlay
     }
 
-    pub(crate) fn set_state_snapshots(
-        &mut self,
-        states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
-    ) {
-        self.resolver.overlay.states = states.clone();
+    /// Populates the branch overlay with exactly the demanded frame
+    /// versions, shared by reference count. Unmounted records are never
+    /// visited; clean ids resolve through the frame view's committed table.
+    pub(crate) fn set_state_snapshots(&mut self, states: &StateFrameView<'_>) {
+        let mut next = HashMap::with_capacity(states.demanded().len());
+        for id in states.demanded() {
+            if let Some(version) = states.get(id) {
+                next.insert(*id, Arc::clone(version));
+            }
+        }
+        self.resolver.overlay.states = next;
     }
 
     #[cfg(test)]

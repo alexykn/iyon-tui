@@ -2,14 +2,19 @@
 //!
 //! The state record/effective presentation lives under `retained_state`; this
 //! file only adapts mutation wakes and owner teardown to `HostInner`.
+//!
+//! Wrappers carry the immutable state identity plus a weak host reference.
+//! Records are owned directly by the host registry, so every mutation,
+//! validation, and disposal serializes through the host lock and no
+//! per-record lock remains.
 
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Mutex, Weak};
 
 use anyhow::Result;
 
 use crate::retained_state::{
     StateEffects, StateNodeKind, ViewStateGeometryPatch, ViewStateGeometryProperty,
-    ViewStateLifecycle, ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateRecord,
+    ViewStatePresentationPatch, ViewStatePresentationProperty,
 };
 
 use super::environment::WakeDisposition;
@@ -18,31 +23,34 @@ use super::host::HostInner;
 /// Native host-owned retained geometry/presentation state exposed to Node-API.
 #[derive(Clone)]
 pub struct HostViewState {
-    pub(super) record: Arc<Mutex<ViewStateRecord>>,
+    id: u64,
     host: Weak<Mutex<HostInner>>,
 }
 
 impl HostViewState {
-    pub(super) fn new(record: Arc<Mutex<ViewStateRecord>>, host: &Arc<Mutex<HostInner>>) -> Self {
+    pub(super) fn new(id: u64, host: &std::sync::Arc<Mutex<HostInner>>) -> Self {
         Self {
-            record,
-            host: Arc::downgrade(host),
+            id,
+            host: std::sync::Arc::downgrade(host),
         }
     }
 
+    /// The immutable identity assigned at creation. Reading it needs no lock:
+    /// the id never changes for the life of the wrapper.
     #[must_use]
     pub fn state_id(&self) -> u64 {
-        self.record.lock().map_or(0, |record| record.id)
+        self.id
     }
 
     pub fn validate_node_kind(&self, node_kind: u32) -> Result<()> {
         let kind = semantic_state_node_kind(node_kind)?;
-        let record = self
-            .record
+        let Some(host) = self.host.upgrade() else {
+            return Err(anyhow::anyhow!("TUI host is disposed"));
+        };
+        let host = host
             .lock()
-            .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?;
-        ensure_live(&record.lifecycle)?;
-        crate::retained_state::validate_geometry_for_kind(kind, &record.geometry)
+            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
+        host.validate_view_state_kind(self.id, kind)
     }
 
     pub fn set_geometry(&self, patch: &ViewStateGeometryPatch) -> Result<WakeDisposition> {
@@ -85,21 +93,19 @@ impl HostViewState {
 
     pub fn dispose(&self) -> Result<()> {
         let Some(host) = self.host.upgrade() else {
-            self.record
-                .lock()
-                .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?
-                .dispose();
+            // The owner registry is gone with the host; there is no retained
+            // entry left to invalidate, so disposal is a no-op.
             return Ok(());
         };
         let mut host = host
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
-        host.dispose_view_state(&self.record)
+        host.dispose_view_state(self.id)
     }
 
     fn mutate<F>(&self, mutation: F) -> Result<WakeDisposition>
     where
-        F: FnOnce(&mut ViewStateRecord) -> Result<StateEffects>,
+        F: FnOnce(&mut crate::retained_state::ViewStateRecord) -> Result<StateEffects>,
     {
         let Some(host) = self.host.upgrade() else {
             return Err(anyhow::anyhow!("TUI host is disposed"));
@@ -110,18 +116,11 @@ impl HostViewState {
         if host.is_closed() {
             return Err(anyhow::anyhow!("TUI host is disposed"));
         }
-        let effects = {
-            let mut record = self
-                .record
-                .lock()
-                .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?;
-            ensure_live(&record.lifecycle)?;
-            mutation(&mut record)?
-        };
+        let effects = host.mutate_view_state(self.id, mutation)?;
         if effects.is_empty() {
             return Ok(WakeDisposition::default());
         }
-        host.invalidate_state(self.state_id(), effects)
+        host.invalidate_state(self.id, effects)
     }
 }
 
@@ -142,11 +141,4 @@ fn semantic_state_node_kind(node_kind: u32) -> Result<StateNodeKind> {
             "unknown semantic ViewState node kind: {node_kind}"
         )),
     }
-}
-
-fn ensure_live(lifecycle: &ViewStateLifecycle) -> Result<()> {
-    if *lifecycle == ViewStateLifecycle::Disposed {
-        return Err(anyhow::anyhow!("STATE_DISPOSED: ViewState is disposed"));
-    }
-    Ok(())
 }

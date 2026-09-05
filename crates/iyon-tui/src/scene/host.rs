@@ -30,7 +30,7 @@ use crate::{
         layout::{LayoutCache, ViewCompiler, layout_view_with_overlay_and_cache_and_content},
         paint::{PaintCache, ViewPainter},
     },
-    retained_state::{DamageRegion, StateEffects, StateNodeKind, ViewStateSnapshot},
+    retained_state::{DamageRegion, StateEffects, StateFrameView, StateNodeKind},
 };
 
 use super::root::merge_root_scene;
@@ -639,7 +639,7 @@ impl SceneHost {
             theme,
             sink,
             viewport,
-            &HashMap::new(),
+            &StateFrameView::empty(),
             &mut content,
         )
     }
@@ -665,7 +665,7 @@ impl SceneHost {
             theme,
             sink,
             viewport,
-            &HashMap::new(),
+            &StateFrameView::empty(),
             &mut content,
         )
     }
@@ -678,7 +678,7 @@ impl SceneHost {
         theme: &Theme,
         sink: &mut S,
         mut viewport: F,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
@@ -784,7 +784,7 @@ impl SceneHost {
             size,
             now,
             HistoryViewportAnchor::FollowEnd,
-            &HashMap::new(),
+            &StateFrameView::empty(),
             &mut content,
         )
     }
@@ -796,7 +796,7 @@ impl SceneHost {
         size: Size,
         now: Instant,
         anchor: HistoryViewportAnchor,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
         let mut force_full = false;
@@ -935,7 +935,7 @@ impl SceneHost {
         registry: &mut ComponentRegistry,
         size: Size,
         anchor: HistoryViewportAnchor,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
         if !self.invalidated_states.is_empty() {
@@ -991,7 +991,7 @@ impl SceneHost {
         registry: &mut ComponentRegistry,
         size: Size,
         anchor: HistoryViewportAnchor,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let history_revision = scene.history().map_or(0, crate::History::revision);
@@ -1417,7 +1417,7 @@ impl SceneHost {
         retained: StableScene,
         affected: Vec<ComponentId>,
         body_layout_changed: bool,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let Some(history) = scene.history() else {
@@ -1840,7 +1840,7 @@ fn prepare_component_subtree_update(
     retained: &StableScene,
     registry: &ComponentRegistry,
     id: ComponentId,
-    states: &HashMap<u64, ViewStateSnapshot>,
+    states: &StateFrameView<'_>,
     _content: &mut dyn ContentProvider,
 ) -> Result<PreparedComponentSubtree, ResolveError> {
     let snapshot = registry

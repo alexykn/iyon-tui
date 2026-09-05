@@ -4,6 +4,7 @@
 //! presentation override storage and effective-state derivation live here.
 
 mod capabilities;
+mod capture;
 mod damage;
 mod effects;
 mod geometry;
@@ -15,6 +16,7 @@ mod registry;
 pub(crate) use capabilities::{StateNodeKind, state_node_kind};
 #[cfg(feature = "native-host")]
 pub(crate) use capabilities::{presentation_state_capable, validate_geometry_for_kind};
+pub(crate) use capture::{StateCandidateOverlay, StateFrameView};
 pub(crate) use damage::DamageRegion;
 pub(crate) use effects::StateEffects;
 pub(crate) use geometry::EffectiveGeometry;

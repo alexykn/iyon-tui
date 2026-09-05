@@ -5,7 +5,7 @@
 //! the Rust application driver.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
@@ -28,7 +28,10 @@ use crate::{
     geometry::Size,
     physical::PhysicalRow,
     presentation::{ContentProvider, EmptyContentProvider},
-    retained_state::{StateNodeKind, ViewStateRecord, ViewStateRegistry, ViewStateSnapshot},
+    retained_state::{
+        StateCandidateOverlay, StateFrameView, StateNodeKind, ViewStateLifecycle, ViewStateRecord,
+        ViewStateRegistry,
+    },
     scene::{PreparedSceneFrame, SceneHostError},
     terminal::{PresentReceipt, TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };
@@ -981,7 +984,7 @@ impl TuiHost {
             .start(now)
             .map_err(|error| anyhow::anyhow!("host init failed: {error:?}"))?;
         let mut backend = backend;
-        let frame = prepare_frame(&mut running, &mut backend, now, &HashMap::new())?;
+        let frame = prepare_frame(&mut running, &mut backend, now, &StateFrameView::empty())?;
         let inner =
             Arc::new(Mutex::new(HostInner {
                 running,
@@ -1039,8 +1042,8 @@ impl TuiHost {
             return Err(anyhow::anyhow!("host is closed"));
         }
         let host_id = inner.host_id;
-        let (_, record) = inner.view_states.create(host_id)?;
-        Ok(HostViewState::new(record, &self.inner))
+        let id = inner.view_states.create(host_id)?;
+        Ok(HostViewState::new(id, &self.inner))
     }
 
     /// Creates a host-owned `ContentPort`. Source/Funnel identity remains
@@ -1667,8 +1670,32 @@ impl HostInner {
         self.closed
     }
 
-    fn state_snapshots(&self) -> Result<HashMap<u64, ViewStateSnapshot>> {
-        self.view_states.snapshots()
+    /// Captures the frame candidate overlay. Only demanded attachments
+    /// (desired ∪ visible ∪ in-flight) contribute versions; unrelated
+    /// unmounted records are never visited or cloned.
+    fn capture_state_candidate(&mut self) -> StateCandidateOverlay {
+        self.view_states.capture_candidate()
+    }
+
+    pub(super) fn mutate_view_state<F>(
+        &mut self,
+        id: u64,
+        mutation: F,
+    ) -> Result<crate::retained_state::StateEffects>
+    where
+        F: FnOnce(&mut ViewStateRecord) -> Result<crate::retained_state::StateEffects>,
+    {
+        self.view_states.mutate_record(id, mutation)
+    }
+
+    pub(super) fn validate_view_state_kind(&self, id: u64, kind: StateNodeKind) -> Result<()> {
+        let Some(record) = self.view_states.record(id) else {
+            return Err(anyhow::anyhow!("STATE_DISPOSED: ViewState is disposed"));
+        };
+        if record.lifecycle == ViewStateLifecycle::Disposed {
+            return Err(anyhow::anyhow!("STATE_DISPOSED: ViewState is disposed"));
+        }
+        crate::retained_state::validate_geometry_for_kind(kind, &record.geometry)
     }
 
     fn validate_state_targets(&self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
@@ -1691,8 +1718,12 @@ impl HostInner {
         self.content.candidate_bindings(&targets)
     }
 
-    fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) {
-        self.view_states.set_visible(targets);
+    /// Prepares the visible binding changes before commit. Validation runs
+    /// first so a failed commit never installs a partial binding set; the
+    /// in-flight pins stay held until the caller explicitly clears them
+    /// after the visible swap.
+    fn commit_visible_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
+        self.view_states.set_visible(targets)
     }
 
     fn set_in_flight_state_bindings(&mut self, ids: &[u64]) {
@@ -1723,35 +1754,17 @@ impl HostInner {
         self.view_states.clear_bindings();
     }
 
-    pub(super) fn dispose_view_state(
-        &mut self,
-        record: &Arc<Mutex<ViewStateRecord>>,
-    ) -> Result<()> {
-        let id = record
-            .lock()
-            .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?
-            .id;
-        let Some(owned) = self.view_states.records.get(&id) else {
+    pub(super) fn dispose_view_state(&mut self, id: u64) -> Result<()> {
+        // Unknown identities stay a no-op so repeated disposal is idempotent.
+        if self.view_states.record(id).is_none() {
             return Ok(());
-        };
-        if !Arc::ptr_eq(owned, record) {
+        }
+        // The host namespace rides in the high bits of every state identity,
+        // so a record from another host cannot alias this host's slot.
+        if id >> 32 != self.host_id {
             return Err(anyhow::anyhow!("ViewState belongs to a different host"));
         }
-        let mut record = record
-            .lock()
-            .map_err(|_| anyhow::anyhow!("ViewState lock is poisoned"))?;
-        if record.lifecycle == crate::retained_state::ViewStateLifecycle::Disposed {
-            return Ok(());
-        }
-        if record.desired_bound || record.visible_bound || record.in_flight_bound {
-            return Err(anyhow::anyhow!(
-                "STATE_MOUNTED: ViewState is still attached"
-            ));
-        }
-        record.dispose();
-        drop(record);
-        self.view_states.remove(id);
-        Ok(())
+        self.view_states.dispose(id)
     }
 
     fn dispose_view_states(&mut self) {
@@ -1809,13 +1822,12 @@ impl HostInner {
         if self.content_dirty {
             self.running.host_invalidate_content();
         }
-        let states = match self.state_snapshots() {
-            Ok(states) => states,
-            Err(error) => {
-                self.content.abort_candidate();
-                return Err(error);
-            }
-        };
+        // One candidate overlay over the committed version table replaces the
+        // old whole-registry snapshot. Failed preparation keeps the committed
+        // versions untouched: the overlay owns its `Arc` pins, and the scene
+        // candidate is discarded without merging anything back.
+        let overlay = self.capture_state_candidate();
+        let states = StateFrameView::new(self.view_states.committed_table(), &overlay);
         let candidate = match prepare_frame_with_content(
             &mut self.running,
             &mut self.backend,
@@ -1958,7 +1970,7 @@ impl HostInner {
             .take()
             .ok_or_else(|| anyhow::anyhow!("missing candidate structural revision"))?;
         let state_bindings = candidate.state_bindings.clone();
-        self.commit_visible_state_bindings(&state_bindings);
+        self.commit_visible_state_bindings(&state_bindings)?;
         self.content.commit_visible(&content_bindings);
         self.content.end_candidate();
         self.clear_in_flight_state_bindings();
@@ -2156,7 +2168,7 @@ fn prepare_frame(
     running: &mut HostRunning,
     backend: &mut HostBackend,
     now: Instant,
-    states: &HashMap<u64, ViewStateSnapshot>,
+    states: &StateFrameView<'_>,
 ) -> Result<PreparedSceneFrame> {
     let mut content = EmptyContentProvider;
     prepare_frame_with_content(running, backend, now, states, &mut content)
@@ -2166,7 +2178,7 @@ fn prepare_frame_with_content(
     running: &mut HostRunning,
     backend: &mut HostBackend,
     now: Instant,
-    states: &HashMap<u64, ViewStateSnapshot>,
+    states: &StateFrameView<'_>,
     content: &mut dyn ContentProvider,
 ) -> Result<PreparedSceneFrame> {
     content.set_theme(running.theme());
@@ -2218,13 +2230,13 @@ fn prepare_frame_with_content(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use tokio::sync::oneshot;
 
     use super::super::environment::TuiEnvironment;
     use super::TuiHost;
-    use crate::{ColorSpec, IntoView, View, ViewStatePresentationPatch};
+    use crate::{
+        ColorSpec, IntoView, View, ViewStatePresentationPatch, retained_state::StateFrameView,
+    };
 
     #[test]
     fn desired_revision_waits_for_a_successful_frame_barrier() {
@@ -2314,6 +2326,60 @@ mod tests {
     }
 
     #[test]
+    fn failed_frame_retains_old_state_versions_until_retry() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let state = host.create_view_state().unwrap();
+        let view = View::text("state")
+            .into_view()
+            .native_with_state_attachment(state.state_id())
+            .unwrap();
+        host.set_desired_view(view).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let mut first = ViewStatePresentationPatch::default();
+        first.foreground = Some(Some(ColorSpec::ansi(6)));
+        state.set_presentation(&first).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let foreground_at = |host: &TuiHost| {
+            (0..4).any(|row| {
+                host.style_at(row, 0)
+                    .and_then(|style| style.foreground)
+                    .as_deref()
+                    == Some("ansi:6")
+            })
+        };
+        assert!(foreground_at(&host));
+
+        // The injected failure fires before capture, so the failed attempt
+        // must leave the old version visible with the newer desired revision
+        // still pending; the retry then captures and commits the new version.
+        let mut second = ViewStatePresentationPatch::default();
+        second.foreground = Some(Some(ColorSpec::ansi(1)));
+        state.set_presentation(&second).unwrap();
+        host.fail_next_frame_for_test("injected state frame failure")
+            .unwrap();
+        let failed = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(failed.errors.len(), 1);
+        assert!(
+            foreground_at(&host),
+            "failed frame must keep the old state version visible"
+        );
+
+        let retried = host.flush_pending_hosts(8, true).unwrap();
+        assert!(retried.errors.is_empty());
+        assert!(
+            (0..4).any(|row| {
+                host.style_at(row, 0)
+                    .and_then(|style| style.foreground)
+                    .as_deref()
+                    == Some("ansi:1")
+            }),
+            "retry must commit the newer state version"
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
     fn environment_requeues_in_flight_presentation_receipts() {
         let host = TuiHost::open(20, 4, true).unwrap();
         host.set_desired_view(View::text("receipt").into_view())
@@ -2328,7 +2394,7 @@ mod tests {
                     now,
                     ..
                 } = &mut *inner;
-                super::prepare_frame(running, backend, *now, &HashMap::new()).unwrap()
+                super::prepare_frame(running, backend, *now, &StateFrameView::empty()).unwrap()
             };
             let state_ids = candidate
                 .state_bindings

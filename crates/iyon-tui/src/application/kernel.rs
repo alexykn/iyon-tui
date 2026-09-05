@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    marker::PhantomData,
-    time::Instant,
-};
+use std::{collections::VecDeque, marker::PhantomData, time::Instant};
 
 use tokio::sync::mpsc::{Receiver, error::TryRecvError};
 
@@ -15,7 +11,7 @@ use crate::{
     geometry::Size,
     output::OutputDispatchError,
     presentation::{ContentProvider, EmptyContentProvider},
-    retained_state::ViewStateSnapshot,
+    retained_state::StateFrameView,
     scene::{PreparedSceneFrame, SceneHost, SceneHostError},
 };
 
@@ -632,7 +628,7 @@ where
         F: FnMut(&mut S) -> Result<Size>,
     {
         let mut content = EmptyContentProvider;
-        self.prepare_frame_with_states(now, sink, viewport, &HashMap::new(), &mut content)
+        self.prepare_frame_with_states(now, sink, viewport, &StateFrameView::empty(), &mut content)
     }
 
     pub(crate) fn prepare_frame_with_states<S, F>(
@@ -640,7 +636,7 @@ where
         now: Instant,
         sink: &mut S,
         mut viewport: F,
-        states: &HashMap<u64, ViewStateSnapshot>,
+        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where

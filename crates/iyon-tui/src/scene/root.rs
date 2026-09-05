@@ -1,9 +1,6 @@
 //! Public semantic terminal-root composition.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 use crate::presentation::{ContentProvider, EmptyContentProvider, StyleFacts, StyleStates};
 use crate::{History, IntoView, View};
@@ -163,7 +160,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
         size,
         anchor,
         cache,
-        &HashMap::new(),
+        &crate::retained_state::StateFrameView::empty(),
     )
 }
 
@@ -173,7 +170,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states(
     size: Size,
     anchor: HistoryViewportAnchor,
     cache: &mut LayoutCache,
-    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    states: &crate::retained_state::StateFrameView<'_>,
 ) -> Result<ResolvedRootScene, ResolveError> {
     let mut content = EmptyContentProvider;
     resolve_root_scene_with_anchor_and_cache_and_states_and_content(
@@ -193,7 +190,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
     size: Size,
     anchor: HistoryViewportAnchor,
     cache: &mut LayoutCache,
-    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    states: &crate::retained_state::StateFrameView<'_>,
     content: &mut dyn ContentProvider,
 ) -> Result<ResolvedRootScene, ResolveError> {
     let body_scene = resolve_branch(root.layout_body(), registry, states)?;
@@ -257,7 +254,7 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
 fn resolve_branch(
     view: &View,
     registry: &ComponentRegistry,
-    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    states: &crate::retained_state::StateFrameView<'_>,
 ) -> Result<ResolvedScene, ResolveError> {
     let mut session = ResolveSession::new(registry);
     session.set_state_snapshots(states);
@@ -273,14 +270,19 @@ pub(crate) fn resolve_component_subtree(
     registry: &ComponentRegistry,
     parent: ComponentId,
 ) -> Result<ResolvedScene, ResolveError> {
-    resolve_component_subtree_with_states(view, registry, parent, &HashMap::new())
+    resolve_component_subtree_with_states(
+        view,
+        registry,
+        parent,
+        &crate::retained_state::StateFrameView::empty(),
+    )
 }
 
 pub(crate) fn resolve_component_subtree_with_states(
     view: &View,
     registry: &ComponentRegistry,
     parent: ComponentId,
-    states: &HashMap<u64, crate::retained_state::ViewStateSnapshot>,
+    states: &crate::retained_state::StateFrameView<'_>,
 ) -> Result<ResolvedScene, ResolveError> {
     let mut resolved = resolve_branch(view, registry, states)?;
     resolved.mounts.reparent_roots(parent);

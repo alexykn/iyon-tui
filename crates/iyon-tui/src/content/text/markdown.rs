@@ -93,15 +93,8 @@ pub struct MarkdownProjector {
 struct CachedDomain {
     source_base: StreamOffset,
     stable_end: StreamOffset,
-    prefix: String,
-    spans: Vec<CachedSpan>,
+    spans: Arc<[ProjectionSpan<TextContent>]>,
     has_reference_context: bool,
-}
-
-#[derive(Clone, Debug)]
-struct CachedSpan {
-    source: StreamRange,
-    values: Vec<TextContent>,
 }
 
 #[derive(Debug)]
@@ -308,9 +301,6 @@ impl MarkdownProjector {
                 cache.source_base == domain.source_base()
                     && !cache.has_reference_context
                     && cache.stable_end <= candidate
-                    && domain
-                        .text_prefix(cache.stable_end)
-                        .is_some_and(|prefix| prefix == cache.prefix)
             })
             .cloned()
         {
@@ -398,9 +388,6 @@ impl MarkdownProjector {
             .find(|cache| {
                 cache.source_base == domain.source_base()
                     && cache.stable_end <= domain.source_end()
-                    && domain
-                        .text_prefix(cache.stable_end)
-                        .is_some_and(|prefix| prefix == cache.prefix)
             })
             .cloned()
             && cache.stable_end > domain.source_base()
@@ -443,24 +430,16 @@ impl MarkdownProjector {
         sealed: bool,
     ) {
         let stable_end = stable_end.min(domain.source_end());
-        let prefix = domain
-            .text_prefix(stable_end)
-            .unwrap_or_default()
-            .to_owned();
-        let spans = parsed
+        let spans: Arc<[ProjectionSpan<TextContent>]> = parsed
             .projection
             .spans()
             .iter()
             .filter(|span| span.source().end() <= stable_end)
-            .map(|span| CachedSpan {
-                source: span.source(),
-                values: span.values().to_vec(),
-            })
+            .cloned()
             .collect();
         let cached = CachedDomain {
             source_base: domain.source_base(),
             stable_end,
-            prefix,
             spans,
             has_reference_context: parsed.has_reference_context,
         };
@@ -489,8 +468,8 @@ fn cached_projection(
 ) -> Result<Projection<TextContent>, MarkdownProjectionError> {
     let mut builder =
         ProjectionBuilder::new(cache.source_base, cache.stable_end, cache.stable_end, true);
-    for span in &cache.spans {
-        builder = builder.emit_many(span.source, span.values.clone());
+    for span in cache.spans.iter() {
+        builder = builder.emit_many(span.source(), span.values().iter().cloned());
     }
     builder
         .finish()
@@ -512,7 +491,7 @@ fn prepend_cached(
     let cached = cache
         .spans
         .iter()
-        .map(|span| (span.source, span.values.as_slice()));
+        .map(|span| (span.source(), span.values()));
     let extra = suffix
         .spans()
         .iter()

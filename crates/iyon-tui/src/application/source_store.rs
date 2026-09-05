@@ -1549,7 +1549,11 @@ pub(crate) struct StoredOverlap<'a> {
     record: &'a SourceAnnotation,
 }
 
-impl StoredOverlap<'_> {
+impl<'a> StoredOverlap<'a> {
+    pub(crate) fn record(&self) -> &'a SourceAnnotation {
+        self.record
+    }
+
     pub(crate) fn kind(&self) -> u32 {
         self.record.kind
     }

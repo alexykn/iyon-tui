@@ -5,24 +5,58 @@ use crate::stream::{StreamOffset, StreamRange};
 use super::{Block, TextIrError, TextRun};
 
 /// Exact, unclaimed text at the root of a text projection.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-pub struct RawText(Arc<str>);
+#[derive(Clone, Debug, Default)]
+pub struct RawText {
+    page: Arc<str>,
+    start: u32,
+    len: u32,
+}
+
+impl PartialEq for RawText {
+    fn eq(&self, other: &Self) -> bool {
+        self.text() == other.text()
+    }
+}
+impl Eq for RawText {}
 
 impl RawText {
     pub fn new(text: impl Into<Arc<str>>) -> Self {
-        Self(text.into())
+        let page = text.into();
+        let len = page.len() as u32;
+        Self {
+            page,
+            start: 0,
+            len,
+        }
     }
+
+    pub(crate) fn from_page_slice(page: Arc<str>, start: u32, len: u32) -> Self {
+        Self { page, start, len }
+    }
+
+    pub(crate) fn page(&self) -> &Arc<str> {
+        &self.page
+    }
+
+    pub(crate) fn page_start(&self) -> u32 {
+        self.start
+    }
+
     #[must_use]
     pub fn text(&self) -> &str {
-        &self.0
+        let start = self.start as usize;
+        let end = start + self.len as usize;
+        &self.page[start..end]
     }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.len == 0
     }
+
     #[must_use]
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.len as usize
     }
 
     /// Creates an exact text run from a byte slice of this root source witness.
@@ -85,6 +119,6 @@ impl From<Block> for TextContent {
 
 impl fmt::Display for RawText {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.text())
     }
 }

@@ -10,7 +10,7 @@ use std::ops::Range;
 use crate::{
     AnsiColor, ColorSpec, StyleRef, StyleSpec, TextAttribute,
     projection::{Projection, ProjectionBuilder, ProjectionSpan, Projector},
-    stream::StreamRange,
+    stream::{StreamOffset, StreamRange},
 };
 
 use super::source::RawDomain;
@@ -32,9 +32,14 @@ pub struct AnsiOptions {
 pub type AnsiProjectionError = TextProjectionError;
 
 /// Converts safe ANSI display intent into the canonical text IR.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AnsiProjector {
     options: AnsiOptions,
+    last_base: Option<StreamOffset>,
+    last_end: Option<StreamOffset>,
+    completed_state: AnsiState,
+    completed_inlines: Vec<Inline>,
+    completed_end: StreamOffset,
 }
 
 impl Default for AnsiProjector {
@@ -46,11 +51,18 @@ impl Default for AnsiProjector {
 impl AnsiProjector {
     #[must_use]
     pub const fn new(options: AnsiOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            last_base: None,
+            last_end: None,
+            completed_state: AnsiState::EMPTY,
+            completed_inlines: Vec::new(),
+            completed_end: StreamOffset::ZERO,
+        }
     }
 
     #[must_use]
-    pub const fn options(self) -> AnsiOptions {
+    pub const fn options(&self) -> AnsiOptions {
         self.options
     }
 }
@@ -64,6 +76,18 @@ impl Projector<TextContent> for AnsiProjector {
         input: &Projection<TextContent>,
     ) -> Result<Projection<Self::Output>, Self::Error> {
         validate_text_projection(input)?;
+        let is_continuation = self.last_base == Some(input.source_base())
+            && self.last_end.is_some_and(|end| end <= input.source_end())
+            && self.completed_end >= input.source_base();
+
+        if !is_continuation {
+            self.last_base = Some(input.source_base());
+            self.completed_state = AnsiState::EMPTY;
+            self.completed_inlines.clear();
+            self.completed_end = input.source_base();
+        }
+        self.last_end = Some(input.source_end());
+
         let mut output = ProjectionBuilder::new(
             input.source_base(),
             input.stable_through(),
@@ -85,7 +109,7 @@ impl Projector<TextContent> for AnsiProjector {
                 index += 1;
             }
             let domain = RawDomain::from_spans(&input.spans()[start..index])?;
-            let block = parse_domain(&domain, self.options)?;
+            let block = self.parse_ansi_domain(&domain, input.is_sealed())?;
             output = output.emit(
                 StreamRange::new(domain.source_base(), domain.source_end()),
                 TextContent::Block(block),
@@ -113,6 +137,18 @@ struct AnsiState {
 }
 
 impl AnsiState {
+    const EMPTY: Self = Self {
+        foreground: None,
+        background: None,
+        bold: false,
+        dim: false,
+        italic: false,
+        underline: false,
+        reversed: false,
+        strikethrough: false,
+        link: None,
+    };
+
     fn reset(&mut self) {
         *self = Self::default();
     }
@@ -135,58 +171,182 @@ impl AnsiState {
     }
 }
 
-fn parse_domain(
-    domain: &RawDomain,
-    options: AnsiOptions,
-) -> Result<super::Block, TextProjectionError> {
-    let text = domain.text().as_bytes();
-    let mut state = AnsiState::default();
-    let mut inlines = Vec::new();
-    let mut segment_start = 0usize;
-    let mut cursor = 0usize;
+impl AnsiProjector {
+    fn parse_ansi_domain(
+        &mut self,
+        domain: &RawDomain,
+        is_sealed: bool,
+    ) -> Result<super::Block, TextProjectionError> {
+        let resume_offset = if self.completed_end > domain.source_base() {
+            usize::try_from(
+                self.completed_end
+                    .as_u64()
+                    .saturating_sub(domain.source_base().as_u64()),
+            )
+            .unwrap_or(0)
+        } else {
+            0
+        };
 
-    while cursor < text.len() {
-        match text[cursor] {
-            b'\r' if text.get(cursor + 1) == Some(&b'\n') => {
-                // CRLF is one semantic hard break. Keep both bytes in the
-                // Source range while omitting the carriage-return control
-                // from the rendered inline sequence.
-                push_segment(domain, segment_start..cursor, &state, options, &mut inlines)?;
-                cursor += 1;
-                segment_start = cursor;
+        if resume_offset > domain.len() {
+            self.completed_state = AnsiState::EMPTY;
+            self.completed_inlines.clear();
+            self.completed_end = domain.source_base();
+        }
+
+        let parse_slice = if self.completed_end > domain.source_base() && resume_offset < domain.len() {
+            domain.suffix(resume_offset)?
+        } else if self.completed_end <= domain.source_base() {
+            domain.clone()
+        } else {
+            domain.suffix(domain.len())?
+        };
+
+        let text = parse_slice.text().as_bytes();
+        let mut state = self.completed_state.clone();
+        let mut trailing_inlines = Vec::new();
+        let mut segment_start = 0usize;
+        let mut cursor = 0usize;
+
+        while cursor < text.len() {
+            match text[cursor] {
+                b'\r' if text.get(cursor + 1) == Some(&b'\n') => {
+                    push_segment(
+                        &parse_slice,
+                        segment_start..cursor,
+                        &state,
+                        self.options,
+                        &mut trailing_inlines,
+                    )?;
+                    trailing_inlines.push(Inline::break_(BreakKind::Hard));
+                    cursor += 2;
+                    segment_start = cursor;
+                    self.completed_inlines.extend(trailing_inlines.drain(..));
+                    self.completed_end = parse_slice.source_base().saturating_add(cursor as u64);
+                    self.completed_state = state.clone();
+                }
+                b'\n' => {
+                    push_segment(
+                        &parse_slice,
+                        segment_start..cursor,
+                        &state,
+                        self.options,
+                        &mut trailing_inlines,
+                    )?;
+                    trailing_inlines.push(Inline::break_(BreakKind::Hard));
+                    cursor += 1;
+                    segment_start = cursor;
+                    self.completed_inlines.extend(trailing_inlines.drain(..));
+                    self.completed_end = parse_slice.source_base().saturating_add(cursor as u64);
+                    self.completed_state = state.clone();
+                }
+                0x1b => {
+                    let mut next_state = state.clone();
+                    if let Some(new_cursor) =
+                        try_consume_escape(text, cursor + 1, &mut next_state, self.options)
+                    {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        state = next_state;
+                        cursor = new_cursor;
+                        segment_start = cursor;
+                        self.completed_inlines.extend(trailing_inlines.drain(..));
+                        self.completed_end =
+                            parse_slice.source_base().saturating_add(cursor as u64);
+                        self.completed_state = state.clone();
+                    } else if is_sealed {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        cursor = text.len();
+                        segment_start = cursor;
+                    } else {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        break;
+                    }
+                }
+                0xc2 if text.get(cursor + 1) == Some(&0x9b) => {
+                    let mut next_state = state.clone();
+                    if let Some(new_cursor) = try_consume_csi(text, cursor + 2, &mut next_state) {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        state = next_state;
+                        cursor = new_cursor;
+                        segment_start = cursor;
+                        self.completed_inlines.extend(trailing_inlines.drain(..));
+                        self.completed_end =
+                            parse_slice.source_base().saturating_add(cursor as u64);
+                        self.completed_state = state.clone();
+                    } else if is_sealed {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        cursor = text.len();
+                        segment_start = cursor;
+                    } else {
+                        push_segment(
+                            &parse_slice,
+                            segment_start..cursor,
+                            &state,
+                            self.options,
+                            &mut trailing_inlines,
+                        )?;
+                        break;
+                    }
+                }
+                _ => cursor += 1,
             }
-            b'\n' => {
-                push_segment(domain, segment_start..cursor, &state, options, &mut inlines)?;
-                inlines.push(Inline::break_(BreakKind::Hard));
-                cursor += 1;
-                segment_start = cursor;
-            }
-            0x1b => {
-                push_segment(domain, segment_start..cursor, &state, options, &mut inlines)?;
-                cursor = consume_escape(text, cursor + 1, &mut state, options);
-                segment_start = cursor;
-            }
-            0xc2 if text.get(cursor + 1) == Some(&0x9b) => {
-                // A genuine C1 CSI in UTF-8 text is the two-byte sequence
-                // C2 9B. A lone 0x9B byte is always a UTF-8 continuation
-                // byte and must never be read as an independent C1 control
-                // (§11.5); it falls through to ordinary text below.
-                push_segment(domain, segment_start..cursor, &state, options, &mut inlines)?;
-                cursor = consume_csi(text, cursor + 2, &mut state);
-                segment_start = cursor;
-            }
-            _ => cursor += 1,
+        }
+
+        if segment_start < text.len() && (cursor == text.len() || is_sealed) {
+            push_segment(
+                &parse_slice,
+                segment_start..text.len(),
+                &state,
+                self.options,
+                &mut trailing_inlines,
+            )?;
+        }
+
+        if is_sealed {
+            self.completed_inlines.extend(trailing_inlines.drain(..));
+            self.completed_end = domain.source_end();
+            self.completed_state = state;
+            Ok(
+                super::Block::paragraph(InlineContent::new(self.completed_inlines.clone()))
+                    .with_origin(TextOrigin::ANSI),
+            )
+        } else {
+            let mut all_inlines = self.completed_inlines.clone();
+            all_inlines.extend(trailing_inlines);
+            Ok(super::Block::paragraph(InlineContent::new(all_inlines))
+                .with_origin(TextOrigin::ANSI))
         }
     }
-    push_segment(
-        domain,
-        segment_start..text.len(),
-        &state,
-        options,
-        &mut inlines,
-    )?;
-
-    Ok(super::Block::paragraph(InlineContent::new(inlines)).with_origin(TextOrigin::ANSI))
 }
 
 fn push_segment(
@@ -213,58 +373,64 @@ fn push_segment(
     Ok(())
 }
 
-fn consume_escape(
+fn try_consume_escape(
     bytes: &[u8],
     start: usize,
     state: &mut AnsiState,
     options: AnsiOptions,
-) -> usize {
-    let Some(&kind) = bytes.get(start) else {
-        return bytes.len();
-    };
+) -> Option<usize> {
+    let &kind = bytes.get(start)?;
     match kind {
-        b'[' => consume_csi(bytes, start + 1, state),
-        b']' => consume_osc(bytes, start + 1, state, options),
+        b'[' => try_consume_csi(bytes, start + 1, state),
+        b']' => try_consume_osc(bytes, start + 1, state, options),
         // RIS, save/restore cursor, and every other two-byte ESC command are
         // intentionally consumed. None may become terminal output.
-        _ => start.saturating_add(1).min(bytes.len()),
+        _ => Some(start + 1),
     }
 }
 
-fn consume_csi(bytes: &[u8], start: usize, state: &mut AnsiState) -> usize {
+fn try_consume_csi(bytes: &[u8], start: usize, state: &mut AnsiState) -> Option<usize> {
     let mut cursor = start;
     while let Some(&byte) = bytes.get(cursor) {
         if (0x40..=0x7e).contains(&byte) {
             if byte == b'm' {
                 apply_sgr(&bytes[start..cursor], state);
             }
-            return cursor.saturating_add(1);
+            return Some(cursor + 1);
         }
         cursor += 1;
     }
-    bytes.len()
+    None
 }
 
-fn consume_osc(bytes: &[u8], start: usize, state: &mut AnsiState, options: AnsiOptions) -> usize {
+fn try_consume_osc(
+    bytes: &[u8],
+    start: usize,
+    state: &mut AnsiState,
+    options: AnsiOptions,
+) -> Option<usize> {
     let mut cursor = start;
-    let mut end = bytes.len();
+    let mut end = None;
+    let mut new_cursor = None;
     while cursor < bytes.len() {
         if bytes[cursor] == 0x07 {
-            end = cursor;
-            cursor += 1;
+            end = Some(cursor);
+            new_cursor = Some(cursor + 1);
             break;
         }
         if bytes[cursor] == 0x1b && bytes.get(cursor + 1) == Some(&b'\\') {
-            end = cursor;
-            cursor += 2;
+            end = Some(cursor);
+            new_cursor = Some(cursor + 2);
             break;
         }
         cursor += 1;
     }
+    let end = end?;
+    let new_cursor = new_cursor?;
     if options.hyperlinks {
         apply_osc(&bytes[start..end], state);
     }
-    cursor.min(bytes.len())
+    Some(new_cursor)
 }
 
 fn apply_osc(bytes: &[u8], state: &mut AnsiState) {
@@ -390,5 +556,132 @@ fn ansi_color(value: u8, bright: bool) -> AnsiColor {
         BRIGHT[usize::from(value.min(7))]
     } else {
         NORMAL[usize::from(value.min(7))]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_projection(text: &str, sealed: bool) -> Projection<TextContent> {
+        let b = StreamOffset::ZERO;
+        let e = StreamOffset::new(text.len() as u64);
+        ProjectionBuilder::new(b, e, e, sealed)
+            .emit(StreamRange::new(b, e), TextContent::raw(text))
+            .finish()
+            .unwrap()
+    }
+
+    #[test]
+    fn incremental_ansi_matches_one_shot() {
+        let text = "\x1b[1mBold\x1b[0m \x1b[31mRed\x1b[32mGreen\x1b[0m\n\x1b]8;;https://example.com\x07Link\x1b]8;;\x07\n";
+        let mut one_shot = AnsiProjector::default();
+        let expected = one_shot.project(&raw_projection(text, true)).unwrap();
+
+        let mut incremental = AnsiProjector::default();
+        let mut accumulated = String::new();
+        let mut last_proj = None;
+        for ch in text.chars() {
+            accumulated.push(ch);
+            let is_final = accumulated.len() == text.len();
+            let proj = incremental
+                .project(&raw_projection(&accumulated, is_final))
+                .unwrap();
+            last_proj = Some(proj);
+        }
+
+        let actual = last_proj.expect("at least one projection");
+        assert_eq!(actual.spans().len(), expected.spans().len());
+        for (a, b) in actual.spans().iter().zip(expected.spans()) {
+            assert_eq!(a.source(), b.source());
+            assert_eq!(a.values(), b.values());
+        }
+    }
+
+    #[test]
+    fn incomplete_escape_at_boundary_held_and_completed() {
+        let mut incremental = AnsiProjector::default();
+
+        // Chunk 1 ends in incomplete CSI "\x1b[3"
+        let p1 = incremental
+            .project(&raw_projection("Hello \x1b[3", false))
+            .unwrap();
+        // The incomplete escape is not leaked as text
+        let block1 = match &p1.spans()[0].values()[0] {
+            TextContent::Block(b) => b,
+            _ => panic!("expected block"),
+        };
+        let crate::text::BlockKind::Paragraph(inline_content1) = block1.kind() else {
+            panic!("expected paragraph block");
+        };
+        let inlines1 = inline_content1.items();
+        assert_eq!(inlines1.len(), 1);
+        let run1 = match inlines1[0].kind() {
+            crate::text::InlineKind::Text(r) => r,
+            _ => panic!("expected text run"),
+        };
+        assert_eq!(run1.text(), "Hello ");
+
+        // Chunk 2 completes the escape with "1mWorld\n"
+        let p2 = incremental
+            .project(&raw_projection("Hello \x1b[31mWorld\n", true))
+            .unwrap();
+        let mut one_shot = AnsiProjector::default();
+        let expected = one_shot
+            .project(&raw_projection("Hello \x1b[31mWorld\n", true))
+            .unwrap();
+
+        assert_eq!(p2.spans().len(), expected.spans().len());
+        for (a, b) in p2.spans().iter().zip(expected.spans()) {
+            assert_eq!(a.source(), b.source());
+            assert_eq!(a.values(), b.values());
+        }
+    }
+
+    #[test]
+    fn incomplete_escape_at_stream_seal_is_dropped_safely() {
+        let mut projector = AnsiProjector::default();
+        // Ends with incomplete escape, but stream is sealed
+        let p = projector
+            .project(&raw_projection("Safe text\x1b[3", true))
+            .unwrap();
+        let block = match &p.spans()[0].values()[0] {
+            TextContent::Block(b) => b,
+            _ => panic!("expected block"),
+        };
+        let crate::text::BlockKind::Paragraph(inline_content) = block.kind() else {
+            panic!("expected paragraph block");
+        };
+        let inlines = inline_content.items();
+        assert_eq!(inlines.len(), 1);
+        let run = match inlines[0].kind() {
+            crate::text::InlineKind::Text(r) => r,
+            _ => panic!("expected text run"),
+        };
+        assert_eq!(run.text(), "Safe text");
+    }
+
+    #[test]
+    fn unsafe_control_sequences_never_leak() {
+        let mut projector = AnsiProjector::default();
+        // Cursor move, clear screen, private modes
+        let input = "clean\x1b[2J\x1b[H\x1b[?25ltext\x1b[?1049h\n";
+        let p = projector.project(&raw_projection(input, true)).unwrap();
+        let block = match &p.spans()[0].values()[0] {
+            TextContent::Block(b) => b,
+            _ => panic!("expected block"),
+        };
+        let crate::text::BlockKind::Paragraph(inline_content) = block.kind() else {
+            panic!("expected paragraph block");
+        };
+        let inlines = inline_content.items();
+        let mut text_output = String::new();
+        for inline in inlines {
+            if let crate::text::InlineKind::Text(r) = inline.kind() {
+                text_output.push_str(r.text());
+            }
+        }
+        assert_eq!(text_output, "cleantext");
+        assert!(!text_output.contains('\x1b'));
     }
 }

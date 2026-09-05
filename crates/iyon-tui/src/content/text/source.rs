@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use crate::{
     projection::ProjectionSpan,
@@ -15,7 +15,8 @@ use super::{RawText, TextContent, TextIrError, TextProjectionError, TextRun};
 pub(crate) struct RawDomain {
     source_base: StreamOffset,
     source_end: StreamOffset,
-    text: String,
+    text: Arc<str>,
+    sub_range: Range<usize>,
     pieces: Vec<RawPiece>,
 }
 
@@ -38,8 +39,40 @@ impl RawDomain {
         };
         let source_base = first.source().start();
         let mut expected = source_base;
-        let mut text = String::new();
-        let mut pieces = Vec::with_capacity(spans.len());
+
+        if spans.len() == 1 {
+            let span = &spans[0];
+            if span.values().len() != 1 {
+                return Err(TextProjectionError::RawMustBeSoleValue {
+                    source: span.source(),
+                });
+            }
+            let TextContent::Raw(raw) = &span.values()[0] else {
+                return Err(TextProjectionError::RawMustBeSoleValue {
+                    source: span.source(),
+                });
+            };
+            if raw.len() as u64 != span.source().len() {
+                return Err(TextProjectionError::RawByteLengthMismatch {
+                    source: span.source(),
+                    text_len: raw.len() as u64,
+                });
+            }
+            let piece = RawPiece {
+                source: span.source(),
+                local: 0..raw.len(),
+                raw: raw.clone(),
+            };
+            return Ok(Self {
+                source_base,
+                source_end: span.source().end(),
+                text: Arc::clone(raw.page()),
+                sub_range: raw.page_start() as usize..(raw.page_start() as usize + raw.len()),
+                pieces: vec![piece],
+            });
+        }
+
+        let mut total_len = 0usize;
         for span in spans {
             if span.source().start() != expected || span.values().len() != 1 {
                 return Err(TextProjectionError::RawMustBeSoleValue {
@@ -57,6 +90,16 @@ impl RawDomain {
                     text_len: raw.len() as u64,
                 });
             }
+            total_len = total_len.saturating_add(raw.len());
+            expected = span.source().end();
+        }
+
+        let mut text = String::with_capacity(total_len);
+        let mut pieces = Vec::with_capacity(spans.len());
+        for span in spans {
+            let TextContent::Raw(raw) = &span.values()[0] else {
+                unreachable!();
+            };
             let start = text.len();
             text.push_str(raw.text());
             let end = text.len();
@@ -65,12 +108,13 @@ impl RawDomain {
                 local: start..end,
                 raw: raw.clone(),
             });
-            expected = span.source().end();
         }
+        let text_len = text.len();
         Ok(Self {
             source_base,
             source_end: expected,
-            text,
+            text: Arc::from(text),
+            sub_range: 0..text_len,
             pieces,
         })
     }
@@ -84,22 +128,24 @@ impl RawDomain {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.text.len()
+        self.sub_range.len()
     }
 
     pub(crate) fn text(&self) -> &str {
-        &self.text
+        &self.text[self.sub_range.clone()]
     }
 
+    #[allow(dead_code)]
     pub(crate) fn text_prefix(&self, end: StreamOffset) -> Option<&str> {
         let local = end.as_u64().checked_sub(self.source_base.as_u64())?;
         let local = usize::try_from(local).ok()?;
-        self.text.get(..local)
+        self.text().get(..local)
     }
 
     #[allow(dead_code)]
     pub(crate) fn prefix(&self, local_end: usize) -> Result<Self, TextProjectionError> {
-        if local_end > self.text.len() || !self.text.is_char_boundary(local_end) {
+        let len = self.len();
+        if local_end > len || !self.text().is_char_boundary(local_end) {
             return Err(TextProjectionError::Ir(TextIrError::NotCharBoundary));
         }
         let mut pieces = Vec::new();
@@ -116,19 +162,25 @@ impl RawDomain {
                     piece.source.start().saturating_add(raw_end as u64),
                 ),
                 local: start..end,
-                raw: RawText::new(&piece.raw.text()[..raw_end]),
+                raw: RawText::from_page_slice(
+                    Arc::clone(piece.raw.page()),
+                    piece.raw.page_start(),
+                    raw_end as u32,
+                ),
             });
         }
         Ok(Self {
             source_base: self.source_base,
             source_end: self.source_base.saturating_add(local_end as u64),
-            text: self.text[..local_end].to_owned(),
+            text: Arc::clone(&self.text),
+            sub_range: self.sub_range.start..(self.sub_range.start + local_end),
             pieces,
         })
     }
 
     pub(crate) fn suffix(&self, local_start: usize) -> Result<Self, TextProjectionError> {
-        if local_start > self.text.len() || !self.text.is_char_boundary(local_start) {
+        let len = self.len();
+        if local_start > len || !self.text().is_char_boundary(local_start) {
             return Err(TextProjectionError::Ir(TextIrError::NotCharBoundary));
         }
         let mut pieces = Vec::new();
@@ -140,28 +192,33 @@ impl RawDomain {
             }
             let raw_start = start - piece.local.start;
             let raw_end = end - piece.local.start;
-            let text = &piece.raw.text()[raw_start..raw_end];
             let source_start = piece.source.start().saturating_add(raw_start as u64);
             let source_end = piece.source.start().saturating_add(raw_end as u64);
             pieces.push(RawPiece {
                 source: StreamRange::new(source_start, source_end),
                 local: (start - local_start)..(end - local_start),
-                raw: RawText::new(text),
+                raw: RawText::from_page_slice(
+                    Arc::clone(piece.raw.page()),
+                    piece.raw.page_start() + raw_start as u32,
+                    (raw_end - raw_start) as u32,
+                ),
             });
         }
         Ok(Self {
             source_base: self.source_base.saturating_add(local_start as u64),
             source_end: self.source_end,
-            text: self.text[local_start..].to_owned(),
+            text: Arc::clone(&self.text),
+            sub_range: (self.sub_range.start + local_start)..self.sub_range.end,
             pieces,
         })
     }
 
     pub(crate) fn source_slice(&self, local: Range<usize>) -> Result<&str, TextProjectionError> {
+        let text = self.text();
         if local.start > local.end
-            || local.end > self.text.len()
-            || !self.text.is_char_boundary(local.start)
-            || !self.text.is_char_boundary(local.end)
+            || local.end > text.len()
+            || !text.is_char_boundary(local.start)
+            || !text.is_char_boundary(local.end)
         {
             return Err(TextProjectionError::Ir(TextIrError::InvalidSourceSlice {
                 owner: StreamRange::new(self.source_base, self.source_end),
@@ -171,14 +228,14 @@ impl RawDomain {
                 ),
             }));
         }
-        Ok(&self.text[local])
+        Ok(&text[local])
     }
 
     pub(crate) fn root_range(
         &self,
         local: Range<usize>,
     ) -> Result<StreamRange, TextProjectionError> {
-        if local.start > local.end || local.end > self.text.len() {
+        if local.start > local.end || local.end > self.len() {
             return Err(TextProjectionError::Ir(TextIrError::InvalidSourceSlice {
                 owner: StreamRange::new(self.source_base, self.source_end),
                 local: StreamRange::new(
@@ -193,7 +250,8 @@ impl RawDomain {
     }
 
     fn root_offset(&self, local: usize) -> Result<StreamOffset, TextProjectionError> {
-        if local > self.text.len() {
+        let len = self.len();
+        if local > len {
             return Err(TextProjectionError::Ir(TextIrError::InvalidSourceSlice {
                 owner: StreamRange::new(self.source_base, self.source_end),
                 local: StreamRange::new(
@@ -202,7 +260,7 @@ impl RawDomain {
                 ),
             }));
         }
-        if local == self.text.len() {
+        if local == len {
             return Ok(self.source_end);
         }
         let index = self.pieces.partition_point(|piece| piece.local.end < local);

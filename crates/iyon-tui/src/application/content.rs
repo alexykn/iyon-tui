@@ -24,9 +24,9 @@ use crate::{
     stream::{StreamOffset, StreamRange},
     text::{
         AnsiProjector, Block, DiffProjector, Inline, InlineContent, InlineKind, LiteralText,
-        MarkdownOptions, MarkdownProjector, PlainTextProjector, TextContent, TextProjectionError,
-        TextProvenance, TextRenderer, TextRewriter, TextRun, walk_rewrite_block,
-        walk_rewrite_inline,
+        MarkdownOptions, MarkdownProjector, PlainTextProjector, RawText, TextContent,
+        TextProjectionError, TextProvenance, TextRenderer, TextRewriter, TextRun,
+        walk_rewrite_block, walk_rewrite_inline,
     },
     {AnsiColor, ColorSpec, StyleRef, StyleSpec, TextAttribute, Theme},
 };
@@ -34,7 +34,7 @@ use crate::{
 use super::environment::{EnvironmentIdentity, WakeDisposition};
 use super::host::HostInner;
 use super::source_store::{
-    SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
+    ChunkView, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -154,6 +154,10 @@ impl HostContentSourceSnapshot {
         self.storage.chunk_count()
     }
 
+    pub(crate) fn chunk_views(&self) -> Vec<ChunkView> {
+        self.storage.chunk_views()
+    }
+
     fn chunks(&self) -> impl Iterator<Item = (&[u8], u64)> {
         self.storage.iter_chunks()
     }
@@ -200,11 +204,8 @@ impl TextProjectionKey {
     }
 }
 
-/// Theme-independent semantic identity for one Connector projection input.
-/// A palette/presentation recolor changes the painted surface but never the
-/// semantic IR, so semantic products cache under this key while surfaces
-/// keep the full theme-qualified key. The source range is part of the key:
-/// stable-prefix snapshots share every other field with their full snapshot.
+/// Key identifying a cached semantic IR projection. The semantic IR is
+/// independent of theme, width, delivery tick, and viewport.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SemanticProjectionKey {
     source_id: u64,
@@ -213,18 +214,14 @@ struct SemanticProjectionKey {
     source_revision: u64,
     source_base: u64,
     source_end: u64,
-    width: u16,
-    wrap: TextWrapMode,
     funnel_kind: TextFunnelKind,
-    delivery_revision: u64,
+    hyperlinks: bool,
 }
 
 impl SemanticProjectionKey {
     fn for_snapshot(
         snapshot: &HostContentSourceSnapshot,
         funnel: HostContentFunnel,
-        width: u16,
-        delivery_revision: u64,
     ) -> Self {
         Self {
             source_id: snapshot.source_id,
@@ -233,10 +230,8 @@ impl SemanticProjectionKey {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
-            width: width.max(1),
-            wrap: funnel.wrap,
             funnel_kind: funnel.kind,
-            delivery_revision,
+            hyperlinks: funnel.hyperlinks,
         }
     }
 }
@@ -282,6 +277,8 @@ struct HostContentProjection {
 #[derive(Debug)]
 struct ConnectorExecution {
     markdown: Option<MarkdownProjector>,
+    diff: Option<DiffProjector>,
+    ansi: Option<AnsiProjector>,
     smoother: Option<Smooth>,
 }
 
@@ -290,6 +287,12 @@ impl ConnectorExecution {
         Self {
             markdown: matches!(funnel.kind, TextFunnelKind::Markdown).then(|| {
                 MarkdownProjector::new(MarkdownOptions::gfm().with_live_table_stabilization(true))
+            }),
+            diff: matches!(funnel.kind, TextFunnelKind::Diff).then(DiffProjector::new),
+            ansi: matches!(funnel.kind, TextFunnelKind::Ansi).then(|| {
+                AnsiProjector::new(crate::text::AnsiOptions {
+                    hyperlinks: funnel.hyperlinks,
+                })
             }),
             smoother: funnel.smooth_config().map(Smooth::new),
         }
@@ -405,12 +408,12 @@ fn source_projection(
         StreamOffset::new(snapshot.source_end),
         snapshot.sealed,
     );
-    for (bytes, start) in snapshot.chunks() {
-        let text = str::from_utf8(bytes).expect("Source snapshot chunks are valid UTF-8");
-        let end = start.saturating_add(bytes.len() as u64);
+    for view in snapshot.chunk_views() {
+        let raw = RawText::from_page_slice(view.page, view.page_start, view.len);
+        let end = view.abs_start.saturating_add(u64::from(view.len));
         builder = builder.emit(
-            StreamRange::new(StreamOffset::new(start), StreamOffset::new(end)),
-            TextContent::raw(text.to_owned()),
+            StreamRange::new(StreamOffset::new(view.abs_start), StreamOffset::new(end)),
+            TextContent::Raw(raw),
         );
     }
     builder.finish().map_err(TextProjectionError::Projection)
@@ -492,19 +495,25 @@ fn project_semantic_snapshot(
             })
             .project(&raw)
             .map_err(|error| anyhow!(error.to_string()))?,
-        TextFunnelKind::Diff => DiffProjector::new()
+        TextFunnelKind::Diff => execution
+            .diff
+            .get_or_insert_with(DiffProjector::new)
             .project(&raw)
             .map_err(|error| anyhow!(error.to_string()))?,
-        TextFunnelKind::Ansi => AnsiProjector::new(crate::text::AnsiOptions {
-            hyperlinks: funnel.hyperlinks,
-        })
-        .project(&raw)
-        .map_err(|error| anyhow!(error.to_string()))?,
+        TextFunnelKind::Ansi => execution
+            .ansi
+            .get_or_insert_with(|| {
+                AnsiProjector::new(crate::text::AnsiOptions {
+                    hyperlinks: funnel.hyperlinks,
+                })
+            })
+            .project(&raw)
+            .map_err(|error| anyhow!(error.to_string()))?,
     };
     if snapshot.annotations_for_projection().is_empty() {
         return Ok(semantic);
     }
-    SourceAnnotationRewriter::new(snapshot.annotations_for_projection())
+    SourceAnnotationRewriter::new(&snapshot.storage)
         .into_projector()
         .project(&semantic)
         .map_err(|error| anyhow!(error.to_string()))
@@ -675,10 +684,10 @@ fn project_text_snapshot(
         ));
     }
 
-    // Semantic IR is theme-independent: a recolor hits the cache and
-    // repaints only, while source/delivery/width changes rebuild.
-    let semantic_key =
-        SemanticProjectionKey::for_snapshot(snapshot, funnel, offered_width, delivery_revision);
+    // Semantic IR is theme-independent and layout-independent: recolors,
+    // window resizes, and smooth timer delivery ticks hit the cache, while
+    // source revisions or funnel kind changes rebuild.
+    let semantic_key = SemanticProjectionKey::for_snapshot(snapshot, funnel);
     let semantic = resolve_cached_semantic(semantic_cache, semantic_key, || {
         project_semantic_snapshot(snapshot, funnel, execution)
     })?;
@@ -704,12 +713,7 @@ fn project_text_snapshot(
         let stable_prefix_rows = snapshot
             .stable_prefix()
             .and_then(|prefix| {
-                let prefix_key = SemanticProjectionKey::for_snapshot(
-                    &prefix,
-                    funnel,
-                    offered_width,
-                    delivery_revision,
-                );
+                let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
                 let mut prefix_exec = ConnectorExecution::new(&funnel);
                 resolve_cached_semantic(semantic_cache, prefix_key, || {
                     project_semantic_snapshot(&prefix, funnel, &mut prefix_exec)
@@ -740,12 +744,12 @@ fn project_text_snapshot(
 /// host-native style. Exact runs preserve source coordinates; transformed
 /// runs use a deterministic proportional split when a range crosses them.
 struct SourceAnnotationRewriter<'a> {
-    annotations: &'a [SourceAnnotation],
+    storage: &'a StoredSource,
 }
 
 impl<'a> SourceAnnotationRewriter<'a> {
-    fn new(annotations: &'a [SourceAnnotation]) -> Self {
-        Self { annotations }
+    fn new(storage: &'a StoredSource) -> Self {
+        Self { storage }
     }
 
     fn annotate_run(&self, run: TextRun) -> Result<Vec<TextRun>, TextProjectionError> {
@@ -758,14 +762,15 @@ impl<'a> SourceAnnotationRewriter<'a> {
         if source.is_empty() || run.text().is_empty() {
             return Ok(vec![run]);
         }
+        let overlapping = self
+            .storage
+            .overlapping(source.start().as_u64(), source.end().as_u64());
+        if overlapping.is_empty() {
+            return Ok(vec![run]);
+        }
         let mut cuts = vec![0usize, run.text().len()];
-        for annotation in self.annotations {
-            if annotation.end_byte <= source.start().as_u64()
-                || annotation.start_byte >= source.end().as_u64()
-            {
-                continue;
-            }
-            for offset in [annotation.start_byte, annotation.end_byte] {
+        for overlap in &overlapping {
+            for offset in [overlap.start(), overlap.end()] {
                 if offset <= source.start().as_u64() || offset >= source.end().as_u64() {
                     continue;
                 }
@@ -777,6 +782,26 @@ impl<'a> SourceAnnotationRewriter<'a> {
         }
         cuts.sort_unstable();
         cuts.dedup();
+        if cuts.len() == 2 {
+            let mut piece = run;
+            piece = piece.map_annotations(|current| {
+                overlapping.iter().fold(current, |current, overlap| {
+                    if let Some(tag) = overlap.tag() {
+                        current.with_tag(tag)
+                    } else {
+                        current
+                    }
+                })
+            });
+            if let Some(style) = overlapping
+                .iter()
+                .rev()
+                .find_map(|overlap| overlap.style())
+            {
+                piece = piece.with_style(style);
+            }
+            return Ok(vec![piece]);
+        }
         let mut output = Vec::with_capacity(cuts.len().saturating_sub(1));
         for pair in cuts.windows(2) {
             let local_start = pair[0];
@@ -787,20 +812,19 @@ impl<'a> SourceAnnotationRewriter<'a> {
             let (piece, _) = run.split_at(local_end)?;
             let (_, piece) = piece.split_at(local_start)?;
             let piece_source = source_range_for_piece(&run, source, local_start, local_end);
-            let active = self
-                .annotations
+            let active = overlapping
                 .iter()
-                .filter(|annotation| {
-                    annotation.end_byte > piece_source.start().as_u64()
-                        && annotation.start_byte < piece_source.end().as_u64()
+                .filter(|overlap| {
+                    overlap.end() > piece_source.start().as_u64()
+                        && overlap.start() < piece_source.end().as_u64()
                 })
                 .collect::<Vec<_>>();
             let mut piece = piece;
             if !active.is_empty() {
                 piece = piece.map_annotations(|current| {
-                    active.iter().fold(current, |current, annotation| {
-                        if let Some(tag) = annotation.tag.as_ref() {
-                            current.with_tag(tag.clone())
+                    active.iter().fold(current, |current, overlap| {
+                        if let Some(tag) = overlap.tag() {
+                            current.with_tag(tag)
                         } else {
                             current
                         }
@@ -809,7 +833,7 @@ impl<'a> SourceAnnotationRewriter<'a> {
                 if let Some(style) = active
                     .iter()
                     .rev()
-                    .find_map(|annotation| annotation.style.clone())
+                    .find_map(|overlap| overlap.style())
                 {
                     piece = piece.with_style(style);
                 }
@@ -5103,6 +5127,16 @@ mod tests {
             m1.projection_revision, m2.projection_revision,
             "recolor must still invalidate the paint cache"
         );
+        // Resizing the viewport changes layout width but must reuse cached semantic IR:
+        // no parser runs again.
+        let _m3 = registry.measure_content(port.id(), 40, crate::presentation::WidthRule::Fill);
+        if cfg!(feature = "perf-counters") {
+            assert_eq!(
+                rebuilds(),
+                after_recolor,
+                "viewport resize must not reparse semantic content"
+            );
+        }
         // New source bytes change the semantic key and rebuild exactly.
         source.append_utf8(b"more text\n", &[], &[]).unwrap();
         registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);

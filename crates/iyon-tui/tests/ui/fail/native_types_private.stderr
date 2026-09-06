@@ -1,5 +1,0 @@
-error[E0432]: unresolved import `iyon_tui::NativeHistorySink`
- --> tests/ui/fail/native_types_private.rs:1:5
-  |
-1 | use iyon_tui::NativeHistorySink;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `NativeHistorySink` in the root

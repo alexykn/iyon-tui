@@ -16,6 +16,9 @@ mod style;
 mod validate;
 mod visit;
 
+#[cfg(test)]
+mod migrated_tests;
+
 pub use annotations::{Annotations, SemanticKey, SemanticTag, SemanticValue};
 pub use ansi::{AnsiOptions, AnsiProjectionError, AnsiProjector};
 pub use block::{

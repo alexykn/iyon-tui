@@ -12,6 +12,8 @@ mod validate;
 mod value;
 
 #[cfg(test)]
+mod migrated_tests;
+#[cfg(test)]
 mod tests;
 
 pub use compose::{Then, ThenError};

@@ -16,7 +16,7 @@
 //! `(i-1)`-th newline, exactly matching the previous `line_starts` vector.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
 
@@ -172,7 +172,7 @@ enum ChunkNode {
         children: Vec<Arc<ChunkNode>>,
         bytes: u64,
         newlines: u64,
-        leaves: usize,
+        descriptors: usize,
     },
 }
 
@@ -191,10 +191,10 @@ impl ChunkNode {
         }
     }
 
-    fn leaves(&self) -> usize {
+    fn descriptors(&self) -> usize {
         match self {
-            Self::Leaf { .. } => 1,
-            Self::Branch { leaves, .. } => *leaves,
+            Self::Leaf { descs, .. } => descs.len(),
+            Self::Branch { descriptors, .. } => *descriptors,
         }
     }
 
@@ -217,17 +217,17 @@ impl ChunkNode {
         debug_assert!(children.len() <= BRANCH_CHILDREN);
         let mut bytes = 0u64;
         let mut newlines = 0u64;
-        let mut leaves = 0usize;
+        let mut descriptors = 0usize;
         for child in &children {
             bytes = bytes.saturating_add(child.bytes());
             newlines = newlines.saturating_add(child.newlines());
-            leaves = leaves.saturating_add(child.leaves());
+            descriptors = descriptors.saturating_add(child.descriptors());
         }
         Arc::new(Self::Branch {
             children,
             bytes,
             newlines,
-            leaves,
+            descriptors,
         })
     }
 }
@@ -262,8 +262,8 @@ impl ChunkTree {
         self.root.as_ref().map_or(0, |root| root.newlines())
     }
 
-    pub(crate) fn leaf_count(&self) -> usize {
-        self.root.as_ref().map_or(0, |root| root.leaves())
+    pub(crate) fn descriptor_count(&self) -> usize {
+        self.root.as_ref().map_or(0, |root| root.descriptors())
     }
 
     /// Line entries in a range: entry `0` is the base, entry `i > 0` follows
@@ -1022,6 +1022,7 @@ pub(crate) enum ContentError {
     AlreadySealed,
     InvalidByteRange { start: u64, end: u64, len: u64 },
     LengthOverflow,
+    AnnotationSequenceOverflow,
     RetentionOverflow,
 }
 
@@ -1037,6 +1038,9 @@ impl std::fmt::Display for ContentError {
                 )
             }
             Self::LengthOverflow => write!(f, "INVALID_RANGE: Source coordinate exhausted"),
+            Self::AnnotationSequenceOverflow => {
+                write!(f, "INVALID_RANGE: Source annotation sequence exhausted")
+            }
             Self::RetentionOverflow => {
                 write!(
                     f,
@@ -1049,6 +1053,23 @@ impl std::fmt::Display for ContentError {
 
 impl std::error::Error for ContentError {}
 
+fn empty_annotation_cache() -> Arc<OnceLock<Arc<[SourceAnnotation]>>> {
+    Arc::new(OnceLock::new())
+}
+
+fn annotation_cache(values: Vec<SourceAnnotation>) -> Arc<OnceLock<Arc<[SourceAnnotation]>>> {
+    let cache = empty_annotation_cache();
+    let _ = cache.set(Arc::from(values.into_boxed_slice()));
+    cache
+}
+
+fn checked_annotation_seqno(start: u64, count: usize) -> Result<u64, ContentError> {
+    let count = u64::try_from(count).map_err(|_| ContentError::AnnotationSequenceOverflow)?;
+    start
+        .checked_add(count)
+        .ok_or(ContentError::AnnotationSequenceOverflow)
+}
+
 /// Persistent source storage: a chunk tree for bytes plus an annotation
 /// index, with the accepted revision, end offset, seal state, and next
 /// annotation sequence number. Every mutating entry point takes `&self`
@@ -1059,7 +1080,11 @@ impl std::error::Error for ContentError {}
 pub(crate) struct StoredSource {
     pub(crate) chunks: ChunkTree,
     pub(crate) annotations: AnnotationTree,
-    pub(crate) ordered_annotations: Arc<[SourceAnnotation]>,
+    /// Materialized only by diagnostics, projection, or prefix callers that
+    /// need acceptance order. Mutations keep the persistent index as the
+    /// source of truth and invalidate this cache only when an annotation
+    /// mutation can change the ordered contents.
+    pub(crate) ordered_annotations: Arc<OnceLock<Arc<[SourceAnnotation]>>>,
     pub(crate) base: u64,
     pub(crate) end: u64,
     pub(crate) head_partial: bool,
@@ -1115,7 +1140,7 @@ impl StoredSource {
     }
 
     pub(crate) fn chunk_count(&self) -> usize {
-        self.chunks.leaf_count()
+        self.chunks.descriptor_count()
     }
 
     pub(crate) fn line_count(&self) -> usize {
@@ -1133,20 +1158,27 @@ impl StoredSource {
         if self.sealed {
             return Err(ContentError::Sealed);
         }
+        let text_len = u64::try_from(text.len()).map_err(|_| ContentError::LengthOverflow)?;
+        let next_end = self
+            .end
+            .checked_add(text_len)
+            .ok_or(ContentError::LengthOverflow)?;
+        let next_seqno = checked_annotation_seqno(self.next_seqno, annos.len())?;
         let mut next = self.clone();
         next.revision = revision;
         if !text.is_empty() {
-            next.chunks = next.chunks.appended(text, next.end);
-            next.end = next
-                .end
-                .checked_add(text.len() as u64)
-                .ok_or(ContentError::LengthOverflow)?;
+            next.chunks = next.chunks.appended(text, self.end);
+            next.end = next_end;
         }
         if !annos.is_empty() {
             let mut records = Vec::with_capacity(annos.len());
-            for anno in annos {
+            for (index, anno) in annos.into_iter().enumerate() {
+                let index = u64::try_from(index).expect("annotation batch fits in u64");
                 let seqno = next.next_seqno;
-                next.next_seqno = next.next_seqno.saturating_add(1);
+                next.next_seqno = self
+                    .next_seqno
+                    .checked_add(index + 1)
+                    .expect("annotation sequence preflighted");
                 records.push(SourceAnnotation {
                     kind: anno.kind,
                     flags: anno.flags,
@@ -1160,10 +1192,11 @@ impl StoredSource {
                     seqno,
                 });
             }
+            debug_assert_eq!(next.next_seqno, next_seqno);
             let batch = AnnotationTree::from_sorted_batch(records);
             next.annotations = next.annotations.merge_append(&batch);
+            next.ordered_annotations = empty_annotation_cache();
         }
-        next.ordered_annotations = Arc::from(next.annotations.in_application_order());
         Ok(next)
     }
 
@@ -1187,13 +1220,15 @@ impl StoredSource {
         if self.sealed {
             return Err(ContentError::AlreadySealed);
         }
+        let marker_count = if marker.is_some() { 1 } else { 0 };
+        let next_seqno = checked_annotation_seqno(self.next_seqno, marker_count)?;
         let mut next = self.clone();
         next.revision = revision;
         next.sealed = true;
         next.sealed_at = Some(at);
         if let Some(anno) = marker {
             let seqno = next.next_seqno;
-            next.next_seqno = next.next_seqno.saturating_add(1);
+            next.next_seqno = next_seqno;
             next.annotations = next.annotations.insert(SourceAnnotation {
                 kind: anno.kind,
                 flags: anno.flags,
@@ -1206,8 +1241,8 @@ impl StoredSource {
                 style: anno.style,
                 seqno,
             });
+            next.ordered_annotations = empty_annotation_cache();
         }
-        next.ordered_annotations = Arc::from(next.annotations.in_application_order());
         Ok(next)
     }
 
@@ -1226,10 +1261,11 @@ impl StoredSource {
         if self.sealed {
             return Err(ContentError::Sealed);
         }
+        let next_seqno = checked_annotation_seqno(self.next_seqno, 1)?;
         let mut next = self.clone();
         next.revision = revision;
         let seqno = next.next_seqno;
-        next.next_seqno = next.next_seqno.saturating_add(1);
+        next.next_seqno = next_seqno;
         next.annotations = next.annotations.insert(SourceAnnotation {
             kind: anno.kind,
             flags: anno.flags,
@@ -1242,8 +1278,8 @@ impl StoredSource {
             style: anno.style,
             seqno,
         });
+        next.ordered_annotations = empty_annotation_cache();
         next = next.enforce_retention(max_annotations, max_retained_bytes);
-        next.ordered_annotations = Arc::from(next.annotations.in_application_order());
         Ok(next)
     }
 
@@ -1261,11 +1297,10 @@ impl StoredSource {
             let drop = ordered.len() - max_annotations;
             ordered.drain(..drop);
         }
-        let ordered_annotations = Arc::from(ordered.as_slice());
         Self {
             chunks: self.chunks.clone(),
             annotations: AnnotationTree::from_sorted_batch(ordered),
-            ordered_annotations,
+            ordered_annotations: empty_annotation_cache(),
             base: self.base,
             end: self.end,
             head_partial: self.head_partial,
@@ -1299,12 +1334,11 @@ impl StoredSource {
         let annotations = self.annotations.truncate_head(offset);
         let partial = offset < self.end
             && (offset != 0 && self.chunks.byte_at(base, offset.saturating_sub(1)) != Some(b'\n'));
-        let ordered_annotations = Arc::from(annotations.in_application_order());
         Ok((
             Self {
                 chunks,
                 annotations,
-                ordered_annotations,
+                ordered_annotations: empty_annotation_cache(),
                 base: offset,
                 end: self.end,
                 head_partial: partial,
@@ -1472,6 +1506,11 @@ impl StoredSource {
             {
                 return desc.abs_start.saturating_add(next as u64);
             }
+            // The requested offset may be in the final scalar of a nonfinal
+            // descriptor. The next retention boundary is that descriptor's
+            // end, not the end of the complete Source; otherwise the valid
+            // suffix in later descriptors is dropped as well.
+            return desc.end();
         }
         self.end
     }
@@ -1494,7 +1533,7 @@ impl StoredSource {
         }
         let (chunks, _) = self.chunks.split_at(self.base, end);
         let mut kept_annos = Vec::new();
-        for anno in self.ordered_annotations.iter() {
+        for anno in self.annotations_in_order().iter() {
             if anno.start_byte >= end {
                 continue;
             }
@@ -1519,7 +1558,7 @@ impl StoredSource {
         Some(Self {
             chunks,
             annotations,
-            ordered_annotations: Arc::from(kept_annos),
+            ordered_annotations: annotation_cache(kept_annos),
             base: self.base,
             end,
             head_partial: false,
@@ -1555,7 +1594,9 @@ impl StoredSource {
 
     /// All records in acceptance order, for diagnostics and snapshots.
     pub(crate) fn annotations_in_order(&self) -> &[SourceAnnotation] {
-        &self.ordered_annotations
+        self.ordered_annotations
+            .get_or_init(|| Arc::from(self.annotations.in_application_order()))
+            .as_ref()
     }
 
     /// Ordered chunk views with their backing pages, for the zero-copy FFI
@@ -1750,7 +1791,7 @@ mod tests {
         let store = StoredSource {
             chunks: tree,
             annotations: AnnotationTree::default(),
-            ordered_annotations: Arc::from([]),
+            ordered_annotations: empty_annotation_cache(),
             base: 1000,
             end: 1000 + text.len() as u64,
             head_partial: false,
@@ -1860,6 +1901,165 @@ mod tests {
         let mut out = Vec::new();
         store.text_in(0, e_start + 1, e_start + 2, &mut out);
         assert_eq!(out, vec![0xA9]);
+    }
+
+    #[test]
+    fn retention_stops_at_multibyte_scalar_at_nonfinal_page_end() {
+        // Keep the final scalar of one append at the exact 16 KiB page end,
+        // then append a separate page. A five-byte limit targets the scalar's
+        // continuation byte; the next valid boundary is the first byte of the
+        // later page, not the end of the complete Source.
+        let first = format!("{}é", "a".repeat(SOURCE_CHUNK_BYTES - 2));
+        assert_eq!(first.len(), SOURCE_CHUNK_BYTES);
+        let old_snapshot = StoredSource::empty()
+            .apply_append(&first, 1, Vec::new())
+            .unwrap();
+        let store = old_snapshot.apply_append("tail", 2, Vec::new()).unwrap();
+        assert_eq!(store.chunk_count(), 2);
+        assert_eq!(
+            store.offset_for_max_bytes(5),
+            SOURCE_CHUNK_BYTES as u64,
+            "retention must stop at the nonfinal page boundary"
+        );
+
+        let (retained, dropped) = store
+            .apply_truncate(0, SOURCE_CHUNK_BYTES as u64, 3)
+            .unwrap();
+        assert_eq!(dropped, SOURCE_CHUNK_BYTES as u64);
+        assert_eq!(retained.base(), SOURCE_CHUNK_BYTES as u64);
+        assert_eq!(retained.end(), (SOURCE_CHUNK_BYTES + 4) as u64);
+        assert_eq!(retained.text(), "tail");
+        assert!(retained.head_partial());
+        assert_eq!(old_snapshot.text(), first, "old snapshots stay immutable");
+        assert_eq!(old_snapshot.base(), 0);
+        assert_eq!(old_snapshot.end(), SOURCE_CHUNK_BYTES as u64);
+    }
+
+    #[test]
+    fn partial_truncate_shares_page_with_old_snapshot() {
+        let old_snapshot = StoredSource::empty()
+            .apply_append("abcdef", 1, Vec::new())
+            .unwrap();
+        let old_view = old_snapshot.chunk_views().pop().expect("old page");
+        let (retained, dropped) = old_snapshot.apply_truncate(0, 3, 2).unwrap();
+        let new_view = retained.chunk_views().pop().expect("retained page");
+
+        assert_eq!(dropped, 3);
+        assert_eq!(retained.text(), "def");
+        assert_eq!(old_snapshot.text(), "abcdef");
+        assert!(Arc::ptr_eq(&old_view.page, &new_view.page));
+        assert_eq!(retained.chunk_count(), 1);
+    }
+
+    #[test]
+    fn ordered_annotations_materialize_only_when_requested() {
+        let store = StoredSource::empty()
+            .apply_append("abcdef", 1, Vec::new())
+            .unwrap()
+            .apply_annotation(anno(0, 3), 2, 1024, u64::MAX)
+            .unwrap();
+        assert!(store.ordered_annotations.get().is_none());
+
+        // Appending text without annotations and truncating the head must not
+        // walk the complete persistent annotation index just to refresh a
+        // diagnostic array.
+        let appended = store.apply_append("tail", 3, Vec::new()).unwrap();
+        assert!(appended.ordered_annotations.get().is_none());
+        let (truncated, _) = appended.apply_truncate(0, 1, 4).unwrap();
+        assert!(truncated.ordered_annotations.get().is_none());
+
+        // The first ordered read remains the explicit materialization point;
+        // its result is cached for subsequent projection/diagnostic callers.
+        let ordered = truncated.annotations_in_order();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!((ordered[0].start_byte, ordered[0].end_byte), (1, 3));
+        assert!(truncated.ordered_annotations.get().is_some());
+    }
+
+    #[test]
+    fn lazy_order_cache_preserves_overlap_precedence() {
+        let store = StoredSource::empty()
+            .apply_append("012345", 1, Vec::new())
+            .unwrap()
+            .apply_annotation(anno(3, 6), 2, 1024, u64::MAX)
+            .unwrap()
+            .apply_annotation(anno(0, 4), 3, 1024, u64::MAX)
+            .unwrap();
+        assert!(store.ordered_annotations.get().is_none());
+
+        let hits = store.overlapping(0, 6);
+        let spans: Vec<(u64, u64)> = hits.iter().map(|hit| (hit.start(), hit.end())).collect();
+        assert_eq!(spans, vec![(3, 6), (0, 4)]);
+        assert!(
+            store.ordered_annotations.get().is_none(),
+            "overlap lookup must use the index without diagnostic materialization"
+        );
+        assert_eq!(
+            store
+                .annotations_in_order()
+                .iter()
+                .map(|record| (record.start_byte, record.end_byte))
+                .collect::<Vec<_>>(),
+            vec![(3, 6), (0, 4)]
+        );
+    }
+
+    #[test]
+    fn annotation_sequence_batch_preflight_is_atomic_at_counter_boundary() {
+        let mut store = StoredSource::empty();
+        store.next_seqno = u64::MAX - 1;
+        let before = store.clone();
+
+        let rejected = store.apply_append("x", 1, vec![anno(0, 1), point(1)]);
+        assert!(matches!(
+            rejected,
+            Err(ContentError::AnnotationSequenceOverflow)
+        ));
+        assert_eq!(stored_text(&store), stored_text(&before));
+        assert_eq!(store.end(), before.end());
+        assert_eq!(store.next_seqno, u64::MAX - 1);
+        assert_eq!(store.annotation_count(), 0);
+
+        // The final available identity is accepted exactly once, and the
+        // following operation rejects before touching its accepted snapshot.
+        let accepted = store.apply_append("x", 2, vec![anno(0, 1)]).unwrap();
+        assert_eq!(accepted.next_seqno, u64::MAX);
+        assert_eq!(accepted.annotations_in_order()[0].seqno, u64::MAX - 1);
+        let rejected = accepted.apply_annotation(point(1), 3, 1024, u64::MAX);
+        assert!(matches!(
+            rejected,
+            Err(ContentError::AnnotationSequenceOverflow)
+        ));
+        assert_eq!(accepted.end(), 1);
+        assert_eq!(accepted.annotation_count(), 1);
+
+        let mut sealed_boundary = StoredSource::empty();
+        sealed_boundary.next_seqno = u64::MAX;
+        let rejected = sealed_boundary.apply_seal(0, 0, 1, Some(point(0)));
+        assert!(matches!(
+            rejected,
+            Err(ContentError::AnnotationSequenceOverflow)
+        ));
+        assert!(!sealed_boundary.sealed());
+        assert_eq!(sealed_boundary.annotation_count(), 0);
+    }
+
+    #[test]
+    fn chunk_count_tracks_retained_descriptors_not_tree_leaves() {
+        let mut store = StoredSource::empty();
+        assert_eq!(store.chunk_count(), 0);
+        store = store.apply_append("a", 1, Vec::new()).unwrap();
+        store = store.apply_append("b", 2, Vec::new()).unwrap();
+        assert_eq!(store.chunk_count(), 2);
+
+        let large = "z".repeat(SOURCE_CHUNK_BYTES * 2 + 1);
+        store = store.apply_append(&large, 3, Vec::new()).unwrap();
+        assert_eq!(store.chunk_count(), 5);
+
+        let (truncated, dropped) = store.apply_truncate(0, 1, 4).unwrap();
+        assert_eq!(dropped, 1);
+        assert_eq!(truncated.chunk_count(), 4);
+        assert_eq!(truncated.text().len(), 1 + large.len());
     }
 
     #[test]
@@ -2013,7 +2213,7 @@ mod tests {
         let store = StoredSource {
             chunks: ChunkTree::empty(),
             annotations: AnnotationTree::default(),
-            ordered_annotations: Arc::from([]),
+            ordered_annotations: empty_annotation_cache(),
             base: 0,
             revision: 7,
             end: u64::MAX - 1,

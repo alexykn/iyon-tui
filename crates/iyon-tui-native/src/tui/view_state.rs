@@ -385,7 +385,7 @@ fn decode_presentation_envelope(
     }
     if set_mask & (1 << presentation::ID_TEXT_ATTRIBUTES) != 0 {
         let base = presentation::TEXT_ATTRIBUTES_WORD_OFFSET as usize;
-        patch.text_attributes = read_text_attributes(words[base], words[base + 1]);
+        patch.text_attributes = read_text_attributes(words[base], words[base + 1])?;
     }
     if set_mask & (1 << presentation::ID_STYLE) != 0 {
         patch.style = Some(if null_mask & (1 << presentation::ID_STYLE) != 0 {
@@ -455,7 +455,12 @@ fn read_u16(word: u32, what: &str) -> Result<u16> {
 }
 
 fn read_alignment(word: u32) -> Result<GeometryAlignment> {
-    let horizontal = match word & 0x7 {
+    if word & !geometry::ALIGN_WORD_MASK != 0 {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState alignment contains unknown bits",
+        ));
+    }
+    let horizontal = match word & geometry::ALIGN_H_MASK {
         0 => None,
         geometry::ALIGN_H_START => Some(HorizontalAlign::Start),
         geometry::ALIGN_H_CENTER => Some(HorizontalAlign::Center),
@@ -466,7 +471,7 @@ fn read_alignment(word: u32) -> Result<GeometryAlignment> {
             ));
         }
     };
-    let vertical = match (word >> geometry::ALIGN_V_SHIFT) & 0x7 {
+    let vertical = match (word >> geometry::ALIGN_V_SHIFT) & geometry::ALIGN_V_MASK {
         0 => None,
         geometry::ALIGN_V_TOP => Some(VerticalAlign::Top),
         geometry::ALIGN_V_CENTER => Some(VerticalAlign::Center),
@@ -489,9 +494,14 @@ fn read_alignment(word: u32) -> Result<GeometryAlignment> {
 }
 
 fn read_border_edges(kind: u32, bits: u32) -> Result<BorderEdges> {
+    if bits & !geometry::EDGE_BITS_MASK != 0 {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState borderEdges contains unknown bits",
+        ));
+    }
     match kind {
-        geometry::EDGE_KIND_ALL => Ok(BorderEdges::ALL),
-        geometry::EDGE_KIND_TOP_BOTTOM => Ok(BorderEdges::TOP_BOTTOM),
+        geometry::EDGE_KIND_ALL if bits == 0 => Ok(BorderEdges::ALL),
+        geometry::EDGE_KIND_TOP_BOTTOM if bits == 0 => Ok(BorderEdges::TOP_BOTTOM),
         geometry::EDGE_KIND_OBJECT => Ok(BorderEdges::new(
             bits & geometry::EDGE_BIT_TOP != 0,
             bits & geometry::EDGE_BIT_RIGHT != 0,
@@ -544,7 +554,22 @@ fn read_border_glyphs(strings: &[String]) -> Result<BorderGlyphs> {
     .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
 }
 
-fn read_text_attributes(presence: u32, values: u32) -> TextAttributeSpec {
+fn read_text_attributes(presence: u32, values: u32) -> Result<TextAttributeSpec> {
+    if presence & !presentation::TEXT_ATTR_MASK != 0 {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState text attributes presence contains unknown bits",
+        ));
+    }
+    if values & !presentation::TEXT_ATTR_MASK != 0 {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState text attributes values contain unknown bits",
+        ));
+    }
+    if values & !presence != 0 {
+        return Err(crate::NativeError::invalid_input(
+            "ViewState text attribute values escape their presence mask",
+        ));
+    }
     let mut spec = TextAttributeSpec::new();
     for (bit, attribute) in [
         (presentation::TEXT_ATTR_BIT_BOLD, TextAttribute::Bold),
@@ -567,7 +592,7 @@ fn read_text_attributes(presence: u32, values: u32) -> TextAttributeSpec {
             spec = spec.attribute(attribute, values & bit != 0);
         }
     }
-    spec
+    Ok(spec)
 }
 
 fn read_style(
@@ -584,7 +609,7 @@ fn read_style(
     if !background.is_empty() {
         style = style.background(color_spec_str(background)?);
     }
-    let attributes = read_text_attributes(attr_presence, attr_values);
+    let attributes = read_text_attributes(attr_presence, attr_values)?;
     let named = [
         ("bold", attributes.attribute_value(TextAttribute::Bold)),
         ("dim", attributes.attribute_value(TextAttribute::Dim)),
@@ -788,6 +813,127 @@ mod tests {
         let (mut words, strings) = geometry_lanes();
         words[geometry::WIDTH_WORD_OFFSET as usize] = 9;
         assert!(decode_geometry_envelope(1 << geometry::ID_WIDTH, 0, 0, &words, &strings).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_value_bits_and_values_outside_presence() {
+        let (mut words, strings) = geometry_lanes();
+        words[geometry::ALIGNMENT_WORD_OFFSET as usize] = geometry::ALIGN_H_START | (1 << 31);
+        assert!(
+            decode_geometry_envelope(1 << geometry::ID_ALIGNMENT, 0, 0, &words, &strings).is_err()
+        );
+
+        let edge_base = geometry::BORDER_EDGES_WORD_OFFSET as usize;
+        words[edge_base] = geometry::EDGE_KIND_OBJECT;
+        words[edge_base + 1] = geometry::EDGE_BITS_MASK | (1 << 31);
+        assert!(
+            decode_geometry_envelope(1 << geometry::ID_BORDER_EDGES, 0, 0, &words, &strings)
+                .is_err()
+        );
+
+        let (mut words, strings) = presentation_lanes();
+        let attr_base = presentation::TEXT_ATTRIBUTES_WORD_OFFSET as usize;
+        words[attr_base] = presentation::TEXT_ATTR_MASK | (1 << 31);
+        assert!(
+            decode_presentation_envelope(
+                1 << presentation::ID_TEXT_ATTRIBUTES,
+                0,
+                0,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+        words[attr_base] = presentation::TEXT_ATTR_BIT_BOLD;
+        words[attr_base + 1] = 1 << 31;
+        assert!(
+            decode_presentation_envelope(
+                1 << presentation::ID_TEXT_ATTRIBUTES,
+                0,
+                0,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+        words[attr_base + 1] = presentation::TEXT_ATTR_BIT_ITALIC;
+        assert!(
+            decode_presentation_envelope(
+                1 << presentation::ID_TEXT_ATTRIBUTES,
+                0,
+                0,
+                &words,
+                &strings
+            )
+            .is_err()
+        );
+
+        let style_base = presentation::STYLE_WORD_OFFSET as usize;
+        words[style_base] = presentation::TEXT_ATTR_BIT_BOLD;
+        words[style_base + 1] = presentation::TEXT_ATTR_BIT_ITALIC;
+        assert!(
+            decode_presentation_envelope(1 << presentation::ID_STYLE, 0, 0, &words, &strings)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn absent_and_null_value_lanes_are_not_decoded() {
+        let (mut words, strings) = geometry_lanes();
+        words[geometry::WIDTH_WORD_OFFSET as usize] = geometry::SIZE_MODE_FIT;
+        words[geometry::ALIGNMENT_WORD_OFFSET as usize] = u32::MAX;
+        let edge_base = geometry::BORDER_EDGES_WORD_OFFSET as usize;
+        words[edge_base] = u32::MAX;
+        words[edge_base + 1] = u32::MAX;
+        let patch = decode_geometry_envelope(1 << geometry::ID_WIDTH, 0, 0, &words, &strings)
+            .expect("absent geometry lanes are ignored");
+        assert_eq!(patch.width, Some(ViewStateSizeMode::Fit));
+        let patch = decode_geometry_envelope(
+            1 << geometry::ID_BORDER_EDGES,
+            1 << geometry::ID_BORDER_EDGES,
+            0,
+            &words,
+            &strings,
+        )
+        .expect("null geometry lane is ignored");
+        assert_eq!(patch.border_edges, Some(None));
+
+        let (mut words, mut strings) = presentation_lanes();
+        strings[presentation::FOREGROUND_STRING_OFFSET as usize] = "#aé000".to_owned();
+        strings[presentation::BORDER_COLOR_STRING_OFFSET as usize] = "#000é0".to_owned();
+        let style_base = presentation::STYLE_WORD_OFFSET as usize;
+        words[style_base] = u32::MAX;
+        words[style_base + 1] = u32::MAX;
+        let border_style = presentation::BORDER_STYLE_WORD_OFFSET as usize;
+        words[border_style] = presentation::BORDER_STYLE_ROUNDED;
+        let patch = decode_presentation_envelope(
+            1 << presentation::ID_BORDER_STYLE,
+            0,
+            0,
+            &words,
+            &strings,
+        )
+        .expect("absent presentation lanes are ignored");
+        assert_eq!(patch.border_style, Some(Some(BorderStyle::Rounded)));
+
+        let patch = decode_presentation_envelope(
+            1 << presentation::ID_FOREGROUND,
+            1 << presentation::ID_FOREGROUND,
+            0,
+            &words,
+            &strings,
+        )
+        .expect("null presentation lane is ignored");
+        assert_eq!(patch.foreground, Some(None));
+        let patch = decode_presentation_envelope(
+            1 << presentation::ID_STYLE,
+            1 << presentation::ID_STYLE,
+            0,
+            &words,
+            &strings,
+        )
+        .expect("null nested style lane is ignored");
+        assert_eq!(patch.style, Some(None));
     }
 
     #[test]

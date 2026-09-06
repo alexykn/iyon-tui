@@ -1,6 +1,5 @@
 ---
 source: tools/tui-abi-gen/src/main.rs
-assertion_line: 320
 expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json\").expect(\"manifest output\")"
 ---
 {
@@ -4168,7 +4167,7 @@ expression: "outputs.get(\"packages/iyon-tui/src/transport/abi/structural/genera
     "crates/iyon-tui-native/src/generated/view_state_schema.rs",
     "packages/iyon-tui/src/transport/state/generated/state_envelope.ts"
   ],
-  "generator_blake3": "5a6fc7adbab8648b16846c2fe9a1a24550929a9f53329a05e7b48274230b06b7",
+  "generator_blake3": "57dcbc4070f1184a9472ecb4545b39c6c5a39d0d936e8071aeb36c0594be5010",
   "handles": [
     {
       "kind": null,

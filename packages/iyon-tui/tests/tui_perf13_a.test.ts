@@ -206,6 +206,55 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
   registration.dispose();
 });
 
+test(`${PERF13A} preserves a Source wake failure in the failed host channel without spinning`, async () => {
+  let calls = 0;
+  const nativeHost = {
+    epochs: () => ({
+      host_id: "1",
+      desired_structural_revision: "0",
+      visible_structural_revision: "0",
+      visible_frame_revision: "0",
+      pending_epoch: "0",
+      committed_epoch: "0",
+    }),
+    flushPendingHosts: () => {
+      calls += 1;
+      return {
+        rearm: false,
+        waiting_for_presentation: false,
+        attempted: 0,
+        commits: [],
+        errors: [{
+          host_id: "1",
+          attempted_epoch: "0",
+          desired_revision: "0",
+          phase: "content",
+          code: "SOURCE_WAKE_FAILED",
+          retryable: false,
+          diagnostic: "SOURCE_WAKE_FAILED: Source revision 1 was accepted",
+        }],
+        wake_epoch: "0",
+      };
+    },
+  };
+  const errors = new RuntimeErrorChannel(() => true);
+  const broker = new EnvironmentWakeBroker(1);
+  const registration = broker.register(nativeHost, errors, () => {});
+  registration.markPending();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(calls).toBe(1);
+  expect(errors.latestFor("1")).toMatchObject({
+    code: "SOURCE_WAKE_FAILED",
+    phase: "content",
+  });
+  registration.markPending();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(calls).toBe(2);
+  registration.dispose();
+});
+
 test(`${PERF13A} polls asynchronous presentation receipts without a microtask spin`, async () => {
   let ready = false;
   let calls = 0;

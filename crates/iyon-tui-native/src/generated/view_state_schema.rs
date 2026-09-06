@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817
-// generator_blake3 = 5a6fc7adbab8648b16846c2fe9a1a24550929a9f53329a05e7b48274230b06b7
+// generator_blake3 = 57dcbc4070f1184a9472ecb4545b39c6c5a39d0d936e8071aeb36c0594be5010
 // L1-05 retained-state envelope tables (§7.1).
 //
 // Single source of truth: the `state_property` rows in
@@ -83,10 +83,13 @@ pub mod geometry {
     pub const ALIGN_H_START: u32 = 1;
     pub const ALIGN_H_CENTER: u32 = 2;
     pub const ALIGN_H_END: u32 = 3;
+    pub const ALIGN_H_MASK: u32 = ALIGN_H_START | ALIGN_H_CENTER | ALIGN_H_END;
     pub const ALIGN_V_TOP: u32 = 1;
     pub const ALIGN_V_CENTER: u32 = 2;
     pub const ALIGN_V_BOTTOM: u32 = 3;
+    pub const ALIGN_V_MASK: u32 = ALIGN_V_TOP | ALIGN_V_CENTER | ALIGN_V_BOTTOM;
     pub const ALIGN_V_SHIFT: u32 = 3;
+    pub const ALIGN_WORD_MASK: u32 = ALIGN_H_MASK | (ALIGN_V_MASK << ALIGN_V_SHIFT);
     pub const EDGE_KIND_OBJECT: u32 = 0;
     pub const EDGE_KIND_ALL: u32 = 1;
     pub const EDGE_KIND_TOP_BOTTOM: u32 = 2;
@@ -94,6 +97,7 @@ pub mod geometry {
     pub const EDGE_BIT_RIGHT: u32 = 2;
     pub const EDGE_BIT_BOTTOM: u32 = 4;
     pub const EDGE_BIT_LEFT: u32 = 8;
+    pub const EDGE_BITS_MASK: u32 = EDGE_BIT_TOP | EDGE_BIT_RIGHT | EDGE_BIT_BOTTOM | EDGE_BIT_LEFT;
     pub fn check_envelope(
         set_mask: u32,
         null_mask: u32,
@@ -198,6 +202,7 @@ pub mod presentation {
     pub const TEXT_ATTR_BIT_UNDERLINE: u32 = 8;
     pub const TEXT_ATTR_BIT_REVERSED: u32 = 16;
     pub const TEXT_ATTR_BIT_STRIKETHROUGH: u32 = 32;
+    pub const TEXT_ATTR_MASK: u32 = TEXT_ATTR_BIT_BOLD | TEXT_ATTR_BIT_DIM | TEXT_ATTR_BIT_ITALIC | TEXT_ATTR_BIT_UNDERLINE | TEXT_ATTR_BIT_REVERSED | TEXT_ATTR_BIT_STRIKETHROUGH;
     pub fn check_envelope(
         set_mask: u32,
         null_mask: u32,

@@ -482,3 +482,104 @@ pub unsafe extern "C" fn iyon_tui_source_head_truncate_v1(
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use iyon_tui::binding::{
+        ContentFamily, HostContentFunnel, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost,
+        view_native_content_host,
+    };
+
+    use super::{
+        CONTENT_ABI_SCHEDULE_ENVIRONMENT_DRAIN, CONTENT_STATUS_OK, IyonTuiSourceMutationResultV1,
+        iyon_tui_source_append_utf8_v1,
+    };
+
+    #[test]
+    fn accepted_wake_failure_keeps_direct_ffi_result_and_healthy_fanout() {
+        let environment = TuiEnvironment::new();
+        let environment_slot = environment.environment_slot();
+        crate::tui::register_content_environment_for_test(&environment);
+
+        let failed = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let healthy = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let failed_host_id = failed.epochs().unwrap().host_id;
+        let healthy_host_id = healthy.epochs().unwrap().host_id;
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        let funnel = HostContentFunnel::plain(TextWrapMode::Word);
+
+        for host in [&failed, &healthy] {
+            let port = host.create_content_port(ContentFamily::Text).unwrap();
+            let connector = port.connect(&source, funnel).unwrap();
+            connector.activate().unwrap();
+            host.set_desired_view(view_native_content_host(port.id()).unwrap())
+                .unwrap();
+            host.flush_pending_hosts(32, true).unwrap();
+        }
+        failed.poison_lock_for_test();
+        let bytes = b"ffi wake\n";
+        let mut result = IyonTuiSourceMutationResultV1::default();
+        // SAFETY: all pointers reference live, synchronously-borrowed test
+        // buffers and the output record lives until this call returns.
+        let status = unsafe {
+            iyon_tui_source_append_utf8_v1(
+                environment_slot,
+                environment.environment_generation(),
+                u32::try_from(source.id()).unwrap(),
+                source.generation(),
+                bytes.as_ptr(),
+                u32::try_from(bytes.len()).unwrap(),
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                &mut result,
+            )
+        };
+        assert_eq!(status, CONTENT_STATUS_OK);
+        assert_eq!(u64::from(result.source_revision_lo), 1);
+        assert_eq!(result.source_revision_hi, 0);
+        assert!(result.environment_wake_epoch_lo > 0);
+        assert_eq!(result.environment_wake_epoch_hi, 0);
+        assert_ne!(
+            result.flags & CONTENT_ABI_SCHEDULE_ENVIRONMENT_DRAIN,
+            0,
+            "a failed host wake must still return a drain hint"
+        );
+        assert_eq!(source.snapshot().unwrap().text(), "ffi wake\n");
+
+        let report = healthy.flush_pending_hosts(32, false).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.host_id == failed_host_id
+                && error.code == "SOURCE_WAKE_FAILED"
+                && error.diagnostic.contains("Source revision 1 was accepted")
+        }));
+        assert!(
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == healthy_host_id)
+        );
+        assert!(
+            healthy
+                .screen_rows()
+                .iter()
+                .any(|row| row.contains("ffi wake"))
+        );
+        let idle = healthy.flush_pending_hosts(32, false).unwrap();
+        assert!(idle.errors.is_empty());
+        assert!(
+            !idle.rearm,
+            "a failed wake must not create an automatic spin"
+        );
+
+        healthy.close().unwrap();
+        drop(failed);
+        source.dispose().unwrap();
+        crate::tui::remove_content_environment_for_test(environment_slot);
+    }
+}

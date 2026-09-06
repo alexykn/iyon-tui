@@ -1,5 +1,0 @@
-error[E0432]: unresolved import `iyon_tui::IntoView`
- --> tests/ui/fail/scene_not_into_view.rs:1:16
-  |
-1 | use iyon_tui::{IntoView, Scene};
-  |                ^^^^^^^^ no `IntoView` in the root

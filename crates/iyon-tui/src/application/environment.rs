@@ -520,11 +520,45 @@ impl TuiEnvironment {
         let mut report = HostDrainReport::default();
         let budget = budget.max(1);
         let mut candidates = Vec::new();
+        let mut source_wake_errors = Vec::new();
         let mut environment = self
             .inner
             .lock()
             .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
         report.wake_epoch = environment.wake_epoch;
+        // Source payload acceptance happens before host wake delivery.  Wake
+        // failures therefore arrive through the Source registry's side
+        // channel and must be surfaced independently of the pending-host
+        // queue.  Resolve the weak host by identity only: a poisoned host
+        // mutex must not prevent its error from reaching the environment
+        // channel, and pointer equality prevents allocator-address reuse
+        // from retargeting a stale failure.
+        for failure in environment.content_sources.take_wake_failures() {
+            let host_id = environment
+                .hosts
+                .iter()
+                .find(|(_, candidate)| {
+                    candidate.as_ptr() as usize == failure.host_key
+                        && Weak::ptr_eq(candidate, &failure.host)
+                })
+                .map(|(host_id, _)| *host_id);
+            let Some(host_id) = host_id else {
+                // The subscriber disappeared before the next environment
+                // drain.  There is no surviving host error channel to notify;
+                // dropping this stale diagnostic is the membership-race
+                // policy, not a mutation rejection or a lost healthy wake.
+                continue;
+            };
+            source_wake_errors.push(HostFrameError {
+                host_id,
+                attempted_epoch: 0,
+                desired_revision: 0,
+                phase: "content".to_owned(),
+                code: "SOURCE_WAKE_FAILED".to_owned(),
+                retryable: false,
+                diagnostic: failure.diagnostic,
+            });
+        }
         let presentations = environment
             .waiting_for_presentation
             .drain()
@@ -663,6 +697,12 @@ impl TuiEnvironment {
             drop(host);
         }
 
+        // Append Source wake failures after host attempts. If a failed host
+        // was already pending for unrelated work, the host-lock diagnostic
+        // above is still useful, but the post-acceptance Source diagnostic
+        // must remain the latest per-host error observed by the TypeScript
+        // channel rather than being overwritten by that older attempt.
+        report.errors.extend(source_wake_errors);
         let mut environment = self
             .inner
             .lock()

@@ -9,8 +9,12 @@ edition.workspace = true
 publish = false
 
 [features]
+# Internal test hooks used by the in-tree/native test targets. This feature
+# never restores a public Rust testing facade.
 test-util = []
 native-host = []
+# Counter exports and the package-local `tui_perf` binary are hidden tooling
+# seams, not supported Rust authoring APIs.
 perf-counters = []
 
 [[bin]]
@@ -31,7 +35,6 @@ pulldown-cmark.workspace = true
 vt100.workspace = true
 proptest.workspace = true
 insta.workspace = true
-trybuild.workspace = true
 
 # Strictness is inherited from the workspace root: clippy pedantic and
 # cognitive complexity report as warnings on all targets. Site-specific

@@ -10,43 +10,47 @@
 //! layout, Unicode-safe painting, and the retained host kernel remain owned by
 //! this crate.
 
-mod application;
+pub(crate) mod application;
 mod backend;
 mod component;
-mod content;
-mod controls;
+pub(crate) mod content;
+pub(crate) mod controls;
 mod geometry;
-mod history;
+pub(crate) mod history;
 mod id;
-mod interaction;
-mod output;
+pub(crate) mod interaction;
+pub(crate) mod output;
 #[cfg(feature = "perf-counters")]
 #[doc(hidden)]
-pub mod perf;
+pub(crate) mod perf;
 #[cfg(not(feature = "perf-counters"))]
 mod perf;
+// `tui_perf` is a separate package binary and therefore cannot access a
+// private library module. Keep this one executable-only escape hatch public
+// but hidden and feature-gated; the native binding reexports counters through
+// `binding`, never through this module path.
 #[cfg(feature = "perf-counters")]
 #[doc(hidden)]
 pub mod perf_bench;
 mod physical;
-mod presentation;
-/// Root-coordinate projection algebra and diagnostics.
-pub mod projection;
-mod retained_state;
-mod scene;
-mod scroll;
+pub(crate) mod presentation;
+// Projection, source coordinates, and semantic text stay implementation-only
+// even though their public item declarations are reused by the binding and
+// by in-crate unit tests. Rust callers author against the TypeScript facade.
+pub(crate) mod projection;
+pub(crate) mod retained_state;
+pub(crate) mod scene;
+pub(crate) mod scroll;
 mod scroll_command;
 /// Source-rooted coordinates shared by semantic content projections.
-pub mod stream;
+mod stream;
 mod terminal;
-#[cfg(feature = "test-util")]
-pub mod testing;
 /// Complete generic semantic text IR, traversal, projectors, and renderers.
-pub mod text;
-mod theme;
+mod text;
+pub(crate) mod theme;
 
 #[cfg(feature = "native-host")]
-pub use application::{
+pub(crate) use application::{
     ContentAnnotationRecord, ContentAnnotationSnapshot, ContentDelivery, ContentFamily,
     ContentMutationResult, HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel,
     HostContentPort, HostContentSource, HostContentSourceSnapshot, HostContentSourceStats,
@@ -61,33 +65,33 @@ pub use application::{
 pub(crate) use application::{App, AppCx, AppHandle, RunError, RuntimeError};
 
 pub(crate) use component::{Component, ComponentCx, ComponentHandle};
-pub use content::diff::{
+pub(crate) use content::diff::{
     DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination,
     DiffRange, DiffValidationError,
 };
-pub use content::text::{
+pub(crate) use content::text::{
     AnsiOptions, AnsiProjector, Block, CodeBlockLabelPolicy, DiffProjector, FormatId, HeadingLevel,
     Inline, InlineContent, LanguageId, MarkdownOptions, MarkdownProjector, PlainTextProjector,
     RawText, SemanticTag, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent,
     TextListKind, TextOrigin, TextPart, TextRenderPolicy, TextRole, TextSelector, TextTableSection,
     TextTaskState,
 };
-pub use controls::{TextChange, TextInput};
-pub use history::{FlowBoundary, History, HistoryError, HistoryLayout, HistoryUnitId};
-pub use interaction::{InteractionResult, Key, KeyStroke, MediaKey, ModifierKey, Modifiers};
-pub use output::{EventCx, Output, OutputRouter, RouteConflict};
-pub use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
+pub(crate) use controls::{TextChange, TextInput};
+pub(crate) use history::{FlowBoundary, History, HistoryError, HistoryLayout, HistoryUnitId};
+pub(crate) use interaction::{InteractionResult, Key, KeyStroke, MediaKey, ModifierKey, Modifiers};
+pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};
+pub(crate) use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
 #[cfg(feature = "native-host")]
 #[doc(hidden)]
-pub use retained_state::{
+pub(crate) use retained_state::{
     GeometryAlignment, ViewStateGeometryPatch, ViewStateGeometryProperty,
     ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
 };
-pub use scene::Scene;
-pub use scroll::ScrollPane;
-pub use theme::Theme;
+pub(crate) use scene::Scene;
+pub(crate) use scroll::ScrollPane;
+pub(crate) use theme::Theme;
 
-pub use presentation::api::style::Insets;
+pub(crate) use presentation::api::style::Insets;
 #[allow(unused_imports)]
 pub(crate) use presentation::api::{
     AnsiColor, BorderEdges, BorderSpec, ColorSpec, HorizontalAlign, StyleRef, StyleSelector,

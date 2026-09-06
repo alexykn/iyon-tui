@@ -369,6 +369,60 @@ mod tests {
     }
 
     #[test]
+    fn validation_rejects_state_lane_shapes_that_do_not_match_value_kinds() {
+        let (document, kind_codes) = canonical_document();
+        let expected = [
+            ("size_mode", 1, 0),
+            ("u16", 1, 0),
+            ("insets", 4, 0),
+            ("alignment", 1, 0),
+            ("edges", 2, 0),
+            ("color", 0, 1),
+            ("border_style", 1, 0),
+            ("glyphs", 0, 8),
+            ("text_attrs", 2, 0),
+            ("style", 2, 3),
+        ];
+        for (value_kind, words, strings) in expected {
+            let property = document
+                .state_properties
+                .iter()
+                .find(|property| property.value == value_kind)
+                .expect("canonical schema covers every value kind");
+
+            let mut bad_words = document.clone();
+            let bad_words_value = if words == 8 { 7 } else { words + 1 };
+            bad_words
+                .state_properties
+                .iter_mut()
+                .find(|candidate| {
+                    candidate.domain == property.domain && candidate.id == property.id
+                })
+                .expect("property remains addressable")
+                .words = bad_words_value;
+            assert!(
+                validate::validate(&bad_words, &kind_codes).is_err(),
+                "{value_kind} must reject words={bad_words_value}, strings={strings}"
+            );
+
+            let mut bad_strings = document.clone();
+            let bad_strings_value = if strings == 8 { 7 } else { strings + 1 };
+            bad_strings
+                .state_properties
+                .iter_mut()
+                .find(|candidate| {
+                    candidate.domain == property.domain && candidate.id == property.id
+                })
+                .expect("property remains addressable")
+                .strings = bad_strings_value;
+            assert!(
+                validate::validate(&bad_strings, &kind_codes).is_err(),
+                "{value_kind} must reject words={words}, strings={bad_strings_value}"
+            );
+        }
+    }
+
+    #[test]
     fn state_envelope_outputs_cover_both_domains() {
         let (document, _) = canonical_document();
         for (path, body) in [

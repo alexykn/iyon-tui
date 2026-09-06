@@ -185,6 +185,23 @@ impl HostContentSourceSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ContentLineage {
+    source_id: u64,
+    source_generation: u32,
+    content_generation: u64,
+}
+
+impl ContentLineage {
+    fn from_snapshot(snapshot: &HostContentSourceSnapshot) -> Self {
+        Self {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TextProjectionKey {
     source_id: u64,
@@ -405,6 +422,7 @@ struct ConnectorExecution {
     markdown: Option<MarkdownProjector>,
     diff: Option<DiffProjector>,
     ansi: Option<AnsiProjector>,
+    parser_lineage: Option<ContentLineage>,
     delivery: Option<ConnectorDelivery>,
     /// Text lowering is connector-local just like parser and delivery state.
     /// Keeping this renderer alive makes its immutable block/edge products
@@ -424,9 +442,27 @@ impl ConnectorExecution {
                     hyperlinks: funnel.hyperlinks,
                 })
             }),
+            parser_lineage: None,
             delivery: funnel.smooth_config().map(ConnectorDelivery::new),
             renderer: content_text_renderer(),
         }
+    }
+
+    fn prepare_for_snapshot(&mut self, snapshot: &HostContentSourceSnapshot) {
+        let lineage = ContentLineage::from_snapshot(snapshot);
+        if self.parser_lineage == Some(lineage) {
+            return;
+        }
+        if self.parser_lineage.is_some() {
+            // Replacement/clear starts a new logical document even when the
+            // retained byte range happens to have the same coordinates. Only
+            // parser state is lineage-bound; Smooth keeps its existing
+            // replacement policy and the renderer remains reusable.
+            self.markdown = None;
+            self.diff = None;
+            self.ansi = None;
+        }
+        self.parser_lineage = Some(lineage);
     }
 }
 
@@ -462,7 +498,9 @@ pub struct HostContentSourceStats {
 }
 
 /// Result returned by every successful Source data mutation. The wake bit is
-/// only a scheduler hint; native host epochs remain authoritative.
+/// only a scheduler hint; native host epochs remain authoritative. A
+/// post-acceptance host wake failure is reported by the environment's next
+/// drain report without changing this successful result.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ContentMutationResult {
     pub revision: u64,
@@ -660,6 +698,7 @@ fn project_semantic_snapshot(
     funnel: HostContentFunnel,
     execution: &mut ConnectorExecution,
 ) -> Result<Projection<TextContent>> {
+    execution.prepare_for_snapshot(snapshot);
     let raw = source_projection(snapshot).map_err(|error| anyhow!(error.to_string()))?;
     let semantic = match funnel.kind {
         TextFunnelKind::Plain => PlainTextProjector::new()
@@ -1574,6 +1613,77 @@ struct ContentSourceRecord {
     subscriber_wake_scratch: Vec<CapturedSubscriberGroup>,
 }
 
+/// A Source mutation can finish after releasing the Source lock, so a host
+/// wake failure cannot be returned as the mutation's ordinary `Result`:
+/// doing so would make an already-installed revision look rejected to the
+/// caller.  Keep one latest failure per host in an environment-owned side
+/// channel instead.  The weak host reference is retained to resolve the
+/// current environment host ID without taking the possibly poisoned host
+/// lock, and also prevents an allocator-address reuse from misattributing a
+/// stale failure to a new host.
+#[derive(Debug)]
+pub(crate) struct PendingSourceWakeFailure {
+    pub(super) host_key: usize,
+    pub(super) host: Weak<Mutex<HostInner>>,
+    pub(super) revision: u64,
+    pub(super) diagnostic: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SourceWakeFailureChannel {
+    failures: Arc<Mutex<HashMap<usize, PendingSourceWakeFailure>>>,
+}
+
+impl SourceWakeFailureChannel {
+    pub(super) fn record(
+        &self,
+        host: &Weak<Mutex<HostInner>>,
+        revision: u64,
+        diagnostic: impl Into<String>,
+    ) {
+        let host_key = host.as_ptr() as usize;
+        let mut failures = self
+            .failures
+            .lock()
+            // A poisoned diagnostic channel must not turn accepted Source
+            // bytes into an apparent mutation rejection.  The queue contains
+            // only replaceable diagnostics, so recovering its guard is safe;
+            // the failure remains explicit when the environment drains it.
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if failures
+            .get(&host_key)
+            .is_some_and(|previous| previous.revision > revision)
+        {
+            return;
+        }
+        failures.insert(
+            host_key,
+            PendingSourceWakeFailure {
+                host_key,
+                host: host.clone(),
+                revision,
+                diagnostic: diagnostic.into(),
+            },
+        );
+    }
+
+    pub(super) fn take(&self) -> Vec<PendingSourceWakeFailure> {
+        let mut failures = self
+            .failures
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut pending = failures
+            .drain()
+            .map(|(_, failure)| failure)
+            .collect::<Vec<_>>();
+        // HashMap iteration order is deliberately unspecified. Stable error
+        // ordering keeps the environment report deterministic while retaining
+        // O(number of failed hosts) extraction.
+        pending.sort_unstable_by_key(|failure| (failure.host_key, failure.revision));
+        pending
+    }
+}
+
 #[derive(Debug, Default)]
 struct ContentSourceRegistryInner {
     next_id: u64,
@@ -1588,6 +1698,7 @@ struct ContentSourceRegistryInner {
 pub(crate) struct ContentSourceRegistry {
     inner: Arc<Mutex<ContentSourceRegistryInner>>,
     identity: EnvironmentIdentity,
+    wake_failures: SourceWakeFailureChannel,
 }
 
 impl Default for ContentSourceRegistry {
@@ -1605,11 +1716,25 @@ impl ContentSourceRegistry {
         Self {
             inner: Arc::new(Mutex::new(ContentSourceRegistryInner::default())),
             identity,
+            wake_failures: SourceWakeFailureChannel::default(),
         }
     }
 
     pub(crate) fn identity(&self) -> EnvironmentIdentity {
         self.identity
+    }
+
+    pub(super) fn record_wake_failure(
+        &self,
+        host: &Weak<Mutex<HostInner>>,
+        revision: u64,
+        diagnostic: impl Into<String>,
+    ) {
+        self.wake_failures.record(host, revision, diagnostic);
+    }
+
+    pub(super) fn take_wake_failures(&self) -> Vec<PendingSourceWakeFailure> {
+        self.wake_failures.take()
     }
 
     pub(crate) fn create(&self, kind: TextSourceKind) -> Result<HostContentSource> {
@@ -2297,7 +2422,7 @@ impl HostContentSource {
             }
             if record.storage.base() == 0
                 && record.storage.end() == 0
-                && record.storage.annotations_in_order().is_empty()
+                && record.storage.annotation_count() == 0
             {
                 return Ok(ContentMutationResult {
                     revision: record.revision,
@@ -2393,18 +2518,18 @@ impl HostContentSource {
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
         // A failed subscriber must not cancel the remaining wakes (§9.6):
-        // every eligible host is attempted, and a failure is reported
-        // afterwards with the accepted revision attached, never as an
-        // ambiguous ordinary rejection that invites a duplicating retry.
+        // every eligible host is attempted, and a failure is reported through
+        // the environment's per-host error channel.  In particular, do not
+        // return an ordinary mutation error after the Source revision is
+        // installed; that would make a successful append look retryable to a
+        // direct-FFI caller and could duplicate its bytes.
         crate::perf::add(crate::perf::Counter::ContentWakeGroups, groups.len() as u64);
-        let mut wake_failures = 0u32;
-        let mut first_wake_error: Option<anyhow::Error> = None;
         for group in &groups {
             let Some(host) = group.host.upgrade() else {
                 continue;
             };
             let tokens = &group.tokens;
-            let wake_result = (|| {
+            let wake_result: Result<()> = (|| {
                 let mut host = host.lock().map_err(|_| anyhow!("host lock is poisoned"))?;
                 let mut dirty = std::mem::take(&mut host.content_dirty_scratch);
                 dirty.clear();
@@ -2426,10 +2551,15 @@ impl HostContentSource {
                 Ok(())
             })();
             if let Err(error) = wake_result {
-                wake_failures += 1;
-                if first_wake_error.is_none() {
-                    first_wake_error = Some(error);
-                }
+                schedule_environment_drain = true;
+                self.registry.record_wake_failure(
+                    &group.host,
+                    revision,
+                    format!(
+                        "SOURCE_WAKE_FAILED: Source revision {revision} was accepted; \
+                         subscriber host wake failed: {error:#}"
+                    ),
+                );
             }
         }
         // Reuse the per-Source outer batch allocation on the next mutation;
@@ -2445,19 +2575,26 @@ impl HostContentSource {
                 record.subscriber_wake_scratch = groups;
             }
             Err(_) => {
-                wake_failures += 1;
-                if first_wake_error.is_none() {
-                    first_wake_error = Some(anyhow!(
-                        "content Source lock is poisoned while recycling wake storage"
-                    ));
+                // The Source was already accepted, so a poisoned record at
+                // this cleanup point is also an environment-visible wake
+                // failure, not a mutation rejection.  The captured weak
+                // references identify the affected host channels without
+                // touching those hosts again.  If all subscribers raced away,
+                // there is no remaining host channel to report to; the next
+                // Source operation will explicitly surface the poisoned
+                // Source lock.
+                for group in &groups {
+                    schedule_environment_drain = true;
+                    self.registry.record_wake_failure(
+                        &group.host,
+                        revision,
+                        format!(
+                            "SOURCE_WAKE_FAILED: Source revision {revision} was accepted; \
+                             Source lock is poisoned while recycling wake storage"
+                        ),
+                    );
                 }
             }
-        }
-        if let Some(error) = first_wake_error {
-            return Err(anyhow!(
-                "SOURCE_WAKE_FAILED: Source revision {revision} was accepted; \
-                 {wake_failures} subscriber host(s) failed to wake: {error:#}"
-            ));
         }
         Ok(ContentMutationResult {
             revision,
@@ -6890,6 +7027,77 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_annotation_sequence_rejects_batch_without_accounting() {
+        let environment = TuiEnvironment::new();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        source
+            .record
+            .lock()
+            .map(|mut record| {
+                Arc::make_mut(&mut record.storage).next_seqno = u64::MAX - 1;
+            })
+            .unwrap();
+
+        let records = [
+            ContentAnnotationRecord {
+                kind: CONTENT_ANNOTATION_KIND_POINT,
+                start_byte: 0,
+                end_byte: 0,
+                ..ContentAnnotationRecord::default()
+            },
+            ContentAnnotationRecord {
+                kind: CONTENT_ANNOTATION_KIND_POINT,
+                start_byte: 1,
+                end_byte: 1,
+                ..ContentAnnotationRecord::default()
+            },
+        ];
+        let error = source.append_utf8(b"ab", &records, &[]).unwrap_err();
+        assert!(
+            error.to_string().contains("annotation sequence exhausted"),
+            "unexpected sequence error: {error:#}"
+        );
+        let stats = source.stats().unwrap();
+        assert_eq!(stats.source_end, 0);
+        assert_eq!(stats.accepted_bytes, 0);
+        assert_eq!(stats.copied_bytes, 0);
+        assert_eq!(stats.revision, 0);
+        assert!(source.snapshot().unwrap().annotations().is_empty());
+
+        // One identity remains available and is accepted exactly once after
+        // the rejected full batch.
+        let one = records[..1].to_vec();
+        source.append_utf8(b"a", &one, &[]).unwrap();
+        let stats = source.stats().unwrap();
+        assert_eq!(stats.source_end, 1);
+        assert_eq!(stats.accepted_bytes, 1);
+        assert_eq!(stats.copied_bytes, 1);
+        assert_eq!(source.snapshot().unwrap().annotations().len(), 1);
+    }
+
+    #[test]
+    fn drop_oldest_retention_keeps_suffix_after_multibyte_chunk_end() {
+        let environment = TuiEnvironment::new();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        source.configure_retention(Some(5), None, true).unwrap();
+
+        source.append_utf8("abcé".as_bytes(), &[], &[]).unwrap();
+        source.append_utf8(b"tail", &[], &[]).unwrap();
+
+        let stats = source.stats().unwrap();
+        assert_eq!(stats.source_base, 5);
+        assert_eq!(stats.source_end, 9);
+        assert_eq!(stats.retained_bytes, 4);
+        assert_eq!(stats.dropped_head_bytes, 5);
+        assert!(stats.head_partial);
+        assert_eq!(source.snapshot().unwrap().text(), "tail");
+    }
+
+    #[test]
     fn exhausted_source_revision_rejects_replace_without_touching_storage() {
         // Replace preflights the revision before installing the fresh root,
         // so the old storage survives the rejection intact.
@@ -7037,7 +7245,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_subscriber_wake_reports_source_wake_failed_with_accepted_revision() {
+    fn poisoned_subscriber_wake_reports_accepted_revision_and_healthy_drain() {
         let environment = TuiEnvironment::new();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
@@ -7063,6 +7271,7 @@ mod tests {
         second.flush_pending_hosts(32, true).unwrap();
 
         assert_eq!(source.subscriber_count(), 2);
+        let first_host_id = first.epochs().unwrap().host_id;
 
         // Deliberately poison first host's mutex
         let inner_clone = first.inner.clone();
@@ -7071,26 +7280,106 @@ mod tests {
             panic!("deliberate host lock poisoning for test");
         }));
 
-        // Now append to the source. The source revision MUST advance and be accepted,
-        // while finish_mutation reports SOURCE_WAKE_FAILED with the accepted revision.
-        let result = source.append_utf8(b"hello\n", &[], &[]);
-        let err =
-            result.expect_err("mutation should report wake failure when subscriber is poisoned");
-        let err_str = err.to_string();
+        // The Source revision is accepted even though one subscriber cannot
+        // be locked.  The wake failure is delivered through the environment
+        // report instead of the mutation result, so direct FFI callers still
+        // receive the authoritative revision and drain hint.
+        let mutation = source.append_utf8(b"hello\n", &[], &[]).unwrap();
+        assert_eq!(mutation.revision, 1);
+        assert!(mutation.schedule_environment_drain);
+
+        // The healthy subscriber still receives the wake and presents the
+        // accepted bytes in the same fair drain that reports the failed host.
+        let report = second.flush_pending_hosts(32, false).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.host_id == first_host_id
+                && error.code == "SOURCE_WAKE_FAILED"
+                && error.diagnostic.contains("Source revision 1 was accepted")
+        }));
         assert!(
-            err_str.contains("SOURCE_WAKE_FAILED"),
-            "error must identify wake failure, got: {err_str}"
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == second.epochs().unwrap().host_id),
+            "healthy subscriber must commit despite a failed wake"
         );
         assert!(
-            err_str.contains("Source revision 1 was accepted"),
-            "error must report accepted revision to prevent retry duplicates, got: {err_str}"
+            second.screen_rows().iter().any(|row| row.contains("hello")),
+            "healthy subscriber must present the accepted Source bytes"
         );
+        let idle = second.flush_pending_hosts(32, false).unwrap();
+        assert_eq!(
+            idle.attempted, 0,
+            "a reported wake failure must not spin drains"
+        );
+        assert!(idle.errors.is_empty());
+        assert!(!idle.rearm);
 
         // State is authoritative and NOT rolled back:
         let stats = source.stats().unwrap();
         assert_eq!(stats.revision, 1);
         assert_eq!(stats.accepted_bytes, 6);
         assert_eq!(source.snapshot().unwrap().text(), "hello\n");
+    }
+
+    #[test]
+    fn stale_source_wake_error_is_dropped_after_subscriber_membership_ends() {
+        let environment = TuiEnvironment::new();
+        let failed = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let healthy = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        let funnel = HostContentFunnel::plain(TextWrapMode::Word);
+
+        for host in [&failed, &healthy] {
+            let port = host.create_content_port(ContentFamily::Text).unwrap();
+            let connector = port.connect(&source, funnel).unwrap();
+            connector.activate().unwrap();
+            host.set_desired_view(vf::content_host(port.id()).unwrap())
+                .unwrap();
+            host.flush_pending_hosts(32, true).unwrap();
+        }
+        assert_eq!(source.subscriber_count(), 2);
+
+        let failed_inner = failed.inner.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = failed_inner.lock().unwrap();
+            panic!("deliberate membership-race host poison");
+        }));
+
+        let mutation = source.append_utf8(b"stale\n", &[], &[]).unwrap();
+        assert_eq!(mutation.revision, 1);
+        assert!(mutation.schedule_environment_drain);
+
+        // Dropping the poisoned host removes its Source membership before the
+        // healthy host drains.  Its weak error channel must not be retargeted
+        // or surfaced after the owner is gone.
+        drop(failed_inner);
+        drop(failed);
+        assert_eq!(source.subscriber_count(), 1);
+        let report = healthy.flush_pending_hosts(32, false).unwrap();
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|error| error.code != "SOURCE_WAKE_FAILED"),
+            "a stale failed-host channel must be discarded after membership ends"
+        );
+        assert!(
+            healthy
+                .screen_rows()
+                .iter()
+                .any(|row| row.contains("stale")),
+            "membership cleanup must not affect the healthy subscriber"
+        );
+        assert!(
+            !report.rearm,
+            "stale failure cleanup must not spin the drain"
+        );
+
+        healthy.close().unwrap();
+        source.dispose().unwrap();
     }
 
     #[test]

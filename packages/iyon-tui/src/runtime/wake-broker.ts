@@ -517,7 +517,7 @@ function toNativeError(error: RuntimeFrameErrorRecord): NativeHostDrainError {
 }
 
 function framePhase(value: string): FramePhase {
-  if (value === "structural" || value === "backend") return value;
+  if (value === "structural" || value === "content" || value === "backend") return value;
   return "frame";
 }
 
@@ -529,6 +529,7 @@ function frameCode(value: string): RuntimeFrameErrorCode {
     case "LAYOUT_DID_NOT_CONVERGE":
     case "INTERNAL_INVARIANT":
     case "RUNTIME_POISONED":
+    case "SOURCE_WAKE_FAILED":
     case "FRAME_PREPARATION_FAILED":
       return value;
     default:

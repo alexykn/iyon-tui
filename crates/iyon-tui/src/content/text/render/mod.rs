@@ -58,9 +58,19 @@ enum SemanticItemKey {
         page_ptr: usize,
         start: u32,
         len: u32,
+        /// Keep the source page alive while this persistent sequence entry is
+        /// retained. The pointer is only an efficient lookup key; without the
+        /// owner, eviction of `raw` could let the allocator reuse the address
+        /// for different source bytes while a sequence hit still returns the
+        /// old View.
+        owner: Arc<str>,
     },
     Block {
         block_ptr: usize,
+        /// A sequence entry can outlive the bounded block-lowering cache. Keep
+        /// the immutable identity owner with the address key so a later Block
+        /// allocation cannot alias a retained sequence hit.
+        owner: Block,
     },
 }
 
@@ -72,14 +82,23 @@ impl PartialEq for SemanticItemKey {
                     page_ptr: left_page,
                     start: left_start,
                     len: left_len,
+                    ..
                 },
                 Self::Raw {
                     page_ptr: right_page,
                     start: right_start,
                     len: right_len,
+                    ..
                 },
             ) => (left_page, left_start, left_len) == (right_page, right_start, right_len),
-            (Self::Block { block_ptr: left }, Self::Block { block_ptr: right }) => left == right,
+            (
+                Self::Block {
+                    block_ptr: left, ..
+                },
+                Self::Block {
+                    block_ptr: right, ..
+                },
+            ) => left == right,
             _ => false,
         }
     }
@@ -94,13 +113,14 @@ impl std::hash::Hash for SemanticItemKey {
                 page_ptr,
                 start,
                 len,
+                ..
             } => {
                 0u8.hash(state);
                 page_ptr.hash(state);
                 start.hash(state);
                 len.hash(state);
             }
-            Self::Block { block_ptr } => {
+            Self::Block { block_ptr, .. } => {
                 1u8.hash(state);
                 block_ptr.hash(state);
             }
@@ -522,9 +542,11 @@ fn semantic_item_key(content: &TextContent) -> SemanticItemKey {
             page_ptr: Arc::as_ptr(raw.page()) as *const () as usize,
             start: raw.page_start(),
             len: raw.len() as u32,
+            owner: Arc::clone(raw.page()),
         },
         TextContent::Block(block) => SemanticItemKey::Block {
             block_ptr: block.identity_ptr(),
+            owner: block.clone(),
         },
     }
 }

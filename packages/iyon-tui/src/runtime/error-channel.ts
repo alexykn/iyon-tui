@@ -1,6 +1,6 @@
 import { TuiError } from "../api/errors.ts";
 
-export type FramePhase = "structural" | "frame" | "backend";
+export type FramePhase = "structural" | "content" | "frame" | "backend";
 
 export type RuntimeFrameErrorCode =
   | "FRAME_PREPARATION_FAILED"
@@ -9,7 +9,8 @@ export type RuntimeFrameErrorCode =
   | "SURFACE_DESYNCHRONIZED"
   | "LAYOUT_DID_NOT_CONVERGE"
   | "INTERNAL_INVARIANT"
-  | "RUNTIME_POISONED";
+  | "RUNTIME_POISONED"
+  | "SOURCE_WAKE_FAILED";
 
 /** Structured native failure retained until an explicit barrier observes it. */
 export interface RuntimeFrameErrorRecord {

@@ -1,4 +1,4 @@
-use super::{Renderer, TextRenderer};
+use super::{Renderer, SemanticItemKey, TextRenderer};
 use crate::content::text::{
     Alignment, Annotations, Block, CodeBlock, FormatId, HeadingLevel, Image, Inline, InlineContent,
     LanguageId, LinkTarget, List, ListItem, ListMarker, LiteralText, Mark, MarkSet,
@@ -598,6 +598,61 @@ fn semantic_append_updates_only_the_tail_of_the_persistent_sequence() {
             &appended_column.children[index].view,
         ));
     }
+}
+
+#[test]
+fn semantic_sequence_keys_retain_identity_owners_across_lowering_eviction() {
+    let renderer = TextRenderer::default();
+    let block = Block::paragraph("retained block");
+    let raw = crate::RawText::new("retained raw");
+    let block_ptr = block.identity_ptr();
+    let raw_ptr = std::sync::Arc::as_ptr(raw.page()) as *const () as usize;
+
+    renderer.lower_semantic_iter(
+        [
+            TextContent::block(block.clone()),
+            TextContent::from(raw.clone()),
+        ]
+        .iter(),
+    );
+
+    // Force the separate block/raw lowering caches through their bounded
+    // eviction points while the semantic sequence remains retained. A
+    // sequence hit must still be collision-safe after the original caller
+    // drops both source values.
+    for index in 0..1_024 {
+        let block = Block::paragraph(format!("evicted block {index}"));
+        let raw = crate::RawText::new(format!("evicted raw {index}"));
+        let _ = renderer.render_block(&block);
+        renderer.render(&TextContent::from(raw));
+    }
+    drop(block);
+    drop(raw);
+
+    let cache = renderer.lowering_cache.lock().unwrap();
+    let entry = cache
+        .sequences
+        .first()
+        .expect("the semantic sequence remains resident");
+    let Some(SemanticItemKey::Block {
+        block_ptr: cached,
+        owner,
+    }) = entry.items.get(0)
+    else {
+        panic!("the first semantic key must retain its Block owner");
+    };
+    assert_eq!(*cached, block_ptr);
+    assert_eq!(owner.identity_ptr(), block_ptr);
+    let Some(SemanticItemKey::Raw {
+        page_ptr: cached,
+        owner,
+        ..
+    }) = entry.items.get(1)
+    else {
+        panic!("the second semantic key must retain its source-page owner");
+    };
+    assert_eq!(*cached, raw_ptr);
+    assert_eq!(std::sync::Arc::as_ptr(owner) as *const () as usize, raw_ptr);
 }
 
 #[test]

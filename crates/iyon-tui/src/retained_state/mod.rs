@@ -7,9 +7,9 @@ mod capabilities;
 mod capture;
 mod damage;
 mod effects;
-mod geometry;
+pub(crate) mod geometry;
 mod occurrence;
-mod presentation;
+pub(crate) mod presentation;
 mod record;
 mod registry;
 

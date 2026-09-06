@@ -1,5 +1,0 @@
-error[E0425]: cannot find value `append_only_text_stable_frontier` in module `iyon_tui::stream`
- --> tests/ui/fail/root_append_frontier.rs:2:31
-  |
-2 |     let _ = iyon_tui::stream::append_only_text_stable_frontier;
-  |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in `iyon_tui::stream`

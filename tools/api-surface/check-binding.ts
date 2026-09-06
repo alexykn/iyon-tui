@@ -10,6 +10,7 @@ const NATIVE_SRC = join(ROOT, "crates/iyon-tui-native/src");
 const CORE_LIB = join(ROOT, "crates/iyon-tui/src/lib.rs");
 const CORE_MANIFEST = join(ROOT, "crates/iyon-tui/Cargo.toml");
 const BINDING = join(ROOT, "crates/iyon-tui/src/binding/mod.rs");
+const ROOT_ALLOWED_PUBLIC_MODULES = new Set(["binding", "perf_bench"]);
 
 // blend of §5.3 lanes; the check compares sets, order is documentary.
 const BLESSED_BINDING = new Set([
@@ -112,10 +113,35 @@ if (forbiddenAuthoring.length > 0) {
   pass("binding-no-authoring-names", "removed Rust authoring traits/renderers are not exported");
 }
 
-// 3. Forbidden authoring posture on the core crate.
+// 3. The unsupported binding is the only public runtime seam. The one
+// feature-gated benchmark module is an explicit tooling exception: it is
+// hidden from documentation and is not an authoring API. Keeping this check on the
+// source root (rather than only on the mapping snapshot) makes a newly added
+// `pub use` or public semantic module fail immediately.
 const lib = readFileSync(CORE_LIB, "utf8");
 const manifest = readFileSync(CORE_MANIFEST, "utf8");
 const posture: string[] = [];
+const leakedRootUses = [...lib.matchAll(/^\s*pub\s+use\b[^\n]*/gm)].map((m) => m[0]!.trim());
+if (leakedRootUses.length > 0) {
+  posture.push(`crate root publishes unsupported re-exports: ${leakedRootUses.join("; ")}`);
+}
+for (const match of lib.matchAll(/^\s*pub\s+mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/gm)) {
+  const name = match[1]!;
+  if (!ROOT_ALLOWED_PUBLIC_MODULES.has(name)) {
+    posture.push(`crate root publishes unsupported module ${name}`);
+    continue;
+  }
+  if (name !== "binding") {
+    const declarationStart = match.index ?? 0;
+    const context = lib.slice(Math.max(0, declarationStart - 160), declarationStart);
+    if (!/#\[\s*doc\s*\(\s*hidden\s*\)\s*\]/u.test(context)) {
+      posture.push(`internal tooling module ${name} is not #[doc(hidden)]`);
+    }
+    if (name === "perf_bench" && !/#\[\s*cfg\(\s*feature\s*=\s*"perf-counters"\s*\)\s*\]/u.test(context)) {
+      posture.push("internal tooling module perf_bench is not feature-gated");
+    }
+  }
+}
 if (/(^|\n)\s*pub\s+mod\s+prelude\b/.test(lib)) posture.push("pub mod prelude is still offered");
 if (!/^\s*publish\s*=\s*false\s*$/m.test(manifest)) posture.push("core manifest is not publish = false");
 if (/pub\s+use\s+(?:crate::|self::)?binding::/.test(lib)) posture.push("binding is re-exported wholesale at the crate root");

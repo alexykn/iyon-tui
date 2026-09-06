@@ -188,7 +188,7 @@ impl Projector<TextContent> for MarkdownProjector {
             let domain = RawDomain::from_spans(&input.spans()[start..index])?;
             let domain_closed = input.is_sealed() || index < input.spans().len();
             let mut parsed = self.parse_domain(&domain, domain_closed)?;
-            if !input.is_sealed() && has_open_reference_definition_prefix(domain.text()) {
+            if !input.is_sealed() && domain.has_open_reference_definition_prefix()? {
                 parsed.unstable_from = Some(
                     parsed
                         .unstable_from
@@ -1267,14 +1267,6 @@ impl<'a> Builder<'a> {
             .map_err(TextProjectionError::from)
             .map_err(Into::into)
     }
-}
-
-fn has_open_reference_definition_prefix(text: &str) -> bool {
-    if text.ends_with('\n') {
-        return false;
-    }
-    let line = text.rsplit('\n').next().unwrap_or(text).trim_start();
-    line.starts_with('[')
 }
 
 // A GFM table is still open while the following line could be another row.

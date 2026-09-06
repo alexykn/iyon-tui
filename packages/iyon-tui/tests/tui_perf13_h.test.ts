@@ -14,6 +14,22 @@ async function openContentHost(source: TextStreamSource) {
   return { tui, port };
 }
 
+test(`${PERF13H} returns the accepted direct-FFI revision and wake hint`, async () => {
+  const source = TextStreamSource.create();
+  const { tui } = await openContentHost(source);
+  try {
+    const mutation = source.append("ffi wake\n");
+    expect(mutation.revision).toBe(1n);
+    expect(mutation.environmentWakeEpoch).toBeGreaterThan(0n);
+    expect(mutation.scheduleEnvironmentDrain).toBe(true);
+    tui.flush();
+    expect(tui.screenRows().join("\n")).toContain("ffi wake");
+  } finally {
+    tui.close();
+    source.dispose();
+  }
+});
+
 test(`${PERF13H} releases every shared Source subscription on multi-host teardown`, async () => {
   const source = TextStreamSource.create();
   const hosts: Array<Awaited<ReturnType<typeof openContentHost>>> = [];

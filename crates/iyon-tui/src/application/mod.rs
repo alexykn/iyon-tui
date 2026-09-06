@@ -7,14 +7,14 @@
 
 mod app;
 #[cfg(feature = "native-host")]
-mod content;
+pub(crate) mod content;
 mod context;
 #[cfg(feature = "native-host")]
-mod environment;
+pub(crate) mod environment;
 mod error;
 mod handle;
 #[cfg(feature = "native-host")]
-mod host;
+pub(crate) mod host;
 mod input;
 mod kernel;
 mod run;
@@ -22,7 +22,7 @@ mod run;
 mod source_store;
 mod timer;
 #[cfg(feature = "native-host")]
-mod view_state;
+pub(crate) mod view_state;
 
 #[cfg(test)]
 mod tests;

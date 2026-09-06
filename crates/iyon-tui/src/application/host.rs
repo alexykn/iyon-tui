@@ -1614,6 +1614,18 @@ impl TuiHost {
             .map(|mut inner| inner.fail_next_frame = Some(diagnostic.into()))
     }
 
+    /// Poisons this host's owner lock for cross-crate failure-injection tests.
+    /// The hook is available only to the in-tree test-util feature and never
+    /// crosses the normal native or TypeScript host surface.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn poison_lock_for_test(&self) {
+        let inner = Arc::clone(&self.inner);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = inner.lock().expect("host must be healthy before poisoning");
+            panic!("intentional host lock poisoning for test");
+        }));
+    }
+
     #[must_use]
     pub fn is_headless(&self) -> bool {
         self.lock().map_or(true, |inner| inner.headless)
@@ -1749,10 +1761,25 @@ impl HostInner {
     }
 
     fn clear_in_flight_state_bindings(&mut self) {
+        let candidate_present = self.candidate_frame.is_some();
+        let candidate_shape_matches = candidate_present == self.candidate_epoch.is_some()
+            && candidate_present == self.candidate_structural_revision.is_some()
+            && candidate_present == self.candidate_content_dirty_epoch.is_some()
+            && candidate_present == self.candidate_content_commit.is_some()
+            && candidate_present == self.candidate_state_commit.is_some();
+        if !candidate_shape_matches {
+            panic!("candidate frame and commit metadata must be present together");
+        }
+        // The initial real-terminal bootstrap receipt has no candidate frame
+        // or state plan. Its failed receipt still reaches this cleanup path,
+        // but there is no in-flight state to clear.
+        if !candidate_present {
+            return;
+        }
         let prepared = self
             .candidate_state_commit
             .as_ref()
-            .expect("candidate state commit must exist while clearing in-flight state");
+            .expect("candidate state commit must exist for a candidate frame");
         self.view_states
             .clear_in_flight_prepared(&prepared.in_flight_ids);
     }
@@ -2032,7 +2059,17 @@ impl HostInner {
                     .candidate_content_commit
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("missing candidate content commit"))?;
-                self.content.commit_prepared(content_commit)?
+                match self.content.commit_prepared(content_commit) {
+                    Ok(deferred_source_cleanup) => deferred_source_cleanup,
+                    Err(error) => {
+                        // Preserve the failed candidate's coordinates for the
+                        // error channel even if newer desired work is
+                        // accepted before the explicit retry.
+                        self.failed_attempt =
+                            Some((candidate_epoch, candidate_structural_revision));
+                        return Err(error);
+                    }
+                }
             };
             let candidate = self
                 .candidate_frame
@@ -2088,6 +2125,43 @@ impl HostInner {
         }
     }
 
+    /// Reconciles a candidate whose backend receipt has already completed
+    /// before any newer dirty work is advanced or prepared.  Commit failures
+    /// intentionally retain the exact candidate so an explicit retry can
+    /// rerun its preflight against the same state/content/frontier plan.
+    fn retry_existing_candidate(&mut self) -> Result<Option<HostFlushOutcome>> {
+        let candidate_present = self.candidate_frame.is_some();
+        let candidate_shape_matches = candidate_present == self.candidate_epoch.is_some()
+            && candidate_present == self.candidate_structural_revision.is_some()
+            && candidate_present == self.candidate_content_dirty_epoch.is_some()
+            && candidate_present == self.candidate_content_commit.is_some()
+            && candidate_present == self.candidate_state_commit.is_some();
+        if !candidate_shape_matches {
+            return Err(anyhow::anyhow!(
+                "candidate frame and commit metadata must be present together"
+            ));
+        }
+
+        if self.presentation.is_some() {
+            let outcome = self.poll_presentation()?;
+            if outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.committed || outcome.waiting_for_presentation)
+            {
+                return Ok(outcome);
+            }
+        }
+        if self.candidate_frame.is_some() {
+            if self.frame_pending {
+                return Err(anyhow::anyhow!(
+                    "candidate frame is pending backend submission"
+                ));
+            }
+            return self.commit_frame().map(Some);
+        }
+        Ok(None)
+    }
+
     fn note_physical_sync_failure(&mut self, error: &anyhow::Error) {
         if error
             .downcast_ref::<super::environment::HostAttemptError>()
@@ -2098,6 +2172,10 @@ impl HostInner {
     }
 
     fn discard_candidate_frame(&mut self) {
+        // Validate the candidate shape before clearing any ownership.  The
+        // absent/absent pair is the legitimate initial bootstrap state;
+        // every other partial pair is an internal invariant failure.
+        self.clear_in_flight_state_bindings();
         self.content.abort_candidate();
         self.candidate_frame = None;
         self.candidate_epoch = None;
@@ -2105,7 +2183,6 @@ impl HostInner {
         self.candidate_content_commit = None;
         self.candidate_content_dirty_epoch = None;
         self.frame_pending = false;
-        self.clear_in_flight_state_bindings();
         self.candidate_state_commit = None;
         self.running.host_abort_content_candidate();
     }
@@ -2177,6 +2254,18 @@ impl HostInner {
             // and blocked by the environment rather than requeued forever.
             self.ensure_pending()?;
         }
+
+        // A completed receipt with an uncommitted candidate is an older
+        // accepted frame, not a fresh preparation opportunity. Reconcile it
+        // before advancing newer content/state work: beginning a new
+        // projection pass would clear or overwrite the candidate and could
+        // expose newer desired data through the older receipt.
+        if let Some(outcome) = self.retry_existing_candidate()? {
+            if outcome.committed || outcome.waiting_for_presentation {
+                return Ok(outcome);
+            }
+        }
+
         self.failed_attempt = None;
         #[cfg(test)]
         if let Some(diagnostic) = self.fail_next_frame.take() {
@@ -2348,7 +2437,10 @@ mod tests {
 
     use super::super::environment::TuiEnvironment;
     use super::TuiHost;
-    use crate::{ColorSpec, ViewStatePresentationPatch, retained_state::StateFrameView};
+    use crate::{
+        ColorSpec, Insets, ViewStateGeometryPatch, ViewStatePresentationPatch,
+        retained_state::StateFrameView,
+    };
 
     #[test]
     fn desired_revision_waits_for_a_successful_frame_barrier() {
@@ -2430,6 +2522,78 @@ mod tests {
                 .as_deref()
                 == Some("ansi:6")
         }));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn structural_publication_invalidates_retained_state_dependency_paths() {
+        let host = TuiHost::open(20, 8, true).unwrap();
+        let state = host.create_view_state().unwrap();
+        let child = vf::text("child")
+            .native_with_state_attachment(state.state_id())
+            .unwrap();
+        let stable = vf::column(vec![child], 0);
+        host.set_desired_view(vf::column(vec![stable.clone(), vf::text("before")], 0))
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let mut patch = ViewStateGeometryPatch::default();
+        patch.padding = Some(Insets::all(1));
+        state.set_geometry(&patch).unwrap();
+
+        // Publishing a new root in the same pending epoch used to clear the
+        // state dirty worklist while retaining the stable ancestor's cached
+        // measurement. The fresh suffix makes this the exact structural
+        // publication path rather than a state-only repaint.
+        host.set_desired_view(vf::column(vec![stable, vf::text("after")], 0))
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let child_row = host
+            .screen_rows()
+            .into_iter()
+            .find(|row| row.contains("child"))
+            .expect("state-attached child remains visible");
+        assert_eq!(
+            child_row.find("child"),
+            Some(1),
+            "the retained state geometry must survive the root publication"
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn component_slot_replacement_carries_captured_state_versions() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let state = host.create_view_state().unwrap();
+        let slot = host.create_view_slot(vf::text("old")).unwrap();
+        let slot_view = vf::native_component(slot.component_id().unwrap());
+        let mut patch = ViewStatePresentationPatch::default();
+        patch.foreground = Some(Some(ColorSpec::ansi(2)));
+        state.set_presentation(&patch).unwrap();
+
+        host.set_desired_view(slot_view).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        slot.set_view(
+            vf::text("new")
+                .native_with_state_attachment(state.state_id())
+                .unwrap(),
+        )
+        .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let new_row = host
+            .screen_rows()
+            .iter()
+            .position(|row| row.contains("new"))
+            .expect("replacement view is visible");
+        assert_eq!(
+            host.style_at(new_row as u16, 0)
+                .and_then(|style| style.foreground),
+            Some("ansi:2".to_owned()),
+            "incremental component replacement must preserve the captured state"
+        );
         host.close().unwrap();
     }
 
@@ -2640,6 +2804,47 @@ mod tests {
     }
 
     #[test]
+    fn failed_bootstrap_receipt_reports_backend_error_without_candidate_state() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let (sender, receiver) = oneshot::channel::<Result<(), anyhow::Error>>();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            // Model a real backend bootstrap receipt: the initial frame is
+            // submitted directly, so no candidate frame or state commit is
+            // installed before the receipt is observed.
+            inner.frame_pending = false;
+            inner.presentation = Some(receiver);
+            inner.mark_pending().unwrap();
+        }
+        sender
+            .send(Err(anyhow::anyhow!(
+                "simulated bootstrap presentation failure"
+            )))
+            .unwrap();
+
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code, "BACKEND_IO_FAILED");
+        assert_eq!(report.errors[0].phase, "backend");
+        assert!(
+            report.errors[0]
+                .diagnostic
+                .contains("simulated bootstrap presentation failure")
+        );
+        assert!(host.inner.lock().unwrap().candidate_state_commit.is_none());
+
+        // The failed bootstrap is retryable through the normal explicit
+        // barrier and no candidate-shape panic occurs on either path.
+        let retried = host.flush_pending_hosts(8, true).unwrap();
+        assert!(retried.errors.is_empty());
+        assert_eq!(
+            host.epochs().unwrap().pending_epoch,
+            host.epochs().unwrap().committed_epoch
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
     fn poisoned_content_commit_keeps_state_content_and_frame_authority_unchanged() {
         let environment = TuiEnvironment::new();
         let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
@@ -2734,6 +2939,13 @@ mod tests {
             "visible state must remain bound after poison"
         );
 
+        // A Source wake also encounters the poisoned Connector while the old
+        // candidate is retained. Repair it, then accept newer structural,
+        // state, and Source work. The next flush must reconcile the old
+        // candidate first rather than beginning a new preparation pass over
+        // it.
+        let poisoned_wake = source.append_utf8(b"-poisoned-wake", &[], &[]).unwrap();
+        assert!(poisoned_wake.schedule_environment_drain);
         {
             let inner = host.inner.lock().unwrap();
             inner
@@ -2741,11 +2953,51 @@ mod tests {
                 .clear_connector_poison_for_test(connector_id)
                 .unwrap();
         }
-        host.flush_pending_hosts(8, true).unwrap();
+        let newer_state = host.create_view_state().unwrap();
+        let newer_content = vf::content_host(port.id())
+            .unwrap()
+            .native_with_state_attachment(newer_state.state_id())
+            .unwrap();
+        let newer_body = vf::column(vec![vf::text("new-root"), newer_content], 0);
+        host.set_desired_view(newer_body).unwrap();
+        let mut newer_patch = ViewStatePresentationPatch::default();
+        newer_patch.foreground = Some(Some(ColorSpec::ansi(6)));
+        newer_state.set_presentation(&newer_patch).unwrap();
+        source.append_utf8(b"-newer", &[], &[]).unwrap();
+
+        let old_retry = host.flush_pending_hosts(8, true).unwrap();
+        assert!(
+            old_retry
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
+        );
         assert!(
             host.screen_rows()
                 .iter()
                 .any(|row| row.contains("before-new"))
+        );
+
+        let pending_after_old = host.epochs().unwrap();
+        assert!(
+            pending_after_old.pending_epoch > pending_after_old.committed_epoch,
+            "newer desired/state/Source work must remain pending after old retry"
+        );
+
+        let newer = host.flush_pending_hosts(8, true).unwrap();
+        assert!(newer.errors.is_empty());
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("new-root")),
+            "newer desired root must be prepared after the old candidate commits"
+        );
+        let settled = host.epochs().unwrap();
+        assert_eq!(settled.pending_epoch, settled.committed_epoch);
+        assert_eq!(
+            connector.status().unwrap().projected_source_revision,
+            Some(4),
+            "newer Source work must be projected after the retained candidate retry"
         );
         host.close().unwrap();
         source.dispose().unwrap();
@@ -3107,23 +3359,33 @@ mod tests {
         // Source post-acceptance wake failure (§9.6). The poisoned subscriber
         // is woken last, so the healthy host is already marked pending when
         // the failure surfaces. The installed revision stays authoritative
-        // and observable, and the reported error carries the accepted
-        // revision instead of an ambiguous ordinary rejection that would
-        // invite a duplicating retry.
+        // and observable, and the environment report carries the failed
+        // host diagnostic instead of an ambiguous ordinary rejection that
+        // would invite a duplicating retry.
         let (first, second, source) = mounted_subscribed_pair();
+        let second_host_id = second.epochs().unwrap().host_id;
         poison_host(&second);
         let revision_before = source.snapshot().unwrap().revision;
         let epoch_before = first.epochs().unwrap().pending_epoch;
 
-        let result = source.append_utf8(b"wake-auth\n", &[], &[]);
-        let message = format!("{:?}", result.unwrap_err());
+        let mutation = source.append_utf8(b"wake-auth\n", &[], &[]).unwrap();
+        assert_eq!(mutation.revision, revision_before + 1);
+        assert!(mutation.schedule_environment_drain);
+
+        let report = first.flush_pending_hosts(8, false).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.host_id == second_host_id
+                && error.code == "SOURCE_WAKE_FAILED"
+                && error
+                    .diagnostic
+                    .contains(&format!("revision {}", revision_before + 1))
+        }));
         assert!(
-            message.contains("SOURCE_WAKE_FAILED"),
-            "wake failure must report as wake failure, got: {message}"
-        );
-        assert!(
-            message.contains(&format!("revision {}", revision_before + 1)),
-            "wake failure must carry the accepted revision, got: {message}"
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == first.epochs().unwrap().host_id),
+            "healthy host must continue through the failed subscriber wake"
         );
 
         let snapshot = source.snapshot().unwrap();
@@ -3152,19 +3414,29 @@ mod tests {
         // woken first: every remaining host must still be woken, and the
         // failure still reports the accepted revision.
         let (first, second, source) = mounted_subscribed_pair();
+        let first_host_id = first.epochs().unwrap().host_id;
         poison_host(&first);
         let revision_before = source.snapshot().unwrap().revision;
         let epoch_before = second.epochs().unwrap().pending_epoch;
 
-        let result = source.append_utf8(b"wake-auth\n", &[], &[]);
-        let message = format!("{:?}", result.unwrap_err());
+        let mutation = source.append_utf8(b"wake-auth\n", &[], &[]).unwrap();
+        assert_eq!(mutation.revision, revision_before + 1);
+        assert!(mutation.schedule_environment_drain);
+
+        let report = second.flush_pending_hosts(8, false).unwrap();
+        assert!(report.errors.iter().any(|error| {
+            error.host_id == first_host_id
+                && error.code == "SOURCE_WAKE_FAILED"
+                && error
+                    .diagnostic
+                    .contains(&format!("revision {}", revision_before + 1))
+        }));
         assert!(
-            message.contains("SOURCE_WAKE_FAILED"),
-            "wake failure must report as wake failure, got: {message}"
-        );
-        assert!(
-            message.contains(&format!("revision {}", revision_before + 1)),
-            "wake failure must carry the accepted revision, got: {message}"
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == second.epochs().unwrap().host_id),
+            "healthy host must continue after the first subscriber wake fails"
         );
 
         let snapshot = source.snapshot().unwrap();

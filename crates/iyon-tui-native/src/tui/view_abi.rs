@@ -1,4 +1,4 @@
-use super::NativeTuiHost;
+use super::{NativeTuiHost, view_state_schema};
 use crate::NativeError;
 use iyon_tui::binding::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
@@ -296,8 +296,6 @@ const STYLE_ATOM_REF_START: u32 = 0x6000_0001;
 const STYLE_ATOM_REF_LIMIT: u32 = 0x7000_0000;
 const STYLE_REF_START: u32 = 0x7000_0001;
 const STYLE_REF_LIMIT: u32 = BUILDER_REF_START;
-const STYLE_ATTRIBUTE_BITS: u32 = 0x3f;
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct PathKey {
     parent: u32,
@@ -3852,19 +3850,37 @@ fn style_from_bits(
     theme_atom_ref: u32,
 ) -> Result<StyleRef, u32> {
     if flags != 0
-        || attribute_present & !STYLE_ATTRIBUTE_BITS != 0
+        || attribute_present & !view_state_schema::presentation::TEXT_ATTR_MASK != 0
         || attribute_true & !attribute_present != 0
     {
         return Err(FAST_INVALID);
     }
     let mut local = StyleSpec::new();
     for (bit, attribute) in [
-        (1, TextAttribute::Bold),
-        (2, TextAttribute::Dim),
-        (4, TextAttribute::Italic),
-        (8, TextAttribute::Underline),
-        (16, TextAttribute::Reversed),
-        (32, TextAttribute::Strikethrough),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_BOLD,
+            TextAttribute::Bold,
+        ),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_DIM,
+            TextAttribute::Dim,
+        ),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_ITALIC,
+            TextAttribute::Italic,
+        ),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_UNDERLINE,
+            TextAttribute::Underline,
+        ),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_REVERSED,
+            TextAttribute::Reversed,
+        ),
+        (
+            view_state_schema::presentation::TEXT_ATTR_BIT_STRIKETHROUGH,
+            TextAttribute::Strikethrough,
+        ),
     ] {
         if attribute_present & bit != 0 {
             local = local.attribute(attribute, attribute_true & bit != 0);
@@ -3902,14 +3918,9 @@ fn parse_color_atom(value: &str) -> Result<ColorSpec, u32> {
             .map(ColorSpec::ansi)
             .map_err(|_| FAST_INVALID);
     }
-    if let Some(hex) = value.strip_prefix('#') {
-        if hex.len() != 6 {
-            return Err(FAST_INVALID);
-        }
-        let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| FAST_INVALID)?;
-        let g = u8::from_str_radix(&hex[2..4], 16).map_err(|_| FAST_INVALID)?;
-        let b = u8::from_str_radix(&hex[4..6], 16).map_err(|_| FAST_INVALID)?;
-        return Ok(ColorSpec::rgb(r, g, b));
+    match super::parse_rgb_hex(value).map_err(|_| FAST_INVALID)? {
+        Some((r, g, b)) => return Ok(ColorSpec::rgb(r, g, b)),
+        None => {}
     }
     let color = match value.to_ascii_lowercase().as_str() {
         "black" => AnsiColor::Black,

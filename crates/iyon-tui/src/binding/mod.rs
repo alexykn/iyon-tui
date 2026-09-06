@@ -16,6 +16,10 @@
 // → canonical retained nodes and persistent derivations.
 #[cfg(feature = "native-host")]
 pub use crate::content::diff::lower_diff_hunks;
+pub use crate::content::diff::{
+    DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange,
+};
+pub use crate::content::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
 pub use crate::presentation::api::grid::{GridCellSpec, GridTrack};
 pub use crate::presentation::api::style::{
     AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec, Insets,
@@ -48,34 +52,45 @@ pub use crate::presentation::binding::{
 pub use crate::presentation::ir::View;
 #[cfg(feature = "native-host")]
 pub use crate::presentation::ir::{RetainedPathStep, WeakView};
-pub use crate::{
-    DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, Theme,
-};
-pub use crate::{FormatId, LanguageId, SemanticTag, TextOrigin};
+pub use crate::theme::Theme;
 
 // STATE: validated property operations + retained state identity → canonical
 // sparse override records. Geometry/presentation patch vocabulary only;
 // effect classification stays inside the core.
 // CONTENT: validated borrowed bytes/records and immutable funnel config →
 // Source storage and Connector control.
-pub use crate::SmoothConfig;
+pub use crate::projection::SmoothConfig;
 
 // HOST: desired publication, barriers, and native control integration.
-pub use crate::{
-    History, HistoryLayout, Key, KeyStroke, Modifiers, Output, TextInput, TextPart, TextRole,
-    TextSelector,
-};
+pub use crate::content::text::{TextPart, TextRole, TextSelector};
+pub use crate::controls::TextInput;
+pub use crate::history::{History, HistoryLayout};
+pub use crate::interaction::{Key, KeyStroke, Modifiers};
+pub use crate::output::Output;
 // Native-host seam. These mirror the `native-host` gates on the crate root:
 // the native crate always enables the feature, while featureless core builds
 // must not see host integration vocabulary.
 #[cfg(feature = "native-host")]
-pub use crate::{
+pub use crate::application::content::{
     ContentAnnotationRecord, ContentDelivery, ContentFamily, ContentMutationResult,
-    GeometryAlignment, HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort,
-    HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, HostViewState,
-    TextFunnelKind, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost, ViewStateGeometryPatch,
-    ViewStateGeometryProperty, ViewStatePresentationPatch, ViewStatePresentationProperty,
-    ViewStateSizeMode, WakeDisposition,
+    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource, TextFunnelKind,
+    TextSourceKind, TextWrapMode,
+};
+#[cfg(feature = "native-host")]
+pub use crate::application::environment::{TuiEnvironment, WakeDisposition};
+#[cfg(feature = "native-host")]
+pub use crate::application::host::{
+    HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, TuiHost,
+};
+#[cfg(feature = "native-host")]
+pub use crate::application::view_state::HostViewState;
+#[cfg(feature = "native-host")]
+pub use crate::retained_state::geometry::{
+    GeometryAlignment, ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStateSizeMode,
+};
+#[cfg(feature = "native-host")]
+pub use crate::retained_state::presentation::{
+    ViewStatePresentationPatch, ViewStatePresentationProperty,
 };
 
 // Measurement seam. The native crate reports through these only; counters

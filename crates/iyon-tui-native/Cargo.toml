@@ -27,6 +27,11 @@ static_assertions.workspace = true
 [build-dependencies]
 napi-build = "2.4.1"
 
+[dev-dependencies]
+# Cross-crate direct-FFI failure tests need the core's test-only host poison
+# hook; the feature is not enabled for the shipped native artifact.
+iyon-tui = { workspace = true, features = ["native-host", "test-util"] }
+
 # Strictness is inherited from the workspace root: clippy pedantic and
 # cognitive complexity report as warnings on all targets. The unsafe FFI
 # boundary documents its contracts with `# Safety` sections instead of

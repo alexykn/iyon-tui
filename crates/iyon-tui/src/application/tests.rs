@@ -3,6 +3,7 @@ use std::{
     convert::Infallible,
     future::Future,
     rc::Rc,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -108,6 +109,46 @@ fn body(state: &State) -> View {
         children.push(View::component(ticking));
     }
     crate::presentation::factory::column(children, 0)
+}
+
+#[test]
+fn app_theme_cow_is_deferred_until_theme_mut() {
+    let now = Instant::now();
+    let app = App::new(
+        |_cx: &mut AppCx<'_, Action>| -> Result<(), TestError> { Ok(()) },
+        |_state: &mut (), action, cx| {
+            match action {
+                Action::First => assert!(cx.theme().color("deferred").is_none()),
+                Action::Second => {
+                    cx.theme_mut()
+                        .set_color("deferred", crate::ThemeColor::Indexed(1));
+                }
+                _ => {}
+            }
+            Ok(())
+        },
+        |_state: &()| crate::presentation::factory::spacer(0),
+    );
+    let handle = app.handle();
+    let mut running = start(app, now);
+    let shared_before = Arc::clone(running.theme_shared());
+    let pointer_before = Arc::as_ptr(running.theme_shared());
+
+    handle.send(Action::First).expect("read action is queued");
+    running.collect_external_pending();
+    running.advance_ready(now).expect("read action succeeds");
+    assert_eq!(Arc::as_ptr(running.theme_shared()), pointer_before);
+    assert!(Arc::ptr_eq(&shared_before, running.theme_shared()));
+
+    handle.send(Action::Second).expect("write action is queued");
+    running.collect_external_pending();
+    running.advance_ready(now).expect("write action succeeds");
+    assert_ne!(Arc::as_ptr(running.theme_shared()), pointer_before);
+    assert_eq!(shared_before.color("deferred"), None);
+    assert_eq!(
+        running.theme().color("deferred"),
+        Some(crate::ThemeColor::Indexed(1))
+    );
 }
 
 fn start<State, Action, Error, Init, Update, ViewFn>(

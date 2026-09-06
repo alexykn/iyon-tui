@@ -78,15 +78,12 @@ impl Projector<TextContent> for PlainTextProjector {
 fn literal_paragraph(domain: &RawDomain) -> Result<Block, TextProjectionError> {
     let mut inlines = Vec::new();
     let mut segment_start = 0;
-    for (offset, character) in domain.text().char_indices() {
-        if character != '\n' {
-            continue;
-        }
+    for offset in domain.newline_offsets() {
         if segment_start < offset {
             inlines.extend(exact_runs(domain, segment_start..offset)?);
         }
         inlines.push(Inline::break_(BreakKind::Hard));
-        segment_start = offset + character.len_utf8();
+        segment_start = offset + 1;
     }
     if segment_start < domain.len() {
         inlines.extend(exact_runs(domain, segment_start..domain.len())?);

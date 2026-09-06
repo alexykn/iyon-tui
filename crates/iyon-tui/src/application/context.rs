@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,7 @@ pub(crate) struct AppCxParts<'a, Action> {
     pub(crate) components: &'a mut ComponentRegistry,
     pub(crate) outputs: &'a mut OutputRouter<Action>,
     pub(crate) timers: &'a mut TimerQueue<Action>,
-    pub(crate) theme: &'a mut Theme,
+    pub(crate) theme: &'a mut Arc<Theme>,
     pub(crate) global_bindings: &'a mut GlobalBindings<Action>,
     pub(crate) paste_interceptors: &'a mut PasteInterceptors<Action>,
     pub(crate) deferred_pastes: &'a mut VecDeque<String>,
@@ -34,7 +35,7 @@ pub struct AppCx<'a, Action> {
     components: &'a mut ComponentRegistry,
     outputs: &'a mut OutputRouter<Action>,
     timers: &'a mut TimerQueue<Action>,
-    theme: &'a mut Theme,
+    theme: &'a mut Arc<Theme>,
     global_bindings: &'a mut GlobalBindings<Action>,
     paste_interceptors: &'a mut PasteInterceptors<Action>,
     deferred_pastes: &'a mut VecDeque<String>,
@@ -146,12 +147,12 @@ impl<'a, Action> AppCx<'a, Action> {
     /// Returns the active application theme.
     #[must_use]
     pub fn theme(&self) -> &Theme {
-        self.theme
+        self.theme.as_ref()
     }
 
     /// Returns mutable access to the active application theme.
     pub fn theme_mut(&mut self) -> &mut Theme {
-        self.theme
+        Arc::make_mut(self.theme)
     }
 
     /// Returns the driver's logical time for deterministic application policy.

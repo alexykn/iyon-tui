@@ -88,6 +88,19 @@ fn remove_content_environment(slot: u32) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn register_content_environment_for_test(environment: &TuiEnvironment) {
+    content_environments()
+        .lock()
+        .expect("test content environment registry must be healthy")
+        .insert(environment.environment_slot(), environment.clone());
+}
+
+#[cfg(test)]
+pub(crate) fn remove_content_environment_for_test(slot: u32) {
+    remove_content_environment(slot);
+}
+
 pub(crate) fn content_environment_for_identity(
     slot: u32,
     generation: u32,
@@ -1881,19 +1894,14 @@ pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
             crate::NativeError::invalid_input("ANSI color must fit in u8")
         })?));
     }
-    if let Some(value) = value.strip_prefix('#')
-        && value.len() == 6
-    {
-        let r = u8::from_str_radix(&value[0..2], 16).map_err(|_| {
-            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-        })?;
-        let g = u8::from_str_radix(&value[2..4], 16).map_err(|_| {
-            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-        })?;
-        let b = u8::from_str_radix(&value[4..6], 16).map_err(|_| {
-            crate::NativeError::invalid_input("RGB color must contain hexadecimal bytes")
-        })?;
-        return Ok(ColorSpec::rgb(r, g, b));
+    match parse_rgb_hex(value) {
+        Ok(Some((r, g, b))) => return Ok(ColorSpec::rgb(r, g, b)),
+        Err(()) => {
+            return Err(crate::NativeError::invalid_input(
+                "RGB color must contain hexadecimal bytes",
+            ));
+        }
+        Ok(None) => {}
     }
     let color = match value.to_ascii_lowercase().as_str() {
         "black" => AnsiColor::Black,
@@ -1919,6 +1927,25 @@ pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
         }
     };
     Ok(ColorSpec::named(color))
+}
+
+/// Decodes the six ASCII hexadecimal digits in an RGB color before any
+/// byte-indexed slicing. A non-ASCII six-byte payload (for example
+/// `#aé000`) is malformed input, not a valid UTF-8 boundary for a pair.
+pub(super) fn parse_rgb_hex(value: &str) -> std::result::Result<Option<(u8, u8, u8)>, ()> {
+    let Some(value) = value.strip_prefix('#') else {
+        return Ok(None);
+    };
+    if value.len() != 6 {
+        return Ok(None);
+    }
+    if !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(());
+    }
+    let r = u8::from_str_radix(&value[0..2], 16).map_err(|_| ())?;
+    let g = u8::from_str_radix(&value[2..4], 16).map_err(|_| ())?;
+    let b = u8::from_str_radix(&value[4..6], 16).map_err(|_| ())?;
+    Ok(Some((r, g, b)))
 }
 
 pub(super) fn text_attribute(value: &str) -> Option<TextAttribute> {

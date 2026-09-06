@@ -799,6 +799,30 @@ impl SceneHost {
         // index in invalidate_theme; clearing both caches here would
         // relayout/repaint every stable sibling on a narrow publication.
         if let Some(retained) = self.retained.as_ref() {
+            // A structural publication can arrive in the same pending epoch
+            // as a retained-state mutation. Parent cache entries do not carry
+            // every descendant state revision, so preserve clean siblings but
+            // evict each changed state's dependency path before the retained
+            // layout/state indexes below are discarded. Otherwise a stable
+            // ancestor reused by the replacement root can reintroduce the old
+            // descendant geometry or presentation.
+            let mut state_view_ids = HashSet::new();
+            for state_id in &self.invalidated_states {
+                if let Some(node_id) = retained.layout.tree.state_roots.get(state_id) {
+                    state_view_ids.extend(
+                        retained
+                            .layout
+                            .tree
+                            .path_to_root(*node_id)
+                            .into_iter()
+                            .map(|node| retained.layout.tree.node(node).view_id),
+                    );
+                }
+            }
+            if !state_view_ids.is_empty() {
+                self.layout_cache.invalidate_view_ids(&state_view_ids);
+                self.paint_cache.invalidate_view_ids(&state_view_ids);
+            }
             self.retained_content_dependencies.clear();
             for nodes in retained.layout.tree.content_roots.values() {
                 for node in nodes {
@@ -1497,7 +1521,6 @@ impl SceneHost {
                 self.state_only_refresh = false;
                 self.incremental_paint_history = false;
                 self.history_only_refresh = false;
-                self.full_paint_pending = false;
                 self.pending_damage = None;
                 #[cfg(test)]
                 {
@@ -2418,6 +2441,20 @@ fn apply_component_subtree_update(retained: &mut StableScene, update: PreparedCo
             topology_changed,
         );
     }
+    // Every resolved branch uses the same frame-demanded state coordinate
+    // space. Keep the branch not traversed above in sync as well; otherwise a
+    // later History projection could merge an older overlay and hide a state
+    // captured by this body replacement (or vice versa).
+    if history_component {
+        retained
+            .root
+            .body_scene
+            .overlay
+            .states
+            .clone_from(&subtree.overlay.states);
+    } else if let Some(history) = retained.root.history_scene.as_mut() {
+        history.overlay.states.clone_from(&subtree.overlay.states);
+    }
 }
 
 fn apply_component_subtree_update_to_scene(
@@ -2450,6 +2487,12 @@ fn apply_component_subtree_update_to_scene(
         .overlay
         .components
         .extend(subtree.overlay.components.clone());
+    // The subtree resolver captures the complete frame-demanded state map,
+    // not only attachments physically nested below this component. Replace
+    // the branch map with that exact candidate map: additive extension would
+    // retain state Arcs for attachments removed by earlier slot replacements.
+    // The caller synchronizes the untouched body/History branch as well.
+    scene.overlay.states.clone_from(&subtree.overlay.states);
     scene
         .capabilities
         .entries
@@ -2558,11 +2601,15 @@ impl<E: std::fmt::Debug + 'static> std::error::Error for SceneHostError<E> {}
 mod tests {
     use super::*;
     use crate::presentation::factory as vf;
+    #[cfg(feature = "native-host")]
+    use crate::retained_state::{StateCandidateOverlay, ViewStateSnapshot};
     use crate::{
         BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult, Key,
         KeyStroke, Scene, ScrollPane, StyleSelector, ThemeColor, View, backend::NativeHistorySink,
         component::ComponentRegistry, geometry::Size, physical::PhysicalRow,
     };
+    #[cfg(feature = "native-host")]
+    use std::sync::{Arc, Weak};
 
     #[derive(Debug)]
     struct LayoutAware {
@@ -3006,6 +3053,111 @@ mod tests {
         assert!(lines.iter().any(|line| line.starts_with("body-new")));
     }
 
+    #[cfg(feature = "native-host")]
+    #[test]
+    fn component_state_overlay_replaces_obsolete_demanded_entries_and_pins_old_candidates() {
+        fn stateful_view(id: u64, label: usize) -> View {
+            vf::text(format!("history-{label}"))
+                .native_with_state_attachment(id)
+                .expect("test state attachment must be valid")
+        }
+
+        let first_state = 70_001;
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(IndexedContentComponent {
+            view: stateful_view(first_state, 0),
+        });
+        let mut history = crate::History::new();
+        history
+            .push(View::component(handle))
+            .expect("history component must be accepted");
+        let scene = Scene::with_history(history, vf::text("body"));
+        let size = Size::new(24, 6);
+        let now = Instant::now();
+        let mut host = SceneHost::default();
+        let committed = HashMap::new();
+        let mut content = EmptyContentProvider;
+        let mut previous_owner: Option<StableScene> = None;
+        let mut previous_weak: Option<Weak<ViewStateSnapshot>> = None;
+
+        for iteration in 0..32_u64 {
+            let state_id = first_state + iteration;
+            if iteration > 0 {
+                registry
+                    .with_mut(handle, |component| {
+                        component.view = stateful_view(state_id, iteration as usize);
+                    })
+                    .unwrap();
+                host.invalidate_component(handle.id());
+            }
+
+            let snapshot = Arc::new(ViewStateSnapshot {
+                id: state_id,
+                revision: iteration + 1,
+                ..ViewStateSnapshot::default()
+            });
+            let snapshot_weak = Arc::downgrade(&snapshot);
+            let candidate = StateCandidateOverlay::new(
+                iteration,
+                vec![state_id],
+                HashMap::from([(state_id, Arc::clone(&snapshot))]),
+            );
+            let states = StateFrameView::new(&committed, &candidate);
+            let resolved = host
+                .resolve_stable_at_with_anchor::<()>(
+                    &scene,
+                    &mut registry,
+                    size,
+                    now,
+                    HistoryViewportAnchor::FollowEnd,
+                    &states,
+                    &mut content,
+                )
+                .unwrap();
+            let _frame = host.paint_with_content(resolved, &Theme::default(), &content);
+
+            let retained = host.retained.as_ref().expect("painted scene is retained");
+            assert_eq!(retained.root.scene.overlay.states.len(), 1);
+            assert_eq!(retained.root.body_scene.overlay.states.len(), 1);
+            let history_scene = retained
+                .root
+                .history_scene
+                .as_ref()
+                .expect("history scene remains retained");
+            assert_eq!(history_scene.overlay.states.len(), 1);
+            assert_eq!(
+                history_scene
+                    .overlay
+                    .state(state_id)
+                    .expect("current History state snapshot")
+                    .revision,
+                iteration + 1
+            );
+
+            if let (Some(old_owner), Some(old_weak)) = (previous_owner.take(), previous_weak.take())
+            {
+                assert!(
+                    old_weak.upgrade().is_some(),
+                    "the old captured version must survive while its old frame owner lives"
+                );
+                drop(old_owner);
+                assert!(
+                    old_weak.upgrade().is_none(),
+                    "obsolete state snapshots must not remain in the current retained maps"
+                );
+            }
+            previous_owner = host.retained.clone();
+            previous_weak = Some(snapshot_weak);
+        }
+
+        if let (Some(final_owner), Some(final_weak)) = (previous_owner.take(), previous_weak.take())
+        {
+            drop(final_owner);
+            host.clear_retained_views();
+            assert!(final_weak.upgrade().is_none());
+        }
+    }
+
     #[test]
     fn component_content_path_index_updates_same_and_switched_ports() {
         let mut registry = ComponentRegistry::new();
@@ -3339,6 +3491,86 @@ mod tests {
                 .screen_lines()
                 .iter()
                 .any(|line| line.starts_with('2'))
+        );
+    }
+
+    #[test]
+    fn content_refresh_preserves_a_pending_full_paint_theme_obligation() {
+        let mut registry = ComponentRegistry::new();
+        let scene = Scene::new(crate::presentation::factory::column(
+            vec![
+                crate::presentation::factory::foreground(
+                    vf::text("label"),
+                    ColorSpec::theme("label"),
+                ),
+                crate::presentation::factory::content_host(404)
+                    .expect("test ContentHost port must be positive"),
+            ],
+            0,
+        ));
+        let size = Size::new(16, 4);
+        let now = Instant::now();
+        let mut host = SceneHost::default();
+        let mut content = IndexedContentProvider {
+            revisions: HashMap::from([(404, 1)]),
+        };
+        let theme_one = Theme::new().with_color("label", ThemeColor::Indexed(1));
+        let theme_two = Theme::new().with_color("label", ThemeColor::Indexed(2));
+        let initial = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        let _ = host.paint_with_content(initial, &theme_one, &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+
+        content.revisions.insert(404, 2);
+        host.invalidate_content(ContentDirty::new(
+            404,
+            None,
+            crate::presentation::ContentDirtyReason::Presentation,
+        ));
+        host.invalidate_theme();
+        let refreshed = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        let frame = host.paint_with_content(refreshed, &theme_two, &content);
+        let label_row = frame
+            .screen_lines()
+            .iter()
+            .position(|line| line.contains("label"))
+            .expect("the themed label must be painted");
+        let label = frame
+            .surface
+            .row_cells(label_row as u16)
+            .iter()
+            .find(|cell| cell.grapheme.as_deref() == Some("l"))
+            .expect("the themed label must be painted");
+        assert_eq!(
+            label.style.foreground,
+            Some(crate::physical::PhysicalColor::Indexed(2)),
+            "a theme change must repaint clean siblings when content also refreshes"
+        );
+        assert!(
+            frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with('2')),
+            "the content paint update must remain visible"
         );
     }
 

@@ -379,10 +379,29 @@ fn validate_state_properties(document: &AbiDocument) -> Result<(), ValidationErr
                     domain, property.name, property.capability
                 ));
             }
-            if property.words > 8 || property.strings > 8 {
+            let expected_lanes = match property.value.as_str() {
+                "size_mode" | "u16" | "alignment" | "border_style" => (1, 0),
+                "insets" => (4, 0),
+                "edges" => (2, 0),
+                "color" => (0, 1),
+                "glyphs" => (0, 8),
+                "text_attrs" => (2, 0),
+                "style" => (2, 3),
+                // `property.value` was checked against `VALUES` above. Keep
+                // this arm explicit so a new value kind cannot accidentally
+                // bypass the lane-shape check while this validator is being
+                // updated.
+                other => unreachable!("validated state value kind {other}"),
+            };
+            if (property.words, property.strings) != expected_lanes {
                 return invalid(format!(
-                    "state property `{}.{}` lanes are too wide (words={}, strings={})",
-                    domain, property.name, property.words, property.strings
+                    "state property `{}.{}` has the wrong lane shape: expected words={}, strings={}, got words={}, strings={}",
+                    domain,
+                    property.name,
+                    expected_lanes.0,
+                    expected_lanes.1,
+                    property.words,
+                    property.strings
                 ));
             }
         }

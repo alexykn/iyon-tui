@@ -1,8 +1,14 @@
 /target
-/target-direct-ffi
+/target-*/
 /TUI_DOGFOOD.md
 node_modules/
 /iyon-smoke
+
+# Local qualification experiments and superseded draft (not canonical reports)
+/packages/iyon-tui/bench/l13_content_lanes.ts
+/packages/iyon-tui/bench/l13_source_workload.ts
+/packages/iyon-tui/bench/l13_view_state_workload.ts
+/reports/pre-v5-l1/L1-13-report.md
 
 # Bun / JavaScript build artifacts
 *.node

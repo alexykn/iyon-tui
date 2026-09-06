@@ -58,13 +58,13 @@ impl std::error::Error for RuntimeCause {}
 
 #[test]
 fn runtime_error_source_exposes_the_wrapped_top_level_cause() {
-    let error = super::error::RuntimeError::new(RuntimeCause);
+    let error = super::test_driver::RuntimeError::new(RuntimeCause);
     let source = std::error::Error::source(&error).expect("runtime source");
     assert_eq!(source.to_string(), "runtime cause");
     assert!(source.source().is_none());
 
     let output_error =
-        super::error::RuntimeError::new(crate::output::OutputDispatchError::TypeMismatch);
+        super::test_driver::RuntimeError::new(crate::output::OutputDispatchError::TypeMismatch);
     let source = std::error::Error::source(&output_error).expect("output source");
     assert!(
         source
@@ -256,16 +256,6 @@ impl NativeHistorySink for FakeBackend {
 }
 
 impl TerminalBackend for FakeBackend {
-    async fn next_event(&mut self) -> anyhow::Result<TerminalEvent> {
-        if self.event_error {
-            return Err(anyhow::anyhow!("fake event failure"));
-        }
-        self.events
-            .recv()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("fake terminal event source closed"))
-    }
-
     fn try_next_event(&mut self) -> anyhow::Result<Option<TerminalEvent>> {
         if self.event_error {
             return Err(anyhow::anyhow!("fake event failure"));
@@ -323,6 +313,18 @@ impl TerminalBackend for FakeBackend {
             return Err(anyhow::anyhow!("fake restore failure"));
         }
         Ok(())
+    }
+}
+
+impl super::test_driver::TestTerminalInput for FakeBackend {
+    async fn next_event(&mut self) -> anyhow::Result<TerminalEvent> {
+        if self.event_error {
+            return Err(anyhow::anyhow!("fake event failure"));
+        }
+        self.events
+            .recv()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("fake terminal event source closed"))
     }
 }
 
@@ -1059,7 +1061,7 @@ async fn production_runtime_processes_pre_run_actions_after_initial_frame() {
     handle.send(Action::Exit).unwrap();
     let (backend, control) = fake_backend();
 
-    let result = super::run::run_with_backend(app, backend).await;
+    let result = super::test_driver::run_with_backend(app, backend).await;
 
     assert!(result.is_ok());
     assert_eq!(updates.get(), 1);
@@ -1085,7 +1087,7 @@ async fn init_exit_skips_backend_factory() {
     let called = Rc::new(Cell::new(false));
     let called_by_factory = Rc::clone(&called);
     let (backend, _control) = fake_backend();
-    let result = super::run::run_with_backend_factory(app, move || {
+    let result = super::test_driver::run_with_backend_factory(app, move || {
         called_by_factory.set(true);
         Ok(backend)
     })
@@ -1115,7 +1117,7 @@ async fn app_handle_wakes_a_runtime_without_terminal_polling() {
     let handle = app.handle();
     let (backend, _control) = fake_backend();
 
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let producer = async move {
         tokio::task::yield_now().await;
         handle.send(Action::Exit).unwrap();
@@ -1151,7 +1153,7 @@ async fn production_runtime_wakes_on_mounted_component_tick() {
         |ticking: &ComponentHandle<Ticking>| View::component(*ticking),
     );
     let (backend, _control) = fake_backend();
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let clock = async {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(80)).await;
@@ -1184,7 +1186,7 @@ async fn production_runtime_yields_between_finite_action_batches() {
     );
     let (backend, control) = fake_backend();
 
-    super::run::run_with_backend(app, backend)
+    super::test_driver::run_with_backend(app, backend)
         .await
         .expect("finite runtime completes");
 
@@ -1225,7 +1227,7 @@ async fn buffered_terminal_input_is_serviced_between_action_batches() {
         |state: &usize| crate::presentation::factory::text(state.to_string()),
     );
     let (backend, control) = fake_backend();
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let producer = async move {
         tokio::task::yield_now().await;
         control
@@ -1276,7 +1278,7 @@ async fn input_updates_state_while_presentation_is_in_flight() {
     );
     let (mut backend, control) = fake_backend();
     backend.delay_presentations = true;
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let producer_control = control.clone();
     let producer = async move {
         while producer_control.report.borrow().draws < 1 {
@@ -1340,7 +1342,7 @@ async fn production_runtime_wakes_on_application_timer_deadline() {
         |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, _control) = fake_backend();
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let clock = async {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_millis(10)).await;
@@ -1367,7 +1369,7 @@ async fn production_runtime_uses_backend_viewport_after_resize_event() {
         |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, control) = fake_backend();
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let producer = async move {
         tokio::task::yield_now().await;
         control.viewport.set(Size::new(50, 12));
@@ -1418,7 +1420,7 @@ async fn init_forward_paste_routes_after_initial_mount_without_terminal_input() 
     );
     let (backend, control) = fake_backend();
 
-    super::run::run_with_backend(app, backend)
+    super::test_driver::run_with_backend(app, backend)
         .await
         .expect("init paste completes the application");
 
@@ -1461,7 +1463,7 @@ async fn production_paste_interceptor_forwards_without_reinterception() {
         |input: &ComponentHandle<TextInput>| View::component(*input),
     );
     let (backend, control) = fake_backend();
-    let runtime = super::run::run_with_backend(app, backend);
+    let runtime = super::test_driver::run_with_backend(app, backend);
     let producer = async move {
         tokio::task::yield_now().await;
         control
@@ -1491,8 +1493,11 @@ async fn normal_completion_preserves_restore_failure_as_runtime_error() {
     handle.send(Action::Exit).unwrap();
     let (mut backend, control) = fake_backend();
     backend.restore_error = true;
-    let result = super::run::run_with_backend(app, backend).await;
-    assert!(matches!(result, Err(crate::RunError::Runtime(_))));
+    let result = super::test_driver::run_with_backend(app, backend).await;
+    assert!(matches!(
+        result,
+        Err(super::test_driver::RunError::Runtime(_))
+    ));
     assert_eq!(control.report.borrow().restores, 1);
 }
 
@@ -1507,10 +1512,13 @@ async fn production_runtime_maps_backend_and_application_errors() {
     handle.send(Action::A).unwrap();
     let (mut backend, control) = fake_backend();
     backend.restore_error = true;
-    let application_error = super::run::run_with_backend(app, backend)
+    let application_error = super::test_driver::run_with_backend(app, backend)
         .await
         .expect_err("update error propagates");
-    assert!(matches!(application_error, crate::RunError::Application(_)));
+    assert!(matches!(
+        application_error,
+        super::test_driver::RunError::Application(_)
+    ));
     assert_eq!(control.report.borrow().restores, 1);
 
     let app = App::new(
@@ -1521,10 +1529,10 @@ async fn production_runtime_maps_backend_and_application_errors() {
     let (mut backend, control) = fake_backend();
     backend.event_error = true;
     backend.restore_error = true;
-    let runtime_error = super::run::run_with_backend(app, backend)
+    let runtime_error = super::test_driver::run_with_backend(app, backend)
         .await
         .expect_err("terminal error propagates");
-    let crate::RunError::Runtime(runtime_error) = runtime_error else {
+    let super::test_driver::RunError::Runtime(runtime_error) = runtime_error else {
         panic!("expected runtime error");
     };
     assert!(std::error::Error::source(&runtime_error).is_some());
@@ -1537,10 +1545,13 @@ async fn production_runtime_maps_backend_and_application_errors() {
     );
     let (mut backend, control) = fake_backend();
     backend.viewport_error = true;
-    let runtime_error = super::run::run_with_backend(app, backend)
+    let runtime_error = super::test_driver::run_with_backend(app, backend)
         .await
         .expect_err("frame preparation error propagates");
-    assert!(matches!(runtime_error, crate::RunError::Runtime(_)));
+    assert!(matches!(
+        runtime_error,
+        super::test_driver::RunError::Runtime(_)
+    ));
     assert_eq!(control.report.borrow().restores, 1);
 
     let app = App::new(
@@ -1550,10 +1561,13 @@ async fn production_runtime_maps_backend_and_application_errors() {
     );
     let (mut backend, control) = fake_backend();
     backend.draw_error = true;
-    let runtime_error = super::run::run_with_backend(app, backend)
+    let runtime_error = super::test_driver::run_with_backend(app, backend)
         .await
         .expect_err("draw error propagates");
-    assert!(matches!(runtime_error, crate::RunError::Runtime(_)));
+    assert!(matches!(
+        runtime_error,
+        super::test_driver::RunError::Runtime(_)
+    ));
     assert_eq!(control.report.borrow().restores, 1);
 }
 
@@ -1565,7 +1579,7 @@ async fn terminal_session_restores_when_run_future_is_dropped() {
         |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, control) = fake_backend();
-    let mut runtime = Box::pin(super::run::run_with_backend(app, backend));
+    let mut runtime = Box::pin(super::test_driver::run_with_backend(app, backend));
     let waker = std::task::Waker::noop();
     let mut context = Context::from_waker(waker);
     assert!(matches!(runtime.as_mut().poll(&mut context), Poll::Pending));
@@ -1818,7 +1832,7 @@ async fn production_runtime_preserves_native_history_in_its_backend() {
     handle.send(Action::Exit).unwrap();
     let (backend, control) = fake_backend();
 
-    super::run::run_with_backend(app, backend)
+    super::test_driver::run_with_backend(app, backend)
         .await
         .expect("runtime completes");
 

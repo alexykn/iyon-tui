@@ -2,7 +2,7 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::{History, Theme, View};
 
-use super::{context::AppCx, error::RunError, handle::AppHandle, kernel::RunningApp};
+use super::{context::AppCx, handle::AppHandle, kernel::RunningApp};
 
 /// A generic standalone application definition.
 ///
@@ -51,19 +51,6 @@ impl<State, Action, Error, Init, Update, ViewFn> App<State, Action, Error, Init,
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
-    }
-
-    /// Runs the application with the default terminal adapter.
-    ///
-    /// The future may remain single-threaded when State or Action is not
-    /// `Send`. Await it on a Tokio-compatible runtime.
-    pub async fn run(self) -> Result<(), RunError<Error>>
-    where
-        Init: FnOnce(&mut AppCx<'_, Action>) -> Result<State, Error>,
-        Update: FnMut(&mut State, Action, &mut AppCx<'_, Action>) -> Result<(), Error>,
-        ViewFn: Fn(&State) -> View,
-    {
-        super::run::run(self).await
     }
 
     /// Configures the one persistent root History owned by this application.

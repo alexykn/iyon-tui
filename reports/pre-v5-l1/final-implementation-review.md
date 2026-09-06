@@ -5,14 +5,14 @@
 - Remote fetched before review: `origin/main` = `90f19f5c9057ebb41fd1f8ffc73adbab05656cbc`.
 - Reviewed tip at start: `8aff2f8697cbd2106ad71ea3f8091a4b349e5e96` (`main`, 23 commits ahead).
 - User requests a personal parent review of the entire implementation, not only L1-13, and authorizes corrective changes. Luna implements confirmed fixes; the parent reviews their diffs and evidence.
-- Performance qualification is paused. Existing untracked benchmark fixtures, draft report, and target directories are preserved, not part of this committed review range.
-- Decision: the parent approves the F1–F17 corrective implementation after personal code review and focused verification. Full L1-13 acceptance under §19–21 remains open; performance qualification has not been resumed or waived.
+- The user subsequently authorized committing the corrections, feature-preserving size cleanup, then resumed performance/memory/platform qualification. Historical benchmark fixtures, draft report, and target directories are preserved; they are not automatically passing evidence.
+- Final decision: F1–F17 corrections are approved and committed as `313689e`; subsequent cleanup and qualification fixes are accepted for the owner's macOS arm64 use. The owner explicitly waived full-platform qualification as a delivery blocker. Parent acceptance of the measured local performance tradeoff and bounded simplification is documented in `post-cleanup-qualification.md`; this is not a claim that every original §19–21 target or smaller-overall expectation was met.
 
 ## Correction-pass decision
 
 The original review range remains `90f19f5..8aff2f8`. The checkout subsequently
 advanced through planning-documents commit `d199bf5` and instruction commit
-`5ffab4f`; neither replaces the implementation review baseline. Corrective code remains uncommitted. The final child
+`5ffab4f`; neither replaces the implementation review baseline. Corrective code was subsequently committed as `313689e`. The final corrective child
 timed out after saving its handoff; read-only same-protocol recovery confirmed
 its implementation and checks were finished. No completed stage was rerun.
 
@@ -41,7 +41,7 @@ Parent spot-checks on the corrective tree include:
 - wake/runtime tests: 11 passing, 55 expectations;
 - parser-generation mounted regression: 1 passing, 8 expectations;
 - retained-scene/cache tests and demanded-state ownership regression recorded in the review notes;
-- all nine relocated semantic test files are byte-for-byte identical to their prior files;
+- all nine relocated semantic test files are byte-for-byte identical across the corrective move (`5ffab4f` to `313689e`); earlier implementation edits since `90f19f5` are a separate reviewed range;
 - binding and ownership gates independently pass (124 binding exports; unchanged 44-value/97-type public TypeScript snapshot).
 
 Child evidence additionally records focused Source/native/parser/generator
@@ -49,11 +49,12 @@ checks, generated drift validation, and a final all-feature Rust library run
 with 719 passing tests and one ignored benchmark. Evidence is not a claim of
 unperformed platform or performance qualification.
 
-**Approval boundary:** the correction pass is approved; this is not full L1-13
-acceptance. The literal §19–21 performance, memory and platform evidence is
-incomplete and has not been waived. Historical reports below remain historical
-records, not substitutes for final qualification. The implementation is also
-not claimed to be smaller overall; the accounting below records that limit.
+**Historical approval boundary:** the correction pass alone did not establish
+full L1-13 acceptance. The subsequent scoped macOS acceptance is recorded in
+`post-cleanup-qualification.md`, including the owner's explicit platform
+decision. Historical reports below remain historical records, not substitutes
+for final qualification. The implementation is not claimed to be smaller
+overall; final accounting records that limit.
 
 ### Final same-artifact verification
 
@@ -99,20 +100,107 @@ it is not production-only LOC. The handoff's hoped-for overall size reduction
 has therefore **not been demonstrated**. No feature removal or future-v5
 redesign was undertaken to manufacture a lower count.
 
-### Remaining finalization work
+### Finalization disposition
 
-1. Resume or explicitly revise the paused §19 performance/memory qualification,
-   including the previously unwaived tiny-append regression and same-image
-   platform/profile matrix.
-2. Resolve the handoff's overall size/simplification expectation using honest
-   production/test/generated accounting; the metadata deletion is not evidence
-   that this expectation is satisfied.
-3. Publish final L1-13 acceptance only after those outstanding requirements are
-   satisfied or explicitly amended by the owner. The existing checkpoint and
-   untracked performance draft must not be relabeled as a passing final report.
+1. Local performance/memory qualification is complete for the documented
+   workloads, with small-append residuals separately accepted under the user's
+   delegation of acceptance judgment; they were not hidden by faster frames.
+2. Useful feature-preserving simplification is accepted. Overall baseline
+   shrinkage remains unproven and is not claimed. The final combined source
+   diff is +6 physical lines versus `313689e`, not the earlier cleanup-only
+   −117. Runtime classification is 690 Rust and 32 TypeScript lines smaller
+   than that corrective commit, including test-only reclassification.
+3. The owner explicitly made non-macOS qualification non-blocking. Final
+   macOS arm64 acceptance, measured artifacts, and limits are recorded in
+   `post-cleanup-qualification.md` and its evidence JSON. The historical
+   checkpoint/draft is preserved, not relabeled as passing.
 
-Corrective source changes have not been staged, committed, or pushed by this
-review pass. The user/external documentation commits are preserved.
+Corrective source changes were committed as `313689e` at the user's request;
+nothing was pushed. The user/external documentation commits are preserved.
+
+## Post-correction cleanup acceptance
+
+The parent accepts the bounded cleanup following `313689e`: dead private
+helpers and duplicate constants removed, owned Source descriptors moved rather
+than cloned during bulk construction, an unused TypeScript harness extractor
+deleted, and unsupported standalone Rust application entry points retired.
+The existing application test driver and error assertions remain in test-only
+support. The generic application kernel, native host input/terminal/History
+paths, receipt/deadline waits, semantic renderer, and public binding/TypeScript
+surfaces remain intact. This is not a future-v5 architecture rewrite.
+
+### Classified source accounting
+
+Physical source lines (including comments/blanks), with inline Rust test
+regions separated, generated output separate, and known benchmark/testing
+modules assigned to support:
+
+| Snapshot | Rust runtime | Rust generated | Rust test/support | TS runtime | TS generated | TS test/support |
+|---|---:|---:|---:|---:|---:|---:|
+| Original `90f19f5` | 47,802 | 6,612 | 24,886 | 16,476 | 466 | 3,815 |
+| Corrected `313689e` | 57,375 | 6,863 | 33,274 | 16,519 | 842 | 5,062 |
+| Accepted cleanup worktree | 56,585 | 6,863 | 33,979 | 16,487 | 842 | 5,062 |
+
+Scope: Rust `.rs` under `crates/` and TypeScript `.ts` under
+`packages/iyon-tui`, excluding preserved untracked historical qualification
+files; the new 477-line application test driver is included. TS scripts outside
+runtime/generated/support are a separate other category. This is a reviewed
+source classification, not a compiler-measured binary size or a complete
+repository LOC total. No generated or documentation deletion is counted as
+runtime savings.
+
+The cleanup's actual source diff is **574 additions / 691 deletions, net
+−117 lines**, including the new test-support file. Rust runtime textual changes
+are +26/−588 (net −562); another **228 unchanged lines move from runtime to
+test-only classification**, giving the runtime snapshot reduction of **790**.
+Rust test/support increases by 705 (477 textual plus those 228 transfers).
+TypeScript runtime decreases by 32. These transfers are not physical deletion.
+
+Against the original baseline, runtime source still grows by **8,783 Rust
+lines and 11 TypeScript lines**. Overall shrinkage is therefore **not
+demonstrated**. Parent acceptance covers the useful feature-preserving cleanup,
+not a claim that the handoff's literal smaller-overall expectation is met.
+Further arbitrary cuts would require a separate justified design decision;
+they are not a prerequisite to gathering the now-authorized qualification
+evidence.
+
+Accounting was reproduced with temporary scripts and reviewed region manifests
+under `/tmp/iyon-tui-loc-*`. Parent review caught and required correction of
+cfg-gated field and character-literal scanner errors before accepting these
+figures. The final scanner handles comments/strings/character literals and
+field boundaries; all 66 large test-region ranges were inspected. It is not
+a general Rust parser. The corrective move's nine identical-file hashes are
+recorded separately from earlier implementation edits.
+
+### Cleanup verification and handoff
+
+Parent-independent checks on the accepted source image:
+
+- `cargo test -p iyon-tui --lib --features native-host application::tests::`:
+  **36 passed**.
+- Ownership (81 mapped records), binding (124 exports), `cargo fmt --all --
+  --check`, and `git diff --check`: **passed**.
+- Child evidence additionally reports 605 default library tests, 714
+  native-host library tests, and 60 native tests passing; existing ignored
+  benchmarks remain ignored. Typecheck, generated ABI and declaration checks
+  passed. No new repository tests were added for cleanup.
+
+Parent logs: `/tmp/iyon-parent-size-application.log` and
+`/tmp/iyon-parent-size-final-*.log`. Detailed cleanup handoff and accounting
+are in the managed `size-cleanup.md` output of workflow
+`a8121576-161d-430a-ba79-6c4d6996492f`.
+
+The following qualification and static cleanup supersede this cleanup-only
+snapshot: final Rust runtime/test-support totals are 56,685/34,002, TS runtime
+remains 16,487, and generated counts are unchanged. Compared with `90f19f5`,
+runtime is still +8,883 Rust / +11 TypeScript lines. Final default addon:
+`86506ed3623aa1b1236b8541068cb2052a4dd282e5739ea9adfbfe5374f38238`.
+Parent independently passed Clippy, 21 Source tests, 22 native-facing Bun
+regressions (2,591 expectations), ownership/binding, formatting/diff, TypeScript
+lint and native smoke, then ran 20 alternating final-image timing pairs.
+See the qualification report for source/image hashes and phase-specific results.
+Cleanup and qualification remain uncommitted; the corrective commit is already
+saved. Nothing was pushed.
 
 ## Requirements and commit coverage
 
@@ -138,15 +226,20 @@ instruction update.
 | L1-10 | `86afe80` | §12 current Smooth policy, tick-only work, independent clocks and committed frontiers | reviewed; existing Smooth policy preserved; focused final-addon regressions pass |
 | L1-11 | `407b73f` | §13 cached lowering, captured tickets, viewport clipping and History receipts | reviewed; F7 cache-owner lifetime and captured content painting inspected |
 | L1-12 | `e4a5805` | §14 targeted invalidation, prepared promotion, pending epochs, wakes and failures | reviewed; F11–F15 receipt ordering, failure cleanup and invalidation corrected |
-| L1-13 | `8aff2f8` | §15/17 deletion census, controls, test migration and §21 line-by-line closure | corrective implementation approved; full §19–21 qualification remains open |
+| L1-13 | `8aff2f8` | §15/17 deletion census, controls, test migration and §21 line-by-line closure | accepted for owner-scoped macOS delivery; literal original all-platform/smaller-overall claims are not made |
 
 Cross-cutting checks: §18 behavior/failure matrix, actual generated/native
 artifacts and package profiles in §19.1/19.5, and honest evidence under §20.
-Timing/memory qualification under §19.2–19.4 remains paused. Deterministic
-algorithm/ownership requirements remain part of the implementation review;
-pausing benchmarks does not waive them.
+Timing/memory qualification was paused during corrective review and then
+resumed. Final evidence and explicit acceptance limits are recorded in
+`post-cleanup-qualification.md`. Deterministic algorithm/ownership requirements
+remained part of the implementation review throughout.
 
 ## Review plan
+
+The plan, detailed findings, and file census below preserve the corrective
+review's chronology. Their old scheduling/benchmark-pause language is
+superseded by the final decisions and qualification report above.
 
 1. Source storage, annotations, snapshots, UTF-8 and FFI lifetimes.
 2. State schema/transport, typed mutation, captured state and lifecycle.

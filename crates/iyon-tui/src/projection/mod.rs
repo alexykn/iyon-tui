@@ -17,7 +17,9 @@ mod migrated_tests;
 mod tests;
 
 pub use compose::{Then, ThenError};
-pub use projector::{Projector, ProjectorExt};
+pub use projector::Projector;
+#[cfg(test)]
+pub use projector::ProjectorExt;
 pub use smooth::{Smooth, SmoothConfig, SmoothConfigError};
 pub(crate) use validate::validate_projection;
 pub use validate::{

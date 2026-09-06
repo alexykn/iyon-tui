@@ -49,44 +49,36 @@ mod terminal;
 mod text;
 pub(crate) mod theme;
 
-#[cfg(feature = "native-host")]
-pub(crate) use application::{
-    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentDelivery, ContentFamily,
-    ContentMutationResult, HostCellStyle, HostCommit, HostContentConnector, HostContentFunnel,
-    HostContentPort, HostContentSource, HostContentSourceSnapshot, HostContentSourceStats,
-    HostDrainReport, HostEpochs, HostFrameError, HostHistory, HostScrollPane, HostTextInput,
-    HostViewSlot, HostViewState, RoutedOutput, TextFunnelKind, TextSourceKind, TextWrapMode,
-    TuiEnvironment, TuiHost, WakeDisposition,
-};
-
 // The application driver and presentation graph are runtime-only. Keep the
 // short names available to the in-crate kernel while deliberately omitting
 // them from the public crate surface.
-pub(crate) use application::{App, AppCx, AppHandle, RunError, RuntimeError};
+#[cfg(test)]
+pub(crate) use application::AppHandle;
+pub(crate) use application::{App, AppCx};
 
 pub(crate) use component::{Component, ComponentCx, ComponentHandle};
-pub(crate) use content::diff::{
-    DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination,
-    DiffRange, DiffValidationError,
+#[cfg(test)]
+pub(crate) use content::diff::{DiffLineNumber, DiffLineOffset, DiffRange};
+#[cfg(test)]
+pub(crate) use content::text::{
+    Block, HeadingLevel, Inline, InlineContent, MarkdownOptions, MarkdownProjector,
+    PlainTextProjector, RawText, TextOrigin, TextSelector,
 };
 pub(crate) use content::text::{
-    AnsiOptions, AnsiProjector, Block, CodeBlockLabelPolicy, DiffProjector, FormatId, HeadingLevel,
-    Inline, InlineContent, LanguageId, MarkdownOptions, MarkdownProjector, PlainTextProjector,
-    RawText, SemanticTag, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent,
-    TextListKind, TextOrigin, TextPart, TextRenderPolicy, TextRole, TextSelector, TextTableSection,
-    TextTaskState,
+    CodeBlockLabelPolicy, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent,
+    TextRenderPolicy,
 };
-pub(crate) use controls::{TextChange, TextInput};
-pub(crate) use history::{FlowBoundary, History, HistoryError, HistoryLayout, HistoryUnitId};
-pub(crate) use interaction::{InteractionResult, Key, KeyStroke, MediaKey, ModifierKey, Modifiers};
+pub(crate) use controls::TextInput;
+#[cfg(test)]
+pub(crate) use history::HistoryError;
+pub(crate) use history::{History, HistoryLayout, HistoryUnitId};
+pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};
+#[cfg(test)]
 pub(crate) use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
-#[cfg(feature = "native-host")]
+#[cfg(all(feature = "native-host", test))]
 #[doc(hidden)]
-pub(crate) use retained_state::{
-    GeometryAlignment, ViewStateGeometryPatch, ViewStateGeometryProperty,
-    ViewStatePresentationPatch, ViewStatePresentationProperty, ViewStateSizeMode,
-};
+pub(crate) use retained_state::{ViewStateGeometryPatch, ViewStatePresentationPatch};
 pub(crate) use scene::Scene;
 pub(crate) use scroll::ScrollPane;
 pub(crate) use theme::Theme;

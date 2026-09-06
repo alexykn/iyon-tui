@@ -1784,10 +1784,6 @@ impl HostInner {
             .clear_in_flight_prepared(&prepared.in_flight_ids);
     }
 
-    pub(super) fn content_port_is_mounted(&self, id: u64) -> Result<bool> {
-        self.content.port_status(id)
-    }
-
     pub(super) fn invalidate_state(
         &mut self,
         id: u64,
@@ -3314,8 +3310,14 @@ mod tests {
     /// subscribes one live connector on each host to a fresh stream Source.
     /// Returns `(healthy_first, healthy_second, source)`; callers poison one
     /// host to simulate a post-acceptance wake failure.
-    fn mounted_subscribed_pair() -> (TuiHost, TuiHost, crate::HostContentSource) {
-        use crate::{ContentFamily, HostContentFunnel, TextSourceKind, TextWrapMode};
+    fn mounted_subscribed_pair() -> (
+        TuiHost,
+        TuiHost,
+        crate::application::content::HostContentSource,
+    ) {
+        use crate::application::content::{
+            ContentFamily, HostContentFunnel, TextSourceKind, TextWrapMode,
+        };
 
         let environment = TuiEnvironment::new();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();

@@ -107,19 +107,6 @@ impl NativeHistorySink for TermwizBackend {
 }
 
 impl TerminalBackend for TermwizBackend {
-    async fn next_event(&mut self) -> Result<TerminalEvent> {
-        loop {
-            let event = self
-                .events
-                .recv()
-                .await
-                .ok_or_else(|| anyhow!("terminal input closed"))?;
-            if let Some(event) = self.map_event(event?) {
-                return Ok(event);
-            }
-        }
-    }
-
     fn try_next_event(&mut self) -> Result<Option<TerminalEvent>> {
         loop {
             match self.events.try_recv() {

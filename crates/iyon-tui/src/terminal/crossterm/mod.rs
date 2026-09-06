@@ -57,9 +57,8 @@ pub(crate) fn restore() -> Result<()> {
 
 /// Blocking TTY reader on its own thread.
 ///
-/// `EventStream` plus `now_or_never` parks crossterm's waiter on a noop waker,
-/// so the async `next_event` path never wakes. A channel is cancellation-safe
-/// and keeps `try_next_event` from stealing the waiter.
+/// The worker owns crossterm's blocking reader; a channel lets the host poll
+/// events without borrowing terminal-reader state across frame boundaries.
 pub(crate) struct EventReader {
     shutdown: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,

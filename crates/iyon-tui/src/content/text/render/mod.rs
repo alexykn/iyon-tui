@@ -25,6 +25,7 @@ pub(crate) use block::BlockLoweringCache;
 use std::sync::{Arc, Mutex};
 
 use super::{Block, BlockKind, ListMarker, RawText, TextContent, text_style_ref};
+#[cfg(test)]
 use crate::content::Renderer;
 use crate::presentation::factory as vf;
 use crate::presentation::ir::{ColumnChild, PersistentSeq, ViewId};
@@ -147,6 +148,14 @@ struct SemanticSequenceEntry {
     sequence: PersistentSeq<ColumnChild>,
     view: View,
 }
+
+// Keep a small latest/full and finalized-prefix working set, plus prior entries
+// for an in-flight candidate retry. The newest matching append prefix is
+// preferred; older or otherwise-valid inputs may be recomputed after eviction.
+// Replacement/truncation changes the first source key, while width/theme
+// changes are handled by the outer prepared-product keys. Retaining more full
+// persistent roots keeps historical View trees alive for limited reuse benefit.
+const SEMANTIC_SEQUENCE_CACHE_CAPACITY: usize = 4;
 
 #[derive(Clone, Debug, Default)]
 struct SemanticLoweringCache {
@@ -375,7 +384,7 @@ impl TextRenderer {
         let edge_keys = edge_keys.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
         let view = vf::column_persistent(sequence.clone(), 0);
         if let Ok(mut cache) = self.lowering_cache.lock() {
-            if cache.sequences.len() >= 256 {
+            if cache.sequences.len() >= SEMANTIC_SEQUENCE_CACHE_CAPACITY {
                 cache.sequences.remove(0);
             }
             cache.sequences.push(SemanticSequenceEntry {
@@ -551,6 +560,7 @@ fn semantic_item_key(content: &TextContent) -> SemanticItemKey {
     }
 }
 
+#[cfg(test)]
 impl Renderer<TextContent> for TextRenderer {
     fn render(&self, input: &TextContent) -> View {
         match input {
@@ -560,12 +570,14 @@ impl Renderer<TextContent> for TextRenderer {
     }
 }
 
+#[cfg(test)]
 impl Renderer<Block> for TextRenderer {
     fn render(&self, input: &Block) -> View {
         self.lower_block(input, &RenderContext::default())
     }
 }
 
+#[cfg(test)]
 impl Renderer<[TextContent]> for TextRenderer {
     fn render(&self, input: &[TextContent]) -> View {
         self.lower_semantic_iter(input.iter())

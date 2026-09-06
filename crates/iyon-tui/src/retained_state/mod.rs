@@ -22,7 +22,7 @@ pub(crate) use effects::StateEffects;
 pub(crate) use geometry::EffectiveGeometry;
 pub use geometry::GeometryAlignment;
 #[cfg(feature = "native-host")]
-pub use geometry::{ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStateSizeMode};
+pub use geometry::{ViewStateGeometryPatch, ViewStateGeometryProperty};
 pub(crate) use occurrence::OccurrenceBox;
 pub(crate) use presentation::ViewStateSnapshot;
 #[cfg(feature = "native-host")]

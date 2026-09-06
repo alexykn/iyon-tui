@@ -5,7 +5,7 @@ mod render;
 
 pub use model::{
     DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination,
-    DiffRange, DiffValidationError,
+    DiffRange,
 };
 #[cfg(feature = "native-host")]
 pub use render::lower_diff_hunks;

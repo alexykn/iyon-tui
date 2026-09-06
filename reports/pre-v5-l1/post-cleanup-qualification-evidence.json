@@ -1,0 +1,1948 @@
+{
+  "sourceCommit": "313689e2976c020ea539e43d66e1ed88dcda680e",
+  "sourceDiffSha256": "82df37f64c1df2ce134e5c67d57af3aad3acc19617e8765b12b10cae7f662ec6",
+  "baselineCommit": "36efe16f90ac7ef3c758c65ee35a0502d6b95ea1",
+  "candidateAddonSha256": "86506ed3623aa1b1236b8541068cb2052a4dd282e5739ea9adfbfe5374f38238",
+  "baselineAddonSha256": "5a9cedeee661e8a59c0aa0cf9401783217cef0bf0107bd5133ba83460b86a6f9",
+  "parentFinalH1k": {
+    "baseline": [
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2656417,
+        "frame_ns": 11641084,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2892542,
+        "frame_ns": 11290459,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2676917,
+        "frame_ns": 10861792,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2617209,
+        "frame_ns": 10649000,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2725125,
+        "frame_ns": 10727000,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2722208,
+        "frame_ns": 10706375,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2799375,
+        "frame_ns": 13079917,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2633042,
+        "frame_ns": 10599833,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3139916,
+        "frame_ns": 11486167,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2685042,
+        "frame_ns": 11128917,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2972583,
+        "frame_ns": 10993750,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2685458,
+        "frame_ns": 11200792,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2729333,
+        "frame_ns": 10610709,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2684541,
+        "frame_ns": 10591916,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2717542,
+        "frame_ns": 10891958,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2786792,
+        "frame_ns": 11187000,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2782708,
+        "frame_ns": 11114916,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2509833,
+        "frame_ns": 11018291,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2534875,
+        "frame_ns": 11027625,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2624709,
+        "frame_ns": 10501584,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      }
+    ],
+    "current": [
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3873125,
+        "frame_ns": 5253625,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3023625,
+        "frame_ns": 4860416,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2903208,
+        "frame_ns": 4549125,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2972750,
+        "frame_ns": 4553333,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2739375,
+        "frame_ns": 4615125,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2627042,
+        "frame_ns": 4600000,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2717375,
+        "frame_ns": 4738458,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2919709,
+        "frame_ns": 4700500,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2744500,
+        "frame_ns": 4642250,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2699792,
+        "frame_ns": 4381292,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2863333,
+        "frame_ns": 4349792,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2638583,
+        "frame_ns": 4348333,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2765791,
+        "frame_ns": 4496708,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2674750,
+        "frame_ns": 4538917,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2973958,
+        "frame_ns": 4609792,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2800708,
+        "frame_ns": 4610375,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3950041,
+        "frame_ns": 4835125,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3333542,
+        "frame_ns": 4929000,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 3019125,
+        "frame_ns": 4535375,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      },
+      {
+        "benchmark": "PERF-13-H-content",
+        "iterations": 1000,
+        "append_ns": 2919792,
+        "frame_ns": 4666541,
+        "source": {
+          "revision": "1000",
+          "retained_bytes": "8890",
+          "chunk_count": 1000,
+          "accepted_bytes": "8890",
+          "copied_bytes": "8890",
+          "dropped_head_bytes": "0"
+        },
+        "wake": {
+          "pending_marks": 2,
+          "wake_latch_wins": 2,
+          "wake_already_latched": 0,
+          "microtasks_queued": 2,
+          "drains": 2,
+          "hosts_attempted": 2,
+          "frames_committed": 2,
+          "automatic_errors": 0,
+          "rearm_count": 0,
+          "explicit_barriers": 2,
+          "explicit_barrier_failures": 0
+        }
+      }
+    ]
+  },
+  "childPriorSourceOnly": {
+    "artifactSha256": "34d395cd2544ea224440ae44525641b2115df65cc6322032bcde5ac4057bca92",
+    "baseline": [
+      {
+        "n": 1000,
+        "append_ns": 2613292,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2658917,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2537833,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2561541,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2445667,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2421167,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2354208,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2435584,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2455791,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2553375,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2587583,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2306083,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2620084,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 3048667,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2344833,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2564417,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2769000,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2496459,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2581291,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2445500,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      }
+    ],
+    "current": [
+      {
+        "n": 1000,
+        "append_ns": 2909959,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2697208,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2830167,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2771084,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 3470792,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2793625,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2753250,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2795542,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2499958,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2702083,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2773458,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2670250,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2973500,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2804000,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2883834,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2811958,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2546167,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 3048875,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2628750,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      },
+      {
+        "n": 1000,
+        "append_ns": 2735083,
+        "stats": {
+          "revision": "1000",
+          "sourceBase": "0",
+          "sourceEnd": "8890",
+          "retainedBytes": "8890",
+          "retainedLines": "1001",
+          "chunkCount": 1000,
+          "sealed": false,
+          "headPartial": false,
+          "acceptedBytes": "8890",
+          "copiedBytes": "8890",
+          "droppedHeadBytes": "0"
+        }
+      }
+    ]
+  },
+  "childPriorMemory": {
+    "5000": {
+      "pid": 68664,
+      "n": 5000,
+      "flushEvery": 100,
+      "start": 35225600,
+      "peak": 119734272,
+      "end": 120717312,
+      "afterMaintain": 120733696,
+      "stats": {
+        "revision": "5000",
+        "sourceBase": "0",
+        "sourceEnd": "58890",
+        "retainedBytes": "58890",
+        "retainedLines": "5001",
+        "chunkCount": 5000,
+        "sealed": false,
+        "headPartial": false,
+        "acceptedBytes": "58890",
+        "copiedBytes": "58890",
+        "droppedHeadBytes": "0"
+      },
+      "nativeMemory": {
+        "alive": true,
+        "builders": 0,
+        "edit_txns": 0,
+        "generation": 1,
+        "leased_slots": 1,
+        "native_ref_expired_slots_removed": 0,
+        "native_ref_pages": 1,
+        "native_ref_pages_freed": 0,
+        "native_ref_slots": 1,
+        "node_ref_entries": 1,
+        "nodes_inserted_since_full_sweep": 1,
+        "path_keys": 0,
+        "path_nodes": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_entries_removed": 0,
+        "semantic_cache_expired_seen": 0,
+        "semantic_cache_full_sweeps": 0,
+        "semantic_cache_live": 1,
+        "string_bytes": null,
+        "style_refs": 0,
+        "unleased_live_slots": 0
+      },
+      "maintain": {
+        "full": true,
+        "native_ref_slots": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue_len": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_full_sweeps": 1
+      }
+    },
+    "10000": {
+      "pid": 65602,
+      "n": 10000,
+      "flushEvery": 100,
+      "start": 35094528,
+      "peak": 140607488,
+      "end": 140640256,
+      "afterMaintain": 140640256,
+      "stats": {
+        "revision": "10000",
+        "sourceBase": "53358",
+        "sourceEnd": "118890",
+        "retainedBytes": "65532",
+        "retainedLines": "5462",
+        "chunkCount": 5461,
+        "sealed": false,
+        "headPartial": false,
+        "acceptedBytes": "118890",
+        "copiedBytes": "118890",
+        "droppedHeadBytes": "53358"
+      },
+      "nativeMemory": {
+        "alive": true,
+        "builders": 0,
+        "edit_txns": 0,
+        "generation": 1,
+        "leased_slots": 1,
+        "native_ref_expired_slots_removed": 0,
+        "native_ref_pages": 1,
+        "native_ref_pages_freed": 0,
+        "native_ref_slots": 1,
+        "node_ref_entries": 1,
+        "nodes_inserted_since_full_sweep": 1,
+        "path_keys": 0,
+        "path_nodes": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_entries_removed": 0,
+        "semantic_cache_expired_seen": 0,
+        "semantic_cache_full_sweeps": 0,
+        "semantic_cache_live": 1,
+        "string_bytes": null,
+        "style_refs": 0,
+        "unleased_live_slots": 0
+      },
+      "maintain": {
+        "full": true,
+        "native_ref_slots": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue_len": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_full_sweeps": 1
+      }
+    },
+    "20000": {
+      "pid": 68665,
+      "n": 20000,
+      "flushEvery": 100,
+      "start": 35274752,
+      "peak": 145801216,
+      "end": 145833984,
+      "afterMaintain": 145833984,
+      "stats": {
+        "revision": "20000",
+        "sourceBase": "183357",
+        "sourceEnd": "248890",
+        "retainedBytes": "65533",
+        "retainedLines": "5042",
+        "chunkCount": 5041,
+        "sealed": false,
+        "headPartial": false,
+        "acceptedBytes": "248890",
+        "copiedBytes": "248890",
+        "droppedHeadBytes": "183357"
+      },
+      "nativeMemory": {
+        "alive": true,
+        "builders": 0,
+        "edit_txns": 0,
+        "generation": 1,
+        "leased_slots": 1,
+        "native_ref_expired_slots_removed": 0,
+        "native_ref_pages": 1,
+        "native_ref_pages_freed": 0,
+        "native_ref_slots": 1,
+        "node_ref_entries": 1,
+        "nodes_inserted_since_full_sweep": 1,
+        "path_keys": 0,
+        "path_nodes": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_entries_removed": 0,
+        "semantic_cache_expired_seen": 0,
+        "semantic_cache_full_sweeps": 0,
+        "semantic_cache_live": 1,
+        "string_bytes": null,
+        "style_refs": 0,
+        "unleased_live_slots": 0
+      },
+      "maintain": {
+        "full": true,
+        "native_ref_slots": 1,
+        "scavenge_processed": 0,
+        "scavenge_queue_len": 0,
+        "semantic_cache_entries": 1,
+        "semantic_cache_full_sweeps": 1
+      }
+    },
+    "artifactSha256": "34d395cd2544ea224440ae44525641b2115df65cc6322032bcde5ac4057bca92"
+  }
+}

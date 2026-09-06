@@ -20,6 +20,11 @@ pub(crate) struct BlockLoweringCache {
     entries: std::collections::HashMap<BlockCacheKey, BlockLoweringEntry>,
 }
 
+// Retain only a small current/prior working set. Every entry owns its Block
+// and lowered View (the F7 pointer-ABA guard), so a large historical bound can
+// retain an entire stream's semantic payload for each source revision.
+const BLOCK_LOWERING_CACHE_CAPACITY: usize = 4;
+
 /// A cache hit must retain the immutable Block owner that supplied the key.
 /// The address is only an efficient lookup key; without this owner a dropped
 /// `Arc<BlockData>` could let the allocator reuse the address for a different
@@ -42,7 +47,7 @@ impl BlockLoweringCache {
     }
 
     pub(crate) fn insert(&mut self, key: BlockCacheKey, owner: Block, view: View) {
-        if self.entries.len() >= 1024 {
+        if self.entries.len() >= BLOCK_LOWERING_CACHE_CAPACITY {
             self.entries.clear();
         }
         self.entries.insert(key, BlockLoweringEntry { owner, view });

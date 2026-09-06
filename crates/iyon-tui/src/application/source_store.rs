@@ -59,18 +59,6 @@ impl<'a> ValidatedInput<'a> {
         })
     }
 
-    pub(crate) fn from_str(text: &'a str) -> Self {
-        Self {
-            bytes: text.as_bytes(),
-            text,
-            newlines: text
-                .as_bytes()
-                .iter()
-                .filter(|byte| **byte == b'\n')
-                .count(),
-        }
-    }
-
     #[must_use]
     pub(crate) fn bytes(&self) -> &'a [u8] {
         self.bytes
@@ -242,20 +230,14 @@ pub(crate) struct ChunkTree {
 }
 
 impl ChunkTree {
+    #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self::default()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.root.is_none()
-    }
-
-    pub(crate) fn total_bytes(&self) -> u64 {
-        self.root.as_ref().map_or(0, |root| root.bytes())
-    }
-
+    #[cfg(test)]
     pub(crate) fn bytes(&self) -> u64 {
-        self.total_bytes()
+        self.root.as_ref().map_or(0, |root| root.bytes())
     }
 
     pub(crate) fn total_newlines(&self) -> u64 {
@@ -273,10 +255,19 @@ impl ChunkTree {
     }
 
     pub(crate) fn appended(&self, text: &str, base: u64) -> Self {
-        if text.is_empty() {
-            return self.clone();
-        }
         let mut tree = self.clone();
+        tree.append_in_place(text, base);
+        tree
+    }
+
+    /// Appends descriptors through uniquely owned right-edge nodes where
+    /// possible. `Arc::make_mut` clones only a node still retained by an old
+    /// snapshot, so this keeps snapshot immutability while avoiding a fresh
+    /// persistent path for the ordinary no-snapshot append case.
+    pub(crate) fn append_in_place(&mut self, text: &str, base: u64) {
+        if text.is_empty() {
+            return;
+        }
         let bytes = text.as_bytes();
         let mut cursor = 0;
         let mut absolute = base;
@@ -296,18 +287,91 @@ impl ChunkTree {
                     line_offsets.push((idx + 1) as u32);
                 }
             }
-            let desc = ChunkDesc {
+            self.append_desc_in_place(ChunkDesc {
                 page,
                 page_start: 0,
                 len: part.len() as u32,
                 abs_start: absolute,
                 line_offsets: Arc::from(line_offsets),
-            };
-            tree = tree.append_desc(desc);
+            });
             absolute = absolute.saturating_add(part.len() as u64);
             cursor = end;
         }
-        tree
+    }
+
+    fn append_desc_in_place(&mut self, desc: ChunkDesc) {
+        let Some(root) = self.root.as_mut() else {
+            self.root = Some(ChunkNode::leaf_node(vec![desc]));
+            return;
+        };
+        let carry = Self::insert_right_in_place(root, desc);
+        if let Some(sibling) = carry {
+            let left = self.root.take().expect("chunk root exists");
+            self.root = Some(ChunkNode::branch_node(vec![left, sibling]));
+        }
+    }
+
+    fn insert_right_in_place(node: &mut Arc<ChunkNode>, desc: ChunkDesc) -> Option<Arc<ChunkNode>> {
+        let desc_bytes = desc.len_u64();
+        let desc_newlines = desc.newlines();
+        let current = Arc::make_mut(node);
+        match current {
+            ChunkNode::Leaf {
+                descs,
+                bytes,
+                newlines,
+            } if descs.len() < LEAF_DESCS => {
+                descs.push(desc);
+                *bytes = bytes.saturating_add(desc_bytes);
+                *newlines = newlines.saturating_add(desc_newlines);
+                None
+            }
+            ChunkNode::Leaf { .. } => {
+                let old = std::mem::replace(
+                    current,
+                    ChunkNode::Leaf {
+                        descs: Vec::new(),
+                        bytes: 0,
+                        newlines: 0,
+                    },
+                );
+                let ChunkNode::Leaf { mut descs, .. } = old else {
+                    unreachable!("matched full chunk leaf")
+                };
+                descs.push(desc);
+                let right = descs.split_off(descs.len() / 2);
+                *current = ChunkNode::Leaf {
+                    bytes: descs.iter().map(ChunkDesc::len_u64).sum(),
+                    newlines: descs.iter().map(ChunkDesc::newlines).sum(),
+                    descs,
+                };
+                Some(ChunkNode::leaf_node(right))
+            }
+            ChunkNode::Branch {
+                children,
+                bytes,
+                newlines,
+                descriptors,
+            } => {
+                let last = children.last_mut().expect("chunk branch is non-empty");
+                let carry = Self::insert_right_in_place(last, desc);
+                *bytes = bytes.saturating_add(desc_bytes);
+                *newlines = newlines.saturating_add(desc_newlines);
+                *descriptors = descriptors.saturating_add(1);
+                let Some(carry) = carry else {
+                    return None;
+                };
+                children.push(carry);
+                if children.len() <= BRANCH_CHILDREN {
+                    return None;
+                }
+                let right_children = children.split_off(children.len() / 2);
+                let left_children = std::mem::take(children);
+                let left = ChunkNode::branch_node(left_children);
+                *current = Arc::try_unwrap(left).expect("new chunk branch is unique");
+                Some(ChunkNode::branch_node(right_children))
+            }
+        }
     }
 
     pub(crate) fn truncated_head(&self, base: u64, offset: u64) -> (Self, u64) {
@@ -319,14 +383,22 @@ impl ChunkTree {
         (right, dropped)
     }
 
-    pub(crate) fn from_descs(descs: Vec<ChunkDesc>) -> Self {
+    fn from_descs(descs: Vec<ChunkDesc>) -> Self {
         if descs.is_empty() {
             return Self::default();
         }
-        let mut level = descs
-            .chunks(LEAF_DESCS)
-            .map(|chunk| ChunkNode::leaf_node(chunk.to_vec()))
-            .collect::<Vec<_>>();
+        let mut level = Vec::with_capacity(descs.len().div_ceil(LEAF_DESCS));
+        let mut leaf = Vec::with_capacity(LEAF_DESCS);
+        for desc in descs {
+            leaf.push(desc);
+            if leaf.len() == LEAF_DESCS {
+                level.push(ChunkNode::leaf_node(leaf));
+                leaf = Vec::with_capacity(LEAF_DESCS);
+            }
+        }
+        if !leaf.is_empty() {
+            level.push(ChunkNode::leaf_node(leaf));
+        }
         while level.len() > BRANCH_CHILDREN {
             level = level
                 .chunks(BRANCH_CHILDREN)
@@ -339,63 +411,6 @@ impl ChunkTree {
             ChunkNode::branch_node(level)
         };
         Self { root: Some(root) }
-    }
-
-    /// Appends one descriptor on the right edge with B-tree splits, so
-    /// repeated tiny appends keep logarithmic depth instead of chaining.
-    pub(crate) fn append_desc(&self, desc: ChunkDesc) -> Self {
-        let Some(root) = self.root.clone() else {
-            return Self::from_descs(vec![desc]);
-        };
-        let (root, carry) = Self::insert_right(root, desc);
-        let root = match carry {
-            None => root,
-            Some(sibling) => ChunkNode::branch_node(vec![root, sibling]),
-        };
-        Self { root: Some(root) }
-    }
-
-    /// Inserts on the right edge; returns the rebuilt node plus an optional
-    /// split sibling to link above.
-    fn insert_right(
-        node: Arc<ChunkNode>,
-        desc: ChunkDesc,
-    ) -> (Arc<ChunkNode>, Option<Arc<ChunkNode>>) {
-        match node.as_ref() {
-            ChunkNode::Leaf { descs, .. } => {
-                let mut descs = descs.clone();
-                descs.push(desc);
-                if descs.len() <= LEAF_DESCS {
-                    (ChunkNode::leaf_node(descs), None)
-                } else {
-                    let right = descs.split_off(descs.len() / 2);
-                    (
-                        ChunkNode::leaf_node(descs),
-                        Some(ChunkNode::leaf_node(right)),
-                    )
-                }
-            }
-            ChunkNode::Branch { children, .. } => {
-                let mut children = children.clone();
-                let Some(last) = children.pop() else {
-                    return (ChunkNode::branch_node(vec![node]), None);
-                };
-                let (rebuilt, carry) = Self::insert_right(last, desc);
-                children.push(rebuilt);
-                if let Some(carry) = carry {
-                    children.push(carry);
-                }
-                if children.len() <= BRANCH_CHILDREN {
-                    (ChunkNode::branch_node(children), None)
-                } else {
-                    let right = children.split_off(children.len() / 2);
-                    (
-                        ChunkNode::branch_node(children),
-                        Some(ChunkNode::branch_node(right)),
-                    )
-                }
-            }
-        }
     }
 
     /// Splits into `(bytes < offset, bytes >= offset)` by absolute offset.
@@ -494,7 +509,7 @@ impl ChunkTree {
         })
     }
 
-    pub(crate) fn locate_node<'a>(
+    fn locate_node<'a>(
         node: &'a Arc<ChunkNode>,
         abs_start: u64,
         offset: u64,
@@ -663,7 +678,7 @@ impl ChunkTree {
 
     /// Ordered descriptor views, for text materialization and projection.
     /// Collects leaf slices first (borrowed, no data copies).
-    pub(crate) fn iter_descs(&self) -> impl Iterator<Item = &ChunkDesc> {
+    fn iter_descs(&self) -> impl Iterator<Item = &ChunkDesc> {
         let mut runs = Vec::new();
         if let Some(root) = self.root.as_ref() {
             Self::collect_leaves(root, &mut runs);
@@ -781,10 +796,6 @@ pub(crate) struct AnnotationTree {
 }
 
 impl AnnotationTree {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.count
     }
@@ -1023,7 +1034,6 @@ pub(crate) enum ContentError {
     InvalidByteRange { start: u64, end: u64, len: u64 },
     LengthOverflow,
     AnnotationSequenceOverflow,
-    RetentionOverflow,
 }
 
 impl std::fmt::Display for ContentError {
@@ -1040,12 +1050,6 @@ impl std::fmt::Display for ContentError {
             Self::LengthOverflow => write!(f, "INVALID_RANGE: Source coordinate exhausted"),
             Self::AnnotationSequenceOverflow => {
                 write!(f, "INVALID_RANGE: Source annotation sequence exhausted")
-            }
-            Self::RetentionOverflow => {
-                write!(
-                    f,
-                    "SOURCE_RETENTION_OVERFLOW: Source retention limit would be exceeded"
-                )
             }
         }
     }
@@ -1072,10 +1076,11 @@ fn checked_annotation_seqno(start: u64, count: usize) -> Result<u64, ContentErro
 
 /// Persistent source storage: a chunk tree for bytes plus an annotation
 /// index, with the accepted revision, end offset, seal state, and next
-/// annotation sequence number. Every mutating entry point takes `&self`
-/// and returns the next storage value, so a failed validation can never
-/// leave partial bytes behind (§9.6): callers only swap the stored value
-/// on success.
+/// annotation sequence number. Fallible mutating entry points take `&self`
+/// and return the next storage value, so a failed validation can never leave
+/// partial bytes behind (§9.6): callers only swap the stored value on
+/// success. The validated, annotation-free append fast path mutates a
+/// uniquely owned storage value and uses `Arc::make_mut` for shared nodes.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StoredSource {
     pub(crate) chunks: ChunkTree,
@@ -1097,10 +1102,6 @@ pub(crate) struct StoredSource {
 impl StoredSource {
     pub(crate) fn empty() -> Self {
         Self::default()
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.base == 0 && self.end == 0 && self.revision == 0 && self.annotations.is_empty()
     }
 
     pub(crate) fn base(&self) -> u64 {
@@ -1131,6 +1132,7 @@ impl StoredSource {
         self.sealed
     }
 
+    #[cfg(test)]
     pub(crate) fn sealed_at(&self) -> Option<u64> {
         self.sealed_at
     }
@@ -1200,6 +1202,22 @@ impl StoredSource {
         Ok(next)
     }
 
+    /// Appends an annotation-free payload into the current Source storage.
+    /// The caller has already preflighted the revision, coordinate, and
+    /// retention arithmetic; `Arc::make_mut` inside the chunk tree clones
+    /// only right-edge nodes shared with retained snapshots.
+    pub(crate) fn append_in_place(&mut self, text: &str, revision: u64) {
+        debug_assert!(!self.sealed);
+        if !text.is_empty() {
+            self.chunks.append_in_place(text, self.end);
+            self.end = self
+                .end
+                .checked_add(text.len() as u64)
+                .expect("append coordinate was preflighted");
+        }
+        self.revision = revision;
+    }
+
     /// Seals the source at `at`. Range errors precede the sealed check, as
     /// before; the atomic-marker annotation (when present) is stored last
     /// so a concurrent snapshot never sees a marker without its seal.
@@ -1251,6 +1269,7 @@ impl StoredSource {
     /// survives when it overlaps the retained byte window, or when it is
     /// zero-length at or after the window floor; over-count survivors drop
     /// oldest (lowest sequence number) first.
+    #[cfg(test)]
     pub(crate) fn apply_annotation(
         &self,
         anno: ValidatedAnnotation,
@@ -1283,6 +1302,7 @@ impl StoredSource {
         Ok(next)
     }
 
+    #[cfg(test)]
     fn enforce_retention(&self, max_annotations: usize, max_retained_bytes: u64) -> Self {
         if self.annotations.len() <= max_annotations {
             return self.clone();
@@ -1351,10 +1371,7 @@ impl StoredSource {
         ))
     }
 
-    pub(crate) fn locate(&self, base: u64, offset: u64) -> Option<(&[u8], usize)> {
-        self.chunks.locate(base, offset)
-    }
-
+    #[cfg(test)]
     pub(crate) fn byte_at(&self, base: u64, offset: u64) -> Option<u8> {
         self.chunks.byte_at(base, offset)
     }
@@ -1374,6 +1391,7 @@ impl StoredSource {
     /// Collects absolute line-start entries in order, without copying text:
     /// walks descriptors and shifts each view's precomputed newline offsets
     /// by its absolute start.
+    #[cfg(test)]
     pub(crate) fn collect_line_entries(&self, base: u64, out: &mut Vec<u64>) {
         out.clear();
         out.push(base);
@@ -1387,6 +1405,7 @@ impl StoredSource {
     }
 
     /// Materializes the full text (snapshots and diagnostics only).
+    #[cfg(test)]
     pub(crate) fn collect_text(&self, out: &mut Vec<u8>) {
         out.clear();
         for desc in self.chunks.iter_descs() {
@@ -1412,6 +1431,7 @@ impl StoredSource {
 
     /// Copies `[start, end)` into `out` without materializing the whole
     /// text: walks only the descriptors overlapping the range.
+    #[cfg(test)]
     pub(crate) fn text_in(&self, base: u64, start: u64, end: u64, out: &mut Vec<u8>) {
         out.clear();
         let from = start.max(base).min(self.end);
@@ -1434,6 +1454,7 @@ impl StoredSource {
     }
 
     /// Previous UTF-8 character boundary at or before `offset`.
+    #[cfg(test)]
     pub(crate) fn floor_char_boundary(&self, base: u64, offset: u64) -> u64 {
         let mut at = offset.min(self.end);
         for _ in 0..4 {
@@ -1453,6 +1474,7 @@ impl StoredSource {
     }
 
     /// Next UTF-8 character boundary at or after `offset`.
+    #[cfg(test)]
     pub(crate) fn ceil_char_boundary(&self, base: u64, offset: u64) -> u64 {
         let mut at = offset.max(base).min(self.end);
         for _ in 0..4 {
@@ -1621,36 +1643,12 @@ pub(crate) struct StoredOverlap<'a> {
 }
 
 impl<'a> StoredOverlap<'a> {
-    pub(crate) fn record(&self) -> &'a SourceAnnotation {
-        self.record
-    }
-
-    pub(crate) fn kind(&self) -> u32 {
-        self.record.kind
-    }
-
-    pub(crate) fn flags(&self) -> u32 {
-        self.record.flags
-    }
-
     pub(crate) fn start(&self) -> u64 {
         self.record.start_byte
     }
 
     pub(crate) fn end(&self) -> u64 {
         self.record.end_byte
-    }
-
-    pub(crate) fn payload(&self) -> &[u8] {
-        &self.record.payload
-    }
-
-    pub(crate) fn aux0(&self) -> u32 {
-        self.record.aux0
-    }
-
-    pub(crate) fn aux1(&self) -> u32 {
-        self.record.aux1
     }
 
     pub(crate) fn tag(&self) -> Option<SemanticTag> {
@@ -1669,20 +1667,6 @@ pub(crate) struct ChunkView {
     pub(crate) page_start: u32,
     pub(crate) len: u32,
     pub(crate) abs_start: u64,
-}
-
-impl ChunkView {
-    pub(crate) fn abs_end(&self) -> u64 {
-        self.abs_start.saturating_add(u64::from(self.len))
-    }
-
-    pub(crate) fn bytes(&self) -> &[u8] {
-        let start = self.page_start as usize;
-        self.page
-            .as_bytes()
-            .get(start..start + self.len as usize)
-            .unwrap_or_default()
-    }
 }
 
 #[cfg(test)]

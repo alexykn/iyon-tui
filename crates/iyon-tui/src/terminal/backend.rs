@@ -35,13 +35,8 @@ pub(crate) enum TerminalEvent {
     Resize,
 }
 
-/// Private semantic terminal session boundary.
-///
-/// `next_event` is cancellation-safe: the runtime may stop awaiting it during
-/// a select cycle and await the next event again without losing backend state.
+/// Private semantic terminal session boundary used by the native host.
 pub(crate) trait TerminalBackend: NativeHistorySink<Error = anyhow::Error> {
-    async fn next_event(&mut self) -> Result<TerminalEvent>;
-
     fn try_next_event(&mut self) -> Result<Option<TerminalEvent>>;
 
     fn viewport(&mut self) -> Result<Size>;

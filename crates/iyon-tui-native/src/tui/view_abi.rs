@@ -3918,9 +3918,8 @@ fn parse_color_atom(value: &str) -> Result<ColorSpec, u32> {
             .map(ColorSpec::ansi)
             .map_err(|_| FAST_INVALID);
     }
-    match super::parse_rgb_hex(value).map_err(|_| FAST_INVALID)? {
-        Some((r, g, b)) => return Ok(ColorSpec::rgb(r, g, b)),
-        None => {}
+    if let Some((r, g, b)) = super::parse_rgb_hex(value).map_err(|_| FAST_INVALID)? {
+        return Ok(ColorSpec::rgb(r, g, b));
     }
     let color = match value.to_ascii_lowercase().as_str() {
         "black" => AnsiColor::Black,

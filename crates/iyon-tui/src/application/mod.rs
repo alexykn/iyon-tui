@@ -11,7 +11,6 @@ pub(crate) mod content;
 mod context;
 #[cfg(feature = "native-host")]
 pub(crate) mod environment;
-mod error;
 mod handle;
 #[cfg(feature = "native-host")]
 pub(crate) mod host;
@@ -20,6 +19,9 @@ mod kernel;
 mod run;
 #[cfg(feature = "native-host")]
 mod source_store;
+#[cfg(test)]
+#[path = "tests/driver.rs"]
+mod test_driver;
 mod timer;
 #[cfg(feature = "native-host")]
 pub(crate) mod view_state;
@@ -28,25 +30,6 @@ pub(crate) mod view_state;
 mod tests;
 
 pub use app::App;
-#[cfg(feature = "native-host")]
-pub use content::{
-    ContentAnnotationRecord, ContentAnnotationSnapshot, ContentDelivery, ContentFamily,
-    ContentMutationResult, HostContentConnector, HostContentFunnel, HostContentPort,
-    HostContentSource, HostContentSourceSnapshot, HostContentSourceStats, TextFunnelKind,
-    TextSourceKind, TextWrapMode,
-};
 pub use context::AppCx;
-#[cfg(feature = "native-host")]
-pub use environment::{
-    HostCommit, HostDrainReport, HostEpochs, HostFrameError, TuiEnvironment, WakeDisposition,
-};
-pub use error::{RunError, RuntimeError};
+#[cfg(test)]
 pub use handle::AppHandle;
-#[cfg(feature = "native-host")]
-pub use host::{
-    HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, RoutedOutput, TuiHost,
-};
-#[cfg(feature = "test-util")]
-pub(crate) use kernel::{KernelError, RunningApp};
-#[cfg(feature = "native-host")]
-pub use view_state::HostViewState;

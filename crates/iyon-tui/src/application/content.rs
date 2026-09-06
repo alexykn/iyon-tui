@@ -38,7 +38,9 @@ use crate::{
 use super::environment::{EnvironmentIdentity, WakeDisposition};
 use super::host::HostInner;
 use super::source_store::{
-    ChunkView, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
+    CONTENT_ANNOTATION_KIND_ATOMIC, CONTENT_ANNOTATION_KIND_POINT, CONTENT_ANNOTATION_KIND_STYLE,
+    CONTENT_ANNOTATION_KIND_TAG, ChunkView, MAX_ANNOTATION_PAYLOAD_BYTES, MAX_SOURCE_ANNOTATIONS,
+    MAX_SOURCE_PAYLOAD_BYTES, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
 };
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ContentFamily {
@@ -256,6 +258,14 @@ impl TextProjectionKey {
     }
 }
 
+// Retain a small current/prior working set. The previous product covers an
+// in-flight/rollback retry and the newest matching append prefix is preferred;
+// older, otherwise-valid keys may be recomputed after eviction. Replacement,
+// truncation, width, and theme changes carry distinct keys, so a large
+// historical set increases live layout memory for limited reuse benefit.
+const CONTENT_CACHE_CAPACITY: usize = 2;
+const CONTENT_PREFIX_CACHE_CAPACITY: usize = 2;
+
 /// Key identifying a cached semantic IR projection. The semantic IR is
 /// independent of theme, width, delivery tick, and viewport.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -308,7 +318,7 @@ fn resolve_cached_semantic(
     let built = Arc::new(build()?);
     cache.retain(|(candidate, _)| candidate != &key);
     cache.push_front((key, Arc::clone(&built)));
-    while cache.len() > 4 {
+    while cache.len() > CONTENT_CACHE_CAPACITY {
         cache.pop_back();
     }
     Ok(built)
@@ -397,10 +407,6 @@ impl ConnectorDelivery {
             self.candidate_frontier = self.smoother.published_through();
         }
         progressed
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        self.smoother.next_wakeup()
     }
 
     fn published_through(&self) -> StreamOffset {
@@ -508,11 +514,7 @@ pub struct ContentMutationResult {
     pub schedule_environment_drain: bool,
 }
 
-const SOURCE_CHUNK_BYTES: usize = 16 * 1024;
-const MAX_SOURCE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_CONTENT_PROJECTION_ROWS: u64 = u16::MAX as u64;
-const MAX_SOURCE_ANNOTATIONS: usize = 16 * 1024;
-const MAX_ANNOTATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ContentProjectionFailureKind {
@@ -554,14 +556,6 @@ fn next_content_projection_id() -> u64 {
         })
         .expect("content projection identity exhausted")
 }
-
-/// Initial annotation kinds are deliberately closed and host-independent.
-/// More consumer-specific kinds can be added by a generated sidecar later;
-/// unknown kinds never silently enter the Source store.
-pub const CONTENT_ANNOTATION_KIND_TAG: u32 = 1;
-pub const CONTENT_ANNOTATION_KIND_STYLE: u32 = 2;
-pub const CONTENT_ANNOTATION_KIND_ATOMIC: u32 = 3;
-pub const CONTENT_ANNOTATION_KIND_POINT: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AnnotationTruncationPolicy {
@@ -1004,7 +998,7 @@ fn prove_finalized_prefix(
             layout,
             text_geometry,
         });
-        if prefix_proof_cache.len() >= 8 {
+        if prefix_proof_cache.len() >= CONTENT_PREFIX_CACHE_CAPACITY {
             prefix_proof_cache.pop_back();
         }
         prefix_proof_cache.push_front((key, Arc::clone(&proof)));
@@ -1203,7 +1197,7 @@ fn project_text_snapshot(
         });
         prepared_paint_cache.retain(|(k, _)| k != &paint_key);
         prepared_paint_cache.push_front((paint_key, Arc::clone(&product)));
-        while prepared_paint_cache.len() > 4 {
+        while prepared_paint_cache.len() > CONTENT_CACHE_CAPACITY {
             prepared_paint_cache.pop_back();
         }
         product
@@ -1517,26 +1511,6 @@ impl HostContentFunnel {
             ContentDelivery::Smooth(config) => Some(config),
         }
     }
-
-    fn fingerprint(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.family.hash(&mut hasher);
-        self.kind.hash(&mut hasher);
-        self.wrap.hash(&mut hasher);
-        self.hyperlinks.hash(&mut hasher);
-        match self.delivery {
-            ContentDelivery::Immediate => 0u8.hash(&mut hasher),
-            ContentDelivery::Smooth(config) => {
-                1u8.hash(&mut hasher);
-                config.tick_interval().hash(&mut hasher);
-                config.spring().to_bits().hash(&mut hasher);
-                config.min_units_per_second().to_bits().hash(&mut hasher);
-                config.max_units_per_second().to_bits().hash(&mut hasher);
-            }
-        }
-        hasher.finish()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1718,10 +1692,6 @@ impl ContentSourceRegistry {
             identity,
             wake_failures: SourceWakeFailureChannel::default(),
         }
-    }
-
-    pub(crate) fn identity(&self) -> EnvironmentIdentity {
-        self.identity
     }
 
     pub(super) fn record_wake_failure(
@@ -2165,6 +2135,26 @@ fn retention_would_overflow(
             }))
 }
 
+fn retention_requires_truncation(
+    storage: &StoredSource,
+    retention: Option<SourceRetentionPolicy>,
+    appended_bytes: usize,
+    appended_newlines: usize,
+) -> bool {
+    let Some(policy) = retention else {
+        return false;
+    };
+    policy.drop_oldest
+        && (policy.max_bytes.is_some_and(|limit| {
+            storage
+                .retained_bytes()
+                .saturating_add(appended_bytes as u64)
+                > limit
+        }) || policy.max_lines.is_some_and(|limit| {
+            storage.line_count().saturating_add(appended_newlines) as u64 > limit
+        }))
+}
+
 fn apply_retention(
     storage: StoredSource,
     retention: Option<SourceRetentionPolicy>,
@@ -2355,12 +2345,35 @@ impl HostContentSource {
             // candidate storage: a rejection must leave bytes, annotations,
             // revision and accounting exactly as they were (§9.6).
             let revision = next_revision(record.revision)?;
-            let next = record
-                .storage
-                .apply_append(input.text(), revision, parsed)
-                .map_err(|err| anyhow!("{err}"))?;
-            let (next, dropped) = apply_retention(next, retention)?;
-            record.storage = Arc::new(next);
+            let can_append_in_place = parsed.is_empty()
+                && !retention_requires_truncation(
+                    &record.storage,
+                    retention,
+                    input.len(),
+                    input.newlines(),
+                );
+            let dropped = if can_append_in_place {
+                if let Some(storage) = Arc::get_mut(&mut record.storage) {
+                    storage.append_in_place(input.text(), revision);
+                    0
+                } else {
+                    let next = record
+                        .storage
+                        .apply_append(input.text(), revision, parsed)
+                        .map_err(|err| anyhow!("{err}"))?;
+                    let (next, dropped) = apply_retention(next, retention)?;
+                    record.storage = Arc::new(next);
+                    dropped
+                }
+            } else {
+                let next = record
+                    .storage
+                    .apply_append(input.text(), revision, parsed)
+                    .map_err(|err| anyhow!("{err}"))?;
+                let (next, dropped) = apply_retention(next, retention)?;
+                record.storage = Arc::new(next);
+                dropped
+            };
             record.revision = revision;
             record.copied_bytes = record.copied_bytes.saturating_add(input.len() as u64);
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
@@ -2515,6 +2528,12 @@ impl HostContentSource {
         revision: u64,
         mut groups: Vec<CapturedSubscriberGroup>,
     ) -> Result<ContentMutationResult> {
+        if groups.is_empty() {
+            return Ok(ContentMutationResult {
+                revision,
+                ..ContentMutationResult::default()
+            });
+        }
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
         // A failed subscriber must not cancel the remaining wakes (§9.6):
@@ -2950,6 +2969,7 @@ struct ConnectorRecord {
     generation: u32,
     lifecycle: ConnectorLifecycle,
     port: Weak<Mutex<PortRecord>>,
+    port_id: u64,
     source: HostContentSource,
     funnel: HostContentFunnel,
     requested: bool,
@@ -3426,6 +3446,7 @@ impl ContentHostRegistry {
             generation: self.next_generation,
             lifecycle: ConnectorLifecycle::Live,
             port: Arc::downgrade(port),
+            port_id,
             source: source.clone(),
             funnel,
             requested: false,
@@ -4055,7 +4076,7 @@ impl ContentHostRegistry {
         state
             .projection_cache
             .push_front((key, Arc::clone(&projection)));
-        while state.projection_cache.len() > 4 {
+        while state.projection_cache.len() > CONTENT_CACHE_CAPACITY {
             state.projection_cache.pop_back();
         }
         state.candidate_projection = Some(Arc::clone(&projection));
@@ -4214,7 +4235,7 @@ impl ContentHostRegistry {
         state
             .projection_cache
             .push_front((key, Arc::clone(&rekeyed)));
-        while state.projection_cache.len() > 4 {
+        while state.projection_cache.len() > CONTENT_CACHE_CAPACITY {
             state.projection_cache.pop_back();
         }
         state.candidate_projection = Some(Arc::clone(&rekeyed));
@@ -4389,7 +4410,7 @@ impl ContentHostRegistry {
                 target.physically_complete = false;
                 return;
             };
-            let (rows, physically_complete) = crate::presentation::paint::ViewPainter::default()
+            let (rows, physically_complete) = crate::presentation::paint::ViewPainter
                 .paint_tree_row_range_with_text_cache(
                     &compiler,
                     layout,
@@ -6002,6 +6023,7 @@ impl ContentHostRegistry {
         Ok(())
     }
 
+    #[cfg(test)]
     fn set_connector_visible_record(
         &mut self,
         connector_id: u64,
@@ -6402,18 +6424,43 @@ impl ContentHostRegistry {
             state.projection_failure_key = None;
             state.phase = "activation-pending";
         }
+        let smooth_delivery = state.funnel.smooth_config().is_some();
+        if state.visible {
+            // Visible membership is the committed Port association. The
+            // immutable cached ID avoids locking the Port record or consulting
+            // the inactive/in-flight indexes for the common mounted wake path;
+            // host teardown clears visibility before removing the Port. The
+            // poison check retains the exceptional retirement failure signal
+            // without reacquiring the Port mutex.
+            let port = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+            if port.is_poisoned() {
+                return Err(anyhow!("ContentPort lock is poisoned"));
+            }
+            let port_id = state.port_id;
+            drop(state);
+            if smooth_delivery {
+                self.sync_connector_deadline(id, None)?;
+            }
+            return Ok(Some(ContentDirty::new(
+                port_id,
+                Some(id),
+                ContentDirtyReason::SourceInput,
+            )));
+        }
         let in_flight = self.in_flight_connectors.contains(&id);
         let cleanup_pending = self.pending_source_cleanup_ids.contains(&id);
+        let port_id = state.port_id;
         let port = state
             .port
             .upgrade()
             .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
-        let (port_id, port_mounted) = {
-            let port = port
-                .lock()
-                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
-            (port.id, port.desired_mounted)
-        };
+        let port_mounted = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .desired_mounted;
         let is_live = state.visible
             || (state.requested && port_mounted)
             || in_flight
@@ -6423,7 +6470,10 @@ impl ContentHostRegistry {
             // environment failure path rather than spinning on every tick.
             || cleanup_pending;
         drop(state);
-        if is_live {
+        // Immediate Connectors never have a delivery deadline. Avoid a
+        // second Connector/Port lock on every Source append in that common
+        // case; smooth delivery still resynchronizes its clock after input.
+        if is_live && smooth_delivery {
             self.sync_connector_deadline(id, None)?;
         }
         Ok(is_live.then_some(ContentDirty::new(
@@ -8981,7 +9031,7 @@ mod tests {
 
     #[test]
     fn theme_recolor_repaints_without_reparsing_semantic_content() {
-        use crate::TextFunnelKind;
+        use super::TextFunnelKind;
         #[cfg(feature = "perf-counters")]
         let _perf_lock = crate::perf::test_lock();
         let source_registry = ContentSourceRegistry::new();

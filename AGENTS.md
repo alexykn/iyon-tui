@@ -25,6 +25,31 @@
 - Avoid unnecessary refactors, abstractions, or formatting-only changes.
 - Do not silently swallow exceptions.
 
+## Validation and internal contracts
+- Validate and normalize untrusted data at its entry point (for example, API inputs/responses, files, configuration, and FFI). Establish a clear internal contract before passing it downstream.
+- Inside the trusted pipeline, rely on established contracts. Do not repeat validation, add speculative fallbacks, or carry optional/error states for conditions the upstream contract rules out. Revalidate only when data crosses a new trust boundary or intervening mutation/concurrency can invalidate the guarantee.
+- Express invariants through types, constructors, ownership, and explicit state transitions where practical. Prefer making invalid states unrepresentable to scattering defensive checks through consumers.
+- Cover internal logic, meaningful edge cases, and failure transitions with focused tests at the layer that owns the contract. Avoid duplicating tests and checks at every helper; tests support the contract but do not make external input or runtime operations infallible.
+- Handle legitimate runtime failures explicitly, including I/O errors, cancellation, resource exhaustion, and lifecycle races. Retain checks required for security, memory safety, and externally reachable range or overflow errors.
+- Treat violations of established internal invariants as programming bugs, not routine recoverable failures. Where a runtime check remains necessary, fail explicitly with an assertion or invariant error; do not hide the bug with defaults, swallowed errors, or best-effort continuation.
+- When changing code, remove redundant defensive branches within the touched scope once their upstream guarantee is clear and verified. Do not broaden the task into an unrelated cleanup.
+
+## Code size and maintenance discipline
+- Prefer the smallest clear implementation that preserves required behavior. Optimize for readability and maintenance cost, not minimum line count.
+- When replacing a design, remove the superseded paths, obsolete scaffolding, and unused abstractions. Do not retain parallel implementations “just in case.”
+- Introduce helpers, abstractions, and configuration only when they simplify an actual requirement or remove meaningful duplication—not for hypothetical future needs.
+- Treat production code, tests, fixtures, generated artifacts, and documentation as maintenance costs. Additions should earn their place through required behavior, clarity, or useful verification.
+- Keep simplification within the task’s scope. Do not reduce size by dropping required features, weakening contracts, or compressing readable code into clever expressions.
+
+## Testing and verification discipline
+- Test observable behavior, important invariants, and legitimate failure transitions at the narrowest layer that owns the contract. Do not create a separate test for every helper or implementation detail.
+- Prefer extending or consolidating existing tests and fixtures over adding overlapping suites, new harnesses, or large test matrices.
+- Add regressions that demonstrate the actual bug and protect its contract. Avoid duplicating the same scenario across layers unless each test verifies a distinct boundary or failure mode.
+- Use the smallest set of checks that provides meaningful confidence in the changed behavior. Run broader suites when the affected scope, failures, or unresolved uncertainty justify them—not automatically after every refinement.
+- Reuse build artifacts and validation evidence while they remain applicable. Rerun checks when relevant code, dependencies, configuration, or build profiles change.
+- Treat test complexity, execution time, and compilation cost as design constraints. Prefer a few strong behavioral tests over many brittle or redundant assertions.
+- Report exactly what was verified and what remains uncertain. Passing tests are evidence for correctness, not proof of completeness; test counts and coverage percentages are not acceptance goals.
+
 ## Control Flow & Structure
 - Prefer flat control flow. Avoid unnecessary nesting; if logic gets too deep, extract a helper or return early.
 - Keep behavior local unless clearly visible friction points or boundaries show up.

@@ -48,6 +48,8 @@ jobs:
         run: bun run typecheck
       - name: Check declaration closure
         run: bun run check:tui-declarations
+      - name: Stage default N-API addon
+        run: bun run native:stage
       - name: Check native binding surface
         run: bun run check:tui-binding
       - name: Check ownership rules

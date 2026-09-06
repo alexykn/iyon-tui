@@ -1,0 +1,74 @@
+name: Agent fast validation
+
+on:
+  push:
+    branches:
+      - "agent/**"
+  workflow_dispatch:
+
+concurrency:
+  group: agent-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust-fast:
+    name: Fast Rust correctness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace compilation
+        run: cargo check --workspace --all-features
+      - name: Run core library tests
+        run: cargo test -p iyon-tui --lib --all-features
+
+  surface-fast:
+    name: Fast TypeScript and ABI surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt
+      - name: Install Bun workspace
+        run: bun install --frozen-lockfile
+      - name: Check generated ABI
+        run: bun run check:tui-abi
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Check declaration closure
+        run: bun run check:tui-declarations
+      - name: Stage default N-API addon
+        run: bun run native:stage
+      - name: Check native binding surface
+        run: bun run check:tui-binding
+      - name: Check ownership rules
+        run: bun run check:ownership
+      - name: Check patch cleanliness
+        run: git diff --check
+
+  native-smoke:
+    name: Fast native content smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Install Bun workspace
+        run: bun install --frozen-lockfile
+      - name: Build and stage default N-API addon
+        run: bun run native:stage
+      - name: Exercise content funnel through packaged native path
+        run: bun run native:smoke

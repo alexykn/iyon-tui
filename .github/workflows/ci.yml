@@ -5,6 +5,10 @@ on:
     branches: [bun-refactor, main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     name: Rust
@@ -16,7 +20,9 @@ jobs:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
       - run: sh tools/lint/clippy-gate.sh
-      - run: cargo test --workspace --all-features
+      - name: Run workspace tests independently of lint result
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --all-features
 
   bun:
     name: Bun and N-API

@@ -50,5 +50,6 @@ restore a public Rust `testing` module.
 - `cargo test -p iyon-tui-native` exercises the native adapters.
 - `cargo fmt --all -- --check` verifies Rust formatting.
 
-See `ARCHITECTURE.md` and `PRE-V5-RUST-LOWERING-HANDOFF.md` for the ownership
-rules and migration rationale.
+See the repository's [AGENTS.md](../../AGENTS.md) for ownership rules and the
+[archived Rust lowering handoff](../../docs/history/PRE-V5/PRE-V5-RUST-LOWERING-HANDOFF.md)
+for historical migration rationale.

@@ -3,7 +3,7 @@
 use crate::{
     Component, ComponentCx, InteractionResult, KeyStroke, View,
     geometry::Size,
-    presentation::IntoView,
+    presentation::factory as vf,
     presentation::layout::measure_view,
     scroll_command::{ScrollCommand, map_scroll_key},
 };
@@ -30,8 +30,7 @@ pub struct ScrollPane {
 }
 
 impl ScrollPane {
-    pub fn new(content: impl IntoView) -> Self {
-        let content = content.into_view();
+    pub fn new(content: View) -> Self {
         assert!(
             !content.contains_component_identity(),
             "ScrollPane content cannot contain Component identity"
@@ -44,8 +43,7 @@ impl ScrollPane {
         }
     }
 
-    pub fn set_content(&mut self, content: impl IntoView) {
-        let content = content.into_view();
+    pub fn set_content(&mut self, content: View) {
         assert!(
             !content.contains_component_identity(),
             "ScrollPane content cannot contain Component identity"
@@ -193,16 +191,26 @@ impl ScrollPane {
 impl Component for ScrollPane {
     fn view(&self) -> View {
         let Some(size) = self.layout_size else {
-            return self.content.clone().fill_width().fill_height();
+            return self.content.clone().map_node(|node| {
+                node.width = crate::presentation::ir::WidthRule::Fill;
+                node.height = crate::presentation::ir::HeightRule::Fill;
+            });
         };
         // An empty initial content view can give the slot a zero geometry. Keep
         // the intrinsic content visible in that state so a later retained
         // update can remeasure the pane instead of being permanently clipped.
         if size.width == 0 || size.height == 0 {
-            return self.content.clone().fill_width().fill_height();
+            return self.content.clone().map_node(|node| {
+                node.width = crate::presentation::ir::WidthRule::Fill;
+                node.height = crate::presentation::ir::HeightRule::Fill;
+            });
         }
         let top = self.top_row(self.content_height(size.width), usize::from(size.height));
-        View::row_viewport(self.content.clone(), top.min(usize::from(u16::MAX)) as u16)
+        vf::row_viewport(
+            self.content.clone(),
+            top.min(usize::from(u16::MAX)) as u16,
+            None,
+        )
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -215,16 +223,15 @@ impl Component for ScrollPane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IntoView, presentation::layout::compile_bounded_view};
+    use crate::{presentation::factory as vf, presentation::layout::compile_bounded_view};
 
     fn content(count: usize) -> View {
-        View::text(
+        vf::text(
             (1..=count)
                 .map(|row| format!("row {row}"))
                 .collect::<Vec<_>>()
                 .join("\n"),
         )
-        .into_view()
     }
 
     fn rendered(pane: &ScrollPane) -> Vec<String> {

@@ -5,7 +5,17 @@ use iyon_tui::binding::{
     DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, GridCellSpec, GridTrack,
     HorizontalAlign, Insets, NativeCommonPatch, NativeTextPage, OverflowIndicator,
     RetainedPathStep, StyleRef, StyleSpec, TextAttribute, TextSpan, VerticalAlign, View, WeakView,
-    WrapMode,
+    WrapMode, grid_cell_spec_column_span, grid_cell_spec_horizontal_align, grid_cell_spec_new,
+    grid_cell_spec_row_span, grid_cell_spec_vertical_align, grid_track_content,
+    grid_track_content_max, grid_track_fixed, grid_track_flex, grid_track_flex_max,
+    text_span_styled, view_clamp_rows, view_downgrade, view_hanging,
+    view_native_axis_from_children, view_native_axis_set_child, view_native_axis_splice,
+    view_native_component, view_native_container, view_native_content_host, view_native_grid_final,
+    view_native_grid_set_cell, view_native_patched, view_native_replace_at_path,
+    view_native_state_attachment_id, view_native_state_capable, view_native_text_final,
+    view_native_with_state_attachment, view_spacer, view_try_replace_retained_children,
+    view_try_retained_child, view_try_with_text_layout_patch,
+    view_try_with_text_layout_patch_path_with_nodes, view_upgrade,
 };
 use napi::Env;
 use napi_derive::napi;
@@ -611,7 +621,7 @@ impl NativeViewRuntime {
             return Err(FAST_INVALID);
         }
         let gap = u16::try_from(gap).map_err(|_| FAST_INVALID)?;
-        let view = View::native_axis_from_children(builder.horizontal, gap, builder.children)
+        let view = view_native_axis_from_children(builder.horizontal, gap, builder.children)
             .map_err(|_| FAST_INVALID)?;
         self.publish(node_id, view)
     }
@@ -780,8 +790,7 @@ impl NativeViewRuntime {
             if !node.children.is_empty() || node.node_id.is_none() {
                 return Err(FAST_INVALID);
             }
-            let patched = view
-                .try_with_text_layout_patch(Some(edit.wrap), Some(edit.align))
+            let patched = view_try_with_text_layout_patch(view, Some(edit.wrap), Some(edit.align))
                 .map_err(|_| FAST_INVALID)?;
             staged.push((node.node_id.unwrap(), patched.clone()));
             return Ok(patched);
@@ -796,13 +805,12 @@ impl NativeViewRuntime {
         let mut replacements = Vec::with_capacity(node.children.len());
         for &child_index in &node.children {
             let step = trie[child_index].step.ok_or(FAST_INVALID)?;
-            let child = view.try_retained_child(step).map_err(|_| FAST_INVALID)?;
+            let child = view_try_retained_child(&view, step).map_err(|_| FAST_INVALID)?;
             let rebuilt = self.stage_edit_trie(child, trie, child_index, staged)?;
             replacements.push((step, rebuilt));
         }
-        let patched = view
-            .try_replace_retained_children(&replacements)
-            .map_err(|_| FAST_INVALID)?;
+        let patched =
+            view_try_replace_retained_children(view, &replacements).map_err(|_| FAST_INVALID)?;
         staged.push((node.node_id.unwrap(), patched.clone()));
         Ok(patched)
     }
@@ -824,7 +832,7 @@ impl NativeViewRuntime {
             if node_id == 0 || !unique.insert(node_id) {
                 return Err(FAST_INVALID);
             }
-            if let Some(existing) = self.nodes.get(&node_id).and_then(WeakView::upgrade)
+            if let Some(existing) = self.nodes.get(&node_id).and_then(view_upgrade)
                 && existing != view
             {
                 return Err(FAST_INVALID);
@@ -1007,7 +1015,7 @@ impl NativeViewRuntime {
         if let Some(view) = slot.leased.clone() {
             return Ok((view, true));
         }
-        let Some(view) = slot.weak.upgrade() else {
+        let Some(view) = view_upgrade(&slot.weak) else {
             let node_id = slot.node_id;
             self.node_refs.remove(&node_id);
             self.slots.remove(&reference);
@@ -1039,7 +1047,7 @@ impl NativeViewRuntime {
                 Err(error) => return Err(error),
             }
         }
-        if let Some(existing) = self.nodes.get(&node_id).and_then(WeakView::upgrade) {
+        if let Some(existing) = self.nodes.get(&node_id).and_then(view_upgrade) {
             if existing == *view {
                 return Ok(SemanticIdentityMatch::SameLiveWithoutRef);
             }
@@ -1059,7 +1067,7 @@ impl NativeViewRuntime {
     /// direct publication and staged (host-atomic) publication commits.
     fn install_semantic_view(&mut self, node_id: u64, view: View, reference: u32, leased: bool) {
         self.nodes_inserted_since_full_sweep += 1;
-        let weak = view.downgrade();
+        let weak = view_downgrade(&view);
         self.nodes.insert(node_id, weak.clone());
         self.node_refs.insert(node_id, reference);
         self.slots.insert(
@@ -1150,7 +1158,7 @@ impl NativeViewRuntime {
         let Some(weak) = self.nodes.get(&node_id).cloned() else {
             return Err(FAST_CACHE_MISS);
         };
-        let Some(view) = weak.upgrade() else {
+        let Some(view) = view_upgrade(&weak) else {
             self.nodes.remove(&node_id);
             return Err(FAST_CACHE_MISS);
         };
@@ -1164,7 +1172,7 @@ impl NativeViewRuntime {
 
     /// Live View for a `NodeId` from the shared semantic cache, if any.
     pub(super) fn live_cached_view(&self, node_id: u64) -> Option<View> {
-        self.nodes.get(&node_id).and_then(WeakView::upgrade)
+        self.nodes.get(&node_id).and_then(view_upgrade)
     }
 
     /// Drops the cached weak entry for a `NodeId`. Callers invoke this on a
@@ -1191,7 +1199,7 @@ impl NativeViewRuntime {
             let expired = self
                 .slots
                 .get(&reference)
-                .is_some_and(|slot| slot.js_lease_count == 0 && slot.weak.upgrade().is_none());
+                .is_some_and(|slot| slot.js_lease_count == 0 && view_upgrade(&slot.weak).is_none());
             if !expired {
                 continue;
             }
@@ -1227,7 +1235,7 @@ impl NativeViewRuntime {
         let expired_nodes = self
             .nodes
             .iter()
-            .filter_map(|(node_id, weak)| (weak.upgrade().is_none()).then_some(*node_id))
+            .filter_map(|(node_id, weak)| (view_upgrade(weak).is_none()).then_some(*node_id))
             .collect::<Vec<_>>();
         for node_id in expired_nodes {
             self.nodes.remove(&node_id);
@@ -1248,7 +1256,8 @@ impl NativeViewRuntime {
             .slots
             .iter()
             .filter_map(|(reference, slot)| {
-                (slot.js_lease_count == 0 && slot.weak.upgrade().is_none()).then_some(reference)
+                (slot.js_lease_count == 0 && view_upgrade(&slot.weak).is_none())
+                    .then_some(reference)
             })
             .collect::<Vec<_>>();
         for reference in expired_refs {
@@ -1292,7 +1301,7 @@ impl NativeViewRuntime {
                 if slot.js_lease_count == 0 {
                     slot.leased = None;
                 }
-                slot.js_lease_count == 0 && slot.weak.upgrade().is_none()
+                slot.js_lease_count == 0 && view_upgrade(&slot.weak).is_none()
             });
             if remove_slot {
                 if let Some(slot) = self.slots.remove(&reference) {
@@ -1475,7 +1484,7 @@ pub fn bootstrap(env: Env, prune_expired: Option<bool>) -> napi::Result<Value> {
             runtime_state
                 .nodes
                 .values()
-                .filter(|weak| weak.upgrade().is_some())
+                .filter(|weak| view_upgrade(weak).is_some())
                 .count()
         })
         .unwrap_or(0);
@@ -1610,7 +1619,7 @@ pub fn tui_view_runtime_memory_snapshot(env: Env, count_live: Option<bool>) -> n
         state
             .nodes
             .values()
-            .filter(|weak| weak.upgrade().is_some())
+            .filter(|weak| view_upgrade(weak).is_some())
             .count()
     } else {
         0
@@ -1628,7 +1637,7 @@ pub fn tui_view_runtime_memory_snapshot(env: Env, count_live: Option<bool>) -> n
         state
             .slots
             .values()
-            .filter(|slot| slot.js_lease_count == 0 && slot.weak.upgrade().is_some())
+            .filter(|slot| slot.js_lease_count == 0 && view_upgrade(&slot.weak).is_some())
             .count()
     } else {
         0
@@ -1791,16 +1800,16 @@ pub unsafe extern "Rust" fn view_state_attach_impl(
     let Ok((base, _)) = runtime.resolve_ref(base_ref) else {
         return record_result(runtime, FAST_CACHE_MISS);
     };
-    if !base.native_state_capable() {
+    if !view_native_state_capable(&base) {
         return record_result(runtime, FAST_INVALID);
     }
-    if base.native_state_attachment_id() == Some(state_id) {
+    if view_native_state_attachment_id(&base) == Some(state_id) {
         return record_result(runtime, base_ref);
     }
     if runtime.node_refs.get(&node_id).copied() != Some(base_ref) {
         return record_result(runtime, FAST_INVALID);
     }
-    let attached = match base.clone().native_with_state_attachment(state_id) {
+    let attached = match view_native_with_state_attachment(base.clone(), state_id) {
         Ok(view) => view,
         Err(_) => return record_result(runtime, FAST_INVALID),
     };
@@ -1909,7 +1918,7 @@ fn publish_text_path(
         return FAST_CACHE_MISS;
     };
     let Ok((root, views)) =
-        base_view.try_with_text_layout_patch_path_with_nodes(&steps, wrap, align)
+        view_try_with_text_layout_patch_path_with_nodes(base_view, &steps, wrap, align)
     else {
         return FAST_INVALID;
     };
@@ -1945,7 +1954,7 @@ fn validate_path_publication(
         if !unique.insert(node_id) {
             return Err(FAST_INVALID);
         }
-        if let Some(existing) = runtime.nodes.get(&node_id).and_then(WeakView::upgrade)
+        if let Some(existing) = runtime.nodes.get(&node_id).and_then(view_upgrade)
             && existing != *view
         {
             return Err(FAST_INVALID);
@@ -2299,7 +2308,7 @@ pub unsafe extern "Rust" fn view_content_host_create_impl(
         Err(FAST_CACHE_MISS) => {}
         Err(error) => return record_result(runtime, error),
     }
-    let view = match View::native_content_host(content_port_id) {
+    let view = match view_native_content_host(content_port_id) {
         Ok(view) => view,
         Err(_) => return record_result(runtime, FAST_INVALID),
     };
@@ -2334,7 +2343,7 @@ pub unsafe extern "Rust" fn view_spacer_create_impl(
     let Ok(rows) = u16::try_from(rows) else {
         return FAST_INVALID;
     };
-    let result = match runtime.publish(node_id, View::spacer(rows)) {
+    let result = match runtime.publish(node_id, view_spacer(rows)) {
         Ok(reference) => reference,
         Err(error) => error,
     };
@@ -2372,7 +2381,7 @@ pub unsafe extern "Rust" fn view_text_layout_patch_root_impl(
     let Ok((base_view, _)) = runtime.resolve_ref(base) else {
         return record_base_cache_miss(runtime);
     };
-    let Ok(patched) = base_view.try_with_text_layout_patch(Some(wrap), Some(align)) else {
+    let Ok(patched) = view_try_with_text_layout_patch(base_view, Some(wrap), Some(align)) else {
         return FAST_INVALID;
     };
     let result = match runtime.publish(node_id, patched) {
@@ -2473,7 +2482,7 @@ pub unsafe extern "Rust" fn view_common_patch_root_impl(
         };
         patch.max_height = Some(value);
     }
-    let patched = View::native_patched(base_view, &patch);
+    let patched = view_native_patched(base_view, &patch);
     let result = match runtime.publish(node_id, patched) {
         Ok(reference) => reference,
         Err(error) => error,
@@ -2573,7 +2582,8 @@ fn publish_structural_path(
     let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
         return FAST_CACHE_MISS;
     };
-    let Ok((root, views)) = base_view.native_replace_at_path(
+    let Ok((root, views)) = view_native_replace_at_path(
+        base_view,
         &steps,
         axis_index,
         track_word,
@@ -2637,7 +2647,7 @@ pub unsafe extern "Rust" fn view_axis_create_buffer_impl(
         AXIS_KIND_COLUMN => false,
         _ => return FAST_INVALID,
     };
-    let Ok(view) = View::native_axis_from_children(horizontal, gap, children) else {
+    let Ok(view) = view_native_axis_from_children(horizontal, gap, children) else {
         return FAST_INVALID;
     };
     let result = runtime.publish(node_id, view).unwrap_or_else(|error| error);
@@ -2684,7 +2694,7 @@ fn create_small_axis(
         AXIS_KIND_COLUMN => false,
         _ => return record_result(runtime, FAST_INVALID),
     };
-    let view = match View::native_axis_from_children(horizontal, gap, resolved) {
+    let view = match view_native_axis_from_children(horizontal, gap, resolved) {
         Ok(view) => view,
         Err(_) => return record_result(runtime, FAST_INVALID),
     };
@@ -2846,7 +2856,8 @@ pub unsafe extern "Rust" fn view_axis_set_child_impl(
     let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
         return record_child_cache_miss(runtime, 0);
     };
-    let Ok(patched) = base.native_axis_set_child(child_index as usize, track_word, child) else {
+    let Ok(patched) = view_native_axis_set_child(base, child_index as usize, track_word, child)
+    else {
         return FAST_INVALID;
     };
     let result = runtime
@@ -2887,7 +2898,8 @@ pub unsafe extern "Rust" fn view_axis_splice_buffer_impl(
         Ok(inserted) => inserted,
         Err(error) => return record_result_with_detail(runtime, error.code, error.detail),
     };
-    let Ok(patched) = base.native_axis_splice(index as usize, remove_count as usize, inserted)
+    let Ok(patched) =
+        view_native_axis_splice(base, index as usize, remove_count as usize, inserted)
     else {
         return FAST_INVALID;
     };
@@ -2926,7 +2938,7 @@ pub unsafe extern "Rust" fn view_grid_set_cell_impl(
     let Ok((child, _)) = runtime.resolve_ref(child_ref) else {
         return record_child_cache_miss(runtime, 0);
     };
-    let Ok(patched) = base.native_grid_set_cell(row as usize, column as usize, child) else {
+    let Ok(patched) = view_native_grid_set_cell(base, row as usize, column as usize, child) else {
         return FAST_INVALID;
     };
     let result = runtime
@@ -2959,15 +2971,15 @@ fn parse_and_build_grid(
         }
         let amount = raw_amount as u16;
         match kind {
-            GRID_TRACK_CONTENT_WORD if amount == 0 => Ok(GridTrack::content()),
-            GRID_TRACK_FLEX_WORD if amount == 0 => Ok(GridTrack::flex()),
-            GRID_TRACK_FIXED_WORD => Ok(GridTrack::fixed(
+            GRID_TRACK_CONTENT_WORD if amount == 0 => Ok(grid_track_content()),
+            GRID_TRACK_FLEX_WORD if amount == 0 => Ok(grid_track_flex()),
+            GRID_TRACK_FIXED_WORD => Ok(grid_track_fixed(
                 u16::try_from(amount).map_err(|_| FAST_INVALID)?,
             )),
-            GRID_TRACK_CONTENT_MAX_WORD => Ok(GridTrack::content_max(
+            GRID_TRACK_CONTENT_MAX_WORD => Ok(grid_track_content_max(
                 u16::try_from(amount).map_err(|_| FAST_INVALID)?,
             )),
-            GRID_TRACK_FLEX_MAX_WORD => Ok(GridTrack::flex_max(
+            GRID_TRACK_FLEX_MAX_WORD => Ok(grid_track_flex_max(
                 u16::try_from(amount).map_err(|_| FAST_INVALID)?,
             )),
             _ => Err(FAST_INVALID),
@@ -3007,21 +3019,26 @@ fn parse_and_build_grid(
             if column_span == 0 || row_span == 0 {
                 return Err(FAST_INVALID);
             }
-            let spec = GridCellSpec::new()
-                .column_span(column_span)
-                .row_span(row_span)
-                .horizontal_align(match align_pack & 0xffff {
-                    1 => HorizontalAlign::Start,
-                    2 => HorizontalAlign::Center,
-                    3 => HorizontalAlign::End,
-                    _ => return Err(FAST_INVALID),
-                })
-                .vertical_align(match align_pack >> 16 {
+            let spec = grid_cell_spec_vertical_align(
+                grid_cell_spec_horizontal_align(
+                    grid_cell_spec_row_span(
+                        grid_cell_spec_column_span(grid_cell_spec_new(), column_span),
+                        row_span,
+                    ),
+                    match align_pack & 0xffff {
+                        1 => HorizontalAlign::Start,
+                        2 => HorizontalAlign::Center,
+                        3 => HorizontalAlign::End,
+                        _ => return Err(FAST_INVALID),
+                    },
+                ),
+                match align_pack >> 16 {
                     1 => VerticalAlign::Top,
                     2 => VerticalAlign::Center,
                     3 => VerticalAlign::Bottom,
                     _ => return Err(FAST_INVALID),
-                });
+                },
+            );
             cells.push((spec, view));
         }
         parsed_rows.push((row_track, cells));
@@ -3032,7 +3049,7 @@ fn parse_and_build_grid(
     // L1-04: parsed rows move into final storage through the shared
     // placement factory. No closure replay, no per-cell clone; exactly one
     // root, with the same bounds-checked validation as before.
-    Ok(View::native_grid_final(
+    Ok(view_native_grid_final(
         column_tracks,
         column_gap,
         row_gap,
@@ -3482,7 +3499,7 @@ fn parse_and_build_decorated(
     if cursor != words.len() {
         return Err(FAST_INVALID);
     }
-    Ok(View::native_patched(child, &patch))
+    Ok(view_native_patched(child, &patch))
 }
 
 #[cfg_attr(feature = "direct-ffi", unsafe(no_mangle))]
@@ -3588,7 +3605,7 @@ pub unsafe extern "Rust" fn view_hanging_create_impl(
                 }
                 error
             })?;
-        runtime.publish(node_id, View::hanging(prefix, continuation, body))
+        runtime.publish(node_id, view_hanging(prefix, continuation, body))
     })();
     match outcome {
         Ok(reference) => record_result(runtime, reference),
@@ -3618,7 +3635,7 @@ pub unsafe extern "Rust" fn view_container_create_impl(
     let outcome = runtime
         .resolve_ref(child_ref)
         .map(|(child, _)| child)
-        .and_then(|child| runtime.publish(node_id, View::native_container(child)));
+        .and_then(|child| runtime.publish(node_id, view_native_container(child)));
     match outcome {
         Ok(reference) => record_result(runtime, reference),
         Err(FAST_CACHE_MISS) => {
@@ -3673,7 +3690,7 @@ pub unsafe extern "Rust" fn view_clamp_create_impl(
     let outcome = runtime
         .resolve_ref(child_ref)
         .map(|(child, _)| child)
-        .and_then(|child| runtime.publish(node_id, child.clamp_rows(max_rows, overflow)));
+        .and_then(|child| runtime.publish(node_id, view_clamp_rows(child, max_rows, overflow)));
     match outcome {
         Ok(reference) => record_result(runtime, reference),
         Err(FAST_CACHE_MISS) => {
@@ -3703,7 +3720,7 @@ pub unsafe extern "Rust" fn view_component_create_impl(
         Err(error) => return record_result(runtime, error),
     }
     let handle = (u64::from(handle_high) << 32) | u64::from(handle_low);
-    match runtime.publish(node_id, View::native_component(handle)) {
+    match runtime.publish(node_id, view_native_component(handle)) {
         Ok(reference) => record_result(runtime, reference),
         Err(error) => record_result(runtime, error),
     }
@@ -3922,11 +3939,11 @@ fn text_view_from_spans(spans: Vec<TextSpan>, wrap: u32, align: u32) -> Result<V
     // fluent Text wrapper on this path.
     let wrap = decode_wrap(wrap).map_err(|()| FAST_INVALID)?;
     let align = decode_align(align).map_err(|()| FAST_INVALID)?;
-    Ok(View::native_text_final(spans, wrap, align))
+    Ok(view_native_text_final(spans, wrap, align))
 }
 
 fn text_view_from_owned(text: String, style: StyleRef, wrap: u32, align: u32) -> Result<View, u32> {
-    text_view_from_spans(vec![TextSpan::styled(text, style)], wrap, align)
+    text_view_from_spans(vec![text_span_styled(text, style)], wrap, align)
 }
 
 fn cstring_to_owned(pointer: *const std::ffi::c_char, maximum_bytes: u32) -> Result<String, u32> {
@@ -3955,7 +3972,7 @@ fn cstring_text_spans(
     for (pointer, style_ref) in inputs {
         let text = cstring_to_owned(*pointer, MAX_NEW_TEXT_BYTES)?;
         let style = runtime.style_for_ref(*style_ref)?;
-        spans.push(TextSpan::styled(text, style));
+        spans.push(text_span_styled(text, style));
     }
     Ok(spans)
 }
@@ -4531,29 +4548,38 @@ mod tests {
         NativeRefTable, NativeViewKindTag, NativeViewRuntime, NativeViewSlot, PATH_ROOT_REF,
         STATUS_DETAIL_CHILD_INDEX, generated_exports, is_valid_builder_ref, is_valid_edit_txn_ref,
     };
-    use iyon_tui::binding::{GridTrack, HorizontalAlign, TextSpan, View, WeakView, WrapMode};
+    use iyon_tui::binding::*;
     use std::ffi::CString;
     use std::time::Instant;
 
     fn text_view(text: impl Into<String>) -> View {
-        View::native_text_final(
-            vec![TextSpan::plain(text)],
+        view_native_text_final(
+            vec![text_span_plain(text)],
             WrapMode::default(),
             HorizontalAlign::Start,
         )
     }
 
     fn styled_text_view(spans: impl IntoIterator<Item = TextSpan>) -> View {
-        View::native_text_final(
+        view_native_text_final(
             spans.into_iter().collect(),
             WrapMode::default(),
             HorizontalAlign::Start,
         )
     }
 
+    fn column_view(children: impl IntoIterator<Item = View>) -> View {
+        view_native_axis_from_children(
+            false,
+            0,
+            children.into_iter().map(|child| (0, child)).collect(),
+        )
+        .expect("valid native column")
+    }
+
     fn slot_for(node_id: u64) -> NativeViewSlot {
-        let view = View::spacer(1);
-        let weak = view.downgrade();
+        let view = view_spacer(1);
+        let weak = view_downgrade(&view);
         NativeViewSlot {
             node_id,
             weak,
@@ -4753,7 +4779,7 @@ mod tests {
     #[test]
     fn bulk_publication_reuses_the_environment_native_ref_table() {
         let mut runtime = runtime();
-        let view = View::spacer(3);
+        let view = view_spacer(3);
         let bulk_ref = runtime.publish_bulk(41, view.clone()).expect("bulk ref");
         assert_eq!(runtime.ref_for_node_id(41), Ok(bulk_ref));
         assert_eq!(runtime.resolve_ref(bulk_ref), Ok((view, true)));
@@ -4775,7 +4801,7 @@ mod tests {
                 1,
             )
         };
-        let expected_cstring = styled_text_view([TextSpan::plain("héllo ✓")]);
+        let expected_cstring = styled_text_view([text_span_plain("héllo ✓")]);
         assert_eq!(
             runtime.resolve_ref(cstring_ref).map(|(view, _)| view),
             Ok(expected_cstring)
@@ -4795,7 +4821,7 @@ mod tests {
                 1,
             )
         };
-        let expected_buffer = styled_text_view([TextSpan::plain("left\0right")]);
+        let expected_buffer = styled_text_view([text_span_plain("left\0right")]);
         assert_eq!(
             runtime.resolve_ref(buffer_ref).map(|(view, _)| view),
             Ok(expected_buffer)
@@ -4819,7 +4845,7 @@ mod tests {
             )
         };
         let expected_multi =
-            styled_text_view([TextSpan::plain("left\0"), TextSpan::plain("right\0✓")]);
+            styled_text_view([text_span_plain("left\0"), text_span_plain("right\0✓")]);
         assert_eq!(
             runtime.resolve_ref(multi_ref).map(|(view, _)| view),
             Ok(expected_multi)
@@ -4829,8 +4855,8 @@ mod tests {
     #[test]
     fn native_axis_builders_and_small_constructors_publish_immutable_views() {
         let mut runtime = runtime();
-        let child_a = View::spacer(1);
-        let child_b = View::spacer(2);
+        let child_a = view_spacer(1);
+        let child_b = view_spacer(2);
         let child_a_ref = runtime.publish_bulk(1, child_a.clone()).expect("child a");
         let child_b_ref = runtime.publish_bulk(2, child_b.clone()).expect("child b");
         let pointer = &mut runtime as *mut NativeViewRuntime;
@@ -4863,7 +4889,7 @@ mod tests {
         let built_ref = unsafe {
             generated_exports::invoke_iyon_axis_builder_finish_v1(pointer, builder, 3, 0, 1)
         };
-        let expected = View::native_axis_from_children(false, 1, vec![(0, child_a), (0, child_b)])
+        let expected = view_native_axis_from_children(false, 1, vec![(0, child_a), (0, child_b)])
             .expect("expected native axis");
         assert_eq!(
             runtime.resolve_ref(built_ref).map(|(view, _)| view),
@@ -4892,7 +4918,7 @@ mod tests {
     #[test]
     fn new_constructor_returns_lease_count_one() {
         let mut runtime = runtime();
-        let reference = runtime.publish(11, View::spacer(2)).expect("publish");
+        let reference = runtime.publish(11, view_spacer(2)).expect("publish");
         assert_eq!(lease_count(&runtime, reference), Some(1));
         assert!(runtime.resolve_ref(reference).is_ok());
     }
@@ -4900,12 +4926,12 @@ mod tests {
     #[test]
     fn child_temp_lease_stays_live_until_root_completes() {
         let mut runtime = runtime();
-        let child_view = View::spacer(1);
+        let child_view = view_spacer(1);
         let child_ref = runtime.publish(21, child_view.clone()).expect("child");
         // Parent construction resolves the child ref safely while the temp
         // lease is still held.
         assert!(runtime.resolve_ref(child_ref).is_ok());
-        let parent_view = View::spacer(3);
+        let parent_view = view_spacer(3);
         let parent_ref = runtime.publish(22, parent_view).expect("parent");
         // The root now exists; releasing the child temp lease leaves the child
         // View alive through the parent's strong ownership (unleased-live).
@@ -4919,9 +4945,9 @@ mod tests {
     fn batch_release_drops_child_temp_leases() {
         let mut runtime = runtime();
         let refs = [
-            runtime.publish(31, View::spacer(1)).expect("a"),
-            runtime.publish(32, View::spacer(1)).expect("b"),
-            runtime.publish(33, View::spacer(1)).expect("c"),
+            runtime.publish(31, view_spacer(1)).expect("a"),
+            runtime.publish(32, view_spacer(1)).expect("b"),
+            runtime.publish(33, view_spacer(1)).expect("c"),
         ];
         for reference in refs {
             scratch_release(&mut runtime, &[reference]);
@@ -4948,12 +4974,12 @@ mod tests {
     #[test]
     fn root_lease_transfers_to_boundary_after_new_install() {
         let mut runtime = runtime();
-        let old_root = runtime.publish(41, View::spacer(1)).expect("old root");
+        let old_root = runtime.publish(41, view_spacer(1)).expect("old root");
         // Boundary protocol (§18): keep previousRef leased, materialize the
         // next root, acquire its boundary lease, then release the old root.
-        let new_root = runtime.publish(42, View::spacer(2)).expect("new root");
+        let new_root = runtime.publish(42, view_spacer(2)).expect("new root");
         runtime
-            .ensure_lease(new_root, View::spacer(2))
+            .ensure_lease(new_root, view_spacer(2))
             .expect("boundary lease");
         assert_eq!(runtime.release_many(&old_root, 1), Ok(1));
         // The old root's only owner was the boundary lease, so its slot is
@@ -4965,10 +4991,10 @@ mod tests {
     #[test]
     fn failed_host_install_retains_old_root() {
         let mut runtime = runtime();
-        let old_root = runtime.publish(51, View::spacer(1)).expect("old root");
+        let old_root = runtime.publish(51, view_spacer(1)).expect("old root");
         // A failed host install releases only the failed candidate; the old
         // boundary lease must be untouched.
-        let candidate = runtime.publish(52, View::spacer(2)).expect("candidate");
+        let candidate = runtime.publish(52, view_spacer(2)).expect("candidate");
         assert_eq!(runtime.release_many(&candidate, 1), Ok(1));
         assert_eq!(lease_count(&runtime, old_root), Some(1));
         assert!(runtime.resolve_ref(old_root).is_ok());
@@ -4978,9 +5004,9 @@ mod tests {
     fn failed_transaction_releases_every_new_temp_lease() {
         let mut runtime = runtime();
         let temps = [
-            runtime.publish(61, View::spacer(1)).expect("t1"),
+            runtime.publish(61, view_spacer(1)).expect("t1"),
             runtime.publish(62, text_view("failed-tx")).expect("t2"),
-            runtime.publish(63, View::spacer(4)).expect("t3"),
+            runtime.publish(63, view_spacer(4)).expect("t3"),
         ];
         scratch_release(&mut runtime, &temps);
         for reference in temps {
@@ -4991,7 +5017,7 @@ mod tests {
     #[test]
     fn stale_unleased_weak_slot_returns_cache_miss() {
         let mut runtime = runtime();
-        let view = View::spacer(1);
+        let view = view_spacer(1);
         let reference = runtime.publish_bulk(71, view.clone()).expect("bulk");
         drop(view); // no lease owns it; the weak entry is now stale metadata
         assert_eq!(runtime.resolve_ref(reference), Err(FAST_CACHE_MISS));
@@ -5003,7 +5029,7 @@ mod tests {
         let mut runtime = runtime();
         // Live-but-unleased slot whose View later expires: release enqueues a
         // scavenge candidate and bounded maintenance reclaims the metadata.
-        let view = View::spacer(1);
+        let view = view_spacer(1);
         let live_reference = runtime.publish_bulk(81, view.clone()).expect("live bulk");
         assert_eq!(runtime.release_many(&live_reference, 1), Ok(1));
         // Still alive at release time: the slot stays as unleased-live state
@@ -5021,7 +5047,7 @@ mod tests {
         // weak-cache entries remain as bounded slack until the full sweep
         // removes them (§55 invariant demonstrated end to end).
         for id in 82..82 + 64u64 {
-            let transient = View::spacer(1);
+            let transient = view_spacer(1);
             let reference = runtime.publish(id, transient.clone()).expect("transient");
             drop(transient);
             assert_eq!(runtime.release_many(&reference, 1), Ok(1));
@@ -5042,7 +5068,7 @@ mod tests {
     #[test]
     fn repeated_node_id_lookups_acquire_independent_leases() {
         let mut runtime = runtime();
-        let view = View::spacer(3);
+        let view = view_spacer(3);
         let reference = runtime.publish_bulk(41, view.clone()).expect("bulk ref");
         assert_eq!(runtime.ref_for_node_id(41), Ok(reference));
         assert_eq!(runtime.ref_for_node_id(41), Ok(reference));
@@ -5094,9 +5120,7 @@ mod tests {
     #[test]
     fn path_refs_are_interned_and_depth_specialization_rebuilds_only_the_path() {
         let mut runtime = runtime();
-        let base_view = View::vertical(|column| {
-            column.child(View::text("hello"));
-        });
+        let base_view = column_view([view_text_plain("hello")]);
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
@@ -5112,8 +5136,8 @@ mod tests {
         };
         assert!(patched < 0x8000_0000);
         assert_ne!(patched, base);
-        assert!(runtime.nodes.get(&2).and_then(WeakView::upgrade).is_some());
-        assert!(runtime.nodes.get(&3).and_then(WeakView::upgrade).is_some());
+        assert!(runtime.nodes.get(&2).and_then(view_upgrade).is_some());
+        assert!(runtime.nodes.get(&3).and_then(view_upgrade).is_some());
         assert!(runtime.resolve_ref(patched).is_ok());
         let generic = unsafe {
             generated_exports::invoke_iyon_view_text_layout_patch_path_v1(
@@ -5121,20 +5145,15 @@ mod tests {
             )
         };
         assert!(generic < 0x8000_0000);
-        assert!(runtime.nodes.get(&4).and_then(WeakView::upgrade).is_some());
-        assert!(runtime.nodes.get(&5).and_then(WeakView::upgrade).is_some());
+        assert!(runtime.nodes.get(&4).and_then(view_upgrade).is_some());
+        assert!(runtime.nodes.get(&5).and_then(view_upgrade).is_some());
     }
 
     #[test]
     fn stale_path_base_returns_cache_miss_then_recovers_once() {
         let mut runtime = runtime();
         let base = runtime
-            .publish(
-                1,
-                View::vertical(|column| {
-                    column.child(View::text("hello"));
-                }),
-            )
+            .publish(1, column_view([view_text_plain("hello")]))
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
@@ -5149,12 +5168,7 @@ mod tests {
             FAST_CACHE_MISS
         );
         let recovered = runtime
-            .publish(
-                1,
-                View::vertical(|column| {
-                    column.child(View::text("hello"));
-                }),
-            )
+            .publish(1, column_view([view_text_plain("hello")]))
             .expect("recovered base ref");
         let patched = unsafe {
             generated_exports::invoke_iyon_view_text_layout_patch_path_d1_v1(
@@ -5169,10 +5183,7 @@ mod tests {
     #[test]
     fn edit_transaction_builds_one_shared_ancestor_for_two_text_edits() {
         let mut runtime = runtime();
-        let base_view = View::vertical(|column| {
-            column.child(View::text("left"));
-            column.child(View::text("right"));
-        });
+        let base_view = column_view([view_text_plain("left"), view_text_plain("right")]);
         let base = runtime.publish(1, base_view).expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let path_root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };
@@ -5247,11 +5258,7 @@ mod tests {
     #[test]
     fn generated_axis_and_grid_edits_copy_persistent_sequences() {
         let mut runtime = runtime();
-        let axis = View::vertical(|column| {
-            for index in 0..2_048 {
-                column.child(View::text(format!("axis-{index}")));
-            }
-        });
+        let axis = column_view((0..2_048).map(|index| view_text_plain(format!("axis-{index}"))));
         let child = text_view("replacement");
         let base_axis = runtime.publish(1, axis.clone()).expect("axis base ref");
         let child_ref = runtime.publish(2, child.clone()).expect("child ref");
@@ -5283,12 +5290,15 @@ mod tests {
         };
         assert!(spliced < 0x8000_0000);
 
-        let grid = View::grid(|grid| {
-            grid.columns([GridTrack::fixed(12)]);
-            grid.row(|row| {
-                row.cell(View::text("grid-cell"));
-            });
-        });
+        let grid = view_native_grid_final(
+            vec![grid_track_fixed(12)],
+            0,
+            0,
+            vec![(
+                grid_track_content(),
+                vec![(grid_cell_spec_new(), view_text_plain("grid-cell"))],
+            )],
+        );
         let base_grid = runtime.publish(5, grid.clone()).expect("grid base ref");
         let grid_replaced = unsafe {
             generated_exports::invoke_iyon_view_grid_set_cell_v1(
@@ -5337,9 +5347,7 @@ mod tests {
         // dereference instead of reading out of bounds.
         let mut runtime = runtime();
         let pointer = &mut runtime as *mut NativeViewRuntime;
-        let child = runtime
-            .publish(500_000, View::spacer(1))
-            .expect("child ref");
+        let child = runtime.publish(500_000, view_spacer(1)).expect("child ref");
         let mut scratch = [0u32; 8];
         scratch[1] = child;
         scratch[3] = child;
@@ -6137,12 +6145,7 @@ mod tests {
     fn path_validation_rejects_wrong_parent_kind_and_preserves_publication() {
         let mut runtime = runtime();
         let base = runtime
-            .publish(
-                1,
-                View::vertical(|column| {
-                    column.child(View::text("hello"));
-                }),
-            )
+            .publish(1, column_view([view_text_plain("hello")]))
             .expect("base ref");
         let pointer = &mut runtime as *mut NativeViewRuntime;
         let root = unsafe { generated_exports::invoke_iyon_path_root_v1(pointer) };

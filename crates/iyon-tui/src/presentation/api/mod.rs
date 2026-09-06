@@ -3,24 +3,21 @@
 //! Consumers construct the canonical owned View IR through these types
 //! without depending on retained structural implementation details.
 
-mod composition;
-mod grid;
-pub(super) mod style;
-pub(super) mod text;
-mod view;
+#[doc(hidden)]
+pub mod grid;
+pub mod style;
+pub mod text;
+#[doc(hidden)]
+pub mod view;
 
-pub use super::ir::View;
-pub use composition::{Horizontal, Vertical};
-pub use grid::{Grid, GridCellSpec, GridRow, GridTrack};
+pub(crate) use super::ir::View;
+pub(crate) use grid::{GridCellSpec, GridTrack};
 pub use style::{
     AnsiColor, BorderEdges, BorderGlyphError, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec,
     Insets, OverflowIndicator, StyleRef, StyleSelector, StyleSpec, StyleStateKey, StyleStateValue,
     TextAttribute, TextAttributeSpec, ThemeColor, ThemeKey, VerticalAlign,
 };
 pub(crate) use style::{StyleFacts, StyleStates};
-#[cfg(feature = "native-host")]
-pub use text::NativeTextPage;
-pub use text::{HorizontalAlign, Text, TextSpan, WrapMode};
-pub use view::IntoView;
+pub(crate) use text::{HorizontalAlign, TextSpan, WrapMode};
 #[cfg(feature = "native-host")]
 pub use view::NativeCommonPatch;

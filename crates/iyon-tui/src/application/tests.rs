@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     BorderSpec, Component, ComponentCx, ComponentHandle, EventCx, History, HistoryError,
-    InteractionResult, IntoView, Key, KeyStroke, Modifiers, Output, RouteConflict, TextInput, View,
+    InteractionResult, Key, KeyStroke, Modifiers, Output, RouteConflict, TextInput, View,
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
@@ -100,13 +100,14 @@ struct State {
 }
 
 fn body(state: &State) -> View {
-    View::vertical(|column| {
-        column.child(View::text(format!("count: {}", state.count)));
-        column.child(View::component(state.input));
-        if let Some(ticking) = state.ticking {
-            column.child(View::component(ticking));
-        }
-    })
+    let mut children = vec![
+        crate::presentation::factory::text(format!("count: {}", state.count)),
+        View::component(state.input),
+    ];
+    if let Some(ticking) = state.ticking {
+        children.push(View::component(ticking));
+    }
+    crate::presentation::factory::column(children, 0)
 }
 
 fn start<State, Action, Error, Init, Update, ViewFn>(
@@ -324,7 +325,11 @@ fn neutral_app_composes_input_output_action_timer_and_persistent_history() {
     let now = Instant::now();
     let mut history = History::new();
     for index in 0..20 {
-        history.push(format!("history-{index}")).unwrap();
+        history
+            .push(crate::presentation::factory::text(format!(
+                "history-{index}"
+            )))
+            .unwrap();
     }
     let view_calls = Rc::new(Cell::new(0));
 
@@ -348,7 +353,9 @@ fn neutral_app_composes_input_output_action_timer_and_persistent_history() {
             match action {
                 Action::Submit(text) => {
                     state.submitted.push(text.clone());
-                    cx.history_mut().expect("configured history").push(text)?;
+                    cx.history_mut()
+                        .expect("configured history")
+                        .push(crate::presentation::factory::text(text))?;
                 }
                 Action::Timer => state.count += 1,
                 _ => {}
@@ -487,7 +494,7 @@ fn paste_interceptor_follows_registration_not_mount_lifetime() {
             if state.visible {
                 View::component(state.input)
             } else {
-                View::text("unmounted").into_view()
+                crate::presentation::factory::text("unmounted")
             }
         },
     );
@@ -546,7 +553,7 @@ fn queued_actions_are_fifo_and_coalesce_one_view_per_frame() {
             let view_calls = Rc::clone(&view_calls);
             move |_state: &State| {
                 view_calls.set(view_calls.get() + 1);
-                View::text("body").into_view()
+                crate::presentation::factory::text("body")
             }
         },
     );
@@ -591,7 +598,7 @@ fn zero_duration_timer_is_queued_after_the_current_update() {
                 Ok(())
             }
         },
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -655,7 +662,7 @@ fn finite_batch_yields_a_self_rescheduling_zero_timer() {
             }
             Ok(())
         },
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -744,7 +751,7 @@ impl Ticking {
 
 impl Component for Ticking {
     fn view(&self) -> View {
-        View::text("tick").into_view()
+        crate::presentation::factory::text("tick")
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -762,7 +769,7 @@ impl RedrawTick {
 
 impl Component for RedrawTick {
     fn view(&self) -> View {
-        View::text("redraw").into_view()
+        crate::presentation::factory::text("redraw")
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -886,7 +893,7 @@ fn body_only_apps_have_no_history_and_support_non_send_state() {
             }
             Ok(())
         },
-        |_state: &Rc<RefCell<usize>>| View::text("body").into_view(),
+        |_state: &Rc<RefCell<usize>>| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -918,7 +925,7 @@ fn exit_stops_later_queued_actions() {
             }
             Ok(())
         },
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -947,7 +954,7 @@ fn output_route_conflict_remove_and_readd_use_existing_semantics() {
             })
         },
         |_state, _action, _cx| Ok(()),
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -959,7 +966,7 @@ fn application_errors_stop_initialization_or_the_current_batch() {
     let init_error = App::new(
         |_cx: &mut AppCx<'_, Action>| -> Result<State, TestError> { Err(TestError::Route) },
         |_state, _action, _cx| Ok(()),
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     )
     .start(now);
     assert!(matches!(init_error, Err(KernelError::Application(_))));
@@ -982,7 +989,7 @@ fn application_errors_stop_initialization_or_the_current_batch() {
             }
             Ok(())
         },
-        |_state: &State| View::text("body").into_view(),
+        |_state: &State| crate::presentation::factory::text("body"),
     );
     let mut app = start(app, now);
     prepare(&mut app, now);
@@ -1005,7 +1012,7 @@ async fn production_runtime_processes_pre_run_actions_after_initial_frame() {
                 Ok(())
             }
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let handle = app.handle();
     handle.send(Action::Exit).unwrap();
@@ -1032,7 +1039,7 @@ async fn init_exit_skips_backend_factory() {
             Ok::<_, TestError>(())
         },
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let called = Rc::new(Cell::new(false));
     let called_by_factory = Rc::clone(&called);
@@ -1062,7 +1069,7 @@ async fn app_handle_wakes_a_runtime_without_terminal_polling() {
                 Ok(())
             }
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let handle = app.handle();
     let (backend, _control) = fake_backend();
@@ -1132,7 +1139,7 @@ async fn production_runtime_yields_between_finite_action_batches() {
             }
             Ok(())
         },
-        |state: &usize| View::text(state.to_string()).into_view(),
+        |state: &usize| crate::presentation::factory::text(state.to_string()),
     );
     let (backend, control) = fake_backend();
 
@@ -1174,7 +1181,7 @@ async fn buffered_terminal_input_is_serviced_between_action_batches() {
                 Ok(())
             }
         },
-        |state: &usize| View::text(state.to_string()).into_view(),
+        |state: &usize| crate::presentation::factory::text(state.to_string()),
     );
     let (backend, control) = fake_backend();
     let runtime = super::run::run_with_backend(app, backend);
@@ -1224,7 +1231,7 @@ async fn input_updates_state_while_presentation_is_in_flight() {
                 Ok(())
             }
         },
-        |state: &String| View::text(state.clone()).into_view(),
+        |state: &String| crate::presentation::factory::text(state.clone()),
     );
     let (mut backend, control) = fake_backend();
     backend.delay_presentations = true;
@@ -1289,7 +1296,7 @@ async fn production_runtime_wakes_on_application_timer_deadline() {
                 Ok(())
             }
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, _control) = fake_backend();
     let runtime = super::run::run_with_backend(app, backend);
@@ -1316,7 +1323,7 @@ async fn production_runtime_uses_backend_viewport_after_resize_event() {
             }
             Ok(())
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, control) = fake_backend();
     let runtime = super::run::run_with_backend(app, backend);
@@ -1437,7 +1444,7 @@ async fn normal_completion_preserves_restore_failure_as_runtime_error() {
             }
             Ok(())
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let handle = app.handle();
     handle.send(Action::Exit).unwrap();
@@ -1453,7 +1460,7 @@ async fn production_runtime_maps_backend_and_application_errors() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Err(TestError::Route),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let handle = app.handle();
     handle.send(Action::A).unwrap();
@@ -1468,7 +1475,7 @@ async fn production_runtime_maps_backend_and_application_errors() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (mut backend, control) = fake_backend();
     backend.event_error = true;
@@ -1485,7 +1492,7 @@ async fn production_runtime_maps_backend_and_application_errors() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (mut backend, control) = fake_backend();
     backend.viewport_error = true;
@@ -1498,7 +1505,7 @@ async fn production_runtime_maps_backend_and_application_errors() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (mut backend, control) = fake_backend();
     backend.draw_error = true;
@@ -1514,7 +1521,7 @@ async fn terminal_session_restores_when_run_future_is_dropped() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let (backend, control) = fake_backend();
     let mut runtime = Box::pin(super::run::run_with_backend(app, backend));
@@ -1531,7 +1538,7 @@ fn local_runtime_accepts_non_send_state_and_action() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Local>| Ok::<_, TestError>(Rc::new("state".to_owned())),
         |_state: &mut Local, _action: Local, _cx| Ok(()),
-        |_state: &Local| View::text("local").into_view(),
+        |_state: &Local| crate::presentation::factory::text("local"),
     );
     app.start(Instant::now()).expect("local app starts");
 }
@@ -1544,7 +1551,7 @@ fn app_handle_recovers_closed_actions_and_has_conditional_thread_traits() {
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
         |_state: &mut (), _action, _cx| Ok(()),
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     );
     let handle = app.handle();
     drop(app);
@@ -1597,10 +1604,19 @@ fn application_paste_interceptors_respect_active_modal_routing() {
             Ok(())
         },
         |state: &ModalState| {
-            View::vertical(|column| {
-                column.child(View::component(state.background));
-                column.child(View::component(state.modal));
-            })
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(state.background),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(state.modal),
+                    ),
+                ],
+                0,
+            )
         },
     );
     let mut app = start(app, now);
@@ -1617,7 +1633,7 @@ struct KeyConsumer;
 
 impl Component for KeyConsumer {
     fn view(&self) -> View {
-        View::text("consumer").into_view()
+        crate::presentation::factory::text("consumer")
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -1671,10 +1687,19 @@ fn application_global_keys_preserve_local_traversal_and_binding_lifetime() {
             Ok(())
         },
         |state: &GlobalState| {
-            View::vertical(|column| {
-                column.child(View::component(state.consumer));
-                column.child(View::component(state.input).min_height(1));
-            })
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(state.consumer),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        crate::presentation::factory::min_height(View::component(state.input), 1),
+                    ),
+                ],
+                0,
+            )
         },
     );
     let mut app = start(app, now);
@@ -1731,7 +1756,11 @@ fn application_global_keys_preserve_local_traversal_and_binding_lifetime() {
 async fn production_runtime_preserves_native_history_in_its_backend() {
     let mut history = History::new();
     for index in 0..20 {
-        history.push(format!("native-{index}")).unwrap();
+        history
+            .push(crate::presentation::factory::text(format!(
+                "native-{index}"
+            )))
+            .unwrap();
     }
     let app = App::new(
         |_cx: &mut AppCx<'_, Action>| Ok::<_, TestError>(()),
@@ -1741,7 +1770,7 @@ async fn production_runtime_preserves_native_history_in_its_backend() {
             }
             Ok(())
         },
-        |_state: &()| View::text("runtime").into_view(),
+        |_state: &()| crate::presentation::factory::text("runtime"),
     )
     .with_history(history);
     let handle = app.handle();

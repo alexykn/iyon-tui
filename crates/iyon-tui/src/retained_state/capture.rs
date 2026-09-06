@@ -1,12 +1,12 @@
 //! Frame-lifetime candidate overlay over the committed state version table.
 //!
-//! The registry keeps one committed immutable version per live state record.
-//! A frame capture owns exactly the versions the candidate needs beyond what
-//! the committed table already serves: changed versions drained through the
-//! captured epoch, plus newly demanded (desired-but-not-yet-visible) versions
-//! for structural mounts and remounts. Readers look through the overlay first
-//! and fall back to the committed table, so a paint-only patch on one
-//! attachment never visits or snapshots unrelated unmounted states.
+//! The registry keeps one committed immutable version per demanded state
+//! record. A frame capture owns exactly the versions the candidate needs beyond
+//! what the committed table already serves: changed versions drained through
+//! the captured epoch, plus newly demanded (desired-but-not-yet-visible)
+//! versions for structural mounts and remounts. Readers look through the
+//! overlay first and fall back to the committed table, so a paint-only patch on
+//! one attachment never visits or snapshots unrelated unmounted states.
 //!
 //! This is a frame-lifetime mechanism, not a second mutable state authority.
 //! Old `Arc` versions survive only while a visible or in-flight frame needs

@@ -98,16 +98,19 @@ fn unsupported(property: &str, kind: StateNodeKind) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::presentation::{IntoView, View};
 
     #[test]
     fn concrete_layout_kinds_have_presentation_boxes() {
         let kinds = [
-            View::text("text").into_view(),
-            View::spacer(1),
-            View::vertical(|_| {}),
-            View::horizontal(|_| {}),
-            View::text("hanging").into_view(),
+            crate::presentation::factory::text("text"),
+            crate::presentation::factory::spacer(1),
+            crate::presentation::factory::column(vec![], 0),
+            crate::presentation::factory::row_specs::<crate::presentation::View>(
+                vec![],
+                0,
+                crate::presentation::VerticalAlign::Top,
+            ),
+            crate::presentation::factory::text("hanging"),
         ];
         assert!(
             kinds

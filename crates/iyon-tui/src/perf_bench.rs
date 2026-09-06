@@ -7,12 +7,13 @@
 use std::{process::Command, time::Instant};
 
 use crate::{
-    Component, History, IntoView, TextSpan, Theme, View,
+    Component, History, TextSpan, Theme, View,
     component::{ComponentRegistry, MountGraph},
     geometry::{LayoutConstraints, Size},
     history::{HistoryViewportAnchor, project_into_session_for_host},
     perf::{self, PerfSnapshot},
     presentation::{
+        factory as vf,
         layout::{self, LayoutCache},
         paint::{PaintCache, ViewPainter},
     },
@@ -81,17 +82,14 @@ impl Component for PerfComponent {
 
 fn leaf(workload: Workload, index: usize) -> View {
     match workload {
-        Workload::StyledSpanHeavy => View::styled_text([
+        Workload::StyledSpanHeavy => vf::styled_text([
             TextSpan::plain(format!("span-{index} ")),
             TextSpan::plain("stable "),
             TextSpan::plain("text "),
             TextSpan::plain("payload"),
-        ])
-        .into_view(),
-        Workload::TextHeavy => {
-            View::text(format!("text-{index}: deterministic payload\n")).into_view()
-        }
-        _ => View::text(format!("node-{index}")).into_view(),
+        ]),
+        Workload::TextHeavy => vf::text(format!("text-{index}: deterministic payload\n")),
+        _ => vf::text(format!("node-{index}")),
     }
 }
 
@@ -103,14 +101,10 @@ fn build_fixture(workload: Workload, nodes: usize) -> ViewFixture {
             let mut handles = Vec::with_capacity(leaves);
             for index in 0..leaves {
                 handles.push(registry.register(PerfComponent {
-                    body: View::text(format!("component-{index}")).into_view(),
+                    body: vf::text(format!("component-{index}")),
                 }));
             }
-            let view = View::vertical(|column| {
-                for handle in handles {
-                    column.child(View::component(handle));
-                }
-            });
+            let view = vf::column(handles.into_iter().map(vf::component).collect(), 0);
             ViewFixture {
                 view,
                 registry: Some(registry),
@@ -118,41 +112,34 @@ fn build_fixture(workload: Workload, nodes: usize) -> ViewFixture {
         }
         Workload::GridHeavy => {
             let side = (leaves as f64).sqrt().ceil() as usize;
-            let view = View::grid(|grid| {
-                grid.columns((0..side).map(|_| crate::GridTrack::content()));
-                for row in 0..side {
-                    grid.row(|cells| {
-                        for column in 0..side {
+            let columns = (0..side).map(|_| crate::GridTrack::content()).collect();
+            let rows = (0..side)
+                .map(|row| {
+                    let cells = (0..side)
+                        .filter_map(|column| {
                             let index = row * side + column;
-                            if index < leaves {
-                                cells.cell(leaf(workload, index));
-                            }
-                        }
-                    });
-                }
-            });
+                            (index < leaves)
+                                .then(|| (crate::GridCellSpec::new(), leaf(workload, index)))
+                        })
+                        .collect();
+                    (crate::GridTrack::content(), cells)
+                })
+                .collect();
+            let view = vf::grid(columns, 0, 0, rows);
             ViewFixture {
                 view,
                 registry: None,
             }
         }
         Workload::RowHeavy => {
-            let view = View::horizontal(|row| {
-                for index in 0..leaves {
-                    row.child(leaf(workload, index));
-                }
-            });
+            let view = vf::row((0..leaves).map(|index| leaf(workload, index)).collect(), 0);
             ViewFixture {
                 view,
                 registry: None,
             }
         }
         Workload::ColumnHeavy | Workload::TextHeavy | Workload::StyledSpanHeavy => {
-            let view = View::vertical(|column| {
-                for index in 0..leaves {
-                    column.child(leaf(workload, index));
-                }
-            });
+            let view = vf::column((0..leaves).map(|index| leaf(workload, index)).collect(), 0);
             ViewFixture {
                 view,
                 registry: None,
@@ -338,11 +325,8 @@ fn run_view_case(
                 ));
             }
             "SHARED_PATH" => {
-                let changed = View::text(format!("changed-{index}"));
-                let view = View::vertical(|column| {
-                    column.child(shared.clone());
-                    column.child(changed);
-                });
+                let changed = vf::text(format!("changed-{index}"));
+                let view = vf::column(vec![shared.clone(), changed], 0);
                 std::hint::black_box(render_view(
                     &view,
                     base.registry.as_ref(),
@@ -412,10 +396,7 @@ fn run_paint_gate_case(workload: Workload, nodes: usize, sha: &str) {
 
     for index in 0..3 {
         cache.begin_epoch();
-        let view = View::vertical(|column| {
-            column.child(shared.clone());
-            column.child(View::text(format!("warmup-{index}")));
-        });
+        let view = vf::column(vec![shared.clone(), vf::text(format!("warmup-{index}"))], 0);
         let _ = render_view_timed(
             &view,
             base.registry.as_ref(),
@@ -431,10 +412,10 @@ fn run_paint_gate_case(workload: Workload, nodes: usize, sha: &str) {
     perf::reset();
     for index in 0..iterations {
         cache.begin_epoch();
-        let view = View::vertical(|column| {
-            column.child(shared.clone());
-            column.child(View::text(format!("changed-{index}")));
-        });
+        let view = vf::column(
+            vec![shared.clone(), vf::text(format!("changed-{index}"))],
+            0,
+        );
         let started = Instant::now();
         paint_cache.begin_epoch(&Theme::default());
         let timing = render_view_timed(
@@ -494,7 +475,7 @@ fn run_history_case(sha: &str) {
     let mut static_history = History::new();
     for index in 0..1_000 {
         static_history
-            .push(View::text(format!("static-{index}")))
+            .push(vf::text(format!("static-{index}")))
             .expect("static fixture append");
     }
     let static_registry = ComponentRegistry::new();
@@ -519,16 +500,16 @@ fn run_history_case(sha: &str) {
 
     let mut registry = ComponentRegistry::new();
     let handle = registry.register(PerfComponent {
-        body: View::text("live tail").into_view(),
+        body: vf::text("live tail"),
     });
     let mut history = History::new();
     for index in 0..1_000 {
         history
-            .push(View::text(format!("static-{index}")))
+            .push(vf::text(format!("static-{index}")))
             .expect("static fixture append");
     }
     history
-        .push(View::component(handle))
+        .push(vf::component(handle))
         .expect("live fixture append");
     let _ = render_history(&history, &registry);
 

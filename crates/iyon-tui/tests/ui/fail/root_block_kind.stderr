@@ -9,7 +9,7 @@ error[E0603]: enum `BlockKind` is private
 note: the enum `BlockKind` is defined here
  --> src/lib.rs
   |
-  |     Alignment, Annotations, BlockKind, BreakKind, CodeBlock, FormatId, Image, InlineKind,
+  |     Alignment, Annotations, BlockKind, BreakKind, CodeBlock, Image, InlineKind, LinkTarget, List,
   |                             ^^^^^^^^^
   |
  ::: src/content/text/block.rs

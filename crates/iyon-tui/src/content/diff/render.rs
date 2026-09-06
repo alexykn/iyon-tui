@@ -1,26 +1,6 @@
 use super::{DiffHunk, DiffLine, DiffLineKind, DiffLineTermination, DiffRange};
-use crate::{IntoView, Renderer, StyleRef, View};
-
-/// Lowers validated semantic diff hunks into geometry-independent Views.
-#[derive(Clone, Debug, Default)]
-pub struct DiffRenderer;
-
-impl DiffRenderer {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
-    #[must_use]
-    pub fn render_hunk(&self, hunk: &DiffHunk) -> View {
-        lower_hunk(hunk)
-    }
-
-    #[must_use]
-    pub(crate) fn render_hunks(&self, hunks: &[DiffHunk]) -> View {
-        lower_diff_hunks(hunks)
-    }
-}
+use crate::presentation::factory as vf;
+use crate::{StyleRef, View};
 
 /// Direct native-ingress lowering for validated static diff records.  The
 /// operation-specific function keeps the formatting algorithm on the same
@@ -28,7 +8,7 @@ impl DiffRenderer {
 /// renderer/extension trait.
 #[doc(hidden)]
 pub fn lower_diff_hunks(hunks: &[DiffHunk]) -> View {
-    View::column_from_views(hunks.iter().map(lower_hunk).collect(), 0)
+    vf::column(hunks.iter().map(lower_hunk).collect(), 0)
 }
 
 fn lower_hunk(hunk: &DiffHunk) -> View {
@@ -39,35 +19,25 @@ fn lower_hunk(hunk: &DiffHunk) -> View {
     for line in hunk.lines() {
         children.push(render_line(line));
         if line.termination() == DiffLineTermination::Unterminated {
-            children.push(
-                View::text("\\ No newline at end of file")
-                    .no_wrap()
-                    .style(StyleRef::theme("diff.meta"))
-                    .into_view(),
-            );
+            children.push(vf::text_with_style(
+                "\\ No newline at end of file",
+                crate::WrapMode::NoWrap,
+                crate::HorizontalAlign::Start,
+                StyleRef::theme("diff.meta"),
+            ));
         }
     }
-    View::column_from_views(children, 0)
-}
-
-impl Renderer<DiffHunk> for DiffRenderer {
-    fn render(&self, input: &DiffHunk) -> View {
-        self.render_hunk(input)
-    }
-}
-
-impl Renderer<[DiffHunk]> for DiffRenderer {
-    fn render(&self, input: &[DiffHunk]) -> View {
-        self.render_hunks(input)
-    }
+    vf::column(children, 0)
 }
 
 fn header(old: DiffRange, new_side: DiffRange) -> View {
     let text = format!("@@ -{} +{} @@", display_range(old), display_range(new_side));
-    View::text(text)
-        .no_wrap()
-        .style(StyleRef::theme("diff.header"))
-        .into_view()
+    vf::text_with_style(
+        text,
+        crate::WrapMode::NoWrap,
+        crate::HorizontalAlign::Start,
+        StyleRef::theme("diff.header"),
+    )
 }
 
 fn display_range(range: DiffRange) -> String {
@@ -94,10 +64,25 @@ fn render_line(line: &DiffLine) -> View {
         DiffLineKind::Addition => "+",
         DiffLineKind::Deletion => "-",
     };
-    View::hanging(
-        View::text(marker).no_wrap().style(style.clone()),
-        View::text(" ").no_wrap().style(style.clone()),
-        View::text(line.text()).fill_width().style(style),
+    vf::hanging(
+        vf::text_with_style(
+            marker,
+            crate::WrapMode::NoWrap,
+            crate::HorizontalAlign::Start,
+            style.clone(),
+        ),
+        vf::text_with_style(
+            " ",
+            crate::WrapMode::NoWrap,
+            crate::HorizontalAlign::Start,
+            style.clone(),
+        ),
+        vf::text_with_style_fill(
+            line.text(),
+            crate::WrapMode::WordThenGrapheme,
+            crate::HorizontalAlign::Start,
+            style,
+        ),
     )
 }
 
@@ -153,7 +138,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            rows(&DiffRenderer::new().render(&hunk), 80, &Theme::new()),
+            rows(&lower_hunk(&hunk), 80, &Theme::new()),
             [
                 "@@ -1,2 +1,2 @@",
                 " + context",
@@ -172,7 +157,7 @@ mod tests {
                 .with_termination(DiffLineTermination::Unterminated)],
         );
         assert_eq!(
-            rows(&DiffRenderer::new().render(&hunk), 80, &Theme::new()),
+            rows(&lower_hunk(&hunk), 80, &Theme::new()),
             ["@@ -10,0 +11 @@", "+added", "\\ No newline at end of file"]
         );
     }
@@ -184,7 +169,7 @@ mod tests {
             range(0, 1),
             [DiffLine::addition(number(1), "one two three four")],
         );
-        let rendered = DiffRenderer::new().render(&hunk);
+        let rendered = lower_hunk(&hunk);
         let result = compile_view_with_theme(&rendered, 10, &Theme::new());
         let texts: Vec<_> = result.rows.iter().map(|row| row.plain_text()).collect();
         assert_eq!(texts[0], "@@ -0,0 +1");
@@ -209,7 +194,7 @@ mod tests {
                 DiffLine::addition(number(2), "added"),
             ],
         );
-        let view = DiffRenderer::new().render(&hunk);
+        let view = lower_hunk(&hunk);
         let framework = Theme::new();
         assert_eq!(
             foreground(&view, "context", &framework),
@@ -286,11 +271,7 @@ mod tests {
             [DiffLine::addition(number(4), "second")],
         );
         assert_eq!(
-            rows(
-                &DiffRenderer::new().render(&[first, second][..]),
-                80,
-                &Theme::new()
-            ),
+            rows(&lower_diff_hunks(&[first, second][..]), 80, &Theme::new()),
             ["@@ -0,0 +1 @@", "+first", "@@ -2,0 +4 @@", "+second"]
         );
     }

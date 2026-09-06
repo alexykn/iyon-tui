@@ -87,6 +87,22 @@ impl LayoutCache {
         });
     }
 
+    /// Drops only ContentHost measurement/preparation entries. Theme changes
+    /// intentionally do not participate in ordinary layout input revisions,
+    /// but a structural replacement may discard the retained content index
+    /// before the theme invalidation arrives. Preserve ordinary sibling
+    /// products while forcing fresh content tickets on the next root pass.
+    pub(crate) fn invalidate_content_entries(&mut self) {
+        self.current_measure
+            .retain(|key, _| key.content_revision == 0);
+        self.previous_measure
+            .retain(|key, _| key.content_revision == 0);
+        self.current_prepare
+            .retain(|key, _| key.measured.content_revision == 0);
+        self.previous_prepare
+            .retain(|key, _| key.measured.content_revision == 0);
+    }
+
     pub(crate) fn begin_epoch(&mut self) {
         std::mem::swap(&mut self.current_measure, &mut self.previous_measure);
         self.current_measure.clear();

@@ -16,7 +16,6 @@ mod style;
 mod validate;
 mod visit;
 
-pub use crate::content::Renderer;
 pub use annotations::{Annotations, SemanticKey, SemanticTag, SemanticValue};
 pub use ansi::{AnsiOptions, AnsiProjectionError, AnsiProjector};
 pub use block::{
@@ -35,9 +34,10 @@ pub use markdown_options::MarkdownOptions;
 pub use origin::TextOrigin;
 pub use plain::PlainTextProjector;
 pub use provenance::{LiteralText, TextProvenance, TextRun};
+pub(crate) use render::TextRenderer;
 pub use render::{
     CodeBlockLabelPolicy, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy,
-    TextRenderPolicy, TextRenderer,
+    TextRenderPolicy,
 };
 #[allow(unused_imports)]
 pub(crate) use style::{TEXT_THEME_KEY, TextFacts, text_style_ref};

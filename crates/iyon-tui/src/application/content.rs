@@ -196,6 +196,8 @@ struct TextProjectionKey {
     funnel_kind: TextFunnelKind,
     delivery_revision: u64,
     theme_revision: u64,
+    needs_finalized_prefix: bool,
+    needs_physical_rows: bool,
 }
 
 impl TextProjectionKey {
@@ -212,6 +214,7 @@ impl TextProjectionKey {
         self.width.hash(&mut hasher);
         self.wrap.hash(&mut hasher);
         self.funnel_kind.hash(&mut hasher);
+        self.needs_finalized_prefix.hash(&mut hasher);
         size.width.hash(&mut hasher);
         size.height.hash(&mut hasher);
         complete.hash(&mut hasher);
@@ -303,7 +306,15 @@ struct HostContentProjection {
     key: TextProjectionKey,
     intrinsic_size: Size,
     physically_complete: bool,
-    rows: Arc<Vec<PhysicalRow>>,
+    /// Immediate non-History projections may defer physical row lowering to
+    /// the prepared-ticket window. Smooth/History products retain rows for
+    /// reveal and scrollback semantics.
+    rows: Option<Arc<Vec<PhysicalRow>>>,
+    layout: Option<Arc<crate::presentation::layout::LayoutTree>>,
+    text_geometry: Option<Arc<Mutex<crate::presentation::paint::TextGeometryCache>>>,
+    /// Immutable palette captured with this projection. Deferred row-window
+    /// painting must not consult the Connector's newer host theme.
+    theme: Arc<Theme>,
     /// Physical rows produced by the established finalized-prefix proof.
     /// This is a distinct product from the open document rows: Markdown may
     /// render a prefix differently while its trailing block remains open.
@@ -737,6 +748,21 @@ fn compile_semantic_content(
     ))
 }
 
+fn layout_semantic_content(
+    renderer: &TextRenderer,
+    semantic: &Projection<TextContent>,
+    theme: &Theme,
+    offered_width: u16,
+) -> (u16, bool, Arc<crate::presentation::layout::LayoutTree>) {
+    let view = renderer.lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values()));
+    let compiler = crate::presentation::layout::ViewCompiler::new(theme);
+    let tree = Arc::new(compiler.layout_tree(
+        &view,
+        crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+    ));
+    (tree.size.width, tree.physically_complete, tree)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RevealBoundary {
     pub(crate) revealed_height: u16,
@@ -843,6 +869,8 @@ struct PreparedPaintKey {
     semantic_key: SemanticProjectionKey,
     theme_revision: u64,
     width: u16,
+    needs_finalized_prefix: bool,
+    needs_physical_rows: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -852,11 +880,11 @@ struct PreparedPaintProduct {
     /// paint product layered on top of this retained tree.
     layout: Arc<crate::presentation::layout::LayoutTree>,
     text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
-    rows: Arc<Vec<PhysicalRow>>,
+    rows: Option<Arc<Vec<PhysicalRow>>>,
     width: u16,
     height: u16,
     physically_complete: bool,
-    visibility: VisibilityIndex,
+    visibility: Option<VisibilityIndex>,
     /// The current finalized-prefix policy is retained as an immutable row
     /// product. It is intentionally allowed to differ from the open document
     /// until the existing parser/History policy says the prefix is finalized.
@@ -961,7 +989,8 @@ fn project_text_snapshot(
     snapshot: &HostContentSourceSnapshot,
     funnel: HostContentFunnel,
     offered_width: u16,
-    theme: &Theme,
+    needs_finalized_prefix: bool,
+    theme: &Arc<Theme>,
     theme_revision: u64,
     execution: &mut ConnectorExecution,
     delivery_revision: u64,
@@ -979,6 +1008,8 @@ fn project_text_snapshot(
         funnel_kind: funnel.kind,
         delivery_revision,
         theme_revision,
+        needs_finalized_prefix,
+        needs_physical_rows: needs_finalized_prefix || execution.delivery.is_some(),
     };
     if snapshot.source_base == snapshot.source_end {
         return Ok(HostContentProjection {
@@ -986,7 +1017,10 @@ fn project_text_snapshot(
             key,
             intrinsic_size: Size::new(0, 0),
             physically_complete: true,
-            rows: Arc::new(Vec::new()),
+            rows: Some(Arc::new(Vec::new())),
+            layout: None,
+            text_geometry: None,
+            theme: Arc::clone(theme),
             finalized_prefix: None,
             stable_rows: 0,
             visible_row_count: 0,
@@ -1020,7 +1054,10 @@ fn project_text_snapshot(
         semantic_key: semantic_key.clone(),
         theme_revision,
         width: offered_width.max(1),
+        needs_finalized_prefix,
+        needs_physical_rows: key.needs_physical_rows,
     };
+    let retain_rows = key.needs_physical_rows;
 
     let paint_product = if let Some(product) = prepared_paint_cache
         .iter()
@@ -1035,46 +1072,74 @@ fn project_text_snapshot(
         let reusable_product = prepared_paint_cache
             .iter()
             .find(|(candidate, _)| {
-                candidate.semantic_key == semantic_key && candidate.width == offered_width.max(1)
+                candidate.semantic_key == semantic_key
+                    && candidate.width == offered_width.max(1)
+                    && candidate.needs_finalized_prefix == needs_finalized_prefix
+                    && candidate.needs_physical_rows == key.needs_physical_rows
             })
             .map(|(_, product)| Arc::clone(product));
         let (compiled, layout, text_geometry) = if let Some(product) = reusable_product {
-            let compiler = crate::presentation::layout::ViewCompiler::new(theme);
             let layout = Arc::clone(&product.layout);
             let text_geometry = Arc::clone(&product.text_geometry);
-            let compiled = {
+            let compiled = if retain_rows {
+                let compiler = crate::presentation::layout::ViewCompiler::new(theme);
                 let mut text_geometry_guard = text_geometry
                     .lock()
                     .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
                 compiler.compile_tree_with_text_cache(&layout, &mut text_geometry_guard)
+            } else {
+                crate::presentation::layout::LayoutBlock {
+                    width: layout.size.width,
+                    rows: Vec::new(),
+                    physically_complete: layout.physically_complete,
+                }
             };
             (compiled, layout, text_geometry)
         } else {
             let text_geometry = Arc::new(Mutex::new(
                 crate::presentation::paint::TextGeometryCache::new(),
             ));
-            let (compiled, layout) = {
-                let mut text_geometry_guard = text_geometry
-                    .lock()
-                    .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
-                compile_semantic_content(
-                    &execution.renderer,
-                    &semantic,
-                    theme,
-                    offered_width,
-                    &mut text_geometry_guard,
-                )?
+            let (compiled, layout) = if retain_rows {
+                let (compiled, layout) = {
+                    let mut text_geometry_guard = text_geometry
+                        .lock()
+                        .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
+                    compile_semantic_content(
+                        &execution.renderer,
+                        &semantic,
+                        theme,
+                        offered_width,
+                        &mut text_geometry_guard,
+                    )?
+                };
+                (compiled, layout)
+            } else {
+                let (width, physically_complete, layout) =
+                    layout_semantic_content(&execution.renderer, &semantic, theme, offered_width);
+                (
+                    crate::presentation::layout::LayoutBlock {
+                        width,
+                        rows: Vec::new(),
+                        physically_complete,
+                    },
+                    layout,
+                )
             };
             (compiled, layout, text_geometry)
         };
         let width = compiled.width;
         let physically_complete = compiled.physically_complete;
-        let rows = Arc::new(compiled.rows);
-        let height = rows.len().min(usize::from(u16::MAX)) as u16;
-        let visibility = VisibilityIndex::from_rows(&rows);
-        let finalized_prefix = if snapshot.sealed {
+        let rows = retain_rows.then(|| Arc::new(compiled.rows));
+        let height = layout.size.height;
+        let visibility = rows.as_ref().map(|rows| VisibilityIndex::from_rows(rows));
+        let finalized_prefix = if !needs_finalized_prefix {
+            None
+        } else if snapshot.sealed {
             Some(Arc::new(FinalizedPrefixProduct {
-                rows: Arc::clone(&rows),
+                rows: Arc::clone(
+                    rows.as_ref()
+                        .expect("History products retain physical rows"),
+                ),
             }))
         } else {
             prove_finalized_prefix(
@@ -1109,11 +1174,11 @@ fn project_text_snapshot(
         if let Some(delivery) = execution.delivery.as_mut() {
             delivery.accept_input(snapshot)?;
             let reveal_units = delivery.reveal_units();
-            let bounds = paint_product.visibility.reveal_bounds(
-                reveal_units,
-                paint_product.width,
-                paint_product.height,
-            );
+            let bounds = paint_product
+                .visibility
+                .as_ref()
+                .expect("delivery products retain visibility rows")
+                .reveal_bounds(reveal_units, paint_product.width, paint_product.height);
             (
                 Size::new(paint_product.width, bounds.revealed_height),
                 usize::from(bounds.revealed_height),
@@ -1125,7 +1190,7 @@ fn project_text_snapshot(
                 Size::new(paint_product.width, paint_product.height),
                 usize::from(paint_product.height),
                 None,
-                paint_product.visibility.row_glyphs.len(),
+                usize::from(paint_product.height),
             )
         };
 
@@ -1146,7 +1211,10 @@ fn project_text_snapshot(
         key,
         intrinsic_size,
         physically_complete: paint_product.physically_complete,
-        rows: Arc::clone(&paint_product.rows),
+        rows: paint_product.rows.clone(),
+        layout: Some(Arc::clone(&paint_product.layout)),
+        text_geometry: Some(Arc::clone(&paint_product.text_geometry)),
+        theme: Arc::clone(theme),
         finalized_prefix: paint_product.finalized_prefix.clone(),
         stable_rows,
         visible_row_count,
@@ -2818,6 +2886,10 @@ struct PreparedContentConnector {
     control_revision: u64,
     deadline: Option<Instant>,
     visible: bool,
+    /// Immutable projection captured with this candidate. Receipt promotion
+    /// must use this Arc rather than consuming whatever candidate happens to
+    /// be installed after a newer delivery tick or Source revision.
+    candidate_projection: Option<Arc<HostContentProjection>>,
     delivery_frontier: StreamOffset,
     delivery_input: Option<(u32, u64, bool)>,
     delivery_revision: u64,
@@ -3019,6 +3091,10 @@ pub(crate) struct ContentHostRegistry {
     /// currently eligible Connector IDs and never require a registry scan.
     active_sync_scratch: Vec<u64>,
     due_connector_scratch: Vec<u64>,
+    /// Last host-supplied clock. Source/control wakes may arrive without an
+    /// explicit `now`; once a host has advanced, those wakes must stay on the
+    /// same timeline rather than falling back to wall time.
+    authoritative_clock: Option<Instant>,
     /// Connector/Port records touched while preparing the current candidate.
     /// Candidate cleanup and visible promotion consume these sets instead of
     /// scanning unrelated inactive registry entries.
@@ -3064,6 +3140,7 @@ impl ContentHostRegistry {
             active_connectors: HashSet::new(),
             active_sync_scratch: Vec::new(),
             due_connector_scratch: Vec::new(),
+            authoritative_clock: None,
             candidate_touched_connectors: HashSet::new(),
             candidate_touched_ports: HashSet::new(),
             pending_source_cleanups: Vec::new(),
@@ -3352,6 +3429,7 @@ impl ContentHostRegistry {
     /// Source storage. A progressed smoother invalidates only its derived
     /// projection; the host frame commits the new visible frontier later.
     pub(crate) fn advance(&mut self, now: Instant) -> Result<Vec<ContentDirty>> {
+        self.authoritative_clock = Some(now);
         if self.active_deadlines.is_empty() {
             let mut active_candidates = std::mem::take(&mut self.active_sync_scratch);
             active_candidates.clear();
@@ -3509,14 +3587,19 @@ impl ContentHostRegistry {
         if let Some(execution) = state.execution.as_mut()
             && let Some(delivery) = execution.delivery.as_mut()
         {
+            let clock_now = now
+                .or(self.authoritative_clock)
+                .unwrap_or_else(Instant::now);
+            delivery.smoother.ensure_clock(clock_now);
             delivery.accept_input(&snapshot)?;
+            delivery.smoother.ensure_clock(clock_now);
             if !delivery.smoother.has_pending_work() {
                 self.active_deadlines.remove(&connector_id);
                 self.active_connectors.remove(&connector_id);
             } else if let Some(dl) = delivery.smoother.next_wakeup() {
                 self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, dl);
-            } else if let Some(now) = now {
+            } else if let Some(now) = now.or(self.authoritative_clock) {
                 self.active_connectors.insert(connector_id);
                 self.active_deadlines.insert(connector_id, now);
             } else {
@@ -3564,6 +3647,14 @@ impl ContentHostRegistry {
         let state = connector
             .lock()
             .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        let port = state
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+        let port_id = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
         let snapshot = self.source_snapshot_for(&state.source)?;
         Ok(TextProjectionKey {
             source_id: snapshot.source_id,
@@ -3575,6 +3666,9 @@ impl ContentHostRegistry {
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
             theme_revision: self.theme_revision,
+            needs_finalized_prefix: self.history_adapter.unit_id(port_id).is_some(),
+            needs_physical_rows: self.history_adapter.unit_id(port_id).is_some()
+                || state.funnel.smooth_config().is_some(),
         })
     }
 
@@ -3689,14 +3783,29 @@ impl ContentHostRegistry {
             self.connectors.get(&connector_id).cloned().ok_or_else(|| {
                 anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
             })?;
-        let (source, funnel, delivery_revision) = {
+        let (source, funnel, delivery_revision, needs_finalized_prefix, needs_physical_rows) = {
             let state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
             if state.lifecycle != ConnectorLifecycle::Live || (!state.requested && !state.visible) {
                 return Ok(ContentMeasurement::default());
             }
-            (state.source.clone(), state.funnel, state.delivery_revision)
+            let port = state
+                .port
+                .upgrade()
+                .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+            let port_id = port
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .id;
+            (
+                state.source.clone(),
+                state.funnel,
+                state.delivery_revision,
+                self.history_adapter.unit_id(port_id).is_some(),
+                self.history_adapter.unit_id(port_id).is_some()
+                    || state.funnel.smooth_config().is_some(),
+            )
         };
         crate::perf::inc(crate::perf::Counter::SemanticPreparations);
         let snapshot = self.source_snapshot_for(&source)?;
@@ -3717,6 +3826,8 @@ impl ContentHostRegistry {
             funnel_kind: funnel.kind,
             delivery_revision,
             theme_revision: self.theme_revision,
+            needs_finalized_prefix,
+            needs_physical_rows,
         };
         {
             let mut state = connector
@@ -3766,6 +3877,7 @@ impl ContentHostRegistry {
             &snapshot,
             funnel,
             offered_width,
+            needs_finalized_prefix,
             &self.theme,
             self.theme_revision,
             &mut execution,
@@ -3913,6 +4025,19 @@ impl ContentHostRegistry {
         {
             return measurement;
         }
+        // The first probe already compiled the semantic product at the
+        // offered width. When its natural width is smaller, no line wrapped
+        // in that product, so re-keying the prepared ticket is equivalent to
+        // recompiling at the natural width. Keep one canonical paint product
+        // and avoid a second full semantic/layout/paint compilation for the
+        // common width-fit ContentHost path.
+        if let Some(measurement) = self.rekey_fit_projection(
+            connector_id,
+            offered_width,
+            measurement.intrinsic_size.width,
+        ) {
+            return measurement;
+        }
         match self.prepare_connector_projection(connector_id, measurement.intrinsic_size.width) {
             Ok(measurement) => measurement,
             Err(error) => {
@@ -3920,6 +4045,43 @@ impl ContentHostRegistry {
                 measurement
             }
         }
+    }
+
+    fn rekey_fit_projection(
+        &mut self,
+        connector_id: u64,
+        offered_width: u16,
+        intrinsic_width: u16,
+    ) -> Option<ContentMeasurement> {
+        let connector = self.connectors.get(&connector_id).cloned()?;
+        let mut state = connector.lock().ok()?;
+        let projection = state.candidate_projection.as_ref()?.clone();
+        if projection.key.width != offered_width.max(1)
+            || projection.intrinsic_size.width != intrinsic_width
+            || intrinsic_width == 0
+        {
+            return None;
+        }
+        let mut key = projection.key;
+        key.width = intrinsic_width.max(1);
+        if key == projection.key {
+            return Some(projection.measurement(connector_id));
+        }
+        let mut rekeyed = (*projection).clone();
+        rekeyed.identity = next_content_projection_id();
+        rekeyed.key = key;
+        let rekeyed = Arc::new(rekeyed);
+        state
+            .projection_cache
+            .retain(|(candidate, _)| candidate != &key);
+        state
+            .projection_cache
+            .push_front((key, Arc::clone(&rekeyed)));
+        while state.projection_cache.len() > 4 {
+            state.projection_cache.pop_back();
+        }
+        state.candidate_projection = Some(Arc::clone(&rekeyed));
+        Some(rekeyed.measurement(connector_id))
     }
 
     fn adjust_history_measurement(
@@ -4052,27 +4214,58 @@ impl ContentHostRegistry {
             target.physically_complete = false;
         }
         let committed_rows = self.history_adapter.committed_content_rows(ticket.port_id);
-        let rows = &projection.rows[..];
-        let available_rows = if committed_rows >= rows.len() {
-            &[][..]
-        } else {
-            &rows[committed_rows..]
-        };
-
         let max_visible = projection.visible_row_count.saturating_sub(committed_rows);
-        let visible_len = available_rows.len().min(max_visible);
-        let visible_rows = &available_rows[..visible_len];
+        let retained_visible_len = projection.rows.as_ref().map_or(max_visible, |rows| {
+            rows.len().saturating_sub(committed_rows).min(max_visible)
+        });
 
         let start_offset = match usize::try_from(window.first_row) {
             Ok(v) => v,
             Err(_) => return,
         };
-        if start_offset >= visible_rows.len() || window.row_count == 0 {
+        if start_offset >= retained_visible_len || window.row_count == 0 {
             return;
         }
         let row_count = usize::try_from(window.row_count).unwrap_or(usize::MAX);
-        let end_offset = (start_offset.saturating_add(row_count)).min(visible_rows.len());
-        let window_slice = &visible_rows[start_offset..end_offset];
+        let end_offset = (start_offset.saturating_add(row_count)).min(retained_visible_len);
+        let generated_rows;
+        let window_slice: &[PhysicalRow] = if let Some(rows) = projection.rows.as_ref() {
+            let available_rows = if committed_rows >= rows.len() {
+                &[][..]
+            } else {
+                &rows[committed_rows..]
+            };
+            &available_rows[start_offset..end_offset]
+        } else {
+            let first_row = committed_rows.saturating_add(start_offset);
+            let source_row_count = end_offset.saturating_sub(start_offset);
+            let compiler = crate::presentation::layout::ViewCompiler::new(&projection.theme);
+            let layout = projection
+                .layout
+                .as_ref()
+                .expect("deferred projection must retain its prepared layout");
+            let text_geometry = projection
+                .text_geometry
+                .as_ref()
+                .expect("deferred projection must retain text geometry");
+            let Ok(mut text_geometry) = text_geometry.lock() else {
+                target.physically_complete = false;
+                return;
+            };
+            let (rows, physically_complete) = crate::presentation::paint::ViewPainter::default()
+                .paint_tree_row_range_with_text_cache(
+                    &compiler,
+                    layout,
+                    u16::try_from(first_row).unwrap_or(u16::MAX),
+                    u16::try_from(source_row_count).unwrap_or(u16::MAX),
+                    &mut text_geometry,
+                );
+            if !physically_complete {
+                target.physically_complete = false;
+            }
+            generated_rows = rows;
+            generated_rows.as_slice()
+        };
 
         let clip_left = i32::from(clip.x);
         let clip_top = i32::from(clip.y);
@@ -4110,7 +4303,6 @@ impl ContentHostRegistry {
 
             let dest_origin_x = i32::from(target_origin.0);
             let src_cells = row.cells();
-
             for glyph in row.glyphs() {
                 if !glyph.leader.painted {
                     continue;
@@ -4243,6 +4435,7 @@ impl ContentHostRegistry {
             subscribed,
             control_revision,
             deadline,
+            candidate_projection,
             delivery_frontier,
             delivery_input,
             delivery_revision,
@@ -4290,6 +4483,7 @@ impl ContentHostRegistry {
                 state.subscribed,
                 state.control_revision,
                 deadline,
+                state.candidate_projection.clone(),
                 state.candidate_delivery_frontier,
                 delivery_input,
                 state.delivery_revision,
@@ -4306,6 +4500,7 @@ impl ContentHostRegistry {
             control_revision,
             deadline,
             visible,
+            candidate_projection,
             delivery_frontier,
             delivery_input,
             delivery_revision,
@@ -4649,6 +4844,14 @@ impl ContentHostRegistry {
         // still preparing this candidate; recording the pre-attempt revision
         // and exact width prevents a second layout measurement in this same
         // frame from retrying the identical failed input.
+        let port = state
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+        let port_id = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
         let snapshot = self.source_snapshot_for(&state.source)?;
         let key = TextProjectionKey {
             source_id: snapshot.source_id,
@@ -4660,6 +4863,9 @@ impl ContentHostRegistry {
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
             theme_revision: self.theme_revision,
+            needs_finalized_prefix: self.history_adapter.unit_id(port_id).is_some(),
+            needs_physical_rows: self.history_adapter.unit_id(port_id).is_some()
+                || state.funnel.smooth_config().is_some(),
         };
         let attempted_source_revision = snapshot.revision;
         let diagnostic = state
@@ -4864,25 +5070,26 @@ impl ContentHostRegistry {
                 .record
                 .lock()
                 .expect("prepared Connector lock must remain usable after preflight");
-            if connector.visible
-                && let Some(projection) = state.candidate_projection.take()
-            {
-                state.projected_source_revision = Some(projection.key.source_revision);
-                let current_delivery_input = state.execution.as_ref().and_then(|execution| {
-                    execution.delivery.as_ref().map(|delivery| {
-                        (
-                            delivery.indexed_generation,
-                            delivery.indexed_revision,
-                            delivery.indexed_sealed,
-                        )
-                    })
-                });
-                if current_delivery_input == connector.delivery_input
-                    && state.delivery_revision == connector.delivery_revision
+            if connector.visible {
+                if let Some(projection) = connector.candidate_projection.as_ref() {
+                    state.projected_source_revision = Some(projection.key.source_revision);
+                    // The projection and frontier belong to the prepared
+                    // candidate, not to the mutable Connector slot. A newer
+                    // delivery tick may have cleared/replaced that slot while
+                    // this receipt was outstanding; publishing the current
+                    // slot would skip the captured frame or expose newer work
+                    // through an older receipt.
+                    state.committed_delivery_frontier = connector.delivery_frontier;
+                    state.committed_projection = Some(Arc::clone(projection));
+                } else if state.committed_delivery_frontier == StreamOffset::ZERO
+                    && connector.delivery_frontier > StreamOffset::ZERO
                 {
+                    // A content-only plan can carry a frontier without a new
+                    // projection. Preserve the captured first visible
+                    // frontier, but never inspect/publish newer candidate
+                    // state here.
                     state.committed_delivery_frontier = connector.delivery_frontier;
                 }
-                state.committed_projection = Some(projection);
             }
         }
 
@@ -5096,10 +5303,19 @@ impl ContentHostRegistry {
                 .record
                 .lock()
                 .expect("prepared Connector lock must remain usable during cleanup");
-            state.candidate_projection = None;
-            if state.control_revision == connector.control_revision
+            let captured_projection_is_current = match (
+                connector.candidate_projection.as_ref(),
+                state.candidate_projection.as_ref(),
+            ) {
+                (Some(captured), Some(current)) => Arc::ptr_eq(captured, current),
+                (None, None) => true,
+                _ => false,
+            };
+            if captured_projection_is_current
+                && state.control_revision == connector.control_revision
                 && state.delivery_revision == connector.delivery_revision
             {
+                state.candidate_projection = None;
                 state.candidate_delivery_frontier = state.committed_delivery_frontier;
                 if !state.visible {
                     state.committed_projection = None;
@@ -6266,16 +6482,11 @@ impl ContentProvider for ContentHostRegistry {
         if insets == view.decoration().padding {
             return view.clone();
         }
-        // History has already acknowledged the removed padding rows.  Apply
+        // History has already acknowledged the removed padding rows. Apply
         // the replacement decoration as one final semantic root instead of
-        // replaying a public fluent modifier chain during every projection.
-        crate::presentation::api::View::native_patched(
-            view.clone(),
-            &crate::presentation::api::NativeCommonPatch {
-                padding: Some(insets),
-                ..Default::default()
-            },
-        )
+        // replaying a modifier chain during every projection.
+        view.clone()
+            .map_node(|node| node.decoration.padding = insets)
     }
 
     fn history_unit_retired(&mut self, unit_id: u64) {
@@ -6613,9 +6824,9 @@ impl Drop for HostContentConnector {
 mod tests {
     use super::*;
     use crate::ThemeColor;
-    use crate::View;
     use crate::application::environment::TuiEnvironment;
     use crate::application::host::TuiHost;
+    use crate::presentation::factory as vf;
 
     /// Forced-boundary Source: accepted bytes installed at revision 1, then
     /// the revision counter pinned to its limit. The returned source always
@@ -6799,7 +7010,7 @@ mod tests {
         first_connector.activate().unwrap();
         assert_eq!(source.subscriber_count(), 0);
         first
-            .set_desired_view(View::native_content_host(first_port.id()).unwrap())
+            .set_desired_view(vf::content_host(first_port.id()).unwrap())
             .unwrap();
         first.flush_pending_hosts(32, true).unwrap();
         assert_eq!(source.subscriber_count(), 1);
@@ -6809,7 +7020,7 @@ mod tests {
         second_connector.activate().unwrap();
         assert_eq!(source.subscriber_count(), 1);
         second
-            .set_desired_view(View::native_content_host(second_port.id()).unwrap())
+            .set_desired_view(vf::content_host(second_port.id()).unwrap())
             .unwrap();
         second.flush_pending_hosts(32, true).unwrap();
         assert_eq!(source.subscriber_count(), 2);
@@ -6839,7 +7050,7 @@ mod tests {
         let first_conn = first_port.connect(&source, funnel).unwrap();
         first_conn.activate().unwrap();
         first
-            .set_desired_view(View::native_content_host(first_port.id()).unwrap())
+            .set_desired_view(vf::content_host(first_port.id()).unwrap())
             .unwrap();
         first.flush_pending_hosts(32, true).unwrap();
 
@@ -6847,7 +7058,7 @@ mod tests {
         let second_conn = second_port.connect(&source, funnel).unwrap();
         second_conn.activate().unwrap();
         second
-            .set_desired_view(View::native_content_host(second_port.id()).unwrap())
+            .set_desired_view(vf::content_host(second_port.id()).unwrap())
             .unwrap();
         second.flush_pending_hosts(32, true).unwrap();
 
@@ -6924,11 +7135,15 @@ mod tests {
         let snap_i0 = &snapshots[0];
         assert_eq!(snap_i0.text(), "item 000\n");
         assert_eq!(snap_i0.annotations().len(), 1);
+        let snap_i0_storage = Arc::clone(&snap_i0.storage);
+        assert!(
+            Arc::ptr_eq(&snap_i0.storage, &snap_i0_storage),
+            "native Snapshot storage must be retained by Arc ownership"
+        );
 
         let latest = source.snapshot().unwrap();
         assert_eq!(latest.annotations().len(), 50);
         assert_eq!(latest.retained_lines(), 51); // 50 newlines + base line = 51
-
         // 4. Test atomic retention + annotations
         source.configure_retention(Some(30), None, true).unwrap();
         source.append_utf8(b"tail-item\n", &[], &[]).unwrap();
@@ -6941,6 +7156,18 @@ mod tests {
         for anno in snap_retained.annotations() {
             assert!(anno.end_byte > stats.source_base);
         }
+        source
+            .replace_utf8(b"replacement generation\n", &[], &[])
+            .unwrap();
+        assert_eq!(snap_i0.text(), "item 000\n");
+        assert_eq!(snap_i0.annotations().len(), 1);
+        assert!(
+            Arc::ptr_eq(&snap_i0.storage, &snap_i0_storage),
+            "Source replacement must not detach an old native Snapshot owner"
+        );
+        assert_eq!(Arc::strong_count(&snap_i0.storage), 2);
+        drop(snap_i0_storage);
+        assert_eq!(Arc::strong_count(&snap_i0.storage), 1);
     }
 
     #[test]
@@ -6955,7 +7182,12 @@ mod tests {
             .connect(
                 &port.record,
                 &source,
-                HostContentFunnel::plain(TextWrapMode::Word),
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Immediate,
+                ),
             )
             .unwrap();
         assert_eq!(source.subscriber_count(), 0);
@@ -6973,7 +7205,7 @@ mod tests {
         let second_port = second.create_content_port(ContentFamily::Text).unwrap();
         assert_ne!(first_port.id(), second_port.id());
 
-        let foreign_view = View::native_content_host(first_port.id()).unwrap();
+        let foreign_view = vf::content_host(first_port.id()).unwrap();
         let error = second.set_desired_view(foreign_view).unwrap_err();
         assert!(error.to_string().contains("STALE_HANDLE"));
 
@@ -6995,7 +7227,7 @@ mod tests {
         let second = port
             .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
             .unwrap();
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         first.activate().unwrap();
         host.flush_pending_hosts(32, true).unwrap();
@@ -7057,7 +7289,7 @@ mod tests {
         let second = port
             .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
             .unwrap();
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         first.activate().unwrap();
         host.flush_pending_hosts(32, true).unwrap();
@@ -7068,10 +7300,10 @@ mod tests {
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "failed");
 
-        host.set_desired_view(View::spacer(0)).unwrap();
+        host.set_desired_view(vf::spacer(0)).unwrap();
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "waiting-for-mount");
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "active");
@@ -7821,6 +8053,10 @@ mod tests {
             state.requested = true;
             state.visible = true;
         }
+
+        // Commit an initial candidate so the delayed receipt below exercises
+        // a real F0 < F1 < F2 progression rather than relying on ZERO as an
+        // uninitialized sentinel.
         registry.begin_projection_candidate();
         registry
             .prepare_connector_projection(connector.id(), 32)
@@ -7829,34 +8065,250 @@ mod tests {
         let initial = registry
             .connector_candidate_delivery_frontier(connector.id())
             .unwrap();
-        let plan = registry.prepare_content_commit().unwrap();
-        registry.begin_prepared_candidate(&plan);
-        let deadline = registry
-            .next_wakeup()
-            .expect("smooth content must have a deadline");
-        let _ = registry
-            .advance(deadline + std::time::Duration::from_secs(5))
-            .unwrap();
-        let newer = registry
-            .connector_candidate_delivery_frontier(connector.id())
-            .unwrap();
-        registry.commit_prepared(&plan).unwrap();
+        assert!(initial > StreamOffset::ZERO);
+        let initial_plan = registry.prepare_content_commit().unwrap();
+        registry.begin_prepared_candidate(&initial_plan);
+        registry.commit_prepared(&initial_plan).unwrap();
         registry.end_candidate();
-        assert!(newer >= initial);
         assert_eq!(
             registry
                 .connector_delivery_frontier(connector.id())
                 .unwrap(),
-            initial,
-            "an older receipt must not publish a newer delivery frontier"
+            initial
+        );
+
+        // Prepare F1, then hold its receipt while a newer delivery tick
+        // advances the mutable Connector state to F2 and clears its current
+        // candidate projection. The prepared plan must retain the old Arc.
+        registry.begin_projection_candidate();
+        let deadline = registry
+            .next_wakeup()
+            .expect("smooth content must have a deadline");
+        let _ = registry
+            .advance(deadline + std::time::Duration::from_millis(16))
+            .unwrap();
+        let first_newer = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        assert!(first_newer > initial);
+        registry
+            .prepare_connector_projection(connector.id(), 32)
+            .unwrap();
+        registry.candidate_binding_changes.insert(port.id());
+        let delayed_plan = registry.prepare_content_commit().unwrap();
+        let captured_identity = delayed_plan
+            .connectors
+            .iter()
+            .find(|prepared| prepared.id == connector.id())
+            .and_then(|prepared| prepared.candidate_projection.as_ref())
+            .map(|projection| projection.identity)
+            .expect("delayed plan must own F1 projection");
+        registry.begin_prepared_candidate(&delayed_plan);
+        let next_deadline = registry
+            .next_wakeup()
+            .expect("newer smooth content must have a deadline");
+        let _ = registry
+            .advance(next_deadline + std::time::Duration::from_millis(16))
+            .unwrap();
+        let newer = registry
+            .connector_candidate_delivery_frontier(connector.id())
+            .unwrap();
+        assert!(newer > first_newer);
+
+        // A Source replacement arrives before the old receipt. It must not
+        // rewrite the old plan or make its F1 frontier disappear.
+        let before_replace = source.stats().unwrap().revision;
+        source
+            .replace_utf8(b"replacement source payload\n", &[], &[])
+            .unwrap();
+        assert!(source.stats().unwrap().revision > before_replace);
+        // Consume the replacement wake and prepare its newer product while
+        // the old receipt is still outstanding. Its source generation and
+        // delivery coordinate may reset independently of F1; the old commit
+        // must leave this exact newer product/deadline untouched.
+        registry
+            .sync_connector_deadline(
+                connector.id(),
+                Some(next_deadline + std::time::Duration::from_millis(32)),
+            )
+            .unwrap();
+        registry
+            .prepare_connector_projection(connector.id(), 32)
+            .unwrap();
+        let replacement_state = registry
+            .connectors
+            .get(&connector.id())
+            .unwrap()
+            .lock()
+            .unwrap();
+        let replacement_identity = replacement_state
+            .candidate_projection
+            .as_ref()
+            .map(|projection| projection.identity)
+            .expect("replacement wake must install a newer product");
+        let replacement_frontier = replacement_state.candidate_delivery_frontier;
+        let replacement_deadline = registry.active_deadlines.get(&connector.id()).copied();
+        drop(replacement_state);
+        assert_ne!(replacement_identity, captured_identity);
+
+        registry.commit_prepared(&delayed_plan).unwrap();
+        registry.end_candidate();
+        assert!(newer > initial);
+        assert_eq!(
+            registry
+                .connector_delivery_frontier(connector.id())
+                .unwrap(),
+            first_newer,
+            "an older receipt must publish exactly its captured F1 frontier"
         );
         assert_eq!(
             registry
                 .connector_candidate_delivery_frontier(connector.id())
                 .unwrap(),
             newer,
-            "newer delivery progress must remain pending"
+            "newer F2 delivery progress must remain pending"
         );
+        let after_replacement = registry
+            .connectors
+            .get(&connector.id())
+            .unwrap()
+            .lock()
+            .unwrap();
+        assert_eq!(
+            after_replacement
+                .candidate_projection
+                .as_ref()
+                .map(|projection| projection.identity),
+            Some(replacement_identity),
+            "older receipt must not consume the replacement candidate"
+        );
+        assert_eq!(
+            after_replacement.candidate_delivery_frontier, replacement_frontier,
+            "replacement coordinate must not be compared to old-source F1"
+        );
+        assert_eq!(
+            registry.active_deadlines.get(&connector.id()).copied(),
+            replacement_deadline,
+            "newer replacement deadline must remain pending"
+        );
+        drop(after_replacement);
+        assert_eq!(
+            registry
+                .connectors
+                .get(&connector.id())
+                .unwrap()
+                .lock()
+                .unwrap()
+                .committed_projection
+                .as_ref()
+                .map(|projection| projection.identity),
+            Some(captured_identity),
+            "receipt must retain the candidate-owned F1 projection"
+        );
+    }
+
+    #[test]
+    fn history_binding_requires_prefix_product_on_a_warm_projection() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(
+                b"# Header\n\nParagraph line 1\nParagraph line 2\n\nMore text\n",
+                &[],
+                &[],
+            )
+            .unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::new(
+                    TextFunnelKind::Markdown,
+                    TextWrapMode::Word,
+                    true,
+                    ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        // Warm an ordinary open projection without any History binding.
+        registry.begin_projection_candidate();
+        let ordinary =
+            registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert!(ordinary.intrinsic_size.height > 0);
+        registry.promote_candidate_projection(connector.id());
+        assert!(
+            registry
+                .connectors
+                .get(&connector.id())
+                .unwrap()
+                .lock()
+                .unwrap()
+                .committed_projection
+                .as_ref()
+                .and_then(|projection| projection.finalized_prefix.as_ref())
+                .is_none()
+        );
+
+        // Binding/rebinding the same warm Connector must change the cache key
+        // and prepare the existing finalized-prefix policy without new Source
+        // bytes or a whole registry/cache flush.
+        registry
+            .set_history_unit(port.id(), 1, crate::Insets::ZERO)
+            .unwrap();
+        registry.begin_projection_candidate();
+        let history = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        assert!(history.intrinsic_size.height > 0);
+        let candidate = registry
+            .connectors
+            .get(&connector.id())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .candidate_projection
+            .as_ref()
+            .cloned()
+            .expect("History-bound warm Connector must prepare a candidate");
+        assert!(candidate.key.needs_finalized_prefix);
+        assert!(candidate.finalized_prefix.is_some());
+        registry.promote_candidate_projection(connector.id());
+        let first_rows = registry.history_rows(port.id(), 20).expect("History rows");
+        assert!(first_rows.complete || !first_rows.rows.is_empty());
+
+        registry
+            .set_history_unit(port.id(), 2, crate::Insets::ZERO)
+            .unwrap();
+        registry.begin_projection_candidate();
+        registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
+        let rebound = registry
+            .connectors
+            .get(&connector.id())
+            .unwrap()
+            .lock()
+            .unwrap()
+            .candidate_projection
+            .as_ref()
+            .cloned()
+            .expect("rebound History unit must retain prefix policy");
+        assert!(rebound.key.needs_finalized_prefix);
+        assert!(rebound.finalized_prefix.is_some());
     }
 
     #[test]
@@ -8060,6 +8512,185 @@ mod tests {
     }
 
     #[test]
+    fn prepared_paint_cache_separates_immediate_and_smooth_row_demands() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source
+            .append_utf8(b"shared cache rows must stay visible\n", &[], &[])
+            .unwrap();
+        let snapshot = source.snapshot().unwrap();
+        let immediate = HostContentFunnel::plain(TextWrapMode::Word);
+        let smooth = HostContentFunnel::new(
+            TextFunnelKind::Plain,
+            TextWrapMode::Word,
+            true,
+            ContentDelivery::Smooth(SmoothConfig::default()),
+        );
+        let theme = Arc::new(Theme::new());
+
+        let mut semantic_cache = SemanticProjectionCache::new();
+        let mut prefix_cache = PrefixProofCache::new();
+        let mut prepared_cache = PreparedPaintCache::new();
+        let mut immediate_execution = ConnectorExecution::new(&immediate);
+        let immediate_projection = project_text_snapshot(
+            &snapshot,
+            immediate,
+            40,
+            false,
+            &theme,
+            0,
+            &mut immediate_execution,
+            0,
+            &mut semantic_cache,
+            &mut prefix_cache,
+            &mut prepared_cache,
+        )
+        .unwrap();
+        assert!(
+            immediate_projection.rows.is_none(),
+            "immediate non-History projections may defer physical rows"
+        );
+
+        let mut smooth_execution = ConnectorExecution::new(&smooth);
+        let smooth_projection = project_text_snapshot(
+            &snapshot,
+            smooth,
+            40,
+            false,
+            &theme,
+            0,
+            &mut smooth_execution,
+            0,
+            &mut semantic_cache,
+            &mut prefix_cache,
+            &mut prepared_cache,
+        )
+        .unwrap();
+        assert!(
+            smooth_projection.rows.is_some(),
+            "smooth projections require visibility rows"
+        );
+
+        let mut reverse_semantic_cache = SemanticProjectionCache::new();
+        let mut reverse_prefix_cache = PrefixProofCache::new();
+        let mut reverse_prepared_cache = PreparedPaintCache::new();
+        let mut smooth_first = ConnectorExecution::new(&smooth);
+        let smooth_first_projection = project_text_snapshot(
+            &snapshot,
+            smooth,
+            40,
+            false,
+            &theme,
+            0,
+            &mut smooth_first,
+            0,
+            &mut reverse_semantic_cache,
+            &mut reverse_prefix_cache,
+            &mut reverse_prepared_cache,
+        )
+        .unwrap();
+        assert!(smooth_first_projection.rows.is_some());
+        let mut immediate_after_smooth = ConnectorExecution::new(&immediate);
+        let immediate_after_smooth_projection = project_text_snapshot(
+            &snapshot,
+            immediate,
+            40,
+            false,
+            &theme,
+            0,
+            &mut immediate_after_smooth,
+            0,
+            &mut reverse_semantic_cache,
+            &mut reverse_prefix_cache,
+            &mut reverse_prepared_cache,
+        )
+        .unwrap();
+        assert!(immediate_after_smooth_projection.rows.is_none());
+    }
+
+    #[test]
+    fn deferred_ticket_paints_with_its_captured_theme_after_recolor() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"captured palette\n", &[], &[]).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_mounted = true;
+            port_state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+
+        let theme_a = Arc::new(Theme::new().with_style(
+            crate::content::text::TEXT_THEME_KEY,
+            StyleSpec::new().foreground(ColorSpec::ansi(1)),
+        ));
+        let theme_b = Arc::new(Theme::new().with_style(
+            crate::content::text::TEXT_THEME_KEY,
+            StyleSpec::new().foreground(ColorSpec::ansi(4)),
+        ));
+        registry.set_theme(&theme_a);
+        let measurement_a =
+            registry.measure_content(port.id(), 40, crate::presentation::WidthRule::Fill);
+        let old_projection = registry
+            .connectors
+            .get(&connector.id())
+            .and_then(|record| record.lock().ok())
+            .and_then(|state| state.candidate_projection.clone())
+            .expect("initial measurement must prepare a projection");
+        let old_ticket = PreparedProjectionTicket {
+            port_id: port.id(),
+            connector_id: Some(connector.id()),
+            offered_width: 40,
+            projection_revision: old_projection.key.revision(),
+            projection_identity: old_projection.identity,
+        };
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            record.lock().unwrap().committed_projection = Some(old_projection);
+        }
+
+        registry.set_theme(&theme_b);
+        let _measurement_b =
+            registry.measure_content(port.id(), 40, crate::presentation::WidthRule::Fill);
+        let mut target = Surface::new(40, 1);
+        registry.paint_window_direct(
+            old_ticket,
+            ContentWindow {
+                first_row: 0,
+                row_count: 1,
+            },
+            &mut target,
+            (0, 0),
+            crate::geometry::Rect::new(0, 0, 40, 1),
+            crate::physical::PhysicalStyle::default(),
+        );
+        assert_eq!(
+            target.get(0, 0).style.foreground,
+            Some(crate::physical::PhysicalColor::Indexed(1)),
+            "an old prepared ticket must retain theme A after host recolors to B"
+        );
+        assert!(measurement_a.intrinsic_size.height >= 1);
+    }
+
+    #[test]
     fn theme_recolor_repaints_without_reparsing_semantic_content() {
         use crate::TextFunnelKind;
         #[cfg(feature = "perf-counters")]
@@ -8254,7 +8885,9 @@ mod tests {
     #[test]
     fn native_sink_failure_marks_synchronization_unknown_without_rewinding_history() {
         let mut history = crate::History::new();
-        history.push("one\ntwo").unwrap();
+        history
+            .push(crate::presentation::factory::text("one\ntwo"))
+            .unwrap();
         let mut sink = PartialErrorSink {
             rows: Vec::new(),
             fail: true,
@@ -8304,7 +8937,9 @@ mod tests {
     #[test]
     fn history_marker_preserves_prior_acknowledged_rows_after_later_failure() {
         let mut history = crate::History::new();
-        history.push("one\ntwo\nthree").unwrap();
+        history
+            .push(crate::presentation::factory::text("one\ntwo\nthree"))
+            .unwrap();
         let mut sink = SuccessThenErrorSink {
             rows: Vec::new(),
             calls: 0,
@@ -8418,7 +9053,7 @@ mod tests {
                     ),
                 )
                 .unwrap();
-            let view = View::native_content_host(port_id).unwrap();
+            let view = vf::content_host(port_id).unwrap();
             let mut history = crate::History::new();
             let unit_id = history.push(view).unwrap();
             registry
@@ -8542,7 +9177,7 @@ mod tests {
                 HostContentFunnel::plain(TextWrapMode::Word),
             )
             .unwrap();
-        let view = View::native_content_host(port_id).unwrap();
+        let view = vf::content_host(port_id).unwrap();
         let mut history = crate::History::new();
         let unit_id = history.push(view).unwrap();
         registry
@@ -8729,9 +9364,10 @@ mod tests {
             )
             .unwrap();
         let mut history = crate::History::new();
-        let view = View::native_content_host(port_id)
-            .unwrap()
-            .padding(crate::Insets::new(2, 0, 1, 0));
+        let view = crate::presentation::factory::padding(
+            vf::content_host(port_id).unwrap(),
+            crate::Insets::new(2, 0, 1, 0),
+        );
         let unit_id = history.push(view.clone()).unwrap();
         registry
             .set_history_unit(port_id, unit_id.value(), crate::Insets::new(2, 0, 1, 0))
@@ -8826,7 +9462,7 @@ mod tests {
             )
             .unwrap();
         let mut history = crate::History::new();
-        let view = View::native_content_host(port_id).unwrap();
+        let view = vf::content_host(port_id).unwrap();
         let unit_id = history.push(view.clone()).unwrap();
         registry
             .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
@@ -8939,9 +9575,7 @@ mod tests {
             )
             .unwrap();
         let mut history = crate::History::new();
-        let unit_id = history
-            .push(View::native_content_host(port_id).unwrap())
-            .unwrap();
+        let unit_id = history.push(vf::content_host(port_id).unwrap()).unwrap();
         registry
             .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)
             .unwrap();
@@ -9084,7 +9718,7 @@ mod tests {
                     ),
                 )
                 .unwrap();
-            let unit_view = View::native_content_host(port.id()).unwrap();
+            let unit_view = vf::content_host(port.id()).unwrap();
             let mut history = crate::History::new();
             let unit_id = history.push(unit_view).unwrap();
             registry
@@ -9123,7 +9757,7 @@ mod tests {
     fn history_transfer_static_and_unsealed_markdown_stream_does_not_block() {
         let mut history = crate::History::new();
         // Unit 1: A completed/frozen static unit
-        let static_view = View::text("Command output: success");
+        let static_view = vf::text("Command output: success");
         let _ = history.push(static_view).unwrap();
 
         // Unit 2: An unsealed Markdown text stream
@@ -9150,7 +9784,7 @@ mod tests {
                 ),
             )
             .unwrap();
-        let stream_view = View::native_content_host(port_id).unwrap();
+        let stream_view = vf::content_host(port_id).unwrap();
         let unit_id = history.push(stream_view).unwrap();
         registry
             .set_history_unit(port_id, unit_id.value(), crate::Insets::ZERO)

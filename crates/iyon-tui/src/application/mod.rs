@@ -41,13 +41,12 @@ pub use environment::{
     HostCommit, HostDrainReport, HostEpochs, HostFrameError, TuiEnvironment, WakeDisposition,
 };
 pub use error::{RunError, RuntimeError};
-pub use handle::{AppClosed, AppHandle, AppSendError};
+pub use handle::AppHandle;
 #[cfg(feature = "native-host")]
 pub use host::{
     HostCellStyle, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, RoutedOutput, TuiHost,
 };
 #[cfg(feature = "test-util")]
 pub(crate) use kernel::{KernelError, RunningApp};
-pub use timer::TimerHandle;
 #[cfg(feature = "native-host")]
 pub use view_state::HostViewState;

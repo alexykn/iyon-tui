@@ -4,29 +4,30 @@ use super::super::{
 };
 use super::identity::{RenderContext, inline_base_facts};
 use super::{SoftBreakPolicy, TextRenderer};
-use crate::{Text, TextSpan, View};
+use crate::presentation::factory as vf;
+use crate::{TextSpan, View};
 
 impl TextRenderer {
     pub(super) fn render_inline_content(
         &self,
         content: &InlineContent,
         context: &RenderContext,
-    ) -> Text {
+    ) -> View {
         let mut spans = Vec::new();
         let base = inline_base_facts(context);
         for inline in content.iter() {
             self.push_inline(&mut spans, inline, context, base.clone());
         }
-        View::styled_text(spans)
+        vf::styled_text(spans)
     }
 
-    pub(super) fn render_literal(&self, literal: &LiteralText, context: &RenderContext) -> Text {
+    pub(super) fn render_literal(&self, literal: &LiteralText, context: &RenderContext) -> View {
         let mut spans = Vec::new();
         let base = inline_base_facts(context);
         for run in literal.runs() {
             spans.push(run_span(run, context, base.clone()));
         }
-        View::styled_text(spans)
+        vf::styled_text(spans)
     }
 
     fn push_inline(

@@ -213,6 +213,17 @@ impl Smooth {
         self.next_wakeup
     }
 
+    /// Initialize the delivery clock once a pending input episode is known.
+    /// Subsequent scheduler calls preserve the existing deadline and elapsed
+    /// credit; this is intentionally not a per-tick rebase.
+    pub(crate) fn ensure_clock(&mut self, now: Instant) {
+        if self.input_sealed || self.pending.is_empty() || self.next_wakeup.is_some() {
+            return;
+        }
+        self.last_advance = Some(now);
+        self.next_wakeup = now.checked_add(self.config.tick_interval);
+    }
+
     #[must_use]
     pub fn published_through(&self) -> StreamOffset {
         self.published_end

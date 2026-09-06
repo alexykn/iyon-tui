@@ -724,6 +724,14 @@ impl Clone for View {
     }
 }
 
+#[cfg(test)]
+impl View {
+    #[cfg(test)]
+    pub(crate) fn component<C>(handle: crate::component::ComponentHandle<C>) -> Self {
+        crate::presentation::factory::component(handle)
+    }
+}
+
 pub(crate) struct ViewNodeParts {
     pub(crate) width: WidthRule,
     pub(crate) height: HeightRule,
@@ -817,7 +825,7 @@ impl View {
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
     #[must_use]
-    pub fn native_state_attachment_id(&self) -> Option<u64> {
+    pub(crate) fn native_state_attachment_id(&self) -> Option<u64> {
         self.state_attachment_id()
     }
 
@@ -826,7 +834,7 @@ impl View {
     /// the ordinary semantic value.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_with_state_attachment(self, state_id: u64) -> Result<Self, String> {
+    pub(crate) fn native_with_state_attachment(self, state_id: u64) -> Result<Self, String> {
         if state_id == 0 {
             return Err("ViewState identity must be positive".to_owned());
         }
@@ -843,7 +851,7 @@ impl View {
     /// The public semantic node carries only the backend-neutral HandleId.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_with_content_attachment(self, port_id: u64) -> Result<Self, String> {
+    pub(crate) fn native_with_content_attachment(self, port_id: u64) -> Result<Self, String> {
         if port_id == 0 {
             return Err("ContentPort identity must be positive".to_owned());
         }
@@ -875,14 +883,14 @@ impl View {
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
     #[must_use]
-    pub fn native_state_capable(&self) -> bool {
+    pub(crate) fn native_state_capable(&self) -> bool {
         crate::retained_state::presentation_state_capable(self.kind())
     }
 
     /// Returns every retained state identity in this semantic value. The
     /// native host uses this to establish desired binding before a frame.
     #[cfg(feature = "native-host")]
-    pub fn native_state_attachment_ids(&self) -> Result<Vec<u64>, String> {
+    pub(crate) fn native_state_attachment_ids(&self) -> Result<Vec<u64>, String> {
         Ok(self
             .native_state_attachment_targets()?
             .into_iter()
@@ -1036,7 +1044,7 @@ impl View {
     /// subsequent structural edits.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_axis_from_children(
+    pub(crate) fn native_axis_from_children(
         horizontal: bool,
         gap: u16,
         children: Vec<(u32, View)>,
@@ -1079,7 +1087,7 @@ impl View {
     /// `(track kind in low byte, value in high 16 bits)` representation.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_axis_set_child(
+    pub(crate) fn native_axis_set_child(
         self,
         index: usize,
         track_word: u32,
@@ -1136,7 +1144,7 @@ impl View {
     /// operations. No flat child vector is constructed by this method.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_axis_splice(
+    pub(crate) fn native_axis_splice(
         self,
         index: usize,
         remove_count: usize,
@@ -1193,7 +1201,7 @@ impl View {
     /// placement metadata and sharing every unchanged sequence node.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_grid_set_cell(
+    pub(crate) fn native_grid_set_cell(
         self,
         row: usize,
         column: usize,
@@ -1224,7 +1232,7 @@ impl View {
     /// Applies a retained axis or grid child update at a path target.
     #[cfg(feature = "native-host")]
     #[doc(hidden)]
-    pub fn native_replace_at_path(
+    pub(crate) fn native_replace_at_path(
         self,
         steps: &[RetainedPathStep],
         axis_index: Option<usize>,
@@ -1261,7 +1269,7 @@ impl View {
 
     #[cfg(feature = "native-host")]
     #[must_use]
-    pub fn downgrade(&self) -> WeakView {
+    pub(crate) fn downgrade(&self) -> WeakView {
         WeakView {
             inner: Arc::downgrade(&self.inner),
         }
@@ -1338,7 +1346,7 @@ impl View {
     /// ancestor once. Axis and grid children use `PersistentSeq::set`, so a
     /// wide parent never becomes a flat copy during a path edit.
     #[doc(hidden)]
-    pub fn try_with_text_layout_patch_path(
+    pub(crate) fn try_with_text_layout_patch_path(
         self,
         steps: &[RetainedPathStep],
         wrap: WrapMode,
@@ -1354,7 +1362,7 @@ impl View {
     /// each rebuilt ancestor. Native uses these values to publish every JS
     /// semantic NodeId without sending a NodeId array over FFI.
     #[doc(hidden)]
-    pub fn try_with_text_layout_patch_path_with_nodes(
+    pub(crate) fn try_with_text_layout_patch_path_with_nodes(
         self,
         steps: &[RetainedPathStep],
         wrap: WrapMode,
@@ -1370,7 +1378,7 @@ impl View {
     /// Transaction staging uses this to descend a native path trie without
     /// rebuilding or flattening any unchanged sibling sequence.
     #[doc(hidden)]
-    pub fn try_retained_child(&self, step: RetainedPathStep) -> Result<Self, String> {
+    pub(crate) fn try_retained_child(&self, step: RetainedPathStep) -> Result<Self, String> {
         if view_kind_tag(self.kind()) != step.expected_view_kind {
             return Err("retained path expected view kind does not match base".to_owned());
         }
@@ -1451,7 +1459,7 @@ impl View {
     /// The receiver is immutable; all unaffected subtrees and sequence nodes
     /// remain shared with it.
     #[doc(hidden)]
-    pub fn try_replace_retained_child(
+    pub(crate) fn try_replace_retained_child(
         self,
         step: RetainedPathStep,
         child: Self,
@@ -1468,7 +1476,7 @@ impl View {
     /// parents chain `PersistentSeq::set` (path copies, never flat copies)
     /// and still allocate exactly one root.
     #[doc(hidden)]
-    pub fn try_replace_retained_children(
+    pub(crate) fn try_replace_retained_children(
         self,
         replacements: &[(RetainedPathStep, Self)],
     ) -> Result<Self, String> {
@@ -1943,7 +1951,7 @@ pub struct WeakView {
 #[cfg(feature = "native-host")]
 impl WeakView {
     #[must_use]
-    pub fn upgrade(&self) -> Option<View> {
+    pub(crate) fn upgrade(&self) -> Option<View> {
         self.inner.upgrade().map(|inner| View { inner })
     }
 }
@@ -2228,12 +2236,11 @@ pub(crate) struct RowViewportView {
 #[cfg(test)]
 mod tests {
     use super::{PersistentSeq, SeqNode, SequenceAggregate, View, ViewKind};
-    use crate::presentation::IntoView;
     use std::sync::Arc;
 
     #[test]
     fn clone_retains_identity_and_only_clones_the_outer_arc() {
-        let original = View::text("x").into_view();
+        let original = crate::presentation::factory::text("x");
         let cloned = original.clone();
 
         assert!(View::ptr_eq(&original, &cloned));
@@ -2243,18 +2250,18 @@ mod tests {
 
     #[test]
     fn semantic_mutation_gets_a_new_identity_even_when_unique() {
-        let original = View::text("x").into_view();
+        let original = crate::presentation::factory::text("x");
         let original_id = original.id();
-        let changed = original.padding(1);
+        let changed = crate::presentation::factory::padding(original, 1);
         assert_ne!(original_id, changed.id());
     }
 
     #[test]
     fn semantic_mutation_gets_a_new_identity_when_shared() {
-        let original = View::text("x").into_view();
+        let original = crate::presentation::factory::text("x");
         let shared = original.clone();
         let shared_id = shared.id();
-        let changed = shared.padding(1);
+        let changed = crate::presentation::factory::padding(shared, 1);
 
         assert_ne!(original.id(), changed.id());
         assert_eq!(original.id(), shared_id);
@@ -2263,8 +2270,10 @@ mod tests {
 
     #[test]
     fn semantic_equality_ignores_view_identity() {
-        let first = View::text("same").padding(1).into_view();
-        let second = View::text("same").padding(1).into_view();
+        let first =
+            crate::presentation::factory::padding(crate::presentation::factory::text("same"), 1);
+        let second =
+            crate::presentation::factory::padding(crate::presentation::factory::text("same"), 1);
 
         assert_ne!(first.id(), second.id());
         assert_eq!(first, second);
@@ -2272,11 +2281,15 @@ mod tests {
 
     #[test]
     fn changing_a_parent_retains_an_unchanged_child_identity() {
-        let child = View::text("stable").into_view();
-        let root = View::vertical(|column| {
-            column.child(child.clone());
-        });
-        let changed = root.clone().padding(1);
+        let child = crate::presentation::factory::text("stable");
+        let root = crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                child.clone(),
+            )],
+            0,
+        );
+        let changed = crate::presentation::factory::padding(root.clone(), 1);
 
         let ViewKind::Column(original_column) = root.kind() else {
             panic!("expected column root");
@@ -2358,20 +2371,24 @@ mod tests {
 
     #[test]
     fn component_presence_is_cached_in_flags() {
-        let ordinary = View::text("ordinary").into_view();
+        let ordinary = crate::presentation::factory::text("ordinary");
         assert!(!ordinary.contains_component_identity());
 
-        let mounted = View::vertical(|column| {
-            column.child(View::native_component(1));
-        });
+        let mounted = crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::native_component(1),
+            )],
+            0,
+        );
         assert!(mounted.contains_component_identity());
-        assert!(mounted.padding(1).contains_component_identity());
+        assert!(crate::presentation::factory::padding(mounted, 1).contains_component_identity());
     }
 
     #[cfg(feature = "native-host")]
     #[test]
     fn weak_view_handles_do_not_keep_views_alive() {
-        let view = View::text("weak").into_view();
+        let view = crate::presentation::factory::text("weak");
         let weak = view.downgrade();
         let upgraded = weak.upgrade().expect("live view must upgrade");
         assert_eq!(upgraded.id(), view.id());
@@ -2386,7 +2403,7 @@ mod tests {
         use crate::presentation::api::NativeCommonPatch;
         use crate::{ColorSpec, Insets};
 
-        let child = View::text("leaf").into_view();
+        let child = crate::presentation::factory::text("leaf");
         let patch = NativeCommonPatch {
             padding: Some(Insets::new(1, 2, 3, 4)),
             foreground: Some(ColorSpec::ansi(6)),
@@ -2395,14 +2412,18 @@ mod tests {
             style_states: vec![("text-style".into(), "bold".into())],
             ..Default::default()
         };
-        let assembled = View::native_patched(child.clone(), &patch);
-        let chained = child
-            .clone()
-            .padding(Insets::new(1, 2, 3, 4))
-            .foreground(ColorSpec::ansi(6))
-            .fill_width()
-            .min_width(10)
-            .style_state("text-style", "bold");
+        let assembled = crate::presentation::factory::native_patched(child.clone(), &patch);
+        let chained = crate::presentation::factory::style_state(
+            crate::presentation::factory::min_width(
+                crate::presentation::factory::fill_width(crate::presentation::factory::foreground(
+                    crate::presentation::factory::padding(child.clone(), Insets::new(1, 2, 3, 4)),
+                    ColorSpec::ansi(6),
+                )),
+                10,
+            ),
+            "text-style",
+            "bold",
+        );
         assert!(
             assembled.inner.semantic_eq(&chained.inner),
             "final assembly must equal the modifier chain it replaces"
@@ -2411,7 +2432,7 @@ mod tests {
         {
             let _guard = crate::perf::test_lock();
             crate::perf::reset();
-            let _ = View::native_patched(child.clone(), &patch);
+            let _ = crate::presentation::factory::native_patched(child.clone(), &patch);
             assert_eq!(
                 crate::perf::snapshot().value(crate::perf::Counter::ViewNodesConstructedRust),
                 1,
@@ -2426,11 +2447,11 @@ mod tests {
         use crate::Insets;
         use crate::presentation::api::NativeCommonPatch;
 
-        let leaf = View::native_content_host(7).expect("valid port must attach");
+        let leaf = crate::presentation::factory::content_host(7).expect("valid port must attach");
         let axis =
             View::native_axis_from_children(false, 0, vec![(0, leaf.clone())]).expect("valid axis");
         assert!(axis.flags().contains_content_attachment());
-        let patched = View::native_patched(
+        let patched = crate::presentation::factory::native_patched(
             axis,
             &NativeCommonPatch {
                 padding: Some(Insets::new(1, 1, 1, 1)),
@@ -2459,7 +2480,7 @@ mod tests {
     fn final_grid_assembly_equals_closure_builder_with_one_root() {
         use crate::{GridCellSpec, GridTrack, HorizontalAlign};
 
-        let leaf = |text: &str| View::text(text).into_view();
+        let leaf = |text: &str| crate::presentation::factory::text(text);
         let parts = || {
             (
                 vec![GridTrack::content(), GridTrack::fixed(4)],
@@ -2477,21 +2498,30 @@ mod tests {
                 )],
             )
         };
-        let via_builder = View::grid(|grid| {
-            grid.columns([GridTrack::content(), GridTrack::fixed(4)]);
-            grid.column_gap(1);
-            grid.row(|row| {
-                row.cell(leaf("a"));
-                row.cell_with(
-                    GridCellSpec::new()
-                        .column_span(2)
-                        .horizontal_align(HorizontalAlign::Center),
-                    leaf("b"),
-                );
-            });
-        });
+        let via_builder = crate::presentation::factory::grid(
+            ([GridTrack::content(), GridTrack::fixed(4)])
+                .into_iter()
+                .collect(),
+            1,
+            0,
+            vec![(
+                crate::presentation::api::grid::GridTrack::content(),
+                vec![
+                    (
+                        crate::presentation::factory::grid_cell_spec_new(),
+                        leaf("a"),
+                    ),
+                    (
+                        GridCellSpec::new()
+                            .column_span(2)
+                            .horizontal_align(HorizontalAlign::Center),
+                        leaf("b"),
+                    ),
+                ],
+            )],
+        );
         let (columns, rows) = parts();
-        let via_final = View::native_grid_final(columns, 1, 0, rows);
+        let via_final = crate::presentation::factory::grid(columns, 1, 0, rows);
         assert!(
             via_final.inner.semantic_eq(&via_builder.inner),
             "final grid assembly must equal the closure builder it replaces"
@@ -2503,7 +2533,7 @@ mod tests {
             let (columns, rows) = parts();
             let _guard = crate::perf::test_lock();
             crate::perf::reset();
-            let _ = View::native_grid_final(columns, 1, 0, rows);
+            let _ = crate::presentation::factory::grid(columns, 1, 0, rows);
             assert_eq!(
                 crate::perf::snapshot().value(crate::perf::Counter::ViewNodesConstructedRust),
                 1,
@@ -2517,8 +2547,8 @@ mod tests {
     fn batched_retained_replace_equals_sequential_singles() {
         use super::{PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, RetainedPathStep};
 
-        let leaf = |text: &str| View::text(text).into_view();
-        let parent = View::column_from_views(vec![leaf("a"), leaf("b"), leaf("c")], 0);
+        let leaf = |text: &str| crate::presentation::factory::text(text);
+        let parent = crate::presentation::factory::column(vec![leaf("a"), leaf("b"), leaf("c")], 0);
         let step =
             |index: u32| RetainedPathStep::new(PATH_STEP_COLUMN_CHILD, PATH_VIEW_COLUMN, index);
         let replacements = vec![(step(0), leaf("A")), (step(2), leaf("C"))];
@@ -2577,12 +2607,10 @@ mod tests {
     #[cfg(feature = "native-host")]
     #[test]
     fn duplicate_state_attachment_still_rejected_once() {
-        let first = View::text("a")
-            .into_view()
+        let first = crate::presentation::factory::text("a")
             .native_with_state_attachment(9)
             .expect("first attachment is unique");
-        let second = View::text("b")
-            .into_view()
+        let second = crate::presentation::factory::text("b")
             .native_with_state_attachment(9)
             .expect("construction itself does not dedupe");
         let axis = View::native_axis_from_children(false, 0, vec![(0, first), (0, second)])
@@ -2592,8 +2620,7 @@ mod tests {
             "duplicate ViewState attachment",
             "per-candidate uniqueness must report the same rejection"
         );
-        let distinct = View::text("c")
-            .into_view()
+        let distinct = crate::presentation::factory::text("c")
             .native_with_state_attachment(10)
             .expect("distinct attachment is unique");
         let ok = View::native_axis_from_children(false, 0, vec![(0, distinct)])

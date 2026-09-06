@@ -5,7 +5,7 @@ use crate::{
     component::{Component, ComponentRegistry, MountedComponents},
     geometry::Size,
     interaction::FocusState,
-    presentation::{IntoView, View, layout::compile_view_with_overlay},
+    presentation::{View, layout::compile_view_with_overlay},
 };
 
 use super::{LayoutSynchronizer, layout_resolved_scene};
@@ -17,7 +17,7 @@ struct Label {
 
 impl Component for Label {
     fn view(&self) -> View {
-        View::text(self.text.clone()).into_view()
+        crate::presentation::factory::text(self.text.clone())
     }
 }
 
@@ -30,7 +30,7 @@ struct CountingComponent {
 impl Component for CountingComponent {
     fn view(&self) -> View {
         self.view_calls.set(self.view_calls.get() + 1);
-        View::text("counted").into_view()
+        crate::presentation::factory::text("counted")
     }
 
     fn capabilities(&self, _cx: &mut crate::ComponentCx<'_, Self>) {
@@ -46,7 +46,7 @@ struct LayoutAware {
 
 impl Component for LayoutAware {
     fn view(&self) -> View {
-        View::text("layout").into_view()
+        crate::presentation::factory::text("layout")
     }
 
     fn capabilities(&self, cx: &mut crate::ComponentCx<'_, Self>) {
@@ -69,7 +69,7 @@ struct HangingBody {
 
 impl Component for HangingBody {
     fn view(&self) -> View {
-        View::text("A1 long content\nA2").into_view()
+        crate::presentation::factory::text("A1 long content\nA2")
     }
 
     fn capabilities(&self, cx: &mut crate::ComponentCx<'_, Self>) {
@@ -89,7 +89,7 @@ struct FocusableLabel;
 
 impl Component for FocusableLabel {
     fn view(&self) -> View {
-        View::text("focus").into_view()
+        crate::presentation::factory::text("focus")
     }
 
     fn capabilities(&self, cx: &mut crate::ComponentCx<'_, Self>) {
@@ -102,7 +102,7 @@ struct FocusableMultiline;
 
 impl Component for FocusableMultiline {
     fn view(&self) -> View {
-        View::text("top\nbottom").into_view()
+        crate::presentation::factory::text("top\nbottom")
     }
 
     fn capabilities(&self, cx: &mut crate::ComponentCx<'_, Self>) {
@@ -132,10 +132,19 @@ struct Parent {
 
 impl Component for Parent {
     fn view(&self) -> View {
-        View::vertical(|column| {
-            column.child("parent");
-            column.child(View::component(self.child));
-        })
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("parent"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::component(self.child),
+                ),
+            ],
+            0,
+        )
     }
 }
 
@@ -147,8 +156,8 @@ struct CycleNode {
 impl Component for CycleNode {
     fn view(&self) -> View {
         self.target.map_or_else(
-            || View::text("cycle").into_view(),
-            |id| View::native_component(id.value()),
+            || crate::presentation::factory::text("cycle"),
+            |id| crate::presentation::factory::native_component(id.value()),
         )
     }
 }
@@ -203,15 +212,13 @@ fn component_snapshots_are_cached_by_revision_and_isolated_by_component() {
 #[test]
 fn component_free_resolution_stops_at_the_flagged_root() {
     let registry = ComponentRegistry::new();
-    let view = View::vertical(|column| {
-        for _ in 0..100 {
-            column.child(View::vertical(|nested| {
-                for _ in 0..10 {
-                    nested.child(View::text("ordinary"));
-                }
-            }));
-        }
-    });
+    let nested = crate::presentation::factory::column(
+        (0..10)
+            .map(|_| crate::presentation::factory::text("ordinary"))
+            .collect(),
+        0,
+    );
+    let view = crate::presentation::factory::column((0..100).map(|_| nested.clone()).collect(), 0);
     let mut session = ResolveSession::new(&registry);
     session.resolve_root(&view).unwrap();
     assert_eq!(session.nodes_visited(), 1);
@@ -220,10 +227,19 @@ fn component_free_resolution_stops_at_the_flagged_root() {
 #[test]
 fn static_scene_resolves_identically_with_no_mounts() {
     let registry = ComponentRegistry::new();
-    let original = View::vertical(|column| {
-        column.child("a");
-        column.child(View::spacer(1));
-    });
+    let original = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("a"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::spacer(1),
+            ),
+        ],
+        0,
+    );
 
     let resolved = resolve_scene(&original, &registry).unwrap();
     assert_eq!(resolved.view, original);
@@ -237,12 +253,19 @@ fn hanging_body_component_is_mounted_once_and_owns_one_body_geometry() {
         size: None,
         calls: 0,
     });
-    let view = View::hanging(
-        View::text("• ").no_wrap(),
-        View::text("  ").no_wrap(),
-        View::component(handle).fill_width(),
-    )
-    .fill_width();
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("• "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("  "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(View::component(handle)),
+    ));
     let resolved = resolve_scene(&view, &registry).unwrap();
     let rows = compile_view_with_overlay(&resolved.view, 10, &resolved.overlay).rows;
 
@@ -272,12 +295,19 @@ fn hanging_body_component_reflows_without_mount_duplication() {
         size: None,
         calls: 0,
     });
-    let view = View::hanging(
-        View::text("• ").no_wrap(),
-        View::text("  ").no_wrap(),
-        View::component(handle).fill_width(),
-    )
-    .fill_width();
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("• "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("  "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(View::component(handle)),
+    ));
     let resolved = resolve_scene(&view, &registry).unwrap();
     let mut synchronizer = LayoutSynchronizer::default();
 
@@ -333,12 +363,17 @@ fn hanging_prefix_component_is_mounted_once_when_body_wraps() {
     let handle = registry.register(Label {
         text: "• ".into()
     });
-    let view = View::hanging(
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
         View::component(handle),
-        View::text("  ").no_wrap(),
-        View::text("body that wraps").fill_width(),
-    )
-    .fill_width();
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("  "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(crate::presentation::factory::text(
+            "body that wraps",
+        )),
+    ));
     let resolved = resolve_scene(&view, &registry).unwrap();
     let layout = layout_resolved_scene(&resolved, Size::new(8, 4));
 
@@ -364,10 +399,10 @@ fn hanging_prefix_component_is_mounted_once_when_body_wraps() {
 fn hanging_continuation_component_is_rejected_before_resolution() {
     let mut registry = ComponentRegistry::new();
     let repeated = registry.register(Label { text: "  ".into() });
-    let _ = View::hanging(
-        View::text("• "),
+    let _ = crate::presentation::factory::hanging(
+        crate::presentation::factory::text("• "),
         View::component(repeated),
-        View::text("body long enough to wrap"),
+        crate::presentation::factory::text("body long enough to wrap"),
     );
 }
 
@@ -431,7 +466,10 @@ fn slot_properties_become_the_component_ownership_shell() {
     let handle = registry.register(Label {
         text: "hello".into(),
     });
-    let slot = View::component(handle).padding(1).fill_width();
+    let slot = crate::presentation::factory::fill_width(crate::presentation::factory::padding(
+        View::component(handle),
+        1,
+    ));
     let resolved = resolve_scene(&slot, &registry).unwrap();
 
     assert_eq!(resolved.view, slot);
@@ -453,8 +491,14 @@ fn explicit_outer_structure_stays_outside_component_ownership() {
     let handle = registry.register(Label {
         text: "hello".into(),
     });
-    let resolved =
-        resolve_scene(&View::component(handle).container().padding(1), &registry).unwrap();
+    let resolved = resolve_scene(
+        &crate::presentation::factory::padding(
+            crate::presentation::factory::container(View::component(handle)),
+            1,
+        ),
+        &registry,
+    )
+    .unwrap();
 
     let crate::presentation::ir::ViewKind::Container(container) = resolved.view.kind() else {
         panic!("expected outer container")
@@ -469,10 +513,19 @@ fn explicit_outer_structure_stays_outside_component_ownership() {
 fn duplicate_slots_are_rejected_without_returning_a_scene() {
     let mut registry = ComponentRegistry::new();
     let handle = registry.register(Label { text: "x".into() });
-    let view = View::vertical(|column| {
-        column.child(View::component(handle));
-        column.child(View::component(handle));
-    });
+    let view = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(handle),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(handle),
+            ),
+        ],
+        0,
+    );
 
     assert_eq!(
         resolve_scene(&view, &registry),
@@ -491,10 +544,19 @@ fn failed_resolution_does_not_mutate_previous_mount_state() {
     mounted.reconcile(valid.mounts.clone());
     let previous = mounted.current().clone();
 
-    let invalid = View::vertical(|column| {
-        column.child(View::component(handle));
-        column.child(View::component(handle));
-    });
+    let invalid = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(handle),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(handle),
+            ),
+        ],
+        0,
+    );
     assert!(matches!(
         resolve_scene(&invalid, &registry),
         Err(ResolveError::DuplicateComponent { .. })
@@ -574,7 +636,9 @@ fn layout_size_delivery_is_initial_and_changes_only_when_size_changes() {
         calls: 0,
     });
     let resolved = resolve_scene(
-        &View::component(handle).fill_width().fill_height(),
+        &crate::presentation::factory::fill_height(crate::presentation::factory::fill_width(
+            View::component(handle),
+        )),
         &registry,
     )
     .unwrap();
@@ -620,9 +684,11 @@ fn component_geometry_distinguishes_mounting_from_visibility() {
     let handle = registry.register(Label {
         text: "hidden".into(),
     });
-    let view = View::component(handle)
-        .padding(1)
-        .clamp_rows(0, crate::presentation::OverflowIndicator::None);
+    let view = crate::presentation::factory::clamp_rows(
+        crate::presentation::factory::padding(View::component(handle), 1),
+        0,
+        crate::presentation::OverflowIndicator::None,
+    );
     let resolved = resolve_scene(&view, &registry).unwrap();
     let layout = layout_resolved_scene(&resolved, Size::new(20, 4));
     let geometry = layout.components.entries.get(&handle.id()).unwrap();
@@ -635,14 +701,25 @@ fn focus_excludes_fully_clipped_components() {
     let mut registry = ComponentRegistry::new();
     let hidden = registry.register(FocusableLabel);
     let visible = registry.register(FocusableLabel);
-    let view = View::vertical(|column| {
-        column.child(
-            View::component(hidden).clamp_rows(0, crate::presentation::OverflowIndicator::None),
-        );
-        column.child(View::component(visible).fill_height());
-    })
-    .fill_width()
-    .fill_height();
+    let view = crate::presentation::factory::fill_height(crate::presentation::factory::fill_width(
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::clamp_rows(
+                        View::component(hidden),
+                        0,
+                        crate::presentation::OverflowIndicator::None,
+                    ),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::fill_height(View::component(visible)),
+                ),
+            ],
+            0,
+        ),
+    ));
     let resolved = resolve_scene(&view, &registry).unwrap();
     let layout = layout_resolved_scene(&resolved, Size::new(20, 4));
     let mut focus = FocusState::default();
@@ -659,7 +736,11 @@ fn focus_excludes_fully_clipped_components() {
 fn partially_clipped_focusable_remains_eligible() {
     let mut registry = ComponentRegistry::new();
     let handle = registry.register(FocusableMultiline);
-    let view = View::component(handle).clamp_rows(1, crate::presentation::OverflowIndicator::None);
+    let view = crate::presentation::factory::clamp_rows(
+        View::component(handle),
+        1,
+        crate::presentation::OverflowIndicator::None,
+    );
     let resolved = resolve_scene(&view, &registry).unwrap();
     let layout = layout_resolved_scene(&resolved, Size::new(20, 4));
     assert!(
@@ -687,10 +768,19 @@ fn invisible_focus_repairs_without_stealing_focus_on_return() {
     let first = registry.register(FocusableLabel);
     let second = registry.register(FocusableLabel);
     let resolved = resolve_scene(
-        &View::vertical(|column| {
-            column.child(View::component(first));
-            column.child(View::component(second));
-        }),
+        &crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(second),
+                ),
+            ],
+            0,
+        ),
         &registry,
     )
     .unwrap();
@@ -729,10 +819,19 @@ fn invisible_active_modal_does_not_expose_background_focus() {
     let modal = registry.register(ModalHost { child: modal_child });
     let background = registry.register(FocusableLabel);
     let resolved = resolve_scene(
-        &View::vertical(|column| {
-            column.child(View::component(modal));
-            column.child(View::component(background));
-        }),
+        &crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(modal),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background),
+                ),
+            ],
+            0,
+        ),
         &registry,
     )
     .unwrap();
@@ -761,7 +860,11 @@ fn clipped_component_remains_semantically_mounted() {
     let handle = registry.register(Label {
         text: "hidden".into(),
     });
-    let view = View::component(handle).clamp_rows(0, crate::presentation::OverflowIndicator::None);
+    let view = crate::presentation::factory::clamp_rows(
+        View::component(handle),
+        0,
+        crate::presentation::OverflowIndicator::None,
+    );
     let resolved = resolve_scene(&view, &registry).unwrap();
 
     assert_eq!(resolved.mounts.iter().next().unwrap().id, handle.id());

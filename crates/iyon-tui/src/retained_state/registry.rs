@@ -19,10 +19,15 @@ use super::record::{ViewStateLifecycle, ViewStateRecord};
 
 #[derive(Debug, Default)]
 pub(crate) struct ViewStateRegistry {
-    records: HashMap<u64, ViewStateRecord>,
-    /// Committed immutable version per live record. Published at creation and
-    /// on every accepted mutation; read by frames through the candidate
-    /// overlay without cloning unrelated records.
+    // Keep the host-owned records behind stable boxes so the identity map
+    // stores one pointer per state instead of widening every hash bucket by
+    // the full mutable record. The host lock remains the sole synchronizing
+    // boundary; this is storage layout, not a second per-record lock.
+    records: HashMap<u64, Box<ViewStateRecord>>,
+    /// Committed immutable version per demanded record. Unmounted records stay
+    /// in the mutable registry and only publish a snapshot when a frame first
+    /// demands them; this avoids retaining one duplicate snapshot for every
+    /// detached state while preserving immutable frame reads.
     committed: HashMap<u64, Arc<ViewStateSnapshot>>,
     /// Deduplicated dirty-state worklist. An id appears at most once no
     /// matter how many accepted mutations land before the next capture.
@@ -72,18 +77,16 @@ impl ViewStateRegistry {
         self.next_id = local_id
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("ViewState identity exhausted"))?;
-        let record = ViewStateRecord::new(id);
-        // Publish the initial version so a newly attached or remounted state
-        // resolves even when it was never mutated since creation.
-        self.committed.insert(id, Arc::new(record.snapshot()));
-        self.records.insert(id, record);
+        self.records.insert(id, Box::new(ViewStateRecord::new(id)));
         Ok(id)
     }
 
     /// Applies one validated mutation atomically, then publishes the new
-    /// immutable version and queues the id on the deduplicated dirty
-    /// worklist. No-op writes return without publishing, so versions advance
-    /// only when logical values change. A removed record reads as disposed:
+    /// immutable version when the record is currently demanded and queues the
+    /// id on the deduplicated dirty worklist. Unmounted records retain only
+    /// their mutable source of truth until a later mount demands a snapshot.
+    /// No-op writes return without publishing, so versions advance only when
+    /// logical values change. A removed record reads as disposed:
     /// removal always follows disposal, and the wrapper outlives only the
     /// host-owned entry, never the lifecycle.
     pub(crate) fn mutate_record<F>(&mut self, id: u64, mutation: F) -> anyhow::Result<StateEffects>
@@ -102,12 +105,17 @@ impl ViewStateRegistry {
         if effects.is_empty() {
             return Ok(effects);
         }
-        let snapshot = self
-            .records
-            .get(&id)
-            .map(ViewStateRecord::snapshot)
-            .expect("mutated record is still owned by the registry");
-        self.committed.insert(id, Arc::new(snapshot));
+        let demanded = self.records.get(&id).is_some_and(|record| {
+            record.desired_bound || record.visible_bound || record.in_flight_bound
+        });
+        if demanded {
+            let snapshot = self
+                .records
+                .get(&id)
+                .map(|record| record.snapshot())
+                .expect("mutated record is still owned by the registry");
+            self.committed.insert(id, Arc::new(snapshot));
+        }
         self.dirty.insert(id);
         Ok(effects)
     }
@@ -134,12 +142,23 @@ impl ViewStateRegistry {
         for id in &demanded {
             let changed = self.dirty.contains(id);
             let newly_demanded = self.desired.contains(id) && !self.visible.contains(id);
-            if !changed && !newly_demanded {
+            let missing_committed = !self.committed.contains_key(id);
+            if !changed && !newly_demanded && !missing_committed {
                 continue;
             }
-            if let Some(version) = self.committed.get(id) {
-                touched.insert(*id, Arc::clone(version));
-            }
+            let version = if let Some(version) = self.committed.get(id) {
+                Arc::clone(version)
+            } else {
+                let version = Arc::new(
+                    self.records
+                        .get(id)
+                        .expect("demanded state still exists")
+                        .snapshot(),
+                );
+                self.committed.insert(*id, Arc::clone(&version));
+                version
+            };
+            touched.insert(*id, version);
         }
         self.dirty.retain(|id| !demanded_set.contains(id));
         StateCandidateOverlay::new(epoch, demanded, touched)
@@ -150,7 +169,7 @@ impl ViewStateRegistry {
     }
 
     pub(crate) fn record(&self, id: u64) -> Option<&ViewStateRecord> {
-        self.records.get(&id)
+        self.records.get(&id).map(Box::as_ref)
     }
 
     /// Single-pass identity plus kind validation. The previous two-pass shape
@@ -174,6 +193,7 @@ impl ViewStateRegistry {
         let next = targets.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
         for id in self.desired.difference(&next).copied().collect::<Vec<_>>() {
             self.set_bound(&id, false, true, None);
+            self.prune_committed_if_unbound(id);
         }
         for (id, kind) in targets {
             self.set_bound(id, true, true, Some(*kind));
@@ -241,6 +261,7 @@ impl ViewStateRegistry {
         for id in &prepared.removed_visible {
             self.set_bound(id, false, false, None);
             self.visible.remove(id);
+            self.prune_committed_if_unbound(*id);
         }
         for (id, kind) in &prepared.visible_targets {
             self.set_bound(id, true, false, Some(*kind));
@@ -262,6 +283,7 @@ impl ViewStateRegistry {
         for id in ids {
             self.set_in_flight_bound(id, false);
             self.in_flight.remove(id);
+            self.prune_committed_if_unbound(*id);
         }
     }
 
@@ -275,6 +297,7 @@ impl ViewStateRegistry {
             .collect::<Vec<_>>()
         {
             self.set_in_flight_bound(&id, false);
+            self.prune_committed_if_unbound(id);
         }
         for id in &next {
             self.set_in_flight_bound(id, true);
@@ -283,8 +306,10 @@ impl ViewStateRegistry {
     }
 
     pub(crate) fn clear_in_flight(&mut self) {
-        for id in self.in_flight.iter().copied().collect::<Vec<_>>() {
-            self.set_in_flight_bound(&id, false);
+        let former_in_flight = self.in_flight.iter().copied().collect::<Vec<_>>();
+        for id in &former_in_flight {
+            self.set_in_flight_bound(id, false);
+            self.prune_committed_if_unbound(*id);
         }
         self.in_flight.clear();
     }
@@ -330,6 +355,12 @@ impl ViewStateRegistry {
     }
 
     pub(crate) fn clear_bindings(&mut self) {
+        let former_desired_or_visible = self
+            .desired
+            .iter()
+            .chain(self.visible.iter())
+            .copied()
+            .collect::<HashSet<_>>();
         for id in self
             .desired
             .iter()
@@ -343,6 +374,9 @@ impl ViewStateRegistry {
         self.desired.clear();
         self.visible.clear();
         self.clear_in_flight();
+        for id in former_desired_or_visible {
+            self.prune_committed_if_unbound(id);
+        }
     }
 
     pub(crate) fn dispose_all(&mut self) {
@@ -370,6 +404,16 @@ impl ViewStateRegistry {
     fn set_in_flight_bound(&mut self, id: &u64, bound: bool) {
         if let Some(record) = self.records.get_mut(id) {
             record.in_flight_bound = bound;
+        }
+    }
+
+    fn prune_committed_if_unbound(&mut self, id: u64) {
+        let Some(record) = self.records.get(&id) else {
+            self.committed.remove(&id);
+            return;
+        };
+        if !record.desired_bound && !record.visible_bound && !record.in_flight_bound {
+            self.committed.remove(&id);
         }
     }
 }
@@ -408,10 +452,10 @@ mod tests {
     }
 
     #[test]
-    fn creation_publishes_an_initial_version_without_dirtying() {
+    fn creation_defers_initial_version_without_dirtying() {
         let mut registry = ViewStateRegistry::new();
         let id = registry.create(1).unwrap();
-        assert!(registry.committed_table().contains_key(&id));
+        assert!(!registry.committed_table().contains_key(&id));
         assert!(registry.dirty.is_empty());
     }
 
@@ -462,15 +506,7 @@ mod tests {
         assert!(overlay.contains_touched(bound));
         // The unmounted mark stays queued and its version stays current.
         assert!(registry.dirty.contains(&loose));
-        assert_eq!(
-            registry
-                .committed_table()
-                .get(&loose)
-                .expect("version exists")
-                .presentation
-                .foreground,
-            Some(Some(ColorSpec::ansi(5)))
-        );
+        assert!(!registry.committed_table().contains_key(&loose));
     }
 
     #[test]
@@ -490,6 +526,34 @@ mod tests {
             overlay.touched_len(),
             1,
             "mount captures the newly demanded version"
+        );
+        let view = super::super::capture::StateFrameView::new(registry.committed_table(), &overlay);
+        assert_eq!(
+            view.get(&id)
+                .expect("newly demanded version")
+                .presentation
+                .foreground,
+            Some(Some(ColorSpec::ansi(6)))
+        );
+
+        // A warm committed version is pruned when its last binding leaves.
+        // A later unmounted mutation must be captured from the mutable record
+        // on remount, without requiring a second mutation during mounting.
+        registry.set_visible(&[(id, StateNodeKind::Text)]).unwrap();
+        registry.clear_bindings();
+        assert!(!registry.committed_table().contains_key(&id));
+        accept_presentation(&mut registry, id, 7);
+        registry.set_desired(&[(id, StateNodeKind::Text)]).unwrap();
+        let remount = registry.capture_candidate();
+        let remount_view =
+            super::super::capture::StateFrameView::new(registry.committed_table(), &remount);
+        assert_eq!(
+            remount_view
+                .get(&id)
+                .expect("remounted version")
+                .presentation
+                .foreground,
+            Some(Some(ColorSpec::ansi(7)))
         );
     }
 
@@ -519,6 +583,34 @@ mod tests {
                 .committed_table()
                 .get(&id)
                 .expect("committed version")
+                .presentation
+                .foreground,
+            Some(Some(ColorSpec::ansi(2)))
+        );
+
+        // Pruning the owner table must not invalidate a receipt's captured
+        // Arc. A later remount gets a fresh current version while this old
+        // overlay remains readable.
+        registry.clear_bindings();
+        assert!(!registry.committed_table().contains_key(&id));
+        let old_view =
+            super::super::capture::StateFrameView::new(registry.committed_table(), &overlay);
+        assert_eq!(
+            old_view
+                .get(&id)
+                .expect("captured old version")
+                .presentation
+                .foreground,
+            Some(Some(ColorSpec::ansi(1)))
+        );
+        registry.set_desired(&[(id, StateNodeKind::Text)]).unwrap();
+        let remount = registry.capture_candidate();
+        let remount_view =
+            super::super::capture::StateFrameView::new(registry.committed_table(), &remount);
+        assert_eq!(
+            remount_view
+                .get(&id)
+                .expect("captured remount version")
                 .presentation
                 .foreground,
             Some(Some(ColorSpec::ansi(2)))

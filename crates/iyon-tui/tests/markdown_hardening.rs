@@ -3,15 +3,8 @@ use std::time::{Duration, Instant};
 
 use iyon_tui::projection::{ProjectionBuilder, validate_projection_transition};
 use iyon_tui::stream::{StreamOffset, StreamRange};
-use iyon_tui::text::{
-    Alignment, List, ListItem, ListMarker, Mark, MarkSet, NumberDelimiter, NumberStyle,
-    TextProvenance, TextRun, TextVisitor, validate_text_projection,
-};
-use iyon_tui::text::{Table, TableCell, TableColumn, TableRow};
-use iyon_tui::{
-    Block, Inline, InlineContent, MarkdownProjector, Projection, Projector, Renderer, Smooth,
-    TextContent, TextRenderer,
-};
+use iyon_tui::text::{TextProvenance, TextRun, TextVisitor, validate_text_projection};
+use iyon_tui::{MarkdownProjector, Projection, Projector, Smooth, TextContent};
 
 fn source_projection(
     source: &str,
@@ -291,48 +284,6 @@ fn markdown_composes_after_smooth_without_special_streaming_api() {
 }
 
 #[test]
-fn renderer_preserves_generic_list_table_and_image_semantics() {
-    let paragraph =
-        |text: &str| Block::paragraph(InlineContent::new([Inline::text(TextRun::synthetic(text))]));
-    let list = List::new(
-        ListMarker::Ordered {
-            start: 1,
-            style: NumberStyle::LowerAlpha,
-            delimiter: NumberDelimiter::TwoParens,
-        },
-        true,
-        [ListItem::new([paragraph("item")])],
-    );
-    let caption = [paragraph("caption")];
-    let table = Table::new(
-        Some(caption),
-        [TableColumn::new(Alignment::Center)],
-        1,
-        [TableRow::new([TableCell::plain([paragraph("cell")])])],
-    )
-    .unwrap();
-    let alt =
-        Inline::text(TextRun::synthetic("alt")).with_marks(MarkSet::new([Mark::Strong]).unwrap());
-    let image = Inline::image(iyon_tui::text::Image::new(
-        "image",
-        None::<&str>,
-        InlineContent::new([alt]),
-    ))
-    .with_marks(MarkSet::new([Mark::Emphasis]).unwrap());
-    let block = Block::paragraph(InlineContent::new([image]));
-    let renderer = TextRenderer::new();
-    let list_view = renderer.render(&TextContent::block(Block::list(list)));
-    let list_text = format!("{list_view:?}");
-    assert!(list_text.contains("(a) "));
-    let table_view = renderer.render(&TextContent::block(Block::table(table)));
-    let table_text = format!("{table_view:?}");
-    assert!(table_text.contains("caption"));
-    assert!(table_text.contains("cell"));
-    let image_view = renderer.render(&TextContent::block(block));
-    let image_text = format!("{image_view:?}");
-    assert!(image_text.contains("alt"));
-}
-
 #[test]
 fn smooth_markdown_final_result_is_chunk_invariant() {
     let source = "ASCII\n\né\n\n中\n\na\u{301}\n\n👩‍💻\n";
@@ -387,35 +338,4 @@ fn stable_cache_reuses_closed_prefixes() {
     );
     assert!(invocations > 0);
     assert!(bytes < source.len().saturating_mul(100));
-}
-
-#[test]
-fn renderer_accepts_all_number_styles() {
-    let text = |value: &str| {
-        Block::paragraph(InlineContent::new([Inline::text(TextRun::synthetic(
-            value,
-        ))]))
-    };
-    let render_marker = |start, style, delimiter| {
-        let list = List::new(
-            ListMarker::Ordered {
-                start,
-                style,
-                delimiter,
-            },
-            true,
-            [ListItem::new([text("x")])],
-        );
-        format!(
-            "{:?}",
-            TextRenderer::new().render(&TextContent::block(Block::list(list)))
-        )
-    };
-    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::Period).contains("9. "));
-    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::Paren).contains("9) "));
-    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::TwoParens).contains("(9) "));
-    assert!(render_marker(1, NumberStyle::LowerAlpha, NumberDelimiter::Paren).contains("a) "));
-    assert!(render_marker(27, NumberStyle::UpperAlpha, NumberDelimiter::Paren).contains("AA) "));
-    assert!(render_marker(9, NumberStyle::LowerRoman, NumberDelimiter::Paren).contains("ix) "));
-    assert!(render_marker(9, NumberStyle::UpperRoman, NumberDelimiter::Paren).contains("IX) "));
 }

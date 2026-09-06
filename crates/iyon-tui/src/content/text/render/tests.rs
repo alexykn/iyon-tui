@@ -1,9 +1,10 @@
 use super::{Renderer, TextRenderer};
 use crate::content::text::{
-    Annotations, Block, CodeBlock, FormatId, HeadingLevel, Image, Inline, InlineContent,
-    LanguageId, LinkTarget, List, ListItem, LiteralText, Mark, MarkdownProjector, SemanticTag,
-    Table, TableCell, TableColumn, TableRow, TextContent, TextOrigin, TextPart, TextRole,
-    TextSelector, TextTableSection, TextTaskState,
+    Alignment, Annotations, Block, CodeBlock, FormatId, HeadingLevel, Image, Inline, InlineContent,
+    LanguageId, LinkTarget, List, ListItem, ListMarker, LiteralText, Mark, MarkSet,
+    MarkdownProjector, NumberDelimiter, NumberStyle, SemanticTag, Table, TableCell, TableColumn,
+    TableRow, TextContent, TextOrigin, TextPart, TextRole, TextRun, TextSelector, TextTableSection,
+    TextTaskState,
 };
 use crate::physical::PhysicalStyle;
 use crate::presentation::layout::compile_view_with_theme;
@@ -472,8 +473,10 @@ fn any_selector_applies_the_reserved_text_base_style() {
 
 #[test]
 fn local_view_style_still_wins_over_framework_and_application_rules() {
-    let heading = render(&Block::heading(HeadingLevel::H1, "Hello"))
-        .style(StyleSpec::new().attribute(TextAttribute::Bold, false));
+    let heading = crate::presentation::factory::style(
+        render(&Block::heading(HeadingLevel::H1, "Hello")),
+        StyleSpec::new().attribute(TextAttribute::Bold, false),
+    );
     let style = style_at(&heading, &Theme::new(), "Hello");
     assert!(!style.bold);
     assert!(style.underline);
@@ -638,4 +641,77 @@ fn raw_semantic_lowering_retains_the_source_page_range() {
     };
     assert_eq!(text.spans[0].source_page_ptr(), Some(expected_page));
     assert_eq!(text.spans[0].text(), "raw source text");
+}
+
+#[test]
+fn renderer_preserves_generic_list_table_and_image_semantics() {
+    let paragraph =
+        |text: &str| Block::paragraph(InlineContent::new([Inline::text(TextRun::synthetic(text))]));
+    let list = List::new(
+        ListMarker::Ordered {
+            start: 1,
+            style: NumberStyle::LowerAlpha,
+            delimiter: NumberDelimiter::TwoParens,
+        },
+        true,
+        [ListItem::new([paragraph("item")])],
+    );
+    let caption = [paragraph("caption")];
+    let table = Table::new(
+        Some(caption),
+        [TableColumn::new(Alignment::Center)],
+        1,
+        [TableRow::new([TableCell::plain([paragraph("cell")])])],
+    )
+    .unwrap();
+    let alt =
+        Inline::text(TextRun::synthetic("alt")).with_marks(MarkSet::new([Mark::Strong]).unwrap());
+    let image = Inline::image(Image::new("image", None::<&str>, InlineContent::new([alt])))
+        .with_marks(MarkSet::new([Mark::Emphasis]).unwrap());
+    let block = Block::paragraph(InlineContent::new([image]));
+    let renderer = TextRenderer::new();
+    let list_text = format!(
+        "{:?}",
+        renderer.render(&TextContent::block(Block::list(list)))
+    );
+    assert!(list_text.contains("(a) "));
+    let table_text = format!(
+        "{:?}",
+        renderer.render(&TextContent::block(Block::table(table)))
+    );
+    assert!(table_text.contains("caption"));
+    assert!(table_text.contains("cell"));
+    let image_text = format!("{:?}", renderer.render(&TextContent::block(block)));
+    assert!(image_text.contains("alt"));
+}
+
+#[test]
+fn renderer_accepts_all_number_styles() {
+    let text = |value: &str| {
+        Block::paragraph(InlineContent::new([Inline::text(TextRun::synthetic(
+            value,
+        ))]))
+    };
+    let render_marker = |start, style, delimiter| {
+        let list = List::new(
+            ListMarker::Ordered {
+                start,
+                style,
+                delimiter,
+            },
+            true,
+            [ListItem::new([text("x")])],
+        );
+        format!(
+            "{:?}",
+            TextRenderer::new().render(&TextContent::block(Block::list(list)))
+        )
+    };
+    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::Period).contains("9. "));
+    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::Paren).contains("9) "));
+    assert!(render_marker(9, NumberStyle::Decimal, NumberDelimiter::TwoParens).contains("(9) "));
+    assert!(render_marker(1, NumberStyle::LowerAlpha, NumberDelimiter::Paren).contains("a) "));
+    assert!(render_marker(27, NumberStyle::UpperAlpha, NumberDelimiter::Paren).contains("AA) "));
+    assert!(render_marker(9, NumberStyle::LowerRoman, NumberDelimiter::Paren).contains("ix) "));
+    assert!(render_marker(9, NumberStyle::UpperRoman, NumberDelimiter::Paren).contains("IX) "));
 }

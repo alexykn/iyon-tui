@@ -9,7 +9,7 @@ use std::{
 use crate::{
     id::next_nonzero_id,
     perf::{self, Counter},
-    presentation::{IntoView, View},
+    presentation::View,
 };
 
 use super::{
@@ -23,18 +23,6 @@ static NEXT_HISTORY_ID: AtomicU64 = AtomicU64::new(1);
 ///
 /// History owns unit order, semantic lifetime, and semantic layout. Native
 /// durability remains private behind the host-owned native sink seam.
-///
-/// ```no_run
-/// use iyon_tui::{Component, ComponentHandle, History, HistoryError, View};
-///
-/// fn build<C: Component>(handle: ComponentHandle<C>) -> Result<History, HistoryError> {
-///     let mut history = History::new();
-///     history.push("completed output")?;
-///     let live = history.push(View::component(handle))?;
-///     history.freeze(live, "final output")?;
-///     Ok(history)
-/// }
-/// ```
 pub struct History {
     pub(super) units: VecDeque<HistoryUnit>,
     /// Stable identity for detecting replacement of the History object in a
@@ -81,16 +69,15 @@ impl History {
         self.units.is_empty()
     }
 
-    pub fn push(&mut self, view: impl IntoView) -> Result<HistoryUnitId, HistoryError> {
+    pub fn push(&mut self, view: View) -> Result<HistoryUnitId, HistoryError> {
         self.push_with_boundary(view, FlowBoundary::Default)
     }
 
     pub fn push_with_boundary(
         &mut self,
-        view: impl IntoView,
+        view: View,
         boundary: FlowBoundary,
     ) -> Result<HistoryUnitId, HistoryError> {
-        let view = view.into_view();
         let content = if view.contains_component_identity() {
             HistoryUnitContent::Live(view)
         } else {
@@ -126,16 +113,11 @@ impl History {
         Ok(())
     }
 
-    pub fn freeze(
-        &mut self,
-        unit: HistoryUnitId,
-        final_view: impl IntoView,
-    ) -> Result<(), HistoryError> {
+    pub fn freeze(&mut self, unit: HistoryUnitId, final_view: View) -> Result<(), HistoryError> {
         let index = self.index_of(unit)?;
         if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
             return Err(HistoryError::UnitNotLive { unit });
         }
-        let final_view = final_view.into_view();
         if final_view.contains_component_identity() {
             return Err(HistoryError::FinalViewContainsComponent { unit });
         }

@@ -7,8 +7,8 @@ error[E0603]: trait `TextVisitor` is private
 note: the trait `TextVisitor` is defined here
  --> src/lib.rs
   |
-  |     TextProjectionError, TextProvenance, TextRewriter, TextRun, TextVisitor, validate_text_content,
-  |                                                                 ^^^^^^^^^^^
+  |     TextVisitor, validate_text_content, validate_text_projection, walk_block, walk_content,
+  |     ^^^^^^^^^^^
 help: import `TextVisitor` directly
   |
 2 |     fn assert_visitor<T: iyon_tui::content::text::visit::TextVisitor>() {}

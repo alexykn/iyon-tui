@@ -4,7 +4,7 @@
 //! exactly one runtime operation or passive type the native crate links
 //! against. The set is pinned by `bun run check:tui-binding` and must not
 //! grow without a handoff amendment. In particular it never carries the
-//! fluent View DSL, `IntoView` as an authoring promise, a public renderer or
+//! fluent View DSL or public renderer
 //! projector extension ecosystem, or user callbacks into the hot pipeline.
 //!
 //! Lane layout follows handoff §5.3: validated structural inputs produce
@@ -16,19 +16,46 @@
 // → canonical retained nodes and persistent derivations.
 #[cfg(feature = "native-host")]
 pub use crate::content::diff::lower_diff_hunks;
-pub use crate::text::{FormatId, LanguageId, SemanticTag, TextOrigin};
-pub use crate::{
-    AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, ColorSpec, DiffHunk, DiffLine,
-    DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, GridCellSpec, GridTrack,
-    HorizontalAlign, Insets, OverflowIndicator, StyleRef, StyleSpec, TextAttribute,
-    TextAttributeSpec, TextSpan, Theme, ThemeColor, ThemeKey, VerticalAlign, View, WrapMode,
+pub use crate::presentation::api::grid::{GridCellSpec, GridTrack};
+pub use crate::presentation::api::style::{
+    AnsiColor, BorderEdges, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec, Insets,
+    OverflowIndicator, StyleRef, StyleSelector, StyleSpec, StyleStateKey, StyleStateValue,
+    TextAttribute, TextAttributeSpec, ThemeColor, ThemeKey, VerticalAlign,
 };
+#[cfg(feature = "native-host")]
+pub use crate::presentation::api::text::NativeTextPage;
+pub use crate::presentation::api::text::{HorizontalAlign, TextSpan, WrapMode};
+#[cfg(feature = "native-host")]
+pub use crate::presentation::api::view::NativeCommonPatch;
+pub use crate::presentation::binding::{
+    grid_cell_spec_column_span, grid_cell_spec_horizontal_align, grid_cell_spec_new,
+    grid_cell_spec_row_span, grid_cell_spec_vertical_align, grid_track_content,
+    grid_track_content_max, grid_track_fixed, grid_track_flex, grid_track_flex_max,
+    text_span_plain, text_span_styled,
+};
+#[cfg(feature = "native-host")]
+pub use crate::presentation::binding::{
+    view_clamp_rows, view_downgrade, view_hanging, view_native_axis_from_children,
+    view_native_axis_set_child, view_native_axis_splice, view_native_component,
+    view_native_container, view_native_content_host, view_native_grid_final,
+    view_native_grid_set_cell, view_native_patched, view_native_replace_at_path,
+    view_native_state_attachment_id, view_native_state_attachment_ids, view_native_state_capable,
+    view_native_text_final, view_native_with_content_attachment, view_native_with_state_attachment,
+    view_spacer, view_styled_text, view_text, view_text_plain, view_try_replace_retained_children,
+    view_try_retained_child, view_try_with_text_layout_patch, view_try_with_text_layout_patch_path,
+    view_try_with_text_layout_patch_path_with_nodes, view_upgrade,
+};
+pub use crate::presentation::ir::View;
+#[cfg(feature = "native-host")]
+pub use crate::presentation::ir::{RetainedPathStep, WeakView};
+pub use crate::{
+    DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange, Theme,
+};
+pub use crate::{FormatId, LanguageId, SemanticTag, TextOrigin};
 
 // STATE: validated property operations + retained state identity → canonical
 // sparse override records. Geometry/presentation patch vocabulary only;
 // effect classification stays inside the core.
-pub use crate::{BorderStyle, StyleSelector};
-
 // CONTENT: validated borrowed bytes/records and immutable funnel config →
 // Source storage and Connector control.
 pub use crate::SmoothConfig;
@@ -38,15 +65,6 @@ pub use crate::{
     History, HistoryLayout, Key, KeyStroke, Modifiers, Output, TextInput, TextPart, TextRole,
     TextSelector,
 };
-// Final common-property assembly. The candidate struct travels from native
-// ingress to the one-root constructor without exposing size-rule vocabulary.
-#[cfg(feature = "native-host")]
-pub use crate::NativeCommonPatch;
-// Shared text pages. Length-delimited ingress moves one owned buffer into a
-// page; spans borrow checked ranges instead of rehydrating Strings.
-#[cfg(feature = "native-host")]
-pub use crate::NativeTextPage;
-
 // Native-host seam. These mirror the `native-host` gates on the crate root:
 // the native crate always enables the feature, while featureless core builds
 // must not see host integration vocabulary.
@@ -55,9 +73,9 @@ pub use crate::{
     ContentAnnotationRecord, ContentDelivery, ContentFamily, ContentMutationResult,
     GeometryAlignment, HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort,
     HostContentSource, HostHistory, HostScrollPane, HostTextInput, HostViewSlot, HostViewState,
-    RetainedPathStep, TextFunnelKind, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost,
-    ViewStateGeometryPatch, ViewStateGeometryProperty, ViewStatePresentationPatch,
-    ViewStatePresentationProperty, ViewStateSizeMode, WakeDisposition, WeakView,
+    TextFunnelKind, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost, ViewStateGeometryPatch,
+    ViewStateGeometryProperty, ViewStatePresentationPatch, ViewStatePresentationProperty,
+    ViewStateSizeMode, WakeDisposition,
 };
 
 // Measurement seam. The native crate reports through these only; counters

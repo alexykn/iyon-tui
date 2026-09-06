@@ -11,8 +11,8 @@ use crate::presentation::api::style::{
 use crate::presentation::ir::ViewKind;
 use crate::presentation::ir::{Decoration, RowChild, ViewNodeParts};
 use crate::presentation::{
-    ColorSpec, EmptyContentProvider, GridCellSpec, GridTrack, HorizontalAlign, Insets, IntoView,
-    StyleRef, StyleSpec, TextSpan, ThemeKey, VerticalAlign, View, WidthRule, WrapMode,
+    ColorSpec, EmptyContentProvider, GridCellSpec, GridTrack, HorizontalAlign, Insets, StyleRef,
+    StyleSpec, TextSpan, ThemeKey, VerticalAlign, View, WidthRule, WrapMode,
 };
 use crate::{StyleSelector, Theme};
 
@@ -85,13 +85,20 @@ fn style(color: &str) -> StyleSpec {
 fn decorated_row_view(body: &str) -> View {
     row_view(
         vec![
-            RowChild::content(View::text("●").no_wrap().style(style("accent")).into_view()),
-            RowChild::flex(
-                View::text(body)
-                    .style(style("text.default"))
-                    .fill_width()
-                    .into_view(),
-            ),
+            RowChild::content(crate::presentation::factory::style(
+                crate::presentation::factory::wrap(
+                    crate::presentation::factory::text("●"),
+                    crate::WrapMode::NoWrap,
+                    None,
+                ),
+                style("accent"),
+            )),
+            RowChild::flex(crate::presentation::factory::fill_width(
+                crate::presentation::factory::style(
+                    crate::presentation::factory::text(body),
+                    style("text.default"),
+                ),
+            )),
         ],
         1,
     )
@@ -113,13 +120,30 @@ fn assert_measurement_parity(view: &View, width: u16) {
 
 #[test]
 fn layout_stage_counters_match_semantic_nodes() {
-    let view = View::vertical(|column| {
-        column.fixed(1, View::text("one"));
-        column.flex(View::horizontal(|row| {
-            row.fixed(3, View::text("two"));
-            row.flex(View::text("three"));
-        }));
-    });
+    let row = crate::presentation::factory::row_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Fixed(3),
+                crate::presentation::factory::text("two"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Flex { min: 1 },
+                crate::presentation::factory::text("three"),
+            ),
+        ],
+        0,
+        crate::presentation::VerticalAlign::Top,
+    );
+    let view = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Fixed(1),
+                crate::presentation::factory::text("one"),
+            ),
+            (crate::presentation::ir::TrackSize::Flex { min: 1 }, row),
+        ],
+        0,
+    );
     reset_layout_counters();
     let tree = super::layout_view(&view, LayoutConstraints::width_only(20));
     let counters = layout_counters();
@@ -127,12 +151,21 @@ fn layout_stage_counters_match_semantic_nodes() {
     assert_eq!(counters.1, counters.2);
     assert_eq!(counters.2, tree.nodes.len());
 
-    let hanging = View::hanging(
-        View::text("> ").no_wrap(),
-        View::text("  ").no_wrap(),
-        View::text("one two three").fill_width(),
-    )
-    .fill_width();
+    let hanging = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("> "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("  "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(crate::presentation::factory::text(
+            "one two three",
+        )),
+    ));
     reset_layout_counters();
     let hanging_tree = super::layout_view(&hanging, LayoutConstraints::width_only(8));
     let hanging_counters = layout_counters();
@@ -144,40 +177,94 @@ fn layout_stage_counters_match_semantic_nodes() {
 #[test]
 fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
     let decorated = box_view(
-        View::text("inside box").into_view(),
+        crate::presentation::factory::text("inside box"),
         background_with_padding(ColorSpec::ansi(4), Insets::new(1, 1, 1, 1)),
     );
     let views = [
-        View::text("one two three").fill_width().into_view(),
-        View::vertical(|column| {
-            column.child(View::text("first"));
-            column.child(View::text("second").fill_width());
-        }),
-        View::horizontal(|row| {
-            row.fixed(4, View::text("left"));
-            row.flex(View::text("right"));
-        }),
-        View::horizontal(|row| {
-            row.fixed(10, View::text("tall\nline 2\nline 3"));
-            row.fixed(10, View::text("short"));
-        }),
-        View::grid(|grid| {
-            grid.columns([GridTrack::fixed(10), GridTrack::fixed(10)]);
-            grid.row(|row| {
-                row.cell_with(
-                    GridCellSpec::new().row_span(2),
-                    View::text("tall\nline 2\nline 3"),
-                );
-                row.cell("short");
-            });
-            grid.row(|row| {
-                row.cell("next");
-            });
-        }),
-        View::row_viewport(
-            View::vertical(|column| {
-                column.children(["row 0", "row 1", "row 2"]);
-            }),
+        crate::presentation::factory::fill_width(crate::presentation::factory::text(
+            "one two three",
+        )),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("first"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                        "second",
+                    )),
+                ),
+            ],
+            0,
+        ),
+        crate::presentation::factory::row_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(4),
+                    crate::presentation::factory::text("left"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::text("right"),
+                ),
+            ],
+            0,
+            crate::presentation::VerticalAlign::Top,
+        ),
+        crate::presentation::factory::row_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(10),
+                    crate::presentation::factory::text("tall\nline 2\nline 3"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Fixed(10),
+                    crate::presentation::factory::text("short"),
+                ),
+            ],
+            0,
+            crate::presentation::VerticalAlign::Top,
+        ),
+        crate::presentation::factory::grid(
+            ([GridTrack::fixed(10), GridTrack::fixed(10)])
+                .into_iter()
+                .collect(),
+            0,
+            0,
+            vec![
+                (
+                    crate::presentation::api::grid::GridTrack::content(),
+                    vec![
+                        (
+                            GridCellSpec::new().row_span(2),
+                            crate::presentation::factory::text("tall\nline 2\nline 3"),
+                        ),
+                        (
+                            crate::presentation::factory::grid_cell_spec_new(),
+                            crate::presentation::factory::text("short"),
+                        ),
+                    ],
+                ),
+                (
+                    crate::presentation::api::grid::GridTrack::content(),
+                    vec![(
+                        crate::presentation::factory::grid_cell_spec_new(),
+                        crate::presentation::factory::text("next"),
+                    )],
+                ),
+            ],
+        ),
+        crate::presentation::factory::row_viewport_default(
+            crate::presentation::factory::column(
+                vec![
+                    crate::presentation::factory::text("row 0"),
+                    crate::presentation::factory::text("row 1"),
+                    crate::presentation::factory::text("row 2"),
+                ],
+                0,
+            ),
             1,
         ),
         decorated,
@@ -196,19 +283,33 @@ fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
     // The viewport and its child are deliberately offset below a preceding
     // row.  This exercises the global-to-local clip transform used by the
     // direct row compositor rather than only the zero-origin fast path.
-    let nested_viewport = View::vertical(|column| {
-        column.fixed(1, View::text("header"));
-        column.flex(
-            View::row_viewport(
-                View::vertical(|body| {
-                    body.children(["source 0", "source 1", "source 2"]);
-                }),
-                1,
-            )
-            .fill_width()
-            .fill_height(),
-        );
-    });
+    let nested_viewport = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Fixed(1),
+                crate::presentation::factory::text("header"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Flex { min: 1 },
+                crate::presentation::factory::fill_height(
+                    crate::presentation::factory::fill_width(
+                        crate::presentation::factory::row_viewport_default(
+                            crate::presentation::factory::column(
+                                vec![
+                                    crate::presentation::factory::text("row 0"),
+                                    crate::presentation::factory::text("row 1"),
+                                    crate::presentation::factory::text("row 2"),
+                                ],
+                                0,
+                            ),
+                            1,
+                        ),
+                    ),
+                ),
+            ),
+        ],
+        0,
+    );
     let compiler = ViewCompiler::default();
     let tree = compiler.layout_tree(
         &nested_viewport,
@@ -237,7 +338,8 @@ fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
     spans.push(TextSpan::styled("e", StyleSpec::new().bold()));
     spans.push(TextSpan::styled("\u{301}", StyleSpec::new().italic()));
     spans.push(TextSpan::plain(""));
-    let styled_many = View::styled_text(spans).fill_width().into_view();
+    let styled_many =
+        crate::presentation::factory::fill_width(crate::presentation::factory::styled_text(spans));
     let compiler = ViewCompiler::default();
     let tree = compiler.layout_tree(&styled_many, LayoutConstraints::width_only(20));
     let expected = lower_surface(ViewPainter.paint_tree(&compiler, &tree));
@@ -245,9 +347,10 @@ fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
         ViewPainter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
     assert_eq!(actual, expected, "many-span geometry/style lookup diverged");
 
-    let labeled = View::text("x")
-        .border(BorderSpec::plain().top_label("🐕x"))
-        .into_view();
+    let labeled = crate::presentation::factory::border(
+        crate::presentation::factory::text("x"),
+        BorderSpec::plain().top_label("🐕x"),
+    );
     for width in [3, 4] {
         let compiler = ViewCompiler::default();
         let tree = compiler.layout_tree(&labeled, LayoutConstraints::bounded(Size::new(width, 3)));
@@ -270,11 +373,12 @@ fn row_paint_lowering_matches_surface_paint_for_common_layouts() {
 #[test]
 fn row_paint_prunes_disjoint_column_children_before_allocating_rows() {
     let _lock = crate::perf::test_lock();
-    let view = View::vertical(|column| {
-        for index in 0..4_096 {
-            column.child(View::text(format!("row {index}")));
-        }
-    });
+    let view = crate::presentation::factory::column(
+        (0..4_096)
+            .map(|index| crate::presentation::factory::text(format!("row {index}")))
+            .collect(),
+        0,
+    );
     let compiler = ViewCompiler::default();
     let tree = compiler.layout_tree(&view, LayoutConstraints::bounded(Size::new(20, 1)));
     crate::perf::reset();
@@ -302,11 +406,12 @@ fn row_paint_prunes_disjoint_column_children_before_allocating_rows() {
 #[test]
 fn retained_layout_cache_reuses_warm_measurement_and_prepare() {
     let _lock = crate::perf::test_lock();
-    let view = View::vertical(|column| {
-        for index in 0..10_000 {
-            column.child(View::text(format!("stable-{index}")));
-        }
-    });
+    let view = crate::presentation::factory::column(
+        (0..10_000)
+            .map(|index| crate::presentation::factory::text(format!("stable-{index}")))
+            .collect(),
+        0,
+    );
     let overlay = crate::scene::ResolutionOverlay::default();
     let mut cache = LayoutCache::default();
 
@@ -351,18 +456,32 @@ fn retained_layout_cache_reuses_warm_measurement_and_prepare() {
 #[test]
 fn retained_layout_cache_reuses_unaffected_shared_path() {
     let _lock = crate::perf::test_lock();
-    let shared = View::vertical(|column| {
-        for index in 0..1_000 {
-            column.child(View::text(format!("shared-{index}")));
-        }
-    });
-    let original = View::vertical(|column| {
-        column.child(shared.clone());
-    });
-    let changed = View::vertical(|column| {
-        column.child(shared.clone());
-        column.child(View::text("changed"));
-    });
+    let shared = crate::presentation::factory::column(
+        (0..1_000)
+            .map(|index| crate::presentation::factory::text(format!("shared-{index}")))
+            .collect(),
+        0,
+    );
+    let original = crate::presentation::factory::column_specs(
+        vec![(
+            crate::presentation::ir::TrackSize::Content { max: None },
+            shared.clone(),
+        )],
+        0,
+    );
+    let changed = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                shared.clone(),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("changed"),
+            ),
+        ],
+        0,
+    );
     let overlay = crate::scene::ResolutionOverlay::default();
     let mut cache = LayoutCache::default();
 
@@ -409,11 +528,12 @@ fn retained_layout_cache_rotates_out_old_view_id_working_sets() {
 
     for generation in 0..6 {
         cache.begin_epoch();
-        let view = View::vertical(|column| {
-            for index in 0..100 {
-                column.child(View::text(format!("{generation}-{index}")));
-            }
-        });
+        let view = crate::presentation::factory::column(
+            (0..100)
+                .map(|index| crate::presentation::factory::text(format!("{generation}-{index}")))
+                .collect(),
+            0,
+        );
         if generation == 0 {
             first_view_id = Some(view.id());
         }
@@ -434,37 +554,105 @@ fn retained_layout_cache_rotates_out_old_view_id_working_sets() {
 #[test]
 fn standalone_measurement_matches_width_only_layout() {
     let views = vec![
-        View::text("text").into_view(),
-        View::spacer(2),
-        View::text("wrapped content").container(),
-        View::vertical(|column| {
-            column.fixed(1, View::text("fixed").fill_height());
-            column.child(View::text("content"));
-            column.flex(View::text("flex").fill_height());
-            column.flex_max(4, View::text("flex max").fill_height());
-        }),
-        View::horizontal(|row| {
-            row.fixed(3, View::text("fixed"));
-            row.child(View::text("content"));
-            row.flex(View::text("flex").fill_width());
-        }),
-        View::hanging(
-            View::text("> ").no_wrap(),
-            View::text("  ").no_wrap(),
-            View::text("hanging body").fill_width(),
+        crate::presentation::factory::text("text"),
+        crate::presentation::factory::spacer(2),
+        crate::presentation::factory::container(crate::presentation::factory::text(
+            "wrapped content",
+        )),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(1),
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "fixed",
+                    )),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("content"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "flex",
+                    )),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::FlexMax { min: 1, max: 4 },
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "flex max",
+                    )),
+                ),
+            ],
+            0,
         ),
-        View::text("clamped content").clamp_rows(2, OverflowIndicator::None),
-        View::row_viewport(View::text("viewport content").into_view(), 1),
-        View::text("decorated")
-            .into_view()
-            .fill_width()
-            .fill_height()
-            .min_width(2)
-            .max_width(30)
-            .min_height(1)
-            .max_height(8)
-            .padding(Insets::all(1))
-            .border(BorderSpec::plain()),
+        crate::presentation::factory::row_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(3),
+                    crate::presentation::factory::text("fixed"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("content"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                        "flex",
+                    )),
+                ),
+            ],
+            0,
+            crate::presentation::VerticalAlign::Top,
+        ),
+        crate::presentation::factory::hanging(
+            crate::presentation::factory::wrap(
+                crate::presentation::factory::text("> "),
+                crate::WrapMode::NoWrap,
+                None,
+            ),
+            crate::presentation::factory::wrap(
+                crate::presentation::factory::text("  "),
+                crate::WrapMode::NoWrap,
+                None,
+            ),
+            crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                "hanging body",
+            )),
+        ),
+        crate::presentation::factory::clamp_rows(
+            crate::presentation::factory::text("clamped content"),
+            2,
+            OverflowIndicator::None,
+        ),
+        crate::presentation::factory::row_viewport_default(
+            crate::presentation::factory::text("viewport content"),
+            1,
+        ),
+        crate::presentation::factory::border(
+            crate::presentation::factory::padding(
+                crate::presentation::factory::max_height(
+                    crate::presentation::factory::min_height(
+                        crate::presentation::factory::max_width(
+                            crate::presentation::factory::min_width(
+                                crate::presentation::factory::fill_height(
+                                    crate::presentation::factory::fill_width(
+                                        crate::presentation::factory::text("decorated"),
+                                    ),
+                                ),
+                                2,
+                            ),
+                            30,
+                        ),
+                        1,
+                    ),
+                    8,
+                ),
+                Insets::all(1),
+            ),
+            BorderSpec::plain(),
+        ),
     ];
 
     for view in &views {
@@ -476,13 +664,21 @@ fn standalone_measurement_matches_width_only_layout() {
 
 #[test]
 fn flex_max_intrinsic_height_respects_its_cap() {
-    let view = View::vertical(|column| {
-        column.fixed(1, View::text("header"));
-        column.flex_max(
-            16,
-            View::text((1..=40).map(|row| format!("{row}\n")).collect::<String>()),
-        );
-    });
+    let view = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Fixed(1),
+                crate::presentation::factory::text("header"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::FlexMax { min: 1, max: 16 },
+                crate::presentation::factory::text(
+                    (1..=40).map(|row| format!("{row}\n")).collect::<String>(),
+                ),
+            ),
+        ],
+        0,
+    );
     assert_eq!(ViewCompiler::default().compile(&view, 20).rows.len(), 17);
 }
 
@@ -515,17 +711,26 @@ fn capped_flex_tracks_leave_only_intentional_slack() {
 }
 
 fn empty_vertical() -> View {
-    View::vertical(|_| {})
+    crate::presentation::factory::column(vec![], 0)
 }
 
 #[test]
 fn hanging_view_repeats_continuation_prefix_while_body_wraps() {
-    let view = View::hanging(
-        View::text("10. ").no_wrap(),
-        View::text("    ").no_wrap(),
-        View::text("one two three").fill_width(),
-    )
-    .fill_width();
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("10. "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("    "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(crate::presentation::factory::text(
+            "one two three",
+        )),
+    ));
     let block = ViewCompiler::default().compile(&view, 12);
 
     assert_eq!(
@@ -542,12 +747,19 @@ fn hanging_view_repeats_continuation_prefix_while_body_wraps() {
 
 #[test]
 fn hanging_view_marks_prefix_too_wide_as_incomplete_without_panicking() {
-    let view = View::hanging(
-        View::text("10. ").no_wrap(),
-        View::text("    ").no_wrap(),
-        View::text("body").fill_width(),
-    )
-    .fill_width();
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("10. "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("    "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        crate::presentation::factory::fill_width(crate::presentation::factory::text("body")),
+    ));
     let block = ViewCompiler::default().compile(&view, 3);
 
     assert!(!block.physically_complete);
@@ -556,9 +768,27 @@ fn hanging_view_marks_prefix_too_wide_as_incomplete_without_panicking() {
 
 #[test]
 fn hanging_view_preserves_prefix_and_continuation_styles() {
-    let marker = View::text("* ").no_wrap().foreground(ColorSpec::ansi(3));
-    let continuation = View::text("  ").no_wrap().foreground(ColorSpec::ansi(3));
-    let view = View::hanging(marker, continuation, View::text("one two").fill_width()).fill_width();
+    let marker = crate::presentation::factory::foreground(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("* "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        ColorSpec::ansi(3),
+    );
+    let continuation = crate::presentation::factory::foreground(
+        crate::presentation::factory::wrap(
+            crate::presentation::factory::text("  "),
+            crate::WrapMode::NoWrap,
+            None,
+        ),
+        ColorSpec::ansi(3),
+    );
+    let view = crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+        marker,
+        continuation,
+        crate::presentation::factory::fill_width(crate::presentation::factory::text("one two")),
+    ));
     let rows = ViewCompiler::default().compile(&view, 6).rows;
 
     assert_eq!(rows.len(), 2);
@@ -568,14 +798,37 @@ fn hanging_view_preserves_prefix_and_continuation_styles() {
 
 #[test]
 fn bounded_vertical_tracks_allocate_multiple_flex_children() {
-    let view = View::vertical(|column| {
-        column.fixed(2, View::text("header").fill_height());
-        column.flex(View::text("body").fill_height());
-        column.flex(View::text("tail").fill_height());
-        column.fixed(1, View::text("footer").fill_height());
-    })
-    .fill_width()
-    .fill_height();
+    let view = crate::presentation::factory::fill_height(crate::presentation::factory::fill_width(
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(2),
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "header",
+                    )),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "body",
+                    )),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "tail",
+                    )),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Fixed(1),
+                    crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                        "footer",
+                    )),
+                ),
+            ],
+            0,
+        ),
+    ));
     let compiler = ViewCompiler::default();
     let tree = compiler.layout_tree(
         &view,
@@ -597,11 +850,27 @@ fn bounded_vertical_tracks_allocate_multiple_flex_children() {
 
 #[test]
 fn unbounded_column_treats_flex_as_intrinsic_after_fixed_tracks() {
-    let view = View::vertical(|column| {
-        column.fixed(3, View::text("header").fill_height());
-        column.child(View::text("content"));
-        column.flex(View::text("body\nline\nthree").fill_height());
-    });
+    let view = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Fixed(3),
+                crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                    "header",
+                )),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("content"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Flex { min: 1 },
+                crate::presentation::factory::fill_height(crate::presentation::factory::text(
+                    "body\nline\nthree",
+                )),
+            ),
+        ],
+        0,
+    );
     let tree = ViewCompiler::default()
         .layout_tree(&view, crate::geometry::LayoutConstraints::width_only(20));
     let root = tree.node(tree.root);
@@ -613,14 +882,20 @@ fn unbounded_column_treats_flex_as_intrinsic_after_fixed_tracks() {
 
 #[test]
 fn fit_row_respects_fixed_track_and_fill_width_content() {
-    let view = row_view(
+    let view = crate::presentation::factory::fit_width(row_view(
         vec![
-            RowChild::fixed(5, View::text("fixed").fill_width().into_view()),
-            RowChild::content(View::text("x").fill_width().into_view()),
+            RowChild::fixed(
+                5,
+                crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                    "fixed",
+                )),
+            ),
+            RowChild::content(crate::presentation::factory::fill_width(
+                crate::presentation::factory::text("x"),
+            )),
         ],
         0,
-    )
-    .fit_width();
+    ));
     let tree = ViewCompiler::default()
         .layout_tree(&view, crate::geometry::LayoutConstraints::width_only(20));
     let root = tree.node(tree.root);
@@ -631,12 +906,16 @@ fn fit_row_respects_fixed_track_and_fill_width_content() {
 
 #[test]
 fn bounded_row_vertical_alignment_uses_extra_height() {
-    let view = View::horizontal(|row| {
-        row.child(View::text("x"));
-        row.vertical_align(crate::presentation::VerticalAlign::Bottom);
-    })
-    .fill_width()
-    .fill_height();
+    let view = crate::presentation::factory::fill_height(crate::presentation::factory::fill_width(
+        crate::presentation::factory::row_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("x"),
+            )],
+            0,
+            crate::presentation::VerticalAlign::Bottom,
+        ),
+    ));
     let block = crate::presentation::layout::compile_bounded_view(&view, Size::new(5, 3));
     assert!(block.rows[0].plain_text().is_empty());
     assert!(block.rows[1].plain_text().is_empty());
@@ -645,9 +924,11 @@ fn bounded_row_vertical_alignment_uses_extra_height() {
 
 #[test]
 fn clamp_does_not_mask_impossible_wide_grapheme() {
-    let view = View::text("漢")
-        .fill_width()
-        .clamp_rows(1, OverflowIndicator::None);
+    let view = crate::presentation::factory::clamp_rows(
+        crate::presentation::factory::fill_width(crate::presentation::factory::text("漢")),
+        1,
+        OverflowIndicator::None,
+    );
     assert!(
         !ViewCompiler::default()
             .compile(&view, 1)
@@ -657,7 +938,11 @@ fn clamp_does_not_mask_impossible_wide_grapheme() {
 
 #[test]
 fn nowrap_paint_clips_whole_graphemes_and_never_emits_a_partial_wide_cell() {
-    let view = View::text("ABC界D").no_wrap().into_view();
+    let view = crate::presentation::factory::wrap(
+        crate::presentation::factory::text("ABC界D"),
+        crate::WrapMode::NoWrap,
+        None,
+    );
     let block = compile_view(&view, 4);
     assert!(block.rows[0].validate_cell_geometry().is_ok());
     assert_eq!(block.rows[0].plain_text(), "ABC");
@@ -667,10 +952,14 @@ fn nowrap_paint_clips_whole_graphemes_and_never_emits_a_partial_wide_cell() {
 
 #[test]
 fn bounded_compiler_preserves_fit_height_inside_fixed_track() {
-    let view = View::vertical(|column| {
-        column.fixed(3, View::text("x"));
-    })
-    .fill_height();
+    let view =
+        crate::presentation::factory::fill_height(crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Fixed(3),
+                crate::presentation::factory::text("x"),
+            )],
+            0,
+        ));
     let block = crate::presentation::layout::compile_bounded_view(&view, Size::new(10, 3));
     assert_eq!(block.rows.len(), 3);
     assert_eq!(block.rows[0].plain_text(), "x");
@@ -679,16 +968,19 @@ fn bounded_compiler_preserves_fit_height_inside_fixed_track() {
 
 #[test]
 fn view_bounds_apply_to_fit_and_fill_outer_dimensions() {
-    let fit = View::text("x").into_view().min_width(5);
+    let fit = crate::presentation::factory::min_width(crate::presentation::factory::text("x"), 5);
     let fit_block = crate::presentation::layout::compile_bounded_view(&fit, Size::new(20, 20));
     assert_eq!(fit_block.width, 5);
 
-    let fill = View::text("abcdefgh")
-        .into_view()
-        .fill_width()
-        .max_width(4)
-        .fill_height()
-        .max_height(3);
+    let fill = crate::presentation::factory::max_height(
+        crate::presentation::factory::fill_height(crate::presentation::factory::max_width(
+            crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                "abcdefgh",
+            )),
+            4,
+        )),
+        3,
+    );
     let fill_block = crate::presentation::layout::compile_bounded_view(&fill, Size::new(20, 20));
     assert_eq!(fill_block.width, 4);
     assert_eq!(fill_block.rows.len(), 3);
@@ -696,7 +988,8 @@ fn view_bounds_apply_to_fit_and_fill_outer_dimensions() {
 
 #[test]
 fn view_width_bounds_change_wrapping_and_height() {
-    let view = View::text("abcdefgh").into_view().max_width(4);
+    let view =
+        crate::presentation::factory::max_width(crate::presentation::factory::text("abcdefgh"), 4);
     let block = crate::presentation::layout::compile_bounded_view(&view, Size::new(20, 20));
     assert_eq!(block.width, 4);
     assert_eq!(block.rows.len(), 2);
@@ -704,23 +997,29 @@ fn view_width_bounds_change_wrapping_and_height() {
 
 #[test]
 fn view_bounds_normalize_contradictions_and_respect_hard_capacity() {
-    let contradictory = View::text("x").into_view().min_height(4).max_height(2);
+    let contradictory = crate::presentation::factory::max_height(
+        crate::presentation::factory::min_height(crate::presentation::factory::text("x"), 4),
+        2,
+    );
     let block =
         crate::presentation::layout::compile_bounded_view(&contradictory, Size::new(20, 10));
     assert_eq!(block.rows.len(), 4);
 
-    let constrained = View::text("x").into_view().min_height(5);
+    let constrained =
+        crate::presentation::factory::min_height(crate::presentation::factory::text("x"), 5);
     let block = crate::presentation::layout::compile_bounded_view(&constrained, Size::new(20, 3));
     assert_eq!(block.rows.len(), 3);
 }
 
 #[test]
 fn view_height_bounds_include_padding_and_border() {
-    let view = View::text("x")
-        .into_view()
-        .padding(1)
-        .border(BorderSpec::plain())
-        .max_height(5);
+    let view = crate::presentation::factory::max_height(
+        crate::presentation::factory::border(
+            crate::presentation::factory::padding(crate::presentation::factory::text("x"), 1),
+            BorderSpec::plain(),
+        ),
+        5,
+    );
     let block = crate::presentation::layout::compile_bounded_view(&view, Size::new(20, 20));
     assert_eq!(block.rows.len(), 5);
 }
@@ -740,51 +1039,104 @@ fn layout_performance_probe() {
         .collect::<Vec<_>>()
         .join("\n");
     let cases = vec![
-        ("simple_text", View::text("hello world").into_view()),
+        (
+            "simple_text",
+            crate::presentation::factory::text("hello world"),
+        ),
         (
             "wrapped_text",
-            View::text("one two three four five six seven eight nine ten")
-                .fill_width()
-                .into_view(),
+            crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                "one two three four five six seven eight nine ten",
+            )),
         ),
         (
             "nested_row_column",
-            View::vertical(|column| {
-                column.child(View::horizontal(|row| {
-                    row.child(View::text("left"));
-                    row.flex(View::text("right").fill_width());
-                }));
-                column.child(View::text("body").fill_width());
-            }),
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        crate::presentation::factory::row_specs(
+                            vec![
+                                (
+                                    crate::presentation::ir::TrackSize::Content { max: None },
+                                    crate::presentation::factory::text("left"),
+                                ),
+                                (
+                                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                                    crate::presentation::factory::fill_width(
+                                        crate::presentation::factory::text("right"),
+                                    ),
+                                ),
+                            ],
+                            0,
+                            crate::presentation::VerticalAlign::Top,
+                        ),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        crate::presentation::factory::fill_width(
+                            crate::presentation::factory::text("body"),
+                        ),
+                    ),
+                ],
+                0,
+            ),
         ),
-        ("long_text", View::text(&long_text).fill_width().into_view()),
+        (
+            "long_text",
+            crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                &long_text,
+            )),
+        ),
         (
             "decorated_text",
-            View::text("decorated message with decoration")
-                .fill_width()
-                .padding(Insets::horizontal(1))
-                .border(BorderSpec::rounded())
-                .background(ColorSpec::ansi(4))
-                .into_view(),
+            crate::presentation::factory::background(
+                crate::presentation::factory::border(
+                    crate::presentation::factory::padding(
+                        crate::presentation::factory::fill_width(
+                            crate::presentation::factory::text("decorated message with decoration"),
+                        ),
+                        Insets::horizontal(1),
+                    ),
+                    BorderSpec::rounded(),
+                ),
+                ColorSpec::ansi(4),
+            ),
         ),
         (
             "hanging",
-            View::hanging(
-                View::text("10. ").no_wrap(),
-                View::text("    ").no_wrap(),
-                View::text("one two three four five six").fill_width(),
-            )
-            .fill_width(),
+            crate::presentation::factory::fill_width(crate::presentation::factory::hanging(
+                crate::presentation::factory::wrap(
+                    crate::presentation::factory::text("10. "),
+                    crate::WrapMode::NoWrap,
+                    None,
+                ),
+                crate::presentation::factory::wrap(
+                    crate::presentation::factory::text("    "),
+                    crate::WrapMode::NoWrap,
+                    None,
+                ),
+                crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                    "one two three four five six",
+                )),
+            )),
         ),
         (
             "bounded_row_viewport",
-            View::row_viewport(View::text(&long_text).into_view(), 20),
+            crate::presentation::factory::row_viewport_default(
+                crate::presentation::factory::text(&long_text),
+                20,
+            ),
         ),
         (
             "scene_body",
-            View::vertical(|column| {
-                column.child(View::text("body"));
-            }),
+            crate::presentation::factory::column_specs(
+                vec![(
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("body"),
+                )],
+                0,
+            ),
         ),
     ];
     let iterations = 100;

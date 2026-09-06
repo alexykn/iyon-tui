@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use super::{Block, BlockKind, ListMarker, RawText, TextContent, text_style_ref};
 use crate::content::Renderer;
+use crate::presentation::factory as vf;
 use crate::presentation::ir::{ColumnChild, PersistentSeq, ViewId};
 use crate::{HorizontalAlign, Insets, StyleRef, TextSpan, View, WrapMode};
 use identity::RenderContext;
@@ -136,7 +137,7 @@ struct SemanticLoweringCache {
 
 /// The one generic renderer for the frozen text IR.
 #[derive(Clone, Debug)]
-pub struct TextRenderer {
+pub(crate) struct TextRenderer {
     policy: TextRenderPolicy,
     cache: Arc<Mutex<BlockLoweringCache>>,
     /// Connector-local semantic lowering owns this cache through the
@@ -191,6 +192,15 @@ impl TextRenderer {
         let mut rebuilding = false;
         let mut item_keys = None;
         let mut edge_keys = None;
+        // A first render (or a mismatch before any retained prefix) has no
+        // persistent structure to preserve. Accumulate that rebuilt suffix
+        // in owned vectors and bulk-build its sequence once instead of
+        // inserting every item through the root-to-leaf path.
+        let mut pending_rebuild: Option<(
+            Vec<ColumnChild>,
+            Vec<SemanticItemKey>,
+            Vec<EdgeCacheKey>,
+        )> = None;
         let mut index = 0usize;
         for content in input {
             let predecessor = previous
@@ -253,6 +263,7 @@ impl TextRenderer {
                 sequence = Some(prefix_sequence);
                 item_keys = Some(prefix_items);
                 edge_keys = Some(prefix_edges);
+                pending_rebuild = Some((Vec::new(), Vec::new(), Vec::new()));
                 rebuilding = true;
             }
             let child = match content {
@@ -265,24 +276,30 @@ impl TextRenderer {
                 gap,
                 predecessor,
             };
-            sequence = Some(
-                sequence
-                    .take()
-                    .expect("semantic sequence initialized")
-                    .insert(index, ColumnChild::content(child)),
-            );
-            item_keys = Some(
-                item_keys
-                    .take()
-                    .expect("semantic item sequence initialized")
-                    .insert(index, item_key),
-            );
-            edge_keys = Some(
-                edge_keys
-                    .take()
-                    .expect("semantic edge sequence initialized")
-                    .insert(index, edge_key),
-            );
+            if let Some((children, items, edges)) = pending_rebuild.as_mut() {
+                children.push(ColumnChild::content(child));
+                items.push(item_key);
+                edges.push(edge_key);
+            } else {
+                sequence = Some(
+                    sequence
+                        .take()
+                        .expect("semantic sequence initialized")
+                        .insert(index, ColumnChild::content(child)),
+                );
+                item_keys = Some(
+                    item_keys
+                        .take()
+                        .expect("semantic item sequence initialized")
+                        .insert(index, item_key),
+                );
+                edge_keys = Some(
+                    edge_keys
+                        .take()
+                        .expect("semantic edge sequence initialized")
+                        .insert(index, edge_key),
+                );
+            }
             previous = Some(content);
             index += 1;
         }
@@ -310,10 +327,33 @@ impl TextRenderer {
                 edge_keys = Some(prefix_edges);
             }
         }
+        if let Some((children, items, edges)) = pending_rebuild {
+            let suffix = PersistentSeq::from_vec(children);
+            let suffix_items = PersistentSeq::from_vec(items);
+            let suffix_edges = PersistentSeq::from_vec(edges);
+            sequence = Some(
+                sequence
+                    .take()
+                    .expect("semantic sequence initialized")
+                    .concat(&suffix),
+            );
+            item_keys = Some(
+                item_keys
+                    .take()
+                    .expect("semantic item sequence initialized")
+                    .concat(&suffix_items),
+            );
+            edge_keys = Some(
+                edge_keys
+                    .take()
+                    .expect("semantic edge sequence initialized")
+                    .concat(&suffix_edges),
+            );
+        }
         let sequence = sequence.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
         let item_keys = item_keys.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
         let edge_keys = edge_keys.unwrap_or_else(|| PersistentSeq::from_vec(Vec::new()));
-        let view = View::column_from_persistent(sequence.clone(), 0);
+        let view = vf::column_persistent(sequence.clone(), 0);
         if let Ok(mut cache) = self.lowering_cache.lock() {
             if cache.sequences.len() >= 256 {
                 cache.sequences.remove(0);
@@ -425,7 +465,7 @@ impl TextRenderer {
             );
             return entry.view.clone();
         }
-        let view = View::text_from_spans(
+        let view = vf::text_from_spans_with_style(
             vec![TextSpan::from_source_page(
                 Arc::clone(raw.page()),
                 raw.page_start(),
@@ -465,7 +505,7 @@ impl TextRenderer {
         {
             return view.clone();
         }
-        let view = child.padding(Insets::new(gap, 0, 0, 0));
+        let view = vf::padding(child, Insets::new(gap, 0, 0, 0));
         if let Ok(mut cache) = self.lowering_cache.lock() {
             if cache.edges.len() >= 2048 {
                 cache.edges.clear();

@@ -11,7 +11,7 @@ use iyon_tui::text::{
 };
 use iyon_tui::{
     Block, Inline, InlineContent, MarkdownProjector, Projection, Projector, ProjectorExt, RawText,
-    Renderer, Smooth, TextContent, TextRenderer,
+    Smooth, TextContent,
 };
 
 fn raw(source: &str, sealed: bool) -> Projection<TextContent> {
@@ -191,12 +191,6 @@ fn markdown_creates_real_json_syntax_and_mermaid_portals() {
     assert!(saw_json);
     assert!(saw_mermaid);
     assert!(saw_syntax);
-    let renderer = TextRenderer::new();
-    for span in mermaid.spans() {
-        for value in span.values() {
-            let _ = renderer.render(value);
-        }
-    }
 }
 
 struct Claim;

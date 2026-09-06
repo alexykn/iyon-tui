@@ -4,6 +4,7 @@ use tokio::sync::mpsc::{Receiver, error::TryRecvError};
 
 use anyhow::Result;
 
+use crate::presentation::factory as vf;
 use crate::{
     ComponentHandle, InteractionResult, OutputRouter, Scene, View,
     backend::NativeHistorySink,
@@ -457,8 +458,8 @@ where
             marker: _,
         } = app;
         let mut scene = history.map_or_else(
-            || Scene::new(View::spacer(0)),
-            |history| Scene::with_history(history, View::spacer(0)),
+            || Scene::new(vf::spacer(0)),
+            |history| Scene::with_history(history, vf::spacer(0)),
         );
         let mut components = ComponentRegistry::new();
         let mut outputs = OutputRouter::new();

@@ -20,6 +20,7 @@ use super::environment::{
     host_attempt_error,
 };
 use super::view_state::HostViewState;
+use crate::presentation::factory as vf;
 use crate::{
     App as TuiApp, AppCx, BorderSpec, Component, ComponentCx, ComponentHandle, History,
     HistoryLayout, HistoryUnitId, InteractionResult, KeyStroke, Output, ScrollPane, TextInput,
@@ -67,7 +68,7 @@ struct HostState {
 
 fn host_init(_cx: &mut AppCx<'_, HostOutput>) -> Result<HostState> {
     Ok(HostState {
-        body: View::spacer(0),
+        body: vf::spacer(0),
         outputs: VecDeque::new(),
     })
 }
@@ -558,7 +559,7 @@ impl Component for MountedScrollPane {
         self.0
             .state
             .lock()
-            .map_or_else(|_| View::spacer(0), |pane| Component::view(&*pane))
+            .map_or_else(|_| vf::spacer(0), |pane| Component::view(&*pane))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -611,7 +612,7 @@ impl Component for MountedViewSlot {
         self.0
             .state
             .lock()
-            .map_or_else(|_| View::spacer(0), |state| state.view.clone())
+            .map_or_else(|_| vf::spacer(0), |state| state.view.clone())
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -753,7 +754,7 @@ impl Component for MountedTextInput {
     fn view(&self) -> View {
         self.0
             .lock()
-            .map_or_else(|_| View::spacer(0), |input| input.view())
+            .map_or_else(|_| vf::spacer(0), |input| input.view())
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -1589,8 +1590,8 @@ impl TuiHost {
         // Closing a host is also the ownership boundary for its retained
         // semantic root. Drop both the host state's body and the scene root so
         // environment-scoped weak caches can observe expiry after disposal.
-        inner.running.state.body = View::spacer(0);
-        inner.running.host_set_body(View::spacer(0));
+        inner.running.state.body = vf::spacer(0);
+        inner.running.host_set_body(vf::spacer(0));
         inner.running.host_clear_retained_views();
         inner.dispose_view_states();
         inner.content.dispose_all();
@@ -2342,13 +2343,12 @@ fn prepare_frame_with_content(
 
 #[cfg(test)]
 mod tests {
+    use crate::presentation::factory as vf;
     use tokio::sync::oneshot;
 
     use super::super::environment::TuiEnvironment;
     use super::TuiHost;
-    use crate::{
-        ColorSpec, IntoView, View, ViewStatePresentationPatch, retained_state::StateFrameView,
-    };
+    use crate::{ColorSpec, ViewStatePresentationPatch, retained_state::StateFrameView};
 
     #[test]
     fn desired_revision_waits_for_a_successful_frame_barrier() {
@@ -2358,8 +2358,7 @@ mod tests {
         assert_eq!(initial.visible_frame_revision, 0);
         assert_eq!(initial.pending_epoch, initial.committed_epoch);
 
-        host.set_desired_view(View::text("desired").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("desired")).unwrap();
         let pending = host.epochs().unwrap();
         assert_eq!(pending.desired_structural_revision, 1);
         assert_eq!(pending.visible_frame_revision, 0);
@@ -2377,15 +2376,13 @@ mod tests {
     #[test]
     fn failed_frame_keeps_old_visible_state_and_explicit_retry_recovers() {
         let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(View::text("old").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("old")).unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         let old_rows = host.screen_rows();
 
         host.fail_next_frame_for_test("injected frame preparation failure")
             .unwrap();
-        host.set_desired_view(View::text("new").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("new")).unwrap();
         let failed = host.flush_pending_hosts(8, false).unwrap();
         assert_eq!(failed.errors.len(), 1);
         assert_eq!(host.screen_rows(), old_rows);
@@ -2407,8 +2404,7 @@ mod tests {
     fn presentation_state_repaints_without_measurement_or_semantic_republication() {
         let host = TuiHost::open(20, 4, true).unwrap();
         let state = host.create_view_state().unwrap();
-        let view = View::text("state")
-            .into_view()
+        let view = vf::text("state")
             .native_with_state_attachment(state.state_id())
             .unwrap();
         host.set_desired_view(view).unwrap();
@@ -2441,8 +2437,7 @@ mod tests {
     fn failed_frame_retains_old_state_versions_until_retry() {
         let host = TuiHost::open(20, 4, true).unwrap();
         let state = host.create_view_state().unwrap();
-        let view = View::text("state")
-            .into_view()
+        let view = vf::text("state")
             .native_with_state_attachment(state.state_id())
             .unwrap();
         host.set_desired_view(view).unwrap();
@@ -2519,11 +2514,10 @@ mod tests {
         first.set_theme(theme.clone()).unwrap();
         second.set_theme(theme).unwrap();
         for host in [&first, &second] {
-            host.set_desired_view(
-                View::text("parity")
-                    .style(StyleRef::theme("emphasis"))
-                    .into_view(),
-            )
+            host.set_desired_view(crate::presentation::factory::style(
+                vf::text("parity"),
+                StyleRef::theme("emphasis"),
+            ))
             .unwrap();
             host.flush_pending_hosts(8, true).unwrap();
         }
@@ -2550,8 +2544,7 @@ mod tests {
     #[test]
     fn environment_requeues_in_flight_presentation_receipts() {
         let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(View::text("receipt").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("receipt")).unwrap();
         let (sender, receiver) = oneshot::channel();
         {
             let mut inner = host.inner.lock().unwrap();
@@ -2598,8 +2591,7 @@ mod tests {
     #[test]
     fn failed_presentation_marks_physical_sync_unknown_until_recovery_frame() {
         let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(View::text("receipt-failure").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("receipt-failure")).unwrap();
         let (sender, receiver) = oneshot::channel();
         {
             let mut inner = host.inner.lock().unwrap();
@@ -2661,15 +2653,18 @@ mod tests {
         let connector = port
             .connect(
                 &source,
-                super::super::content::HostContentFunnel::plain(
+                super::super::content::HostContentFunnel::new(
+                    super::super::content::TextFunnelKind::Markdown,
                     super::super::content::TextWrapMode::Word,
+                    true,
+                    super::super::content::ContentDelivery::Immediate,
                 ),
             )
             .unwrap();
         let connector_id = connector.id();
         connector.activate().unwrap();
         let state = host.create_view_state().unwrap();
-        let body = View::native_content_host(port.id())
+        let body = vf::content_host(port.id())
             .unwrap()
             .native_with_state_attachment(state.state_id())
             .unwrap();
@@ -2770,13 +2765,16 @@ mod tests {
         let connector = port
             .connect(
                 &source,
-                super::super::content::HostContentFunnel::plain(
+                super::super::content::HostContentFunnel::new(
+                    super::super::content::TextFunnelKind::Markdown,
                     super::super::content::TextWrapMode::Word,
+                    true,
+                    super::super::content::ContentDelivery::Immediate,
                 ),
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
 
@@ -2893,10 +2891,20 @@ mod tests {
             .unwrap();
         first.activate().unwrap();
         second.activate().unwrap();
-        host.set_desired_view(View::horizontal(|row| {
-            row.child(View::native_content_host(first_port.id()).unwrap());
-            row.child(View::native_content_host(second_port.id()).unwrap());
-        }))
+        host.set_desired_view(crate::presentation::factory::row_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    vf::content_host(first_port.id()).unwrap(),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    vf::content_host(second_port.id()).unwrap(),
+                ),
+            ],
+            0,
+            crate::presentation::VerticalAlign::Top,
+        ))
         .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         assert!(first.status().unwrap().visible);
@@ -2943,8 +2951,7 @@ mod tests {
         );
         assert_eq!(first_source.subscriber_count(), 0);
         let peer = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        peer.set_desired_view(View::text("peer").into_view())
-            .unwrap();
+        peer.set_desired_view(vf::text("peer")).unwrap();
         let fair = host.flush_pending_hosts(8, false).unwrap();
         assert!(
             fair.commits
@@ -2993,12 +3000,8 @@ mod tests {
         let environment = TuiEnvironment::new();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        first
-            .set_desired_view(View::text("first").into_view())
-            .unwrap();
-        second
-            .set_desired_view(View::text("second").into_view())
-            .unwrap();
+        first.set_desired_view(vf::text("first")).unwrap();
+        second.set_desired_view(vf::text("second")).unwrap();
 
         let first_batch = first.flush_pending_hosts(1, false).unwrap();
         assert_eq!(first_batch.attempted, 1);
@@ -3022,12 +3025,8 @@ mod tests {
         let environment = TuiEnvironment::new();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        first
-            .set_desired_view(View::text("poisoned").into_view())
-            .unwrap();
-        second
-            .set_desired_view(View::text("healthy").into_view())
-            .unwrap();
+        first.set_desired_view(vf::text("poisoned")).unwrap();
+        second.set_desired_view(vf::text("healthy")).unwrap();
         let first_host_id = first.epochs().unwrap().host_id;
         let second_host_id = second.epochs().unwrap().host_id;
         {
@@ -3077,7 +3076,7 @@ mod tests {
             let connector = port
                 .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
                 .unwrap();
-            host.set_desired_view(View::native_content_host(port.id()).unwrap())
+            host.set_desired_view(vf::content_host(port.id()).unwrap())
                 .unwrap();
             host.flush_pending_hosts(8, true).unwrap();
             connector.activate().unwrap();
@@ -3190,8 +3189,7 @@ mod tests {
         // binding or body install, so rejection leaves the visible frame
         // and the pending pipeline exactly as they were.
         let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(View::text("settled").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("settled")).unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         let settled_rows = host.screen_rows();
         {
@@ -3199,7 +3197,7 @@ mod tests {
             inner.desired_structural_revision = u64::MAX;
         }
 
-        let result = host.set_desired_view(View::text("never").into_view());
+        let result = host.set_desired_view(vf::text("never"));
         let message = format!("{:?}", result.unwrap_err());
         assert!(
             message.contains("desired structural revision exhausted"),
@@ -3228,8 +3226,7 @@ mod tests {
         // one desired revision.
         let host = TuiHost::open(20, 4, true).unwrap();
         let state = host.create_view_state().unwrap();
-        let view = View::text("lane")
-            .into_view()
+        let view = vf::text("lane")
             .native_with_state_attachment(state.state_id())
             .unwrap();
         host.set_desired_view(view).unwrap();
@@ -3246,8 +3243,7 @@ mod tests {
             "state patch must not consume a structural revision"
         );
 
-        host.set_desired_view(View::text("lane").into_view())
-            .unwrap();
+        host.set_desired_view(vf::text("lane")).unwrap();
         let after_structural = host.epochs().unwrap();
         assert_eq!(
             after_structural.desired_structural_revision,
@@ -3278,7 +3274,7 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         #[cfg(feature = "perf-counters")]
@@ -3332,13 +3328,21 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(
-            View::vertical(|column| {
-                column.child(View::native_content_host(port.id()).unwrap());
-                column.child(View::text("following"));
-            })
-            .fill_width(),
-        )
+        host.set_desired_view(crate::presentation::factory::fill_width(
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        vf::content_host(port.id()).unwrap(),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        vf::text("following"),
+                    ),
+                ],
+                0,
+            ),
+        ))
         .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         let before = host.screen_rows();
@@ -3414,21 +3418,25 @@ mod tests {
             .unwrap();
         first_connector.activate().unwrap();
         second_connector.activate().unwrap();
-        host.set_desired_view(
-            View::vertical(|column| {
-                column.child(
-                    View::native_content_host(first_port.id())
-                        .unwrap()
-                        .fill_width(),
-                );
-                column.child(
-                    View::native_content_host(second_port.id())
-                        .unwrap()
-                        .fill_width(),
-                );
-            })
-            .fill_width(),
-        )
+        host.set_desired_view(crate::presentation::factory::fill_width(
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        crate::presentation::factory::fill_width(
+                            vf::content_host(first_port.id()).unwrap(),
+                        ),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        crate::presentation::factory::fill_width(
+                            vf::content_host(second_port.id()).unwrap(),
+                        ),
+                    ),
+                ],
+                0,
+            ),
+        ))
         .unwrap();
         host.flush_pending_hosts(16, true).unwrap();
         #[cfg(feature = "perf-counters")]
@@ -3498,14 +3506,19 @@ mod tests {
             ports.push(port);
             connectors.push(connector);
         }
-        host.set_desired_view(
-            View::vertical(|column| {
-                for port in &ports {
-                    column.child(View::native_content_host(port.id()).unwrap().fill_width());
-                }
-            })
-            .fill_width(),
-        )
+        host.set_desired_view(crate::presentation::factory::fill_width(
+            crate::presentation::factory::column(
+                ports
+                    .iter()
+                    .map(|port| {
+                        crate::presentation::factory::fill_width(
+                            vf::content_host(port.id()).unwrap(),
+                        )
+                    })
+                    .collect(),
+                0,
+            ),
+        ))
         .unwrap();
         host.flush_pending_hosts(PORT_COUNT, true).unwrap();
         #[cfg(feature = "perf-counters")]
@@ -3606,14 +3619,19 @@ mod tests {
                 ports.push(port);
                 connectors.push(connector);
             }
-            host.set_desired_view(
-                View::vertical(|column| {
-                    for port in &ports {
-                        column.child(View::native_content_host(port.id()).unwrap().fill_width());
-                    }
-                })
-                .fill_width(),
-            )
+            host.set_desired_view(crate::presentation::factory::fill_width(
+                crate::presentation::factory::column(
+                    ports
+                        .iter()
+                        .map(|port| {
+                            crate::presentation::factory::fill_width(
+                                vf::content_host(port.id()).unwrap(),
+                            )
+                        })
+                        .collect(),
+                    0,
+                ),
+            ))
             .unwrap();
             host.flush_pending_hosts(port_count, true).unwrap();
 
@@ -3688,16 +3706,16 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(View::native_content_host(port.id()).unwrap())
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
 
         let first_theme = crate::Theme::new().with_text_style(
-            crate::TextSelector::heading(),
+            crate::TextSelector::heading().level(crate::HeadingLevel::H1),
             crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(1)),
         );
         let second_theme = crate::Theme::new().with_text_style(
-            crate::TextSelector::heading(),
+            crate::TextSelector::heading().level(crate::HeadingLevel::H1),
             crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(2)),
         );
         host.set_theme(first_theme).unwrap();
@@ -3710,6 +3728,172 @@ mod tests {
         assert_ne!(
             first, second,
             "theme-only content repaint must resolve new styles"
+        );
+        host.close().unwrap();
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn structural_theme_and_source_order_preserves_fresh_content_tickets() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(32, 5, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"# heading\n", &[], &[]).unwrap();
+        let port = host
+            .create_content_port(super::super::content::ContentFamily::Text)
+            .unwrap();
+        let connector = port
+            .connect(
+                &source,
+                super::super::content::HostContentFunnel::new(
+                    super::super::content::TextFunnelKind::Markdown,
+                    super::super::content::TextWrapMode::Word,
+                    true,
+                    super::super::content::ContentDelivery::Immediate,
+                ),
+            )
+            .unwrap();
+        connector.activate().unwrap();
+        let content = vf::content_host(port.id()).unwrap();
+        let red_theme = crate::Theme::new().with_text_style(
+            crate::TextSelector::heading().level(crate::HeadingLevel::H1),
+            crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(1)),
+        );
+        host.set_desired_view(content.clone()).unwrap();
+        host.set_theme(red_theme).unwrap();
+        assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
+        let heading_row = host
+            .screen_rows()
+            .iter()
+            .position(|row| row.contains("heading"))
+            .expect("heading must be visible in the direct content view");
+        let heading_column = host.screen_rows()[heading_row]
+            .find("heading")
+            .expect("heading glyph must be present") as u16;
+        assert_eq!(
+            host.style_at(heading_row as u16, heading_column)
+                .and_then(|style| style.foreground),
+            Some("ansi:1".to_owned())
+        );
+        let green_theme = crate::Theme::new().with_text_style(
+            crate::TextSelector::heading().level(crate::HeadingLevel::H1),
+            crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(2)),
+        );
+        host.set_theme(green_theme).unwrap();
+        assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
+        assert_eq!(
+            host.style_at(heading_row as u16, heading_column)
+                .and_then(|style| style.foreground),
+            Some("ansi:2".to_owned())
+        );
+        // Keep the ContentHost and its immediate ancestor identities stable
+        // across each structural root; only the sibling changes.
+        let stable_content = vf::style(
+            vf::column(vec![content.clone()], 0),
+            crate::StyleRef::theme("probe"),
+        );
+        let first = vf::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    stable_content.clone(),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    vf::text("tail-a"),
+                ),
+            ],
+            0,
+        );
+        host.set_desired_view(first).unwrap();
+        assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
+
+        // Structural publication followed by a theme change must not reuse a
+        // detached retained tree's old ContentHost measurement/paint ticket.
+        host.set_desired_view(vf::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    stable_content.clone(),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    vf::text("tail-b"),
+                ),
+            ],
+            0,
+        ))
+        .unwrap();
+        source.append_utf8(b"-two", &[], &[]).unwrap();
+        let blue_theme = crate::Theme::new()
+            .with_style(
+                "probe",
+                crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(4)),
+            )
+            .with_text_style(
+                crate::TextSelector::heading().level(crate::HeadingLevel::H1),
+                crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(1)),
+            );
+        host.set_theme(blue_theme).unwrap();
+        assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
+        let heading_row = host
+            .screen_rows()
+            .iter()
+            .position(|row| row.contains("heading"))
+            .expect("heading must be visible after structural/theme refresh");
+        let heading_column = host.screen_rows()[heading_row]
+            .find("heading")
+            .expect("heading glyph must be present") as u16;
+        assert_eq!(
+            host.style_at(heading_row as u16, heading_column)
+                .and_then(|style| style.foreground),
+            Some("ansi:1".to_owned())
+        );
+        assert!(host.screen_rows().iter().any(|row| row.contains("-two")));
+
+        // Reverse order: source preparation first, then a structural root
+        // replacement and theme update, must likewise use fresh products.
+        source.append_utf8(b"-three", &[], &[]).unwrap();
+        host.set_desired_view(vf::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    stable_content.clone(),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    vf::text("tail-c"),
+                ),
+            ],
+            0,
+        ))
+        .unwrap();
+        let red_theme = crate::Theme::new()
+            .with_style(
+                "probe",
+                crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(4)),
+            )
+            .with_text_style(
+                crate::TextSelector::heading().level(crate::HeadingLevel::H1),
+                crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(2)),
+            );
+        host.set_theme(red_theme).unwrap();
+        assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
+        assert!(host.screen_rows().iter().any(|row| row.contains("-three")));
+        let heading_row = host
+            .screen_rows()
+            .iter()
+            .position(|row| row.contains("heading"))
+            .expect("heading must remain visible after reverse-order refresh");
+        let heading_column = host.screen_rows()[heading_row]
+            .find("heading")
+            .expect("heading glyph must remain present") as u16;
+        assert_eq!(
+            host.style_at(heading_row as u16, heading_column)
+                .and_then(|style| style.foreground),
+            Some("ansi:2".to_owned())
         );
         host.close().unwrap();
         source.dispose().unwrap();

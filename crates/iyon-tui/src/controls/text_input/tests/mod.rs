@@ -4,7 +4,6 @@ use crate::component::ComponentRegistry;
 use crate::interaction::route_key_local;
 use crate::interaction::{FocusState, route_paste};
 use crate::output::{OutputQueue, OutputRouter};
-use crate::presentation::IntoView;
 use crate::scene::resolve_scene;
 use crate::{
     Component, ComponentHandle, EventCx, InteractionResult, Key, KeyStroke, Modifiers, Output, View,
@@ -56,7 +55,7 @@ struct FocusablePassive;
 
 impl Component for FocusablePassive {
     fn view(&self) -> View {
-        View::text("passive").into_view()
+        crate::presentation::factory::text("passive")
     }
 
     fn capabilities(&self, cx: &mut crate::ComponentCx<'_, Self>) {
@@ -190,10 +189,19 @@ fn modal_paste_containment_excludes_background_components() {
         modal: true,
     });
     let scene = resolve_scene(
-        &View::vertical(|column| {
-            column.child(View::component(background));
-            column.child(View::component(modal));
-        }),
+        &crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(modal),
+                ),
+            ],
+            0,
+        ),
         &registry,
     )
     .unwrap();

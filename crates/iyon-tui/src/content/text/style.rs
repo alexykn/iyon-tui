@@ -103,26 +103,8 @@ pub enum TextTableSection {
 /// Optional dimensions such as origin allow an application to specialize
 /// presentation for content claimed by a particular projector.
 ///
-/// ```
-/// use iyon_tui::{
-///     ColorSpec, HeadingLevel, StyleSpec, TextOrigin, TextRole, TextSelector, Theme,
-/// };
-///
-/// let _theme = Theme::new()
-///     .with_text_style(TextSelector::heading(), StyleSpec::new().bold())
-///     .with_text_style(
-///         TextSelector::heading().level(HeadingLevel::H1),
-///         StyleSpec::new().underline(),
-///     )
-///     .with_text_style(
-///         TextSelector::heading().origin(TextOrigin::MARKDOWN),
-///         StyleSpec::new().foreground(ColorSpec::theme("accent")),
-///     )
-///     .with_text_style(
-///         TextSelector::strong().and_role(TextRole::Link),
-///         StyleSpec::new().underline(),
-///     );
-/// ```
+/// Theme/style construction is an internal runtime operation; callers use the
+/// TypeScript semantic facade and do not author Rust Views or themes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextSelector {
     inner: StyleSelector,

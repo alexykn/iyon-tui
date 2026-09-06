@@ -225,7 +225,7 @@ fn to_physical_ansi(color: AnsiColor) -> PhysicalAnsiColor {
 mod tests {
     use super::*;
     use crate::{
-        IntoView, StyleSelector, StyleStateKey, StyleStateValue, TextAttribute, View,
+        StyleSelector, StyleStateKey, StyleStateValue, TextAttribute,
         presentation::layout::compile_view_with_theme,
     };
 
@@ -249,10 +249,14 @@ mod tests {
                 StyleSelector::state("severity", "error").and_focused(),
                 ThemeColor::Named(AnsiColor::Yellow),
             );
-        let view = View::text("x")
-            .foreground(ColorSpec::theme("accent"))
-            .into_view()
-            .style_state("severity", "error");
+        let view = crate::presentation::factory::style_state(
+            crate::presentation::factory::foreground(
+                crate::presentation::factory::text("x"),
+                ColorSpec::theme("accent"),
+            ),
+            "severity",
+            "error",
+        );
         let rows = compile_view_with_theme(&view, 10, &theme).rows;
         assert_eq!(
             rows[0].style_at(0).unwrap().foreground,
@@ -345,10 +349,11 @@ mod tests {
 
     #[test]
     fn theme_changes_paint_without_changing_geometry() {
-        let themed = View::text("hello")
-            .foreground(ColorSpec::theme("accent"))
-            .into_view();
-        let plain = View::text("hello").into_view();
+        let themed = crate::presentation::factory::foreground(
+            crate::presentation::factory::text("hello"),
+            ColorSpec::theme("accent"),
+        );
+        let plain = crate::presentation::factory::text("hello");
         let theme = Theme::new().with_color("accent", ThemeColor::Indexed(1));
         let themed = compile_view_with_theme(&themed, 20, &theme);
         let plain = crate::presentation::layout::compile_view(&plain, 20);

@@ -129,6 +129,10 @@ pub(crate) struct LayoutTree {
     /// scene, but the value is a vector so the index remains correct for
     /// generic callers that intentionally reuse an attachment.
     pub(crate) content_roots: HashMap<u64, Vec<LayoutNodeId>>,
+    /// Whether each node's children are ordered by non-overlapping vertical
+    /// ranges. Row painting reuses this prepared geometry to prune siblings
+    /// without rescanning the complete layout tree for every requested row.
+    pub(crate) child_y_sorted: Vec<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,6 +256,17 @@ impl LayoutTree {
         self.content_roots.clear();
         self.parents = vec![None; self.nodes.len()];
         self.collect_component_roots(self.root, None);
+        self.child_y_sorted = self
+            .nodes
+            .iter()
+            .map(|node| {
+                node.children.windows(2).all(|pair| {
+                    let first = self.node(pair[0]).rect;
+                    let second = self.node(pair[1]).rect;
+                    first.y <= second.y && first.bottom() <= second.bottom()
+                })
+            })
+            .collect();
     }
 
     fn collect_component_roots(&mut self, id: LayoutNodeId, parent: Option<LayoutNodeId>) {

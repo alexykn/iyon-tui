@@ -1,19 +1,11 @@
-error[E0277]: the trait bound `History: IntoView` is not satisfied
- --> tests/ui/fail/history_not_column_child.rs:6:22
+error[E0603]: struct `View` is private
+ --> tests/ui/fail/history_not_column_child.rs:1:25
   |
-6 |         column.child(history);
-  |                ----- ^^^^^^^ the trait `IntoView` is not implemented for `History`
-  |                |
-  |                required by a bound introduced by this call
+1 | use iyon_tui::{History, View};
+  |                         ^^^^ private struct
   |
-  = help: the following other types implement trait `IntoView`:
-            &'a String
-            &'a str
-            String
-            View
-            iyon_tui::Text
-note: required by a bound in `Vertical::child`
- --> src/presentation/api/composition.rs
+note: the struct `View` is defined here
+ --> src/lib.rs
   |
-  |     pub fn child(&mut self, child: impl IntoView) -> &mut Self {
-  |                                         ^^^^^^^^ required by this bound in `Vertical::child`
+  | pub(crate) use presentation::ir::View;
+  |                ^^^^^^^^^^^^^^^^^^^^^^

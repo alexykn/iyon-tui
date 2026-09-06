@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::{
     component::{Component, ComponentRegistry, MountedComponents, TickScheduler},
     output::{Output, OutputQueue, OutputRouter},
-    presentation::{IntoView, View},
+    presentation::View,
     scene::resolve_scene,
 };
 
@@ -16,7 +16,7 @@ struct FocusProbe {
 
 impl Component for FocusProbe {
     fn view(&self) -> View {
-        View::text("focus").into_view()
+        crate::presentation::factory::text("focus")
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -38,7 +38,7 @@ struct DynamicFocusProbe {
 
 impl Component for DynamicFocusProbe {
     fn view(&self) -> View {
-        View::text("dynamic").into_view()
+        crate::presentation::factory::text("dynamic")
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -63,7 +63,7 @@ struct TickProbe {
 
 impl Component for TickProbe {
     fn view(&self) -> View {
-        View::text(self.ticks.to_string()).into_view()
+        crate::presentation::factory::text(self.ticks.to_string())
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -93,7 +93,7 @@ enum CounterCommand {
 
 impl Component for Counter {
     fn view(&self) -> View {
-        View::text(self.value.to_string()).into_view()
+        crate::presentation::factory::text(self.value.to_string())
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -144,14 +144,15 @@ struct Modal {
 
 impl Component for Modal {
     fn view(&self) -> View {
-        View::vertical(|column| {
-            for child in &self.children {
-                column.child(View::component(*child));
-            }
-            if let Some(nested) = self.nested {
-                column.child(View::component(nested));
-            }
-        })
+        let mut children = self
+            .children
+            .iter()
+            .map(|child| View::component(*child))
+            .collect::<Vec<_>>();
+        if let Some(nested) = self.nested {
+            children.push(View::component(nested));
+        }
+        crate::presentation::factory::column(children, 0)
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -165,7 +166,7 @@ struct IgnoredEmitter {
 
 impl Component for IgnoredEmitter {
     fn view(&self) -> View {
-        View::text("ignored").into_view()
+        crate::presentation::factory::text("ignored")
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -218,7 +219,7 @@ struct Parent {
 
 impl Component for Parent {
     fn view(&self) -> View {
-        View::component(self.child).container()
+        crate::presentation::factory::container(View::component(self.child))
     }
 
     fn capabilities(&self, cx: &mut super::ComponentCx<'_, Self>) {
@@ -252,10 +253,20 @@ fn focus_traversal_is_cyclic_and_not_index_owned() {
     let mut registry = ComponentRegistry::new();
     let a = registry.register(FocusProbe { focused: false });
     let b = registry.register(FocusProbe { focused: false });
-    let view = View::horizontal(|row| {
-        row.child(View::component(a));
-        row.child(View::component(b));
-    });
+    let view = crate::presentation::factory::row_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(a),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(b),
+            ),
+        ],
+        0,
+        crate::presentation::VerticalAlign::Top,
+    );
     let scene = scene_for(view, &registry);
     let mounted = mount(&scene);
     let mut focus = FocusState::default();
@@ -386,10 +397,19 @@ fn focus_change_callbacks_advance_component_revision() {
     let a = registry.register(FocusProbe { focused: false });
     let b = registry.register(FocusProbe { focused: false });
     let scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(a));
-            column.child(View::component(b));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(a),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(b),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     let mut focus = FocusState::default();
@@ -406,9 +426,13 @@ fn removed_focused_component_receives_blur_from_retained_handler() {
     let first = registry.register(FocusProbe { focused: false });
     let second = registry.register(FocusProbe { focused: false });
     let first_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(first),
+            )],
+            0,
+        ),
         &registry,
     );
     let mut focus = FocusState::default();
@@ -421,9 +445,13 @@ fn removed_focused_component_receives_blur_from_retained_handler() {
     assert_eq!(registry.revision(first).unwrap().value(), 1);
 
     let second_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(second));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                View::component(second),
+            )],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -458,10 +486,19 @@ fn losing_focusability_blurs_using_the_previous_capability() {
 
     registry.with_mut(first, |probe| probe.focusable = false);
     let second_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(first));
-            column.child(View::component(second));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(second),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -538,10 +575,19 @@ fn modal_focus_is_contained_and_restored_in_nested_order() {
     });
 
     let first_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     let mut focus = FocusState::default();
@@ -561,10 +607,19 @@ fn modal_focus_is_contained_and_restored_in_nested_order() {
 
     registry.with_mut(first, |modal| modal.nested = Some(second));
     let nested_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -578,10 +633,19 @@ fn modal_focus_is_contained_and_restored_in_nested_order() {
 
     registry.with_mut(first, |modal| modal.nested = None);
     let restored_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -620,10 +684,19 @@ fn removing_a_modal_hierarchy_unwinds_to_background_focus() {
     });
 
     let background_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(background_a));
-            column.child(View::component(background_b));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_a),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_b),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     let mut focus = FocusState::default();
@@ -641,11 +714,23 @@ fn removing_a_modal_hierarchy_unwinds_to_background_focus() {
     assert_eq!(focus.focused(), Some(background_b.id()));
 
     let first_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(background_a));
-            column.child(View::component(background_b));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_a),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_b),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -657,11 +742,23 @@ fn removing_a_modal_hierarchy_unwinds_to_background_focus() {
     registry.with_mut(first, |modal| modal.nested = Some(nested));
 
     let nested_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(background_a));
-            column.child(View::component(background_b));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_a),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_b),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -673,10 +770,19 @@ fn removing_a_modal_hierarchy_unwinds_to_background_focus() {
     assert_eq!(focus.focused(), Some(nested_child.id()));
 
     let removed_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(background_a));
-            column.child(View::component(background_b));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_a),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(background_b),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -706,10 +812,19 @@ fn replacing_a_modal_does_not_leave_stale_restore_frames() {
     });
 
     let first_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     let mut focus = FocusState::default();
@@ -727,10 +842,19 @@ fn replacing_a_modal_does_not_leave_stale_restore_frames() {
     assert_eq!(focus.focused(), Some(first_other.id()));
 
     let replacement_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(second));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(second),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(
@@ -751,10 +875,19 @@ fn replacing_a_modal_does_not_leave_stale_restore_frames() {
     assert_eq!(focus.focused(), Some(underlying.id()));
 
     let reopened_scene = scene_for(
-        View::vertical(|column| {
-            column.child(View::component(underlying));
-            column.child(View::component(first));
-        }),
+        crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(underlying),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+            ],
+            0,
+        ),
         &registry,
     );
     focus.reconcile_with_geometry(

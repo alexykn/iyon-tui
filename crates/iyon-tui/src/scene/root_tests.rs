@@ -5,7 +5,7 @@ use std::sync::{
 };
 
 use crate::{
-    History, HistoryLayout, Insets, IntoView, View,
+    History, HistoryLayout, Insets, View,
     backend::NativeHistorySink,
     component::{Component, ComponentCx, ComponentRegistry},
     geometry::Size,
@@ -21,7 +21,7 @@ struct CountingRootComponent(Arc<AtomicUsize>);
 impl Component for CountingRootComponent {
     fn view(&self) -> View {
         self.0.fetch_add(1, Ordering::Relaxed);
-        View::text("counted").into_view()
+        crate::presentation::factory::text("counted")
     }
 
     fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>) {}
@@ -29,7 +29,7 @@ impl Component for CountingRootComponent {
 
 impl Component for RootComponent {
     fn view(&self) -> View {
-        View::text(self.0).into_view()
+        crate::presentation::factory::text(self.0)
     }
 
     fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>) {}
@@ -57,7 +57,9 @@ fn body_component_is_resolved_once_per_root_pass() {
     let mut registry = ComponentRegistry::new();
     let handle = registry.register(CountingRootComponent(calls.clone()));
     let mut history = History::new();
-    history.push("history").unwrap();
+    history
+        .push(crate::presentation::factory::text("history"))
+        .unwrap();
 
     resolve_root_scene(
         &Scene::with_history(history, View::component(handle)),
@@ -72,7 +74,12 @@ fn body_component_is_resolved_once_per_root_pass() {
 #[test]
 fn body_only_root_has_no_history_overlay() {
     let registry = ComponentRegistry::new();
-    let resolved = resolve_root_scene(&Scene::new("body"), &registry, Size::new(10, 6)).unwrap();
+    let resolved = resolve_root_scene(
+        &Scene::new(crate::presentation::factory::text("body")),
+        &registry,
+        Size::new(10, 6),
+    )
+    .unwrap();
     assert!(resolved.history_overlay.is_none());
     assert_eq!(resolved.history_height, 0);
     assert_eq!(resolved.body_height, 1);
@@ -82,11 +89,22 @@ fn body_only_root_has_no_history_overlay() {
 #[test]
 fn history_and_body_use_remaining_height_and_terminal_width() {
     let mut history = History::new();
-    history.push("H1\nH2\nH3\nH4\nH5\nH6").unwrap();
-    let body = View::vertical(|column| {
-        column.child("B1");
-        column.child("B2");
-    });
+    history
+        .push(crate::presentation::factory::text("H1\nH2\nH3\nH4\nH5\nH6"))
+        .unwrap();
+    let body = crate::presentation::factory::column_specs(
+        vec![
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("B1"),
+            ),
+            (
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::text("B2"),
+            ),
+        ],
+        0,
+    );
     let resolved = resolve_root_scene(
         &Scene::with_history(history, body),
         &ComponentRegistry::new(),
@@ -105,12 +123,14 @@ fn history_and_body_use_remaining_height_and_terminal_width() {
 
 #[test]
 fn history_tracks_all_space_left_by_intrinsic_body() {
-    let body = View::text("B1\nB2\nB3\nB4");
+    let body = crate::presentation::factory::text("B1\nB2\nB3\nB4");
     for (height, expected) in [(24, 20), (40, 36), (10, 6)] {
         let mut history = History::new();
-        history.push("history").unwrap();
+        history
+            .push(crate::presentation::factory::text("history"))
+            .unwrap();
         let resolved = resolve_root_scene(
-            &Scene::with_history(history, body.clone().into_view()),
+            &Scene::with_history(history, body.clone()),
             &ComponentRegistry::new(),
             Size::new(20, height),
         )
@@ -122,9 +142,11 @@ fn history_tracks_all_space_left_by_intrinsic_body() {
 #[test]
 fn history_follow_end_stays_above_body() {
     let mut history = History::new();
-    history.push("H1\nH2\nH3\nH4\nH5\nH6").unwrap();
+    history
+        .push(crate::presentation::factory::text("H1\nH2\nH3\nH4\nH5\nH6"))
+        .unwrap();
     let resolved = resolve_root_scene(
-        &Scene::with_history(history, "B1\nB2"),
+        &Scene::with_history(history, crate::presentation::factory::text("B1\nB2")),
         &ComponentRegistry::new(),
         Size::new(10, 6),
     )
@@ -144,9 +166,14 @@ fn history_follow_end_stays_above_body() {
 #[test]
 fn narrow_body_does_not_narrow_history() {
     let mut history = History::new();
-    history.push("H").unwrap();
+    history
+        .push(crate::presentation::factory::text("H"))
+        .unwrap();
     let resolved = resolve_root_scene(
-        &Scene::with_history(history, View::text("B").fit_width()),
+        &Scene::with_history(
+            history,
+            crate::presentation::factory::fit_width(crate::presentation::factory::text("B")),
+        ),
         &ComponentRegistry::new(),
         Size::new(20, 4),
     )
@@ -163,7 +190,7 @@ fn body_exhaustion_gives_history_zero_height_but_keeps_live_mounted() {
     let handle = registry.register(RootComponent("live"));
     let mut history = History::new();
     history.push(View::component(handle)).unwrap();
-    let scene = Scene::with_history(history, "B1\nB2\nB3");
+    let scene = Scene::with_history(history, crate::presentation::factory::text("B1\nB2\nB3"));
     let resolved = resolve_root_scene(&scene, &registry, Size::new(10, 3)).unwrap();
     assert_eq!(resolved.history_height, 0);
     assert_eq!(
@@ -224,7 +251,7 @@ fn zero_dimensions_preserve_semantic_resolution_without_fake_rows() {
     let mut history = History::new();
     history.push(View::component(handle)).unwrap();
     let resolved = resolve_root_scene(
-        &Scene::with_history(history, "body"),
+        &Scene::with_history(history, crate::presentation::factory::text("body")),
         &registry,
         Size::new(0, 0),
     )
@@ -240,8 +267,10 @@ fn zero_dimensions_preserve_semantic_resolution_without_fake_rows() {
 fn frozen_history_overlay_stays_inside_history_track_above_body() {
     let mut history = History::new();
     history.set_layout(HistoryLayout::from_parts(Insets::ZERO, 0));
-    history.push("A\nB\nC").unwrap();
-    let expected_view = View::text("A\nB\nC").into_view();
+    history
+        .push(crate::presentation::factory::text("A\nB\nC"))
+        .unwrap();
+    let expected_view = crate::presentation::factory::text("A\nB\nC");
     let expected =
         crate::presentation::layout::compile_bounded_view(&expected_view, Size::new(10, 3))
             .rows
@@ -255,7 +284,7 @@ fn frozen_history_overlay_stays_inside_history_track_above_body() {
     transfer_native_prefix(&mut history, &mut sink, 10, 1).unwrap();
 
     let resolved = resolve_root_scene(
-        &Scene::with_history(history, "body"),
+        &Scene::with_history(history, crate::presentation::factory::text("body")),
         &ComponentRegistry::new(),
         Size::new(10, 5),
     )

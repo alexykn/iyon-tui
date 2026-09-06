@@ -334,7 +334,7 @@ fn table_alignment_and_cell_override() {
         [TableRow::new([cell("A"), cell("B"), cell("C")])],
     )
     .unwrap();
-    let view = render(&Block::table(table)).fill_width();
+    let view = crate::presentation::factory::fill_width(render(&Block::table(table)));
     let (a_x, _) = text_at(&view, 30, "A");
     let (b_x, _) = text_at(&view, 30, "B");
     let (c_x, _) = text_at(&view, 30, "C");
@@ -356,7 +356,7 @@ fn table_alignment_and_cell_override() {
         ],
     )
     .unwrap();
-    let view = render(&Block::table(overridden)).fill_width();
+    let view = crate::presentation::factory::fill_width(render(&Block::table(overridden)));
     let (start_x, _) = text_at(&view, 30, "AAAA");
     let (end_x, _) = text_at(&view, 30, "L");
     assert_eq!(start_x, 0);
@@ -875,12 +875,7 @@ fn gfm_end_to_end_render_fixture() {
     let source =
         "| Item | State |\n| --- | --- |\n| ~~old~~ | active |\n\n- [x] complete\n- [ ] pending\n";
     let blocks = project_markdown(MarkdownOptions::gfm(), source);
-    let view = View::vertical(|column| {
-        column.gap(1);
-        for block in &blocks {
-            column.child(render(block));
-        }
-    });
+    let view = crate::presentation::factory::column(blocks.iter().map(render).collect(), 1);
     let theme = Theme::new();
     assert!(style_at(&view, &theme, "old").strikethrough);
     assert!(style_at(&view, &theme, "Item").bold);

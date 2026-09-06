@@ -1,61 +1,19 @@
-//! Closure-scoped two-dimensional grid construction.
+//! Two-dimensional grid placement and normalization.
 //!
-//! [`Grid`] and [`GridRow`] exist only while their construction closure runs.
-//! [`View::grid`] lowers them immediately into retained presentation IR.
+//! Owned grid records lower directly into retained presentation IR through
+//! the internal factory seam; no closure-scoped authoring builder is exposed.
 //! Declared columns define the initial explicit tracks; additional columns
 //! required by cell placement become implicit content-sized tracks. The same
 //! principle applies to rows created by row spans.
 //!
-//! ```
-//! use iyon_tui::{GridCellSpec, GridTrack, HorizontalAlign, View};
-//!
-//! let view = View::grid(|grid| {
-//!     grid.columns([GridTrack::content(), GridTrack::flex()]);
-//!     grid.column_gap(1);
-//!
-//!     grid.row(|row| {
-//!         row.cell("Name");
-//!         row.cell("Value");
-//!     });
-//!
-//!     grid.row(|row| {
-//!         row.cell("requests");
-//!         row.cell_with(
-//!             GridCellSpec::new().horizontal_align(HorizontalAlign::End),
-//!             "42",
-//!         );
-//!     });
-//! });
-//! # let _ = view;
-//! ```
-//!
-//! Spanning cells occupy multiple shared tracks, including internal gaps:
-//!
-//! ```
-//! use iyon_tui::{GridCellSpec, GridTrack, HorizontalAlign, View};
-//!
-//! let view = View::grid(|grid| {
-//!     grid.columns([
-//!         GridTrack::content(),
-//!         GridTrack::content(),
-//!         GridTrack::flex(),
-//!     ]);
-//!     grid.row(|row| {
-//!         row.cell_with(
-//!             GridCellSpec::new()
-//!                 .column_span(2)
-//!                 .horizontal_align(HorizontalAlign::Center),
-//!             "Spans two columns",
-//!         );
-//!         row.cell("tail");
-//!     });
-//! });
-//! # let _ = view;
-//! ```
+//! Grid placement and normalization are private runtime algorithms. The
+//! TypeScript facade supplies semantic grid records; the native binding moves
+//! validated records into the retained grid product without exposing a Rust
+//! authoring builder.
 
 use std::{collections::HashMap, num::NonZeroU16, sync::Arc};
 
-use super::{style::VerticalAlign, text::HorizontalAlign, view::IntoView};
+use super::{style::VerticalAlign, text::HorizontalAlign};
 use crate::presentation::ir::{GridCellView, GridView, PersistentSeq, TrackSize, View, ViewKind};
 
 /// A column or row track size. The underlying layout representation is private.
@@ -66,35 +24,35 @@ pub struct GridTrack {
 
 impl GridTrack {
     #[must_use]
-    pub const fn content() -> Self {
+    pub(crate) const fn content() -> Self {
         Self {
             track: TrackSize::Content { max: None },
         }
     }
 
     #[must_use]
-    pub const fn content_max(max: u16) -> Self {
+    pub(crate) const fn content_max(max: u16) -> Self {
         Self {
             track: TrackSize::Content { max: Some(max) },
         }
     }
 
     #[must_use]
-    pub const fn fixed(size: u16) -> Self {
+    pub(crate) const fn fixed(size: u16) -> Self {
         Self {
             track: TrackSize::Fixed(size),
         }
     }
 
     #[must_use]
-    pub const fn flex() -> Self {
+    pub(crate) const fn flex() -> Self {
         Self {
             track: TrackSize::Flex { min: 1 },
         }
     }
 
     #[must_use]
-    pub const fn flex_max(max: u16) -> Self {
+    pub(crate) const fn flex_max(max: u16) -> Self {
         Self {
             track: TrackSize::FlexMax { min: 1, max },
         }
@@ -118,7 +76,7 @@ impl Default for GridCellSpec {
 
 impl GridCellSpec {
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             column_span: NonZeroU16::MIN,
             row_span: NonZeroU16::MIN,
@@ -128,7 +86,7 @@ impl GridCellSpec {
     }
 
     #[must_use]
-    pub fn column_span(self, span: u16) -> Self {
+    pub(crate) fn column_span(self, span: u16) -> Self {
         Self {
             column_span: NonZeroU16::new(span).expect("grid column span must be at least 1"),
             ..self
@@ -136,7 +94,7 @@ impl GridCellSpec {
     }
 
     #[must_use]
-    pub fn row_span(self, span: u16) -> Self {
+    pub(crate) fn row_span(self, span: u16) -> Self {
         Self {
             row_span: NonZeroU16::new(span).expect("grid row span must be at least 1"),
             ..self
@@ -144,7 +102,7 @@ impl GridCellSpec {
     }
 
     #[must_use]
-    pub fn horizontal_align(self, align: HorizontalAlign) -> Self {
+    pub(crate) fn horizontal_align(self, align: HorizontalAlign) -> Self {
         Self {
             horizontal_align: align,
             ..self
@@ -152,7 +110,7 @@ impl GridCellSpec {
     }
 
     #[must_use]
-    pub fn vertical_align(self, align: VerticalAlign) -> Self {
+    pub(crate) fn vertical_align(self, align: VerticalAlign) -> Self {
         Self {
             vertical_align: align,
             ..self
@@ -160,116 +118,9 @@ impl GridCellSpec {
     }
 }
 
-/// Closure-scoped capability for constructing two-dimensional composition.
-///
-/// The capability is consumed by [`View::grid`](crate::View::grid); it is not a
-/// retained semantic node and cannot itself be converted into a `View`.
-pub struct Grid {
-    columns: Vec<GridTrack>,
-    rows: Vec<PendingGridRow>,
-    column_gap: u16,
-    row_gap: u16,
-}
-
-struct PendingGridRow {
-    track: GridTrack,
-    cells: Vec<PendingGridCell>,
-}
-
-struct PendingGridCell {
-    spec: GridCellSpec,
-    view: View,
-}
-
-impl Grid {
-    pub(super) fn new() -> Self {
-        Self {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            column_gap: 0,
-            row_gap: 0,
-        }
-    }
-
-    pub fn columns(&mut self, columns: impl IntoIterator<Item = GridTrack>) -> &mut Self {
-        self.columns = columns.into_iter().collect();
-        self
-    }
-
-    pub fn column_gap(&mut self, gap: u16) -> &mut Self {
-        self.column_gap = gap;
-        self
-    }
-
-    pub fn row_gap(&mut self, gap: u16) -> &mut Self {
-        self.row_gap = gap;
-        self
-    }
-
-    pub fn row(&mut self, build: impl FnOnce(&mut GridRow)) -> &mut Self {
-        self.row_with(GridTrack::content(), build)
-    }
-
-    pub fn row_with(&mut self, track: GridTrack, build: impl FnOnce(&mut GridRow)) -> &mut Self {
-        let mut row = GridRow { cells: Vec::new() };
-        build(&mut row);
-        self.rows.push(PendingGridRow {
-            track,
-            cells: row.cells,
-        });
-        self
-    }
-
-    pub(super) fn into_grid_view(self) -> GridView {
-        lower_grid(self)
-    }
-}
-
-/// Closure-scoped capability for constructing one grid source row.
-pub struct GridRow {
-    cells: Vec<PendingGridCell>,
-}
-
-impl GridRow {
-    pub fn cell(&mut self, child: impl IntoView) -> &mut Self {
-        self.cell_with(GridCellSpec::new(), child)
-    }
-
-    pub fn cell_with(&mut self, spec: GridCellSpec, child: impl IntoView) -> &mut Self {
-        self.cells.push(PendingGridCell {
-            spec,
-            view: child.into_view(),
-        });
-        self
-    }
-}
-
-fn lower_grid(grid: Grid) -> GridView {
-    lower_grid_parts(
-        grid.columns.into_iter().map(|track| track.track).collect(),
-        grid.column_gap,
-        grid.row_gap,
-        grid.rows
-            .into_iter()
-            .map(|row| {
-                (
-                    row.track.track,
-                    row.cells
-                        .into_iter()
-                        .map(|cell| (cell.spec, cell.view))
-                        .collect(),
-                )
-            })
-            .collect(),
-    )
-}
-
-/// The single shared grid placement/normalization algorithm. Every caller
-/// moves owned values in: explicit columns, gaps, and one
-/// `(track, cells)` pair per source row. Implicit tracks grow from cell
-/// placement; row spans past the last source row extend the row list.
-/// Exactly one [`GridView`] comes out; no caller replays cells through a
-/// second construction pass.
+/// Internal two-dimensional placement input. The canonical factory consumes
+/// owned columns, rows, and cells directly; this record is not a retained
+/// semantic node and cannot itself be converted into a `View`.
 fn lower_grid_parts(
     mut columns: Vec<TrackSize>,
     column_gap: u16,
@@ -344,20 +195,6 @@ impl View {
                 .collect(),
         ))))
     }
-
-    /// Direct final grid construction for native ingress: the already-parsed
-    /// rows move into final storage with no second collection and no
-    /// per-cell clone. Exactly one root per call.
-    #[cfg(feature = "native-host")]
-    #[doc(hidden)]
-    pub fn native_grid_final(
-        columns: Vec<GridTrack>,
-        column_gap: u16,
-        row_gap: u16,
-        rows: Vec<(GridTrack, Vec<(GridCellSpec, View)>)>,
-    ) -> Self {
-        Self::grid_from_parts(columns, column_gap, row_gap, rows)
-    }
 }
 
 fn place_cell(
@@ -413,8 +250,6 @@ fn debug_assert_grid_non_overlapping(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::presentation::View;
-    use crate::presentation::ir::{HeightRule, ViewKind, WidthRule};
 
     fn grid_ir(view: &View) -> &GridView {
         let ViewKind::Grid(grid) = view.kind() else {
@@ -423,65 +258,36 @@ mod tests {
         grid
     }
 
-    #[test]
-    fn default_grid_is_empty_fit() {
-        let view = View::grid(|_| {});
-        assert_eq!(view.width(), WidthRule::Fit);
-        assert_eq!(view.height(), HeightRule::Fit);
-        let grid = grid_ir(&view);
-        assert!(grid.columns.is_empty());
-        assert!(grid.rows.is_empty());
-        assert!(grid.cells.is_empty());
-        assert_eq!(grid.column_gap, 0);
-        assert_eq!(grid.row_gap, 0);
-    }
-
-    #[test]
-    fn explicit_tracks_lower_to_retained_sizes() {
-        let view = View::grid(|grid| {
-            grid.columns([GridTrack::content(), GridTrack::fixed(4), GridTrack::flex()]);
-            grid.row(|_| {});
-            grid.row_with(GridTrack::fixed(3), |_| {});
-        });
-        let grid = grid_ir(&view);
-        assert_eq!(
-            grid.columns.iter().copied().collect::<Vec<_>>(),
-            vec![
-                TrackSize::Content { max: None },
-                TrackSize::Fixed(4),
-                TrackSize::Flex { min: 1 },
-            ]
-        );
-        assert_eq!(
-            grid.rows.iter().copied().collect::<Vec<_>>(),
-            vec![TrackSize::Content { max: None }, TrackSize::Fixed(3),]
-        );
-    }
-
-    #[test]
-    fn last_columns_declaration_wins() {
-        let view = View::grid(|grid| {
-            grid.columns([GridTrack::fixed(1)]);
-            grid.columns([GridTrack::content(), GridTrack::flex()]);
-        });
-        assert_eq!(
-            grid_ir(&view).columns.iter().copied().collect::<Vec<_>>(),
-            vec![TrackSize::Content { max: None }, TrackSize::Flex { min: 1 }]
-        );
+    fn text(view: &View) -> &str {
+        let ViewKind::Text(text) = view.kind() else {
+            panic!("expected text");
+        };
+        text.spans[0].text()
     }
 
     #[test]
     fn basic_auto_placement_fills_rows_in_source_order() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell("A");
-                row.cell("B");
-            });
-            grid.row(|row| {
-                row.cell("C");
-                row.cell("D");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![
+                (
+                    GridTrack::content(),
+                    vec![
+                        (GridCellSpec::new(), crate::presentation::factory::text("A")),
+                        (GridCellSpec::new(), crate::presentation::factory::text("B")),
+                    ],
+                ),
+                (
+                    GridTrack::content(),
+                    vec![
+                        (GridCellSpec::new(), crate::presentation::factory::text("C")),
+                        (GridCellSpec::new(), crate::presentation::factory::text("D")),
+                    ],
+                ),
+            ],
+        );
         let cells = &grid_ir(&view).cells;
         assert_eq!(cells.len(), 4);
         assert_eq!((cells[0].row, cells[0].column), (0, 0));
@@ -494,17 +300,31 @@ mod tests {
 
     #[test]
     fn column_span_skips_occupied_columns_on_the_next_row() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell_with(GridCellSpec::new().column_span(2), "A");
-                row.cell("B");
-            });
-            grid.row(|row| {
-                row.cell("C");
-                row.cell("D");
-                row.cell("E");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![
+                (
+                    GridTrack::content(),
+                    vec![
+                        (
+                            GridCellSpec::new().column_span(2),
+                            crate::presentation::factory::text("A"),
+                        ),
+                        (GridCellSpec::new(), crate::presentation::factory::text("B")),
+                    ],
+                ),
+                (
+                    GridTrack::content(),
+                    vec![
+                        (GridCellSpec::new(), crate::presentation::factory::text("C")),
+                        (GridCellSpec::new(), crate::presentation::factory::text("D")),
+                        (GridCellSpec::new(), crate::presentation::factory::text("E")),
+                    ],
+                ),
+            ],
+        );
         let grid = grid_ir(&view);
         assert_eq!(grid.columns.len(), 3);
         assert_eq!(
@@ -523,15 +343,27 @@ mod tests {
 
     #[test]
     fn row_span_occupancy_skips_the_occupied_column() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell_with(GridCellSpec::new().row_span(2), "A");
-                row.cell("B");
-            });
-            grid.row(|row| {
-                row.cell("C");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![
+                (
+                    GridTrack::content(),
+                    vec![
+                        (
+                            GridCellSpec::new().row_span(2),
+                            crate::presentation::factory::text("A"),
+                        ),
+                        (GridCellSpec::new(), crate::presentation::factory::text("B")),
+                    ],
+                ),
+                (
+                    GridTrack::content(),
+                    vec![(GridCellSpec::new(), crate::presentation::factory::text("C"))],
+                ),
+            ],
+        );
         let cells = &grid_ir(&view).cells;
         assert_eq!(
             (cells[0].row, cells[0].column, cells[0].row_span),
@@ -544,15 +376,27 @@ mod tests {
 
     #[test]
     fn combined_row_and_column_span_occupies_a_block() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell_with(GridCellSpec::new().column_span(2).row_span(2), "A");
-                row.cell("B");
-            });
-            grid.row(|row| {
-                row.cell("C");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![
+                (
+                    GridTrack::content(),
+                    vec![
+                        (
+                            GridCellSpec::new().column_span(2).row_span(2),
+                            crate::presentation::factory::text("A"),
+                        ),
+                        (GridCellSpec::new(), crate::presentation::factory::text("B")),
+                    ],
+                ),
+                (
+                    GridTrack::content(),
+                    vec![(GridCellSpec::new(), crate::presentation::factory::text("C"))],
+                ),
+            ],
+        );
         let grid = grid_ir(&view);
         assert_eq!(
             (
@@ -569,14 +413,19 @@ mod tests {
 
     #[test]
     fn implicit_columns_extend_declared_tracks() {
-        let view = View::grid(|grid| {
-            grid.columns([GridTrack::fixed(3)]);
-            grid.row(|row| {
-                row.cell("A");
-                row.cell("B");
-                row.cell("C");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![GridTrack::fixed(3)],
+            0,
+            0,
+            vec![(
+                GridTrack::content(),
+                vec![
+                    (GridCellSpec::new(), crate::presentation::factory::text("A")),
+                    (GridCellSpec::new(), crate::presentation::factory::text("B")),
+                    (GridCellSpec::new(), crate::presentation::factory::text("C")),
+                ],
+            )],
+        );
         let grid = grid_ir(&view);
         assert_eq!(grid.columns.len(), 3);
         assert_eq!(grid.columns[0], TrackSize::Fixed(3));
@@ -586,11 +435,18 @@ mod tests {
 
     #[test]
     fn implicit_rows_cover_row_spans() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell_with(GridCellSpec::new().row_span(3), "A");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![(
+                GridTrack::content(),
+                vec![(
+                    GridCellSpec::new().row_span(3),
+                    crate::presentation::factory::text("A"),
+                )],
+            )],
+        );
         let grid = grid_ir(&view);
         assert_eq!(grid.rows.len(), 3);
         assert!(
@@ -602,20 +458,17 @@ mod tests {
 
     #[test]
     fn component_identity_is_owned_once_by_the_cell() {
-        let child = View::native_component(1);
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell(child);
-            });
-        });
+        let child = crate::presentation::factory::native_component(1);
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![(GridTrack::content(), vec![(GridCellSpec::new(), child)])],
+        );
         assert!(view.contains_component_identity());
         let cloned = view.clone();
-        let ViewKind::Grid(original) = view.kind() else {
-            panic!("expected grid");
-        };
-        let ViewKind::Grid(clone) = cloned.kind() else {
-            panic!("expected grid");
-        };
+        let original = grid_ir(&view);
+        let clone = grid_ir(&cloned);
         assert_eq!(original.cells.len(), 1);
         assert_eq!(clone.cells.len(), 1);
         assert_eq!(original.cells[0].view, clone.cells[0].view);
@@ -623,39 +476,38 @@ mod tests {
 
     #[test]
     fn source_order_is_preserved_in_retained_cells() {
-        let view = View::grid(|grid| {
-            grid.row(|row| {
-                row.cell_with(GridCellSpec::new().column_span(2), "first");
-                row.cell("second");
-            });
-            grid.row(|row| {
-                row.cell("third");
-            });
-        });
+        let view = crate::presentation::factory::grid(
+            vec![],
+            0,
+            0,
+            vec![
+                (
+                    GridTrack::content(),
+                    vec![
+                        (
+                            GridCellSpec::new().column_span(2),
+                            crate::presentation::factory::text("first"),
+                        ),
+                        (
+                            GridCellSpec::new(),
+                            crate::presentation::factory::text("second"),
+                        ),
+                    ],
+                ),
+                (
+                    GridTrack::content(),
+                    vec![(
+                        GridCellSpec::new(),
+                        crate::presentation::factory::text("third"),
+                    )],
+                ),
+            ],
+        );
         let labels: Vec<_> = grid_ir(&view)
             .cells
             .iter()
             .map(|cell| text(&cell.view))
             .collect();
         assert_eq!(labels, ["first", "second", "third"]);
-    }
-
-    #[test]
-    #[should_panic(expected = "grid column span must be at least 1")]
-    fn zero_column_span_is_a_programmer_error() {
-        let _ = GridCellSpec::new().column_span(0);
-    }
-
-    #[test]
-    #[should_panic(expected = "grid row span must be at least 1")]
-    fn zero_row_span_is_a_programmer_error() {
-        let _ = GridCellSpec::new().row_span(0);
-    }
-
-    fn text(view: &View) -> &str {
-        let ViewKind::Text(text) = view.kind() else {
-            panic!("expected text");
-        };
-        text.spans[0].text()
     }
 }

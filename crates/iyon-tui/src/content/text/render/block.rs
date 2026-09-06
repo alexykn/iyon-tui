@@ -6,7 +6,8 @@ use super::super::{
 use super::TextRenderer;
 use super::identity::{RenderContext, part_facts, semantic_view_facts, stamp_text, stamp_view};
 use super::policy::{CodeBlockLabelPolicy, TableColumnSizing, TaskListMarkerPolicy};
-use crate::{GridCellSpec, GridTrack, HorizontalAlign, IntoView, View};
+use crate::presentation::factory as vf;
+use crate::{GridCellSpec, GridTrack, HorizontalAlign, View};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct BlockCacheKey {
@@ -88,7 +89,7 @@ impl TextRenderer {
             BlockKind::CodeBlock(code) => self.render_code_block(block, code, &context),
             BlockKind::Table(table) => self.render_table(block, table, &context),
             BlockKind::ThematicBreak => stamp_text(
-                View::text("───").no_wrap(),
+                vf::wrap(vf::text("───"), crate::WrapMode::NoWrap, None),
                 semantic_view_facts(&context, TextRole::ThematicBreak, block.annotations())
                     .part(TextPart::ThematicRule),
             ),
@@ -96,7 +97,14 @@ impl TextRenderer {
                 let facts = semantic_view_facts(&context, TextRole::RawBlock, block.annotations())
                     .format(format);
                 let child_context = context.with_role(TextRole::RawBlock).with_format(format);
-                stamp_text(self.render_literal(body, &child_context).no_wrap(), facts)
+                stamp_text(
+                    vf::wrap(
+                        self.render_literal(body, &child_context),
+                        crate::WrapMode::NoWrap,
+                        None,
+                    ),
+                    facts,
+                )
             }
             BlockKind::Container { blocks } => {
                 let facts = semantic_view_facts(&context, TextRole::Container, block.annotations());
@@ -112,7 +120,7 @@ impl TextRenderer {
 
     fn render_blocks_with_gap(&self, blocks: &[Block], context: &RenderContext, gap: u16) -> View {
         // L1-04: moved children plus the direct column factory.
-        View::column_from_views(
+        vf::column(
             blocks
                 .iter()
                 .map(|block| self.lower_block(block, context))
@@ -131,12 +139,12 @@ impl TextRenderer {
         let facts = semantic_view_facts(context, TextRole::Paragraph, block.annotations());
         let mut text = self.render_inline_content(content, context);
         if let Some(alignment) = alignment {
-            text = text.text_align(alignment);
+            text = vf::wrap(text, crate::WrapMode::WordThenGrapheme, Some(alignment));
         }
         // Open pipe tables stay raw until they close. Word-wrap reflows them at
         // every ` | ` boundary, so the last fragment jumps by a row as cells arrive.
         if is_pipe_source_paragraph(content) {
-            text = text.no_wrap();
+            text = vf::wrap(text, crate::WrapMode::NoWrap, None);
         }
         stamp_text(text, facts)
     }
@@ -156,10 +164,16 @@ impl TextRenderer {
     fn render_quote(&self, block: &Block, blocks: &[Block], context: &RenderContext) -> View {
         let facts = semantic_view_facts(context, TextRole::BlockQuote, block.annotations());
         let marker_facts = part_facts(context, TextPart::QuoteMarker, block.annotations());
-        let prefix = stamp_text(View::text("> ").no_wrap(), marker_facts.clone());
-        let continuation = stamp_text(View::text("> ").no_wrap(), marker_facts);
+        let prefix = stamp_text(
+            vf::wrap(vf::text("> "), crate::WrapMode::NoWrap, None),
+            marker_facts.clone(),
+        );
+        let continuation = stamp_text(
+            vf::wrap(vf::text("> "), crate::WrapMode::NoWrap, None),
+            marker_facts,
+        );
         let body = self.render_blocks(blocks, &context.with_role(TextRole::BlockQuote));
-        stamp_view(View::hanging(prefix, continuation, body), facts)
+        stamp_view(vf::hanging(prefix, continuation, body), facts)
     }
 
     fn render_list(&self, block: &Block, list: &List, context: &RenderContext) -> View {
@@ -178,7 +192,7 @@ impl TextRenderer {
             self.policy.block_gap()
         };
         // L1-04: moved children plus the direct column factory.
-        let items = View::column_from_views(
+        let items = vf::column(
             list.items()
                 .iter()
                 .enumerate()
@@ -225,7 +239,7 @@ impl TextRenderer {
                 self.policy.block_gap()
             },
         );
-        stamp_view(View::hanging(prefix, View::spacer(0), body), facts)
+        stamp_view(vf::hanging(prefix, vf::spacer(0), body), facts)
     }
 
     fn list_item_prefix(
@@ -236,22 +250,28 @@ impl TextRenderer {
         context: &RenderContext,
     ) -> View {
         let list_marker = stamp_text(
-            View::text(list_marker_text(marker, index)).no_wrap(),
+            vf::wrap(
+                vf::text(list_marker_text(marker, index)),
+                crate::WrapMode::NoWrap,
+                None,
+            ),
             part_facts(context, TextPart::ListMarker, item.annotations()),
         );
         let Some(checked) = item.checked() else {
             return list_marker;
         };
         let task_marker = stamp_text(
-            View::text(if checked { "[x] " } else { "[ ] " }).no_wrap(),
+            vf::wrap(
+                vf::text(if checked { "[x] " } else { "[ ] " }),
+                crate::WrapMode::NoWrap,
+                None,
+            ),
             part_facts(context, TextPart::TaskMarker, item.annotations()),
         );
         match self.policy.task_list_marker() {
             TaskListMarkerPolicy::TaskOnly => task_marker,
             // L1-04: moved children plus the direct row factory.
-            TaskListMarkerPolicy::TaskAndList => {
-                View::row_from_views(vec![task_marker, list_marker], 0)
-            }
+            TaskListMarkerPolicy::TaskAndList => vf::row(vec![task_marker, list_marker], 0),
         }
     }
 
@@ -263,24 +283,26 @@ impl TextRenderer {
         let child_context = context
             .with_role(TextRole::CodeBlock)
             .with_language(code.language());
-        let body = self
-            .render_literal(code.body(), &child_context)
-            .wrap(self.policy.code_wrap());
+        let body = self.render_literal(code.body(), &child_context);
+        let body = vf::wrap(body, self.policy.code_wrap(), None);
         let inner = match code_label_text(code, self.policy.code_block_label()) {
             Some(label) => {
                 let label_context = context.with_language(code.language());
                 let label_facts =
                     part_facts(&label_context, TextPart::CodeLabel, block.annotations());
                 // L1-04: moved children plus the direct column factory.
-                View::column_from_views(
+                vf::column(
                     vec![
-                        stamp_text(View::text(label).no_wrap(), label_facts),
-                        body.into_view(),
+                        stamp_text(
+                            vf::wrap(vf::text(label), crate::WrapMode::NoWrap, None),
+                            label_facts,
+                        ),
+                        body,
                     ],
                     self.policy.code_block_gap(),
                 )
             }
-            None => body.container(),
+            None => vf::container(body),
         };
         stamp_view(inner, facts)
     }
@@ -325,23 +347,23 @@ impl TextRenderer {
                         .row_span(cell.row_span().get())
                         .column_span(cell.col_span().get())
                         .horizontal_align(to_horizontal_align(alignment)),
-                    stamp_view(cell_view.container(), row_facts.clone()),
+                    stamp_view(vf::container(cell_view), row_facts.clone()),
                 ));
             }
             rows.push((GridTrack::content(), cells));
         }
-        let mut grid = View::grid_from_parts(
+        let mut grid = vf::grid(
             vec![track; table.columns().len()],
             self.policy.table_column_gap(),
             self.policy.table_row_gap(),
             rows,
         );
         if matches!(self.policy.table_column_sizing(), TableColumnSizing::Flex) {
-            grid = grid.fill_width();
+            grid = vf::fill_width(grid);
         }
         let body = if let Some(caption) = table.caption() {
             // L1-04: moved children plus the direct column factory.
-            View::column_from_views(
+            vf::column(
                 vec![self.render_blocks(caption, &table_context), grid],
                 self.policy.block_gap(),
             )
@@ -378,7 +400,7 @@ impl TextRenderer {
         } else {
             self.render_blocks(cell.blocks(), &child_context)
         };
-        stamp_view(inner.container(), facts)
+        stamp_view(vf::container(inner), facts)
     }
 }
 

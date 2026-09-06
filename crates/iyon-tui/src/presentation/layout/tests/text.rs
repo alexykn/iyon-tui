@@ -2,18 +2,17 @@ use super::*;
 
 #[test]
 fn styled_spans_survive_wrapping_and_newlines() {
-    let view = View::styled_text(vec![
-        TextSpan::styled(
-            "abc",
-            StyleSpec::new().foreground(ColorSpec::Named(AnsiColor::Green)),
-        ),
-        TextSpan::styled(
-            "def\ngh",
-            StyleSpec::new().foreground(ColorSpec::Named(AnsiColor::Red)),
-        ),
-    ])
-    .fill_width()
-    .into_view();
+    let view =
+        crate::presentation::factory::fill_width(crate::presentation::factory::styled_text(vec![
+            TextSpan::styled(
+                "abc",
+                StyleSpec::new().foreground(ColorSpec::Named(AnsiColor::Green)),
+            ),
+            TextSpan::styled(
+                "def\ngh",
+                StyleSpec::new().foreground(ColorSpec::Named(AnsiColor::Red)),
+            ),
+        ]));
     let rows = compile_view(&view, 4).rows;
     assert_eq!(text(&rows[0]), "abcd");
     assert_eq!(text(&rows[1]), "ef");
@@ -34,12 +33,13 @@ fn styled_spans_survive_wrapping_and_newlines() {
 
 #[test]
 fn typed_text_style_cascades_to_physical_spans_without_rewriting_them() {
-    let text = View::styled_text([
-        TextSpan::plain("plain"),
-        TextSpan::styled("bold", StyleSpec::new().bold()),
-    ])
-    .style(StyleSpec::new().foreground(ColorSpec::Ansi(1)))
-    .into_view();
+    let text = crate::presentation::factory::style(
+        crate::presentation::factory::styled_text([
+            TextSpan::plain("plain"),
+            TextSpan::styled("bold", StyleSpec::new().bold()),
+        ]),
+        StyleSpec::new().foreground(ColorSpec::Ansi(1)),
+    );
     let rows = compile_view(&text, 20).rows;
 
     assert_eq!(
@@ -56,11 +56,21 @@ fn typed_text_style_cascades_to_physical_spans_without_rewriting_them() {
 
 #[test]
 fn typed_text_wrap_and_no_wrap_preserve_existing_behavior() {
-    let wrapped = View::text("abcd efgh")
-        .wrap(WrapMode::WordThenGrapheme)
-        .into_view();
-    let grapheme = View::text("abcd efgh").wrap(WrapMode::Grapheme).into_view();
-    let no_wrap = View::text("abcdef").no_wrap().into_view();
+    let wrapped = crate::presentation::factory::wrap(
+        crate::presentation::factory::text("abcd efgh"),
+        WrapMode::WordThenGrapheme,
+        None,
+    );
+    let grapheme = crate::presentation::factory::wrap(
+        crate::presentation::factory::text("abcd efgh"),
+        WrapMode::Grapheme,
+        None,
+    );
+    let no_wrap = crate::presentation::factory::wrap(
+        crate::presentation::factory::text("abcdef"),
+        crate::WrapMode::NoWrap,
+        None,
+    );
 
     let ViewKind::Text(wrapped_text) = wrapped.kind() else {
         panic!("expected text view");
@@ -84,7 +94,11 @@ fn typed_text_alignment_uses_existing_text_layout() {
         (HorizontalAlign::Center, "  x"),
         (HorizontalAlign::End, "    x"),
     ] {
-        let view = View::text("x").fill_width().text_align(align).into_view();
+        let view = crate::presentation::factory::wrap(
+            crate::presentation::factory::fill_width(crate::presentation::factory::text("x")),
+            crate::WrapMode::WordThenGrapheme,
+            Some(align),
+        );
         let rows = compile_view(&view, 5).rows;
         assert_eq!(text(&rows[0]), expected);
     }
@@ -93,7 +107,7 @@ fn typed_text_alignment_uses_existing_text_layout() {
 #[test]
 fn ordinary_view_does_not_partially_paint_wide_grapheme() {
     let compiler = ViewCompiler::default();
-    let view = View::text("漢").into_view();
+    let view = crate::presentation::factory::text("漢");
 
     let block = compiler.compile(&view, 1);
 

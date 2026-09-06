@@ -77,4 +77,4 @@ jobs:
           T15_SIZE=20 \
           T15_WARMUP=2 \
           T15_MEASURED=20 \
-          bun run packages/iyon-tui/bench/perf12_t15_direct_case.ts
+          bun run packages/iyon-tui/bench/perf12_t15_authoritative_case.ts

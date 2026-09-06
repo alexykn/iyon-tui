@@ -5,4 +5,4 @@ pub(crate) mod diff;
 mod render;
 pub(crate) mod text;
 
-pub use render::Renderer;
+pub(crate) use render::Renderer;

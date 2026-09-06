@@ -181,7 +181,7 @@ impl ViewStateSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::presentation::{BorderSpec, IntoView, TextAttribute, View};
+    use crate::presentation::{BorderSpec, TextAttribute};
 
     #[test]
     fn explicit_null_and_clear_are_distinct() {
@@ -202,11 +202,16 @@ mod tests {
 
     #[test]
     fn effective_presentation_preserves_base_and_applies_sparse_override() {
-        let base = View::text("x")
-            .background(ColorSpec::ansi(2))
-            .foreground(ColorSpec::ansi(3))
-            .border(BorderSpec::plain())
-            .into_view();
+        let base = crate::presentation::factory::border(
+            crate::presentation::factory::foreground(
+                crate::presentation::factory::background(
+                    crate::presentation::factory::text("x"),
+                    ColorSpec::ansi(2),
+                ),
+                ColorSpec::ansi(3),
+            ),
+            BorderSpec::plain(),
+        );
         let mut record = super::super::record::ViewStateRecord::new(1);
         let mut patch = ViewStatePresentationPatch::default();
         patch.foreground = Some(Some(ColorSpec::ansi(4)));

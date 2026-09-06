@@ -361,6 +361,9 @@ impl ViewCompiler<'_> {
             HorizontalAlign::End => usize::from(geometry.width).saturating_sub(row.width),
         };
         let (placed, complete) = physical.place(geometry.width, offset as u16);
+        if row.cursor_column.is_none() {
+            return (placed, row.fits && complete);
+        }
         let mut surface = Surface::new(geometry.width, 1);
         for (column, cell) in placed.cells().iter().enumerate() {
             if cell.painted {

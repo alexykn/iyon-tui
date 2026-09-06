@@ -1,150 +1,14 @@
-//! Semantic terminal UI construction.
+//! Generic terminal runtime implementation.
 //!
-//! This crate is runtime implementation for the in-tree native binding, not
-//! a supported authoring package: it is `publish = false`, carries no
-//! authoring prelude, and its root exports exist only until the interim
-//! migration out of them completes. External UI code authors against the TypeScript
-//! `@iyon/tui` surface. The single deliberately unsupported cross-crate seam
-//! is [`binding`]: opaque retained handles, passive typed records, and the
-//! host operations the native crate links against.
+//! The Rust crate is an unpublished implementation crate for the TypeScript
+//! framework and its in-tree native addon. Rust applications do not author
+//! Views, controls, or renderers through this crate. The only public bridge is
+//! [`binding`], a deliberately unsupported, operation-specific seam consumed by
+//! `iyon-tui-native`; semantic construction and retained storage stay private.
 //!
-//! [`View`] is an owned backend-neutral presentation value. [`Component`] adds
-//! retained mounted state, [`History`] owns ordered historical/live/stream
-//! content, and [`Scene`] is the terminal semantic root.
-//!
-//! Semantic text is claimed by a source projector and then lowered to [`View`]:
-//!
-//! ```text
-//! Raw TextContent
-//!     ↓ source projector (Markdown, PlainText, future formats)
-//! semantic TextContent
-//!     ↓ optional semantic rewrites
-//! TextRenderer
-//!     ↓
-//! View
-//!     ↓
-//! layout / Theme / paint
-//! ```
-//!
-//! Semantic diffs lower through the same View pipeline:
-//!
-//! ```text
-//! DiffHunk / DiffLine
-//!     ↓
-//! DiffRenderer
-//!     ↓
-//! View
-//!     ↓
-//! layout / Theme / paint
-//! ```
-//!
-//! ```
-//! use iyon_tui::{
-//!     DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffRange, DiffRenderer, Renderer,
-//! };
-//!
-//! let range = DiffRange::new(DiffLineOffset::new(0), 1).unwrap();
-//! let line = DiffLine::context(
-//!     DiffLineNumber::new(1).unwrap(),
-//!     DiffLineNumber::new(1).unwrap(),
-//!     "unchanged",
-//! );
-//! let hunk = DiffHunk::new(range, range, [line]).unwrap();
-//! let view = DiffRenderer::new().render(&hunk);
-//! # let _ = view;
-//! ```
-//!
-//! Markdown is one projector, not the text model. [`MarkdownOptions::gfm`]
-//! enables the supported GFM extensions (tables, strikethrough, and task lists);
-//! [`MarkdownOptions::default`] remains strict `CommonMark`. [`TextRenderer`] is
-//! source-format independent: it emits structure and semantic identity, never
-//! application paint. [`TextSelector`] themes semantic roles and generated
-//! parts. Origin specialization is optional. Terminal geometry remains below
-//! the renderer in the View pipeline.
-//!
-//! Styling has three channels:
-//!
-//! - inherited runtime/application context (style state)
-//! - node-local semantic identity (roles, parts, annotations)
-//! - resolved physical paint, which inherits normally
-//!
-//! A heading can therefore be presented as `plain` while nested strong text
-//! remains bold: semantic identity is local, physical style inherits.
-//!
-//! ```
-//! use iyon_tui::{
-//!     CodeBlockLabelPolicy, ColorSpec, MarkdownOptions, MarkdownProjector, StyleSpec,
-//!     TaskListMarkerPolicy, TextPart, TextRenderPolicy, TextRenderer, TextSelector, Theme,
-//! };
-//!
-//! let theme = Theme::new()
-//!     .with_text_style(
-//!         TextSelector::heading(),
-//!         StyleSpec::new().foreground(ColorSpec::theme("heading")),
-//!     )
-//!     .with_text_style(
-//!         TextSelector::part(TextPart::CodeLabel),
-//!         StyleSpec::new().dim(),
-//!     );
-//!
-//! let markdown = MarkdownProjector::new(MarkdownOptions::gfm());
-//!
-//! let renderer = TextRenderer::with_policy(
-//!     TextRenderPolicy::new()
-//!         .with_task_list_marker(TaskListMarkerPolicy::TaskOnly)
-//!         .with_code_block_label(CodeBlockLabelPolicy::Language),
-//! );
-//! # let _ = (theme, markdown, renderer);
-//! ```
-//!
-//! Semantic plain text uses the same shape with [`PlainTextProjector`]. Custom
-//! semantic transformations can be composed through [`ProjectorExt`], while
-//! [`text::TextRewriter::into_projector`] is the
-//! envelope-preserving adapter for ordinary IR rewrites. Nested literal portals
-//! and `CodeBlock::language` leave room for future projectors without adding
-//! format-specific machinery here.
-//!
-//! [`Smooth`] is optional temporal publication control: `Projection<T> ->
-//! Smooth<T> -> next projector`. Its pacing granularity is determined by the
-//! upstream spans and values; it is not required by Markdown.
-//!
-//! Advanced compiler and protocol machinery is organized under [`text`],
-//! [`projection`], and [`stream`]. Root coordinates are source coordinates,
-//! never terminal positions. Applications do not perform terminal geometry;
-//! renderers lower semantics to `View`, and the View pipeline owns layout.
-//!
-//! ```compile_fail
-//! use iyon_tui::presentation::ir::ViewKind;
-//! ```
-//!
-//! ```compile_fail
-//! use iyon_tui::{IntoView, View};
-//!
-//! let view = View::text("x").into_view();
-//! let _ = view.kind;
-//! ```
-//!
-//! ```compile_fail
-//! use iyon_tui::{Decoration, RowChild, WidthRule};
-//! ```
-//!
-//! ```compile_fail
-//! use iyon_tui::View;
-//!
-//! let _ = View::text("x").container().no_wrap();
-//! ```
-//!
-//! ```compile_fail
-//! use iyon_tui::Horizontal;
-//!
-//! let _ = Horizontal::new();
-//! ```
-//!
-//! ```compile_fail
-//! use iyon_tui::Grid;
-//!
-//! let _ = Grid::new();
-//! ```
+//! TypeScript callers use `@iyon/tui`. Native input routing, clocks, History,
+//! layout, Unicode-safe painting, and the retained host kernel remain owned by
+//! this crate.
 
 mod application;
 mod backend;
@@ -181,10 +45,6 @@ pub mod testing;
 pub mod text;
 mod theme;
 
-pub use application::{
-    App, AppClosed, AppCx, AppHandle, AppSendError, RunError, RuntimeError, TimerHandle,
-};
-
 #[cfg(feature = "native-host")]
 pub use application::{
     ContentAnnotationRecord, ContentAnnotationSnapshot, ContentDelivery, ContentFamily,
@@ -195,17 +55,21 @@ pub use application::{
     TuiEnvironment, TuiHost, WakeDisposition,
 };
 
-pub use component::{Component, ComponentCx, ComponentHandle};
-pub use content::Renderer;
+// The application driver and presentation graph are runtime-only. Keep the
+// short names available to the in-crate kernel while deliberately omitting
+// them from the public crate surface.
+pub(crate) use application::{App, AppCx, AppHandle, RunError, RuntimeError};
+
+pub(crate) use component::{Component, ComponentCx, ComponentHandle};
 pub use content::diff::{
     DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination,
-    DiffRange, DiffRenderer, DiffValidationError,
+    DiffRange, DiffValidationError,
 };
 pub use content::text::{
-    AnsiOptions, AnsiProjector, Block, CodeBlockLabelPolicy, DiffProjector, HeadingLevel, Inline,
-    InlineContent, MarkdownOptions, MarkdownProjector, PlainTextProjector, RawText,
-    SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent, TextListKind,
-    TextOrigin, TextPart, TextRenderPolicy, TextRenderer, TextRole, TextSelector, TextTableSection,
+    AnsiOptions, AnsiProjector, Block, CodeBlockLabelPolicy, DiffProjector, FormatId, HeadingLevel,
+    Inline, InlineContent, LanguageId, MarkdownOptions, MarkdownProjector, PlainTextProjector,
+    RawText, SemanticTag, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent,
+    TextListKind, TextOrigin, TextPart, TextRenderPolicy, TextRole, TextSelector, TextTableSection,
     TextTaskState,
 };
 pub use controls::{TextChange, TextInput};
@@ -223,36 +87,24 @@ pub use scene::Scene;
 pub use scroll::ScrollPane;
 pub use theme::Theme;
 
-#[cfg(feature = "native-host")]
-#[doc(hidden)]
-pub use presentation::api::NativeCommonPatch;
-#[cfg(feature = "native-host")]
-#[doc(hidden)]
-pub use presentation::api::NativeTextPage;
-pub use presentation::api::{
-    AnsiColor, BorderEdges, BorderGlyphError, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec,
-    Grid, GridCellSpec, GridRow, GridTrack, Horizontal, HorizontalAlign, Insets, IntoView,
-    OverflowIndicator, StyleRef, StyleSelector, StyleSpec, StyleStateKey, StyleStateValue, Text,
-    TextAttribute, TextAttributeSpec, TextSpan, ThemeColor, ThemeKey, Vertical, VerticalAlign,
-    View, WrapMode,
+pub use presentation::api::style::Insets;
+#[allow(unused_imports)]
+pub(crate) use presentation::api::{
+    AnsiColor, BorderEdges, BorderSpec, ColorSpec, HorizontalAlign, StyleRef, StyleSelector,
+    StyleSpec, StyleStateKey, StyleStateValue, TextAttribute, TextSpan, ThemeColor, WrapMode,
 };
-#[cfg(feature = "native-host")]
-#[doc(hidden)]
-pub use presentation::ir::RetainedPathStep;
-
-#[cfg(feature = "native-host")]
-pub use presentation::ir::WeakView;
+pub(crate) use presentation::api::{GridCellSpec, GridTrack};
+pub(crate) use presentation::ir::View;
 // Internal modules may use the short names without making implementation
 // machinery part of the external crate-root vocabulary.
 #[allow(unused_imports)]
 pub(crate) use content::text::{
-    Alignment, Annotations, BlockKind, BreakKind, CodeBlock, FormatId, Image, InlineKind,
-    LanguageId, LinkTarget, List, ListItem, ListMarker, LiteralText, Mark, MarkSet,
-    NumberDelimiter, NumberStyle, SemanticKey, SemanticTag, SemanticValue, TextIrError,
-    TextProjectionError, TextProvenance, TextRewriter, TextRun, TextVisitor, validate_text_content,
-    validate_text_projection, walk_block, walk_content, walk_inline, walk_inline_content,
-    walk_literal, walk_rewrite_block, walk_rewrite_blocks, walk_rewrite_content,
-    walk_rewrite_inline, walk_rewrite_inline_content, walk_rewrite_literal,
+    Alignment, Annotations, BlockKind, BreakKind, CodeBlock, Image, InlineKind, LinkTarget, List,
+    ListItem, ListMarker, LiteralText, Mark, MarkSet, NumberDelimiter, NumberStyle, SemanticKey,
+    SemanticValue, TextIrError, TextProjectionError, TextProvenance, TextRewriter, TextRun,
+    TextVisitor, validate_text_content, validate_text_projection, walk_block, walk_content,
+    walk_inline, walk_inline_content, walk_literal, walk_rewrite_block, walk_rewrite_blocks,
+    walk_rewrite_content, walk_rewrite_inline, walk_rewrite_inline_content, walk_rewrite_literal,
 };
 #[allow(unused_imports)]
 pub(crate) use projection::{

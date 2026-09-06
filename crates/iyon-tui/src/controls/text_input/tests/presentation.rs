@@ -1,11 +1,8 @@
 use super::*;
 use crate::geometry::Size;
 use crate::physical::PhysicalStyle;
-use crate::presentation::{
-    IntoView,
-    layout::{compile_bounded_view, compile_view},
-};
-use crate::{BorderEdges, BorderSpec, Component, View};
+use crate::presentation::layout::{compile_bounded_view, compile_view};
+use crate::{BorderEdges, BorderSpec, Component};
 
 fn focused_view(text: &str) -> crate::presentation::View {
     let mut input = TextInput::new().multiline(true);
@@ -99,7 +96,7 @@ fn inside_egc_cursor_snaps_to_the_leading_edge() {
 #[test]
 #[should_panic(expected = "text cursor anchor is not a UTF-8 boundary")]
 fn invalid_cursor_anchor_fails_loudly() {
-    let view = View::text("é").cursor_at(1).into_view();
+    let view = crate::presentation::factory::cursor_at(crate::presentation::factory::text("é"), 1);
     let _ = compile_view(&view, 20);
 }
 
@@ -216,7 +213,7 @@ fn bounded_text_input_recomputes_after_resize_and_zero_size_is_safe() {
 fn unfocused_text_matches_ordinary_semantic_text() {
     let input = TextInput::new();
     let input_rows = compile_view(&input.view(), 20).rows;
-    let ordinary_rows = compile_view(&View::text("").into_view(), 20).rows;
+    let ordinary_rows = compile_view(&crate::presentation::factory::text(""), 20).rows;
     assert_eq!(input_rows, ordinary_rows);
     assert!(
         input_rows

@@ -2,7 +2,8 @@ use super::super::{
     Annotations, FormatId, LanguageId, TextFacts, TextListKind, TextOrigin, TextPart, TextRole,
     TextTableSection, TextTaskState, text_style_ref,
 };
-use crate::{IntoView, Text, View};
+use crate::View;
+use crate::presentation::factory as vf;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct RenderContextKey {
@@ -116,16 +117,12 @@ pub(super) fn part_facts(
     apply_scalars(TextFacts::new().part(part), context).annotations(annotations)
 }
 
-pub(super) fn stamp_view(view: impl IntoView, facts: TextFacts) -> View {
-    view.into_view()
-        .style(text_style_ref())
-        .with_style_facts(facts.finish())
+pub(super) fn stamp_view(view: View, facts: TextFacts) -> View {
+    vf::with_style_facts(vf::style(view, text_style_ref()), facts.finish())
 }
 
-pub(super) fn stamp_text(text: Text, facts: TextFacts) -> View {
-    text.style(text_style_ref())
-        .with_style_facts(facts.finish())
-        .into_view()
+pub(super) fn stamp_text(text: View, facts: TextFacts) -> View {
+    vf::with_style_facts(vf::style(text, text_style_ref()), facts.finish())
 }
 
 fn apply_scalars(facts: TextFacts, context: &RenderContext) -> TextFacts {

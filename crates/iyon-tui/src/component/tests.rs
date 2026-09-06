@@ -1,5 +1,5 @@
 use super::*;
-use crate::presentation::{IntoView, View, layout::compile_view_with_overlay};
+use crate::presentation::{View, layout::compile_view_with_overlay};
 
 #[derive(Debug)]
 struct Counter {
@@ -8,7 +8,7 @@ struct Counter {
 
 impl Component for Counter {
     fn view(&self) -> View {
-        View::text(self.value.to_string()).into_view()
+        crate::presentation::factory::text(self.value.to_string())
     }
 }
 
@@ -17,7 +17,7 @@ struct SameVisual;
 
 impl Component for SameVisual {
     fn view(&self) -> View {
-        View::text("same").into_view()
+        crate::presentation::factory::text("same")
     }
 }
 
@@ -145,7 +145,7 @@ fn nested_component_attachment_wraps_without_overwriting_the_child() {
     assert_eq!(nodes[1].id, child_handle.id());
     assert_eq!(
         resolved.overlay.component(child_handle.id()).unwrap().view,
-        View::text("same").into_view()
+        crate::presentation::factory::text("same")
     );
 }
 
@@ -175,7 +175,7 @@ fn component_metadata_is_physically_invisible() {
     let mut registry = ComponentRegistry::new();
     let owned = registry.register(SameVisual);
     let with_identity = crate::scene::resolve_scene(&View::component(owned), &registry).unwrap();
-    let without_identity = View::text("same").into_view();
+    let without_identity = crate::presentation::factory::text("same");
 
     assert_eq!(
         compile_view_with_overlay(&with_identity.view, 20, &with_identity.overlay),

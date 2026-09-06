@@ -2,11 +2,7 @@
 
 use std::{fmt, str, sync::Arc};
 
-use super::style::{
-    BorderSpec, ColorSpec, Insets, OverflowIndicator, StyleFacts, StyleRef, StyleStateKey,
-    StyleStateValue, TextAttribute,
-};
-use crate::presentation::ir::{TextView, View, ViewKind};
+use super::style::{StyleFacts, StyleRef, StyleStateKey, StyleStateValue};
 
 const INLINE_TEXT_CAPACITY: usize = 12;
 
@@ -186,7 +182,7 @@ impl TextSpan {
         &mut self.style
     }
 
-    pub fn plain(text: impl Into<String>) -> Self {
+    pub(crate) fn plain(text: impl Into<String>) -> Self {
         Self {
             text: TextStorage::from_string(text.into()),
             style: StyleRef::default(),
@@ -194,7 +190,7 @@ impl TextSpan {
         }
     }
 
-    pub fn styled(text: impl Into<String>, style: impl Into<StyleRef>) -> Self {
+    pub(crate) fn styled(text: impl Into<String>, style: impl Into<StyleRef>) -> Self {
         Self {
             text: TextStorage::from_string(text.into()),
             style: style.into(),
@@ -255,308 +251,9 @@ pub enum HorizontalAlign {
     End,
 }
 
-/// Typed backend-neutral text construction backed by the crate's owned
-/// semantic [`View`]. Ordinary properties preserve `Text`; structural
-/// transforms return a general `View`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Text {
-    view: View,
-}
-
-impl View {
-    /// Direct final text construction for native ingress: wrap and alignment
-    /// initialize the `TextView` fields before root allocation, and the
-    /// already-owned span vector moves into the payload with no second
-    /// collection. Exactly one root per call.
-    #[cfg(feature = "native-host")]
-    #[doc(hidden)]
-    pub fn native_text_final(spans: Vec<TextSpan>, wrap: WrapMode, align: HorizontalAlign) -> Self {
-        View::text_from_spans(spans, wrap, align, StyleRef::default())
-    }
-}
-
-impl Text {
-    pub(super) fn plain(text: impl Into<String>) -> Self {
-        Self::from_text_view(TextView::plain(text))
-    }
-
-    pub(super) fn styled(spans: impl IntoIterator<Item = TextSpan>) -> Self {
-        Self::from_text_view(TextView {
-            spans: spans.into_iter().collect::<Vec<_>>().into(),
-            wrap: WrapMode::WordThenGrapheme,
-            align: HorizontalAlign::Start,
-            cursor: None,
-        })
-    }
-
-    fn from_text_view(text: TextView) -> Self {
-        Self {
-            view: View::new_kind(ViewKind::Text(Arc::new(text))),
-        }
-    }
-
-    pub(super) fn into_canonical_view(self) -> View {
-        self.view
-    }
-
-    fn map_text(mut self, update: impl FnOnce(&mut TextView)) -> Self {
-        self.view = self.view.map_text(update);
-        self
-    }
-
-    #[must_use]
-    pub fn wrap(self, wrap: WrapMode) -> Self {
-        self.map_text(|text| text.wrap = wrap)
-    }
-
-    pub(crate) fn cursor_at(self, byte_offset: usize) -> Self {
-        self.map_text(|text| {
-            text.cursor = Some(crate::presentation::ir::TextCursorAnchor { byte_offset });
-        })
-    }
-
-    #[must_use]
-    pub fn no_wrap(self) -> Self {
-        self.map_text(|text| text.wrap = WrapMode::NoWrap)
-    }
-
-    #[must_use]
-    pub fn text_align(self, align: HorizontalAlign) -> Self {
-        self.map_text(|text| text.align = align)
-    }
-
-    fn map_view(mut self, map: impl FnOnce(View) -> View) -> Self {
-        self.view = map(self.view);
-        self
-    }
-
-    #[must_use]
-    pub fn style(self, style: impl Into<StyleRef>) -> Self {
-        self.map_view(|view| view.style(style))
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn style_fact(
-        self,
-        key: impl Into<StyleStateKey>,
-        value: impl Into<StyleStateValue>,
-    ) -> Self {
-        self.map_view(|view| view.style_fact(key, value))
-    }
-
-    pub(crate) fn with_style_facts(self, facts: StyleFacts) -> Self {
-        self.map_view(|view| view.with_style_facts(facts))
-    }
-
-    /// Sets the current text node's padding; repeated calls replace the prior value.
-    #[must_use]
-    pub fn style_state(
-        mut self,
-        key: impl Into<StyleStateKey>,
-        value: impl Into<StyleStateValue>,
-    ) -> Self {
-        self.view = self.view.style_state(key, value);
-        self
-    }
-
-    #[must_use]
-    pub fn style_states(
-        mut self,
-        states: impl IntoIterator<Item = (StyleStateKey, StyleStateValue)>,
-    ) -> Self {
-        self.view = self.view.style_states(states);
-        self
-    }
-
-    #[must_use]
-    pub fn padding(self, padding: impl Into<Insets>) -> Self {
-        self.map_view(|view| view.padding(padding))
-    }
-
-    /// Paints the text node's allocated surface, not its text-cell style.
-    #[must_use]
-    pub fn background(self, color: ColorSpec) -> Self {
-        self.map_view(|view| view.background(color))
-    }
-
-    /// Sets inherited foreground intent for this text node.
-    #[must_use]
-    pub fn foreground(self, color: ColorSpec) -> Self {
-        self.map_view(|view| view.foreground(color))
-    }
-
-    /// Replaces the text node's complete border specification.
-    #[must_use]
-    pub fn border(self, border: BorderSpec) -> Self {
-        self.map_view(|view| view.border(border))
-    }
-
-    /// Sets sparse text-attribute intent, including explicit false.
-    #[must_use]
-    pub fn text_attribute(self, attribute: TextAttribute, enabled: bool) -> Self {
-        self.map_view(|view| view.text_attribute(attribute, enabled))
-    }
-
-    #[must_use]
-    pub fn bold(self) -> Self {
-        self.text_attribute(TextAttribute::Bold, true)
-    }
-
-    #[must_use]
-    pub fn dim(self) -> Self {
-        self.text_attribute(TextAttribute::Dim, true)
-    }
-
-    #[must_use]
-    pub fn italic(self) -> Self {
-        self.text_attribute(TextAttribute::Italic, true)
-    }
-
-    #[must_use]
-    pub fn underline(self) -> Self {
-        self.text_attribute(TextAttribute::Underline, true)
-    }
-
-    #[must_use]
-    pub fn reversed(self) -> Self {
-        self.text_attribute(TextAttribute::Reversed, true)
-    }
-
-    #[must_use]
-    pub fn strikethrough(self) -> Self {
-        self.text_attribute(TextAttribute::Strikethrough, true)
-    }
-
-    #[must_use]
-    pub fn container(self) -> View {
-        self.into_canonical_view().container()
-    }
-
-    #[must_use]
-    pub fn clamp_rows(self, max_rows: u16, overflow: OverflowIndicator) -> View {
-        self.into_canonical_view().clamp_rows(max_rows, overflow)
-    }
-
-    #[must_use]
-    pub fn fit_width(self) -> Self {
-        self.map_view(View::fit_width)
-    }
-
-    #[must_use]
-    pub fn fill_width(self) -> Self {
-        self.map_view(View::fill_width)
-    }
-
-    #[must_use]
-    pub fn fit_height(self) -> Self {
-        self.map_view(View::fit_height)
-    }
-
-    #[must_use]
-    pub fn fill_height(self) -> Self {
-        self.map_view(View::fill_height)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::view::IntoView;
     use super::*;
-    use crate::presentation::api::style::{ColorSpec, OverflowIndicator, StyleSpec, TextAttribute};
-    use crate::presentation::ir::{Decoration, WidthRule};
-
-    #[test]
-    fn text_style_merges_node_intent_without_rewriting_spans() {
-        let text = View::styled_text([
-            TextSpan::plain("plain"),
-            TextSpan::styled("bold", StyleSpec::new().bold()),
-        ])
-        .style(StyleSpec::new().foreground(ColorSpec::Ansi(1)))
-        .style(StyleSpec::new().italic());
-
-        assert_eq!(
-            text.view.decoration().text_style.foreground,
-            Some(ColorSpec::Ansi(1))
-        );
-        assert_eq!(
-            text.view.decoration().text_style.attributes.italic,
-            Some(true)
-        );
-        let ViewKind::Text(text_view) = text.view.kind() else {
-            panic!("expected text view");
-        };
-        assert_eq!(text_view.spans[0].style, StyleSpec::default());
-        assert_eq!(text_view.spans[1].style.attributes.bold, Some(true));
-
-        let converted = text.into_view();
-        assert!(matches!(converted.kind(), ViewKind::Text(_)));
-    }
-
-    #[test]
-    fn typed_text_methods_update_only_canonical_text_payload() {
-        let text = View::text("abcdef")
-            .wrap(WrapMode::Grapheme)
-            .text_align(HorizontalAlign::End)
-            .style(StyleSpec::new().foreground(ColorSpec::Ansi(3)))
-            .fill_width();
-
-        assert_eq!(text.view.width(), WidthRule::Fill);
-        assert_eq!(
-            text.view.decoration().text_style.foreground,
-            Some(ColorSpec::Ansi(3))
-        );
-        let ViewKind::Text(text_view) = text.view.kind() else {
-            panic!("expected text view");
-        };
-        assert_eq!(text_view.wrap, WrapMode::Grapheme);
-        assert_eq!(text_view.align, HorizontalAlign::End);
-        assert_eq!(text_view.spans[0].style, StyleSpec::default());
-    }
-
-    #[test]
-    fn typed_width_modifiers_preserve_text_and_last_write_wins() {
-        let text = View::text("x")
-            .fill_width()
-            .no_wrap()
-            .text_align(HorizontalAlign::End)
-            .fit_width();
-
-        assert_eq!(text.view.width(), WidthRule::Fit);
-        assert!(matches!(text.view.kind(), ViewKind::Text(_)));
-        assert_eq!(text.view.decoration(), &Decoration::default());
-    }
-
-    #[test]
-    fn style_and_specific_text_properties_merge_as_sparse_patches() {
-        let text = View::text("x")
-            .bold()
-            .style(StyleSpec::new().attribute(TextAttribute::Bold, false))
-            .foreground(ColorSpec::ansi(1))
-            .style(StyleSpec::new().italic())
-            .bold();
-
-        assert_eq!(
-            text.view.decoration().text_style.foreground,
-            Some(ColorSpec::ansi(1))
-        );
-        assert_eq!(
-            text.view.decoration().text_style.attributes.bold,
-            Some(true)
-        );
-        assert_eq!(
-            text.view.decoration().text_style.attributes.italic,
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn structural_text_transforms_return_general_views() {
-        let container = View::text("x").container();
-        let clamp = View::text("x").clamp_rows(1, OverflowIndicator::None);
-
-        assert!(matches!(container.kind(), ViewKind::Container(_)));
-        assert!(matches!(clamp.kind(), ViewKind::ClampRows(_)));
-    }
 
     #[test]
     fn small_spans_stay_inline_without_a_page() {
@@ -571,7 +268,6 @@ mod tests {
     #[cfg(feature = "native-host")]
     #[test]
     fn page_shared_spans_keep_old_roots_valid() {
-        use super::NativeTextPage;
         use std::sync::Arc;
 
         let page = NativeTextPage::new("hello world".to_owned());
@@ -583,7 +279,6 @@ mod tests {
             .expect("in-bounds range");
         assert_eq!(first.text(), "hello");
         assert_eq!(second.text(), "world");
-        // Both spans borrow the single page: no per-span allocation.
         let (page_of_first, page_of_second) = match (&first.text, &second.text) {
             (
                 TextStorage::PageSlice { page: first, .. },
@@ -592,20 +287,19 @@ mod tests {
             _ => panic!("length-delimited spans must borrow the shared page"),
         };
         assert!(Arc::ptr_eq(&page_of_first, &page_of_second));
-        // An old root stays valid after subsequent construction, sharing the
-        // page even once the ingress handle is gone.
-        let old = View::native_text_final(
+
+        let old = crate::presentation::factory::text_from_spans(
             vec![first],
             WrapMode::WordThenGrapheme,
             HorizontalAlign::Start,
         );
         drop(page);
-        let _newer = View::native_text_final(
+        let _newer = crate::presentation::factory::text_from_spans(
             vec![second],
             WrapMode::WordThenGrapheme,
             HorizontalAlign::Start,
         );
-        let ViewKind::Text(retained) = old.kind() else {
+        let crate::presentation::ir::ViewKind::Text(retained) = old.kind() else {
             panic!("expected text view");
         };
         assert_eq!(retained.spans[0].text(), "hello");
@@ -614,8 +308,6 @@ mod tests {
     #[cfg(feature = "native-host")]
     #[test]
     fn page_span_rejects_out_of_bounds_and_split_sequences() {
-        use super::NativeTextPage;
-
         let page = NativeTextPage::new("héllo🌍".to_owned());
         assert!(page.span(0, 100, StyleRef::default()).is_none());
         assert!(page.span(1, 1, StyleRef::default()).is_none());
@@ -623,7 +315,6 @@ mod tests {
             page.span(0, 1, StyleRef::default()).expect("ascii").text(),
             "h"
         );
-        // Trailing newlines are ordinary text, preserved byte for byte.
         let lines = NativeTextPage::new("line\n".to_owned());
         assert_eq!(
             lines

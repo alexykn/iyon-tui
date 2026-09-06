@@ -2,14 +2,14 @@ error[E0061]: this function takes 2 arguments but 1 argument was supplied
  --> tests/ui/fail/scene_requires_body.rs:4:13
   |
 4 |     let _ = Scene::with_history(History::new());
-  |             ^^^^^^^^^^^^^^^^^^^---------------- argument #2 is missing
+  |             ^^^^^^^^^^^^^^^^^^^---------------- argument #2 of type `View` is missing
   |
 note: associated function defined here
  --> src/scene/root.rs
   |
-  |     pub fn with_history(history: History, body: impl IntoView) -> Self {
+  |     pub fn with_history(history: History, body: View) -> Self {
   |            ^^^^^^^^^^^^
 help: provide the argument
   |
-4 |     let _ = Scene::with_history(History::new(), /* body */);
+4 |     let _ = Scene::with_history(History::new(), /* View */);
   |                                               ++++++++++++

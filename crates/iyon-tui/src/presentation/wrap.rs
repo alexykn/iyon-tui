@@ -552,9 +552,8 @@ fn place_caret(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::View;
     use crate::physical::PhysicalColor;
-    use crate::presentation::{IntoView, layout::compile_view};
+    use crate::presentation::layout::compile_view;
     fn fg(color: PhysicalColor) -> PhysicalStyle {
         PhysicalStyle {
             foreground: Some(color),
@@ -611,10 +610,15 @@ mod tests {
         let compiled = [2, 7, 11]
             .into_iter()
             .map(|cursor| {
-                compile_view(
-                    &View::text(text).no_wrap().cursor_at(cursor).into_view(),
-                    12,
-                )
+                let view = crate::presentation::factory::cursor_at(
+                    crate::presentation::factory::wrap(
+                        crate::presentation::factory::text(text),
+                        crate::WrapMode::NoWrap,
+                        None,
+                    ),
+                    cursor,
+                );
+                compile_view(&view, 12)
             })
             .collect::<Vec<_>>();
 

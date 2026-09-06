@@ -132,6 +132,7 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope_and_content(
         parents: Vec::new(),
         state_roots: Default::default(),
         content_roots: Default::default(),
+        child_y_sorted: Vec::new(),
     };
     tree.index_component_roots();
     if matches!(constraints.height, AxisConstraint::Unbounded) {

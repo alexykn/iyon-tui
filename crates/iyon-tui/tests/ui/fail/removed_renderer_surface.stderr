@@ -1,0 +1,28 @@
+error[E0432]: unresolved imports `iyon_tui::DiffRenderer`, `iyon_tui::Renderer`, `iyon_tui::TextRenderer`
+ --> tests/ui/fail/removed_renderer_surface.rs:1:16
+  |
+1 | use iyon_tui::{DiffRenderer, Renderer, TextRenderer};
+  |                ^^^^^^^^^^^^  ^^^^^^^^  ^^^^^^^^^^^^ no `TextRenderer` in the root
+  |                |             |
+  |                |             no `Renderer` in the root
+  |                no `DiffRenderer` in the root
+  |
+help: a similar name exists in the module
+  |
+1 - use iyon_tui::{DiffRenderer, Renderer, TextRenderer};
+1 + use iyon_tui::{DiffRenderer, Renderer, TextRewriter};
+  |
+
+error[E0603]: module `presentation` is private
+ --> tests/ui/fail/removed_renderer_surface.rs:2:15
+  |
+2 | use iyon_tui::presentation::api::View;
+  |               ^^^^^^^^^^^^  --- module `api` is not publicly re-exported
+  |               |
+  |               private module
+  |
+note: the module `presentation` is defined here
+ --> src/lib.rs
+  |
+  | mod presentation;
+  | ^^^^^^^^^^^^^^^^

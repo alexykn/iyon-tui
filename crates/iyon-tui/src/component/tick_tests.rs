@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use super::*;
 use crate::interaction::MountedCapabilities;
 use crate::output::OutputQueue;
-use crate::presentation::{IntoView, View};
+use crate::presentation::View;
 use crate::{ComponentCx, EventCx};
 
 #[derive(Debug)]
@@ -14,7 +14,7 @@ struct Blinker {
 
 impl Component for Blinker {
     fn view(&self) -> View {
-        View::text(self.frame.to_string()).into_view()
+        crate::presentation::factory::text(self.frame.to_string())
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -271,7 +271,7 @@ struct ZeroTick;
 
 impl Component for ZeroTick {
     fn view(&self) -> View {
-        View::spacer(0)
+        crate::presentation::factory::spacer(0)
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {

@@ -6,20 +6,20 @@ use std::{
 };
 
 use crate::presentation::{ContentProvider, EmptyContentProvider, StyleFacts, StyleStates};
-use crate::{History, IntoView, View};
+use crate::{History, View};
 
 /// The semantic root of a terminal application.
 ///
 /// A [`Scene`] contains an optional root-level [`History`] followed by one
-/// ordinary [`View`] body. It is intentionally not an [`IntoView`] value:
+/// ordinary [`View`] body. It is intentionally not a nested composition value:
 /// roots cannot be nested inside ordinary presentation composition.
 ///
 /// ```text
-/// let scene = Scene::new(View::text("ordinary application"));
+/// let scene = Scene::new(crate::presentation::factory::text("ordinary application"));
 ///
 /// let mut history = History::new();
-/// history.push("earlier output")?;
-/// let scene = Scene::with_history(history, View::text("body"));
+/// history.push(crate::presentation::factory::text("earlier output"))?;
+/// let scene = Scene::with_history(history, crate::presentation::factory::text("body"));
 /// ```
 pub struct Scene {
     history: Option<History>,
@@ -30,9 +30,11 @@ pub struct Scene {
 
 impl Scene {
     /// Creates a body-only semantic root.
-    pub fn new(body: impl IntoView) -> Self {
-        let body = body.into_view();
-        let layout_body = body.clone().fill_width().fill_height();
+    pub fn new(body: View) -> Self {
+        let layout_body = body.clone().map_node(|node| {
+            node.width = crate::presentation::ir::WidthRule::Fill;
+            node.height = crate::presentation::ir::HeightRule::Fill;
+        });
         let layout_root = root_view(None, layout_body.clone());
         Self {
             history: None,
@@ -44,9 +46,11 @@ impl Scene {
 
     /// Creates a semantic root with one root-level History and an ordinary
     /// body below it.
-    pub fn with_history(history: History, body: impl IntoView) -> Self {
-        let body = body.into_view();
-        let layout_body = body.clone().fill_width().fill_height();
+    pub fn with_history(history: History, body: View) -> Self {
+        let layout_body = body.clone().map_node(|node| {
+            node.width = crate::presentation::ir::WidthRule::Fill;
+            node.height = crate::presentation::ir::HeightRule::Fill;
+        });
         let layout_root = root_view(None, layout_body.clone());
         Self {
             history: Some(history),
@@ -80,9 +84,11 @@ impl Scene {
     }
 
     /// Replaces the ordinary body View.
-    pub fn set_body(&mut self, body: impl IntoView) {
-        let body = body.into_view();
-        self.layout_body = body.clone().fill_width().fill_height();
+    pub fn set_body(&mut self, body: View) {
+        self.layout_body = body.clone().map_node(|node| {
+            node.width = crate::presentation::ir::WidthRule::Fill;
+            node.height = crate::presentation::ir::HeightRule::Fill;
+        });
         self.layout_root = root_view(None, self.layout_body.clone());
         self.body = body;
     }

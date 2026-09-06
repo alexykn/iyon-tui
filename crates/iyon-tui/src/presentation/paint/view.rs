@@ -10,11 +10,11 @@ use crate::{
     geometry::Rect,
     perf::{self, Counter},
     physical::{PhysicalRow, PhysicalStyle, Surface},
-    presentation::{IntoView, TextSpan, View},
+    presentation::TextSpan,
 };
 
 use crate::presentation::{
-    ContentProvider, EmptyContentProvider,
+    ContentProvider, EmptyContentProvider, factory as vf,
     ir::{ViewId, ViewKind, WidthRule},
     layout::{LayoutContent, LayoutNode, LayoutNodeId, LayoutTree, ViewCompiler},
 };
@@ -264,17 +264,7 @@ impl ViewPainter {
         let mut rows = Vec::with_capacity(usize::from(tree.size.height));
         let mut physically_complete = tree.physically_complete;
         let clip = tree.node(tree.root).clip_rect;
-        let child_y_sorted = tree
-            .nodes
-            .iter()
-            .map(|node| {
-                node.children.windows(2).all(|pair| {
-                    let first = tree.node(pair[0]).rect;
-                    let second = tree.node(pair[1]).rect;
-                    first.y <= second.y && first.bottom() <= second.bottom()
-                })
-            })
-            .collect::<Vec<_>>();
+        let child_y_sorted = tree.child_y_sorted.as_slice();
         for row in 0..tree.size.height {
             let Some(surface) = self.paint_row_node(
                 compiler,
@@ -286,6 +276,53 @@ impl ViewPainter {
                 clip,
                 true,
                 content,
+                text_rows,
+                &child_y_sorted,
+            ) else {
+                rows.push(PhysicalRow::from_cells(
+                    Surface::new(tree.size.width, 1).cells,
+                ));
+                continue;
+            };
+            physically_complete &= surface.physically_complete;
+            let cells = surface.cells;
+            let physical = PhysicalRow::from_cells(cells);
+            debug_assert!(physical.validate_cell_geometry().is_ok());
+            rows.push(physical);
+        }
+        (rows, physically_complete)
+    }
+
+    /// Paints only a source-row window from a prepared layout tree. Content
+    /// providers use this when a retained projection has geometry for a long
+    /// document but the terminal asks for a bounded row window; the complete
+    /// semantic/layout tree remains authoritative while unused physical rows
+    /// are not lowered.
+    pub(crate) fn paint_tree_row_range_with_text_cache(
+        &self,
+        compiler: &ViewCompiler,
+        tree: &LayoutTree,
+        first_row: u16,
+        row_count: u16,
+        text_rows: &mut TextGeometryCache,
+    ) -> (Vec<PhysicalRow>, bool) {
+        let mut rows = Vec::with_capacity(usize::from(row_count));
+        let mut physically_complete = tree.physically_complete;
+        let clip = tree.node(tree.root).clip_rect;
+        let child_y_sorted = tree.child_y_sorted.as_slice();
+        let start = first_row.min(tree.size.height);
+        let end = start.saturating_add(row_count).min(tree.size.height);
+        for row in start..end {
+            let Some(surface) = self.paint_row_node(
+                compiler,
+                tree,
+                tree.root,
+                row,
+                PhysicalStyle::default(),
+                compiler.style_context(tree.node(tree.root).style.component_scope),
+                clip,
+                true,
+                &EmptyContentProvider,
                 text_rows,
                 &child_y_sorted,
             ) else {
@@ -668,15 +705,16 @@ impl ViewPainter {
         }) else {
             return;
         };
-        let indicator_view = View::styled_text(vec![TextSpan::styled(text, style)])
-            .fill_width()
-            .no_wrap()
-            .into_view();
+        let indicator_view = vf::styled_text_fill(
+            vec![TextSpan::styled(text, style)],
+            crate::WrapMode::NoWrap,
+            crate::HorizontalAlign::Start,
+        );
         let ViewKind::Text(indicator_text) = indicator_view.kind() else {
             unreachable!("overflow indicator must be text")
         };
         let (_, Some(row), complete) = compiler.paint_text_row(
-            indicator_text,
+            &indicator_text,
             node.rect.width,
             WidthRule::Fill,
             inherited,
@@ -1240,15 +1278,16 @@ impl ViewPainter {
         }) else {
             return;
         };
-        let indicator_view = View::styled_text(vec![TextSpan::styled(text, style)])
-            .fill_width()
-            .no_wrap()
-            .into_view();
+        let indicator_view = vf::styled_text_fill(
+            vec![TextSpan::styled(text, style)],
+            crate::WrapMode::NoWrap,
+            crate::HorizontalAlign::Start,
+        );
         let crate::presentation::ir::ViewKind::Text(indicator_text) = indicator_view.kind() else {
             unreachable!("overflow indicator must be text")
         };
         let indicator = compiler.paint_text(
-            indicator_text,
+            &indicator_text,
             node.rect.width,
             WidthRule::Fill,
             inherited,
@@ -1402,8 +1441,9 @@ fn node_content_projection_identity(content: &LayoutContent) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presentation::ir::View;
     use crate::{
-        ColorSpec, IntoView, StyleRef, StyleSelector, StyleSpec,
+        ColorSpec, StyleRef, StyleSelector, StyleSpec,
         component::{ComponentId, ComponentRevision, MountGraph, MountNode},
         geometry::{LayoutConstraints, Size},
         presentation::layout::layout_view,
@@ -1424,11 +1464,16 @@ mod tests {
 
     #[test]
     fn theme_switch_invalidates_cached_surfaces() {
-        let view = View::vertical(|column| {
-            column.child(View::text("x"));
-        })
-        .foreground(ColorSpec::theme("accent"))
-        .into_view();
+        let view = crate::presentation::factory::foreground(
+            crate::presentation::factory::column_specs(
+                vec![(
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    crate::presentation::factory::text("x"),
+                )],
+                0,
+            ),
+            ColorSpec::theme("accent"),
+        );
         let red = Theme::new().with_color("accent", crate::ThemeColor::Indexed(1));
         let blue = Theme::new().with_color("accent", crate::ThemeColor::Indexed(4));
         let mut cache = PaintCache::default();
@@ -1446,17 +1491,27 @@ mod tests {
 
     #[test]
     fn inherited_style_change_does_not_reuse_child_surface() {
-        let child = View::text("x").into_view();
-        let red = View::vertical(|column| {
-            column.child(child.clone());
-        })
-        .foreground(ColorSpec::ansi(1))
-        .into_view();
-        let blue = View::vertical(|column| {
-            column.child(child);
-        })
-        .foreground(ColorSpec::ansi(4))
-        .into_view();
+        let child = crate::presentation::factory::text("x");
+        let red = crate::presentation::factory::foreground(
+            crate::presentation::factory::column_specs(
+                vec![(
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    child.clone(),
+                )],
+                0,
+            ),
+            ColorSpec::ansi(1),
+        );
+        let blue = crate::presentation::factory::foreground(
+            crate::presentation::factory::column_specs(
+                vec![(
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    child,
+                )],
+                0,
+            ),
+            ColorSpec::ansi(4),
+        );
         let theme = Theme::default();
         let compiler = ViewCompiler::new(&theme);
         let mut cache = PaintCache::default();
@@ -1478,9 +1533,16 @@ mod tests {
             parent: None,
             revision: ComponentRevision::default(),
         }]);
-        let view = View::vertical(|column| {
-            column.child(View::text("x").style(StyleRef::theme("focus")));
-        });
+        let view = crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::style(
+                    crate::presentation::factory::text("x"),
+                    StyleRef::theme("focus"),
+                ),
+            )],
+            0,
+        );
         let theme = Theme::new().with_style_variant(
             "focus",
             StyleSelector::focused(),
@@ -1513,11 +1575,12 @@ mod tests {
         let mut cache = PaintCache::default();
 
         for epoch in 0..3 {
-            let view = View::vertical(|column| {
-                for child in 0..32 {
-                    column.child(View::text(format!("{epoch}-{child}")));
-                }
-            });
+            let view = crate::presentation::factory::column(
+                (0..32)
+                    .map(|child| crate::presentation::factory::text(format!("{epoch}-{child}")))
+                    .collect(),
+                0,
+            );
             let tree = layout_view(&view, LayoutConstraints::bounded(Size::new(16, 40)));
             cache.begin_epoch(&theme);
             ViewPainter.paint_tree_with_cache(&compiler, &tree, &mut cache);
@@ -1530,11 +1593,15 @@ mod tests {
 
     #[test]
     fn viewport_scroll_and_geometry_are_cache_safe() {
-        let content = View::vertical(|column| {
-            column.children(["one", "two", "three"]);
-        });
-        let first = View::row_viewport(content.clone(), 0);
-        let second = View::row_viewport(content, 1);
+        let content = crate::presentation::factory::column(
+            ["one", "two", "three"]
+                .into_iter()
+                .map(crate::presentation::factory::text)
+                .collect(),
+            0,
+        );
+        let first = crate::presentation::factory::row_viewport_default(content.clone(), 0);
+        let second = crate::presentation::factory::row_viewport_default(content, 1);
         let theme = Theme::default();
         let compiler = ViewCompiler::new(&theme);
         let mut cache = PaintCache::default();
@@ -1544,9 +1611,15 @@ mod tests {
         assert_eq!(first_surface.get(0, 0).grapheme.as_deref(), Some("o"));
         assert_eq!(second_surface.get(0, 0).grapheme.as_deref(), Some("t"));
 
-        let wide = View::vertical(|column| {
-            column.child(View::text("abcdef").fill_width());
-        });
+        let wide = crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::fill_width(crate::presentation::factory::text(
+                    "abcdef",
+                )),
+            )],
+            0,
+        );
         let narrow_surface = paint(&wide, Size::new(2, 1), &theme, &compiler, &mut cache);
         let wide_surface = paint(&wide, Size::new(6, 1), &theme, &compiler, &mut cache);
         assert_eq!(narrow_surface.width(), 2);
@@ -1609,7 +1682,7 @@ mod tests {
             calls: std::sync::Arc::clone(&calls),
         };
         let content = View::content_host(42);
-        let viewport = View::row_viewport(content, 10);
+        let viewport = crate::presentation::factory::row_viewport_default(content, 10);
         let theme = Theme::default();
         let compiler = ViewCompiler::new(&theme);
         let mut cache = PaintCache::default();
@@ -1628,6 +1701,46 @@ mod tests {
         assert_eq!(surface.get(0, 0).grapheme.as_deref(), Some("10"));
         assert_eq!(surface.get(0, 1).grapheme.as_deref(), Some("11"));
         assert_eq!(surface.get(0, 2).grapheme.as_deref(), Some("12"));
+    }
+
+    #[test]
+    fn prepared_row_range_handles_nonzero_rows_and_clipped_wide_backgrounds() {
+        let view = crate::presentation::factory::column(
+            vec![
+                crate::presentation::factory::background(
+                    crate::presentation::factory::text("界"),
+                    ColorSpec::ansi(2),
+                ),
+                crate::presentation::factory::text("tail"),
+            ],
+            0,
+        );
+        let theme = Theme::default();
+        let compiler = ViewCompiler::new(&theme);
+        let tree = layout_view(&view, LayoutConstraints::bounded(Size::new(1, 2)));
+        let painter = ViewPainter;
+        let (full, full_complete) =
+            painter.paint_tree_rows_with_content(&compiler, &tree, &EmptyContentProvider);
+        let mut text_geometry = TextGeometryCache::new();
+        let (first, first_complete) = painter.paint_tree_row_range_with_text_cache(
+            &compiler,
+            &tree,
+            0,
+            1,
+            &mut text_geometry,
+        );
+        let (second, second_complete) = painter.paint_tree_row_range_with_text_cache(
+            &compiler,
+            &tree,
+            1,
+            1,
+            &mut text_geometry,
+        );
+        assert_eq!(first, vec![full[0].clone()]);
+        assert_eq!(second, vec![full[1].clone()]);
+        assert_eq!(first_complete && second_complete, full_complete);
+        assert!(first[0].validate_cell_geometry().is_ok());
+        assert!(second[0].validate_cell_geometry().is_ok());
     }
 
     #[test]
@@ -1688,12 +1801,20 @@ mod tests {
             }
         }
 
-        let child = View::content_host(7)
-            .padding(crate::Insets::all(1))
-            .background(ColorSpec::ansi(2))
-            .foreground(ColorSpec::ansi(3))
-            .border(crate::presentation::BorderSpec::plain().color(ColorSpec::ansi(1)));
-        let viewport = View::row_viewport(child, 0);
+        let child = crate::presentation::factory::border(
+            crate::presentation::factory::foreground(
+                crate::presentation::factory::background(
+                    crate::presentation::factory::padding(
+                        View::content_host(7),
+                        crate::Insets::all(1),
+                    ),
+                    ColorSpec::ansi(2),
+                ),
+                ColorSpec::ansi(3),
+            ),
+            crate::presentation::BorderSpec::plain().color(ColorSpec::ansi(1)),
+        );
+        let viewport = crate::presentation::factory::row_viewport_default(child, 0);
         let theme = Theme::default();
         let compiler = ViewCompiler::new(&theme);
         let mut provider = DecoratedProvider;
@@ -1781,15 +1902,36 @@ mod tests {
             }
         }
 
-        let child = View::content_host(19)
-            .padding(crate::Insets::all(1))
-            .background(ColorSpec::ansi(2))
-            .foreground(ColorSpec::ansi(3))
-            .border(crate::presentation::BorderSpec::plain().color(ColorSpec::ansi(1)));
-        let view = View::vertical(|column| {
-            column.fixed(1, View::text("header"));
-            column.flex(View::row_viewport(child, 2).fill_width().fill_height());
-        });
+        let child = crate::presentation::factory::border(
+            crate::presentation::factory::foreground(
+                crate::presentation::factory::background(
+                    crate::presentation::factory::padding(
+                        View::content_host(19),
+                        crate::Insets::all(1),
+                    ),
+                    ColorSpec::ansi(2),
+                ),
+                ColorSpec::ansi(3),
+            ),
+            crate::presentation::BorderSpec::plain().color(ColorSpec::ansi(1)),
+        );
+        let view = crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Fixed(1),
+                    crate::presentation::factory::text("header"),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Flex { min: 1 },
+                    crate::presentation::factory::fill_height(
+                        crate::presentation::factory::fill_width(
+                            crate::presentation::factory::row_viewport_default(child, 2),
+                        ),
+                    ),
+                ),
+            ],
+            0,
+        );
         let compiler = ViewCompiler::new(&Theme::default());
         let mut provider = RowsProvider;
         let mut layout_cache = crate::presentation::layout::LayoutCache::default();

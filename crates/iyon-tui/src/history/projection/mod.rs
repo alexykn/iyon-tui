@@ -1,11 +1,18 @@
 //! Width-dependent semantic projection of History into one vertical View.
 
+use std::sync::Arc;
+
 use crate::{
     geometry::Size,
     perf::{self, Counter},
     physical::PhysicalRow,
+    presentation::factory as vf,
     presentation::{
         ContentProvider, EmptyContentProvider, Insets, View,
+        ir::{
+            ColumnChild, ColumnView, Decoration, HeightRule, PersistentSeq, ViewKind,
+            ViewNodeParts, WidthRule,
+        },
         layout::{LayoutCache, measure_view_with_overlay_and_cache_and_content},
     },
     scene::{ResolutionOverlay, ResolveError, ResolveSession},
@@ -453,7 +460,7 @@ fn project_into_session_with_mode(
                     children.push(unit_view(&plans[index], units[index], selected, overlay));
                     rendered_row = rendered_row.saturating_add(selected.height);
                 } else if let PlannedContent::Live(view) = &plans[index].content {
-                    children.push(View::row_viewport_with_height(view.clone(), 0, Some(0)));
+                    children.push(vf::row_viewport(view.clone(), 0, Some(0)));
                 }
             }
             FlowItem::TopPadding | FlowItem::Gap(_) | FlowItem::BottomPadding => {
@@ -491,14 +498,27 @@ fn project_into_session_with_mode(
         slack,
     );
 
-    // L1-04: moved children plus the direct column factory.
-    let mut root = View::column_from_views(children, 0);
-    root = root.fill_width().fill_height().padding(Insets::new(
-        0,
-        layout.padding.right,
-        0,
-        layout.padding.left,
-    ));
+    // Assemble the final retained root directly. Unlike a persistent
+    // modifier on an existing View, this projection owns all children and
+    // must not allocate a provisional fit-sized column before installing its
+    // final fill and padding fields.
+    let mut decoration = Decoration::default();
+    decoration.padding = Insets::new(0, layout.padding.right, 0, layout.padding.left);
+    let root = View::from_node(ViewNodeParts {
+        width: WidthRule::Fill,
+        height: HeightRule::Fill,
+        decoration,
+        style_states: Default::default(),
+        style_facts: Default::default(),
+        state_attachment: None,
+        content_attachment: None,
+        kind: ViewKind::Column(Arc::new(ColumnView {
+            children: PersistentSeq::from_vec(
+                children.into_iter().map(ColumnChild::content).collect(),
+            ),
+            gap: 0,
+        })),
+    });
     Ok(HistoryProjectionParts {
         view: root,
         frozen_overlay,
@@ -1030,26 +1050,24 @@ fn unit_view(
                 unreachable!("static plan must match static unit")
             };
             let view = plan.view.as_ref().unwrap_or(view);
-            View::row_viewport_with_height(
+            vf::row_viewport(
                 view.clone(),
                 selected.offset.min(usize::from(u16::MAX)) as u16,
                 Some(selected.height.min(usize::from(u16::MAX)) as u16),
             )
         }
-        PlannedContent::Frozen(_) => {
-            View::spacer(selected.height.min(usize::from(u16::MAX)) as u16)
-        }
+        PlannedContent::Frozen(_) => vf::spacer(selected.height.min(usize::from(u16::MAX)) as u16),
         PlannedContent::Live(view) => {
             if selected.offset == 0
                 && selected.height < plan.height.unwrap_or(selected.height)
                 && flexible_height(view, overlay)
             {
-                View::bounded_row_viewport(
+                vf::bounded_row_viewport(
                     view.clone(),
                     selected.height.min(usize::from(u16::MAX)) as u16,
                 )
             } else {
-                View::row_viewport_with_height(
+                vf::row_viewport(
                     view.clone(),
                     selected.offset.min(usize::from(u16::MAX)) as u16,
                     Some(selected.height.min(usize::from(u16::MAX)) as u16),
@@ -1063,7 +1081,7 @@ fn push_spacer(children: &mut Vec<View>, rows: usize) {
     if rows == 0 {
         return;
     }
-    children.push(View::spacer(rows.min(usize::from(u16::MAX)) as u16));
+    children.push(vf::spacer(rows.min(usize::from(u16::MAX)) as u16));
 }
 
 fn view_height(

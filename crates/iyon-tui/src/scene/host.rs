@@ -26,7 +26,7 @@ use crate::{
     output::{OutputQueue, OutputRouter},
     physical::Surface,
     presentation::{
-        ir::{View, ViewKind},
+        ir::{View, ViewId, ViewKind},
         layout::{LayoutCache, ViewCompiler, layout_view_with_overlay_and_cache_and_content},
         paint::{PaintCache, ViewPainter},
     },
@@ -221,6 +221,11 @@ pub(crate) struct SceneHost {
     /// semantic products. Paint cache entries are discarded, but layout cache
     /// and the retained scene remain valid.
     theme_invalidated: bool,
+    /// ContentHost dependency paths retained across a structural invalidation
+    /// until the replacement root is resolved. Theme revisions are
+    /// intentionally excluded from layout-input keys, so this deferred index
+    /// invalidates only old content tickets without clearing clean siblings.
+    retained_content_dependencies: HashMap<u64, HashSet<ViewId>>,
     /// A body geometry/topology change has been prepared, but native History
     /// promotion may require another retained History refresh before painting.
     /// Keep the final paint whole so that refresh cannot leave moved body rows
@@ -281,6 +286,7 @@ impl Default for SceneHost {
             content_prepared_epoch: None,
             incremental_paint_content: Vec::new(),
             theme_invalidated: false,
+            retained_content_dependencies: HashMap::new(),
             full_paint_pending: false,
             pending_damage: None,
             #[cfg(test)]
@@ -310,6 +316,7 @@ impl SceneHost {
         self.incremental_paint_states.clear();
         self.incremental_paint_content.clear();
         self.theme_invalidated = false;
+        self.retained_content_dependencies.clear();
         self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
@@ -349,6 +356,38 @@ impl SceneHost {
     /// reaches the ContentHost and its metric ancestors before cache lookup.
     pub(crate) fn invalidate_content(&mut self, dirty: ContentDirty) {
         crate::perf::inc(crate::perf::Counter::ContentDirtyRecordsMarked);
+        let requires_measurement = dirty.reason.requires_measurement();
+        let requires_paint = requires_measurement || dirty.reason.is_paint_only();
+        if let Some(existing_epoch) = self
+            .content_dirty
+            .get(&dirty.port_id)
+            .map(|entry| entry.epoch)
+        {
+            let needs_new_epoch = self
+                .content_prepared_epoch
+                .is_some_and(|prepared| existing_epoch <= prepared);
+            if !needs_new_epoch {
+                let (escalated_measurement, escalated_paint, paint) = {
+                    let entry = self
+                        .content_dirty
+                        .get_mut(&dirty.port_id)
+                        .expect("content dirty entry still exists");
+                    let escalated_measurement = requires_measurement && !entry.measurement;
+                    let escalated_paint = requires_paint && !entry.paint;
+                    entry.measurement |= requires_measurement;
+                    entry.paint |= requires_paint;
+                    (escalated_measurement, escalated_paint, entry.paint)
+                };
+                if escalated_measurement || escalated_paint {
+                    self.invalidate_content_dependencies(
+                        dirty.port_id,
+                        escalated_measurement,
+                        paint,
+                    );
+                }
+                return;
+            }
+        }
         let epoch = self.content_dirty_epoch.saturating_add(1);
         self.content_dirty_epoch = epoch;
         let entry = self
@@ -359,23 +398,31 @@ impl SceneHost {
                 ..ContentDirtyRecord::default()
             });
         entry.epoch = epoch;
-        entry.measurement |= dirty.reason.requires_measurement();
-        entry.paint |= dirty.reason.requires_measurement() || dirty.reason.is_paint_only();
+        entry.measurement |= requires_measurement;
+        entry.paint |= requires_paint;
+        let paint = entry.paint;
+        self.invalidate_content_dependencies(dirty.port_id, requires_measurement, paint);
+    }
 
+    fn invalidate_content_dependencies(&mut self, port_id: u64, measurement: bool, paint: bool) {
         let Some(retained) = self.retained.as_ref() else {
+            if let Some(view_ids) = self.retained_content_dependencies.get(&port_id) {
+                if measurement {
+                    self.layout_cache.invalidate_view_ids(view_ids);
+                }
+                if paint {
+                    self.paint_cache.invalidate_view_ids(view_ids);
+                }
+            }
             return;
         };
-        let Some(view_ids) = retained
-            .layout
-            .tree
-            .content_dependency_view_ids(dirty.port_id)
-        else {
+        let Some(view_ids) = retained.layout.tree.content_dependency_view_ids(port_id) else {
             return;
         };
-        if dirty.reason.requires_measurement() {
+        if measurement {
             self.layout_cache.invalidate_view_ids(&view_ids);
         }
-        if entry.paint {
+        if paint {
             self.paint_cache.invalidate_view_ids(&view_ids);
         }
     }
@@ -386,6 +433,12 @@ impl SceneHost {
     /// all visible rows with the new palette.
     pub(crate) fn invalidate_theme(&mut self) {
         self.paint_cache.clear();
+        self.layout_cache.invalidate_content_entries();
+        let mut content_view_ids = HashSet::new();
+        for view_ids in self.retained_content_dependencies.values() {
+            content_view_ids.extend(view_ids.iter().copied());
+        }
+        self.layout_cache.invalidate_view_ids(&content_view_ids);
         self.theme_invalidated = true;
         if let Some(retained) = self.retained.as_ref() {
             let epoch = self.content_dirty_epoch.saturating_add(1);
@@ -739,14 +792,32 @@ impl SceneHost {
 
     /// Invalidates the retained scene root for body/history/topology changes.
     pub(crate) fn invalidate_root(&mut self) {
-        // A root/theme replacement may leave the semantic ViewId unchanged,
-        // but measured ContentHost tickets carry theme/product identities.
-        // Drop derived layout/paint entries before rebuilding so painting
-        // cannot retain a ticket for the previous presentation environment.
-        // Connector semantic products remain owned by the content registry
-        // and are reused without reparsing.
-        self.layout_cache.clear();
-        self.paint_cache.clear();
+        // Keep dependency-local layout/paint products for unchanged retained
+        // descendants. The replacement root gets a new ViewId. Content input
+        // revisions participate in leaf layout keys, while theme revisions
+        // are intentionally excluded and use the deferred ContentHost path
+        // index in invalidate_theme; clearing both caches here would
+        // relayout/repaint every stable sibling on a narrow publication.
+        if let Some(retained) = self.retained.as_ref() {
+            self.retained_content_dependencies.clear();
+            for nodes in retained.layout.tree.content_roots.values() {
+                for node in nodes {
+                    let port_id = match &retained.layout.tree.node(*node).content {
+                        crate::presentation::layout::LayoutContent::ContentHost {
+                            port_id, ..
+                        } => *port_id,
+                        _ => continue,
+                    };
+                    let dependencies = self
+                        .retained_content_dependencies
+                        .entry(port_id)
+                        .or_default();
+                    for ancestor in retained.layout.tree.path_to_root(*node) {
+                        dependencies.insert(retained.layout.tree.node(ancestor).view_id);
+                    }
+                }
+            }
+        }
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();
@@ -1968,6 +2039,7 @@ impl SceneHost {
         content: &dyn ContentProvider,
     ) -> PreparedSceneFrame {
         self.retained = Some(resolved);
+        self.retained_content_dependencies.clear();
         let retained = self.retained.as_ref().expect("retained frame installed");
         let state_bindings = retained.layout.tree.state_bindings();
         let state_damage = DamageRegion::from_rects(
@@ -2485,11 +2557,11 @@ impl<E: std::fmt::Debug + 'static> std::error::Error for SceneHostError<E> {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presentation::factory as vf;
     use crate::{
-        BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult,
-        IntoView, Key, KeyStroke, Scene, ScrollPane, StyleSelector, ThemeColor, View,
-        backend::NativeHistorySink, component::ComponentRegistry, geometry::Size,
-        physical::PhysicalRow,
+        BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult, Key,
+        KeyStroke, Scene, ScrollPane, StyleSelector, ThemeColor, View, backend::NativeHistorySink,
+        component::ComponentRegistry, geometry::Size, physical::PhysicalRow,
     };
 
     #[derive(Debug)]
@@ -2501,9 +2573,9 @@ mod tests {
     impl Component for LayoutAware {
         fn view(&self) -> View {
             if self.changed {
-                View::text("new\nrow").into_view()
+                vf::text("new\nrow")
             } else {
-                View::text("old").into_view()
+                vf::text("old")
             }
         }
 
@@ -2554,7 +2626,7 @@ mod tests {
         ) -> crate::presentation::ContentMeasurement {
             let revision = self.revisions.get(&port_id).copied().unwrap_or(0);
             crate::presentation::ContentMeasurement {
-                intrinsic_size: Size::new(1, 1),
+                intrinsic_size: Size::new(1, revision.max(1) as u16),
                 physically_complete: true,
                 projection_revision: revision,
                 metric_revision: 1,
@@ -2566,13 +2638,22 @@ mod tests {
 
         fn paint_window(
             &self,
-            _ticket: crate::presentation::PreparedProjectionTicket,
-            _window: crate::presentation::ContentWindow,
-            _target: &mut Surface,
-            _target_origin: (u16, u16),
+            ticket: crate::presentation::PreparedProjectionTicket,
+            window: crate::presentation::ContentWindow,
+            target: &mut Surface,
+            target_origin: (u16, u16),
             _clip: crate::geometry::Rect,
             _style: crate::physical::PhysicalStyle,
         ) {
+            let grapheme = ticket.projection_revision.to_string();
+            for row in 0..window.row_count {
+                let y = target_origin.1.saturating_add(row as u16);
+                if y < target.height() && target_origin.0 < target.width() {
+                    let cell = target.get_mut(target_origin.0, y);
+                    cell.grapheme = Some(grapheme.clone());
+                    cell.painted = true;
+                }
+            }
         }
     }
 
@@ -2588,15 +2669,18 @@ mod tests {
     }
 
     fn indexed_content_view(port_id: u64, padding: u16) -> View {
-        View::native_content_host(port_id)
-            .expect("test ContentHost port must be positive")
-            .padding(crate::Insets::all(padding))
-            .background(ColorSpec::ansi(1))
+        crate::presentation::factory::background(
+            crate::presentation::factory::padding(
+                vf::content_host(port_id).expect("test ContentHost port must be positive"),
+                crate::Insets::all(padding),
+            ),
+            ColorSpec::ansi(1),
+        )
     }
 
     impl Component for TickingLeaf {
         fn view(&self) -> View {
-            View::text(format!("tick-{}", self.frame)).into_view()
+            vf::text(format!("tick-{}", self.frame))
         }
 
         fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -2613,7 +2697,7 @@ mod tests {
 
     impl Component for R6bLeaf {
         fn view(&self) -> View {
-            View::text(self.text.clone()).into_view()
+            vf::text(self.text.clone())
         }
     }
 
@@ -2626,9 +2710,9 @@ mod tests {
     impl Component for TopologyRoot {
         fn view(&self) -> View {
             if self.show_child {
-                View::component(self.child).into_view()
+                View::component(self.child)
             } else {
-                View::text("root").into_view()
+                vf::text("root")
             }
         }
     }
@@ -2654,11 +2738,13 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let scene = Scene::new(View::vertical(|column| {
-            for handle in &handles {
-                column.child(View::component(*handle));
-            }
-        }));
+        let scene = Scene::new(crate::presentation::factory::column(
+            handles
+                .iter()
+                .map(|handle| View::component(*handle))
+                .collect(),
+            0,
+        ));
         let size = Size::new(8, 1_000);
         let mut host = SceneHost::default();
         let initial = host
@@ -2791,10 +2877,19 @@ mod tests {
         let second = registry.register(R6bLeaf {
             text: "second".to_owned(),
         });
-        let scene = Scene::new(View::vertical(|column| {
-            column.child(View::component(first));
-            column.child(View::component(second));
-        }));
+        let scene = Scene::new(crate::presentation::factory::column_specs(
+            vec![
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(first),
+                ),
+                (
+                    crate::presentation::ir::TrackSize::Content { max: None },
+                    View::component(second),
+                ),
+            ],
+            0,
+        ));
         let size = Size::new(12, 3);
         let mut host = SceneHost::default();
         let initial = host
@@ -2825,7 +2920,7 @@ mod tests {
                 .component(first.id())
                 .unwrap()
                 .view,
-            View::text("first").into_view()
+            vf::text("first")
         );
         assert_eq!(host.last_surface.as_ref().unwrap(), &initial_frame.surface);
     }
@@ -2836,14 +2931,18 @@ mod tests {
         let handle = registry.register(R6bLeaf {
             text: "x".to_owned(),
         });
-        let scene = Scene::new(
-            View::vertical(|column| {
-                column.child(View::component(handle));
-            })
-            .fill_width()
-            .fill_height()
-            .background(ColorSpec::Ansi(34)),
-        );
+        let scene = Scene::new(crate::presentation::factory::fill_height(
+            crate::presentation::factory::fill_width(crate::presentation::factory::background(
+                crate::presentation::factory::column_specs(
+                    vec![(
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(handle),
+                    )],
+                    0,
+                ),
+                ColorSpec::Ansi(34),
+            )),
+        ));
         let size = Size::new(8, 2);
         let mut host = SceneHost::default();
         let initial = host
@@ -2875,7 +2974,9 @@ mod tests {
             text: "body-old".to_owned(),
         });
         let mut history = crate::History::new();
-        history.push("history-old").unwrap();
+        history
+            .push(crate::presentation::factory::text("history-old"))
+            .unwrap();
         let mut scene = Scene::with_history(history, View::component(handle));
         let size = Size::new(12, 4);
         let mut host = SceneHost::default();
@@ -2888,7 +2989,11 @@ mod tests {
         registry
             .with_mut(handle, |leaf| leaf.text = "body-new".to_owned())
             .unwrap();
-        scene.history_mut().unwrap().push("history-new").unwrap();
+        scene
+            .history_mut()
+            .unwrap()
+            .push(crate::presentation::factory::text("history-new"))
+            .unwrap();
         host.invalidate_component(handle.id());
         let resolved = host
             .resolve_stable::<()>(&scene, &mut registry, size)
@@ -3083,19 +3188,185 @@ mod tests {
     }
 
     #[test]
+    fn content_dirty_coalescing_keeps_each_port_newer_than_a_prepared_epoch() {
+        let mut host = SceneHost::default();
+        host.invalidate_content(ContentDirty::new(
+            101,
+            None,
+            crate::presentation::ContentDirtyReason::Presentation,
+        ));
+        host.invalidate_content(ContentDirty::new(
+            202,
+            None,
+            crate::presentation::ContentDirtyReason::Presentation,
+        ));
+        let epoch = host.content_dirty_epoch;
+        assert!(host.content_dirty[&101].epoch < epoch);
+        assert_eq!(host.content_dirty[&202].epoch, epoch);
+        host.content_prepared_epoch = Some(epoch);
+
+        // The first post-capture update advances the global epoch. The second
+        // port must still advance its own record instead of being merged at
+        // the old epoch and dropped by commit(epoch).
+        host.invalidate_content(ContentDirty::new(
+            101,
+            None,
+            crate::presentation::ContentDirtyReason::SourceInput,
+        ));
+        host.invalidate_content(ContentDirty::new(
+            202,
+            None,
+            crate::presentation::ContentDirtyReason::SourceInput,
+        ));
+        assert!(host.content_dirty[&101].epoch > epoch);
+        assert!(host.content_dirty[&202].epoch > epoch);
+        assert!(host.content_dirty[&101].measurement);
+        assert!(host.content_dirty[&202].measurement);
+        host.commit_content_candidate(epoch);
+        assert!(host.content_dirty.contains_key(&101));
+        assert!(host.content_dirty.contains_key(&202));
+    }
+
+    #[test]
+    fn content_dirty_reason_escalation_marks_measurement_and_keeps_pending_epoch() {
+        let mut host = SceneHost::default();
+        host.content_dirty_epoch = 4;
+        host.content_prepared_epoch = Some(3);
+        host.content_dirty.insert(
+            303,
+            ContentDirtyRecord {
+                epoch: 4,
+                measurement: false,
+                paint: true,
+            },
+        );
+        host.invalidate_content(ContentDirty::new(
+            303,
+            None,
+            crate::presentation::ContentDirtyReason::SourceInput,
+        ));
+        assert_eq!(host.content_dirty_epoch, 4);
+        assert_eq!(host.content_dirty[&303].epoch, 4);
+        assert!(host.content_dirty[&303].measurement);
+        assert!(host.content_dirty[&303].paint);
+    }
+
+    #[test]
+    fn source_escalation_refreshes_retained_content_metrics_and_screen() {
+        let mut registry = ComponentRegistry::new();
+        let scene = Scene::new(
+            crate::presentation::factory::content_host(303)
+                .expect("test ContentHost port must be positive"),
+        );
+        let size = Size::new(16, 4);
+        let now = Instant::now();
+        let mut host = SceneHost::default();
+        let mut content = IndexedContentProvider {
+            revisions: HashMap::from([(303, 1)]),
+        };
+        let initial = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        let initial_node = initial.layout.tree.content_roots[&303][0];
+        let initial_frame = host.paint_with_content(initial, &Theme::default(), &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+        assert!(
+            initial_frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with('1'))
+        );
+
+        // A presentation-only mark is already pending when the Source/metric
+        // reason arrives. The second reason must still invalidate the retained
+        // ContentHost path and update both its geometry and physical output.
+        content.revisions.insert(303, 2);
+        host.invalidate_content(ContentDirty::new(
+            303,
+            None,
+            crate::presentation::ContentDirtyReason::Presentation,
+        ));
+        host.invalidate_content(ContentDirty::new(
+            303,
+            None,
+            crate::presentation::ContentDirtyReason::SourceInput,
+        ));
+        let refreshed = host
+            .resolve_stable_at_with_anchor::<()>(
+                &scene,
+                &mut registry,
+                size,
+                now,
+                HistoryViewportAnchor::FollowEnd,
+                &StateFrameView::empty(),
+                &mut content,
+            )
+            .unwrap();
+        let refreshed_node = refreshed.layout.tree.content_roots[&303][0];
+        let initial_height = match &host
+            .retained
+            .as_ref()
+            .expect("initial retained scene")
+            .layout
+            .tree
+            .node(initial_node)
+            .content
+        {
+            crate::presentation::layout::LayoutContent::ContentHost { intrinsic_size, .. } => {
+                intrinsic_size.height
+            }
+            _ => 0,
+        };
+        let refreshed_height = match &refreshed.layout.tree.node(refreshed_node).content {
+            crate::presentation::layout::LayoutContent::ContentHost { intrinsic_size, .. } => {
+                intrinsic_size.height
+            }
+            _ => 0,
+        };
+        assert!(refreshed_height > initial_height);
+        let frame = host.paint_with_content(refreshed, &Theme::default(), &content);
+        host.commit_content_candidate(host.content_candidate_epoch());
+        assert!(
+            frame
+                .screen_lines()
+                .iter()
+                .any(|line| line.starts_with('2'))
+        );
+    }
+
+    #[test]
     fn geometry_change_with_history_repaints_body_and_clears_old_surface() {
         let mut registry = ComponentRegistry::new();
         let handle = registry.register(R6bLeaf {
             text: "body-old".to_owned(),
         });
         let mut history = crate::History::new();
-        history.push("history").unwrap();
+        history
+            .push(crate::presentation::factory::text("history"))
+            .unwrap();
         let scene = Scene::with_history(
             history,
-            View::vertical(|column| {
-                column.child(View::text("tail"));
-                column.child(View::component(handle));
-            }),
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        vf::text("tail"),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(handle),
+                    ),
+                ],
+                0,
+            ),
         );
         let size = Size::new(12, 20);
         let mut host = SceneHost::default();
@@ -3130,15 +3401,26 @@ mod tests {
         let mut history = crate::History::new();
         for index in 0..50 {
             history
-                .push(View::text(format!("old-{index}")).fill_width())
+                .push(crate::presentation::factory::fill_width(vf::text(format!(
+                    "old-{index}"
+                ))))
                 .unwrap();
         }
         let mut scene = Scene::with_history(
             history,
-            View::vertical(|column| {
-                column.child(View::text("tail"));
-                column.child(View::component(handle));
-            }),
+            crate::presentation::factory::column_specs(
+                vec![
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        vf::text("tail"),
+                    ),
+                    (
+                        crate::presentation::ir::TrackSize::Content { max: None },
+                        View::component(handle),
+                    ),
+                ],
+                0,
+            ),
         );
         let size = Size::new(12, 20);
         let mut host = SceneHost::default();
@@ -3183,7 +3465,7 @@ mod tests {
     #[test]
     fn routes_scroll_pane_locally_and_preserves_detachment_on_content_update() {
         let content = |count: usize| {
-            View::text(
+            vf::text(
                 (1..=count)
                     .map(|row| format!("row {row}"))
                     .collect::<Vec<_>>()
@@ -3218,9 +3500,7 @@ mod tests {
 
     impl Component for StatefulField {
         fn view(&self) -> View {
-            View::text("state")
-                .foreground(ColorSpec::theme("accent"))
-                .into_view()
+            crate::presentation::factory::foreground(vf::text("state"), ColorSpec::theme("accent"))
         }
     }
 
@@ -3230,9 +3510,10 @@ mod tests {
 
     impl Component for FocusWithinShell {
         fn view(&self) -> View {
-            View::component(self.child)
-                .border(BorderSpec::plain().color(ColorSpec::theme("shell.border")))
-                .fill_width()
+            crate::presentation::factory::fill_width(crate::presentation::factory::border(
+                View::component(self.child),
+                BorderSpec::plain().color(ColorSpec::theme("shell.border")),
+            ))
         }
     }
 
@@ -3242,9 +3523,10 @@ mod tests {
 
     impl Component for FocusableShell {
         fn view(&self) -> View {
-            View::component(self.child)
-                .border(BorderSpec::plain().color(ColorSpec::theme("shell.border")))
-                .fill_width()
+            crate::presentation::factory::fill_width(crate::presentation::factory::border(
+                View::component(self.child),
+                BorderSpec::plain().color(ColorSpec::theme("shell.border")),
+            ))
         }
 
         fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -3256,10 +3538,10 @@ mod tests {
 
     impl Component for ThemedField {
         fn view(&self) -> View {
-            View::text("field")
-                .border(BorderSpec::plain().color(ColorSpec::theme("field.border")))
-                .fill_width()
-                .into_view()
+            crate::presentation::factory::fill_width(crate::presentation::factory::border(
+                vf::text("field"),
+                BorderSpec::plain().color(ColorSpec::theme("field.border")),
+            ))
         }
 
         fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -3279,7 +3561,7 @@ mod tests {
 
     impl Component for FocusMutatingField {
         fn view(&self) -> View {
-            View::text(if self.focused { "focused" } else { "unfocused" }).into_view()
+            vf::text(if self.focused { "focused" } else { "unfocused" })
         }
 
         fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -3292,11 +3574,11 @@ mod tests {
     fn semantic_state_crosses_component_boundary_and_nearest_override_wins() {
         let mut registry = ComponentRegistry::new();
         let field = registry.register(StatefulField);
-        let scene = Scene::new(
-            View::component(field)
-                .style_state("severity", "warning")
-                .into_view(),
-        );
+        let scene = Scene::new(crate::presentation::factory::style_state(
+            View::component(field),
+            "severity",
+            "warning",
+        ));
         let theme = Theme::new()
             .with_color("accent", ThemeColor::Indexed(2))
             .with_color_variant(
@@ -3319,16 +3601,20 @@ mod tests {
             Some(crate::physical::PhysicalColor::Indexed(1))
         );
 
-        let nested = Scene::new(
-            View::vertical(|column| {
-                column.child(
-                    View::component(field)
-                        .style_state("severity", "error")
-                        .into_view(),
-                );
-            })
-            .style_state("severity", "warning"),
+        let nested_view = crate::presentation::factory::column_specs(
+            vec![(
+                crate::presentation::ir::TrackSize::Content { max: None },
+                crate::presentation::factory::style_state(
+                    View::component(field),
+                    "severity",
+                    "error",
+                ),
+            )],
+            0,
         );
+        let nested_view =
+            crate::presentation::factory::style_state(nested_view, "severity", "warning");
+        let nested = Scene::new(nested_view);
         let stable = host
             .resolve_stable::<()>(&nested, &mut registry, Size::new(20, 4))
             .unwrap();
@@ -3487,7 +3773,7 @@ mod tests {
 
     impl Component for LiveBlocker {
         fn view(&self) -> View {
-            View::text("B1\nB2\nB3\nB4").into_view()
+            vf::text("B1\nB2\nB3\nB4")
         }
 
         fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>) {}
@@ -3496,11 +3782,15 @@ mod tests {
     #[test]
     fn semantic_blocked_live_prefix_is_pinned_not_skipped() {
         let mut history = crate::History::new();
-        history.push("A").unwrap();
+        history
+            .push(crate::presentation::factory::text("A"))
+            .unwrap();
         let mut registry = ComponentRegistry::new();
         let blocker = registry.register(LiveBlocker);
         history.push(View::component(blocker)).unwrap();
-        history.push("C1\nC2\nC3").unwrap();
+        history
+            .push(crate::presentation::factory::text("C1\nC2\nC3"))
+            .unwrap();
 
         let mut sink = TestSink::default();
         let outcome =
@@ -3509,7 +3799,7 @@ mod tests {
         assert_eq!(sink.rows.len(), 1);
         assert_eq!(sink.rows[0].plain_text(), "A");
 
-        let mut scene = Scene::with_history(history, "body");
+        let mut scene = Scene::with_history(history, crate::presentation::factory::text("body"));
         let mut host = SceneHost::default();
 
         let frame = host
@@ -3550,10 +3840,12 @@ mod tests {
         let mut history = crate::History::new();
         // 100 static units, each one row.
         for i in 0..100u32 {
-            history.push(format!("S{i}")).unwrap();
+            history
+                .push(crate::presentation::factory::text(format!("S{i}")))
+                .unwrap();
         }
 
-        let mut scene = Scene::with_history(history, "body");
+        let mut scene = Scene::with_history(history, crate::presentation::factory::text("body"));
         let mut registry = ComponentRegistry::new();
         let mut host = SceneHost::default();
         let mut sink = TestSink::default();
@@ -3590,10 +3882,12 @@ mod tests {
         let mut history = crate::History::new();
         // 20 static one-row units.
         for i in 0..20u32 {
-            history.push(format!("R{i}")).unwrap();
+            history
+                .push(crate::presentation::factory::text(format!("R{i}")))
+                .unwrap();
         }
 
-        let mut scene = Scene::with_history(history, "body");
+        let mut scene = Scene::with_history(history, crate::presentation::factory::text("body"));
         let mut registry = ComponentRegistry::new();
         let mut host = SceneHost::default();
         let mut sink = TestSink::default();
@@ -3645,7 +3939,7 @@ mod tests {
         impl Component for LiveBlocker {
             fn view(&self) -> View {
                 // Fills 4 rows so it dominates the visible area.
-                View::text("B1\nB2\nB3\nB4").into_view()
+                vf::text("B1\nB2\nB3\nB4")
             }
             fn capabilities(&self, _cx: &mut crate::ComponentCx<'_, Self>) {}
         }
@@ -3654,12 +3948,18 @@ mod tests {
         let blocker_handle = registry.register(LiveBlocker);
 
         let mut history = crate::History::new();
-        history.push("A").unwrap();
-        history.push("B").unwrap();
+        history
+            .push(crate::presentation::factory::text("A"))
+            .unwrap();
+        history
+            .push(crate::presentation::factory::text("B"))
+            .unwrap();
         history.push(View::component(blocker_handle)).unwrap();
-        history.push("D").unwrap();
+        history
+            .push(crate::presentation::factory::text("D"))
+            .unwrap();
 
-        let mut scene = Scene::with_history(history, "body");
+        let mut scene = Scene::with_history(history, crate::presentation::factory::text("body"));
         let mut host = SceneHost::default();
         let mut sink = TestSink::default();
 

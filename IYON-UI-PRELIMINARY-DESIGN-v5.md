@@ -6,6 +6,178 @@
 **Depends on:** PERF-13 reaching a stable three-plane retained-runtime reference implementation  
 **Revision focus:** Resolve the content execution model; make Source/Funnel/Connector/ContentPort ownership implementation-ready; integrate incremental semantic text, Markdown, diff, ANSI, and smoothing; replace the special mixed-content History abstraction with component-only Surfaces; define reversible cache residency rather than rendering freeze; specify the canonical React ergonomics and the dual-backend `iyon` reference application.
 
+# Hope
+
+Yeah, 83k Rust LOC is a lot for the runtime you’re aiming for, especially now that so much policy/application behavior is supposed to live in React/TypeScript and Taffy is meant to eat the general-layout machinery.
+
+But I would not read the post-PERF-13 increase as evidence that V5 failed before it started. PERF-13 was always the awkward phase where you deliberately made ownership explicit:
+
+```text
+one monolithic retained View world
+        ↓
+structure
+state
+content
+transactions
+revisions
+lifetimes
+FFI
+projection ownership
+```
+
+That almost inevitably adds types, tests, registries, state machines, and validation before later abstractions can collapse them.
+
+The real question is whether V5 actually cashes that complexity back in.
+
+And unlike PERF-13, V5 has several **large deletion vectors** rather than mostly additive ones:
+
+```text
+custom Rust UI authoring API
+    → gone
+
+old View-kind composition vocabulary
+    → gone
+
+Rust Component / Scene authoring model
+    → gone
+
+custom TS composition/execution system
+    → React
+
+custom general layout engine
+    → Taffy
+
+special History renderer
+    → generic Surface + children
+
+LIVE / COMPLETED / FROZEN machinery
+    → cache validity + residency
+
+various View-oriented adapters / lowering
+    → direct retained occurrence semantics
+
+terminal-only abstractions that existed because
+layout/composition were terminal-centric
+    → potentially disappear
+```
+
+That is qualitatively different from PERF-13.
+
+I’d actually expect the most important V5 metric not to be total LOC initially, but something like:
+
+```text
+architectural concepts removed
+translation layers removed
+number of authoritative representations reduced
+public API surface reduced
+cross-module dependency edges reduced
+```
+
+Because you could easily delete 15k LOC and add 10k of React/Taffy/GPUI integration and only see a modest net reduction while still making the system **dramatically** easier to reason about.
+
+The especially valuable deletion is this shape:
+
+```text
+React concept
+    ↓
+old Iyon View concept
+    ↓
+old layout concept
+    ↓
+Taffy concept
+```
+
+becoming:
+
+```text
+React host occurrence
+    ↓
+retained semantic/runtime state
+    ↓
+Taffy
+```
+
+Every intermediate model removed tends to delete:
+
+```text
+types
+builders
+converters
+normalizers
+cache keys
+tests
+error cases
+lifetime rules
+documentation
+```
+
+all at once.
+
+Same with History. Killing a bespoke subsystem usually deletes far more than the obvious renderer because you also delete all the special lifecycle vocabulary around it.
+
+So I think V5 can absolutely be the phase where the graph bends downward again.
+
+83k Rust LOC is still a useful warning sign, though. After V5 I would be suspicious if the Rust side is still anywhere near that size **without a very clear explanation where the mass is**.
+
+For the final architecture, I’d expect most Rust code to cluster around genuinely native responsibilities:
+
+```text
+retained runtime / identities
+three-plane state
+content storage + semantic IR
+projection / smoothing
+Taffy integration
+terminal text measurement
+terminal paint/damage/output
+GPUI backend
+input/focus
+Host Environment
+native bridge / FFI
+```
+
+If, after V5, tens of thousands of lines are still tied to things like bespoke composition, View variants, scene authoring, custom layout, History-specific rendering, duplicate control abstractions, or translation glue, then we didn’t simplify hard enough.
+
+And there’s another thing I’d watch: **test LOC can hide architectural weight too**.
+
+Tests are good, obviously, but if an abstraction requires 4k production LOC and 10k test LOC because it has seventeen lifecycle states and five recovery paths, that is still complexity. Deleting the abstraction should delete both production code **and** the test burden.
+
+So for V5 I’d explicitly track:
+
+```text
+production LOC before/after
+test LOC before/after
+
+number of Rust modules
+number of public Rust exports
+number of runtime state machines
+number of semantic→semantic translation layers
+number of alternate execution paths
+number of bespoke caches
+```
+
+The dream result isn't just:
+
+```text
+83k → 65k
+```
+
+It's more like:
+
+```text
+83k complicated Rust
+    ↓
+55–65k Rust with fewer concepts,
+one composition model,
+one layout engine,
+one surface model,
+one content model,
+and two backends
+```
+
+That would be a huge win even before further trimming.
+
+And I suspect there will be a **second cleanup wave after V5 lands**, because once React + Taffy + Surface are real, a bunch of PERF-13-era machinery that currently looks indispensable will suddenly have no callers. That's usually when the satisfying deletion commits happen.
+
 ---
 
 ## 0. Executive decision

@@ -1,0 +1,317 @@
+[
+  {
+    "id": "01",
+    "group": "rust",
+    "slug": "application",
+    "scope": "application/",
+    "goal": "Lifecycle, updates, scheduling, errors, process/runtime ownership."
+  },
+  {
+    "id": "02",
+    "group": "rust",
+    "slug": "components",
+    "scope": "component/",
+    "goal": "Identity, registry, mount graph, capabilities, slots and ticks."
+  },
+  {
+    "id": "03",
+    "group": "rust",
+    "slug": "scene",
+    "scope": "scene/",
+    "goal": "Root ownership, scene resolution, host integration."
+  },
+  {
+    "id": "04",
+    "group": "rust",
+    "slug": "view-presentation",
+    "scope": "presentation/ excluding layout/ and paint/",
+    "goal": "Authoring API, IR, construction, content attachments and semantic representation."
+  },
+  {
+    "id": "05",
+    "group": "rust",
+    "slug": "layout-geometry",
+    "scope": "presentation/layout/ and geometry/",
+    "goal": "General allocator, measurement/placement, invalidation and allocator assumptions outside this scope."
+  },
+  {
+    "id": "06",
+    "group": "rust",
+    "slug": "retained-state",
+    "scope": "retained_state/",
+    "goal": "Occurrences, storage, revisions, effective values, effects, capture, geometry and damage dependencies."
+  },
+  {
+    "id": "07",
+    "group": "rust",
+    "slug": "history",
+    "scope": "history/ recursively",
+    "goal": "Units, ordering, boundaries, native/projection internals, freezing, residency, caches and scrollback."
+  },
+  {
+    "id": "08",
+    "group": "rust",
+    "slug": "semantic-content",
+    "scope": "content/ recursively",
+    "goal": "Semantic text/diff IR, parsers, renderers, annotations, provenance. Thoroughly cover text/render and diff."
+  },
+  {
+    "id": "09",
+    "group": "rust",
+    "slug": "projection-smoothing",
+    "scope": "projection/ recursively",
+    "goal": "Projection composition, validation, incremental state, pacing and clocks."
+  },
+  {
+    "id": "10",
+    "group": "rust",
+    "slug": "stream-l1",
+    "scope": "stream/ recursively",
+    "goal": "Source storage, coordinates, connectors, ports, snapshots and actual post-L1 ownership."
+  },
+  {
+    "id": "11",
+    "group": "rust",
+    "slug": "theme",
+    "scope": "theme/",
+    "goal": "Tokens, selectors, resolution, revisions and semantic/physical styles."
+  },
+  {
+    "id": "12",
+    "group": "rust",
+    "slug": "controls-scroll",
+    "scope": "controls/ recursively, scroll.rs, scroll_command.rs",
+    "goal": "Editing, control state and specialized spatial behavior."
+  },
+  {
+    "id": "13",
+    "group": "rust",
+    "slug": "interaction-output",
+    "scope": "interaction/ and output/ recursively",
+    "goal": "Focus, commands, native input routing, typed output, subscriptions and lifetimes."
+  },
+  {
+    "id": "14",
+    "group": "rust",
+    "slug": "paint-physical",
+    "scope": "presentation/paint/, physical/, text.rs",
+    "goal": "Painting, cells, rows, surfaces, Unicode measurement, clipping, damage, physical styles."
+  },
+  {
+    "id": "15",
+    "group": "rust",
+    "slug": "terminal-backend",
+    "scope": "backend/ and terminal/ recursively",
+    "goal": "Frame output, backend ownership, Termwiz/Crossterm paths, protocols, resize, restoration."
+  },
+  {
+    "id": "16",
+    "group": "rust",
+    "slug": "public-binding",
+    "scope": "lib.rs, binding/, id.rs, crate manifest and all otherwise-unassigned root helpers",
+    "goal": "Public exports and authoring contracts, binding facade, feature visibility and private/public split."
+  },
+  {
+    "id": "17",
+    "group": "native",
+    "slug": "structure-state",
+    "scope": "crates/iyon-tui-native/src/ handwritten structural/state entrypoints",
+    "goal": "Materialization, identities, transactions, property application, decode alternatives and failure semantics; enumerate owned files."
+  },
+  {
+    "id": "18",
+    "group": "native",
+    "slug": "content-host-events",
+    "scope": "crates/iyon-tui-native/src/ remaining handwritten files",
+    "goal": "Content/data lanes, host/controls/runtime handles, native lifecycle, callbacks/errors; cover all handwritten files outside structural/state."
+  },
+  {
+    "id": "19",
+    "group": "typescript",
+    "slug": "public-api",
+    "scope": "packages/iyon-tui/src/api/ recursively and src/index.ts",
+    "goal": "All public builders, content/controls/extensions/presentation/view contracts, properties, handles, consumers."
+  },
+  {
+    "id": "20",
+    "group": "typescript",
+    "slug": "composition",
+    "scope": "packages/iyon-tui/src/composition/",
+    "goal": "Execution scopes, identity, child ownership, tracked state, normalization and publication."
+  },
+  {
+    "id": "21",
+    "group": "typescript",
+    "slug": "runtime",
+    "scope": "packages/iyon-tui/src/runtime/",
+    "goal": "Lifecycle, resources, attachments, wake broker, environment, errors and events."
+  },
+  {
+    "id": "22",
+    "group": "typescript",
+    "slug": "structure-state-transport",
+    "scope": "packages/iyon-tui/src/transport/{structural,state,abi}/ excluding generated bodies",
+    "goal": "Accepted-native-state retention, materialization, structural ABI encoding, state diffs, transaction/failure behavior."
+  },
+  {
+    "id": "23",
+    "group": "typescript",
+    "slug": "content-native-transport",
+    "scope": "packages/iyon-tui/src/transport/{content,native}/ and other transport files",
+    "goal": "Content data/control lanes, native loading/calls, resources, failure behavior; identify remaining transport files."
+  },
+  {
+    "id": "24",
+    "group": "support",
+    "slug": "codegen",
+    "scope": "tools/tui-abi/, tools/tui-abi-gen/, generated Rust/TS, native include/",
+    "goal": "Schema inputs, every generated output, consumers, checks, ownership and ABI synchronization."
+  },
+  {
+    "id": "25",
+    "group": "support",
+    "slug": "tests-fixtures",
+    "scope": "Rust/TS tests, packages/iyon-tui/src/testing/, packages/tui-consumer-fixture/",
+    "goal": "Repository-wide test infrastructure and contracts index, fixtures, compile/API tests; distinguish production/test helpers."
+  },
+  {
+    "id": "26",
+    "group": "support",
+    "slug": "bench-build-examples",
+    "scope": "benches/counters, scripts, manifests, CI, tools excluding ABI generator, examples/replays, package native artifacts",
+    "goal": "Build/package/feature architecture, benchmarks and instrumentation inventory, examples/reference consumers and support docs. Index bulk replay fixtures instead of printing them."
+  },
+  {
+    "id": "27",
+    "group": "wiring",
+    "slug": "rust-side",
+    "scope": "both crates and Rust tool crate",
+    "goal": "Actual crate/module forward/reverse graph, roots, ownership, lifetimes, feature-dependent edges. Breadth rather than retelling local implementations."
+  },
+  {
+    "id": "28",
+    "group": "wiring",
+    "slug": "typescript-side",
+    "scope": "packages/",
+    "goal": "Actual TS module/package graph, API/composition/runtime/transport relationships, all consumer package boundaries and retained states."
+  },
+  {
+    "id": "29",
+    "group": "wiring",
+    "slug": "three-planes",
+    "scope": "TS runtime/transport, native addon and Rust retained runtime",
+    "goal": "Exact structure/state/content wire paths, synchronization, transactions, failures. Distinguish Fiber-like composition retention, TS accepted-native knowledge, Rust retained state; no V5 mapping."
+  },
+  {
+    "id": "30",
+    "group": "traces",
+    "slug": "composition-root",
+    "scope": "public TS authoring through native layout/paint",
+    "goal": "Real create/mount/frame/unmount trace, exact functions, identities and calls; include Rust authoring alternate entry."
+  },
+  {
+    "id": "31",
+    "group": "traces",
+    "slug": "structural-mutation",
+    "scope": "TS and Rust structural update routes",
+    "goal": "Insert/remove/reorder/replace/reparent where supported, prepare/commit, rollback/failure; explicitly mark unsupported operations."
+  },
+  {
+    "id": "32",
+    "group": "traces",
+    "slug": "state-mutation",
+    "scope": "TS state APIs through Rust invalidation/output",
+    "goal": "Declared/base/override/effective values, delta transport, effects, layout/presentation changes and failures."
+  },
+  {
+    "id": "33",
+    "group": "traces",
+    "slug": "themes-styles",
+    "scope": "TS theme/style APIs through rendered cells",
+    "goal": "Initial styles and dynamic theme/selector changes; ordinary content, controls, History and frozen units."
+  },
+  {
+    "id": "34",
+    "group": "traces",
+    "slug": "runtime-scheduling",
+    "scope": "TS startup through native session/backend shutdown",
+    "goal": "Startup, wake/update/tick/frame scheduling, errors, terminal ownership and shutdown."
+  },
+  {
+    "id": "35",
+    "group": "traces",
+    "slug": "stream-content",
+    "scope": "TS source APIs through Rust source/connector/projection/paint",
+    "goal": "Create/append/project/smooth/measure/paint/seal/truncate/compact/release where supported. Per-append/tick/width/frame work and post-L1 cache semantics."
+  },
+  {
+    "id": "36",
+    "group": "traces",
+    "slug": "layout-resize",
+    "scope": "TS layout authoring through resolved cells",
+    "goal": "Row/column/grid declaration, retained properties, constraints, measurement/placement, resize, damage and output."
+  },
+  {
+    "id": "37",
+    "group": "traces",
+    "slug": "history-scrollback",
+    "scope": "TS History consumers through Rust and terminal output",
+    "goal": "Insertion/replacement/live/frozen transitions, scrolling, visibility, resize, native scrollback; app examples only when actually present."
+  },
+  {
+    "id": "38",
+    "group": "traces",
+    "slug": "input-callbacks",
+    "scope": "terminal decoding through native routing and TS callbacks",
+    "goal": "Real keyboard/paste/focus/scroll event path, subscriptions, native control state, output transport, callback-induced update; pointer support evidence."
+  },
+  {
+    "id": "39",
+    "group": "traces",
+    "slug": "slots-controls-animation",
+    "scope": "TS slots/controls through native retained values and output",
+    "goal": "Creation vs first materialization vs update/replacement/tick/reset/destruction; identify multiple architectural routes."
+  },
+  {
+    "id": "40",
+    "group": "traces",
+    "slug": "lifetime-caches",
+    "scope": "all three planes TS/native/Rust",
+    "goal": "Handles, leases/generations, snapshots, attachment ownership, cache bounds, stale refs, cleanup, allocation/RSS distinction. Concrete lifecycle traces."
+  },
+  {
+    "id": "41",
+    "group": "audits",
+    "slug": "production-routes",
+    "scope": "all production code",
+    "goal": "Semantic-operation-to-path matrix; authoritative/alternate/cold/fallback routes and exact branch/failure conditions. No cleanup implementation."
+  },
+  {
+    "id": "42",
+    "group": "audits",
+    "slug": "benchmark-integrity",
+    "scope": "all benchmark suites and route counters",
+    "goal": "Which production path is actually measured, fallback possibility, route assertions, benchmark evidence limits. Do not rerun costly performance suites."
+  },
+  {
+    "id": "43",
+    "group": "audits",
+    "slug": "test-contracts",
+    "scope": "cross-repository tests and source reachability",
+    "goal": "Production contracts vs obsolete helpers/oracles, bypasses, tests that can succeed when intended route is broken."
+  },
+  {
+    "id": "44",
+    "group": "audits",
+    "slug": "history-doc-drift",
+    "scope": "docs/history/, reports/pre-v5-l1/, current docs and referenced source",
+    "goal": "PERF13/API-H/L1 chronology vs actual current implementation. Read relevant original records fully. Record explicit contradictions, not assumed reconciliations; V5 is proposed not current."
+  },
+  {
+    "id": "45",
+    "group": "audits",
+    "slug": "coverage-reconciliation",
+    "scope": "repository manifest plus all preceding reports",
+    "goal": "Read preceding report artifacts, reconcile missing files/dependencies, inconsistent claims and unproven coverage. Source-check contradictions; list precise gaps and evidence. Do not write final synthesis."
+  }
+]

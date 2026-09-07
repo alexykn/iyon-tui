@@ -1,0 +1,25 @@
+# Parent reading notes — 11 theme
+Fullyread1–440,441–880,881–1320,1321–1722. Static scout; no fresh tests.
+
+## Inventory / contract
+theme4files664LOC555production109test: mod267,atoms123,batch213,framework61. Semantic API presentation/api/style.rs + typedtextselectors content/text/style.rs; paint/theme.rs resolver; physical/style.rs privatecellrepresentation.
+Theme colors/styles separateHashMaps<ThemeKey,ThemeEntry<T>>, entry optionalbase+variants(selector,value,declarationorder), sharedmonotoniccounter. With/set base replace-returnold, variant exactselectorreplace+neworder, ascendingpredicatecount/order sort; lessspecific first/laterwins, sparsefieldoverlays. Batch duplicate handling but sortonceperentry equivalent sequential, native uses deterministic BTreeMap traversal.
+StyleSelector positiveconjunction focus/focuswithin/sortedkeyvalue; samekeyreplace canonicalizes; specificity predicatescount. Local StyleFacts shadows inherited StyleStates; descendant retainsstates CLEARSfacts but inheritsphysicalstyle. StyleAtom static/owned contentEq; ThemeKey Arcstr Borrowstr; interning optional.
+StyleSpec fg/bgOption+sixattributesOptionbool(bold/dim/italic/underline/reversed/strike); Noneinherit, explicitfalseclear; plain disablesattributes preservescolors. ColorSpec Theme/Named/Ansi/RGB; ThemeColor Default/Named/Indexed/RGB cannotreference->nocycle. StyleRef optionaltheme+localpatch.
+Cascade inheritedphysical -> frameworkresolvedstyle -> applicationresolvedstyle ->localpatch; specificity ONLYwithinlayer. Colorreference applicationresolve.or_else(framework), explicitDefault countsresolved; frameworkstyle themecolorref can consult apppalette. Missingstyle no-op; missingcolor physicalDefault (not error).
+TextSelector facade over StyleSelector notindependentengine; reserved __iyon_tui.text base(any)/variants; role predicates independentkeysaccumulate, scalar dimensionslastwins; textfacts roles/parts/level/origin/list/task/table/lang/format/annotations, namespace+name lengthprefixcollisionproof. Renderer emits self-onlyfacts and themedrefs; parsingstyle-independent. Framework generic headingbold/H1underline/marks/link/tableheader/diffdefaults allowednotproductpolicy.
+
+## Ownership / runtime
+Theme purevalue no revision. RunningApp Arc activeTheme; settheme alwaysnewArc+Sceneinvalidate+frameinvalid. ContentRegistry settheme pointer-or-valueequal shortcircuit else checkedrev++ clearprojectioncache/candidate, preservesemantic; preparedpaint keyedrev retainscapturedArc fordeferredtickets. Scene theme_invalidated flag; paintcache wholeTheme equality. Revisions external/distributed coherent not automaticallybug.
+Independent source scenehost430+ confirms invalidate_theme clearpaintcache, contententries+dependentviewIDs invalidation; layoutmetric key excludes theme because styles don'tchangegeometry; repaintclean siblings, no structuralrebuild merelypalette.
+Independent resolver66–112 confirms NEW frameworktheme + deep appTheme.clone each resolvercreation; no global compiled-theme cache. Needsperfmeasurement not presumed bottleneck.
+Paintcache2gens storedTheme; ThemeResolver owned framework/appvalues; compiler ownsresolver. Theme/StyleRef data don't ownviews/components/surfaces; caches/preparedproducts retainoldtheme while receipts pending.
+AtomtableglobalOnceLock Mutex HashMap String->Arcstr+FIFO queue, capacity2048 min1, ptrcheckevict, liveArcvalid aftereviction; poisonedmutex freshArc fallback (document as explicitbest-effort notsilentsemanticfailure). Native keys/theme refs/stylesintern; directRustconstructor Arcfrom noallocationidentityguarantee.
+Native DTO failclosed malformedshapes/colors/attrs/semanticIDs; themesColor cannotreference; assemble_batched no duplicateengine. Bindingexports Theme while rootprivate intentional.
+Lookup O(variants * predicates * logassignments); no cardinalitybound/counters; batching still duplicate linearsearch; no themebenchmark discovered within assignedscope. no automatic scalerisks declareddefects.
+
+## Parent verified erratum
+Report2.3 and9 say Theme::color() BASEONLY/omitsvariants. Source theme/mod.rs206–240 actually delegates resolve_color with falsefocus+emptybags, thus EMPTY selector variant can match and overridebase. Theme::style() genuinely returnsbaseonly. Record exact semantics: default-context color resolution, not base-only. Need notein RECONCILIATION.
+Potential saturation next_order uses saturating_add, so theoretical postu64MAX declaration ties; no reachabledesignissuewithoutneed. Clone/valueEq includesordercounter could invalidate observationallyequivalentthemes, not defectproven.
+Unknownperformancevsintention,missingtoken observability,unboundedkeys/variants,native/TSparity need33/19/22not architecturedecisions now. OldRustauthoringpublic questions notissue under approvedsplit.
+Tests sourceonly: sparsefalse/plain, selectornormalization/precedence/applicationpalette/missingfallback, batchsame, atomlifetimes, focuswithoutcomponentrevision, themerecolor nosemanticreparse,deferredcapturedtheme, contentticketinvalidation, cache2gen.

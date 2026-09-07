@@ -1,0 +1,18 @@
+# Parent full-read notes — 27 Rust wiring
+Fully read lines 1–420, 421–840, 841–1250, 1251–1646. Static report, no executed tests; approximate LOC not census.
+
+## Integrated inventory / graph
+Three Cargo members: core iyon-tui (publish=false; internal authoring), native cdylib (depends core/native-host), codegen tool (build-time schema compiler, no runtime edge). Core root mostly private/pub(crate); public binding operation seam is not a supported Rust authoring SDK. Curated passive structural/state/content/host/diagnostic exports, not callbacks/DSL/full renderer registration.
+Core application host/kernel integrates environment/content/view_state, component, interaction/output, History, scene, presentation, physical/backend/terminal. Environment weak-host registry, source registry, pending/wake state NOT scene/paint owner. SceneHost derives committed reachability/mount/layout/frame products; ComponentRegistry owns objects; ViewStateRegistry records; ContentHostRegistry ports/connectors; environment sources. Internal cycles scene↔presentation layout overlays; application content implements presentation provider; History stores Views and consumes scene/component/native products; no Cargo cycle.
+Immutable View core identity and persistent sequences, native NodeId/ViewRef lease/cache relationship distinct; native runtime path/style/build/edit tables. Native NAPI high-level host/control wrappers handwritten; structural ABI/generated NAPI/directC wrappers generator-owned; state envelope generator-owned but decode/semantics handwritten. Codegen outputs16/schema+kindcodes.
+Five ownership layers useful diagram: TS handles/scopes → NativeViewRuntime semantic weak/strong lease tables → HostInner owned runtime registries → SceneHost candidate/committed frame → backend receipt/physical state. Component handles nonowning; native wrapper disposal often retirement rather than actual core destruction.
+Content accepted Source revision → environment wake → connector projection candidate → host preparation → receipt visible; not inline layout. History detached Mutex transfer once then HostHistory; static/live based native component identity; freeze rejects components. Slots generic components/ticks; output caller IDs.
+
+## Errata and source reconciliation
+IMPORTANT §4.5 and §5.1 invent NativeTextSource.append/replace/clear/seal NAPI mutation alternate. Parent independently read entire native tui.rs NativeTextSource impl1089–1234: constructor/dispose/identity/snapshot/stats/family ONLY. This repeats report10 error; source data ALL direct content FFI, controls NAPI, no NAPI payload fallback.
+§5.1 says direct-ffi feature selects alternate route: feature exposes generated structural C symbols only; TS production session remains NAPI (22/23/26). Must not imply runtime selection or benchmark direct dispatch.
+Native wrapper AtomicBool generalization not universal: Connector stays callable/status-queryable after dispose, alive intentionally neverfalse (18 source).
+Host/root old-frame preservation statements require distinguish desired acceptance vs backend visibility; native transaction host success is not terminal commit (17/18/29).
+§5.5 'no separate native retained View tree outside NativeViewRuntime' overly broad: core host/history/components own strong View graph clones; NativeViewRuntime table is identity/lease cache not sole tree owner.
+Pointer validation safety caveat17 remains: affinity/magic check after raw pointer deref not registry-membership lifetime validation; Arc shared to static mut aliasing risk.
+No new execution; existing core/TS specialized reports close backend selection etc gaps. Historical estimates include mutually inconsistent extents and counts; do not use as census.

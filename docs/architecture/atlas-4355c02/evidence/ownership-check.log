@@ -1,0 +1,35 @@
+PASS rust-dependency-direction — closure(iyon-tui) excludes iyon-core and iyon-api
+PASS tui-native-module-purity — TUI-native modules reference no application crate
+PASS framework-rust-purity — crates/iyon-tui sources reference no application crate
+PASS framework-ts-import-direction — 67 files import only framework modules (+15 recorded native-contract seams)
+PASS h2-cut2-ownership — composition and structural transport have dedicated owners with no legacy root peers
+PASS h2-cut3-ownership — controls, live runtime ownership, and raw native access have dedicated owners with no legacy root peers
+PASS h2-cut4-root-cleanup — root contains only the curated barrel; mixed contracts and forwarding residue have explicit owners
+PASS h2-cut5-import-boundaries — production does not import testing, composition avoids live host/native seams, and API code avoids generated ABI
+PASS h3b-composition-transport-seam — composition imports no structural/native transport implementation
+PASS h3c-structural-composition-seam — structural transport imports no composition implementation
+PASS h3d-residual-cleanup — semantic View and composition are physical-transport free; legacy bridge/publication residue is removed
+PASS h2-cut5-root-publication — root exports are explicit semantic/API owners and do not publish bridge, native, generated, or testing modules
+PASS h2-cut5-module-identity — framework source has no path aliases, package self-imports, absolute imports, or duplicate local spellings
+PASS h2-cut5-package-publication — package exports are limited to documented entrypoints and private content transports remain unpublished
+PASS safe-napi-ts-boundary — 67 active framework files use no Bun FFI or raw pointer contract
+PASS generated-napi-lowering — canonical ABI emits safe N-API methods and keeps direct qualification feature-gated
+PASS standalone-consumer-public-entrypoint — fixture source and dependency manifest use only documented @iyon/tui root/testing entrypoints
+PASS h1b-theme-style-semantics — public styles use ColorSpec/StyleRef semantics; theme: lowering remains private
+PASS h1c-opaque-handles — framework handles are nominal and native resources unwrap through the private registry
+PASS perf13h-deletion — superseded stream facades, registries, schedulers, and lifecycle shims are absent from production sources
+PASS h1d-control-lifecycle — controls use canonical Tui factories, builder contracts, and deterministic owner disposal
+PASS h1e-component-facade — controls compose through view() and placement lowering remains private
+PASS h1f-typed-output-events — Output<T> is opaque, payloads are separate, and test-input constructors are not runtime exports
+PASS h1g-false-aliases — superseded stream facades, lifecycle shims, and compatibility action aliases are deleted
+PASS h1h-root-testing-surface — the root is semantic, testing helpers live under ./testing, and Tui test hooks are private
+PASS h1i-runtime-contract — runtime capabilities are required and Tui/AppHarness expose one authoritative post-resize size
+PASS h1j-contract-parity — TypeScript contracts, native lowering, Rust semantic references, and retained paths remain aligned
+PASS tui-package-identity — @iyon/tui is the canonical framework package and snapshot root
+PASS ts-surface-snapshot — 44 value + 97 type exports match the frozen S0 snapshot
+PASS ts-surface-banned-names — no application concepts in the TypeScript TUI surface
+PASS rust-surface-snapshot — 81 mapped Rust items match the committed snapshot
+PASS rust-surface-banned-names — no application concepts in the mapped iyon-tui Rust surface
+
+ALL OWNERSHIP CHECKS PASSED
+$ bun run tools/ownership/check.ts

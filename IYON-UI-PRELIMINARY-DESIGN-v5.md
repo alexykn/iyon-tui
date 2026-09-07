@@ -351,6 +351,7 @@ React + TypeScript is canonical public composition.
 There is no public Rust UI authoring API.
 The TS→Rust boundary is plane-specific.
 Taffy is the final general-layout engine for both hosts.
+Text is content, not a structural node kind; Hanging is not a structural primitive.
 Host Environment is a first-class Rust layer.
 Source/Funnel/Connector/ContentPort are distinct ownership concepts.
 Surfaces contain component occurrences, not a special text/component history mixture.
@@ -644,6 +645,8 @@ Capabilities and environment facts are native inputs, not a fourth application p
 ### 4.13 Taffy is final general layout
 
 Terminal and GPUI use Taffy for general Flexbox/Grid semantics. The legacy terminal allocator is migration-only.
+
+V5 MUST NOT retain `Text` or `Hanging` as structural node kinds, including renamed equivalents. React owns composition; Taffy owns general layout; the content system owns text semantics, wrapping, measurement, and painting. A content-host occurrence still has a layout node, but that does not introduce a separate structural text primitive.
 
 ### 4.14 Convenience lowers to explicit primitives
 
@@ -955,6 +958,14 @@ valid retained resource generations
 ```
 
 Hard-invalid structural facts MUST be rejected before they become authoritative desired state.
+
+### 8.4 No structural Text or Hanging kinds
+
+The structural schema MUST NOT carry forward the legacy `Text` and `Hanging` View variants. Text payload and formatting belong to content; attaching its ContentPort to an occurrence remains structural, while changing the text of that existing destination is a content mutation.
+
+Public React conveniences such as `<Text>` MAY remain. They MUST lower to the ordinary content-host/Port machinery, not a separate native text-node kind or structural string-payload path. React raw-text HostConfig support, if provided, is frontend normalization, not permission to add a native structural Text kind.
+
+Hanging layout MUST be expressed through ordinary layout composition or content formatting as specified in §24.4. It MUST NOT survive as a special host kind, custom general-layout allocator, or differently named structural primitive.
 
 ---
 
@@ -2343,7 +2354,7 @@ Every resumed assistant text segment is another content-backed component.
 
 ### 17.4 Raw React text normalization
 
-React raw text children MAY be supported as syntax sugar, but the renderer normalizes them into retained text occurrences before the Surface/runtime boundary.
+React raw text children MAY be supported as syntax sugar, but the renderer normalizes them into ordinary content-host occurrences with text content and an implicit ContentPort/Connector before the Surface/runtime boundary. These are not a separate structural Text kind (§8.4).
 
 The Surface itself never stores a special raw text stream.
 
@@ -3247,6 +3258,15 @@ semantic text projection
 row viewport/history controls
 ```
 
+Text content supplies intrinsic measurement under the available constraints and paints within the resolved bounds/clip of its content-host layout node. Static labels use the same content boundary as other text; implementations SHOULD keep immutable/static text lightweight, without requiring streaming production, parsing, or smoothing merely to display a label. This optimization MUST preserve the common content ownership contract rather than create a second text rendering path.
+
+Hanging-indent behavior remains supported without a Hanging primitive:
+
+- A marker beside a body uses ordinary Flexbox/Grid composition, with a marker region and a flexible body region.
+- First-line versus subsequent-line indentation within flowing text belongs to content formatting and wrapping, including semantic list/quote rendering.
+
+Neither case adds a special Taffy node kind or preserves the legacy Hanging allocator. Backend-specific text measurement and paint remain content responsibilities on both terminal and GPUI.
+
 ### 24.5 Rounding
 
 Terminal rounding must be deterministic and cumulative-edge based to avoid gaps/overlaps.
@@ -3426,6 +3446,8 @@ The component manages its implicit destination/binding.
 ```
 
 Changing children to `Goodbye` becomes content replacement, not occurrence replacement.
+
+`Text` here is a React content convenience, not a structural host primitive. It manages an ordinary content-host occurrence and implicit Port/Connector with lightweight static text content; it does not require a streaming producer or smoothing stage. Raw JSX text, when supported, normalizes to the same content path (§17.4).
 
 ### 27.5 Content component definition
 
@@ -4211,6 +4233,7 @@ Delete:
 ```text
 legacy TS View composition as canonical public path
 legacy terminal layout
+legacy structural Text and Hanging kinds and their dedicated construction/lowering paths
 legacy History renderer
 second text-stream mutation architecture
 migration selectors/adapters
@@ -4218,6 +4241,8 @@ obsolete dirty/cache mechanisms
 ```
 
 Each tranche must have explicit counters and stop gates before later tranches depend on it.
+
+Cleanup acceptance MUST verify that static text, raw JSX text, and formatted/streaming text use the common content boundary, and that list markers, quotes, and hanging indents preserve their behavior through ordinary layout/content composition. No legacy Text/Hanging structural kind or renamed equivalent may remain as a second production path.
 
 ---
 
@@ -4448,6 +4473,9 @@ Do not accept repeated multi-millisecond hot-path regressions merely for concept
 - Explicit mode cannot ambiguously combine implicit props.
 - Scoped defaults affect only matching subtree/components.
 - Explicit instance props override component defaults.
+- Static `<Text>` and supported raw JSX text lower to ordinary content-host occurrences, not a structural Text kind.
+- Replacing static text preserves occurrence/Port identity and emits content replacement rather than structural replacement.
+- Structural schemas expose neither Text nor Hanging kinds; marker/body composition and multiline hanging indentation retain correct wrapping, measurement, and clipping on both hosts.
 
 ### 34.8 Surface tests
 

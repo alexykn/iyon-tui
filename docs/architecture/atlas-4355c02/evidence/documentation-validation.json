@@ -1,0 +1,241 @@
+{
+  "status": "passed",
+  "baseline": "4355c02d6853549adf32a1e038b14665ce5c6bf8",
+  "head": "4355c02d6853549adf32a1e038b14665ce5c6bf8",
+  "branch": "main",
+  "sourceManifestPaths": 1082,
+  "completeBaselinePaths": 1088,
+  "trackedDiff": null,
+  "reportCount": 46,
+  "totalReportBytes": 3119936,
+  "totalReportLines": 75339,
+  "requiredHeadingsChecked": 495,
+  "managedOriginalsMatched": 45,
+  "markdownFiles": 106,
+  "linksChecked": 257,
+  "authoredLinksChecked": 257,
+  "errors": [],
+  "warnings": [
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/45-coverage-reconciliation.md",
+      "kind": "managed-output-reused",
+      "detail": "canonical45 checked against preserved original hash; managed path now contains46"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/33-themes-styles.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/31-structural-mutation.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/38-input-callbacks.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/39-slots-controls-animation.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/36-layout-resize.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/32-state-mutation.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/30-composition-root.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/35-stream-content.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/34-runtime-scheduling.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/40-lifetime-caches.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/traces/37-history-scrollback.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/evidence/grouped-followup-task.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/46-grouped-deviation-followup.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/43-test-contracts.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/44-history-doc-drift.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/41-production-routes.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/45-coverage-reconciliation.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/audits/42-benchmark-integrity.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/wiring/27-rust-side.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/wiring/28-typescript-side.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/wiring/29-three-planes.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/native/17-structure-state.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/native/18-content-host-events.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/typescript/23-content-native-transport.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/typescript/20-composition.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/typescript/22-structure-state-transport.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/typescript/21-runtime.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/typescript/19-public-api.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/15-terminal-backend.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/12-controls-scroll.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/06-retained-state.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/02-components.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/16-public-binding.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/03-scene.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/08-semantic-content.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/13-interaction-output.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/07-history.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/09-projection-smoothing.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/05-layout-geometry.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/11-theme.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/04-view-presentation.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/01-application.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/10-stream-l1.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/rust/14-paint-physical.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/support/26-bench-build-examples.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/support/24-codegen.md",
+      "kind": "text-framing"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/support/24-codegen.md",
+      "line": 566,
+      "kind": "trailing-whitespace"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/support/24-codegen.md",
+      "line": 979,
+      "kind": "trailing-whitespace"
+    },
+    {
+      "path": "docs/architecture/atlas-4355c02/subsystems/support/25-tests-fixtures.md",
+      "kind": "text-framing"
+    },
+    {
+      "kind": "collected-manifest-omissions",
+      "paths": [
+        ".bun-version",
+        ".cursor/rules/orchestration.mdc",
+        ".gitignore",
+        "LICENSE",
+        "biome.jsonc",
+        "cat-poem.txt"
+      ],
+      "detail": "all six fully read; complete baseline manifest and coverage addendum preserved"
+    }
+  ],
+  "limits": [
+    "Link check covers inline relative path targets outside triple-backtick fences; URL health and heading fragments are not checked.",
+    "Canonical scout reports are immutable evidence; their formatting/link defects are warnings, not silently rewritten.",
+    "Parent reading flags/ranges verify recorded coverage, not automated substitute for actual full reading.",
+    "No production test or benchmark execution; source-symbol checks remain parent evidence, not exhaustive compiler verification."
+  ]
+}

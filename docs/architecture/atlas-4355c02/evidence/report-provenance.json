@@ -1,0 +1,729 @@
+[
+  {
+    "id": "01",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/01-application.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/01-application.md",
+    "childRun": "c260d0a8-d7d2-470a-b8ed-99be871a5c9b",
+    "sha256": "f1c258168159ce395c402bf4b18c9cc07ec621069067a5a9ea1f7c36b9229c3a",
+    "bytes": 79048,
+    "lines": 1854,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-470",
+      "471-950",
+      "951-1410",
+      "1411-1854"
+    ]
+  },
+  {
+    "id": "02",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/02-components.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/02-components.md",
+    "childRun": "9833671d-5a1f-45ae-9ac2-4ff9b759d7b5",
+    "sha256": "fb0013976b85673818c0f2636e2bef105ef5587f17aa6bbf9233c17ed5ed5e55",
+    "bytes": 63771,
+    "lines": 1577,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-500",
+      "501-1040",
+      "1041-1577"
+    ]
+  },
+  {
+    "id": "03",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/03-scene.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/03-scene.md",
+    "childRun": "1b6da886-8714-4517-9d45-dd20907d6ae0",
+    "sha256": "62d72df6df65972576fa1d1f2ff1efacee3d0527b2456503ff6ae4227c14c023",
+    "bytes": 65534,
+    "lines": 1640,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-450",
+      "451-900",
+      "901-1300",
+      "1301-1640"
+    ]
+  },
+  {
+    "id": "04",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/04-view-presentation.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/04-view-presentation.md",
+    "childRun": "6e2bf9b4-74f9-43fc-92aa-d8690df9c3ae",
+    "sha256": "324992f96de83ab5e1b34c171520b878ddfad3ef8965481b7fdaf2ddedb28bb3",
+    "bytes": 64389,
+    "lines": 1599,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-450",
+      "451-900",
+      "901-1300",
+      "1301-1599"
+    ]
+  },
+  {
+    "id": "05",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/05-layout-geometry.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/05-layout-geometry.md",
+    "childRun": "7278aa35-b741-4d62-9c3c-97164d21d29b",
+    "sha256": "46aa42e1bc2a9dde0ecdb2eb5cad07cc47e054efe41dc3425f9cc881dd7346bd",
+    "bytes": 54168,
+    "lines": 1406,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-475",
+      "476-950",
+      "951-1406"
+    ]
+  },
+  {
+    "id": "06",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/06-retained-state.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/06-retained-state.md",
+    "childRun": "542a7549-0ddd-4bee-a372-8cc2295f3d82",
+    "sha256": "29ece97657bb8aada6e3f2703197200cd70b8aec51ad0f0445d951c310458b62",
+    "bytes": 73075,
+    "lines": 1962,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-490",
+      "491-980",
+      "981-1470",
+      "1471-1962"
+    ]
+  },
+  {
+    "id": "07",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/07-history.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/07-history.md",
+    "childRun": "67fd5f08-cc59-4b04-944e-0ed6e208c81e",
+    "sha256": "dfa07d7245a7280696cc1e3d955fff1b1b7929d02f23df0f3cffff42e19f66eb",
+    "bytes": 57294,
+    "lines": 1301,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-450",
+      "451-900",
+      "901-1301"
+    ]
+  },
+  {
+    "id": "08",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/08-semantic-content.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/08-semantic-content.md",
+    "childRun": "aeda4691-77ee-434f-a8be-496c3b5bbda7",
+    "sha256": "6637b79cf7584961b6bce2fd419251d60267e1726693eba38cdff9da52b77838",
+    "bytes": 72461,
+    "lines": 1900,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-475",
+      "476-950",
+      "951-1425",
+      "1426-1900"
+    ]
+  },
+  {
+    "id": "09",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/09-projection-smoothing.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/09-projection-smoothing.md",
+    "childRun": "362608da-62b2-4811-9a8c-9175e319cd18",
+    "sha256": "9046ae7dabde22c6f304bb0b68808129bff15a3d7131d6785e61181fee7f91d8",
+    "bytes": 68965,
+    "lines": 1638,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-410",
+      "411-820",
+      "821-1230",
+      "1231-1638"
+    ]
+  },
+  {
+    "id": "10",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/10-stream-l1.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/10-stream-l1.md",
+    "childRun": "1a75b411-001e-4c6b-be5e-2dc032007aff",
+    "sha256": "2e5c7c0d214c922b314fd9cabfceeda5841398d17c7ac84b24d1b01fddd1adc7",
+    "bytes": 79307,
+    "lines": 1999,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-500",
+      "501-1000",
+      "1001-1500",
+      "1501-1999"
+    ]
+  },
+  {
+    "id": "11",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/11-theme.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/11-theme.md",
+    "childRun": "11662a9a-62a5-4844-b0dd-342ec3015461",
+    "sha256": "0a91e8e63a08f64bf1caf8d6afc65168b1999327be7222fb99ecc9f16af979b5",
+    "bytes": 60024,
+    "lines": 1722,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-440",
+      "441-880",
+      "881-1320",
+      "1321-1722"
+    ]
+  },
+  {
+    "id": "12",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/12-controls-scroll.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/12-controls-scroll.md",
+    "childRun": "903803e7-7c4f-4c36-8bf4-1c6d0ace3edb",
+    "sha256": "4882d6d862b3952be2146c9aea0ebc06b8faff5a8fe3ba132be2140b4e492423",
+    "bytes": 60582,
+    "lines": 1599,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-400",
+      "401-800",
+      "801-1200",
+      "1201-1599"
+    ]
+  },
+  {
+    "id": "13",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/13-interaction-output.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/13-interaction-output.md",
+    "childRun": "c716ebce-420d-4306-aa54-3e99fd47346d",
+    "sha256": "af01fe00664a25b1b4e557a976be9d7bd78302e5ecec7c532d91b28cd61e1acc",
+    "bytes": 62881,
+    "lines": 1444,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-480",
+      "481-960",
+      "961-1444"
+    ]
+  },
+  {
+    "id": "14",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/14-paint-physical.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/14-paint-physical.md",
+    "childRun": "2dc3ddb9-7ada-4573-9011-beda8533da58",
+    "sha256": "0f54da9440a6b372f5be357e9c114973c38841a6d1e72af37369c03c50ea81d0",
+    "bytes": 66562,
+    "lines": 1603,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-420",
+      "421-840",
+      "841-1260",
+      "1261-1603"
+    ]
+  },
+  {
+    "id": "15",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/15-terminal-backend.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/15-terminal-backend.md",
+    "childRun": "2cbaf321-6de8-4638-9b0c-cb75fcab825b",
+    "sha256": "c622e28f2625ea61e9dd90fb9910791798a3ea6695d28417e25ea2342976a25c",
+    "bytes": 51727,
+    "lines": 1055,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-355",
+      "356-710",
+      "711-1055"
+    ]
+  },
+  {
+    "id": "16",
+    "path": "docs/architecture/atlas-4355c02/subsystems/rust/16-public-binding.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/rust/16-public-binding.md",
+    "childRun": "f388e0f0-6e4c-4cb9-9dd9-0c5cb88a15d7",
+    "sha256": "ca1f35e048fc1472508b6a94687be75778c11749aabecc86a43eccaf93d76c1f",
+    "bytes": 44796,
+    "lines": 1237,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-420",
+      "421-840",
+      "841-1237"
+    ]
+  },
+  {
+    "id": "17",
+    "path": "docs/architecture/atlas-4355c02/subsystems/native/17-structure-state.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/native/17-structure-state.md",
+    "childRun": "e6964302-0ede-4daf-a066-9fdf29e9d275",
+    "sha256": "616205707c2dd34b298a562677d7d677478e1924e2fd8b54c41de5e78b3a5c7a",
+    "bytes": 72945,
+    "lines": 1979,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-495",
+      "496-990",
+      "991-1485",
+      "1486-1979"
+    ]
+  },
+  {
+    "id": "18",
+    "path": "docs/architecture/atlas-4355c02/subsystems/native/18-content-host-events.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/native/18-content-host-events.md",
+    "childRun": "0228e287-0f04-437e-a252-cd2b91f5890d",
+    "sha256": "b34f28a147e5633dd733cec974d090237800b2266fa853b45bcdafc6813b7b56",
+    "bytes": 68414,
+    "lines": 1657,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-420",
+      "421-840",
+      "841-1260",
+      "1261-1657"
+    ]
+  },
+  {
+    "id": "19",
+    "path": "docs/architecture/atlas-4355c02/subsystems/typescript/19-public-api.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/typescript/19-public-api.md",
+    "childRun": "bfa6f6f1-e19c-4d8b-9826-996c451e31fa",
+    "sha256": "9d1f7a3ef6834676b2633274598506fcdc08c8726c9cf78e30641301fc7b04a8",
+    "bytes": 77218,
+    "lines": 1958,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-490",
+      "491-980",
+      "981-1470",
+      "1471-1958"
+    ]
+  },
+  {
+    "id": "20",
+    "path": "docs/architecture/atlas-4355c02/subsystems/typescript/20-composition.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/typescript/20-composition.md",
+    "childRun": "fe8efc60-b570-43bc-b3b1-5fcd126b4054",
+    "sha256": "5b2c19cbcd8e479e35a5d15217d43d44054e4d27b4dfe5d90f11f56bf1adadf7",
+    "bytes": 67840,
+    "lines": 1469,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-370",
+      "371-740",
+      "741-1110",
+      "1111-1469"
+    ]
+  },
+  {
+    "id": "21",
+    "path": "docs/architecture/atlas-4355c02/subsystems/typescript/21-runtime.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/typescript/21-runtime.md",
+    "childRun": "b553d5db-1584-453d-b10d-4f07602babee",
+    "sha256": "6b6ccd869cbca5107c4ab15848a60247baa5fbac9b5ad7c2ae7e22de939eec19",
+    "bytes": 60991,
+    "lines": 1535,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-390",
+      "391-780",
+      "781-1170",
+      "1171-1535"
+    ]
+  },
+  {
+    "id": "22",
+    "path": "docs/architecture/atlas-4355c02/subsystems/typescript/22-structure-state-transport.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/typescript/22-structure-state-transport.md",
+    "childRun": "6e99a6a5-bbd9-4514-a8cf-17ac72e26e3d",
+    "sha256": "974556b3328bc6a3ecd5d546dffc5b92dc24038982669b2f978db23d7afd9ad3",
+    "bytes": 79511,
+    "lines": 2223,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-450",
+      "451-900",
+      "901-1350",
+      "1351-1800",
+      "1801-2223"
+    ]
+  },
+  {
+    "id": "23",
+    "path": "docs/architecture/atlas-4355c02/subsystems/typescript/23-content-native-transport.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/typescript/23-content-native-transport.md",
+    "childRun": "115d292e-da46-4c08-8e2e-7383d034023e",
+    "sha256": "cd8193ca265f5085a48d20037f103043b49f91d81484a1156b19395c9c168486",
+    "bytes": 72474,
+    "lines": 1874,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-470",
+      "471-940",
+      "941-1410",
+      "1411-1874"
+    ]
+  },
+  {
+    "id": "24",
+    "path": "docs/architecture/atlas-4355c02/subsystems/support/24-codegen.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/support/24-codegen.md",
+    "childRun": "d49d68ff-bffb-419b-aa70-62e9be9679fb",
+    "sha256": "df46fd220f695c49484f763d18d71b76d3b3b62b24cb3a6d96392a3b7b8d97b7",
+    "bytes": 58225,
+    "lines": 1517,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-500",
+      "501-1000",
+      "1001-1517"
+    ]
+  },
+  {
+    "id": "25",
+    "path": "docs/architecture/atlas-4355c02/subsystems/support/25-tests-fixtures.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/support/25-tests-fixtures.md",
+    "childRun": "c798a6e6-0b6f-4518-8429-258283f26226",
+    "sha256": "a036a3dce709c31640c3e716b804f3e29e0b8aa79778e7991a7cd71dadadefe2",
+    "bytes": 66728,
+    "lines": 1749,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-450",
+      "451-900",
+      "901-1350",
+      "1351-1749"
+    ]
+  },
+  {
+    "id": "26",
+    "path": "docs/architecture/atlas-4355c02/subsystems/support/26-bench-build-examples.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/subsystems/support/26-bench-build-examples.md",
+    "childRun": "6a3d9fd3-8521-4363-b8cd-4662924d7f09",
+    "sha256": "46460d33fd1855613d55b61a4fc0d0ebc071a9050f708ce8e9b7fcbffde2c892",
+    "bytes": 63746,
+    "lines": 1589,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-400",
+      "401-800",
+      "801-1200",
+      "1201-1589"
+    ]
+  },
+  {
+    "id": "27",
+    "path": "docs/architecture/atlas-4355c02/wiring/27-rust-side.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/wiring/27-rust-side.md",
+    "childRun": "efd91120-1aa1-4983-ac39-8e7d2b0d0587",
+    "sha256": "69eeea2e5e8b61a1780a535719a301a0aa96e7f87b326b7cb6c5f87c9a4a160a",
+    "bytes": 72859,
+    "lines": 1646,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-420",
+      "421-840",
+      "841-1250",
+      "1251-1646"
+    ]
+  },
+  {
+    "id": "28",
+    "path": "docs/architecture/atlas-4355c02/wiring/28-typescript-side.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/wiring/28-typescript-side.md",
+    "childRun": "144d29a5-5012-4897-ad98-6543b448ab6c",
+    "sha256": "a72c606d8467d5f313c84505afe6b8bf5b944d26f01db849d28cc47c0473b06d",
+    "bytes": 89491,
+    "lines": 2010,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-410",
+      "411-820",
+      "821-1230",
+      "1231-1640",
+      "1641-2010"
+    ]
+  },
+  {
+    "id": "29",
+    "path": "docs/architecture/atlas-4355c02/wiring/29-three-planes.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/wiring/29-three-planes.md",
+    "childRun": "2a40160b-0b9e-4175-aab5-1a68e34e841a",
+    "sha256": "2ac22843476c08ae13ed969dd73c834125e210f4de9d581bbc617ae3e67a9e29",
+    "bytes": 76808,
+    "lines": 1811,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-455",
+      "456-910",
+      "911-1365",
+      "1366-1811"
+    ]
+  },
+  {
+    "id": "30",
+    "path": "docs/architecture/atlas-4355c02/traces/30-composition-root.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/30-composition-root.md",
+    "childRun": "b49dddba-a7c2-4428-bdaa-4b7ac55606ef",
+    "sha256": "090ac86287dae7a3ced544a6168531f96892cf22b559ea0ca07d52594dc38063",
+    "bytes": 83315,
+    "lines": 2374,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-480",
+      "481-960",
+      "961-1440",
+      "1441-1920",
+      "1921-2374"
+    ]
+  },
+  {
+    "id": "31",
+    "path": "docs/architecture/atlas-4355c02/traces/31-structural-mutation.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/31-structural-mutation.md",
+    "childRun": "74d587e3-bfa9-4b11-9822-fcd804655426",
+    "sha256": "2a9c216883e8a9370d2a65ba5a2c1c35780f06c0c0bac29d9fb7047524629421",
+    "bytes": 59499,
+    "lines": 1242,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-415",
+      "416-830",
+      "831-1242"
+    ]
+  },
+  {
+    "id": "32",
+    "path": "docs/architecture/atlas-4355c02/traces/32-state-mutation.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/32-state-mutation.md",
+    "childRun": "1a84db29-44c7-4b69-a70c-284f7f1e9679",
+    "sha256": "5d90d8d2b85d88a8c6fa5629a0fa845bfc53b9bfa3a65419011f57ba39a65434",
+    "bytes": 57036,
+    "lines": 1176,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-392",
+      "393-784",
+      "785-1176"
+    ]
+  },
+  {
+    "id": "33",
+    "path": "docs/architecture/atlas-4355c02/traces/33-themes-styles.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/33-themes-styles.md",
+    "childRun": "99152004-6bf0-4080-aaed-2909b1b8f79f",
+    "sha256": "64f4e2b84f39bcfe8678167535dff2cf3acfbcda045a7020143df29a400bf37e",
+    "bytes": 67875,
+    "lines": 1551,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-390",
+      "391-780",
+      "781-1170",
+      "1171-1551"
+    ]
+  },
+  {
+    "id": "34",
+    "path": "docs/architecture/atlas-4355c02/traces/34-runtime-scheduling.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/34-runtime-scheduling.md",
+    "childRun": "e0cf20a7-20d0-4855-936e-2a3662f3a776",
+    "sha256": "6bf2ec23962392d26cd4887446fcdb0c75d886c9d5ebdff6f9dc48c52a7f9e38",
+    "bytes": 83670,
+    "lines": 2079,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-420",
+      "421-840",
+      "841-1260",
+      "1261-1680",
+      "1681-2079"
+    ]
+  },
+  {
+    "id": "35",
+    "path": "docs/architecture/atlas-4355c02/traces/35-stream-content.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/35-stream-content.md",
+    "childRun": "e407f42a-b2fd-46be-b1ff-dd1cabb2dca2",
+    "sha256": "6b2a253e86bf6bc03144863421fe56c9ea870e4c5c335a451f229c36090ee2a2",
+    "bytes": 65157,
+    "lines": 1681,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-425",
+      "426-850",
+      "851-1275",
+      "1276-1681"
+    ]
+  },
+  {
+    "id": "36",
+    "path": "docs/architecture/atlas-4355c02/traces/36-layout-resize.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/36-layout-resize.md",
+    "childRun": "c2337c2e-74d6-4912-a024-aee6560c920c",
+    "sha256": "742e093691daca293c51fe4974e5d09f2ddccef4890ece9142ccc7c71635f00e",
+    "bytes": 72923,
+    "lines": 1882,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-470",
+      "471-940",
+      "941-1410",
+      "1411-1882"
+    ]
+  },
+  {
+    "id": "37",
+    "path": "docs/architecture/atlas-4355c02/traces/37-history-scrollback.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/37-history-scrollback.md",
+    "childRun": "45a44924-144c-4cd8-abe5-80056699b338",
+    "sha256": "9a89270d47814aa107c06b9927403b986efcf16f7a4b216e352f42fb206c7fbd",
+    "bytes": 77559,
+    "lines": 1931,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-480",
+      "481-960",
+      "961-1440",
+      "1441-1931"
+    ]
+  },
+  {
+    "id": "38",
+    "path": "docs/architecture/atlas-4355c02/traces/38-input-callbacks.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/38-input-callbacks.md",
+    "childRun": "fe954aaa-2c5e-4f4a-bb97-40960c145dce",
+    "sha256": "7a1d3f5daebc1f503bd0b4773280139dc5e6f04bba47125227d37e133224ad8e",
+    "bytes": 68128,
+    "lines": 1453,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-485",
+      "486-970",
+      "971-1453"
+    ]
+  },
+  {
+    "id": "39",
+    "path": "docs/architecture/atlas-4355c02/traces/39-slots-controls-animation.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/39-slots-controls-animation.md",
+    "childRun": "4a0e5eaf-ad7a-441e-909e-0b2ea01e3ecf",
+    "sha256": "98a818d097f307a64efee7960c20bdb97a49a8b897bd6a27b811ea5c7a83c4aa",
+    "bytes": 85799,
+    "lines": 1902,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-480",
+      "481-960",
+      "961-1440",
+      "1441-1902"
+    ]
+  },
+  {
+    "id": "40",
+    "path": "docs/architecture/atlas-4355c02/traces/40-lifetime-caches.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/traces/40-lifetime-caches.md",
+    "childRun": "7d31df1a-e67c-4a8d-954d-85268b967860",
+    "sha256": "52d55577139393a10cdd91f5fa5110ed37c5e81b023a9ff1b619f97ddea248f9",
+    "bytes": 66839,
+    "lines": 1631,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-410",
+      "411-820",
+      "821-1230",
+      "1231-1631"
+    ]
+  },
+  {
+    "id": "41",
+    "path": "docs/architecture/atlas-4355c02/audits/41-production-routes.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/audits/41-production-routes.md",
+    "childRun": "39077193-972a-421d-91df-c5eb52a26785",
+    "sha256": "1952816b4f5de54f45ccdaa5d87fd732872a418a080c23f6300485865eca162b",
+    "bytes": 73639,
+    "lines": 1588,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-400",
+      "401-800",
+      "801-1200",
+      "1201-1588"
+    ]
+  },
+  {
+    "id": "42",
+    "path": "docs/architecture/atlas-4355c02/audits/42-benchmark-integrity.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/audits/42-benchmark-integrity.md",
+    "childRun": "f38366b3-0705-4c92-858c-ae7ec68fb393",
+    "sha256": "ea3893fc0e65c623ef04e8d9c77871ba1cd9a0f2c3c7d63d6dcdef1535e87094",
+    "bytes": 51433,
+    "lines": 975,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-490",
+      "491-975"
+    ]
+  },
+  {
+    "id": "43",
+    "path": "docs/architecture/atlas-4355c02/audits/43-test-contracts.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/audits/43-test-contracts.md",
+    "childRun": "daa14083-9e37-41e3-a5bd-8d06cd021f95",
+    "sha256": "91eec5764940718b4c2239c58d523296440316ee7886451efdff3c20d23019af",
+    "bytes": 64079,
+    "lines": 1397,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-465",
+      "466-930",
+      "931-1397"
+    ]
+  },
+  {
+    "id": "44",
+    "path": "docs/architecture/atlas-4355c02/audits/44-history-doc-drift.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/b363950e-0ff9-4622-a8f0-491385679af2/audits/44-history-doc-drift.md",
+    "childRun": "fedee2f0-cd10-407b-a7bc-21068c9e8f3c",
+    "sha256": "10b0e62a6de3dcc48655ee4757a3df636412b3d7be37c1c72b85b2bf5e61d8a7",
+    "bytes": 64784,
+    "lines": 1419,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-475",
+      "476-950",
+      "951-1419"
+    ]
+  },
+  {
+    "id": "45",
+    "path": "docs/architecture/atlas-4355c02/audits/45-coverage-reconciliation.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/0b1ee8ef-ede7-4b21-9db7-16f5c2b82e20/audits/45-coverage-reconciliation.md",
+    "childRun": "258b3ac0-056c-4480-bbe4-909bf34d8a4e",
+    "sha256": "56a2e1f1a1a9d1def20b9434acc4edc4ac6620d3597dfd6e34ae5073ff4dc3cf",
+    "bytes": 58066,
+    "lines": 1028,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-515",
+      "516-1028"
+    ],
+    "managedOriginalOverwrittenByResume": true,
+    "preservationNote": "Canonical repository copy retains original SHA-256; management resume reused its stored managed output path for report46. Do not recopy managed original over canonical45."
+  },
+  {
+    "id": "46",
+    "path": "docs/architecture/atlas-4355c02/audits/46-grouped-deviation-followup.md",
+    "original": "/Users/alxknt/.pi/agent/sessions/--Users-alxknt-github-iyon-n-iyon-tui--/subagent-artifacts/outputs/0b1ee8ef-ede7-4b21-9db7-16f5c2b82e20/audits/45-coverage-reconciliation.md",
+    "childRun": "1cf4ce1e-a44c-4b29-9d8e-0019791e181e",
+    "resumedFrom": "258b3ac0-056c-4480-bbe4-909bf34d8a4e",
+    "sha256": "49b02a70b565ce405d10411e5f86e560518c77b2ecdf31c4c516c8a2bd526e15",
+    "bytes": 68301,
+    "lines": 1477,
+    "readByParent": true,
+    "parentReadRanges": [
+      "1-180",
+      "181-550",
+      "551-940",
+      "941-1477"
+    ]
+  }
+]

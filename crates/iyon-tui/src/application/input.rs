@@ -2,60 +2,37 @@ use std::collections::HashMap;
 
 use crate::{Component, ComponentHandle, KeyStroke, component::ComponentId};
 
-pub(crate) struct GlobalBindings<Action> {
-    bindings: HashMap<KeyStroke, Box<dyn Fn() -> Action>>,
+use super::host::RoutedOutput;
+
+#[derive(Default)]
+pub(crate) struct GlobalBindings {
+    bindings: HashMap<KeyStroke, Box<dyn Fn() -> RoutedOutput>>,
 }
 
-impl<Action> Default for GlobalBindings<Action> {
-    fn default() -> Self {
-        Self {
-            bindings: HashMap::new(),
-        }
-    }
-}
-
-impl<Action> GlobalBindings<Action> {
-    pub(crate) fn bind(&mut self, key: KeyStroke, action: impl Fn() -> Action + 'static) {
-        self.bindings.insert(key, Box::new(action));
+impl GlobalBindings {
+    pub(crate) fn bind(&mut self, key: KeyStroke, factory: impl Fn() -> RoutedOutput + 'static) {
+        self.bindings.insert(key, Box::new(factory));
     }
 
-    pub(crate) fn unbind(&mut self, key: KeyStroke) -> bool {
-        self.bindings.remove(&key).is_some()
-    }
-
-    pub(crate) fn action(&self, key: KeyStroke) -> Option<Action> {
+    pub(crate) fn output(&self, key: KeyStroke) -> Option<RoutedOutput> {
         self.bindings.get(&key).map(|factory| factory())
     }
 }
 
-pub(crate) struct PasteInterceptors<Action> {
-    interceptors: HashMap<ComponentId, Box<dyn Fn(String) -> Action>>,
+#[derive(Default)]
+pub(crate) struct PasteInterceptors {
+    interceptors: HashMap<ComponentId, Box<dyn Fn(String) -> RoutedOutput>>,
 }
 
-impl<Action> Default for PasteInterceptors<Action> {
-    fn default() -> Self {
-        Self {
-            interceptors: HashMap::new(),
-        }
-    }
-}
-
-impl<Action> PasteInterceptors<Action> {
+impl PasteInterceptors {
     pub(crate) fn intercept<C>(
         &mut self,
         component: ComponentHandle<C>,
-        map: impl Fn(String) -> Action + 'static,
+        map: impl Fn(String) -> RoutedOutput + 'static,
     ) where
         C: Component,
     {
         self.interceptors.insert(component.id(), Box::new(map));
-    }
-
-    pub(crate) fn remove<C>(&mut self, component: ComponentHandle<C>) -> bool
-    where
-        C: Component,
-    {
-        self.interceptors.remove(&component.id()).is_some()
     }
 
     /// PERF-12 T13.1 R8: ID-based counterpart of `remove` for host-side
@@ -64,7 +41,7 @@ impl<Action> PasteInterceptors<Action> {
         self.interceptors.remove(&component).is_some()
     }
 
-    pub(crate) fn action(&self, component: ComponentId, text: &str) -> Option<Action> {
+    pub(crate) fn output(&self, component: ComponentId, text: &str) -> Option<RoutedOutput> {
         self.interceptors
             .get(&component)
             .map(|map| map(text.to_owned()))

@@ -901,20 +901,6 @@ impl SceneHost {
         self.focused_component()
     }
 
-    #[cfg(test)]
-    pub(crate) fn mount_count_for_test(&self) -> usize {
-        self.graph.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn focusable_count_for_test(&self) -> usize {
-        self.capabilities
-            .entries
-            .values()
-            .filter(|capabilities| capabilities.focusable)
-            .count()
-    }
-
     pub(crate) fn dispatch_key_local(
         &mut self,
         key: KeyStroke,

@@ -1,35 +1,22 @@
-//! Generic standalone application kernel.
+//! Native host runtime and its retained content/state integration.
 //!
-//! [`App`] owns application state and framework runtime state while [`AppCx`]
-//! exposes the narrow capabilities available to `init` and `update`.
-//! Components continue to handle local interaction; their typed outputs are
-//! routed into the application's action queue.
+//! Rust does not expose a generic application-authoring loop here. The native
+//! host owns the concrete runtime, while TypeScript supplies application
+//! composition through the binding seam.
 
-mod app;
 #[cfg(feature = "native-host")]
 pub(crate) mod content;
-mod context;
 #[cfg(feature = "native-host")]
 pub(crate) mod environment;
-mod handle;
 #[cfg(feature = "native-host")]
 pub(crate) mod host;
+#[cfg(feature = "native-host")]
 mod input;
+#[cfg(feature = "native-host")]
 mod kernel;
+#[cfg(feature = "native-host")]
 mod run;
 #[cfg(feature = "native-host")]
 mod source_store;
-#[cfg(test)]
-#[path = "tests/driver.rs"]
-mod test_driver;
-mod timer;
 #[cfg(feature = "native-host")]
 pub(crate) mod view_state;
-
-#[cfg(test)]
-mod tests;
-
-pub use app::App;
-pub use context::AppCx;
-#[cfg(test)]
-pub use handle::AppHandle;

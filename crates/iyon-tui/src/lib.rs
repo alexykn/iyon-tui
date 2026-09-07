@@ -49,13 +49,6 @@ mod terminal;
 mod text;
 pub(crate) mod theme;
 
-// The application driver and presentation graph are runtime-only. Keep the
-// short names available to the in-crate kernel while deliberately omitting
-// them from the public crate surface.
-#[cfg(test)]
-pub(crate) use application::AppHandle;
-pub(crate) use application::{App, AppCx};
-
 pub(crate) use component::{Component, ComponentCx, ComponentHandle};
 #[cfg(test)]
 pub(crate) use content::diff::{DiffLineNumber, DiffLineOffset, DiffRange};
@@ -69,8 +62,6 @@ pub(crate) use content::text::{
     TextRenderPolicy,
 };
 pub(crate) use controls::TextInput;
-#[cfg(test)]
-pub(crate) use history::HistoryError;
 pub(crate) use history::{History, HistoryLayout, HistoryUnitId};
 pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};

@@ -1,6 +1,6 @@
 # Current architecture of iyon-tui
 
-**Last source verification:** `4355c02d6853549adf32a1e038b14665ce5c6bf8` (after L1 completion).  
+**Last source verification:** baseline `c83f3138a468e0a1095e99c8328ec7ba4953aeed` plus the native-runtime cleanup in this working tree.
 **Status:** maintained reference; implementation description, not a V5 design or disposition plan.  
 **Companion:** [revision-specific technical inventory](atlas-4355c02/COMPREHENSIVE-REPORT.md).
 
@@ -75,6 +75,46 @@ The supported authoring package is **`@iyon/tui`**, with root, `./testing` and `
 `AppHarness` belongs to the testing subpath, not the package root. Factory-created controls such as ViewSlot and ScrollPane are exposed as types; callers obtain them from Tui. Type-only export and private construction are not, by themselves, proof that every implementation member is hidden by the emitted declaration surface.
 
 **Deeper evidence:** inventory§1, reports16/19/24/27/28 and the API/build audits.
+
+### 2.1 Native host ownership after generic Rust application removal
+
+The Rust application module is now a native-host implementation boundary, not a
+generic application-authoring package. The ownership path is concrete:
+
+```text
+TuiHost
+  Arc<Mutex<HostInner>>
+    NativeRuntime
+      Scene + Theme + History
+      ComponentRegistry + SceneHost
+      native key/paste routing and component tick deadlines
+      bounded routed-output reduction and deferred retirement
+    backend + candidate/receipt/frame state
+    environment + retained state/content publication state
+```
+
+`NativeRuntime` is the specialized successor to the former generic runtime
+shell. It owns the retained native mechanics that the binding needs: component
+registration and reconciliation, focus/local/global key routing, paste
+interceptor precedence and forwarding, component tick scheduling, typed output
+draining, scene/theme/History authority, attachment discovery and deferred
+component reclamation. Routed outputs are reduced into a concrete FIFO owned by
+the runtime; no Rust application callback is involved.
+
+The removed `application/app.rs`, `context.rs`, `handle.rs`, `timer.rs` and
+test-only terminal driver represented unsupported Rust application authoring:
+generic state/action callbacks, external action ingress, application-owned
+one-shot timers and a duplicate terminal loop. Their deletion does not remove
+native terminal decoding, component interaction, History transfer, candidate
+rollback, content/state publication or receipt synchronization. Those remain in
+`NativeRuntime`, `HostInner`, `SceneHost`, `History`, and the binding seam above.
+
+The post-cleanup verification basis is the native-host test suite, including
+host-level tests for text-input local paste/submit routing, interceptor
+precedence and forwarding, global-key fallback, routed-output FIFO, view-slot
+tick deadlines, candidate/receipt rollback, state/content attachment validation,
+History/content publication, and deferred cleanup. Generic callback-driver tests
+were removed rather than treated as public framework behavior.
 
 ## 3. Authoring is semantic; execution is retained
 
@@ -349,13 +389,21 @@ A semantic History unit remains recolorable until physical acceptance. Exact nat
 
 ### 10.1 More than one clock or queue
 
-The TS scope queue decides which bodies rerun. The realm wake broker coordinates native environments and pending Tui hosts. The native environment drains host epochs. A host processes bounded actions, input, component ticks and content deadlines. The backend worker owns physical writes and receipts.
+The TS scope queue decides which bodies rerun. The realm wake broker coordinates native environments and pending Tui hosts. The native environment drains host epochs. A host processes bounded routed outputs, input, component ticks and content deadlines. The backend worker owns physical writes and receipts.
 
 These are cooperating owners, not duplicate implementations of the same loop.
 
 Automatic failures block the failed epoch to avoid spinning. A newer mutation or explicit retry barrier can retry. Tui flush bounds incomplete progress, but a reported error is thrown immediately; it does not silently try the same error64 times.
 
 Native waitForOutput advances/flushes its local host. It does not run the environment-wide drain that the TS broker supplies. Abort-aware event waiting has a distinct TS polling path. Deterministic harness clock advance is not the same operation as wall-clock native wait.
+
+The native host has no generic Rust action ingress or application timer queue.
+Its bounded queue contains only caller-defined routed outputs produced by native
+component interaction, global bindings, paste interceptors or component ticks;
+the queue is reduced into the host's output FIFO before the next output is
+observed. Wake deadlines come from native component ticks and content/source
+work, while `HostInner` continues to own frame preparation, presentation
+receipts and candidate promotion.
 
 ### 10.2 Real versus headless backend
 
@@ -394,6 +442,21 @@ The map found useful tests and counters, but evidence has a scope:
 - A source-local invariant gap is not a demonstrated reachable public failure.
 
 Structural ABI generation does not cover the handwritten content ABI. Runtime fingerprints do not include every separate generator input. Native staging copies before all qualification completes. Record actual artifact path, revision, features and route when interpreting failures or benchmark numbers.
+
+For the native-runtime cleanup, the verification basis was: `cargo fmt
+--all -- --check` and `cargo check -p iyon-tui --features native-host` (pass);
+the focused native-host suite (681 passed, 1 ignored), `cargo test -p
+iyon-tui-native` (60 passed, 1 ignored across targets), and `cargo test
+--workspace` (all workspace targets passed); `bun run check:ownership`, `bun run
+check:tui-binding`, and the two TUI package/consumer test paths (123 passed).
+Parent verification rebuilt and staged the default N-API addon with `bun run
+native:stage` at `packages/iyon-tui/native/iyon-tui-native.node` on darwin-arm64,
+then reran both Bun test paths against that artifact (123 passed, 0 failed).
+The requested `-D warnings` clippy runs remain blocked by the repository's
+existing warning backlog (including terminal presenter/shadow casts and broad
+unused/dead-code diagnostics); no unrelated atlas or terminal cleanup was
+included here. Parent also ran `cargo clippy -p iyon-tui --features native-host
+-- -W clippy::cognitive_complexity`: exit 0 with 712 warnings, not a clean lint gate.
 
 The mapping's executed checks are in [final validation evidence](atlas-4355c02/evidence/final-validation.md). No broad test suite or benchmark result is implied by the architectural description.
 

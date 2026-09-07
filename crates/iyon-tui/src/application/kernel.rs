@@ -1,6 +1,4 @@
-use std::{collections::VecDeque, marker::PhantomData, sync::Arc, time::Instant};
-
-use tokio::sync::mpsc::{Receiver, error::TryRecvError};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use anyhow::Result;
 
@@ -11,26 +9,17 @@ use crate::{
     component::ComponentRegistry,
     geometry::Size,
     output::OutputDispatchError,
-    presentation::{ContentProvider, EmptyContentProvider},
+    presentation::ContentProvider,
     retained_state::StateFrameView,
     scene::{PreparedSceneFrame, SceneHost, SceneHostError},
 };
 
 use super::{
-    app::App,
-    context::{AppCx, AppCxParts},
-    handle::AppHandle,
+    host::RoutedOutput,
     input::{GlobalBindings, PasteInterceptors},
-    timer::TimerQueue,
 };
 
-const ACTION_BATCH_BUDGET: usize = 128;
-
-#[derive(Debug)]
-pub(crate) enum KernelError<Error> {
-    Application(Error),
-    Output(OutputDispatchError),
-}
+const OUTPUT_BATCH_BUDGET: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReadyStatus {
@@ -39,17 +28,20 @@ pub(crate) struct ReadyStatus {
     pub(crate) more_ready: bool,
 }
 
-pub(crate) struct RunningApp<State, Action, Error, Update, ViewFn> {
-    pub(crate) state: State,
+/// Native retained runtime owned by `HostInner`.
+///
+/// This is intentionally concrete: the native host has one caller-defined
+/// routed-output value, and does not expose a generic Rust application loop,
+/// callback set, external ingress, or application timer queue.
+pub(crate) struct NativeRuntime {
     scene: Scene,
     theme: Arc<crate::Theme>,
     components: ComponentRegistry,
-    outputs: OutputRouter<Action>,
+    outputs: OutputRouter<RoutedOutput>,
     scene_host: SceneHost,
-    actions: VecDeque<Action>,
-    timers: TimerQueue<Action>,
-    global_bindings: GlobalBindings<Action>,
-    paste_interceptors: PasteInterceptors<Action>,
+    pending_outputs: VecDeque<RoutedOutput>,
+    global_bindings: GlobalBindings,
+    paste_interceptors: PasteInterceptors,
     /// PERF-12 T13.1 R8: component ids whose language handle was disposed and
     /// which may be physically reclaimed once the last SUCCESSFULLY reconciled
     /// mount graph no longer contains them (deferred retirement — never
@@ -57,21 +49,12 @@ pub(crate) struct RunningApp<State, Action, Error, Update, ViewFn> {
     /// replacement publishes).
     pending_component_retirements: Vec<u64>,
     deferred_pastes: VecDeque<String>,
-    ingress: Option<Receiver<Action>>,
-    handle: AppHandle<Action>,
-    update: Update,
-    view: ViewFn,
+    routed_outputs: VecDeque<RoutedOutput>,
     dirty: bool,
-    body_dirty: bool,
     exit_requested: bool,
-    marker: PhantomData<fn() -> Error>,
 }
 
-impl<State, Action, Error, Update, ViewFn> RunningApp<State, Action, Error, Update, ViewFn>
-where
-    Update: FnMut(&mut State, Action, &mut AppCx<'_, Action>) -> Result<(), Error>,
-    ViewFn: Fn(&State) -> View,
-{
+impl NativeRuntime {
     pub(crate) fn host_register<C>(&mut self, component: C) -> ComponentHandle<C>
     where
         C: crate::Component,
@@ -82,15 +65,15 @@ where
     pub(crate) fn host_bind_key(
         &mut self,
         key: crate::KeyStroke,
-        action: impl Fn() -> Action + 'static,
+        factory: impl Fn() -> RoutedOutput + 'static,
     ) {
-        self.global_bindings.bind(key, action);
+        self.global_bindings.bind(key, factory);
     }
 
     pub(crate) fn host_route<T: 'static>(
         &mut self,
         output: crate::Output<T>,
-        map: impl Fn(T) -> Action + 'static,
+        map: impl Fn(T) -> RoutedOutput + 'static,
     ) -> Result<(), crate::RouteConflict> {
         self.outputs.route(output, map)
     }
@@ -98,14 +81,14 @@ where
     pub(crate) fn host_intercept_paste<C>(
         &mut self,
         component: ComponentHandle<C>,
-        map: impl Fn(String) -> Action + 'static,
+        map: impl Fn(String) -> RoutedOutput + 'static,
     ) where
         C: crate::Component,
     {
         self.paste_interceptors.intercept(component, map);
     }
 
-    pub(crate) fn host_forward_paste(&mut self, text: String) -> Result<(), KernelError<Error>> {
+    pub(crate) fn host_forward_paste(&mut self, text: String) -> Result<(), OutputDispatchError> {
         self.deferred_pastes.push_back(text);
         self.drain_deferred_pastes()
     }
@@ -397,12 +380,10 @@ where
 
     pub(crate) fn host_set_body(&mut self, body: View) {
         if self.scene.body() == &body {
-            self.body_dirty = false;
             return;
         }
         self.scene.set_body(body);
         self.scene_host.invalidate_root();
-        self.body_dirty = false;
         self.dirty = true;
     }
 
@@ -424,7 +405,8 @@ where
 
     pub(crate) fn host_exit(&mut self) {
         self.exit_requested = true;
-        self.close_ingress();
+        self.pending_outputs.clear();
+        self.deferred_pastes.clear();
         self.dirty = true;
     }
 
@@ -440,90 +422,28 @@ where
         self.scene.history_mut()
     }
 
-    pub(crate) fn new<Init>(
-        app: App<State, Action, Error, Init, Update, ViewFn>,
-        now: Instant,
-    ) -> Result<Self, KernelError<Error>>
-    where
-        Init: FnOnce(&mut AppCx<'_, Action>) -> Result<State, Error>,
-    {
-        let App {
-            init,
-            update,
-            view,
-            history,
-            theme,
-            handle,
-            ingress,
-            marker: _,
-        } = app;
-        let mut scene = history.map_or_else(
-            || Scene::new(vf::spacer(0)),
-            |history| Scene::with_history(history, vf::spacer(0)),
-        );
-        let mut components = ComponentRegistry::new();
-        let mut outputs = OutputRouter::new();
-        let mut timers = TimerQueue::default();
-        let mut global_bindings = GlobalBindings::default();
-        let mut paste_interceptors = PasteInterceptors::default();
-        let mut deferred_pastes = VecDeque::new();
-        let mut exit_requested = false;
-        // The kernel shares one immutable theme table with frame/content
-        // contexts. Lending it mutably to application code clones only when
-        // shared (copy-on-write); the common unshared case stays free.
-        let mut theme = Arc::new(theme);
-        let state = {
-            let mut cx = AppCx::new(
-                AppCxParts {
-                    scene: &mut scene,
-                    components: &mut components,
-                    outputs: &mut outputs,
-                    timers: &mut timers,
-                    theme: &mut theme,
-                    global_bindings: &mut global_bindings,
-                    paste_interceptors: &mut paste_interceptors,
-                    deferred_pastes: &mut deferred_pastes,
-                    exit_requested: &mut exit_requested,
-                    handle: &handle,
-                },
-                now,
-            );
-            init(&mut cx).map_err(KernelError::Application)?
-        };
-        let mut running = Self {
-            state,
-            scene,
-            theme,
-            components,
-            outputs,
+    pub(crate) fn new() -> Self {
+        Self {
+            scene: Scene::with_history(crate::History::new(), vf::spacer(0)),
+            theme: Arc::new(crate::Theme::new()),
+            components: ComponentRegistry::new(),
+            outputs: OutputRouter::new(),
             scene_host: SceneHost::default(),
             pending_component_retirements: Vec::new(),
-            actions: VecDeque::new(),
-            timers,
-            global_bindings,
-            paste_interceptors,
-            deferred_pastes,
-            ingress,
-            handle,
-            update,
-            view,
+            pending_outputs: VecDeque::new(),
+            global_bindings: GlobalBindings::default(),
+            paste_interceptors: PasteInterceptors::default(),
+            deferred_pastes: VecDeque::new(),
+            routed_outputs: VecDeque::new(),
             dirty: true,
-            body_dirty: false,
-            exit_requested,
-            marker: PhantomData,
-        };
-        let body = (running.view)(&running.state);
-        running.scene.set_body(body);
-        if running.exit_requested {
-            running.close_ingress();
+            exit_requested: false,
         }
-        Ok(running)
     }
 
     pub(crate) fn dispatch_key(
         &mut self,
         key: crate::KeyStroke,
-    ) -> Result<InteractionResult, KernelError<Error>> {
+    ) -> Result<InteractionResult, OutputDispatchError> {
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
         }
@@ -532,11 +452,11 @@ where
             .scene_host
             .dispatch_key_local(key, &mut self.components);
         let next_focus = self.scene_host.focused_component();
-        self.drain_outputs_to_actions()?;
+        self.drain_outputs_to_pending()?;
         if result == InteractionResult::Ignored
-            && let Some(action) = self.global_bindings.action(key)
+            && let Some(output) = self.global_bindings.output(key)
         {
-            self.actions.push_back(action);
+            self.pending_outputs.push_back(output);
             return Ok(InteractionResult::Consumed);
         }
         if result == InteractionResult::Consumed {
@@ -549,21 +469,21 @@ where
     pub(crate) fn dispatch_paste(
         &mut self,
         text: &str,
-    ) -> Result<InteractionResult, KernelError<Error>> {
+    ) -> Result<InteractionResult, OutputDispatchError> {
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
         }
-        if let Some(action) = self.scene_host.intercept_paste(text, |component, _text| {
-            self.paste_interceptors.action(component, text)
+        if let Some(output) = self.scene_host.intercept_paste(text, |component, _text| {
+            self.paste_interceptors.output(component, text)
         }) {
-            self.actions.push_back(action);
+            self.pending_outputs.push_back(output);
             return Ok(InteractionResult::Consumed);
         }
 
         let previous_focus = self.scene_host.focused_component();
         let result = self.scene_host.dispatch_paste(text, &mut self.components);
         let next_focus = self.scene_host.focused_component();
-        self.drain_outputs_to_actions()?;
+        self.drain_outputs_to_pending()?;
         if result == InteractionResult::Consumed {
             self.invalidate_interaction_components(previous_focus, next_focus);
             self.dirty = true;
@@ -574,94 +494,43 @@ where
     pub(crate) fn advance_ready(
         &mut self,
         now: Instant,
-    ) -> Result<ReadyStatus, KernelError<Error>> {
+    ) -> Result<ReadyStatus, OutputDispatchError> {
         if self.exit_requested {
-            self.close_ingress();
-            self.actions.clear();
-            self.timers.clear();
+            self.pending_outputs.clear();
+            self.deferred_pastes.clear();
             return Ok(self.status(false));
         }
 
-        self.collect_due_timers_front(now);
         let tick = self.scene_host.tick_due(now, &mut self.components);
         self.dirty |= tick.dirty;
-        self.drain_outputs_to_actions()?;
+        self.drain_outputs_to_pending()?;
 
-        for _ in 0..ACTION_BATCH_BUDGET {
-            let Some(action) = self.actions.pop_front() else {
+        for _ in 0..OUTPUT_BATCH_BUDGET {
+            let Some(output) = self.pending_outputs.pop_front() else {
                 break;
             };
-            let update_result = {
-                let mut cx = AppCx::new(
-                    AppCxParts {
-                        scene: &mut self.scene,
-                        components: &mut self.components,
-                        outputs: &mut self.outputs,
-                        timers: &mut self.timers,
-                        theme: &mut self.theme,
-                        global_bindings: &mut self.global_bindings,
-                        paste_interceptors: &mut self.paste_interceptors,
-                        deferred_pastes: &mut self.deferred_pastes,
-                        exit_requested: &mut self.exit_requested,
-                        handle: &self.handle,
-                    },
-                    now,
-                );
-                (self.update)(&mut self.state, action, &mut cx)
-            };
-            update_result.map_err(KernelError::Application)?;
+            self.routed_outputs.push_back(output);
+            // Keep the old host-visible scheduling contract: reducing a
+            // routed interaction produces one native dirty step even though
+            // there is no application view callback to rerun.
             self.dirty = true;
-            self.body_dirty = true;
-            self.drain_outputs_to_actions()?;
-            self.drain_deferred_pastes()?;
-            self.collect_due_timers(now);
-            if self.exit_requested {
-                self.close_ingress();
-                self.actions.clear();
-                self.timers.clear();
-                break;
-            }
         }
 
-        Ok(self.status(!self.actions.is_empty()))
+        Ok(self.status(!self.pending_outputs.is_empty()))
     }
 
-    pub(crate) fn has_pending_actions(&self) -> bool {
-        !self.actions.is_empty()
+    pub(crate) fn has_pending_outputs(&self) -> bool {
+        !self.pending_outputs.is_empty()
     }
 
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
-        [
-            self.timers.next_deadline(),
-            self.scene_host.next_tick_deadline(),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-    }
-
-    pub(crate) fn theme(&self) -> &crate::Theme {
-        &self.theme
+        self.scene_host.next_tick_deadline()
     }
 
     /// Shared ownership of the active theme for frame/content contexts.
     /// Readers share one immutable table instead of cloning its maps.
     pub(crate) fn theme_shared(&self) -> &Arc<crate::Theme> {
         &self.theme
-    }
-
-    pub(crate) fn prepare_frame<S, F>(
-        &mut self,
-        now: Instant,
-        sink: &mut S,
-        viewport: F,
-    ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
-    where
-        S: NativeHistorySink,
-        F: FnMut(&mut S) -> Result<Size>,
-    {
-        let mut content = EmptyContentProvider;
-        self.prepare_frame_with_states(now, sink, viewport, &StateFrameView::empty(), &mut content)
     }
 
     pub(crate) fn prepare_frame_with_states<S, F>(
@@ -676,13 +545,6 @@ where
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
-        if self.body_dirty {
-            let body = (self.view)(&self.state);
-            if self.scene.body() != &body {
-                self.scene.set_body(body);
-            }
-            self.body_dirty = false;
-        }
         let frame = self.scene_host.render_at_with_states(
             now,
             &mut self.scene,
@@ -709,79 +571,22 @@ where
         self.dirty
     }
 
-    pub(crate) fn is_exiting(&self) -> bool {
-        self.exit_requested
+    pub(crate) fn next_output(&mut self) -> Option<RoutedOutput> {
+        self.routed_outputs.pop_front()
     }
 
-    #[cfg(feature = "test-util")]
-    pub(crate) fn handle(&self) -> AppHandle<Action> {
-        self.handle.clone()
-    }
-
-    pub(crate) fn close_ingress(&mut self) {
-        self.ingress = None;
-    }
-
-    pub(crate) fn ingress_is_open(&self) -> bool {
-        self.ingress.is_some()
-    }
-
-    pub(crate) async fn recv_external(&mut self) -> Option<Action> {
-        self.ingress.as_mut()?.recv().await
-    }
-
-    fn drain_ingress(&mut self, budget: usize) {
-        for _ in 0..budget {
-            let Some(ingress) = self.ingress.as_mut() else {
-                break;
-            };
-            match ingress.try_recv() {
-                Ok(action) => self.actions.push_back(action),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.close_ingress();
-                    break;
-                }
-            }
-        }
-    }
-
-    pub(crate) fn collect_external_pending(&mut self) {
-        self.drain_ingress(ACTION_BATCH_BUDGET);
-    }
-
-    pub(crate) fn collect_external(&mut self, first: Action) {
-        self.actions.push_back(first);
-        self.drain_ingress(ACTION_BATCH_BUDGET.saturating_sub(1));
-    }
-
-    pub(crate) fn drain_deferred_pastes(&mut self) -> Result<(), KernelError<Error>> {
+    pub(crate) fn drain_deferred_pastes(&mut self) -> Result<(), OutputDispatchError> {
         while let Some(text) = self.deferred_pastes.pop_front() {
             let previous_focus = self.scene_host.focused_component();
             let result = self.scene_host.dispatch_paste(&text, &mut self.components);
             let next_focus = self.scene_host.focused_component();
-            self.drain_outputs_to_actions()?;
+            self.drain_outputs_to_pending()?;
             if result == InteractionResult::Consumed {
                 self.invalidate_interaction_components(previous_focus, next_focus);
                 self.dirty = true;
             }
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn focused_for_test(&self) -> bool {
-        self.scene_host.focused().is_some()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn mount_count_for_test(&self) -> usize {
-        self.scene_host.mount_count_for_test()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn focusable_count_for_test(&self) -> usize {
-        self.scene_host.focusable_count_for_test()
     }
 
     fn status(&self, more_ready: bool) -> ReadyStatus {
@@ -792,34 +597,9 @@ where
         }
     }
 
-    fn collect_due_timers_front(&mut self, now: Instant) {
-        let mut due = Vec::new();
-        while let Some(action) = self.timers.pop_due(now) {
-            due.push(action);
-        }
-        for action in due.into_iter().rev() {
-            self.actions.push_front(action);
-        }
-    }
-
-    fn collect_due_timers(&mut self, now: Instant) {
-        while let Some(action) = self.timers.pop_due(now) {
-            self.actions.push_back(action);
-        }
-    }
-
-    fn drain_outputs_to_actions(&mut self) -> Result<(), KernelError<Error>> {
-        let actions = self
-            .scene_host
-            .drain_outputs(&self.outputs)
-            .map_err(KernelError::Output)?;
-        self.actions.extend(actions);
+    fn drain_outputs_to_pending(&mut self) -> Result<(), OutputDispatchError> {
+        let outputs = self.scene_host.drain_outputs(&self.outputs)?;
+        self.pending_outputs.extend(outputs);
         Ok(())
-    }
-}
-
-impl<Error> From<OutputDispatchError> for KernelError<Error> {
-    fn from(error: OutputDispatchError) -> Self {
-        Self::Output(error)
     }
 }

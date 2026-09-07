@@ -1,11 +1,10 @@
 //! A language-binding host for the retained native application runtime.
 //!
-//! `TuiHost` deliberately exposes caller-defined outputs and native snapshots, not
-//! terminal events. Components remain mounted in the same `SceneHost` used by
-//! the Rust application driver.
+//! `TuiHost` deliberately exposes caller-defined outputs and native snapshots,
+//! not terminal events. Components remain mounted in the native `SceneHost`.
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
@@ -22,9 +21,8 @@ use super::environment::{
 use super::view_state::HostViewState;
 use crate::presentation::factory as vf;
 use crate::{
-    App as TuiApp, AppCx, BorderSpec, Component, ComponentCx, ComponentHandle, History,
-    HistoryLayout, HistoryUnitId, InteractionResult, KeyStroke, Output, ScrollPane, TextInput,
-    Theme, View,
+    BorderSpec, Component, ComponentCx, ComponentHandle, History, HistoryLayout, HistoryUnitId,
+    InteractionResult, KeyStroke, Output, ScrollPane, TextInput, Theme, View,
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
@@ -56,45 +54,7 @@ pub struct HostCellStyle {
     pub strikethrough: bool,
 }
 
-#[derive(Debug)]
-enum HostOutput {
-    Routed(RoutedOutput),
-}
-
-struct HostState {
-    body: View,
-    outputs: VecDeque<RoutedOutput>,
-}
-
-fn host_init(_cx: &mut AppCx<'_, HostOutput>) -> Result<HostState> {
-    Ok(HostState {
-        body: vf::spacer(0),
-        outputs: VecDeque::new(),
-    })
-}
-
-fn host_update(
-    state: &mut HostState,
-    action: HostOutput,
-    _cx: &mut AppCx<'_, HostOutput>,
-) -> Result<()> {
-    match action {
-        HostOutput::Routed(output) => state.outputs.push_back(output),
-    }
-    Ok(())
-}
-
-fn host_view(state: &HostState) -> View {
-    state.body.clone()
-}
-
-type HostRunning = crate::application::kernel::RunningApp<
-    HostState,
-    HostOutput,
-    anyhow::Error,
-    fn(&mut HostState, HostOutput, &mut AppCx<'_, HostOutput>) -> Result<()>,
-    fn(&HostState) -> View,
->;
+type HostRunning = crate::application::kernel::NativeRuntime;
 
 const INPUT_PUMP_BUDGET: usize = 32;
 
@@ -260,7 +220,7 @@ impl HostViewSlot {
     /// PERF-12 T13.1 R8: request deferred retirement of this slot's registry
     /// entry. Idempotent; a never-host-mounted slot (no component id) is a
     /// no-op. Physical reclamation happens in
-    /// `RunningApp::reap_retired_components` after reconciliation proves the
+    /// `NativeRuntime::reap_retired_components` after reconciliation proves the
     /// component unmounted.
     pub fn retire(&self) {
         let Some(raw_id) = self.component_id() else {
@@ -983,17 +943,8 @@ impl TuiHost {
         } else {
             HostBackend::Real(TermwizBackend::enter()?)
         };
-        let app = TuiApp::new(
-            host_init as fn(&mut AppCx<'_, HostOutput>) -> Result<HostState>,
-            host_update as fn(&mut HostState, HostOutput, &mut AppCx<'_, HostOutput>) -> Result<()>,
-            host_view as fn(&HostState) -> View,
-        )
-        .with_theme(Theme::new())
-        .with_history(History::new());
         let now = Instant::now();
-        let mut running = app
-            .start(now)
-            .map_err(|error| anyhow::anyhow!("host init failed: {error:?}"))?;
+        let mut running = HostRunning::new();
         let mut backend = backend;
         let frame = prepare_frame(&mut running, &mut backend, now, &StateFrameView::empty())?;
         let inner =
@@ -1113,7 +1064,6 @@ impl TuiHost {
             .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
         inner.set_desired_state_bindings(&state_targets)?;
         inner.content.set_desired(&content_targets)?;
-        inner.running.state.body = body.clone();
         inner.running.host_set_body(body);
         inner.desired_structural_revision = next_revision;
         inner.mark_pending()
@@ -1177,12 +1127,12 @@ impl TuiHost {
 
     pub fn bind_key(&self, key: KeyStroke, route_id: impl Into<String>) -> Result<()> {
         let route_id = route_id.into();
-        self.lock_mut()?.running.host_bind_key(key, move || {
-            HostOutput::Routed(RoutedOutput {
+        self.lock_mut()?
+            .running
+            .host_bind_key(key, move || RoutedOutput {
                 route_id: route_id.clone(),
                 payload: None,
-            })
-        });
+            });
         Ok(())
     }
 
@@ -1268,11 +1218,9 @@ impl TuiHost {
         let route_id = route_id.into();
         self.lock_mut()?
             .running
-            .host_route(output, move |text| {
-                HostOutput::Routed(RoutedOutput {
-                    route_id: route_id.clone(),
-                    payload: Some(text),
-                })
+            .host_route(output, move |text| RoutedOutput {
+                route_id: route_id.clone(),
+                payload: Some(text),
             })
             .map_err(|_| anyhow::anyhow!("output route already exists"))?;
         Ok(())
@@ -1286,11 +1234,9 @@ impl TuiHost {
         let route_id = route_id.into();
         self.lock_mut()?
             .running
-            .host_route(output, move |text| {
-                HostOutput::Routed(RoutedOutput {
-                    route_id: route_id.clone(),
-                    payload: Some(text),
-                })
+            .host_route(output, move |text| RoutedOutput {
+                route_id: route_id.clone(),
+                payload: Some(text),
             })
             .map_err(|_| anyhow::anyhow!("output route already exists"))?;
         Ok(())
@@ -1308,11 +1254,9 @@ impl TuiHost {
         let route_id = route_id.into();
         self.lock_mut()?
             .running
-            .host_intercept_paste(handle, move |text| {
-                HostOutput::Routed(RoutedOutput {
-                    route_id: route_id.clone(),
-                    payload: Some(text),
-                })
+            .host_intercept_paste(handle, move |text| RoutedOutput {
+                route_id: route_id.clone(),
+                payload: Some(text),
             });
         Ok(())
     }
@@ -1410,7 +1354,7 @@ impl TuiHost {
 
     #[must_use]
     pub fn next_output(&self) -> Option<RoutedOutput> {
-        self.lock_mut().ok()?.running.state.outputs.pop_front()
+        self.lock_mut().ok()?.running.next_output()
     }
 
     pub fn style_at(&self, row: u16, column: u16) -> Option<HostCellStyle> {
@@ -1472,7 +1416,7 @@ impl TuiHost {
         let mut inner = self.lock_mut()?;
         inner.sync_real_time();
         for _ in 0..INPUT_PUMP_BUDGET {
-            if inner.running.has_pending_actions() {
+            if inner.running.has_pending_outputs() {
                 break;
             }
             let event = match &mut inner.backend {
@@ -1497,10 +1441,10 @@ impl TuiHost {
                 }
                 TerminalEvent::Resize => inner.running.invalidate_frame(),
             }
-            // Do not consume input after a routed action. The caller must
-            // reduce that action before later keystrokes can change focus or
+            // Do not consume input after a routed output. The caller must
+            // reduce that output before later keystrokes can change focus or
             // clear the composer.
-            if inner.running.has_pending_actions() {
+            if inner.running.has_pending_outputs() {
                 break;
             }
         }
@@ -1588,9 +1532,8 @@ impl TuiHost {
             };
         }
         // Closing a host is also the ownership boundary for its retained
-        // semantic root. Drop both the host state's body and the scene root so
-        // environment-scoped weak caches can observe expiry after disposal.
-        inner.running.state.body = vf::spacer(0);
+        // semantic root. Replace the scene root so environment-scoped weak
+        // caches can observe expiry after disposal.
         inner.running.host_set_body(vf::spacer(0));
         inner.running.host_clear_retained_views();
         inner.dispose_view_states();
@@ -2432,11 +2375,131 @@ mod tests {
     use tokio::sync::oneshot;
 
     use super::super::environment::TuiEnvironment;
-    use super::TuiHost;
+    use super::{RoutedOutput, TuiHost};
     use crate::{
-        ColorSpec, Insets, ViewStateGeometryPatch, ViewStatePresentationPatch,
+        ColorSpec, Insets, Key, KeyStroke, ViewStateGeometryPatch, ViewStatePresentationPatch,
         retained_state::StateFrameView,
     };
+
+    #[test]
+    fn native_text_input_routes_local_paste_and_submit() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let input = host.create_text_input(false).unwrap();
+        host.route_text_input(&input, "submit").unwrap();
+        let input_view = vf::native_component(input.component_id().unwrap());
+        host.render(input_view).unwrap();
+
+        host.dispatch_paste("typed").unwrap();
+        assert_eq!(input.text().unwrap(), "typed");
+        assert_eq!(host.next_output(), None);
+
+        host.dispatch_key(KeyStroke::new(Key::Enter)).unwrap();
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "submit".to_owned(),
+                payload: Some("typed".to_owned()),
+            })
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_paste_interceptor_precedes_local_component_paste() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let input = host.create_text_input(false).unwrap();
+        host.intercept_paste(&input, "intercepted").unwrap();
+        host.render(vf::native_component(input.component_id().unwrap()))
+            .unwrap();
+
+        host.dispatch_paste("raw").unwrap();
+        assert_eq!(input.text().unwrap(), "");
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "intercepted".to_owned(),
+                payload: Some("raw".to_owned()),
+            })
+        );
+        host.forward_paste("forwarded").unwrap();
+        assert_eq!(input.text().unwrap(), "forwarded");
+        assert_eq!(host.next_output(), None);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_routed_outputs_preserve_fifo_order() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let first = KeyStroke::new(Key::Char('a'));
+        let second = KeyStroke::new(Key::Char('b'));
+        host.bind_key(first, "first").unwrap();
+        host.bind_key(second, "second").unwrap();
+        host.render(vf::text("unfocused")).unwrap();
+
+        host.dispatch_key(first).unwrap();
+        host.dispatch_key(second).unwrap();
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "first".to_owned(),
+                payload: None,
+            })
+        );
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "second".to_owned(),
+                payload: None,
+            })
+        );
+        assert_eq!(host.next_output(), None);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_global_key_fallback_preserves_local_component_precedence() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let input = host.create_text_input(false).unwrap();
+        let key = KeyStroke::new(Key::Char('q'));
+        host.bind_key(key, "global").unwrap();
+        host.render(vf::native_component(input.component_id().unwrap()))
+            .unwrap();
+
+        host.dispatch_key(key).unwrap();
+        assert_eq!(input.text().unwrap(), "q");
+        assert_eq!(host.next_output(), None);
+
+        host.render(vf::text("unfocused")).unwrap();
+        host.dispatch_key(key).unwrap();
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "global".to_owned(),
+                payload: None,
+            })
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_view_slot_ticks_from_the_host_deadline() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let slot = host.create_view_slot(vf::text("first")).unwrap();
+        host.render(vf::native_component(slot.component_id().unwrap()))
+            .unwrap();
+        slot.set_animation(
+            vec![vf::text("first"), vf::text("second")],
+            std::time::Duration::from_millis(16),
+        )
+        .unwrap();
+        let before = slot.revision();
+
+        host.advance_time(std::time::Duration::from_millis(32))
+            .unwrap();
+        assert!(slot.revision() > before);
+        assert!(host.screen_rows().iter().any(|row| row.contains("second")));
+        host.close().unwrap();
+    }
 
     #[test]
     fn desired_revision_waits_for_a_successful_frame_barrier() {

@@ -11,6 +11,9 @@ mod edit;
 mod output;
 mod presentation;
 
+pub(crate) use buffer::TextBuffer;
+pub(crate) use command::TextInputCommand;
+
 #[cfg(test)]
 mod tests;
 
@@ -23,8 +26,7 @@ use crate::{
 };
 
 use self::{
-    buffer::TextBuffer,
-    command::{TextInputCommand, command_for_key, handle_command},
+    command::{command_for_key, handle_command},
     output::ChangeOutputs,
 };
 

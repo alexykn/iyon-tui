@@ -32,6 +32,7 @@ mod view_state_schema {
 }
 
 mod theme_dto;
+mod ui_commit;
 mod view_abi;
 mod view_state;
 
@@ -604,6 +605,8 @@ pub struct NativeTuiHost {
     host: Box<TuiHost>,
     alive: AtomicBool,
     view_runtime: usize,
+    ui_state: Mutex<ui_commit::NativeUiState>,
+    ui_environment: iyon_tui::binding::TuiEnvironment,
 }
 
 #[napi]
@@ -622,15 +625,23 @@ impl NativeTuiHost {
         let height = u16::try_from(height)
             .map_err(|_| crate::NativeError::invalid_input("height must fit in u16"))?;
         let environment = host_environment_for_env(&env)?;
+        let ui_environment = environment.clone();
         let host = Box::new(
             TuiHost::open_in_environment(width, height, headless.unwrap_or(false), environment)
                 .map_err(|error| crate::NativeError::internal(error.to_string()))?,
         );
         let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
+        let ui_namespace = iyon_tui::binding::HostNamespace::allocate()
+            .ok_or_else(|| crate::NativeError::internal("UI host namespace exhausted"))?;
         Ok(Self {
             host,
             alive: AtomicBool::new(true),
             view_runtime,
+            ui_state: Mutex::new(ui_commit::NativeUiState::new(
+                ui_namespace,
+                ui_environment.clone(),
+            )),
+            ui_environment,
         })
     }
 
@@ -652,6 +663,15 @@ impl NativeTuiHost {
         }))
     }
 
+    #[napi(js_name = "uiNamespace")]
+    pub fn ui_namespace(&self) -> Result<u32> {
+        ensure_alive(&self.alive)?;
+        self.ui_state
+            .lock()
+            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))
+            .map(|state| state.namespace().get())
+    }
+
     /// Accepts a native retained root as desired structure without presenting
     /// it. The next environment drain performs the frame transaction.
     #[napi(js_name = "setDesiredViewRef")]
@@ -670,6 +690,19 @@ impl NativeTuiHost {
             "host_id": epochs.host_id.to_string(),
             "schedule_environment_drain": disposition.schedule_environment_drain,
         }))
+    }
+
+    #[napi(js_name = "commitUiV1")]
+    pub fn commit_ui_v1(
+        &self,
+        env: Env,
+        words: napi::bindgen_prelude::TypedArray,
+        metadata: napi::bindgen_prelude::TypedArray,
+        owned_content: napi::bindgen_prelude::TypedArray,
+        sources: napi::bindgen_prelude::Array,
+    ) -> Result<napi::bindgen_prelude::Uint32Array> {
+        ensure_alive(&self.alive)?;
+        ui_commit::commit_ui_v1(self, &env, words, metadata, owned_content, sources)
     }
 
     #[napi(js_name = "clearViewStateBindings")]
@@ -741,11 +774,27 @@ impl NativeTuiHost {
 
     #[napi]
     pub fn dispose(&self) -> Result<()> {
-        if self.alive.swap(false, Ordering::AcqRel) {
+        if self.alive.load(Ordering::Acquire) {
             view_abi::abort_all_edit_txns(self.view_runtime as *mut view_abi::NativeViewRuntime);
-            self.host
-                .close()
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+            let host_error = self.host.close().err();
+            let ui_error = self
+                .ui_state
+                .lock()
+                .map_err(|_| "UI state lock is poisoned".to_owned())
+                .and_then(|mut state| state.close());
+            match (host_error, ui_error) {
+                (None, Ok(())) => self.alive.store(false, Ordering::Release),
+                (host_error, ui_error) => {
+                    let mut diagnostics = Vec::new();
+                    if let Some(error) = host_error {
+                        diagnostics.push(format!("host close failed: {error:#}"));
+                    }
+                    if let Err(error) = ui_error {
+                        diagnostics.push(format!("UI resource cleanup failed: {error}"));
+                    }
+                    return Err(crate::NativeError::internal(diagnostics.join("; ")));
+                }
+            }
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
-// schema_blake3 = 8ff1e9e2b87f0439ccdbd9f487068d190302196bd8545dd90d1cd4dc2f9daee0
-// generator_blake3 = da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3
+// schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c
+// generator_blake3 = 18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d
 
 #![allow(dead_code)]
 
@@ -91,6 +91,202 @@ impl ControlKind {
         self as u32
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ControlCommandDescriptor {
+    pub name: &'static str,
+    pub code: u32,
+    pub control_kind: ControlKind,
+    pub operands: &'static [&'static str],
+}
+
+pub const CONTROL_COMMAND_DESCRIPTORS: &[ControlCommandDescriptor] = &[
+    ControlCommandDescriptor {
+        name: "EditorInsert",
+        code: 1,
+        control_kind: ControlKind::Editor,
+        operands: &["codepoint_u32"],
+    },
+    ControlCommandDescriptor {
+        name: "EditorSubmit",
+        code: 2,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorInsertNewline",
+        code: 3,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorBackspace",
+        code: 4,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorDelete",
+        code: 5,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorDeleteWordBackward",
+        code: 6,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorDeleteWordForward",
+        code: 7,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorKillToLineStart",
+        code: 8,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorYank",
+        code: 9,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveLeft",
+        code: 10,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveRight",
+        code: 11,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveWordLeft",
+        code: 12,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveWordRight",
+        code: 13,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveLineStart",
+        code: 14,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveLineEnd",
+        code: 15,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveUp",
+        code: 16,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "EditorMoveDown",
+        code: 17,
+        control_kind: ControlKind::Editor,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollLineUp",
+        code: 256,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollLineDown",
+        code: 257,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollPageUp",
+        code: 258,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollPageDown",
+        code: 259,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollStart",
+        code: 260,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "ScrollEnd",
+        code: 261,
+        control_kind: ControlKind::Scroll,
+        operands: &[],
+    },
+    ControlCommandDescriptor {
+        name: "AnimationStop",
+        code: 512,
+        control_kind: ControlKind::Animation,
+        operands: &[],
+    },
+];
+
+pub fn control_command_descriptor(code: u32) -> Option<&'static ControlCommandDescriptor> {
+    CONTROL_COMMAND_DESCRIPTORS
+        .iter()
+        .find(|command| command.code == code)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiConfigDescriptor {
+    pub name: &'static str,
+    pub owner: &'static str,
+    pub kind: &'static str,
+    pub value: &'static str,
+}
+
+pub const UI_CONFIG_DESCRIPTORS: &[UiConfigDescriptor] = &[
+    UiConfigDescriptor {
+        name: "EditorMultiline",
+        owner: "control",
+        kind: "Editor",
+        value: "bool",
+    },
+    UiConfigDescriptor {
+        name: "AnimationIntervalMs",
+        owner: "control",
+        kind: "Animation",
+        value: "u32",
+    },
+    UiConfigDescriptor {
+        name: "HistoryFlowBoundary",
+        owner: "root",
+        kind: "LegacyHistoryUnit",
+        value: "flow_boundary",
+    },
+    UiConfigDescriptor {
+        name: "HistoryUnitIdentity",
+        owner: "root",
+        kind: "LegacyHistoryUnit",
+        value: "unit_identity",
+    },
+];
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -196,6 +392,214 @@ impl ValueKind {
     pub const fn code(self) -> u32 {
         self as u32
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ValueEncodingDescriptor {
+    pub value_kind: ValueKind,
+    pub encoding: &'static str,
+    pub min_words: usize,
+    pub max_words: usize,
+    pub metadata_words: usize,
+    pub forms: &'static [ValueEncodingForm],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ValueEncodingForm {
+    pub name: &'static str,
+    pub word_count: usize,
+    pub tags: &'static [u32],
+    pub values: &'static [u32],
+    pub mask: Option<u32>,
+    pub max_value: Option<u32>,
+}
+
+pub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::SizeMode,
+        encoding: "u32_enum",
+        min_words: 1,
+        max_words: 1,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "mode",
+            word_count: 1,
+            tags: &[],
+            values: &[0, 1],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::U16,
+        encoding: "u16",
+        min_words: 1,
+        max_words: 1,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "u16",
+            word_count: 1,
+            tags: &[],
+            values: &[],
+            mask: None,
+            max_value: Some(65535),
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Insets,
+        encoding: "u16x4",
+        min_words: 4,
+        max_words: 4,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "u16x4",
+            word_count: 4,
+            tags: &[],
+            values: &[],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Alignment,
+        encoding: "axis_x2",
+        min_words: 2,
+        max_words: 2,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "axis_pair",
+            word_count: 2,
+            tags: &[],
+            values: &[0, 1, 2, 3, 4],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Edges,
+        encoding: "bool_x4",
+        min_words: 4,
+        max_words: 4,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "bool_x4",
+            word_count: 4,
+            tags: &[],
+            values: &[0, 1],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Color,
+        encoding: "ansi_or_rgb_v1",
+        min_words: 1,
+        max_words: 4,
+        metadata_words: 0,
+        forms: &[
+            ValueEncodingForm {
+                name: "ansi",
+                word_count: 1,
+                tags: &[],
+                values: &[],
+                mask: None,
+                max_value: Some(255),
+            },
+            ValueEncodingForm {
+                name: "rgb",
+                word_count: 4,
+                tags: &[2147483649],
+                values: &[],
+                mask: None,
+                max_value: None,
+            },
+        ],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::BorderStyle,
+        encoding: "u32_enum",
+        min_words: 1,
+        max_words: 1,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "border",
+            word_count: 1,
+            tags: &[],
+            values: &[0, 1, 2],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Glyphs,
+        encoding: "metadata_pairs_x8",
+        min_words: 16,
+        max_words: 16,
+        metadata_words: 16,
+        forms: &[ValueEncodingForm {
+            name: "metadata_pairs_x8",
+            word_count: 16,
+            tags: &[],
+            values: &[],
+            mask: None,
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::TextAttributes,
+        encoding: "set_or_clear_bits_v1",
+        min_words: 1,
+        max_words: 2,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "set_or_clear",
+            word_count: 2,
+            tags: &[],
+            values: &[],
+            mask: Some(63),
+            max_value: None,
+        }],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::Style,
+        encoding: "direct_or_themed_style_v1",
+        min_words: 9,
+        max_words: 12,
+        metadata_words: 2,
+        forms: &[
+            ValueEncodingForm {
+                name: "direct",
+                word_count: 9,
+                tags: &[0, 1, 2],
+                values: &[],
+                mask: Some(63),
+                max_value: None,
+            },
+            ValueEncodingForm {
+                name: "themed",
+                word_count: 12,
+                tags: &[0, 1, 2],
+                values: &[],
+                mask: Some(63),
+                max_value: None,
+            },
+        ],
+    },
+];
+
+pub fn value_encoding(value_kind: ValueKind) -> &'static ValueEncodingDescriptor {
+    VALUE_ENCODING_DESCRIPTORS
+        .iter()
+        .find(|descriptor| descriptor.value_kind as u32 == value_kind as u32)
+        .expect("validated value encoding descriptor")
+}
+
+pub fn value_encoding_form(value_kind: ValueKind, name: &str) -> &'static ValueEncodingForm {
+    value_encoding(value_kind)
+        .forms
+        .iter()
+        .find(|form| form.name == name)
+        .expect("validated value encoding form")
 }
 
 #[repr(u32)]

@@ -1788,6 +1788,67 @@ pub struct HostContentSource {
     record: Arc<Mutex<ContentSourceRecord>>,
 }
 
+pub struct PreparedSourceMutation {
+    source: HostContentSource,
+    record: Arc<Mutex<ContentSourceRecord>>,
+    source_id: u64,
+    expected_generation: u32,
+    expected_revision: u64,
+    next_revision: u64,
+    next_content_generation: Option<u64>,
+    next_storage: Option<Arc<StoredSource>>,
+    copied_bytes: u64,
+    dropped_head_bytes: u64,
+    accepted_bytes: u64,
+    expected_connector_count: usize,
+    next_connector_count: usize,
+    dispose_after_install: bool,
+}
+
+/// Owned replacement input validated by the same content-store decoder used by
+/// direct Source mutation. Keeping the parsed annotations with the bytes lets
+/// a UI batch validate every literal operation before coalescing final writes.
+#[derive(Clone)]
+pub(crate) struct PreparedSourceReplacement {
+    text: String,
+    parsed: Vec<ValidatedAnnotation>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceInstallDisposition {
+    Keep,
+    DisposeWhenEmpty,
+}
+
+#[derive(Debug)]
+pub struct PreparedSourceWakes {
+    wakes: Vec<(HostContentSource, u64, Vec<CapturedSubscriberGroup>)>,
+}
+
+impl Drop for PreparedSourceWakes {
+    fn drop(&mut self) {
+        // If the owning UI transaction faults after Source installation but
+        // before it can schedule the wake, return captured tokens to the
+        // Source's reusable scratch storage. The accepted Source state stays
+        // authoritative; a later mutation can capture the restored tokens.
+        for (source, _revision, mut groups) in self.wakes.drain(..) {
+            match source.record.lock() {
+                Ok(mut record) => {
+                    for group in &mut groups {
+                        if let Some(subscriber) = record.subscribers.get_mut(&group.host_key) {
+                            subscriber.wake_tokens = std::mem::take(&mut group.tokens);
+                        }
+                    }
+                    record.subscriber_wake_scratch = groups;
+                }
+                Err(_) => eprintln!(
+                    "prepared Source wake cleanup failed after accepted storage installation"
+                ),
+            }
+        }
+    }
+}
+
 fn ensure_source_live(record: &ContentSourceRecord) -> Result<()> {
     if record.lifecycle != SourceLifecycle::Live {
         return Err(anyhow!("SOURCE_DISPOSED: Source is disposed"));
@@ -2229,7 +2290,7 @@ impl HostContentSource {
             .map_or(TextSourceKind::Stream, |record| record.kind)
     }
 
-    fn retention_compatible(&self, funnel: TextFunnelKind) -> Result<bool> {
+    pub fn retention_compatible(&self, funnel: TextFunnelKind) -> Result<bool> {
         let record = self
             .record
             .lock()
@@ -2380,7 +2441,249 @@ impl HostContentSource {
             record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
         };
-        self.finish_mutation(revision, subscribers)
+        Ok(self.finish_mutation(revision, subscribers))
+    }
+
+    pub fn prepare_membership_delta(
+        &self,
+        delta: i64,
+        disposition: SourceInstallDisposition,
+    ) -> Result<PreparedSourceMutation> {
+        let record = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+        ensure_source_live(&record)?;
+        let next_connector_count = if delta >= 0 {
+            record
+                .connector_count
+                .checked_add(delta as usize)
+                .ok_or_else(|| anyhow!("Source Connector membership count exhausted"))?
+        } else {
+            record
+                .connector_count
+                .checked_sub(delta.unsigned_abs() as usize)
+                .ok_or_else(|| {
+                    anyhow!("SOURCE_MEMBERSHIP_MISMATCH: Connector membership underflow")
+                })?
+        };
+        Ok(PreparedSourceMutation {
+            source: self.clone(),
+            record: Arc::clone(&self.record),
+            source_id: record.id,
+            expected_generation: record.generation,
+            expected_revision: record.revision,
+            next_revision: record.revision,
+            next_content_generation: None,
+            next_storage: None,
+            copied_bytes: 0,
+            dropped_head_bytes: 0,
+            accepted_bytes: 0,
+            expected_connector_count: record.connector_count,
+            next_connector_count,
+            dispose_after_install: disposition == SourceInstallDisposition::DisposeWhenEmpty,
+        })
+    }
+
+    pub(crate) fn validate_replacement(
+        bytes: Vec<u8>,
+        annotations: &[ContentAnnotationRecord],
+        annotation_payload: &[u8],
+    ) -> Result<PreparedSourceReplacement> {
+        validate_payload_size(bytes.len())?;
+        let input = ValidatedInput::from_bytes(&bytes)?;
+        let parsed = decode_annotations(&input, 0, annotations, annotation_payload)?;
+        Ok(PreparedSourceReplacement {
+            text: input.text().to_owned(),
+            parsed,
+        })
+    }
+
+    pub(crate) fn prepare_validated_replacement_with_membership(
+        &self,
+        replacement: PreparedSourceReplacement,
+        membership_delta: i64,
+        disposition: SourceInstallDisposition,
+    ) -> Result<PreparedSourceMutation> {
+        let record = self
+            .record
+            .lock()
+            .map_err(|_| anyhow!("content Source lock is poisoned"))?;
+        ensure_source_live(&record)?;
+        if record.kind == TextSourceKind::Stream && record.storage.sealed() {
+            return Err(anyhow!("SOURCE_SEALED: Source is sealed"));
+        }
+        let next_revision = next_revision(record.revision)?;
+        let next_content_generation = record
+            .content_generation
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("Source content generation exhausted"))?;
+        let next = StoredSource::empty()
+            .apply_append(&replacement.text, next_revision, replacement.parsed)
+            .map_err(|err| anyhow!("{err}"))?;
+        let (next, dropped_head_bytes) = apply_retention(next, record.retention)?;
+        let source_id = record.id;
+        let expected_generation = record.generation;
+        let expected_revision = record.revision;
+        let expected_connector_count = record.connector_count;
+        let next_connector_count = if membership_delta >= 0 {
+            record
+                .connector_count
+                .checked_add(membership_delta as usize)
+                .ok_or_else(|| anyhow!("Source Connector membership count exhausted"))?
+        } else {
+            record
+                .connector_count
+                .checked_sub(membership_delta.unsigned_abs() as usize)
+                .ok_or_else(|| {
+                    anyhow!("SOURCE_MEMBERSHIP_MISMATCH: Connector membership underflow")
+                })?
+        };
+        drop(record);
+        Ok(PreparedSourceMutation {
+            source: self.clone(),
+            record: Arc::clone(&self.record),
+            source_id,
+            expected_generation,
+            expected_revision,
+            next_revision,
+            next_content_generation: Some(next_content_generation),
+            next_storage: Some(Arc::new(next)),
+            copied_bytes: replacement.text.len() as u64,
+            dropped_head_bytes,
+            accepted_bytes: replacement.text.len() as u64,
+            expected_connector_count,
+            next_connector_count,
+            dispose_after_install: disposition == SourceInstallDisposition::DisposeWhenEmpty,
+        })
+    }
+
+    pub fn install_prepared_mutations(
+        mut mutations: Vec<PreparedSourceMutation>,
+    ) -> Result<PreparedSourceWakes> {
+        mutations.sort_unstable_by_key(|mutation| {
+            (
+                mutation.source.environment_slot(),
+                mutation.source.environment_generation(),
+                mutation.source_id,
+            )
+        });
+        if let Some(first) = mutations.first() {
+            let environment = (
+                first.source.environment_slot(),
+                first.source.environment_generation(),
+            );
+            if mutations.iter().any(|mutation| {
+                (
+                    mutation.source.environment_slot(),
+                    mutation.source.environment_generation(),
+                ) != environment
+            }) {
+                return Err(anyhow!(
+                    "SOURCE_TRANSACTION_ENVIRONMENT: Sources belong to different environments"
+                ));
+            }
+        }
+        if mutations.windows(2).any(|pair| {
+            pair[0].source_id == pair[1].source_id
+                && pair[0].source.environment_slot() == pair[1].source.environment_slot()
+                && pair[0].source.environment_generation()
+                    == pair[1].source.environment_generation()
+        }) {
+            return Err(anyhow!(
+                "SOURCE_TRANSACTION_DUPLICATE: duplicate Source mutation"
+            ));
+        }
+        let mut guards = Vec::new();
+        guards
+            .try_reserve(mutations.len())
+            .map_err(|_| anyhow!("Source transaction guard capacity exhausted"))?;
+        for mutation in &mutations {
+            guards.push(
+                mutation
+                    .record
+                    .lock()
+                    .map_err(|_| anyhow!("content Source lock is poisoned"))?,
+            );
+        }
+        for (mutation, record) in mutations.iter().zip(guards.iter()) {
+            ensure_source_live(record)?;
+            if record.id != mutation.source_id
+                || record.generation != mutation.expected_generation
+                || record.revision != mutation.expected_revision
+                || record.connector_count != mutation.expected_connector_count
+            {
+                return Err(anyhow!(
+                    "SOURCE_CHANGED: Source changed while its transaction was prepared"
+                ));
+            }
+            if mutation.next_storage.is_some() != mutation.next_content_generation.is_some() {
+                return Err(anyhow!(
+                    "SOURCE_TRANSACTION_INVALID: incomplete storage replacement"
+                ));
+            }
+            if mutation.dispose_after_install && mutation.next_connector_count != 0 {
+                return Err(anyhow!(
+                    "SOURCE_TRANSACTION_INVALID: disposed Source retains Connector membership"
+                ));
+            }
+        }
+        let mut wakes = Vec::new();
+        wakes
+            .try_reserve(mutations.len())
+            .map_err(|_| anyhow!("Source transaction wake capacity exhausted"))?;
+        // Capture wake groups before the first storage write.  The capture
+        // helper may grow a per-subscriber token buffer on its first use;
+        // doing that here keeps the write phase non-fallible and preserves the
+        // post-acceptance wake contract.
+        for (mutation, record) in mutations.iter().zip(guards.iter_mut()) {
+            if mutation.next_storage.is_some() && mutation.next_connector_count != 0 {
+                let subscribers = capture_subscribers(record);
+                if !subscribers.is_empty() {
+                    wakes.push((mutation.source.clone(), mutation.next_revision, subscribers));
+                }
+            }
+        }
+        for (mutation, record) in mutations.iter().zip(guards.iter_mut()) {
+            if let Some(storage) = mutation.next_storage.as_ref() {
+                record.storage = Arc::clone(storage);
+                if let Some(content_generation) = mutation.next_content_generation {
+                    record.content_generation = content_generation;
+                }
+                record.revision = mutation.next_revision;
+                record.copied_bytes = record.copied_bytes.saturating_add(mutation.copied_bytes);
+                record.dropped_head_bytes = record
+                    .dropped_head_bytes
+                    .saturating_add(mutation.dropped_head_bytes);
+                record.accepted_bytes = record
+                    .accepted_bytes
+                    .saturating_add(mutation.accepted_bytes);
+            }
+            record.connector_count = mutation.next_connector_count;
+            if record.connector_count == 0 {
+                record.subscribers.clear();
+            }
+            if mutation.dispose_after_install {
+                record.lifecycle = SourceLifecycle::Disposed;
+                record.subscribers.clear();
+            }
+        }
+        // Keep every Source guard alive until every Source has been written.
+        // Releasing one guard in the write loop would expose a partially
+        // installed multi-Source replacement to a concurrent mutation.
+        drop(guards);
+        for mutation in &mutations {
+            if mutation.dispose_after_install {
+                mutation.source.remove_disposed_from_registry();
+            }
+        }
+        Ok(PreparedSourceWakes { wakes })
+    }
+
+    pub fn finish_prepared_wakes(mut wakes: PreparedSourceWakes) {
+        for (source, revision, subscribers) in wakes.wakes.drain(..) {
+            source.finish_mutation(revision, subscribers);
+        }
     }
 
     /// Atomically replaces a Block or Stream Source with a fresh content
@@ -2420,7 +2723,7 @@ impl HostContentSource {
             record.accepted_bytes = record.accepted_bytes.saturating_add(input.len() as u64);
             (revision, capture_subscribers(&mut record))
         };
-        self.finish_mutation(revision, subscribers)
+        Ok(self.finish_mutation(revision, subscribers))
     }
 
     pub fn clear(&self) -> Result<ContentMutationResult> {
@@ -2454,7 +2757,7 @@ impl HostContentSource {
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
-        self.finish_mutation(revision, subscribers)
+        Ok(self.finish_mutation(revision, subscribers))
     }
 
     pub fn seal(&self) -> Result<ContentMutationResult> {
@@ -2481,7 +2784,7 @@ impl HostContentSource {
             record.revision = revision;
             (revision, capture_subscribers(&mut record))
         };
-        self.finish_mutation(revision, subscribers)
+        Ok(self.finish_mutation(revision, subscribers))
     }
 
     /// Advances the retained head without renumbering absolute coordinates.
@@ -2520,19 +2823,19 @@ impl HostContentSource {
             record.dropped_head_bytes = record.dropped_head_bytes.saturating_add(dropped);
             (revision, capture_subscribers(&mut record))
         };
-        self.finish_mutation(revision, subscribers)
+        Ok(self.finish_mutation(revision, subscribers))
     }
 
     fn finish_mutation(
         &self,
         revision: u64,
         mut groups: Vec<CapturedSubscriberGroup>,
-    ) -> Result<ContentMutationResult> {
+    ) -> ContentMutationResult {
         if groups.is_empty() {
-            return Ok(ContentMutationResult {
+            return ContentMutationResult {
                 revision,
                 ..ContentMutationResult::default()
-            });
+            };
         }
         let mut schedule_environment_drain = false;
         let mut environment_wake_epoch = 0;
@@ -2615,11 +2918,11 @@ impl HostContentSource {
                 }
             }
         }
-        Ok(ContentMutationResult {
+        ContentMutationResult {
             revision,
             environment_wake_epoch,
             schedule_environment_drain,
-        })
+        }
     }
 
     pub(crate) fn same_environment(&self, registry: &ContentSourceRegistry) -> bool {
@@ -2668,6 +2971,26 @@ impl HostContentSource {
         Ok(())
     }
 
+    fn remove_disposed_from_registry(&self) {
+        let source_id = self
+            .record
+            .lock()
+            .expect("disposed Source record must remain lockable")
+            .id;
+        let mut registry = self
+            .registry
+            .inner
+            .lock()
+            .expect("disposed Source registry must remain lockable");
+        if registry
+            .sources
+            .get(&source_id)
+            .is_some_and(|candidate| Arc::ptr_eq(candidate, &self.record))
+        {
+            registry.sources.remove(&source_id);
+        }
+    }
+
     /// Stores the creation-time retention policy used by Source mutations.
     #[doc(hidden)]
     pub fn configure_retention(
@@ -2711,7 +3034,7 @@ impl HostContentSource {
         Ok(())
     }
 
-    fn acquire_connector(&self) -> Result<()> {
+    pub fn acquire_connector(&self) -> Result<()> {
         let mut record = self
             .record
             .lock()
@@ -2726,7 +3049,7 @@ impl HostContentSource {
         Ok(())
     }
 
-    fn release_connector(&self) -> Result<()> {
+    pub fn release_connector(&self) -> Result<()> {
         let mut record = self
             .record
             .lock()
@@ -7032,6 +7355,70 @@ mod tests {
         source
     }
 
+    #[test]
+    fn prepared_source_batch_validates_all_guards_before_any_write() {
+        let environment = TuiEnvironment::new();
+        let first = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        let second = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        first.append_utf8(b"first-old", &[], &[]).unwrap();
+        second.append_utf8(b"second-old", &[], &[]).unwrap();
+
+        let first_mutation = first
+            .prepare_validated_replacement_with_membership(
+                HostContentSource::validate_replacement(b"first-new".to_vec(), &[], &[]).unwrap(),
+                0,
+                SourceInstallDisposition::Keep,
+            )
+            .unwrap();
+        let second_mutation = second
+            .prepare_membership_delta(1, SourceInstallDisposition::Keep)
+            .unwrap();
+
+        // Advance the last Source in identity order after preparation. The
+        // first prepared replacement must not be visible when the final guard
+        // rejects the batch.
+        second.append_utf8(b"external", &[], &[]).unwrap();
+        let rejection =
+            HostContentSource::install_prepared_mutations(vec![second_mutation, first_mutation])
+                .expect_err("a changed final Source guard must reject the batch");
+        assert!(rejection.to_string().contains("SOURCE_CHANGED"));
+        assert_eq!(first.snapshot().unwrap().text(), "first-old");
+        assert_eq!(first.stats().unwrap().revision, 1);
+        assert_eq!(second.snapshot().unwrap().text(), "second-oldexternal");
+        assert_eq!(second.stats().unwrap().revision, 2);
+        assert_eq!(second.stats().unwrap().retained_lines, 1);
+        assert_eq!(second.stats().unwrap().retained_bytes, 18);
+
+        // A fresh preparation succeeds even when supplied in reverse order;
+        // install sorts by stable Source identity and keeps all guards through
+        // both writes.
+        let first_mutation = first
+            .prepare_validated_replacement_with_membership(
+                HostContentSource::validate_replacement(b"first-new".to_vec(), &[], &[]).unwrap(),
+                0,
+                SourceInstallDisposition::Keep,
+            )
+            .unwrap();
+        let second_mutation = second
+            .prepare_membership_delta(1, SourceInstallDisposition::Keep)
+            .unwrap();
+        let wakes =
+            HostContentSource::install_prepared_mutations(vec![second_mutation, first_mutation])
+                .expect("all guards still match on the retry");
+        HostContentSource::finish_prepared_wakes(wakes);
+        assert_eq!(first.snapshot().unwrap().text(), "first-new");
+        assert_eq!(first.stats().unwrap().revision, 2);
+        assert_eq!(second.stats().unwrap().revision, 2);
+        assert_eq!(second.stats().unwrap().retained_bytes, 18);
+        second.release_connector().unwrap();
+        first.dispose().unwrap();
+        second.dispose().unwrap();
+    }
+
     fn tag_annotation(payload: &[u8]) -> ContentAnnotationRecord {
         ContentAnnotationRecord {
             kind: CONTENT_ANNOTATION_KIND_TAG,
@@ -7291,6 +7678,53 @@ mod tests {
         assert_eq!(source.subscriber_count(), 1);
         second.close().unwrap();
         assert_eq!(source.subscriber_count(), 0);
+        source.dispose().unwrap();
+    }
+
+    #[test]
+    fn prepared_source_replacement_wakes_subscribers_after_install() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let source = environment
+            .create_content_source(TextSourceKind::Stream)
+            .unwrap();
+        source.append_utf8(b"before\n", &[], &[]).unwrap();
+        let port = host.create_content_port(ContentFamily::Text).unwrap();
+        let connector = port
+            .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
+            .unwrap();
+        connector.activate().unwrap();
+        host.set_desired_view(vf::content_host(port.id()).unwrap())
+            .unwrap();
+        host.flush_pending_hosts(32, true).unwrap();
+        assert_eq!(source.subscriber_count(), 1);
+
+        let replacement = source
+            .prepare_validated_replacement_with_membership(
+                HostContentSource::validate_replacement(b"after\n".to_vec(), &[], &[]).unwrap(),
+                0,
+                SourceInstallDisposition::Keep,
+            )
+            .unwrap();
+        let wakes = HostContentSource::install_prepared_mutations(vec![replacement])
+            .expect("prepared replacement");
+        let idle = host.flush_pending_hosts(32, false).unwrap();
+        assert_eq!(idle.attempted, 0, "wake stays deferred until UI acceptance");
+        HostContentSource::finish_prepared_wakes(wakes);
+        let report = host.flush_pending_hosts(32, false).unwrap();
+        assert!(
+            report
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == host.epochs().unwrap().host_id),
+            "accepted Source replacement must wake its subscriber host"
+        );
+        assert!(
+            host.screen_rows().iter().any(|row| row.contains("after")),
+            "subscriber wake must make the replaced storage visible"
+        );
+
+        host.close().unwrap();
         source.dispose().unwrap();
     }
 

@@ -155,6 +155,13 @@ export interface NativeTuiHostContract {
   screenRows(): string[];
   nativeHistoryRows(): string[];
   epochs(): NativeHostEpochs;
+  uiNamespace(): number;
+  commitUiV1(
+    words: Uint32Array,
+    metadata: Uint8Array,
+    ownedContent: Uint8Array,
+    sources: readonly NativeTextSourceContract[],
+  ): Uint32Array;
   setDesiredViewRef(viewRef: number): {
     readonly host_id: string | number;
     readonly schedule_environment_drain: boolean;

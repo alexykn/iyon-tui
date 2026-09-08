@@ -5,24 +5,37 @@
 //! document and exposes a short-lived typed commit plan to its future
 //! transport boundary.
 
-mod arena;
-pub(crate) mod generated;
-mod properties;
-mod tree;
+#[doc(hidden)]
+pub mod arena;
+#[doc(hidden)]
+pub mod generated;
+#[doc(hidden)]
+pub mod properties;
+#[doc(hidden)]
+pub mod tree;
 
-mod commit;
+#[doc(hidden)]
+pub mod commit;
+#[doc(hidden)]
+pub mod config;
+#[doc(hidden)]
+pub mod control;
 
 use std::collections::{HashMap, HashSet};
 
-pub(crate) use arena::{Arena, ArenaError, HostNamespace, NodeKey, ResourceKey, UiHandle};
-pub(crate) use commit::{
-    AppliedUiCommit, CommitDetail, NodeRef, PreparedUiCommit, ResourceRef, UiCommit, UiOperation,
+pub(crate) use arena::Arena;
+pub use arena::{ArenaError, HostNamespace, NodeKey, ResourceKey, UiHandle};
+pub(crate) use commit::{AppliedUiCommit, PreparedUiCommit};
+pub use commit::{
+    CommitDetail, FunnelSpec, NodeRef, ResourceRef, UiAcknowledgement, UiCommit, UiOperation,
     UiOperationResult, UiRejection, UiStatus,
 };
-pub(crate) use generated::{
+pub use config::{ConfigError, ControlConfig, RootConfig};
+pub use control::{AnimationState, ControlError, ControlState, EditorState, ScrollState};
+pub use generated::{
     ControlKind, EffectMask, HandleKind, HostKind, OwnershipMode, PropertyId, RootRole,
 };
-pub(crate) use properties::{
+pub use properties::{
     Alignment, AlignmentAxis, BorderStyle, ColorValue, Edges, GlyphsValue, Insets, LayerValue,
     PropertyError, PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
 };
@@ -30,8 +43,13 @@ pub(crate) use tree::{Attachments, DirtyState, Links, Occurrence, Revisions, Tre
 
 const DEFAULT_ARENA_CAPACITY: usize = 1_048_576;
 
+const _: () = {
+    const fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<OccurrenceDocument>();
+};
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ResourceFamily {
+pub enum ResourceFamily {
     Port,
     Connector,
     Control,
@@ -48,7 +66,7 @@ impl ResourceFamily {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ResourceRecord {
+pub struct ResourceRecord {
     pub(crate) family: ResourceFamily,
     pub(crate) ownership: OwnershipMode,
     pub(crate) owner: Option<NodeKey>,
@@ -105,14 +123,14 @@ impl ResourceRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HandleError {
+pub enum HandleError {
     WrongHost,
     WrongKind,
     Invalid,
     Stale,
 }
 
-pub(crate) struct OccurrenceDocument {
+pub struct OccurrenceDocument {
     namespace: HostNamespace,
     nodes: Arena<Occurrence>,
     ports: Arena<ResourceRecord>,
@@ -130,11 +148,11 @@ pub(crate) struct OccurrenceDocument {
 }
 
 impl OccurrenceDocument {
-    pub(crate) fn new(namespace: HostNamespace) -> Self {
+    pub fn new(namespace: HostNamespace) -> Self {
         Self::try_new(namespace).expect("a fresh occurrence document must be constructible")
     }
 
-    pub(crate) fn try_new(namespace: HostNamespace) -> Result<Self, ArenaError> {
+    pub fn try_new(namespace: HostNamespace) -> Result<Self, ArenaError> {
         let mut nodes = Arena::new();
         let body_keys = nodes.preview_node_keys(1)?;
         let body_root = body_keys[0];
@@ -162,32 +180,37 @@ impl OccurrenceDocument {
         })
     }
 
-    pub(crate) fn namespace(&self) -> HostNamespace {
+    pub fn namespace(&self) -> HostNamespace {
         self.namespace
     }
 
-    pub(crate) fn accepted_ui_revision(&self) -> u64 {
+    pub fn accepted_ui_revision(&self) -> u64 {
         self.accepted_ui_revision
     }
 
-    pub(crate) fn body_root(&self) -> NodeKey {
+    pub fn body_root(&self) -> NodeKey {
         self.body_root
     }
 
-    pub(crate) fn body_handle(&self) -> UiHandle {
+    pub fn body_handle(&self) -> UiHandle {
         self.body_root.handle(self.namespace)
     }
 
-    pub(crate) fn live_node_count(&self) -> usize {
+    pub fn live_node_count(&self) -> usize {
         self.nodes.live_count()
     }
 
-    pub(crate) fn live_resource_count(&self, family: ResourceFamily) -> usize {
+    pub fn live_resource_count(&self, family: ResourceFamily) -> usize {
         match family {
             ResourceFamily::Port => self.ports.live_count(),
             ResourceFamily::Connector => self.connectors.live_count(),
             ResourceFamily::Control => self.controls.live_count(),
         }
+    }
+
+    #[must_use]
+    pub fn resource_is_live(&self, key: ResourceKey) -> bool {
+        self.resource_record(key).is_ok()
     }
 
     fn node_key(&self, handle: UiHandle) -> Result<NodeKey, HandleError> {

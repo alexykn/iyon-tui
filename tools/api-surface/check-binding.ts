@@ -14,6 +14,13 @@ const ROOT_ALLOWED_PUBLIC_MODULES = new Set(["binding", "perf_bench"]);
 
 // blend of §5.3 lanes; the check compares sets, order is documentary.
 const BLESSED_BINDING = new Set([
+  "Alignment", "AlignmentAxis", "AnimationState", "ColorValue", "CommitDetail", "ConfigError", "ControlConfig", "ControlError", "ControlKind", "ControlState", "Edges", "EditorState", "FunnelSpec", "GlyphsValue",
+  "HandleKind", "HostKind", "HostNamespace", "LayerValue", "NodeRef", "OccurrenceDocument", "OwnershipMode",
+  "UiOpcode", "UI_ACK_HEADER_WORDS", "UI_ACK_WORDS_PER_CREATED_HANDLE", "UI_BATCH_HEADER_WORDS",
+  "UI_BATCH_MAGIC", "UI_BATCH_VERSION", "UI_HANDLE_WORDS",
+  "NodeKey", "PropertyId", "PropertyLayer", "PropertyValue", "ResourceKey", "ResourceRef", "RootConfig", "RootRole", "SizeMode",
+  "StyleValue", "TextAttributes", "UiAcknowledgement", "UiCommit", "UiHandle", "UiOperation",
+  "UiOperationResult", "UiRejection", "ValueKind", "property_descriptor", "value_encoding", "value_encoding_form",
   "AnsiColor", "BorderEdges", "BorderGlyphs", "BorderSpec", "BorderStyle",
   "ColorSpec", "ContentAnnotationRecord", "ContentDelivery", "ContentFamily",
   "ContentMutationResult", "Counter", "DiffHunk", "DiffLine", "DiffLineNumber",
@@ -27,7 +34,7 @@ const BLESSED_BINDING = new Set([
   "RetainedPathStep", "SemanticTag", "SmoothConfig",
   "StyleRef", "StyleSelector", "StyleSpec", "StyleStateKey", "StyleStateValue", "TextAttribute", "TextAttributeSpec", "TextFunnelKind",
   "TextInput", "TextOrigin", "TextPart", "TextRole", "TextSelector",
-  "TextSourceKind", "TextSpan", "TextWrapMode", "Theme", "ThemeColor", "ThemeKey",
+  "TextSourceKind", "TextSpan", "TextWrapMode", "Theme", "ThemeColor", "ThemeKey", "ScrollState", "SourceIdentity", "SourceInstallDisposition", "UiResourceOwner",
   "TuiEnvironment", "TuiHost", "VerticalAlign", "View",
   "ViewStateGeometryPatch", "ViewStateGeometryProperty",
   "ViewStatePresentationPatch", "ViewStatePresentationProperty",

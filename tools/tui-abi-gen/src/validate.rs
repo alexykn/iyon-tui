@@ -4,8 +4,8 @@ use serde_json::Map;
 use thiserror::Error;
 
 use crate::model::{
-    AbiDocument, ConformanceSpec, EnumSpec, PodSpec, UiAbiDocument, UiCodeSpec, UiKindSpec,
-    UiOpcodeSpec, UiPropertySpec, UiSectionSpec,
+    AbiDocument, ConformanceSpec, EnumSpec, PodSpec, UiAbiDocument, UiCodeSpec,
+    UiControlCommandSpec, UiKindSpec, UiOpcodeSpec, UiPropertySpec, UiSectionSpec,
 };
 
 #[derive(Debug, Error)]
@@ -349,8 +349,11 @@ pub fn validate_ui(document: &UiAbiDocument) -> Result<(), ValidationError> {
     validate_ui_codes("handle kind", &document.handle_kinds, 1..=0xffff_ffff)?;
     validate_ui_codes("ownership mode", &document.ownership_modes, 1..=0xffff_ffff)?;
     validate_ui_codes("value kind", &document.value_kinds, 1..=0xffff_ffff)?;
+    validate_ui_value_encodings(document)?;
     validate_ui_codes("effect", &document.effects, 0..=31)?;
     validate_ui_opcodes(&document.opcodes, &document.sections)?;
+    validate_ui_control_commands(&document.control_commands, &document.control_kinds)?;
+    validate_ui_configs(document)?;
     validate_ui_properties(document)?;
     Ok(())
 }
@@ -476,6 +479,153 @@ fn validate_ui_opcodes(
                 .any(|operand| operand.is_empty() || operand.chars().any(char::is_whitespace))
         {
             return invalid(format!("UI opcode {} has invalid operands", opcode.name));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ui_control_commands(
+    commands: &[UiControlCommandSpec],
+    control_kinds: &[UiCodeSpec],
+) -> Result<(), ValidationError> {
+    if commands.is_empty() {
+        return invalid("UI ABI must declare at least one control command");
+    }
+    let kind_names: HashSet<&str> = control_kinds
+        .iter()
+        .map(|kind| kind.name.as_str())
+        .collect();
+    let mut names = HashSet::new();
+    let mut codes = HashSet::new();
+    for command in commands {
+        if !is_pascal_case(&command.name)
+            || !names.insert(command.name.as_str())
+            || !codes.insert(command.code)
+        {
+            return invalid(format!(
+                "control command {} is invalid or duplicated",
+                command.name
+            ));
+        }
+        if command.code == 0 || command.code > 0xffff {
+            return invalid(format!(
+                "control command {} code is out of range",
+                command.name
+            ));
+        }
+        if !kind_names.contains(command.control_kind.as_str()) {
+            return invalid(format!(
+                "control command {} refers to unknown control kind {}",
+                command.name, command.control_kind
+            ));
+        }
+        if command
+            .operands
+            .iter()
+            .any(|operand| operand.is_empty() || operand.chars().any(char::is_whitespace))
+        {
+            return invalid(format!(
+                "control command {} has invalid operands",
+                command.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ui_configs(document: &UiAbiDocument) -> Result<(), ValidationError> {
+    let control_kinds: HashSet<&str> = document
+        .control_kinds
+        .iter()
+        .map(|kind| kind.name.as_str())
+        .collect();
+    let root_roles: HashSet<&str> = document
+        .root_roles
+        .iter()
+        .map(|role| role.name.as_str())
+        .collect();
+    let mut names = HashSet::new();
+    for config in &document.configs {
+        if !is_pascal_case(&config.name) || !names.insert(config.name.as_str()) {
+            return invalid(format!(
+                "UI config {} is invalid or duplicated",
+                config.name
+            ));
+        }
+        match config.owner.as_str() {
+            "control" if !control_kinds.contains(config.kind.as_str()) => {
+                return invalid(format!(
+                    "UI config {} refers to unknown control kind {}",
+                    config.name, config.kind
+                ));
+            }
+            "root" if !root_roles.contains(config.kind.as_str()) => {
+                return invalid(format!(
+                    "UI config {} refers to unknown root role {}",
+                    config.name, config.kind
+                ));
+            }
+            "control" | "root" => {}
+            _ => return invalid(format!("UI config {} has an invalid owner", config.name)),
+        }
+        if !matches!(
+            config.value.as_str(),
+            "bool" | "u32" | "flow_boundary" | "unit_identity"
+        ) {
+            return invalid(format!(
+                "UI config {} has an unsupported value kind {}",
+                config.name, config.value
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_ui_value_encodings(document: &UiAbiDocument) -> Result<(), ValidationError> {
+    if document.value_encodings.len() != document.value_kinds.len() {
+        return invalid("UI ABI must declare one encoding descriptor per value kind");
+    }
+    let kinds: HashSet<&str> = document
+        .value_kinds
+        .iter()
+        .map(|kind| kind.name.as_str())
+        .collect();
+    let mut seen = HashSet::new();
+    for encoding in &document.value_encodings {
+        if !kinds.contains(encoding.value_kind.as_str())
+            || !seen.insert(encoding.value_kind.as_str())
+        {
+            return invalid(format!(
+                "UI value encoding {} is unknown or duplicated",
+                encoding.value_kind
+            ));
+        }
+        if encoding.encoding.is_empty()
+            || encoding.encoding.chars().any(char::is_whitespace)
+            || encoding.min_words == 0
+            || encoding.min_words > encoding.max_words
+            || encoding.metadata_words > encoding.max_words
+            || encoding.forms.is_empty()
+        {
+            return invalid(format!(
+                "UI value encoding {} has invalid bounds or name",
+                encoding.value_kind
+            ));
+        }
+        let mut form_names = HashSet::new();
+        for form in &encoding.forms {
+            if form.name.is_empty()
+                || form.name.chars().any(char::is_whitespace)
+                || !form_names.insert(form.name.as_str())
+                || form.word_count < encoding.min_words
+                || form.word_count > encoding.max_words
+                || form.mask.is_some_and(|mask| mask == 0)
+            {
+                return invalid(format!(
+                    "UI value encoding {} has an invalid or duplicated form",
+                    encoding.value_kind
+                ));
+            }
         }
     }
     Ok(())

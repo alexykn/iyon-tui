@@ -11,14 +11,13 @@ use std::{
 
 use anyhow::Result;
 
-use crate::controls::text_input::command::TextInputCommand;
-
 use super::content::{ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
 };
 use super::view_state::HostViewState;
+use crate::controls::text_input::command::TextInputCommand;
 use crate::presentation::factory as vf;
 use crate::{
     BorderSpec, Component, ComponentCx, ComponentHandle, History, HistoryLayout, HistoryUnitId,

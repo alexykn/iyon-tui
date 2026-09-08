@@ -17,6 +17,180 @@
     "semantic_schema": 1,
     "version": 1
   },
+  "configs": [
+    {
+      "kind": "Editor",
+      "name": "EditorMultiline",
+      "owner": "control",
+      "value": "bool"
+    },
+    {
+      "kind": "Animation",
+      "name": "AnimationIntervalMs",
+      "owner": "control",
+      "value": "u32"
+    },
+    {
+      "kind": "LegacyHistoryUnit",
+      "name": "HistoryFlowBoundary",
+      "owner": "root",
+      "value": "flow_boundary"
+    },
+    {
+      "kind": "LegacyHistoryUnit",
+      "name": "HistoryUnitIdentity",
+      "owner": "root",
+      "value": "unit_identity"
+    }
+  ],
+  "control_commands": [
+    {
+      "code": 1,
+      "control_kind": "Editor",
+      "name": "EditorInsert",
+      "operands": [
+        "codepoint_u32"
+      ]
+    },
+    {
+      "code": 2,
+      "control_kind": "Editor",
+      "name": "EditorSubmit",
+      "operands": []
+    },
+    {
+      "code": 3,
+      "control_kind": "Editor",
+      "name": "EditorInsertNewline",
+      "operands": []
+    },
+    {
+      "code": 4,
+      "control_kind": "Editor",
+      "name": "EditorBackspace",
+      "operands": []
+    },
+    {
+      "code": 5,
+      "control_kind": "Editor",
+      "name": "EditorDelete",
+      "operands": []
+    },
+    {
+      "code": 6,
+      "control_kind": "Editor",
+      "name": "EditorDeleteWordBackward",
+      "operands": []
+    },
+    {
+      "code": 7,
+      "control_kind": "Editor",
+      "name": "EditorDeleteWordForward",
+      "operands": []
+    },
+    {
+      "code": 8,
+      "control_kind": "Editor",
+      "name": "EditorKillToLineStart",
+      "operands": []
+    },
+    {
+      "code": 9,
+      "control_kind": "Editor",
+      "name": "EditorYank",
+      "operands": []
+    },
+    {
+      "code": 10,
+      "control_kind": "Editor",
+      "name": "EditorMoveLeft",
+      "operands": []
+    },
+    {
+      "code": 11,
+      "control_kind": "Editor",
+      "name": "EditorMoveRight",
+      "operands": []
+    },
+    {
+      "code": 12,
+      "control_kind": "Editor",
+      "name": "EditorMoveWordLeft",
+      "operands": []
+    },
+    {
+      "code": 13,
+      "control_kind": "Editor",
+      "name": "EditorMoveWordRight",
+      "operands": []
+    },
+    {
+      "code": 14,
+      "control_kind": "Editor",
+      "name": "EditorMoveLineStart",
+      "operands": []
+    },
+    {
+      "code": 15,
+      "control_kind": "Editor",
+      "name": "EditorMoveLineEnd",
+      "operands": []
+    },
+    {
+      "code": 16,
+      "control_kind": "Editor",
+      "name": "EditorMoveUp",
+      "operands": []
+    },
+    {
+      "code": 17,
+      "control_kind": "Editor",
+      "name": "EditorMoveDown",
+      "operands": []
+    },
+    {
+      "code": 256,
+      "control_kind": "Scroll",
+      "name": "ScrollLineUp",
+      "operands": []
+    },
+    {
+      "code": 257,
+      "control_kind": "Scroll",
+      "name": "ScrollLineDown",
+      "operands": []
+    },
+    {
+      "code": 258,
+      "control_kind": "Scroll",
+      "name": "ScrollPageUp",
+      "operands": []
+    },
+    {
+      "code": 259,
+      "control_kind": "Scroll",
+      "name": "ScrollPageDown",
+      "operands": []
+    },
+    {
+      "code": 260,
+      "control_kind": "Scroll",
+      "name": "ScrollStart",
+      "operands": []
+    },
+    {
+      "code": 261,
+      "control_kind": "Scroll",
+      "name": "ScrollEnd",
+      "operands": []
+    },
+    {
+      "code": 512,
+      "control_kind": "Animation",
+      "name": "AnimationStop",
+      "operands": []
+    }
+  ],
   "control_kinds": [
     {
       "code": 1,
@@ -79,7 +253,7 @@
     "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
     "docs/architecture/generated/UI-ABI-REFERENCE.md"
   ],
-  "generator_blake3": "da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3",
+  "generator_blake3": "18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d",
   "handle_kinds": [
     {
       "code": 1,
@@ -832,7 +1006,7 @@
       "name": "LegacyHistoryUnit"
     }
   ],
-  "schema_blake3": "8ff1e9e2b87f0439ccdbd9f487068d190302196bd8545dd90d1cd4dc2f9daee0",
+  "schema_blake3": "09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c",
   "sections": [
     {
       "code": 1,
@@ -853,6 +1027,220 @@
     {
       "code": 5,
       "name": "content_descriptor"
+    }
+  ],
+  "value_encodings": [
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "mode",
+          "tags": [],
+          "values": [
+            0,
+            1
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "SizeMode"
+    },
+    {
+      "encoding": "u16",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": 65535,
+          "name": "u16",
+          "tags": [],
+          "values": [],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "U16"
+    },
+    {
+      "encoding": "u16x4",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "u16x4",
+          "tags": [],
+          "values": [],
+          "word_count": 4
+        }
+      ],
+      "max_words": 4,
+      "metadata_words": 0,
+      "min_words": 4,
+      "value_kind": "Insets"
+    },
+    {
+      "encoding": "axis_x2",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "axis_pair",
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "word_count": 2
+        }
+      ],
+      "max_words": 2,
+      "metadata_words": 0,
+      "min_words": 2,
+      "value_kind": "Alignment"
+    },
+    {
+      "encoding": "bool_x4",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "bool_x4",
+          "tags": [],
+          "values": [
+            0,
+            1
+          ],
+          "word_count": 4
+        }
+      ],
+      "max_words": 4,
+      "metadata_words": 0,
+      "min_words": 4,
+      "value_kind": "Edges"
+    },
+    {
+      "encoding": "ansi_or_rgb_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": 255,
+          "name": "ansi",
+          "tags": [],
+          "values": [],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "rgb",
+          "tags": [
+            2147483649
+          ],
+          "values": [],
+          "word_count": 4
+        }
+      ],
+      "max_words": 4,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "Color"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "border",
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "BorderStyle"
+    },
+    {
+      "encoding": "metadata_pairs_x8",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "metadata_pairs_x8",
+          "tags": [],
+          "values": [],
+          "word_count": 16
+        }
+      ],
+      "max_words": 16,
+      "metadata_words": 16,
+      "min_words": 16,
+      "value_kind": "Glyphs"
+    },
+    {
+      "encoding": "set_or_clear_bits_v1",
+      "forms": [
+        {
+          "mask": 63,
+          "max_value": null,
+          "name": "set_or_clear",
+          "tags": [],
+          "values": [],
+          "word_count": 2
+        }
+      ],
+      "max_words": 2,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "TextAttributes"
+    },
+    {
+      "encoding": "direct_or_themed_style_v1",
+      "forms": [
+        {
+          "mask": 63,
+          "max_value": null,
+          "name": "direct",
+          "tags": [
+            0,
+            1,
+            2
+          ],
+          "values": [],
+          "word_count": 9
+        },
+        {
+          "mask": 63,
+          "max_value": null,
+          "name": "themed",
+          "tags": [
+            0,
+            1,
+            2
+          ],
+          "values": [],
+          "word_count": 12
+        }
+      ],
+      "max_words": 12,
+      "metadata_words": 2,
+      "min_words": 9,
+      "value_kind": "Style"
     }
   ],
   "value_kinds": [

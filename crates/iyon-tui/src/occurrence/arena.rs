@@ -9,10 +9,10 @@ const FIRST_GENERATION: u32 = 1;
 static NEXT_HOST_NAMESPACE: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct HostNamespace(pub(crate) u32);
+pub struct HostNamespace(pub u32);
 
 impl HostNamespace {
-    pub(crate) fn allocate() -> Option<Self> {
+    pub fn allocate() -> Option<Self> {
         let mut current = NEXT_HOST_NAMESPACE.load(Ordering::Relaxed);
         loop {
             if current == 0 || current == u32::MAX {
@@ -31,38 +31,38 @@ impl HostNamespace {
         }
     }
 
-    pub(crate) const fn new(value: u32) -> Option<Self> {
+    pub const fn new(value: u32) -> Option<Self> {
         if value == 0 { None } else { Some(Self(value)) }
     }
 
-    pub(crate) const fn get(self) -> u32 {
+    pub const fn get(self) -> u32 {
         self.0
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct NodeKey {
-    pub(crate) slot: u32,
-    pub(crate) generation: u32,
+pub struct NodeKey {
+    pub slot: u32,
+    pub generation: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ResourceKey {
-    pub(crate) slot: u32,
-    pub(crate) generation: u32,
-    pub(crate) kind: HandleKind,
+pub struct ResourceKey {
+    pub slot: u32,
+    pub generation: u32,
+    pub kind: HandleKind,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct UiHandle {
-    pub(crate) host_namespace: u32,
-    pub(crate) slot: u32,
-    pub(crate) generation: u32,
-    pub(crate) kind: HandleKind,
+pub struct UiHandle {
+    pub host_namespace: u32,
+    pub slot: u32,
+    pub generation: u32,
+    pub kind: HandleKind,
 }
 
 impl UiHandle {
-    pub(crate) const fn new(
+    pub const fn new(
         host_namespace: HostNamespace,
         slot: u32,
         generation: u32,
@@ -79,7 +79,7 @@ impl UiHandle {
         })
     }
 
-    pub(crate) const fn node_key(self) -> Option<NodeKey> {
+    pub const fn node_key(self) -> Option<NodeKey> {
         if self.kind as u32 != HandleKind::Node as u32 {
             return None;
         }
@@ -89,7 +89,7 @@ impl UiHandle {
         })
     }
 
-    pub(crate) const fn resource_key(self) -> Option<ResourceKey> {
+    pub const fn resource_key(self) -> Option<ResourceKey> {
         if self.kind as u32 == HandleKind::Node as u32 {
             return None;
         }
@@ -102,7 +102,7 @@ impl UiHandle {
 }
 
 impl NodeKey {
-    pub(crate) const fn handle(self, host_namespace: HostNamespace) -> UiHandle {
+    pub const fn handle(self, host_namespace: HostNamespace) -> UiHandle {
         // Keys are created only by the arena, which guarantees nonzero fields.
         UiHandle {
             host_namespace: host_namespace.get(),
@@ -114,7 +114,7 @@ impl NodeKey {
 }
 
 impl ResourceKey {
-    pub(crate) const fn handle(self, host_namespace: HostNamespace) -> UiHandle {
+    pub const fn handle(self, host_namespace: HostNamespace) -> UiHandle {
         UiHandle {
             host_namespace: host_namespace.get(),
             slot: self.slot,
@@ -125,7 +125,7 @@ impl ResourceKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ArenaError {
+pub enum ArenaError {
     Capacity,
     InvalidKey,
     StaleKey,

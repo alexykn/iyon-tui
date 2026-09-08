@@ -52,10 +52,76 @@ pub fn rust_schema(document: &UiAbiDocument, schema_hash: &str, generator_hash: 
     }
     output.push_str("        }\n    }\n}\n\n");
     render_rust_code_enum(&mut output, "ControlKind", &document.control_kinds);
+    output.push_str(
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct ControlCommandDescriptor {\n    pub name: &'static str,\n    pub code: u32,\n    pub control_kind: ControlKind,\n    pub operands: &'static [&'static str],\n}\n\npub const CONTROL_COMMAND_DESCRIPTORS: &[ControlCommandDescriptor] = &[\n",
+    );
+    for command in &document.control_commands {
+        writeln!(
+            output,
+            "    ControlCommandDescriptor {{ name: {:?}, code: {}, control_kind: ControlKind::{}, operands: &[{}] }},",
+            command.name,
+            command.code,
+            command.control_kind,
+            command
+                .operands
+                .iter()
+                .map(|operand| format!("{operand:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated control command cannot fail");
+    }
+    output.push_str(
+        "];\n\npub fn control_command_descriptor(code: u32) -> Option<&'static ControlCommandDescriptor> {\n    CONTROL_COMMAND_DESCRIPTORS.iter().find(|command| command.code == code)\n}\n\n",
+    );
+    output.push_str(
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct UiConfigDescriptor {\n    pub name: &'static str,\n    pub owner: &'static str,\n    pub kind: &'static str,\n    pub value: &'static str,\n}\n\npub const UI_CONFIG_DESCRIPTORS: &[UiConfigDescriptor] = &[\n",
+    );
+    for config in &document.configs {
+        writeln!(
+            output,
+            "    UiConfigDescriptor {{ name: {:?}, owner: {:?}, kind: {:?}, value: {:?} }},",
+            config.name, config.owner, config.kind, config.value,
+        )
+        .expect("writing generated UI config cannot fail");
+    }
+    output.push_str("];\n\n");
     render_rust_code_enum(&mut output, "RootRole", &document.root_roles);
     render_rust_code_enum(&mut output, "HandleKind", &document.handle_kinds);
     render_rust_code_enum(&mut output, "OwnershipMode", &document.ownership_modes);
     render_rust_code_enum(&mut output, "ValueKind", &document.value_kinds);
+    output.push_str(
+        "#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingDescriptor {\n    pub value_kind: ValueKind,\n    pub encoding: &'static str,\n    pub min_words: usize,\n    pub max_words: usize,\n    pub metadata_words: usize,\n    pub forms: &'static [ValueEncodingForm],\n}\n\n#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingForm {\n    pub name: &'static str,\n    pub word_count: usize,\n    pub tags: &'static [u32],\n    pub values: &'static [u32],\n    pub mask: Option<u32>,\n    pub max_value: Option<u32>,\n}\n\npub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[\n",
+    );
+    for encoding in &document.value_encodings {
+        writeln!(
+            output,
+            "    ValueEncodingDescriptor {{ value_kind: ValueKind::{}, encoding: {:?}, min_words: {}, max_words: {}, metadata_words: {}, forms: &[{}] }},",
+            encoding.value_kind,
+            encoding.encoding,
+            encoding.min_words,
+            encoding.max_words,
+            encoding.metadata_words,
+            encoding
+                .forms
+                .iter()
+                .map(|form| format!(
+                    "ValueEncodingForm {{ name: {:?}, word_count: {}, tags: &{:?}, values: &{:?}, mask: {:?}, max_value: {:?} }}",
+                    form.name,
+                    form.word_count,
+                    form.tags,
+                    form.values,
+                    form.mask,
+                    form.max_value,
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated value encoding cannot fail");
+    }
+    output.push_str(
+        "];\n\npub fn value_encoding(value_kind: ValueKind) -> &'static ValueEncodingDescriptor {\n    VALUE_ENCODING_DESCRIPTORS.iter().find(|descriptor| descriptor.value_kind as u32 == value_kind as u32).expect(\"validated value encoding descriptor\")\n}\n\npub fn value_encoding_form(value_kind: ValueKind, name: &str) -> &'static ValueEncodingForm {\n    value_encoding(value_kind).forms.iter().find(|form| form.name == name).expect(\"validated value encoding form\")\n}\n\n",
+    );
 
     output.push_str(
         "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum Effect {\n",
@@ -272,10 +338,72 @@ pub fn typescript_schema(
     }
     output.push_str("} as const;\n\n");
     render_typescript_codes(&mut output, "CONTROL_KINDS", &document.control_kinds);
+    output.push_str(
+        "export interface UiControlCommandDescriptor {\n  readonly name: string;\n  readonly code: number;\n  readonly controlKind: ControlKindName;\n  readonly operands: readonly string[];\n}\n\nexport const UI_CONTROL_COMMAND_DESCRIPTORS: readonly UiControlCommandDescriptor[] = [\n",
+    );
+    for command in &document.control_commands {
+        writeln!(
+            output,
+            "  {{ name: {:?}, code: {}, controlKind: {:?}, operands: [{}] }},",
+            command.name,
+            command.code,
+            command.control_kind,
+            command
+                .operands
+                .iter()
+                .map(|operand| format!("{operand:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated TS control command cannot fail");
+    }
+    output.push_str("];\n\n");
+    output.push_str(
+        "export interface UiConfigDescriptor {\n  readonly name: string;\n  readonly owner: \"control\" | \"root\";\n  readonly kind: string;\n  readonly value: string;\n}\n\nexport const UI_CONFIG_DESCRIPTORS: readonly UiConfigDescriptor[] = [\n",
+    );
+    for config in &document.configs {
+        writeln!(
+            output,
+            "  {{ name: {:?}, owner: {:?}, kind: {:?}, value: {:?} }},",
+            config.name, config.owner, config.kind, config.value,
+        )
+        .expect("writing generated TS UI config cannot fail");
+    }
+    output.push_str("];\n\n");
     render_typescript_codes(&mut output, "ROOT_ROLES", &document.root_roles);
     render_typescript_codes(&mut output, "HANDLE_KINDS", &document.handle_kinds);
     render_typescript_codes(&mut output, "OWNERSHIP_MODES", &document.ownership_modes);
     render_typescript_codes(&mut output, "VALUE_KINDS", &document.value_kinds);
+    output.push_str("export interface UiValueEncodingDescriptor {\n  readonly valueKind: ValueKindName;\n  readonly encoding: string;\n  readonly minWords: number;\n  readonly maxWords: number;\n  readonly metadataWords: number;\n  readonly forms: readonly UiValueEncodingForm[];\n}\n\nexport interface UiValueEncodingForm {\n  readonly name: string;\n  readonly wordCount: number;\n  readonly tags: readonly number[];\n  readonly values: readonly number[];\n  readonly mask: number | undefined;\n  readonly maxValue: number | undefined;\n}\n\nexport const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [\n");
+    for encoding in &document.value_encodings {
+        writeln!(
+            output,
+            "  {{ valueKind: {:?}, encoding: {:?}, minWords: {}, maxWords: {}, metadataWords: {}, forms: [{}] }},",
+            encoding.value_kind,
+            encoding.encoding,
+            encoding.min_words,
+            encoding.max_words,
+            encoding.metadata_words,
+            encoding
+                .forms
+                .iter()
+                .map(|form| format!(
+                    "{{ name: {:?}, wordCount: {}, tags: {:?}, values: {:?}, mask: {}, maxValue: {} }}",
+                    form.name,
+                    form.word_count,
+                    form.tags,
+                    form.values,
+                    form.mask
+                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
+                    form.max_value
+                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated TS value encoding cannot fail");
+    }
+    output.push_str("];\n\nexport function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {\n  const descriptor = UI_VALUE_ENCODING_DESCRIPTORS.find((value) => value.valueKind === valueKind);\n  if (!descriptor) throw new Error(\"unknown UI value encoding: \" + valueKind);\n  return descriptor;\n}\n\nexport function uiValueEncodingForm(valueKind: ValueKindName, name: string): UiValueEncodingForm {\n  const descriptor = uiValueEncoding(valueKind).forms.find((value) => value.name === name);\n  if (!descriptor) throw new Error(\"unknown UI value encoding form: \" + valueKind + \"/\" + name);\n  return descriptor;\n}\n\n");
     render_typescript_codes(&mut output, "EFFECTS", &document.effects);
     output.push_str("export const UI_SECTIONS = {\n");
     for section in &document.sections {
@@ -418,8 +546,11 @@ pub fn manifest(
         "handle_kinds": document.handle_kinds,
         "ownership_modes": document.ownership_modes,
         "value_kinds": document.value_kinds,
+        "value_encodings": document.value_encodings,
         "effects": document.effects,
         "opcodes": document.opcodes,
+        "control_commands": document.control_commands,
+        "configs": document.configs,
         "properties": document.properties,
         "generated_outputs": output_paths,
     });
@@ -468,6 +599,52 @@ pub fn human_reference(
             kind.name, kind.code, kind.children
         )
         .expect("writing UI ABI reference cannot fail");
+    }
+    output.push_str(
+        "\n## Value encodings\n\n| Value kind | Encoding | Min words | Max words | Metadata words | Forms |\n|---|---|---:|---:|---:|---|\n",
+    );
+    for encoding in &document.value_encodings {
+        writeln!(
+            output,
+            "| {} | {} | {} | {} | {} | {} |",
+            encoding.value_kind,
+            encoding.encoding,
+            encoding.min_words,
+            encoding.max_words,
+            encoding.metadata_words,
+            encoding
+                .forms
+                .iter()
+                .map(|form| form.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing UI ABI value encoding reference cannot fail");
+    }
+    output.push_str(
+        "\n## Control commands\n\n| Name | Code | Control kind | Operands |\n|---|---:|---|---|\n",
+    );
+    for command in &document.control_commands {
+        writeln!(
+            output,
+            "| {} | 0x{:x} | {} | {} |",
+            command.name,
+            command.code,
+            command.control_kind,
+            command.operands.join(", "),
+        )
+        .expect("writing UI ABI control command reference cannot fail");
+    }
+    output.push_str(
+        "\n## Configuration fields\n\n| Name | Owner | Kind | Value |\n|---|---|---|---|\n",
+    );
+    for config in &document.configs {
+        writeln!(
+            output,
+            "| {} | {} | {} | {} |",
+            config.name, config.owner, config.kind, config.value,
+        )
+        .expect("writing UI ABI config reference cannot fail");
     }
     output.push_str("\n## Opcodes\n\n| Name | Code | Section | Operands |\n|---|---:|---|---|\n");
     for opcode in &document.opcodes {

@@ -19,7 +19,7 @@ Mannered prose substitutes metaphor and flourish for direct statement. Instead o
 - The parent supplies experienced guidance and owns integration, final review, and the delivered result. Use Luna for implementation, scouting, and research rather than as a separate review tier; personally inspect the resulting diffs, surrounding code, and validation evidence before accepting the work.
 - Ask delegates to explain consequential choices and remaining uncertainties in their handoff. Escalation is for genuine blockers, material scope changes, or consequential decisions outside the assignment—not routine engineering judgment. Continue useful in-scope work where possible.
 - Keep one writer per cwd/worktree; isolate concurrent writers. Do not delegate merely to create ceremony. Only the parent spawns agents: delegates must never spawn subagents or launch other agents through tools, CLI commands, or scripts.
-- Use `openai-codex/gpt-5.6-luna` for both profiles: `max` thinking for `delegate`, `high` for `scout`. A difficult scouting assignment may use `xhigh` for that run. More expensive subagent models require explicit user approval; do not escalate models automatically or create reviewer/oracle agents.
+- Use `openai-codex/gpt-5.6-luna` for both profiles: `xhigh` thinking for `delegate`, `high` for `scout`. A difficult scouting assignment may use `xhigh` for that run. More expensive subagent models require explicit user approval; do not escalate models automatically or create reviewer/oracle agents.
 
 ## Code and verification
 - Aim for linear, readable code with guard clauses, small cohesive functions, and explicit data flow.
@@ -42,14 +42,30 @@ Mannered prose substitutes metaphor and flourish for direct statement. Instead o
 - Treat production code, tests, fixtures, generated artifacts, and documentation as maintenance costs. Additions should earn their place through required behavior, clarity, or useful verification.
 - Keep simplification within the task’s scope. Do not reduce size by dropping required features, weakening contracts, or compressing readable code into clever expressions.
 
+## Permanent code and migration quality
+- New permanent code must be well structured when accepted, not left for an unspecified cleanup. Review the complete resulting design as well as individual fixes; passing tests alone are not architectural acceptance.
+- Existing code scheduled for deletion need not be beautified. Give necessary temporary adapters a specific deletion gate and keep permanent behavior out of them. Do not label new long-lived complexity as temporary merely because a migration is underway.
+- Make the execution path easy to follow: decode and validate at the boundary, perform typed operations in the owning core, then encode the result. Keep orchestration separate from low-level parsing and resource bookkeeping.
+- Organize modules around cohesive responsibilities and authoritative ownership. Prefer explicit inputs, outputs, lifecycle, and linear functions that work at one level of detail. Adapters compose existing behavior rather than implement it again.
+- Avoid god functions and nested validation pyramids. An operation that checks several independent conditions should call focused, meaningfully named validation functions in a linear sequence, using early returns or error propagation. Keep each validator responsible for one coherent rule; keep validation, preparation, and installation distinct without weakening the transaction's lock and atomicity guarantees.
+- Extract helpers that give a coherent operation a name and hide its implementation detail. This is different from forwarding wrappers that only supply a default argument or helpers that merely split lines: useful decomposition makes the caller's control flow readable at a glance.
+- When repeated fixes accumulate bookkeeping or duplicate state, reconsider the ownership model instead of adding another patch layer. Remove superseded paths and redundant derived state when replacing the design.
+- Moving a large function to another file is not structural simplification. Neither arbitrary line limits, one-line helper proliferation, speculative traits/frameworks, nor cosmetic renaming improve an unchanged tangled design.
+- Learn from readable examples across languages without copying their syntax or abstraction patterns mechanically. Rust ownership and error handling may require more code, but do not excuse unclear data flow or duplicate implementations.
+
+## Project migration sequence
+- After T2 is complete, review and simplify the permanent T1 occurrence, schema, and generator code before starting T3. Prior T1 acceptance is not an exemption: preserve behavior and contracts, and commit accepted cleanup as a separate change.
+
 ## Testing and verification discipline
 - Test observable behavior, important invariants, and legitimate failure transitions at the narrowest layer that owns the contract. Do not create a separate test for every helper or implementation detail.
 - Prefer extending or consolidating existing tests and fixtures over adding overlapping suites, new harnesses, or large test matrices.
 - Add regressions that demonstrate the actual bug and protect its contract. Avoid duplicating the same scenario across layers unless each test verifies a distinct boundary or failure mode.
 - Use the smallest set of checks that provides meaningful confidence in the changed behavior. Run broader suites when the affected scope, failures, or unresolved uncertainty justify them—not automatically after every refinement.
+- During implementation and parent-review corrections, prefer focused behavioral tests and the smallest relevant format, lint, type, and boundary checks. Coordinate one final broad validation pass after the implementation and corrections stabilize; run broad checks earlier only for an explicit requirement or a concrete cross-cutting risk or failure.
 - Reuse build artifacts and validation evidence while they remain applicable. Rerun checks when relevant code, dependencies, configuration, or build profiles change.
 - Treat test complexity, execution time, and compilation cost as design constraints. Prefer a few strong behavioral tests over many brittle or redundant assertions.
 - Report exactly what was verified and what remains uncertain. Passing tests are evidence for correctness, not proof of completeness; test counts and coverage percentages are not acceptance goals.
+- Distinguish checks run on the current source, still-applicable reused evidence, and deferred validation. Test the production implementation or its actual shared owner, not a parallel test-only implementation.
 
 ## Python
 - Use `uv`, `.venv`, and `pyproject.toml` for environment and dependency management.

@@ -8,8 +8,8 @@ use super::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-#[derive(Debug)]
-pub(super) struct TextBuffer {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TextBuffer {
     text: String,
     cursor: usize,
     preferred_col: Option<usize>,
@@ -17,7 +17,7 @@ pub(super) struct TextBuffer {
 }
 
 impl TextBuffer {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             text: String::new(),
             cursor: 0,
@@ -26,15 +26,15 @@ impl TextBuffer {
         }
     }
 
-    pub(super) fn text(&self) -> &str {
+    pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
-    pub(super) fn cursor_bytes(&self) -> usize {
+    pub(crate) fn cursor_bytes(&self) -> usize {
         self.cursor
     }
 
-    pub(super) fn set_text(&mut self, text: impl AsRef<str>, multiline: bool) {
+    pub(crate) fn set_text(&mut self, text: impl AsRef<str>, multiline: bool) {
         self.text = canonicalize(text.as_ref(), multiline);
         self.cursor = self.text.len();
         self.preferred_col = None;
@@ -42,7 +42,7 @@ impl TextBuffer {
         self.assert_invariant();
     }
 
-    pub(super) fn recanonicalize(&mut self, multiline: bool) {
+    pub(crate) fn recanonicalize(&mut self, multiline: bool) {
         let cursor = self.cursor;
         self.text = canonicalize(&self.text, multiline);
         self.cursor = 0;
@@ -52,7 +52,7 @@ impl TextBuffer {
         self.assert_invariant();
     }
 
-    pub(super) fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
         self.preferred_col = None;
@@ -60,7 +60,7 @@ impl TextBuffer {
         self.assert_invariant();
     }
 
-    pub(super) fn insert_text(&mut self, text: &str, multiline: bool) -> bool {
+    pub(crate) fn insert_text(&mut self, text: &str, multiline: bool) -> bool {
         let text = canonicalize(text, multiline);
         if text.is_empty() {
             return false;
@@ -72,7 +72,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn backspace(&mut self) -> bool {
+    pub(crate) fn backspace(&mut self) -> bool {
         if self.cursor == 0 {
             return false;
         }
@@ -84,7 +84,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn delete(&mut self) -> bool {
+    pub(crate) fn delete(&mut self) -> bool {
         if self.cursor >= self.text.len() {
             return false;
         }
@@ -95,7 +95,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn delete_word_backward(&mut self) -> bool {
+    pub(crate) fn delete_word_backward(&mut self) -> bool {
         if self.cursor == 0 {
             return false;
         }
@@ -107,7 +107,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn delete_word_forward(&mut self) -> bool {
+    pub(crate) fn delete_word_forward(&mut self) -> bool {
         if self.cursor >= self.text.len() {
             return false;
         }
@@ -118,7 +118,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn kill_to_line_start(&mut self) -> bool {
+    pub(crate) fn kill_to_line_start(&mut self) -> bool {
         let start = self.line_start(self.cursor);
         if self.cursor == start {
             if self.cursor == 0 {
@@ -140,7 +140,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn yank(&mut self) -> bool {
+    pub(crate) fn yank(&mut self) -> bool {
         if self.kill_buffer.is_empty() {
             return false;
         }
@@ -152,7 +152,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_left(&mut self) -> bool {
+    pub(crate) fn move_left(&mut self) -> bool {
         if self.cursor == 0 {
             return false;
         }
@@ -161,7 +161,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_right(&mut self) -> bool {
+    pub(crate) fn move_right(&mut self) -> bool {
         if self.cursor >= self.text.len() {
             return false;
         }
@@ -170,7 +170,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_word_left(&mut self) -> bool {
+    pub(crate) fn move_word_left(&mut self) -> bool {
         if self.cursor == 0 {
             return false;
         }
@@ -183,7 +183,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_word_right(&mut self) -> bool {
+    pub(crate) fn move_word_right(&mut self) -> bool {
         if self.cursor >= self.text.len() {
             return false;
         }
@@ -196,7 +196,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_line_start(&mut self) -> bool {
+    pub(crate) fn move_line_start(&mut self) -> bool {
         let next = self.line_start(self.cursor);
         if next == self.cursor {
             return false;
@@ -206,7 +206,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_line_end(&mut self) -> bool {
+    pub(crate) fn move_line_end(&mut self) -> bool {
         let next = self.line_end(self.cursor);
         if next == self.cursor {
             return false;
@@ -216,7 +216,7 @@ impl TextBuffer {
         true
     }
 
-    pub(super) fn move_up_in_rows(&mut self, rows: &[Range<usize>]) -> bool {
+    pub(crate) fn move_up_in_rows(&mut self, rows: &[Range<usize>]) -> bool {
         let Some(index) = wrapped_line_index_by_start(rows, self.cursor) else {
             return false;
         };
@@ -233,7 +233,7 @@ impl TextBuffer {
         self.set_cursor_if_changed(next)
     }
 
-    pub(super) fn move_down_in_rows(&mut self, rows: &[Range<usize>]) -> bool {
+    pub(crate) fn move_down_in_rows(&mut self, rows: &[Range<usize>]) -> bool {
         let Some(index) = wrapped_line_index_by_start(rows, self.cursor) else {
             return false;
         };
@@ -250,11 +250,11 @@ impl TextBuffer {
         self.set_cursor_if_changed(next)
     }
 
-    pub(super) fn has_kill_buffer(&self) -> bool {
+    pub(crate) fn has_kill_buffer(&self) -> bool {
         !self.kill_buffer.is_empty()
     }
 
-    pub(super) fn logical_rows(&self) -> Vec<Range<usize>> {
+    pub(crate) fn logical_rows(&self) -> Vec<Range<usize>> {
         logical_line_ranges(&self.text)
     }
 
@@ -264,7 +264,7 @@ impl TextBuffer {
         self.cursor != previous
     }
 
-    pub(super) fn set_cursor(&mut self, position: usize) {
+    pub(crate) fn set_cursor(&mut self, position: usize) {
         let position = position.min(self.text.len());
         let position = if self.text.is_char_boundary(position) {
             position

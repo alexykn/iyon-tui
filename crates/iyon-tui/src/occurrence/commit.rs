@@ -3,6 +3,7 @@ use std::{
     fmt,
 };
 
+use super::config::{ConfigError, ControlConfig, RootConfig};
 use super::{
     OccurrenceDocument, ResourceFamily, ResourceRecord,
     arena::{NodeKey, ResourceKey, UiHandle},
@@ -21,53 +22,111 @@ const FAILED_RECORD_NONE: u32 = u32::MAX;
 const WAKE_DRAIN: u32 = 1;
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct UiCommit {
+pub struct UiCommit {
     expected_ui_revision: u64,
     operations: Vec<UiOperation>,
+    funnel_specs: HashMap<u32, FunnelSpec>,
+    control_configs: HashMap<u32, ControlConfig>,
+    root_configs: HashMap<u32, RootConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FunnelSpec {
+    pub kind: u32,
+    pub wrap: u32,
+    pub hyperlinks: bool,
+    pub smooth: bool,
 }
 
 impl UiCommit {
-    pub(crate) fn new(expected_ui_revision: u64) -> Self {
+    pub fn new(expected_ui_revision: u64) -> Self {
         Self {
             expected_ui_revision,
             operations: Vec::new(),
+            funnel_specs: HashMap::new(),
+            control_configs: HashMap::new(),
+            root_configs: HashMap::new(),
         }
     }
 
-    pub(crate) fn push(&mut self, operation: UiOperation) {
+    pub fn push(&mut self, operation: UiOperation) {
         self.operations.push(operation);
     }
 
-    pub(crate) fn with_operations(expected_ui_revision: u64, operations: Vec<UiOperation>) -> Self {
+    pub fn with_operations(expected_ui_revision: u64, operations: Vec<UiOperation>) -> Self {
         Self {
             expected_ui_revision,
             operations,
+            funnel_specs: HashMap::new(),
+            control_configs: HashMap::new(),
+            root_configs: HashMap::new(),
         }
     }
 
-    pub(crate) fn expected_ui_revision(&self) -> u64 {
+    pub fn expected_ui_revision(&self) -> u64 {
         self.expected_ui_revision
     }
 
-    pub(crate) fn operations(&self) -> &[UiOperation] {
+    pub fn operations(&self) -> &[UiOperation] {
         &self.operations
+    }
+
+    pub fn set_funnel_for_connector(&mut self, local_ordinal: u32, funnel: FunnelSpec) {
+        self.funnel_specs.insert(local_ordinal, funnel);
+    }
+
+    #[must_use]
+    pub fn funnel_for_connector(&self, local_ordinal: u32) -> FunnelSpec {
+        self.funnel_specs
+            .get(&local_ordinal)
+            .copied()
+            .unwrap_or(FunnelSpec {
+                kind: 0,
+                wrap: 0,
+                hyperlinks: true,
+                smooth: false,
+            })
+    }
+
+    pub fn set_control_config(&mut self, local_ordinal: u32, config: ControlConfig) {
+        self.control_configs.insert(local_ordinal, config);
+    }
+
+    #[must_use]
+    pub fn control_config(&self, local_ordinal: u32) -> ControlConfig {
+        self.control_configs
+            .get(&local_ordinal)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub fn set_root_config(&mut self, local_ordinal: u32, config: RootConfig) {
+        self.root_configs.insert(local_ordinal, config);
+    }
+
+    #[must_use]
+    pub fn root_config(&self, local_ordinal: u32) -> RootConfig {
+        self.root_configs
+            .get(&local_ordinal)
+            .copied()
+            .unwrap_or_default()
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum NodeRef {
+pub enum NodeRef {
     Existing(UiHandle),
     Local(u32),
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum ResourceRef {
+pub enum ResourceRef {
     Existing(UiHandle),
     Local(u32),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum UiOperation {
+pub enum UiOperation {
     CreateNode {
         local_ordinal: u32,
         kind: HostKind,
@@ -122,6 +181,19 @@ pub(crate) enum UiOperation {
     DisposeConnector {
         connector: ResourceRef,
     },
+    SetLiteralFunnel {
+        port: ResourceRef,
+        kind: u32,
+        wrap: u32,
+        hyperlinks: bool,
+        smooth: bool,
+    },
+    ReplaceLiteral {
+        port: ResourceRef,
+        content_format: u32,
+        content: Vec<u8>,
+        annotations: Vec<u8>,
+    },
     CreateControl {
         local_ordinal: u32,
         kind: super::generated::ControlKind,
@@ -130,6 +202,10 @@ pub(crate) enum UiOperation {
     },
     DisposeControl {
         control: ResourceRef,
+    },
+    HistoryAction {
+        root: NodeRef,
+        action_id: u32,
     },
     SetDeclared {
         node: NodeRef,
@@ -158,8 +234,19 @@ pub(crate) enum UiOperation {
         key: String,
         value: String,
     },
+    SetStyleStateLayered {
+        node: NodeRef,
+        layer: u32,
+        key: String,
+        value: String,
+    },
     ClearStyleState {
         node: NodeRef,
+        key: String,
+    },
+    ClearStyleStateLayered {
+        node: NodeRef,
+        layer: u32,
         key: String,
     },
     SetSubscriptions {
@@ -167,18 +254,28 @@ pub(crate) enum UiOperation {
         mask_low: u32,
         mask_high: u32,
     },
+    ControlCommand {
+        control: ResourceRef,
+        command_id: u32,
+        operands: Vec<u32>,
+    },
+    ReplaceEditorContent {
+        control: ResourceRef,
+        content: Vec<u8>,
+        expected_edit_revision: u64,
+    },
 }
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum UiStatus {
+pub enum UiStatus {
     Accepted = STATUS_OK,
     Rejected = STATUS_REJECTED,
 }
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum CommitDetail {
+pub enum CommitDetail {
     Malformed = 1,
     StaleRevision = 2,
     StaleHandle = 3,
@@ -199,25 +296,25 @@ impl CommitDetail {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct UiAcknowledgement {
-    pub(crate) status: UiStatus,
-    pub(crate) accepted_ui_revision: u64,
-    pub(crate) created_count: u32,
-    pub(crate) failed_record: u32,
-    pub(crate) detail_code: u32,
-    pub(crate) wake_flags: u32,
-    pub(crate) created: Box<[UiHandle]>,
+pub struct UiAcknowledgement {
+    pub status: UiStatus,
+    pub accepted_ui_revision: u64,
+    pub created_count: u32,
+    pub failed_record: u32,
+    pub detail_code: u32,
+    pub wake_flags: u32,
+    pub created: Box<[UiHandle]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct UiOperationResult {
-    pub(crate) acknowledgement: UiAcknowledgement,
+pub struct UiOperationResult {
+    pub acknowledgement: UiAcknowledgement,
     /// The exact eight-word acknowledgement header followed by four words per
     /// created handle.  This storage is prepared before authoritative apply.
-    pub(crate) words: Box<[u32]>,
+    pub words: Box<[u32]>,
 }
 
-pub(crate) type AppliedUiCommit = UiOperationResult;
+pub type AppliedUiCommit = UiOperationResult;
 
 impl UiOperationResult {
     fn accepted(revision: u64, created: Vec<UiHandle>, wake_flags: u32) -> Self {
@@ -231,7 +328,7 @@ impl UiOperationResult {
         )
     }
 
-    fn rejected(revision: u64, failed_record: u32, detail: CommitDetail) -> Self {
+    pub fn rejected(revision: u64, failed_record: u32, detail: CommitDetail) -> Self {
         Self::new(
             UiStatus::Rejected,
             revision,
@@ -299,10 +396,21 @@ impl UiOperationResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct UiRejection {
-    pub(crate) result: UiOperationResult,
-    pub(crate) detail: CommitDetail,
-    pub(crate) message: String,
+pub struct UiRejection {
+    pub result: UiOperationResult,
+    pub detail: CommitDetail,
+    pub message: String,
+}
+
+impl UiRejection {
+    pub fn internal(revision: u64, detail: CommitDetail, message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            result: UiOperationResult::rejected(revision, u32::MAX, detail),
+            detail,
+            message,
+        }
+    }
 }
 
 impl fmt::Display for UiRejection {
@@ -361,7 +469,7 @@ struct ResourceDraft<'a> {
     owner_changes: HashMap<ResourceKey, Option<NodeKey>>,
 }
 
-pub(crate) struct PreparedUiCommit {
+pub struct PreparedUiCommit {
     expected_ui_revision: u64,
     next_ui_revision: u64,
     pub(crate) changed: bool,
@@ -371,6 +479,23 @@ pub(crate) struct PreparedUiCommit {
     roots_added: Vec<NodeKey>,
     roots_removed: Vec<NodeKey>,
     result: UiOperationResult,
+}
+
+impl PreparedUiCommit {
+    #[must_use]
+    pub fn acknowledgement(&self) -> &UiAcknowledgement {
+        &self.result.acknowledgement
+    }
+
+    #[must_use]
+    pub fn retired_resource_keys(&self) -> Vec<ResourceKey> {
+        self.resources.retired.clone()
+    }
+
+    #[must_use]
+    pub fn retired_node_keys(&self) -> Vec<NodeKey> {
+        self.tree.retired.clone()
+    }
 }
 
 struct ResourcePlan {
@@ -966,10 +1091,7 @@ impl<'a> ResourceDraft<'a> {
 }
 
 impl OccurrenceDocument {
-    pub(crate) fn prepare_ui_commit(
-        &mut self,
-        batch: &UiCommit,
-    ) -> Result<PreparedUiCommit, UiRejection> {
+    pub fn prepare_ui_commit(&mut self, batch: &UiCommit) -> Result<PreparedUiCommit, UiRejection> {
         if batch.expected_ui_revision != self.accepted_ui_revision {
             return Err(self.rejection(
                 None,
@@ -986,6 +1108,8 @@ impl OccurrenceDocument {
         let (local_specs, node_count, port_count, connector_count, control_count) =
             collect_local_creations(batch.operations())
                 .map_err(|(index, issue)| self.rejection(Some(index), issue))?;
+        validate_commit_configs(batch, &local_specs)
+            .map_err(|issue| self.rejection(None, issue))?;
         let total_live = self
             .nodes
             .live_count()
@@ -1326,15 +1450,12 @@ impl OccurrenceDocument {
         })
     }
 
-    pub(crate) fn commit_ui(&mut self, batch: &UiCommit) -> Result<AppliedUiCommit, UiRejection> {
+    pub fn commit_ui(&mut self, batch: &UiCommit) -> Result<AppliedUiCommit, UiRejection> {
         let prepared = self.prepare_ui_commit(batch)?;
         Ok(self.apply_prepared_ui_commit(prepared))
     }
 
-    pub(crate) fn apply_prepared_ui_commit(
-        &mut self,
-        prepared: PreparedUiCommit,
-    ) -> AppliedUiCommit {
+    pub fn apply_prepared_ui_commit(&mut self, prepared: PreparedUiCommit) -> AppliedUiCommit {
         assert_eq!(
             self.accepted_ui_revision, prepared.expected_ui_revision,
             "prepared UI commit belongs to another accepted revision"
@@ -2891,6 +3012,46 @@ mod tests {
     }
 
     #[test]
+    fn repeated_history_action_is_a_noop_and_wrong_root_is_rejected() {
+        let mut document = document();
+        let mut create = UiCommit::new(document.accepted_ui_revision());
+        create.push(UiOperation::CreateRoot {
+            local_ordinal: 1,
+            role: RootRole::LegacyHistoryUnit,
+            owner: None,
+        });
+        let root = document
+            .commit_ui(&create)
+            .expect("history root")
+            .acknowledgement
+            .created[0];
+
+        let mut freeze = UiCommit::new(document.accepted_ui_revision());
+        freeze.push(UiOperation::HistoryAction {
+            root: NodeRef::Existing(root),
+            action_id: 1,
+        });
+        document.commit_ui(&freeze).expect("first history action");
+        let mut repeated = UiCommit::new(document.accepted_ui_revision());
+        repeated.push(UiOperation::HistoryAction {
+            root: NodeRef::Existing(root),
+            action_id: 1,
+        });
+        let result = document.commit_ui(&repeated).expect("repeated action");
+        assert_eq!(result.acknowledgement.accepted_ui_revision, 2);
+
+        let mut wrong_root = UiCommit::new(document.accepted_ui_revision());
+        wrong_root.push(UiOperation::HistoryAction {
+            root: NodeRef::Existing(document.body_handle()),
+            action_id: 1,
+        });
+        let rejection = document
+            .commit_ui(&wrong_root)
+            .expect_err("body is not a history root");
+        assert_eq!(rejection.detail, CommitDetail::InvalidTopology);
+    }
+
+    #[test]
     fn occurrence_owned_resources_require_an_occurrence_owner() {
         let mut document = document();
         let mut port = UiCommit::new(document.accepted_ui_revision());
@@ -3028,6 +3189,41 @@ mod tests {
         assert!(document.node_key(ordinary).is_ok());
         assert!(document.node_key(portal).is_err());
         assert_eq!(document.live_node_count(), ORDINARY as usize + 1);
+    }
+
+    #[test]
+    fn occurrence_owned_literal_replacement_is_atomic() {
+        let mut document = document();
+        let body = document.body_handle();
+        let mut batch = UiCommit::new(document.accepted_ui_revision());
+        batch.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        batch.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        batch.push(UiOperation::InsertBefore {
+            parent: node_ref(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        batch.push(UiOperation::AttachPort {
+            node: NodeRef::Local(1),
+            port: Some(ResourceRef::Local(2)),
+        });
+        batch.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(2),
+            content_format: 1,
+            content: b"hello".to_vec(),
+            annotations: Vec::new(),
+        });
+        document
+            .commit_ui(&batch)
+            .unwrap_or_else(|rejection| panic!("literal replacement rejected: {rejection}"));
     }
 
     #[test]
@@ -3298,6 +3494,78 @@ fn local_creation(operation: &UiOperation) -> Option<(u32, LocalFamily)> {
     }
 }
 
+fn validate_commit_configs(
+    batch: &UiCommit,
+    local_specs: &BTreeMap<u32, LocalFamily>,
+) -> Result<(), CommitIssue> {
+    for (&ordinal, config) in &batch.control_configs {
+        let Some(LocalFamily::Control) = local_specs.get(&ordinal) else {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "control config must target a local Control creation",
+            ));
+        };
+        let kind = batch
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                UiOperation::CreateControl {
+                    local_ordinal,
+                    kind,
+                    ..
+                } if *local_ordinal == ordinal => Some(*kind),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                CommitIssue::new(
+                    CommitDetail::Invariant,
+                    "control config creation is missing its kind",
+                )
+            })?;
+        config.validate_for(kind).map_err(config_issue)?;
+    }
+    for &ordinal in batch.root_configs.keys() {
+        let Some(LocalFamily::Node) = local_specs.get(&ordinal) else {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "root config must target a local root creation",
+            ));
+        };
+        let role = batch
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                UiOperation::CreateRoot {
+                    local_ordinal,
+                    role,
+                    ..
+                } if *local_ordinal == ordinal => Some(*role),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                CommitIssue::new(
+                    CommitDetail::Invariant,
+                    "root config creation is missing its role",
+                )
+            })?;
+        batch
+            .root_config(ordinal)
+            .validate_for(role)
+            .map_err(config_issue)?;
+    }
+    Ok(())
+}
+
+fn config_issue(error: ConfigError) -> CommitIssue {
+    CommitIssue::new(
+        match error {
+            ConfigError::WrongKind => CommitDetail::InvalidTopology,
+            ConfigError::InvalidValue => CommitDetail::InvalidProperty,
+        },
+        "typed UI config does not match its creation kind",
+    )
+}
+
 const fn local_family_index(family: LocalFamily) -> usize {
     match family {
         LocalFamily::Node => 0,
@@ -3475,6 +3743,28 @@ impl OccurrenceDocument {
                 *effects = effects
                     .union(EFFECT_STRUCTURE_GUARD)
                     .union(EFFECT_LAYOUT_INPUT);
+                Ok(true)
+            }
+            UiOperation::HistoryAction { root, action_id } => {
+                let root = resolve_node_ref(self, tree, local_objects, root)?;
+                if *action_id != 1 && *action_id != 2 {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Unsupported,
+                        "History action is not supported by the current host",
+                    ));
+                }
+                let record = tree.edit(root).map_err(tree_issue)?;
+                if record.root_role != Some(RootRole::LegacyHistoryUnit) {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "History action requires a LegacyHistoryUnit root",
+                    ));
+                }
+                if record.history_action == Some(*action_id) {
+                    return Ok(false);
+                }
+                record.history_action = Some(*action_id);
+                *effects = effects.union(EFFECT_STRUCTURE_GUARD);
                 Ok(true)
             }
             UiOperation::InsertBefore {
@@ -3690,6 +3980,57 @@ impl OccurrenceDocument {
                 }
                 Ok(changed)
             }
+            UiOperation::SetLiteralFunnel { port, .. } => {
+                let port = resolve_resource_ref(
+                    self,
+                    resources,
+                    local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let record = resources.read(port)?;
+                if record.ownership != OwnershipMode::OccurrenceOwned {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "literal Funnel requires an occurrence-owned Port",
+                    ));
+                }
+                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
+            UiOperation::ReplaceLiteral {
+                port,
+                content_format,
+                content,
+                annotations,
+            } => {
+                let port = resolve_resource_ref(
+                    self,
+                    resources,
+                    local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let record = resources.read(port)?;
+                if record.ownership != OwnershipMode::OccurrenceOwned {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "literal replacement requires an occurrence-owned Port",
+                    ));
+                }
+                if *content_format != 1 {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Unsupported,
+                        "literal content format is unsupported",
+                    ));
+                }
+                std::str::from_utf8(content).map_err(|_| {
+                    CommitIssue::new(CommitDetail::Malformed, "literal content is not UTF-8")
+                })?;
+                let _ = annotations;
+                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
             UiOperation::CreateControl {
                 local_ordinal,
                 owner,
@@ -3806,6 +4147,40 @@ impl OccurrenceDocument {
                 record.style_states.insert(key.clone(), value.clone());
                 Ok(false)
             }
+            UiOperation::SetStyleStateLayered {
+                node,
+                layer,
+                key,
+                value,
+            } => {
+                if *layer > 1
+                    || key.is_empty()
+                    || key.contains('\0')
+                    || value.is_empty()
+                    || value.contains('\0')
+                {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Malformed,
+                        "style state layer/value is invalid",
+                    ));
+                }
+                let node = resolve_node_ref(self, tree, local_objects, node)?;
+                if *layer == 0 {
+                    capture_style_state_initial(tree, node, key, style_state_initials)?;
+                }
+                let record = tree.edit(node).map_err(tree_issue)?;
+                let states = if *layer == 0 {
+                    &mut record.style_states
+                } else {
+                    &mut record.style_overrides
+                };
+                if states.get(key) == Some(value) {
+                    return Ok(false);
+                }
+                states.insert(key.clone(), value.clone());
+                mark_style_state(tree, node, effects)?;
+                Ok(true)
+            }
             UiOperation::ClearStyleState { node, key } => {
                 if key.is_empty() || key.contains('\0') {
                     return Err(CommitIssue::new(
@@ -3821,6 +4196,29 @@ impl OccurrenceDocument {
                 }
                 Ok(false)
             }
+            UiOperation::ClearStyleStateLayered { node, layer, key } => {
+                if *layer > 1 || key.is_empty() || key.contains('\0') {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Malformed,
+                        "style state layer/key is invalid",
+                    ));
+                }
+                let node = resolve_node_ref(self, tree, local_objects, node)?;
+                if *layer == 0 {
+                    capture_style_state_initial(tree, node, key, style_state_initials)?;
+                }
+                let record = tree.edit(node).map_err(tree_issue)?;
+                let states = if *layer == 0 {
+                    &mut record.style_states
+                } else {
+                    &mut record.style_overrides
+                };
+                if states.remove(key).is_none() {
+                    return Ok(false);
+                }
+                mark_style_state(tree, node, effects)?;
+                Ok(true)
+            }
             UiOperation::SetSubscriptions {
                 node,
                 mask_low,
@@ -3835,6 +4233,41 @@ impl OccurrenceDocument {
                 }
                 record.subscriptions = mask;
                 Ok(false)
+            }
+            UiOperation::ControlCommand {
+                control,
+                command_id,
+                operands,
+            } => {
+                let _ = command_id;
+                let _ = operands;
+                let _ = resolve_resource_ref(
+                    self,
+                    resources,
+                    local_objects,
+                    control,
+                    ResourceFamily::Control,
+                )?;
+                *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
+                Ok(true)
+            }
+            UiOperation::ReplaceEditorContent {
+                control,
+                content,
+                expected_edit_revision: _,
+            } => {
+                let _ = resolve_resource_ref(
+                    self,
+                    resources,
+                    local_objects,
+                    control,
+                    ResourceFamily::Control,
+                )?;
+                std::str::from_utf8(content).map_err(|_| {
+                    CommitIssue::new(CommitDetail::Malformed, "editor content is not UTF-8")
+                })?;
+                *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
+                Ok(true)
             }
         }
     }

@@ -4167,7 +4167,7 @@
     "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
     "docs/architecture/generated/UI-ABI-REFERENCE.md"
   ],
-  "generator_blake3": "da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3",
+  "generator_blake3": "18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d",
   "handles": [
     {
       "kind": null,

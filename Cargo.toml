@@ -38,7 +38,7 @@ unicode-segmentation = "1.13.2"
 unicode-width = "0.2.2"
 unicode-linebreak = "0.1.5"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
-napi = { version = "3.12.1", features = ["async", "serde-json"] }
+napi = { version = "3.12.1", features = ["async", "serde-json", "napi8"] }
 napi-derive = "3.6.3"
 
 # Test-only tooling, pulled in by crates via [dev-dependencies].

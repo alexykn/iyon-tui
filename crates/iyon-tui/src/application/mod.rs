@@ -19,4 +19,6 @@ mod run;
 #[cfg(feature = "native-host")]
 mod source_store;
 #[cfg(feature = "native-host")]
+pub(crate) mod ui_resources;
+#[cfg(feature = "native-host")]
 pub(crate) mod view_state;

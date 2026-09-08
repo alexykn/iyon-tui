@@ -110,8 +110,14 @@ pub struct UiAbiDocument {
     pub effects: Vec<UiCodeSpec>,
     #[serde(rename = "opcode", default)]
     pub opcodes: Vec<UiOpcodeSpec>,
+    #[serde(rename = "control_command", default)]
+    pub control_commands: Vec<UiControlCommandSpec>,
+    #[serde(rename = "config", default)]
+    pub configs: Vec<UiConfigSpec>,
     #[serde(rename = "property", default)]
     pub properties: Vec<UiPropertySpec>,
+    #[serde(rename = "value_encoding", default)]
+    pub value_encodings: Vec<UiValueEncodingSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -168,6 +174,24 @@ pub struct UiOpcodeSpec {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct UiControlCommandSpec {
+    pub name: String,
+    pub code: u32,
+    pub control_kind: String,
+    pub operands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfigSpec {
+    pub name: String,
+    pub owner: String,
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct UiPropertySpec {
     pub id: u32,
     pub domain: String,
@@ -183,6 +207,33 @@ pub struct UiPropertySpec {
     pub realization: String,
     pub nullable: bool,
     pub clearable: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiValueEncodingSpec {
+    pub value_kind: String,
+    pub encoding: String,
+    pub min_words: u32,
+    pub max_words: u32,
+    #[serde(default)]
+    pub metadata_words: u32,
+    pub forms: Vec<UiValueFormSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiValueFormSpec {
+    pub name: String,
+    pub word_count: u32,
+    #[serde(default)]
+    pub tags: Vec<u32>,
+    #[serde(default)]
+    pub values: Vec<u32>,
+    #[serde(default)]
+    pub mask: Option<u32>,
+    #[serde(default)]
+    pub max_value: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

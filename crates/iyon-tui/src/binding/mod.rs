@@ -61,6 +61,25 @@ pub use crate::theme::Theme;
 // Source storage and Connector control.
 pub use crate::projection::SmoothConfig;
 
+// OCCURRENCE UI acceptance seam. The native addon owns byte decoding and
+// source qualification; the core owns typed operations and transactional
+// desired-state installation. This does not expose renderer/View transport.
+#[cfg(feature = "native-host")]
+pub use crate::application::ui_resources::{SourceIdentity, UiResourceOwner};
+pub use crate::occurrence::generated::{
+    HandleKind, UI_ACK_HEADER_WORDS, UI_ACK_WORDS_PER_CREATED_HANDLE, UI_BATCH_HEADER_WORDS,
+    UI_BATCH_MAGIC, UI_BATCH_VERSION, UI_HANDLE_WORDS, UiOpcode, ValueKind, property_descriptor,
+    value_encoding, value_encoding_form,
+};
+pub use crate::occurrence::{
+    Alignment, AlignmentAxis, AnimationState, ColorValue, CommitDetail, ConfigError, ControlConfig,
+    ControlError, ControlKind, ControlState, Edges, EditorState, FunnelSpec, GlyphsValue, HostKind,
+    HostNamespace, LayerValue, NodeKey, NodeRef, OccurrenceDocument, OwnershipMode, PropertyId,
+    PropertyLayer, PropertyValue, ResourceKey, ResourceRef, RootConfig, RootRole, ScrollState,
+    SizeMode, StyleValue, TextAttributes, UiAcknowledgement, UiCommit, UiHandle, UiOperation,
+    UiOperationResult, UiRejection,
+};
+
 // HOST: desired publication, barriers, and native control integration.
 pub use crate::content::text::{TextPart, TextRole, TextSelector};
 pub use crate::controls::TextInput;
@@ -73,8 +92,8 @@ pub use crate::output::Output;
 #[cfg(feature = "native-host")]
 pub use crate::application::content::{
     ContentAnnotationRecord, ContentDelivery, ContentFamily, ContentMutationResult,
-    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource, TextFunnelKind,
-    TextSourceKind, TextWrapMode,
+    HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
+    SourceInstallDisposition, TextFunnelKind, TextSourceKind, TextWrapMode,
 };
 #[cfg(feature = "native-host")]
 pub use crate::application::environment::{TuiEnvironment, WakeDisposition};

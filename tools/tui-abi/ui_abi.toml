@@ -152,6 +152,84 @@ code = 9
 name = "Style"
 code = 10
 
+[[value_encoding]]
+value_kind = "SizeMode"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "mode", word_count = 1, values = [0, 1] }]
+
+[[value_encoding]]
+value_kind = "U16"
+encoding = "u16"
+min_words = 1
+max_words = 1
+forms = [{ name = "u16", word_count = 1, max_value = 65535 }]
+
+[[value_encoding]]
+value_kind = "Insets"
+encoding = "u16x4"
+min_words = 4
+max_words = 4
+forms = [{ name = "u16x4", word_count = 4 }]
+
+[[value_encoding]]
+value_kind = "Alignment"
+encoding = "axis_x2"
+min_words = 2
+max_words = 2
+forms = [{ name = "axis_pair", word_count = 2, values = [0, 1, 2, 3, 4] }]
+
+[[value_encoding]]
+value_kind = "Edges"
+encoding = "bool_x4"
+min_words = 4
+max_words = 4
+forms = [{ name = "bool_x4", word_count = 4, values = [0, 1] }]
+
+[[value_encoding]]
+value_kind = "Color"
+encoding = "ansi_or_rgb_v1"
+min_words = 1
+max_words = 4
+forms = [
+  { name = "ansi", word_count = 1, max_value = 255 },
+  { name = "rgb", word_count = 4, tags = [0x80000001] }
+]
+
+[[value_encoding]]
+value_kind = "BorderStyle"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "border", word_count = 1, values = [0, 1, 2] }]
+
+[[value_encoding]]
+value_kind = "Glyphs"
+encoding = "metadata_pairs_x8"
+min_words = 16
+max_words = 16
+metadata_words = 16
+forms = [{ name = "metadata_pairs_x8", word_count = 16 }]
+
+[[value_encoding]]
+value_kind = "TextAttributes"
+encoding = "set_or_clear_bits_v1"
+min_words = 1
+max_words = 2
+forms = [{ name = "set_or_clear", word_count = 2, mask = 0x3f }]
+
+[[value_encoding]]
+value_kind = "Style"
+encoding = "direct_or_themed_style_v1"
+min_words = 9
+max_words = 12
+metadata_words = 2
+forms = [
+  { name = "direct", word_count = 9, tags = [0, 1, 2], mask = 0x3f },
+  { name = "themed", word_count = 12, tags = [0, 1, 2], mask = 0x3f }
+]
+
 [[effect]]
 name = "Presentation"
 code = 0
@@ -293,6 +371,177 @@ code = 0x18
 section = "state"
 operands = ["control_handle", "command_id", "typed_operands"]
 
+# Closed command identities reuse the existing native TextInput/Scroll
+# behavior. Operand words are interpreted by the owning core control state;
+# editor text itself remains on REPLACE_EDITOR_CONTENT, never this lane.
+[[control_command]]
+name = "EditorInsert"
+code = 1
+control_kind = "Editor"
+operands = ["codepoint_u32"]
+
+[[control_command]]
+name = "EditorSubmit"
+code = 2
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorInsertNewline"
+code = 3
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorBackspace"
+code = 4
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorDelete"
+code = 5
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorDeleteWordBackward"
+code = 6
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorDeleteWordForward"
+code = 7
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorKillToLineStart"
+code = 8
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorYank"
+code = 9
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveLeft"
+code = 10
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveRight"
+code = 11
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveWordLeft"
+code = 12
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveWordRight"
+code = 13
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveLineStart"
+code = 14
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveLineEnd"
+code = 15
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveUp"
+code = 16
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "EditorMoveDown"
+code = 17
+control_kind = "Editor"
+operands = []
+
+[[control_command]]
+name = "ScrollLineUp"
+code = 0x100
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "ScrollLineDown"
+code = 0x101
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "ScrollPageUp"
+code = 0x102
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "ScrollPageDown"
+code = 0x103
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "ScrollStart"
+code = 0x104
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "ScrollEnd"
+code = 0x105
+control_kind = "Scroll"
+operands = []
+
+[[control_command]]
+name = "AnimationStop"
+code = 0x200
+control_kind = "Animation"
+operands = []
+
+[[config]]
+name = "EditorMultiline"
+owner = "control"
+kind = "Editor"
+value = "bool"
+
+[[config]]
+name = "AnimationIntervalMs"
+owner = "control"
+kind = "Animation"
+value = "u32"
+
+[[config]]
+name = "HistoryFlowBoundary"
+owner = "root"
+kind = "LegacyHistoryUnit"
+value = "flow_boundary"
+
+[[config]]
+name = "HistoryUnitIdentity"
+owner = "root"
+kind = "LegacyHistoryUnit"
+value = "unit_identity"
+
 [[opcode]]
 name = "CreatePort"
 code = 0x20
@@ -349,6 +598,9 @@ operands = ["control_handle", "content_bytes", "expected_edit_revision"]
 
 # Existing finite state semantics are carried into the occurrence document.
 # IDs are globally unique and intentionally leave room for future domains.
+# Property payload layouts are declared by the value_encoding rows above and
+# emitted into the Rust/TypeScript descriptors. The native decoder retains
+# handwritten semantic validation for each finite encoding algorithm.
 [[property]]
 id = 0x0101
 domain = "geometry"

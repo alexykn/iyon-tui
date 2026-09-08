@@ -1,4 +1,4 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = 8ff1e9e2b87f0439ccdbd9f487068d190302196bd8545dd90d1cd4dc2f9daee0; generator_blake3 = da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3 -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c; generator_blake3 = 18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d -->
 
 # Direct UI ABI
 
@@ -35,6 +35,59 @@
 | Editor | 3 | none |
 | Scroll | 4 | many |
 | Animation | 5 | frames |
+
+## Value encodings
+
+| Value kind | Encoding | Min words | Max words | Metadata words | Forms |
+|---|---|---:|---:|---:|---|
+| SizeMode | u32_enum | 1 | 1 | 0 | mode |
+| U16 | u16 | 1 | 1 | 0 | u16 |
+| Insets | u16x4 | 4 | 4 | 0 | u16x4 |
+| Alignment | axis_x2 | 2 | 2 | 0 | axis_pair |
+| Edges | bool_x4 | 4 | 4 | 0 | bool_x4 |
+| Color | ansi_or_rgb_v1 | 1 | 4 | 0 | ansi, rgb |
+| BorderStyle | u32_enum | 1 | 1 | 0 | border |
+| Glyphs | metadata_pairs_x8 | 16 | 16 | 16 | metadata_pairs_x8 |
+| TextAttributes | set_or_clear_bits_v1 | 1 | 2 | 0 | set_or_clear |
+| Style | direct_or_themed_style_v1 | 9 | 12 | 2 | direct, themed |
+
+## Control commands
+
+| Name | Code | Control kind | Operands |
+|---|---:|---|---|
+| EditorInsert | 0x1 | Editor | codepoint_u32 |
+| EditorSubmit | 0x2 | Editor |  |
+| EditorInsertNewline | 0x3 | Editor |  |
+| EditorBackspace | 0x4 | Editor |  |
+| EditorDelete | 0x5 | Editor |  |
+| EditorDeleteWordBackward | 0x6 | Editor |  |
+| EditorDeleteWordForward | 0x7 | Editor |  |
+| EditorKillToLineStart | 0x8 | Editor |  |
+| EditorYank | 0x9 | Editor |  |
+| EditorMoveLeft | 0xa | Editor |  |
+| EditorMoveRight | 0xb | Editor |  |
+| EditorMoveWordLeft | 0xc | Editor |  |
+| EditorMoveWordRight | 0xd | Editor |  |
+| EditorMoveLineStart | 0xe | Editor |  |
+| EditorMoveLineEnd | 0xf | Editor |  |
+| EditorMoveUp | 0x10 | Editor |  |
+| EditorMoveDown | 0x11 | Editor |  |
+| ScrollLineUp | 0x100 | Scroll |  |
+| ScrollLineDown | 0x101 | Scroll |  |
+| ScrollPageUp | 0x102 | Scroll |  |
+| ScrollPageDown | 0x103 | Scroll |  |
+| ScrollStart | 0x104 | Scroll |  |
+| ScrollEnd | 0x105 | Scroll |  |
+| AnimationStop | 0x200 | Animation |  |
+
+## Configuration fields
+
+| Name | Owner | Kind | Value |
+|---|---|---|---|
+| EditorMultiline | control | Editor | bool |
+| AnimationIntervalMs | control | Animation | u32 |
+| HistoryFlowBoundary | root | LegacyHistoryUnit | flow_boundary |
+| HistoryUnitIdentity | root | LegacyHistoryUnit | unit_identity |
 
 ## Opcodes
 

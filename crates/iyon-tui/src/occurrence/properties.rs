@@ -1,19 +1,19 @@
 use std::fmt;
 
 use super::generated::{EffectMask, HostKind, PropertyId, ValueKind, property_descriptor};
-pub(crate) use crate::presentation::{
+pub use crate::presentation::api::style::{
     BorderEdges as Edges, BorderGlyphs as GlyphsValue, BorderStyle, ColorSpec as ColorValue,
     Insets, StyleRef as StyleValue, TextAttributeSpec as TextAttributes,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SizeMode {
+pub enum SizeMode {
     Fit,
     Fill,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AlignmentAxis {
+pub enum AlignmentAxis {
     Start,
     Center,
     End,
@@ -22,16 +22,13 @@ pub(crate) enum AlignmentAxis {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Alignment {
-    pub(crate) horizontal: Option<AlignmentAxis>,
-    pub(crate) vertical: Option<AlignmentAxis>,
+pub struct Alignment {
+    pub horizontal: Option<AlignmentAxis>,
+    pub vertical: Option<AlignmentAxis>,
 }
 
 impl Alignment {
-    pub(crate) const fn new(
-        horizontal: Option<AlignmentAxis>,
-        vertical: Option<AlignmentAxis>,
-    ) -> Self {
+    pub const fn new(horizontal: Option<AlignmentAxis>, vertical: Option<AlignmentAxis>) -> Self {
         Self {
             horizontal,
             vertical,
@@ -40,7 +37,7 @@ impl Alignment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PropertyValue {
+pub enum PropertyValue {
     SizeMode(SizeMode),
     U16(u16),
     Insets(Insets),
@@ -71,7 +68,7 @@ impl PropertyValue {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum LayerValue {
+pub enum LayerValue {
     Unset,
     Null,
     Value(PropertyValue),
@@ -84,7 +81,7 @@ impl Default for LayerValue {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PropertyLayer {
+pub enum PropertyLayer {
     Declared,
     Override,
 }
@@ -97,7 +94,7 @@ pub(crate) struct PropertyChange {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PropertyError {
+pub enum PropertyError {
     UnsupportedKind {
         property: PropertyId,
         node_kind: HostKind,

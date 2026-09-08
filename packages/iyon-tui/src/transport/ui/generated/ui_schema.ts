@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
-// schema_blake3 = 8ff1e9e2b87f0439ccdbd9f487068d190302196bd8545dd90d1cd4dc2f9daee0
-// generator_blake3 = da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3
+// schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c
+// generator_blake3 = 18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d
 
 /** Generated direct-occurrence UI schema; do not edit. */
 export const UI_ABI_NAME = "iyon_tui_ui" as const;
@@ -45,6 +45,54 @@ export type ControlKind = typeof CONTROL_KINDS[keyof typeof CONTROL_KINDS];
 
 
 export type ControlKindName = "Editor" | "Scroll" | "Animation";
+
+export interface UiControlCommandDescriptor {
+  readonly name: string;
+  readonly code: number;
+  readonly controlKind: ControlKindName;
+  readonly operands: readonly string[];
+}
+
+export const UI_CONTROL_COMMAND_DESCRIPTORS: readonly UiControlCommandDescriptor[] = [
+  { name: "EditorInsert", code: 1, controlKind: "Editor", operands: ["codepoint_u32"] },
+  { name: "EditorSubmit", code: 2, controlKind: "Editor", operands: [] },
+  { name: "EditorInsertNewline", code: 3, controlKind: "Editor", operands: [] },
+  { name: "EditorBackspace", code: 4, controlKind: "Editor", operands: [] },
+  { name: "EditorDelete", code: 5, controlKind: "Editor", operands: [] },
+  { name: "EditorDeleteWordBackward", code: 6, controlKind: "Editor", operands: [] },
+  { name: "EditorDeleteWordForward", code: 7, controlKind: "Editor", operands: [] },
+  { name: "EditorKillToLineStart", code: 8, controlKind: "Editor", operands: [] },
+  { name: "EditorYank", code: 9, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveLeft", code: 10, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveRight", code: 11, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveWordLeft", code: 12, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveWordRight", code: 13, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveLineStart", code: 14, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveLineEnd", code: 15, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveUp", code: 16, controlKind: "Editor", operands: [] },
+  { name: "EditorMoveDown", code: 17, controlKind: "Editor", operands: [] },
+  { name: "ScrollLineUp", code: 256, controlKind: "Scroll", operands: [] },
+  { name: "ScrollLineDown", code: 257, controlKind: "Scroll", operands: [] },
+  { name: "ScrollPageUp", code: 258, controlKind: "Scroll", operands: [] },
+  { name: "ScrollPageDown", code: 259, controlKind: "Scroll", operands: [] },
+  { name: "ScrollStart", code: 260, controlKind: "Scroll", operands: [] },
+  { name: "ScrollEnd", code: 261, controlKind: "Scroll", operands: [] },
+  { name: "AnimationStop", code: 512, controlKind: "Animation", operands: [] },
+];
+
+export interface UiConfigDescriptor {
+  readonly name: string;
+  readonly owner: "control" | "root";
+  readonly kind: string;
+  readonly value: string;
+}
+
+export const UI_CONFIG_DESCRIPTORS: readonly UiConfigDescriptor[] = [
+  { name: "EditorMultiline", owner: "control", kind: "Editor", value: "bool" },
+  { name: "AnimationIntervalMs", owner: "control", kind: "Animation", value: "u32" },
+  { name: "HistoryFlowBoundary", owner: "root", kind: "LegacyHistoryUnit", value: "flow_boundary" },
+  { name: "HistoryUnitIdentity", owner: "root", kind: "LegacyHistoryUnit", value: "unit_identity" },
+];
 
 export const ROOT_ROLES = {
   body: 1,
@@ -92,6 +140,49 @@ export type ValueKind = typeof VALUE_KINDS[keyof typeof VALUE_KINDS];
 
 
 export type ValueKindName = "SizeMode" | "U16" | "Insets" | "Alignment" | "Edges" | "Color" | "BorderStyle" | "Glyphs" | "TextAttributes" | "Style";
+
+export interface UiValueEncodingDescriptor {
+  readonly valueKind: ValueKindName;
+  readonly encoding: string;
+  readonly minWords: number;
+  readonly maxWords: number;
+  readonly metadataWords: number;
+  readonly forms: readonly UiValueEncodingForm[];
+}
+
+export interface UiValueEncodingForm {
+  readonly name: string;
+  readonly wordCount: number;
+  readonly tags: readonly number[];
+  readonly values: readonly number[];
+  readonly mask: number | undefined;
+  readonly maxValue: number | undefined;
+}
+
+export const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [
+  { valueKind: "SizeMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "mode", wordCount: 1, tags: [], values: [0, 1], mask: undefined, maxValue: undefined }] },
+  { valueKind: "U16", encoding: "u16", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "u16", wordCount: 1, tags: [], values: [], mask: undefined, maxValue: 65535 }] },
+  { valueKind: "Insets", encoding: "u16x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "u16x4", wordCount: 4, tags: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Alignment", encoding: "axis_x2", minWords: 2, maxWords: 2, metadataWords: 0, forms: [{ name: "axis_pair", wordCount: 2, tags: [], values: [0, 1, 2, 3, 4], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Edges", encoding: "bool_x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "bool_x4", wordCount: 4, tags: [], values: [0, 1], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Color", encoding: "ansi_or_rgb_v1", minWords: 1, maxWords: 4, metadataWords: 0, forms: [{ name: "ansi", wordCount: 1, tags: [], values: [], mask: undefined, maxValue: 255 }, { name: "rgb", wordCount: 4, tags: [2147483649], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "BorderStyle", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "border", wordCount: 1, tags: [], values: [0, 1, 2], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Glyphs", encoding: "metadata_pairs_x8", minWords: 16, maxWords: 16, metadataWords: 16, forms: [{ name: "metadata_pairs_x8", wordCount: 16, tags: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "TextAttributes", encoding: "set_or_clear_bits_v1", minWords: 1, maxWords: 2, metadataWords: 0, forms: [{ name: "set_or_clear", wordCount: 2, tags: [], values: [], mask: 63, maxValue: undefined }] },
+  { valueKind: "Style", encoding: "direct_or_themed_style_v1", minWords: 9, maxWords: 12, metadataWords: 2, forms: [{ name: "direct", wordCount: 9, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }, { name: "themed", wordCount: 12, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }] },
+];
+
+export function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {
+  const descriptor = UI_VALUE_ENCODING_DESCRIPTORS.find((value) => value.valueKind === valueKind);
+  if (!descriptor) throw new Error("unknown UI value encoding: " + valueKind);
+  return descriptor;
+}
+
+export function uiValueEncodingForm(valueKind: ValueKindName, name: string): UiValueEncodingForm {
+  const descriptor = uiValueEncoding(valueKind).forms.find((value) => value.name === name);
+  if (!descriptor) throw new Error("unknown UI value encoding form: " + valueKind + "/" + name);
+  return descriptor;
+}
 
 export const EFFECTS = {
   presentation: 0,

@@ -383,7 +383,10 @@ mod tests {
         validate::validate_ui(&document).expect("UI schema validates");
         assert_eq!(document.host_kinds.len(), 5);
         assert_eq!(document.opcodes.len(), 28);
+        assert_eq!(document.control_commands.len(), 24);
+        assert_eq!(document.configs.len(), 4);
         assert_eq!(document.properties.len(), 17);
+        assert_eq!(document.value_encodings.len(), 10);
         assert!(
             document
                 .properties
@@ -419,6 +422,34 @@ mod tests {
     }
 
     #[test]
+    fn value_encoding_layout_changes_fingerprint_and_generated_description() {
+        let mut document = canonical_ui_document();
+        let original_source = toml::to_string(&document).expect("serialize UI schema");
+        let original_hash = blake3::hash(original_source.as_bytes())
+            .to_hex()
+            .to_string();
+        let original = render_ui::rust_schema(&document, &original_hash, "generator");
+
+        document
+            .value_encodings
+            .iter_mut()
+            .find(|encoding| encoding.value_kind == "Color")
+            .expect("Color encoding")
+            .forms
+            .iter_mut()
+            .find(|form| form.name == "rgb")
+            .expect("RGB form")
+            .tags[0] += 1;
+        let changed_source = toml::to_string(&document).expect("serialize changed UI schema");
+        let changed_hash = blake3::hash(changed_source.as_bytes()).to_hex().to_string();
+        let changed = render_ui::rust_schema(&document, &changed_hash, "generator");
+
+        assert_ne!(original_hash, changed_hash);
+        assert_ne!(original, changed);
+        assert!(changed.contains("tags: &[2147483650]"));
+    }
+
+    #[test]
     fn ui_validation_rejects_unknown_property_effects() {
         let mut document = canonical_ui_document();
         document.properties[0].effects[0] = "PaintEverything".to_owned();
@@ -436,6 +467,20 @@ mod tests {
     fn ui_validation_rejects_section_drift() {
         let mut document = canonical_ui_document();
         document.sections[0].code = 9;
+        assert!(validate::validate_ui(&document).is_err());
+    }
+
+    #[test]
+    fn ui_validation_rejects_unknown_control_command_kind() {
+        let mut document = canonical_ui_document();
+        document.control_commands[0].control_kind = "NotAControl".to_owned();
+        assert!(validate::validate_ui(&document).is_err());
+    }
+
+    #[test]
+    fn ui_validation_rejects_invalid_config_owner() {
+        let mut document = canonical_ui_document();
+        document.configs[0].owner = "props".to_owned();
         assert!(validate::validate_ui(&document).is_err());
     }
 

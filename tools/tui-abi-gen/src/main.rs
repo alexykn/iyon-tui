@@ -4,6 +4,7 @@ mod render_manifest;
 mod render_rust;
 mod render_state;
 mod render_typescript;
+mod render_ui;
 mod validate;
 
 use std::{
@@ -20,6 +21,7 @@ use thiserror::Error;
 use crate::{model::ModelError, validate::ValidationError};
 
 const DEFAULT_SCHEMA: &str = "tools/tui-abi/view_abi.toml";
+const UI_SCHEMA: &str = "tools/tui-abi/ui_abi.toml";
 const KIND_CODES_SCHEMA: &str =
     "packages/iyon-tui/src/transport/abi/structural/schema/view-kind-codes.json";
 const GENERATOR_OUTPUTS: &[&str] = &[
@@ -39,6 +41,12 @@ const GENERATOR_OUTPUTS: &[&str] = &[
     "docs/history/perf/PERF-11-generated-abi-reference.md",
     "crates/iyon-tui-native/src/generated/view_state_schema.rs",
     "packages/iyon-tui/src/transport/state/generated/state_envelope.ts",
+];
+const UI_GENERATOR_OUTPUTS: &[&str] = &[
+    "crates/iyon-tui/src/occurrence/generated.rs",
+    "packages/iyon-tui/src/transport/ui/generated/ui_schema.ts",
+    "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
+    "docs/architecture/generated/UI-ABI-REFERENCE.md",
 ];
 
 #[derive(Debug, Parser)]
@@ -186,9 +194,16 @@ fn render_outputs(
     let kind_codes_path = workspace.join(KIND_CODES_SCHEMA);
     let kind_codes = model::load_kind_codes(&kind_codes_path)?;
     validate::validate(&document, &kind_codes)?;
+    let ui_schema_path = workspace.join(UI_SCHEMA);
+    let (ui_document, ui_schema_source, _) = model::load_ui(&ui_schema_path)?;
+    validate::validate_ui(&ui_document)?;
     let schema_hash = blake3::hash(schema_source.as_bytes()).to_hex().to_string();
+    let ui_schema_hash = blake3::hash(ui_schema_source.as_bytes())
+        .to_hex()
+        .to_string();
     let generator_hash = render_manifest::generator_hash();
-    let output_paths: Vec<&str> = GENERATOR_OUTPUTS.to_vec();
+    let mut output_paths = GENERATOR_OUTPUTS.to_vec();
+    output_paths.extend_from_slice(UI_GENERATOR_OUTPUTS);
     let mut outputs = BTreeMap::new();
     outputs.insert(
         GENERATOR_OUTPUTS[0].to_owned(),
@@ -254,6 +269,27 @@ fn render_outputs(
         GENERATOR_OUTPUTS[15].to_owned(),
         render_state::typescript_envelope(&document, &schema_hash, &generator_hash),
     );
+    outputs.insert(
+        UI_GENERATOR_OUTPUTS[0].to_owned(),
+        render_ui::rust_schema(&ui_document, &ui_schema_hash, &generator_hash),
+    );
+    outputs.insert(
+        UI_GENERATOR_OUTPUTS[1].to_owned(),
+        render_ui::typescript_schema(&ui_document, &ui_schema_hash, &generator_hash),
+    );
+    outputs.insert(
+        UI_GENERATOR_OUTPUTS[2].to_owned(),
+        render_ui::manifest(
+            &ui_document,
+            &ui_schema_hash,
+            &generator_hash,
+            &output_paths,
+        ),
+    );
+    outputs.insert(
+        UI_GENERATOR_OUTPUTS[3].to_owned(),
+        render_ui::human_reference(&ui_document, &ui_schema_hash, &generator_hash),
+    );
     Ok(outputs)
 }
 
@@ -315,8 +351,12 @@ mod tests {
         let workspace = workspace_root().expect("workspace metadata");
         let schema = workspace.join(DEFAULT_SCHEMA);
         let outputs = render_outputs(&workspace, &schema).expect("canonical schema validates");
-        assert_eq!(outputs.len(), GENERATOR_OUTPUTS.len());
+        assert_eq!(
+            outputs.len(),
+            GENERATOR_OUTPUTS.len() + UI_GENERATOR_OUTPUTS.len()
+        );
         assert!(outputs.contains_key("crates/iyon-tui-native/src/generated/view_abi_types.rs"));
+        assert!(outputs.contains_key("crates/iyon-tui/src/occurrence/generated.rs"));
         insta::assert_snapshot!(
             outputs
                 .get("packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json")
@@ -328,8 +368,28 @@ mod tests {
     fn generated_output_paths_are_unique() {
         let unique = GENERATOR_OUTPUTS
             .iter()
+            .chain(UI_GENERATOR_OUTPUTS)
             .collect::<std::collections::HashSet<_>>();
-        assert_eq!(unique.len(), GENERATOR_OUTPUTS.len());
+        assert_eq!(
+            unique.len(),
+            GENERATOR_OUTPUTS.len() + UI_GENERATOR_OUTPUTS.len()
+        );
+    }
+
+    #[test]
+    fn direct_ui_schema_covers_occurrence_wire_contract() {
+        let workspace = workspace_root().expect("workspace metadata");
+        let (document, _, _) = model::load_ui(&workspace.join(UI_SCHEMA)).expect("UI schema");
+        validate::validate_ui(&document).expect("UI schema validates");
+        assert_eq!(document.host_kinds.len(), 5);
+        assert_eq!(document.opcodes.len(), 28);
+        assert_eq!(document.properties.len(), 17);
+        assert!(
+            document
+                .properties
+                .iter()
+                .any(|property| property.name == "background")
+        );
     }
 
     fn canonical_document() -> (
@@ -342,6 +402,41 @@ mod tests {
         let kind_codes = model::load_kind_codes(&workspace.join(KIND_CODES_SCHEMA))
             .expect("kind codes schema parses");
         (document, kind_codes)
+    }
+
+    fn canonical_ui_document() -> model::UiAbiDocument {
+        let workspace = workspace_root().expect("workspace metadata");
+        let schema = workspace.join(UI_SCHEMA);
+        let (document, _, _) = model::load_ui(&schema).expect("canonical UI schema parses");
+        document
+    }
+
+    #[test]
+    fn ui_validation_rejects_duplicate_property_ids() {
+        let mut document = canonical_ui_document();
+        document.properties[1].id = document.properties[0].id;
+        assert!(validate::validate_ui(&document).is_err());
+    }
+
+    #[test]
+    fn ui_validation_rejects_unknown_property_effects() {
+        let mut document = canonical_ui_document();
+        document.properties[0].effects[0] = "PaintEverything".to_owned();
+        assert!(validate::validate_ui(&document).is_err());
+    }
+
+    #[test]
+    fn ui_validation_rejects_wire_constant_drift() {
+        let mut document = canonical_ui_document();
+        document.abi.batch_header_words += 1;
+        assert!(validate::validate_ui(&document).is_err());
+    }
+
+    #[test]
+    fn ui_validation_rejects_section_drift() {
+        let mut document = canonical_ui_document();
+        document.sections[0].code = 9;
+        assert!(validate::validate_ui(&document).is_err());
     }
 
     #[test]

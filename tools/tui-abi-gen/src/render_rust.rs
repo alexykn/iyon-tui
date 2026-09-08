@@ -913,7 +913,7 @@ fn camel_case(value: &str) -> String {
     output
 }
 
-fn format_rust(source: String) -> String {
+pub(crate) fn format_rust(source: String) -> String {
     let body_start = ["\n//!", "\n#[", "\npub ", "\npub(super)"]
         .iter()
         .filter_map(|marker| source.find(marker).map(|index| index + 1))

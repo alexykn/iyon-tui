@@ -1,13 +1,13 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817
-// generator_blake3 = 57dcbc4070f1184a9472ecb4545b39c6c5a39d0d936e8071aeb36c0594be5010
+// generator_blake3 = da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3
 #![allow(dead_code)]
 
 //! Canonical pointer-free ABI types and constants.
 
 pub const SCHEMA_BLAKE3: &str = "c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817";
 pub const GENERATOR_BLAKE3: &str =
-    "57dcbc4070f1184a9472ecb4545b39c6c5a39d0d936e8071aeb36c0594be5010";
+    "da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3";
 
 pub const ABI_NAME: &str = "iyon_tui_view";
 pub const ABI_VERSION: u32 = 1;

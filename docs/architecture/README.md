@@ -6,6 +6,7 @@ This directory contains a source-based mapping of revision `4355c02`, after L1 c
 - [Architecture mapping runbook](ARCHITECTURE-MAPPING-RUNBOOK.md): reproducible procedure and concrete execution record, including assignments, prompts, workflow, artifact handling and parent acceptance requirements.
 - [Revision-specific atlas](atlas-4355c02/README.md): investigation plan, detailed evidence reports, comprehensive parent synthesis and reconciliation register.
 - [Maintained architecture reference](CURRENT-ARCHITECTURE.md): detailed human-readable responsibilities, dependencies, ownership, runtime paths, invariants, diagrams and change-maintenance checklist.
+- [DOM-like runtime implementation ledger](DOM-RUNTIME-IMPLEMENTATION.md): scoped T0/T1 evidence and the T2–T7 migration checklist.
 
 The atlas is a historical source snapshot; the living reference is updated as implementation changes. Neither is a V5 implementation plan. Current source determines description; approved unsuperseded PERF13/API-H/L1/PRE-V5 handoffs remain intended-contract oracles. An unexplained mismatch is not casually dismissed as stale documentation.
 

@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817
-// generator_blake3 = 57dcbc4070f1184a9472ecb4545b39c6c5a39d0d936e8071aeb36c0594be5010
+// generator_blake3 = da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3
 /** Primitive wake disposition bit: the environment must drain. */
 export const STATE_WAKE_DRAIN = 1;
 

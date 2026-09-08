@@ -41,6 +41,30 @@ pub enum ModelError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("failed to read UI ABI schema {path}: {source}")]
+    UiRead {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse UI ABI schema {path}: {source}")]
+    UiParse {
+        path: String,
+        #[source]
+        source: Box<serde_path_to_error::Error<toml::de::Error>>,
+    },
+    #[error("failed to parse UI ABI schema {path}: {source}")]
+    UiParseToml {
+        path: String,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("failed to parse UI ABI schema document {path}: {source}")]
+    UiParseDocument {
+        path: String,
+        #[source]
+        source: toml_edit::TomlError,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -59,6 +83,106 @@ pub struct AbiDocument {
     pub conformance: Vec<ConformanceSpec>,
     #[serde(rename = "state_property", default)]
     pub state_properties: Vec<StatePropertySpec>,
+}
+
+/// The direct-occurrence UI batch schema.  It deliberately has its own
+/// document type: the existing View ABI remains available while this schema
+/// is introduced, but both documents are rendered by this one generator.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiAbiDocument {
+    pub abi: UiAbiMetadata,
+    #[serde(rename = "section", default)]
+    pub sections: Vec<UiSectionSpec>,
+    #[serde(rename = "host_kind", default)]
+    pub host_kinds: Vec<UiKindSpec>,
+    #[serde(rename = "control_kind", default)]
+    pub control_kinds: Vec<UiCodeSpec>,
+    #[serde(rename = "root_role", default)]
+    pub root_roles: Vec<UiCodeSpec>,
+    #[serde(rename = "handle_kind", default)]
+    pub handle_kinds: Vec<UiCodeSpec>,
+    #[serde(rename = "ownership_mode", default)]
+    pub ownership_modes: Vec<UiCodeSpec>,
+    #[serde(rename = "value_kind", default)]
+    pub value_kinds: Vec<UiCodeSpec>,
+    #[serde(rename = "effect", default)]
+    pub effects: Vec<UiCodeSpec>,
+    #[serde(rename = "opcode", default)]
+    pub opcodes: Vec<UiOpcodeSpec>,
+    #[serde(rename = "property", default)]
+    pub properties: Vec<UiPropertySpec>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiAbiMetadata {
+    pub name: String,
+    pub version: u32,
+    pub semantic_schema: u32,
+    pub minimum_bun: String,
+    pub qualified_bun: String,
+    pub result_encoding: String,
+    pub magic: u32,
+    pub batch_version: u32,
+    pub batch_header_words: u32,
+    pub ack_header_words: u32,
+    pub ack_words_per_created_handle: u32,
+    pub handle_words: u32,
+    pub local_handle_host: u32,
+    pub local_handle_generation: u32,
+    pub ack_status_error_bit: u32,
+    pub ack_reserved: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiSectionSpec {
+    pub name: String,
+    pub code: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiKindSpec {
+    pub name: String,
+    pub code: u32,
+    pub children: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiCodeSpec {
+    pub name: String,
+    pub code: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiOpcodeSpec {
+    pub name: String,
+    pub code: u32,
+    pub section: String,
+    pub operands: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiPropertySpec {
+    pub id: u32,
+    pub domain: String,
+    pub name: String,
+    pub value: String,
+    pub legal_kinds: Vec<String>,
+    pub normalizer: String,
+    pub default: String,
+    pub reset: String,
+    pub override_behavior: String,
+    pub inheritance: String,
+    pub effects: Vec<String>,
+    pub realization: String,
+    pub nullable: bool,
+    pub clearable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -234,4 +358,33 @@ pub fn load_kind_codes(
         path: path_display,
         source,
     })
+}
+
+pub fn load_ui(
+    path: &Path,
+) -> Result<(UiAbiDocument, String, toml_edit::Document<String>), ModelError> {
+    let path_display = path.display().to_string();
+    let source = std::fs::read_to_string(path).map_err(|source| ModelError::UiRead {
+        path: path_display.clone(),
+        source,
+    })?;
+    let syntax = toml_edit::Document::parse(source.clone()).map_err(|source| {
+        ModelError::UiParseDocument {
+            path: path_display.clone(),
+            source,
+        }
+    })?;
+    let toml_deserializer =
+        toml::Deserializer::parse(&source).map_err(|source| ModelError::UiParseToml {
+            path: path_display.clone(),
+            source,
+        })?;
+    let mut track = serde_path_to_error::Track::new();
+    let deserializer = serde_path_to_error::Deserializer::new(toml_deserializer, &mut track);
+    let document =
+        UiAbiDocument::deserialize(deserializer).map_err(|source| ModelError::UiParse {
+            path: path_display,
+            source: Box::new(serde_path_to_error::Error::new(track.path(), source)),
+        })?;
+    Ok((document, source, syntax))
 }

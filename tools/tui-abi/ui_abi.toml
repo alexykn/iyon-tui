@@ -1,0 +1,622 @@
+[abi]
+name = "iyon_tui_ui"
+version = 1
+semantic_schema = 1
+minimum_bun = "1.4.0"
+qualified_bun = "1.4.0"
+result_encoding = "u32_ack_v1"
+magic = 0x49595549
+batch_version = 1
+batch_header_words = 16
+ack_header_words = 8
+ack_words_per_created_handle = 4
+handle_words = 4
+local_handle_host = 0
+local_handle_generation = 0
+ack_status_error_bit = 0x80000000
+ack_reserved = 0
+
+[[section]]
+name = "structure"
+code = 1
+
+[[section]]
+name = "state"
+code = 2
+
+[[section]]
+name = "content_control"
+code = 3
+
+[[section]]
+name = "events"
+code = 4
+
+[[section]]
+name = "content_descriptor"
+code = 5
+
+# Host kinds are semantic behavior families.  Layout conveniences such as
+# rows, columns, grids and decorators are represented by Box properties and
+# are intentionally not additional wire kinds.
+[[host_kind]]
+name = "Box"
+code = 1
+children = "many"
+
+[[host_kind]]
+name = "ContentHost"
+code = 2
+children = "none"
+
+[[host_kind]]
+name = "Editor"
+code = 3
+children = "none"
+
+[[host_kind]]
+name = "Scroll"
+code = 4
+children = "many"
+
+[[host_kind]]
+name = "Animation"
+code = 5
+children = "frames"
+
+[[control_kind]]
+name = "Editor"
+code = 1
+
+[[control_kind]]
+name = "Scroll"
+code = 2
+
+[[control_kind]]
+name = "Animation"
+code = 3
+
+[[root_role]]
+name = "Body"
+code = 1
+
+[[root_role]]
+name = "Portal"
+code = 2
+
+[[root_role]]
+name = "LegacyHistoryUnit"
+code = 3
+
+[[handle_kind]]
+name = "Node"
+code = 1
+
+[[handle_kind]]
+name = "Port"
+code = 2
+
+[[handle_kind]]
+name = "Connector"
+code = 3
+
+[[handle_kind]]
+name = "Control"
+code = 4
+
+[[ownership_mode]]
+name = "OccurrenceOwned"
+code = 1
+
+[[ownership_mode]]
+name = "Explicit"
+code = 2
+
+[[value_kind]]
+name = "SizeMode"
+code = 1
+
+[[value_kind]]
+name = "U16"
+code = 2
+
+[[value_kind]]
+name = "Insets"
+code = 3
+
+[[value_kind]]
+name = "Alignment"
+code = 4
+
+[[value_kind]]
+name = "Edges"
+code = 5
+
+[[value_kind]]
+name = "Color"
+code = 6
+
+[[value_kind]]
+name = "BorderStyle"
+code = 7
+
+[[value_kind]]
+name = "Glyphs"
+code = 8
+
+[[value_kind]]
+name = "TextAttributes"
+code = 9
+
+[[value_kind]]
+name = "Style"
+code = 10
+
+[[effect]]
+name = "Presentation"
+code = 0
+
+[[effect]]
+name = "ContentProjection"
+code = 1
+
+[[effect]]
+name = "LayoutInput"
+code = 2
+
+[[effect]]
+name = "InteractionRuntime"
+code = 3
+
+[[effect]]
+name = "HostEnvironmentDependent"
+code = 4
+
+[[effect]]
+name = "StructureGuard"
+code = 5
+
+# The opcode table is complete for version one even though T1 only exercises
+# the topology/property subset.  Later ingress work consumes these generated
+# values rather than introducing a second hand-written operation table.
+[[opcode]]
+name = "CreateNode"
+code = 0x01
+section = "structure"
+operands = ["local_ordinal", "host_kind"]
+
+[[opcode]]
+name = "CreateRoot"
+code = 0x02
+section = "structure"
+operands = ["local_ordinal", "root_role", "owner_handle_or_null", "config_metadata"]
+
+[[opcode]]
+name = "InsertBefore"
+code = 0x03
+section = "structure"
+operands = ["parent_handle", "child_handle", "before_handle_or_null"]
+
+[[opcode]]
+name = "Detach"
+code = 0x04
+section = "structure"
+operands = ["parent_handle", "child_handle"]
+
+[[opcode]]
+name = "RetireSubtree"
+code = 0x05
+section = "structure"
+operands = ["root_handle"]
+
+[[opcode]]
+name = "AttachPort"
+code = 0x06
+section = "structure"
+operands = ["node_handle", "port_handle_or_null"]
+
+[[opcode]]
+name = "AttachControl"
+code = 0x07
+section = "structure"
+operands = ["node_handle", "control_handle_or_null"]
+
+[[opcode]]
+name = "CreateControl"
+code = 0x08
+section = "structure"
+operands = ["local_ordinal", "control_kind", "ownership_mode", "owner_handle_or_null", "config_metadata"]
+
+[[opcode]]
+name = "DisposeControl"
+code = 0x09
+section = "structure"
+operands = ["control_handle"]
+
+[[opcode]]
+name = "HistoryAction"
+code = 0x0a
+section = "structure"
+operands = ["unit_root_handle", "action_id"]
+
+[[opcode]]
+name = "RetireRoot"
+code = 0x0b
+section = "structure"
+operands = ["root_handle"]
+
+[[opcode]]
+name = "SetDeclared"
+code = 0x10
+section = "state"
+operands = ["node_handle", "property_id", "typed_value"]
+
+[[opcode]]
+name = "ResetDeclared"
+code = 0x11
+section = "state"
+operands = ["node_handle", "property_id"]
+
+[[opcode]]
+name = "SetOverride"
+code = 0x12
+section = "state"
+operands = ["node_handle", "property_id", "typed_value"]
+
+[[opcode]]
+name = "ClearOverride"
+code = 0x13
+section = "state"
+operands = ["node_handle", "property_id"]
+
+[[opcode]]
+name = "SetHidden"
+code = 0x14
+section = "state"
+operands = ["node_handle", "boolean"]
+
+[[opcode]]
+name = "SetStyleState"
+code = 0x15
+section = "state"
+operands = ["node_handle", "layer", "key_metadata", "typed_value"]
+
+[[opcode]]
+name = "ClearStyleState"
+code = 0x16
+section = "state"
+operands = ["node_handle", "layer", "key_metadata"]
+
+[[opcode]]
+name = "ControlCommand"
+code = 0x18
+section = "state"
+operands = ["control_handle", "command_id", "typed_operands"]
+
+[[opcode]]
+name = "CreatePort"
+code = 0x20
+section = "content_control"
+operands = ["local_ordinal", "family", "ownership_mode", "owner_handle_or_null"]
+
+[[opcode]]
+name = "CreateConnector"
+code = 0x21
+section = "content_control"
+operands = ["local_ordinal", "source_index", "port_handle", "funnel_metadata", "ownership_mode"]
+
+[[opcode]]
+name = "SelectConnector"
+code = 0x22
+section = "content_control"
+operands = ["port_handle", "connector_handle_or_null"]
+
+[[opcode]]
+name = "DisposeConnector"
+code = 0x23
+section = "content_control"
+operands = ["connector_handle"]
+
+[[opcode]]
+name = "DisposePort"
+code = 0x24
+section = "content_control"
+operands = ["port_handle"]
+
+[[opcode]]
+name = "SetLiteralFunnel"
+code = 0x25
+section = "content_control"
+operands = ["port_handle", "funnel_metadata"]
+
+[[opcode]]
+name = "SetSubscriptions"
+code = 0x30
+section = "events"
+operands = ["node_handle", "mask_low", "mask_high"]
+
+[[opcode]]
+name = "ReplaceLiteral"
+code = 0x40
+section = "content_descriptor"
+operands = ["port_handle", "content_format", "content_bytes", "annotations_bytes"]
+
+[[opcode]]
+name = "ReplaceEditorContent"
+code = 0x41
+section = "content_descriptor"
+operands = ["control_handle", "content_bytes", "expected_edit_revision"]
+
+# Existing finite state semantics are carried into the occurrence document.
+# IDs are globally unique and intentionally leave room for future domains.
+[[property]]
+id = 0x0101
+domain = "geometry"
+name = "width"
+value = "SizeMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "size_mode"
+default = "unset"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput", "ContentProjection"]
+realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0102
+domain = "geometry"
+name = "height"
+value = "SizeMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "size_mode"
+default = "unset"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0103
+domain = "geometry"
+name = "padding"
+value = "Insets"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "insets"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput", "ContentProjection"]
+realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0104
+domain = "geometry"
+name = "minWidth"
+value = "U16"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "u16"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput", "ContentProjection"]
+realization = "layout"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0105
+domain = "geometry"
+name = "maxWidth"
+value = "U16"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "u16"
+default = "unbounded"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput", "ContentProjection"]
+realization = "layout"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0106
+domain = "geometry"
+name = "minHeight"
+value = "U16"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "u16"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0107
+domain = "geometry"
+name = "maxHeight"
+value = "U16"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "u16"
+default = "unbounded"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0108
+domain = "geometry"
+name = "gap"
+value = "U16"
+legal_kinds = ["Box", "Scroll", "Animation"]
+normalizer = "u16"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0109
+domain = "geometry"
+name = "alignment"
+value = "Alignment"
+legal_kinds = ["Box", "Scroll", "Animation"]
+normalizer = "alignment"
+default = "unset"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x010a
+domain = "geometry"
+name = "borderEdges"
+value = "Edges"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "border_edges"
+default = "unset"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput", "ContentProjection"]
+realization = "layout"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0201
+domain = "presentation"
+name = "foreground"
+value = "Color"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "color"
+default = "inherit"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "theme"
+effects = ["Presentation"]
+realization = "paint"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0202
+domain = "presentation"
+name = "background"
+value = "Color"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "color"
+default = "inherit"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "theme"
+effects = ["Presentation"]
+realization = "paint"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0203
+domain = "presentation"
+name = "borderColor"
+value = "Color"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "color"
+default = "inherit"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "theme"
+effects = ["Presentation"]
+realization = "paint"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0204
+domain = "presentation"
+name = "borderStyle"
+value = "BorderStyle"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "border_style"
+default = "plain"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["Presentation", "LayoutInput"]
+realization = "paint"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0205
+domain = "presentation"
+name = "borderGlyphs"
+value = "Glyphs"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "glyphs"
+default = "style_default"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["Presentation"]
+realization = "paint"
+nullable = true
+clearable = true
+
+[[property]]
+id = 0x0206
+domain = "presentation"
+name = "textAttributes"
+value = "TextAttributes"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "text_attributes"
+default = "inherit"
+reset = "unset"
+override_behavior = "sparse"
+inheritance = "theme"
+effects = ["Presentation"]
+realization = "paint"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0207
+domain = "presentation"
+name = "style"
+value = "Style"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "style"
+default = "inherit"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "theme"
+effects = ["Presentation", "HostEnvironmentDependent"]
+realization = "paint"
+nullable = true
+clearable = true

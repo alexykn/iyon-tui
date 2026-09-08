@@ -1,0 +1,900 @@
+{
+  "abi": {
+    "ack_header_words": 8,
+    "ack_reserved": 0,
+    "ack_status_error_bit": 2147483648,
+    "ack_words_per_created_handle": 4,
+    "batch_header_words": 16,
+    "batch_version": 1,
+    "handle_words": 4,
+    "local_handle_generation": 0,
+    "local_handle_host": 0,
+    "magic": 1230591305,
+    "minimum_bun": "1.4.0",
+    "name": "iyon_tui_ui",
+    "qualified_bun": "1.4.0",
+    "result_encoding": "u32_ack_v1",
+    "semantic_schema": 1,
+    "version": 1
+  },
+  "control_kinds": [
+    {
+      "code": 1,
+      "name": "Editor"
+    },
+    {
+      "code": 2,
+      "name": "Scroll"
+    },
+    {
+      "code": 3,
+      "name": "Animation"
+    }
+  ],
+  "effects": [
+    {
+      "code": 0,
+      "name": "Presentation"
+    },
+    {
+      "code": 1,
+      "name": "ContentProjection"
+    },
+    {
+      "code": 2,
+      "name": "LayoutInput"
+    },
+    {
+      "code": 3,
+      "name": "InteractionRuntime"
+    },
+    {
+      "code": 4,
+      "name": "HostEnvironmentDependent"
+    },
+    {
+      "code": 5,
+      "name": "StructureGuard"
+    }
+  ],
+  "generated_outputs": [
+    "crates/iyon-tui-native/src/generated/view_abi_types.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_table.rs",
+    "crates/iyon-tui-native/src/generated/view_abi_napi.rs",
+    "crates/iyon-tui-native/include/iyon_view_abi.h",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_conformance.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_calls.ts",
+    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
+    "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
+    "packages/iyon-tui/bench/generated/view_abi_cases.ts",
+    "crates/iyon-tui-native/tests/generated_view_abi.rs",
+    "docs/history/perf/PERF-11-generated-abi-reference.md",
+    "crates/iyon-tui-native/src/generated/view_state_schema.rs",
+    "packages/iyon-tui/src/transport/state/generated/state_envelope.ts",
+    "crates/iyon-tui/src/occurrence/generated.rs",
+    "packages/iyon-tui/src/transport/ui/generated/ui_schema.ts",
+    "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
+    "docs/architecture/generated/UI-ABI-REFERENCE.md"
+  ],
+  "generator_blake3": "da9e330405afd1424c48eada9c868113caf08ee8009f434e893a0f6f028b4ba3",
+  "handle_kinds": [
+    {
+      "code": 1,
+      "name": "Node"
+    },
+    {
+      "code": 2,
+      "name": "Port"
+    },
+    {
+      "code": 3,
+      "name": "Connector"
+    },
+    {
+      "code": 4,
+      "name": "Control"
+    }
+  ],
+  "host_kinds": [
+    {
+      "children": "many",
+      "code": 1,
+      "name": "Box"
+    },
+    {
+      "children": "none",
+      "code": 2,
+      "name": "ContentHost"
+    },
+    {
+      "children": "none",
+      "code": 3,
+      "name": "Editor"
+    },
+    {
+      "children": "many",
+      "code": 4,
+      "name": "Scroll"
+    },
+    {
+      "children": "frames",
+      "code": 5,
+      "name": "Animation"
+    }
+  ],
+  "opcodes": [
+    {
+      "code": 1,
+      "name": "CreateNode",
+      "operands": [
+        "local_ordinal",
+        "host_kind"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 2,
+      "name": "CreateRoot",
+      "operands": [
+        "local_ordinal",
+        "root_role",
+        "owner_handle_or_null",
+        "config_metadata"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 3,
+      "name": "InsertBefore",
+      "operands": [
+        "parent_handle",
+        "child_handle",
+        "before_handle_or_null"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 4,
+      "name": "Detach",
+      "operands": [
+        "parent_handle",
+        "child_handle"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 5,
+      "name": "RetireSubtree",
+      "operands": [
+        "root_handle"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 6,
+      "name": "AttachPort",
+      "operands": [
+        "node_handle",
+        "port_handle_or_null"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 7,
+      "name": "AttachControl",
+      "operands": [
+        "node_handle",
+        "control_handle_or_null"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 8,
+      "name": "CreateControl",
+      "operands": [
+        "local_ordinal",
+        "control_kind",
+        "ownership_mode",
+        "owner_handle_or_null",
+        "config_metadata"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 9,
+      "name": "DisposeControl",
+      "operands": [
+        "control_handle"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 10,
+      "name": "HistoryAction",
+      "operands": [
+        "unit_root_handle",
+        "action_id"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 11,
+      "name": "RetireRoot",
+      "operands": [
+        "root_handle"
+      ],
+      "section": "structure"
+    },
+    {
+      "code": 16,
+      "name": "SetDeclared",
+      "operands": [
+        "node_handle",
+        "property_id",
+        "typed_value"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 17,
+      "name": "ResetDeclared",
+      "operands": [
+        "node_handle",
+        "property_id"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 18,
+      "name": "SetOverride",
+      "operands": [
+        "node_handle",
+        "property_id",
+        "typed_value"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 19,
+      "name": "ClearOverride",
+      "operands": [
+        "node_handle",
+        "property_id"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 20,
+      "name": "SetHidden",
+      "operands": [
+        "node_handle",
+        "boolean"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 21,
+      "name": "SetStyleState",
+      "operands": [
+        "node_handle",
+        "layer",
+        "key_metadata",
+        "typed_value"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 22,
+      "name": "ClearStyleState",
+      "operands": [
+        "node_handle",
+        "layer",
+        "key_metadata"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 24,
+      "name": "ControlCommand",
+      "operands": [
+        "control_handle",
+        "command_id",
+        "typed_operands"
+      ],
+      "section": "state"
+    },
+    {
+      "code": 32,
+      "name": "CreatePort",
+      "operands": [
+        "local_ordinal",
+        "family",
+        "ownership_mode",
+        "owner_handle_or_null"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 33,
+      "name": "CreateConnector",
+      "operands": [
+        "local_ordinal",
+        "source_index",
+        "port_handle",
+        "funnel_metadata",
+        "ownership_mode"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 34,
+      "name": "SelectConnector",
+      "operands": [
+        "port_handle",
+        "connector_handle_or_null"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 35,
+      "name": "DisposeConnector",
+      "operands": [
+        "connector_handle"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 36,
+      "name": "DisposePort",
+      "operands": [
+        "port_handle"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 37,
+      "name": "SetLiteralFunnel",
+      "operands": [
+        "port_handle",
+        "funnel_metadata"
+      ],
+      "section": "content_control"
+    },
+    {
+      "code": 48,
+      "name": "SetSubscriptions",
+      "operands": [
+        "node_handle",
+        "mask_low",
+        "mask_high"
+      ],
+      "section": "events"
+    },
+    {
+      "code": 64,
+      "name": "ReplaceLiteral",
+      "operands": [
+        "port_handle",
+        "content_format",
+        "content_bytes",
+        "annotations_bytes"
+      ],
+      "section": "content_descriptor"
+    },
+    {
+      "code": 65,
+      "name": "ReplaceEditorContent",
+      "operands": [
+        "control_handle",
+        "content_bytes",
+        "expected_edit_revision"
+      ],
+      "section": "content_descriptor"
+    }
+  ],
+  "ownership_modes": [
+    {
+      "code": 1,
+      "name": "OccurrenceOwned"
+    },
+    {
+      "code": 2,
+      "name": "Explicit"
+    }
+  ],
+  "properties": [
+    {
+      "clearable": true,
+      "default": "unset",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput",
+        "ContentProjection"
+      ],
+      "id": 257,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "width",
+      "normalizer": "size_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "SizeMode"
+    },
+    {
+      "clearable": true,
+      "default": "unset",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 258,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "height",
+      "normalizer": "size_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "SizeMode"
+    },
+    {
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput",
+        "ContentProjection"
+      ],
+      "id": 259,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "padding",
+      "normalizer": "insets",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "Insets"
+    },
+    {
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput",
+        "ContentProjection"
+      ],
+      "id": 260,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "minWidth",
+      "normalizer": "u16",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "U16"
+    },
+    {
+      "clearable": true,
+      "default": "unbounded",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput",
+        "ContentProjection"
+      ],
+      "id": 261,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "maxWidth",
+      "normalizer": "u16",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "U16"
+    },
+    {
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 262,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "minHeight",
+      "normalizer": "u16",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "U16"
+    },
+    {
+      "clearable": true,
+      "default": "unbounded",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 263,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "maxHeight",
+      "normalizer": "u16",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "U16"
+    },
+    {
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 264,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gap",
+      "normalizer": "u16",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "U16"
+    },
+    {
+      "clearable": true,
+      "default": "unset",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 265,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "alignment",
+      "normalizer": "alignment",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "Alignment"
+    },
+    {
+      "clearable": true,
+      "default": "unset",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput",
+        "ContentProjection"
+      ],
+      "id": 266,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "borderEdges",
+      "normalizer": "border_edges",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "Edges"
+    },
+    {
+      "clearable": true,
+      "default": "inherit",
+      "domain": "presentation",
+      "effects": [
+        "Presentation"
+      ],
+      "id": 513,
+      "inheritance": "theme",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "foreground",
+      "normalizer": "color",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "Color"
+    },
+    {
+      "clearable": true,
+      "default": "inherit",
+      "domain": "presentation",
+      "effects": [
+        "Presentation"
+      ],
+      "id": 514,
+      "inheritance": "theme",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "background",
+      "normalizer": "color",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "Color"
+    },
+    {
+      "clearable": true,
+      "default": "inherit",
+      "domain": "presentation",
+      "effects": [
+        "Presentation"
+      ],
+      "id": 515,
+      "inheritance": "theme",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "borderColor",
+      "normalizer": "color",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "Color"
+    },
+    {
+      "clearable": true,
+      "default": "plain",
+      "domain": "presentation",
+      "effects": [
+        "Presentation",
+        "LayoutInput"
+      ],
+      "id": 516,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "borderStyle",
+      "normalizer": "border_style",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "BorderStyle"
+    },
+    {
+      "clearable": true,
+      "default": "style_default",
+      "domain": "presentation",
+      "effects": [
+        "Presentation"
+      ],
+      "id": 517,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "borderGlyphs",
+      "normalizer": "glyphs",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "Glyphs"
+    },
+    {
+      "clearable": true,
+      "default": "inherit",
+      "domain": "presentation",
+      "effects": [
+        "Presentation"
+      ],
+      "id": 518,
+      "inheritance": "theme",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "textAttributes",
+      "normalizer": "text_attributes",
+      "nullable": false,
+      "override_behavior": "sparse",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "TextAttributes"
+    },
+    {
+      "clearable": true,
+      "default": "inherit",
+      "domain": "presentation",
+      "effects": [
+        "Presentation",
+        "HostEnvironmentDependent"
+      ],
+      "id": 519,
+      "inheritance": "theme",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "style",
+      "normalizer": "style",
+      "nullable": true,
+      "override_behavior": "explicit",
+      "realization": "paint",
+      "reset": "unset",
+      "value": "Style"
+    }
+  ],
+  "root_roles": [
+    {
+      "code": 1,
+      "name": "Body"
+    },
+    {
+      "code": 2,
+      "name": "Portal"
+    },
+    {
+      "code": 3,
+      "name": "LegacyHistoryUnit"
+    }
+  ],
+  "schema_blake3": "8ff1e9e2b87f0439ccdbd9f487068d190302196bd8545dd90d1cd4dc2f9daee0",
+  "sections": [
+    {
+      "code": 1,
+      "name": "structure"
+    },
+    {
+      "code": 2,
+      "name": "state"
+    },
+    {
+      "code": 3,
+      "name": "content_control"
+    },
+    {
+      "code": 4,
+      "name": "events"
+    },
+    {
+      "code": 5,
+      "name": "content_descriptor"
+    }
+  ],
+  "value_kinds": [
+    {
+      "code": 1,
+      "name": "SizeMode"
+    },
+    {
+      "code": 2,
+      "name": "U16"
+    },
+    {
+      "code": 3,
+      "name": "Insets"
+    },
+    {
+      "code": 4,
+      "name": "Alignment"
+    },
+    {
+      "code": 5,
+      "name": "Edges"
+    },
+    {
+      "code": 6,
+      "name": "Color"
+    },
+    {
+      "code": 7,
+      "name": "BorderStyle"
+    },
+    {
+      "code": 8,
+      "name": "Glyphs"
+    },
+    {
+      "code": 9,
+      "name": "TextAttributes"
+    },
+    {
+      "code": 10,
+      "name": "Style"
+    }
+  ]
+}

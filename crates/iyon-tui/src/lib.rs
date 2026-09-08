@@ -19,6 +19,7 @@ mod geometry;
 pub(crate) mod history;
 mod id;
 pub(crate) mod interaction;
+pub(crate) mod occurrence;
 pub(crate) mod output;
 #[cfg(feature = "perf-counters")]
 #[doc(hidden)]

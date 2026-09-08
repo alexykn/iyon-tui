@@ -12,6 +12,7 @@ const GENERATOR_SOURCES: &[&[u8]] = &[
     include_bytes!("render_typescript.rs"),
     include_bytes!("render_header.rs"),
     include_bytes!("render_manifest.rs"),
+    include_bytes!("render_ui.rs"),
     include_bytes!("../templates/generated_banner.txt"),
     include_bytes!("../templates/generated_typescript_bindings_header.txt"),
     include_bytes!("../templates/generated_typescript_calls_header.txt"),

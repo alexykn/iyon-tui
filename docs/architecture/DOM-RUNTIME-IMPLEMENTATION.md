@@ -8,7 +8,7 @@ is complete.
 bb0c599fce1a35b8e478d2868e72a851194f4297. The handoff identifies
 1e935406c707ad42eb819d259f0a456f0a1129e7 as the implementation baseline;
 The T0/T1 schema and occurrence core are committed at that accepted SHA;
-the T2 native ingress tranche is accepted in the next scoped commit.
+the T2 native ingress tranche is accepted and committed at 6ae68b2.
 The atlas at docs/architecture/atlas-4355c02 is historical navigation, not
 the current-source authority.
 
@@ -33,6 +33,32 @@ exemption: preserve behavior and contracts, and commit accepted cleanup as a
 separate change. T2's qualified N-API adapter and any other temporary migration
 paths retain their specific deletion gates; new long-lived ownership and
 control code must remain structured at acceptance.
+
+### T1 permanent quality cleanup status
+
+**Accepted after parent review; committed separately from T2.** This cleanup
+addresses the accepted T1 occurrence/schema/generator maintenance findings:
+co-located typed creation configuration lookup, one layered style-state
+operation representation, occurrence module visibility/re-export ownership,
+production helpers moved before the occurrence test module, and coherent
+generated-schema renderer sections. `CommitDraft` now owns interpretation and
+initial snapshots, operation-family methods own their mutations, and draft
+finalization and reserved installation have explicit boundaries. The parent
+kept property/style/interaction finalization inside the draft that owns those
+snapshots and removed the interpreter's unused record-index argument.
+
+It preserves the accepted T1 transaction and generated ABI contracts. The
+generated occurrence schema changed only its generator fingerprint; semantic
+schema content did not change. No T3 work was included in this cleanup.
+
+Verification: final delegate workspace tests and Clippy gate passed, along
+with generator, binding, ownership, TypeScript and formatting checks. The
+fresh delegate addon (`85b667742a454489fcace7065ad2215b16baf8170cd0074e35741ba50a6a4e3b`,
+6,964,464 bytes) passed all 10 Bun ingress tests and 34 expectations. After the
+parent's final ownership-only adjustment, all 30 occurrence/control tests,
+native type-checking, formatting and the Clippy gate passed again. Earlier
+workspace and boundary evidence is reused for unchanged behavior. Clippy now
+has warnings only; the T1 hard failures recorded at T2 acceptance are resolved.
 
 ## T0 baseline provenance
 

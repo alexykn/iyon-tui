@@ -5,41 +5,31 @@
 //! document and exposes a short-lived typed commit plan to its future
 //! transport boundary.
 
-#[doc(hidden)]
-pub mod arena;
-#[doc(hidden)]
-pub mod generated;
-#[doc(hidden)]
-pub mod properties;
-#[doc(hidden)]
-pub mod tree;
+pub(crate) mod arena;
+pub(crate) mod generated;
+pub(crate) mod properties;
+pub(crate) mod tree;
 
-#[doc(hidden)]
-pub mod commit;
-#[doc(hidden)]
-pub mod config;
-#[doc(hidden)]
-pub mod control;
+pub(crate) mod commit;
+pub(crate) mod config;
+pub(crate) mod control;
 
 use std::collections::{HashMap, HashSet};
 
 pub(crate) use arena::Arena;
 pub use arena::{ArenaError, HostNamespace, NodeKey, ResourceKey, UiHandle};
-pub(crate) use commit::{AppliedUiCommit, PreparedUiCommit};
 pub use commit::{
     CommitDetail, FunnelSpec, NodeRef, ResourceRef, UiAcknowledgement, UiCommit, UiOperation,
-    UiOperationResult, UiRejection, UiStatus,
+    UiOperationResult, UiRejection,
 };
 pub use config::{ConfigError, ControlConfig, RootConfig};
 pub use control::{AnimationState, ControlError, ControlState, EditorState, ScrollState};
-pub use generated::{
-    ControlKind, EffectMask, HandleKind, HostKind, OwnershipMode, PropertyId, RootRole,
-};
+pub use generated::{ControlKind, HandleKind, HostKind, OwnershipMode, PropertyId, RootRole};
 pub use properties::{
-    Alignment, AlignmentAxis, BorderStyle, ColorValue, Edges, GlyphsValue, Insets, LayerValue,
-    PropertyError, PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
+    Alignment, AlignmentAxis, ColorValue, Edges, GlyphsValue, LayerValue, PropertyError,
+    PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
 };
-pub(crate) use tree::{Attachments, DirtyState, Links, Occurrence, Revisions, TreeError};
+pub(crate) use tree::{Attachments, Occurrence};
 
 const DEFAULT_ARENA_CAPACITY: usize = 1_048_576;
 

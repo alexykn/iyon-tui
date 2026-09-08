@@ -8,7 +8,7 @@ use super::{
     OccurrenceDocument, ResourceFamily, ResourceRecord,
     arena::{NodeKey, ResourceKey, UiHandle},
     generated::{
-        EFFECT_CONTENT_PROJECTION, EFFECT_INTERACTION_RUNTIME, EFFECT_LAYOUT_INPUT,
+        ControlKind, EFFECT_CONTENT_PROJECTION, EFFECT_INTERACTION_RUNTIME, EFFECT_LAYOUT_INPUT,
         EFFECT_PRESENTATION, EFFECT_STRUCTURE_GUARD, EffectMask, HandleKind, HostKind,
         OwnershipMode, PropertyId, RootRole, property_descriptor,
     },
@@ -231,20 +231,11 @@ pub enum UiOperation {
     },
     SetStyleState {
         node: NodeRef,
-        key: String,
-        value: String,
-    },
-    SetStyleStateLayered {
-        node: NodeRef,
         layer: u32,
         key: String,
         value: String,
     },
     ClearStyleState {
-        node: NodeRef,
-        key: String,
-    },
-    ClearStyleStateLayered {
         node: NodeRef,
         layer: u32,
         key: String,
@@ -445,11 +436,18 @@ impl CommitIssue {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+
 enum LocalFamily {
     Node,
     Port,
     Connector,
     Control,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConfigTarget {
+    Control(ControlKind),
+    Root(RootRole),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1090,417 +1088,765 @@ impl<'a> ResourceDraft<'a> {
     }
 }
 
-impl OccurrenceDocument {
-    pub fn prepare_ui_commit(&mut self, batch: &UiCommit) -> Result<PreparedUiCommit, UiRejection> {
-        if batch.expected_ui_revision != self.accepted_ui_revision {
-            return Err(self.rejection(
-                None,
-                CommitIssue::new(
-                    CommitDetail::StaleRevision,
-                    format!(
-                        "expected UI revision {}, current revision {}",
-                        batch.expected_ui_revision, self.accepted_ui_revision
-                    ),
-                ),
-            ));
+struct CommitDraft<'a> {
+    document: &'a OccurrenceDocument,
+    local_objects: BTreeMap<u32, LocalObject>,
+    tree: TreeDraft<'a>,
+    resources: ResourceDraft<'a>,
+    roots_added: Vec<NodeKey>,
+    roots_removed: Vec<NodeKey>,
+    effects: EffectMask,
+    property_initials: HashMap<NodeKey, PropertyLayers>,
+    style_state_initials: HashMap<(NodeKey, String), Option<String>>,
+    interaction_initials: HashMap<NodeKey, (bool, u64)>,
+}
+
+impl<'a> CommitDraft<'a> {
+    fn apply_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::CreateNode { .. } => self.apply_structure_operation(operation),
+            UiOperation::CreateRoot { .. } => self.apply_structure_operation(operation),
+            UiOperation::HistoryAction { .. } => self.apply_structure_operation(operation),
+            UiOperation::InsertBefore { .. } => self.apply_structure_operation(operation),
+            UiOperation::Detach { .. } => self.apply_structure_operation(operation),
+            UiOperation::RetireSubtree { .. } => self.apply_structure_operation(operation),
+            UiOperation::RetireRoot { .. } => self.apply_structure_operation(operation),
+            UiOperation::AttachPort { .. } => self.apply_resource_operation(operation),
+            UiOperation::AttachControl { .. } => self.apply_resource_operation(operation),
+            UiOperation::CreatePort { .. } => self.apply_resource_operation(operation),
+            UiOperation::CreateConnector { .. } => self.apply_resource_operation(operation),
+            UiOperation::SelectConnector { .. } => self.apply_resource_operation(operation),
+            UiOperation::DisposePort { .. } => self.apply_resource_operation(operation),
+            UiOperation::DisposeConnector { .. } => self.apply_resource_operation(operation),
+            UiOperation::SetLiteralFunnel { .. } => self.apply_resource_operation(operation),
+            UiOperation::ReplaceLiteral { .. } => self.apply_resource_operation(operation),
+            UiOperation::CreateControl { .. } => self.apply_resource_operation(operation),
+            UiOperation::DisposeControl { .. } => self.apply_resource_operation(operation),
+            UiOperation::SetDeclared { .. } => self.apply_property_operation(operation),
+            UiOperation::ResetDeclared { .. } => self.apply_property_operation(operation),
+            UiOperation::SetOverride { .. } => self.apply_property_operation(operation),
+            UiOperation::ClearOverride { .. } => self.apply_property_operation(operation),
+            UiOperation::SetStyleState { .. } => self.apply_style_operation(operation),
+            UiOperation::ClearStyleState { .. } => self.apply_style_operation(operation),
+            UiOperation::SetHidden { .. } => self.apply_interaction_operation(operation),
+            UiOperation::SetSubscriptions { .. } => self.apply_interaction_operation(operation),
+            UiOperation::ControlCommand { .. } => self.apply_control_operation(operation),
+            UiOperation::ReplaceEditorContent { .. } => self.apply_control_operation(operation),
         }
+    }
 
-        let (local_specs, node_count, port_count, connector_count, control_count) =
-            collect_local_creations(batch.operations())
-                .map_err(|(index, issue)| self.rejection(Some(index), issue))?;
-        validate_commit_configs(batch, &local_specs)
-            .map_err(|issue| self.rejection(None, issue))?;
-        let total_live = self
-            .nodes
-            .live_count()
-            .saturating_add(self.ports.live_count())
-            .saturating_add(self.connectors.live_count())
-            .saturating_add(self.controls.live_count());
-        let provisional = node_count
-            .saturating_add(port_count)
-            .saturating_add(connector_count)
-            .saturating_add(control_count);
-        if total_live.saturating_add(provisional) > self.arena_capacity {
-            return Err(self.rejection(
-                None,
-                CommitIssue::new(
-                    CommitDetail::Capacity,
-                    "UI commit exceeds the host occurrence/resource capacity",
-                ),
-            ));
-        }
-
-        self.roots.try_reserve(local_specs.len()).map_err(|_| {
-            self.rejection(
-                None,
-                CommitIssue::new(CommitDetail::Capacity, "root capacity"),
-            )
-        })?;
-        self.port_owners
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "Port owner index capacity"),
-                )
-            })?;
-        self.control_owners
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "control owner index capacity"),
-                )
-            })?;
-
-        let node_keys = self.reserve_node_keys(node_count).map_err(|error| {
-            self.rejection(
-                None,
-                CommitIssue::new(CommitDetail::Capacity, error.to_string()),
-            )
-        })?;
-        let port_keys = self
-            .reserve_resource_keys(ResourceFamily::Port, port_count)
-            .map_err(|error| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
-                )
-            })?;
-        let connector_keys = self
-            .reserve_resource_keys(ResourceFamily::Connector, connector_count)
-            .map_err(|error| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
-                )
-            })?;
-        let control_keys = self
-            .reserve_resource_keys(ResourceFamily::Control, control_count)
-            .map_err(|error| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
-                )
-            })?;
-        let local_objects = assign_local_objects(
-            &local_specs,
-            node_keys,
-            port_keys,
-            connector_keys,
-            control_keys,
-        );
-
-        let mut tree = TreeDraft::new(&self.nodes, &self.portals_by_owner);
-        tree.reserve(batch.operations().len()).map_err(|error| {
-            self.rejection(
-                None,
-                CommitIssue::new(CommitDetail::Capacity, error.to_string()),
-            )
-        })?;
-        let mut resources = ResourceDraft::new(self);
-        resources
-            .reserve(batch.operations().len())
-            .map_err(|issue| self.rejection(None, issue))?;
-
-        let mut roots_added = Vec::new();
-        let mut roots_removed = Vec::new();
-        roots_added.try_reserve(local_specs.len()).map_err(|_| {
-            self.rejection(
-                None,
-                CommitIssue::new(CommitDetail::Capacity, "root capacity"),
-            )
-        })?;
-        roots_removed
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "root retirement capacity"),
-                )
-            })?;
-        for (index, operation) in batch.operations().iter().enumerate() {
-            if let Err(issue) =
-                insert_provisional(operation, &local_objects, &mut tree, &mut resources)
-            {
-                return Err(self.rejection(Some(index), issue));
+    fn apply_structure_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::CreateNode { .. } => {
+                self.effects = self
+                    .effects
+                    .union(EFFECT_STRUCTURE_GUARD)
+                    .union(EFFECT_LAYOUT_INPUT);
+                Ok(true)
             }
-        }
 
-        let mut changed = false;
-        let mut effects = EffectMask::NONE;
-        let mut property_initials: HashMap<NodeKey, PropertyLayers> = HashMap::new();
-        property_initials
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "property snapshot capacity"),
-                )
-            })?;
-        let mut style_state_initials: HashMap<(NodeKey, String), Option<String>> = HashMap::new();
-        style_state_initials
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "style-state snapshot capacity"),
-                )
-            })?;
-        let mut interaction_initials: HashMap<NodeKey, (bool, u64)> = HashMap::new();
-        interaction_initials
-            .try_reserve(batch.operations().len())
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "interaction snapshot capacity"),
-                )
-            })?;
-        for (index, operation) in batch.operations().iter().enumerate() {
-            let result = self.apply_operation(
-                operation,
-                index,
-                &local_objects,
-                &mut tree,
-                &mut resources,
-                &mut roots_added,
-                &mut roots_removed,
-                &mut effects,
-                &mut property_initials,
-                &mut style_state_initials,
-                &mut interaction_initials,
-            );
-            match result {
-                Ok(operation_changed) => changed |= operation_changed,
-                Err(issue) => return Err(self.rejection(Some(index), issue)),
-            }
-        }
-        changed |= finalize_property_changes(&mut tree, property_initials, &mut effects)
-            .map_err(|issue| self.rejection(None, issue))?;
-        changed |= finalize_style_state_changes(&mut tree, style_state_initials, &mut effects)
-            .map_err(|issue| self.rejection(None, issue))?;
-        changed |= finalize_interaction_changes(&mut tree, interaction_initials, &mut effects)
-            .map_err(|issue| self.rejection(None, issue))?;
-
-        tree.validate()
-            .map_err(|error| self.rejection(None, tree_issue(error)))?;
-        validate_root_roles(self, &tree).map_err(|issue| self.rejection(None, issue))?;
-        resources
-            .validate(&tree)
-            .map_err(|issue| self.rejection(None, issue))?;
-        for object in local_objects.values() {
-            match object {
-                LocalObject::Node(key) if tree.is_retired(*key) => {
-                    return Err(self.rejection(
-                        None,
-                        CommitIssue::new(
-                            CommitDetail::InvalidTopology,
-                            "a local occurrence cannot be created and retired in one commit",
-                        ),
+            UiOperation::CreateRoot {
+                local_ordinal,
+                role,
+                owner,
+            } => {
+                let root = local_node_object(&self.local_objects, *local_ordinal)?;
+                let owner = owner
+                    .as_ref()
+                    .map(|value| {
+                        resolve_node_ref(self.document, &self.tree, &self.local_objects, value)
+                    })
+                    .transpose()?;
+                if *role == RootRole::Portal && owner.is_none() {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "Portal roots require an owning occurrence",
                     ));
                 }
-                LocalObject::Resource(key) if resources.is_retired(*key) => {
-                    return Err(self.rejection(
-                        None,
-                        CommitIssue::new(
-                            CommitDetail::InvalidTopology,
-                            "a local resource cannot be created and disposed in one commit",
-                        ),
+                self.tree.set_root_owner(root, owner).map_err(tree_issue)?;
+                self.roots_added.push(root);
+                self.effects = self
+                    .effects
+                    .union(EFFECT_STRUCTURE_GUARD)
+                    .union(EFFECT_LAYOUT_INPUT);
+                Ok(true)
+            }
+
+            UiOperation::HistoryAction { root, action_id } => {
+                let root = resolve_node_ref(self.document, &self.tree, &self.local_objects, root)?;
+                if *action_id != 1 && *action_id != 2 {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Unsupported,
+                        "History action is not supported by the current host",
+                    ));
+                }
+                let record = self.tree.edit(root).map_err(tree_issue)?;
+                if record.root_role != Some(RootRole::LegacyHistoryUnit) {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "History action requires a LegacyHistoryUnit root",
+                    ));
+                }
+                if record.history_action == Some(*action_id) {
+                    return Ok(false);
+                }
+                record.history_action = Some(*action_id);
+                self.effects = self.effects.union(EFFECT_STRUCTURE_GUARD);
+                Ok(true)
+            }
+
+            UiOperation::InsertBefore {
+                parent,
+                child,
+                before,
+            } => {
+                let parent =
+                    resolve_node_ref(self.document, &self.tree, &self.local_objects, parent)?;
+                let child =
+                    resolve_node_ref(self.document, &self.tree, &self.local_objects, child)?;
+                let before = before
+                    .as_ref()
+                    .map(|value| {
+                        resolve_node_ref(self.document, &self.tree, &self.local_objects, value)
+                    })
+                    .transpose()?;
+                let previous_parent = self.tree.read(child).map_err(tree_issue)?.links.parent;
+                let changed = self
+                    .tree
+                    .insert_before(parent, child, before)
+                    .map_err(tree_issue)?;
+                if changed {
+                    let keys = previous_parent
+                        .into_iter()
+                        .chain(std::iter::once(parent))
+                        .chain(std::iter::once(child))
+                        .chain(before);
+                    mark_structure(&mut self.tree, keys, &mut self.effects)?;
+                }
+                Ok(changed)
+            }
+
+            UiOperation::Detach { parent, child } => {
+                let parent =
+                    resolve_node_ref(self.document, &self.tree, &self.local_objects, parent)?;
+                let child =
+                    resolve_node_ref(self.document, &self.tree, &self.local_objects, child)?;
+                let changed = self.tree.detach(parent, child).map_err(tree_issue)?;
+                if changed {
+                    mark_structure(&mut self.tree, [parent, child], &mut self.effects)?;
+                }
+                Ok(changed)
+            }
+
+            UiOperation::RetireSubtree { root } => {
+                let root = resolve_node_ref(self.document, &self.tree, &self.local_objects, root)?;
+                if self
+                    .tree
+                    .read(root)
+                    .map_err(tree_issue)?
+                    .root_role
+                    .is_some()
+                {
+                    return Err(tree_issue(TreeError::ProtectedRoot(root)));
+                }
+                let members = self.tree.retirement_keys(root).map_err(tree_issue)?;
+                let attachments = members
+                    .iter()
+                    .map(|key| self.tree.read(*key).map(|record| record.attachments))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(tree_issue)?;
+                let parent = self.tree.read(root).map_err(tree_issue)?.links.parent;
+                self.tree
+                    .retire_subtree_with_keys(root, &members)
+                    .map_err(tree_issue)?;
+                for attachment in attachments {
+                    self.resources.detach_occurrence_resources(attachment)?;
+                }
+                self.roots_removed
+                    .extend(members.iter().copied().filter(|member| {
+                        self.tree
+                            .read_any(*member)
+                            .is_ok_and(|record| record.root_role.is_some())
+                    }));
+                if let Some(parent) = parent {
+                    mark_structure(&mut self.tree, [parent], &mut self.effects)?;
+                }
+                Ok(true)
+            }
+
+            UiOperation::RetireRoot { root } => {
+                let root = resolve_node_ref(self.document, &self.tree, &self.local_objects, root)?;
+                let root_role = self.tree.read(root).map_err(tree_issue)?.root_role;
+                if root_role.is_none() || root_role == Some(RootRole::Body) {
+                    return Err(tree_issue(TreeError::ProtectedRoot(root)));
+                }
+                let members = self.tree.retirement_keys(root).map_err(tree_issue)?;
+                let attachments = members
+                    .iter()
+                    .map(|key| self.tree.read(*key).map(|record| record.attachments))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(tree_issue)?;
+                let parent = self.tree.read(root).map_err(tree_issue)?.links.parent;
+                self.tree
+                    .retire_subtree_with_keys(root, &members)
+                    .map_err(tree_issue)?;
+                for attachment in attachments {
+                    self.resources.detach_occurrence_resources(attachment)?;
+                }
+                self.roots_removed
+                    .extend(members.iter().copied().filter(|member| {
+                        self.tree
+                            .read_any(*member)
+                            .is_ok_and(|record| record.root_role.is_some())
+                    }));
+                if let Some(parent) = parent {
+                    mark_structure(&mut self.tree, [parent], &mut self.effects)?;
+                }
+                Ok(true)
+            }
+
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+
+    fn apply_resource_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::AttachPort { node, port } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let port = port
+                    .as_ref()
+                    .map(|value| {
+                        resolve_resource_ref(
+                            self.document,
+                            &self.resources,
+                            &self.local_objects,
+                            value,
+                            ResourceFamily::Port,
+                        )
+                    })
+                    .transpose()?;
+                let changed = self.resources.attach_port(&mut self.tree, node, port)?;
+                if changed {
+                    mark_interaction(&mut self.tree, node, &mut self.effects)?;
+                }
+                Ok(changed)
+            }
+
+            UiOperation::AttachControl { node, control } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let control = control
+                    .as_ref()
+                    .map(|value| {
+                        resolve_resource_ref(
+                            self.document,
+                            &self.resources,
+                            &self.local_objects,
+                            value,
+                            ResourceFamily::Control,
+                        )
+                    })
+                    .transpose()?;
+                let changed = self
+                    .resources
+                    .attach_control(&mut self.tree, node, control)?;
+                if changed {
+                    mark_interaction(&mut self.tree, node, &mut self.effects)?;
+                }
+                Ok(changed)
+            }
+
+            UiOperation::CreatePort {
+                local_ordinal,
+                owner,
+                ..
+            } => {
+                let port =
+                    local_resource_object(&self.local_objects, *local_ordinal, HandleKind::Port)?;
+                if let Some(owner) = owner {
+                    let owner =
+                        resolve_node_ref(self.document, &self.tree, &self.local_objects, owner)?;
+                    self.resources
+                        .attach_port(&mut self.tree, owner, Some(port))?;
+                    mark_interaction(&mut self.tree, owner, &mut self.effects)?;
+                }
+                self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
+
+            UiOperation::CreateConnector {
+                local_ordinal,
+                port,
+                ..
+            } => {
+                let connector = local_resource_object(
+                    &self.local_objects,
+                    *local_ordinal,
+                    HandleKind::Connector,
+                )?;
+                let port = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                self.resources.edit(connector)?.port = Some(port);
+                self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
+
+            UiOperation::SelectConnector { port, connector } => {
+                let port = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let connector = connector
+                    .as_ref()
+                    .map(|value| {
+                        resolve_resource_ref(
+                            self.document,
+                            &self.resources,
+                            &self.local_objects,
+                            value,
+                            ResourceFamily::Connector,
+                        )
+                    })
+                    .transpose()?;
+                let changed = self.resources.select_connector(port, connector)?;
+                if changed {
+                    self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                }
+                Ok(changed)
+            }
+
+            UiOperation::DisposePort { port } => {
+                let port = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let changed = self.resources.dispose_port(port)?;
+                if changed {
+                    self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                }
+                Ok(changed)
+            }
+
+            UiOperation::DisposeConnector { connector } => {
+                let connector = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    connector,
+                    ResourceFamily::Connector,
+                )?;
+                let changed = self.resources.dispose_connector(connector)?;
+                if changed {
+                    self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                }
+                Ok(changed)
+            }
+
+            UiOperation::SetLiteralFunnel { port, .. } => {
+                let port = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let record = self.resources.read(port)?;
+                if record.ownership != OwnershipMode::OccurrenceOwned {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "literal Funnel requires an occurrence-owned Port",
+                    ));
+                }
+                self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
+
+            UiOperation::ReplaceLiteral {
+                port,
+                content_format,
+                content,
+                annotations,
+            } => {
+                let port = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    port,
+                    ResourceFamily::Port,
+                )?;
+                let record = self.resources.read(port)?;
+                if record.ownership != OwnershipMode::OccurrenceOwned {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "literal replacement requires an occurrence-owned Port",
+                    ));
+                }
+                if *content_format != 1 {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Unsupported,
+                        "literal content format is unsupported",
+                    ));
+                }
+                std::str::from_utf8(content).map_err(|_| {
+                    CommitIssue::new(CommitDetail::Malformed, "literal content is not UTF-8")
+                })?;
+                let _ = annotations;
+                self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                Ok(true)
+            }
+
+            UiOperation::CreateControl {
+                local_ordinal,
+                owner,
+                ..
+            } => {
+                let control = local_resource_object(
+                    &self.local_objects,
+                    *local_ordinal,
+                    HandleKind::Control,
+                )?;
+                if let Some(owner) = owner {
+                    let owner =
+                        resolve_node_ref(self.document, &self.tree, &self.local_objects, owner)?;
+                    self.resources
+                        .attach_control(&mut self.tree, owner, Some(control))?;
+                    mark_interaction(&mut self.tree, owner, &mut self.effects)?;
+                }
+                self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
+                Ok(true)
+            }
+
+            UiOperation::DisposeControl { control } => {
+                let control = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    control,
+                    ResourceFamily::Control,
+                )?;
+                let changed = self.resources.dispose_control(control)?;
+                if changed {
+                    self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
+                }
+                Ok(changed)
+            }
+
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+
+    fn apply_property_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::SetDeclared {
+                node,
+                property,
+                value,
+            } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let kind = self.tree.read(node).map_err(tree_issue)?.kind;
+                capture_property_initial(&self.tree, node, &mut self.property_initials)?;
+                let change = self
+                    .tree
+                    .edit(node)
+                    .map_err(tree_issue)?
+                    .properties
+                    .apply(PropertyLayer::Declared, kind, *property, value.clone())
+                    .map_err(property_issue)?;
+                let _ = change;
+                Ok(false)
+            }
+
+            UiOperation::ResetDeclared { node, property } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let kind = self.tree.read(node).map_err(tree_issue)?.kind;
+                capture_property_initial(&self.tree, node, &mut self.property_initials)?;
+                let change = self
+                    .tree
+                    .edit(node)
+                    .map_err(tree_issue)?
+                    .properties
+                    .reset_declared(kind, *property)
+                    .map_err(property_issue)?;
+                let _ = change;
+                Ok(false)
+            }
+
+            UiOperation::SetOverride {
+                node,
+                property,
+                value,
+            } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let kind = self.tree.read(node).map_err(tree_issue)?.kind;
+                capture_property_initial(&self.tree, node, &mut self.property_initials)?;
+                let change = self
+                    .tree
+                    .edit(node)
+                    .map_err(tree_issue)?
+                    .properties
+                    .apply(PropertyLayer::Override, kind, *property, value.clone())
+                    .map_err(property_issue)?;
+                let _ = change;
+                Ok(false)
+            }
+
+            UiOperation::ClearOverride { node, property } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let kind = self.tree.read(node).map_err(tree_issue)?.kind;
+                capture_property_initial(&self.tree, node, &mut self.property_initials)?;
+                let change = self
+                    .tree
+                    .edit(node)
+                    .map_err(tree_issue)?
+                    .properties
+                    .clear_override(kind, *property)
+                    .map_err(property_issue)?;
+                let _ = change;
+                Ok(false)
+            }
+
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+
+    fn apply_style_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::SetStyleState {
+                node,
+                layer,
+                key,
+                value,
+            } => {
+                if *layer > 1
+                    || key.is_empty()
+                    || key.contains('\0')
+                    || value.is_empty()
+                    || value.contains('\0')
+                {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Malformed,
+                        "style state layer/value is invalid",
+                    ));
+                }
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                if *layer == 0 {
+                    capture_style_state_initial(
+                        &self.tree,
+                        node,
+                        key,
+                        &mut self.style_state_initials,
+                    )?;
+                }
+                let record = self.tree.edit(node).map_err(tree_issue)?;
+                let states = if *layer == 0 {
+                    &mut record.style_states
+                } else {
+                    &mut record.style_overrides
+                };
+                if states.get(key) == Some(value) {
+                    return Ok(false);
+                }
+                states.insert(key.clone(), value.clone());
+                if *layer == 0 {
+                    return Ok(false);
+                }
+                mark_style_state(&mut self.tree, node, &mut self.effects)?;
+                Ok(true)
+            }
+
+            UiOperation::ClearStyleState { node, layer, key } => {
+                if *layer > 1 || key.is_empty() || key.contains('\0') {
+                    return Err(CommitIssue::new(
+                        CommitDetail::Malformed,
+                        "style state layer/key is invalid",
+                    ));
+                }
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                if *layer == 0 {
+                    capture_style_state_initial(
+                        &self.tree,
+                        node,
+                        key,
+                        &mut self.style_state_initials,
+                    )?;
+                }
+                let record = self.tree.edit(node).map_err(tree_issue)?;
+                let states = if *layer == 0 {
+                    &mut record.style_states
+                } else {
+                    &mut record.style_overrides
+                };
+                if states.remove(key).is_none() {
+                    return Ok(false);
+                }
+                if *layer == 0 {
+                    return Ok(false);
+                }
+                mark_style_state(&mut self.tree, node, &mut self.effects)?;
+                Ok(true)
+            }
+
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+
+    fn apply_interaction_operation(
+        &mut self,
+        operation: &UiOperation,
+    ) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::SetHidden { node, hidden } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                capture_interaction_initial(&self.tree, node, &mut self.interaction_initials)?;
+                let record = self.tree.edit(node).map_err(tree_issue)?;
+                if record.renderer_hidden == *hidden {
+                    return Ok(false);
+                }
+                record.renderer_hidden = *hidden;
+                Ok(false)
+            }
+
+            UiOperation::SetSubscriptions {
+                node,
+                mask_low,
+                mask_high,
+            } => {
+                let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
+                let mask = u64::from(*mask_low) | (u64::from(*mask_high) << 32);
+                capture_interaction_initial(&self.tree, node, &mut self.interaction_initials)?;
+                let record = self.tree.edit(node).map_err(tree_issue)?;
+                if record.subscriptions == mask {
+                    return Ok(false);
+                }
+                record.subscriptions = mask;
+                Ok(false)
+            }
+
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+
+    fn apply_control_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
+        match operation {
+            UiOperation::ControlCommand {
+                control,
+                command_id,
+                operands,
+            } => {
+                let _ = command_id;
+                let _ = operands;
+                let _ = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    control,
+                    ResourceFamily::Control,
+                )?;
+                self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
+                Ok(true)
+            }
+
+            UiOperation::ReplaceEditorContent {
+                control,
+                content,
+                expected_edit_revision: _,
+            } => {
+                let _ = resolve_resource_ref(
+                    self.document,
+                    &self.resources,
+                    &self.local_objects,
+                    control,
+                    ResourceFamily::Control,
+                )?;
+                std::str::from_utf8(content).map_err(|_| {
+                    CommitIssue::new(CommitDetail::Malformed, "editor content is not UTF-8")
+                })?;
+                self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
+                Ok(true)
+            }
+            _ => unreachable!("operation dispatched to the wrong draft phase"),
+        }
+    }
+}
+
+struct FinalizedDraft {
+    local_objects: BTreeMap<u32, LocalObject>,
+    tree: TreePlan,
+    resources: ResourcePlan,
+    roots_added: Vec<NodeKey>,
+    roots_removed: Vec<NodeKey>,
+    effects: EffectMask,
+    changed: bool,
+}
+
+impl<'a> CommitDraft<'a> {
+    fn finalize(mut self, mut changed: bool) -> Result<FinalizedDraft, CommitIssue> {
+        changed |= finalize_property_changes(
+            &mut self.tree,
+            std::mem::take(&mut self.property_initials),
+            &mut self.effects,
+        )?;
+        changed |= finalize_style_state_changes(
+            &mut self.tree,
+            std::mem::take(&mut self.style_state_initials),
+            &mut self.effects,
+        )?;
+        changed |= finalize_interaction_changes(
+            &mut self.tree,
+            std::mem::take(&mut self.interaction_initials),
+            &mut self.effects,
+        )?;
+        self.tree.validate().map_err(tree_issue)?;
+        validate_root_roles(self.document, &self.tree)?;
+        self.resources.validate(&self.tree)?;
+        for object in self.local_objects.values() {
+            match object {
+                LocalObject::Node(key) if self.tree.is_retired(*key) => {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "a local occurrence cannot be created and retired in one commit",
+                    ));
+                }
+                LocalObject::Resource(key) if self.resources.is_retired(*key) => {
+                    return Err(CommitIssue::new(
+                        CommitDetail::InvalidTopology,
+                        "a local resource cannot be created and disposed in one commit",
                     ));
                 }
                 _ => {}
             }
         }
-
-        let mut tree = tree.into_plan();
-        let mut resources = resources.into_plan();
-
-        let (portal_buckets, portal_touched) = reserve_reverse_index(
-            &mut self.portals_by_owner,
-            tree.edits.iter().filter_map(|(key, record)| {
-                if tree.retired_set.contains(key) || record.root_role != Some(RootRole::Portal) {
-                    return None;
-                }
-                record.root_owner.map(|owner| (owner, *key))
-            }),
-        )
-        .map_err(|issue| self.rejection(None, issue))?;
-        tree.portal_buckets = portal_buckets;
-        tree.portal_touched = portal_touched;
-
-        let (connector_buckets, connector_touched) = reserve_reverse_index(
-            &mut self.connectors_by_port,
-            resources.edits.iter().filter_map(|(key, record)| {
-                (!resources.retired_set.contains(key) && key.kind == HandleKind::Connector)
-                    .then_some(record.port)
-                    .flatten()
-                    .map(|port| (port, *key))
-            }),
-        )
-        .map_err(|issue| self.rejection(None, issue))?;
-        resources.connector_buckets = connector_buckets;
-        resources.connector_touched = connector_touched;
-
-        let (selected_buckets, selected_touched) = reserve_reverse_index(
-            &mut self.ports_by_selected_connector,
-            resources.edits.iter().filter_map(|(key, record)| {
-                (!resources.retired_set.contains(key) && key.kind == HandleKind::Port)
-                    .then_some(record.selected)
-                    .flatten()
-                    .map(|connector| (connector, *key))
-            }),
-        )
-        .map_err(|issue| self.rejection(None, issue))?;
-        resources.selected_buckets = selected_buckets;
-        resources.selected_touched = selected_touched;
-
-        self.nodes
-            .ensure_free_capacity_for(
-                tree.retired
-                    .iter()
-                    .filter(|key| key.generation != u32::MAX)
-                    .count(),
-            )
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "node retirement capacity"),
-                )
-            })?;
-        self.ports
-            .ensure_free_capacity_for(
-                resources
-                    .retired
-                    .iter()
-                    .filter(|key| key.kind == HandleKind::Port && key.generation != u32::MAX)
-                    .count(),
-            )
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "Port retirement capacity"),
-                )
-            })?;
-        self.connectors
-            .ensure_free_capacity_for(
-                resources
-                    .retired
-                    .iter()
-                    .filter(|key| key.kind == HandleKind::Connector && key.generation != u32::MAX)
-                    .count(),
-            )
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "Connector retirement capacity"),
-                )
-            })?;
-        self.controls
-            .ensure_free_capacity_for(
-                resources
-                    .retired
-                    .iter()
-                    .filter(|key| key.kind == HandleKind::Control && key.generation != u32::MAX)
-                    .count(),
-            )
-            .map_err(|_| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Capacity, "control retirement capacity"),
-                )
-            })?;
-
-        let next_ui_revision = if changed {
-            self.accepted_ui_revision.checked_add(1).ok_or_else(|| {
-                self.rejection(
-                    None,
-                    CommitIssue::new(CommitDetail::Invariant, "accepted UI revision exhausted"),
-                )
-            })?
-        } else {
-            self.accepted_ui_revision
-        };
-        let mut created_handles = Vec::with_capacity(local_objects.len());
-        for object in local_objects.values() {
-            let handle = match object {
-                LocalObject::Node(key) => key.handle(self.namespace),
-                LocalObject::Resource(key) => key.handle(self.namespace),
-            };
-            created_handles.push(handle);
-        }
-        let result = UiOperationResult::accepted(
-            next_ui_revision,
-            created_handles,
-            if changed || !effects.is_empty() {
-                WAKE_DRAIN
-            } else {
-                0
-            },
-        );
-        Ok(PreparedUiCommit {
-            expected_ui_revision: self.accepted_ui_revision,
-            next_ui_revision,
+        Ok(FinalizedDraft {
+            local_objects: self.local_objects,
+            tree: self.tree.into_plan(),
+            resources: self.resources.into_plan(),
+            roots_added: self.roots_added,
+            roots_removed: self.roots_removed,
+            effects: self.effects,
             changed,
-            effects,
-            tree,
-            resources,
-            roots_added,
-            roots_removed,
-            result,
         })
     }
+}
 
-    pub fn commit_ui(&mut self, batch: &UiCommit) -> Result<AppliedUiCommit, UiRejection> {
-        let prepared = self.prepare_ui_commit(batch)?;
-        Ok(self.apply_prepared_ui_commit(prepared))
-    }
-
-    pub fn apply_prepared_ui_commit(&mut self, prepared: PreparedUiCommit) -> AppliedUiCommit {
-        assert_eq!(
-            self.accepted_ui_revision, prepared.expected_ui_revision,
-            "prepared UI commit belongs to another accepted revision"
-        );
-        let PreparedUiCommit {
-            next_ui_revision,
-            tree,
-            resources,
-            roots_added,
-            roots_removed,
-            result,
-            ..
-        } = prepared;
-        apply_tree_plan(&mut self.nodes, &mut self.portals_by_owner, tree);
-        apply_resource_plan(
-            &mut self.ports,
-            &mut self.connectors,
-            &mut self.controls,
-            &mut self.port_owners,
-            &mut self.control_owners,
-            &mut self.connectors_by_port,
-            &mut self.ports_by_selected_connector,
-            resources,
-        );
-        for root in roots_removed {
-            self.roots.remove(&root);
-        }
-        for root in roots_added {
-            self.roots.insert(root);
-        }
-        self.accepted_ui_revision = next_ui_revision;
-        result
-    }
-
-    fn rejection(&self, index: Option<usize>, issue: CommitIssue) -> UiRejection {
-        let failed_record = index
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(FAILED_RECORD_NONE);
-        let result =
-            UiOperationResult::rejected(self.accepted_ui_revision, failed_record, issue.detail);
-        UiRejection {
-            result,
-            detail: issue.detail,
-            message: issue.message,
-        }
+fn rejection_at_revision(revision: u64, index: Option<usize>, issue: CommitIssue) -> UiRejection {
+    let failed_record = index
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(FAILED_RECORD_NONE);
+    let result = UiOperationResult::rejected(revision, failed_record, issue.detail);
+    UiRejection {
+        result,
+        detail: issue.detail,
+        message: issue.message,
     }
 }
 
@@ -2341,6 +2687,635 @@ where
         if index.get(dependency).is_some_and(HashSet::is_empty) {
             index.remove(dependency);
         }
+    }
+}
+
+fn local_creation(operation: &UiOperation) -> Option<(u32, LocalFamily)> {
+    match operation {
+        UiOperation::CreateNode { local_ordinal, .. }
+        | UiOperation::CreateRoot { local_ordinal, .. } => {
+            Some((*local_ordinal, LocalFamily::Node))
+        }
+        UiOperation::CreatePort { local_ordinal, .. } => Some((*local_ordinal, LocalFamily::Port)),
+        UiOperation::CreateConnector { local_ordinal, .. } => {
+            Some((*local_ordinal, LocalFamily::Connector))
+        }
+        UiOperation::CreateControl { local_ordinal, .. } => {
+            Some((*local_ordinal, LocalFamily::Control))
+        }
+        _ => None,
+    }
+}
+
+fn validate_commit_configs(
+    batch: &UiCommit,
+    local_specs: &BTreeMap<u32, LocalFamily>,
+) -> Result<(), CommitIssue> {
+    let mut targets = HashMap::new();
+    targets
+        .try_reserve(batch.operations.len())
+        .map_err(|_| CommitIssue::new(CommitDetail::Capacity, "config target capacity"))?;
+    for operation in &batch.operations {
+        let target = match operation {
+            UiOperation::CreateControl {
+                local_ordinal,
+                kind,
+                ..
+            } => Some((*local_ordinal, ConfigTarget::Control(*kind))),
+            UiOperation::CreateRoot {
+                local_ordinal,
+                role,
+                ..
+            } => Some((*local_ordinal, ConfigTarget::Root(*role))),
+            _ => None,
+        };
+        if let Some((ordinal, target)) = target {
+            targets.insert(ordinal, target);
+        }
+    }
+    for (&ordinal, config) in &batch.control_configs {
+        let Some(LocalFamily::Control) = local_specs.get(&ordinal) else {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "control config must target a local Control creation",
+            ));
+        };
+        let Some(ConfigTarget::Control(kind)) = targets.get(&ordinal).copied() else {
+            return Err(CommitIssue::new(
+                CommitDetail::Invariant,
+                "control config creation is missing its kind",
+            ));
+        };
+        config.validate_for(kind).map_err(config_issue)?;
+    }
+    for &ordinal in batch.root_configs.keys() {
+        let Some(LocalFamily::Node) = local_specs.get(&ordinal) else {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "root config must target a local root creation",
+            ));
+        };
+        let Some(ConfigTarget::Root(role)) = targets.get(&ordinal).copied() else {
+            return Err(CommitIssue::new(
+                CommitDetail::Invariant,
+                "root config creation is missing its role",
+            ));
+        };
+        batch
+            .root_config(ordinal)
+            .validate_for(role)
+            .map_err(config_issue)?;
+    }
+    Ok(())
+}
+
+fn config_issue(error: ConfigError) -> CommitIssue {
+    CommitIssue::new(
+        match error {
+            ConfigError::WrongKind => CommitDetail::InvalidTopology,
+            ConfigError::InvalidValue => CommitDetail::InvalidProperty,
+        },
+        "typed UI config does not match its creation kind",
+    )
+}
+
+const fn local_family_index(family: LocalFamily) -> usize {
+    match family {
+        LocalFamily::Node => 0,
+        LocalFamily::Port => 1,
+        LocalFamily::Connector => 2,
+        LocalFamily::Control => 3,
+    }
+}
+
+fn assign_local_objects(
+    specifications: &BTreeMap<u32, LocalFamily>,
+    node_keys: Vec<NodeKey>,
+    port_keys: Vec<ResourceKey>,
+    connector_keys: Vec<ResourceKey>,
+    control_keys: Vec<ResourceKey>,
+) -> BTreeMap<u32, LocalObject> {
+    let mut nodes = node_keys.into_iter();
+    let mut ports = port_keys.into_iter();
+    let mut connectors = connector_keys.into_iter();
+    let mut controls = control_keys.into_iter();
+    specifications
+        .iter()
+        .map(|(ordinal, family)| {
+            let object = match family {
+                LocalFamily::Node => LocalObject::Node(
+                    nodes
+                        .next()
+                        .expect("node reservation count matches local declarations"),
+                ),
+                LocalFamily::Port => LocalObject::Resource(
+                    ports
+                        .next()
+                        .expect("Port reservation count matches local declarations"),
+                ),
+                LocalFamily::Connector => LocalObject::Resource(
+                    connectors
+                        .next()
+                        .expect("Connector reservation count matches local declarations"),
+                ),
+                LocalFamily::Control => LocalObject::Resource(
+                    controls
+                        .next()
+                        .expect("control reservation count matches local declarations"),
+                ),
+            };
+            (*ordinal, object)
+        })
+        .collect()
+}
+
+fn insert_provisional(
+    operation: &UiOperation,
+    local_objects: &BTreeMap<u32, LocalObject>,
+    tree: &mut TreeDraft<'_>,
+    resources: &mut ResourceDraft<'_>,
+) -> Result<(), CommitIssue> {
+    match operation {
+        UiOperation::CreateNode {
+            local_ordinal,
+            kind,
+        } => {
+            let key = local_node_object(local_objects, *local_ordinal)?;
+            tree.insert_created(key, Occurrence::new(*kind, None))
+                .map_err(tree_issue)
+        }
+        UiOperation::CreateRoot {
+            local_ordinal,
+            role,
+            ..
+        } => {
+            if *role == RootRole::Body {
+                return Err(CommitIssue::new(
+                    CommitDetail::InvalidTopology,
+                    "the host body root already exists",
+                ));
+            }
+            let key = local_node_object(local_objects, *local_ordinal)?;
+            tree.insert_created(key, Occurrence::new(HostKind::Box, Some(*role)))
+                .map_err(tree_issue)
+        }
+        UiOperation::CreatePort {
+            local_ordinal,
+            content_family,
+            ownership,
+            owner,
+        } => {
+            if *ownership == OwnershipMode::OccurrenceOwned && owner.is_none() {
+                return Err(CommitIssue::new(
+                    CommitDetail::InvalidTopology,
+                    "occurrence-owned Port requires an occurrence owner",
+                ));
+            }
+            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Port)?;
+            resources.insert_created(key, ResourceRecord::port(*ownership, None, *content_family))
+        }
+        UiOperation::CreateConnector {
+            local_ordinal,
+            source_index,
+            port,
+            ownership,
+        } => {
+            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Connector)?;
+            let port = provisional_resource_key(port, local_objects, resources.document)?;
+            if port.kind != HandleKind::Port {
+                return Err(CommitIssue::new(
+                    CommitDetail::WrongKind,
+                    "Connector creation requires a Port",
+                ));
+            }
+            resources.insert_created(
+                key,
+                ResourceRecord::connector(*ownership, port, *source_index),
+            )
+        }
+        UiOperation::CreateControl {
+            local_ordinal,
+            kind,
+            ownership,
+            owner,
+        } => {
+            if *ownership == OwnershipMode::OccurrenceOwned && owner.is_none() {
+                return Err(CommitIssue::new(
+                    CommitDetail::InvalidTopology,
+                    "occurrence-owned control requires an occurrence owner",
+                ));
+            }
+            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Control)?;
+            resources.insert_created(key, ResourceRecord::control(*ownership, None, *kind))
+        }
+        _ => Ok(()),
+    }
+}
+
+struct ReservedDraft {
+    local_objects: BTreeMap<u32, LocalObject>,
+    tree: TreePlan,
+    resources: ResourcePlan,
+    roots_added: Vec<NodeKey>,
+    roots_removed: Vec<NodeKey>,
+    effects: EffectMask,
+    changed: bool,
+}
+
+impl OccurrenceDocument {
+    fn reserve_draft(&mut self, batch: &UiCommit) -> Result<CommitDraft<'_>, UiRejection> {
+        let (local_specs, node_count, port_count, connector_count, control_count) =
+            collect_local_creations(batch.operations())
+                .map_err(|(index, issue)| self.rejection(Some(index), issue))?;
+        validate_commit_configs(batch, &local_specs)
+            .map_err(|issue| self.rejection(None, issue))?;
+        let total_live = self
+            .nodes
+            .live_count()
+            .saturating_add(self.ports.live_count())
+            .saturating_add(self.connectors.live_count())
+            .saturating_add(self.controls.live_count());
+        let provisional = node_count
+            .saturating_add(port_count)
+            .saturating_add(connector_count)
+            .saturating_add(control_count);
+        if total_live.saturating_add(provisional) > self.arena_capacity {
+            return Err(self.rejection(
+                None,
+                CommitIssue::new(
+                    CommitDetail::Capacity,
+                    "UI commit exceeds the host occurrence/resource capacity",
+                ),
+            ));
+        }
+
+        self.roots.try_reserve(local_specs.len()).map_err(|_| {
+            self.rejection(
+                None,
+                CommitIssue::new(CommitDetail::Capacity, "root capacity"),
+            )
+        })?;
+        self.port_owners
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "Port owner index capacity"),
+                )
+            })?;
+        self.control_owners
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "control owner index capacity"),
+                )
+            })?;
+
+        let node_keys = self.reserve_node_keys(node_count).map_err(|error| {
+            self.rejection(
+                None,
+                CommitIssue::new(CommitDetail::Capacity, error.to_string()),
+            )
+        })?;
+        let port_keys = self
+            .reserve_resource_keys(ResourceFamily::Port, port_count)
+            .map_err(|error| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
+                )
+            })?;
+        let connector_keys = self
+            .reserve_resource_keys(ResourceFamily::Connector, connector_count)
+            .map_err(|error| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
+                )
+            })?;
+        let control_keys = self
+            .reserve_resource_keys(ResourceFamily::Control, control_count)
+            .map_err(|error| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, error.to_string()),
+                )
+            })?;
+        let local_objects = assign_local_objects(
+            &local_specs,
+            node_keys,
+            port_keys,
+            connector_keys,
+            control_keys,
+        );
+
+        let mut tree = TreeDraft::new(&self.nodes, &self.portals_by_owner);
+        tree.reserve(batch.operations().len()).map_err(|error| {
+            self.rejection(
+                None,
+                CommitIssue::new(CommitDetail::Capacity, error.to_string()),
+            )
+        })?;
+        let mut resources = ResourceDraft::new(self);
+        resources
+            .reserve(batch.operations().len())
+            .map_err(|issue| self.rejection(None, issue))?;
+
+        let mut roots_added = Vec::new();
+        let mut roots_removed = Vec::new();
+        roots_added.try_reserve(local_specs.len()).map_err(|_| {
+            self.rejection(
+                None,
+                CommitIssue::new(CommitDetail::Capacity, "root capacity"),
+            )
+        })?;
+        roots_removed
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "root retirement capacity"),
+                )
+            })?;
+        for (index, operation) in batch.operations().iter().enumerate() {
+            if let Err(issue) =
+                insert_provisional(operation, &local_objects, &mut tree, &mut resources)
+            {
+                return Err(self.rejection(Some(index), issue));
+            }
+        }
+
+        let mut draft = CommitDraft {
+            document: self,
+            local_objects,
+            tree,
+            resources,
+            roots_added,
+            roots_removed,
+            effects: EffectMask::NONE,
+            property_initials: HashMap::new(),
+            style_state_initials: HashMap::new(),
+            interaction_initials: HashMap::new(),
+        };
+        draft
+            .property_initials
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "property snapshot capacity"),
+                )
+            })?;
+        draft
+            .style_state_initials
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "style-state snapshot capacity"),
+                )
+            })?;
+        draft
+            .interaction_initials
+            .try_reserve(batch.operations().len())
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "interaction snapshot capacity"),
+                )
+            })?;
+        Ok(draft)
+    }
+
+    fn reserve_plans(&mut self, finalized: FinalizedDraft) -> Result<ReservedDraft, UiRejection> {
+        let FinalizedDraft {
+            local_objects,
+            tree,
+            resources,
+            roots_added,
+            roots_removed,
+            effects,
+            changed,
+        } = finalized;
+        let mut tree = tree;
+        let mut resources = resources;
+
+        let (portal_buckets, portal_touched) = reserve_reverse_index(
+            &mut self.portals_by_owner,
+            tree.edits.iter().filter_map(|(key, record)| {
+                if tree.retired_set.contains(key) || record.root_role != Some(RootRole::Portal) {
+                    return None;
+                }
+                record.root_owner.map(|owner| (owner, *key))
+            }),
+        )
+        .map_err(|issue| self.rejection(None, issue))?;
+        tree.portal_buckets = portal_buckets;
+        tree.portal_touched = portal_touched;
+
+        let (connector_buckets, connector_touched) = reserve_reverse_index(
+            &mut self.connectors_by_port,
+            resources.edits.iter().filter_map(|(key, record)| {
+                (!resources.retired_set.contains(key) && key.kind == HandleKind::Connector)
+                    .then_some(record.port)
+                    .flatten()
+                    .map(|port| (port, *key))
+            }),
+        )
+        .map_err(|issue| self.rejection(None, issue))?;
+        resources.connector_buckets = connector_buckets;
+        resources.connector_touched = connector_touched;
+
+        let (selected_buckets, selected_touched) = reserve_reverse_index(
+            &mut self.ports_by_selected_connector,
+            resources.edits.iter().filter_map(|(key, record)| {
+                (!resources.retired_set.contains(key) && key.kind == HandleKind::Port)
+                    .then_some(record.selected)
+                    .flatten()
+                    .map(|connector| (connector, *key))
+            }),
+        )
+        .map_err(|issue| self.rejection(None, issue))?;
+        resources.selected_buckets = selected_buckets;
+        resources.selected_touched = selected_touched;
+
+        self.nodes
+            .ensure_free_capacity_for(
+                tree.retired
+                    .iter()
+                    .filter(|key| key.generation != u32::MAX)
+                    .count(),
+            )
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "node retirement capacity"),
+                )
+            })?;
+        self.ports
+            .ensure_free_capacity_for(
+                resources
+                    .retired
+                    .iter()
+                    .filter(|key| key.kind == HandleKind::Port && key.generation != u32::MAX)
+                    .count(),
+            )
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "Port retirement capacity"),
+                )
+            })?;
+        self.connectors
+            .ensure_free_capacity_for(
+                resources
+                    .retired
+                    .iter()
+                    .filter(|key| key.kind == HandleKind::Connector && key.generation != u32::MAX)
+                    .count(),
+            )
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "Connector retirement capacity"),
+                )
+            })?;
+        self.controls
+            .ensure_free_capacity_for(
+                resources
+                    .retired
+                    .iter()
+                    .filter(|key| key.kind == HandleKind::Control && key.generation != u32::MAX)
+                    .count(),
+            )
+            .map_err(|_| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Capacity, "control retirement capacity"),
+                )
+            })?;
+
+        Ok(ReservedDraft {
+            local_objects,
+            tree,
+            resources,
+            roots_added,
+            roots_removed,
+            effects,
+            changed,
+        })
+    }
+
+    pub fn prepare_ui_commit(&mut self, batch: &UiCommit) -> Result<PreparedUiCommit, UiRejection> {
+        if batch.expected_ui_revision != self.accepted_ui_revision {
+            return Err(self.rejection(
+                None,
+                CommitIssue::new(
+                    CommitDetail::StaleRevision,
+                    format!(
+                        "expected UI revision {}, current revision {}",
+                        batch.expected_ui_revision, self.accepted_ui_revision
+                    ),
+                ),
+            ));
+        }
+
+        let revision = self.accepted_ui_revision;
+        let mut draft = self.reserve_draft(batch)?;
+        let mut changed = false;
+        for (index, operation) in batch.operations().iter().enumerate() {
+            match draft.apply_operation(operation) {
+                Ok(operation_changed) => changed |= operation_changed,
+                Err(issue) => return Err(rejection_at_revision(revision, Some(index), issue)),
+            }
+        }
+        let finalized = draft
+            .finalize(changed)
+            .map_err(|issue| rejection_at_revision(revision, None, issue))?;
+        let reserved = self.reserve_plans(finalized)?;
+        let next_ui_revision = if reserved.changed {
+            self.accepted_ui_revision.checked_add(1).ok_or_else(|| {
+                self.rejection(
+                    None,
+                    CommitIssue::new(CommitDetail::Invariant, "accepted UI revision exhausted"),
+                )
+            })?
+        } else {
+            self.accepted_ui_revision
+        };
+        let mut created_handles = Vec::with_capacity(reserved.local_objects.len());
+        for object in reserved.local_objects.values() {
+            let handle = match object {
+                LocalObject::Node(key) => key.handle(self.namespace),
+                LocalObject::Resource(key) => key.handle(self.namespace),
+            };
+            created_handles.push(handle);
+        }
+        let result = UiOperationResult::accepted(
+            next_ui_revision,
+            created_handles,
+            if reserved.changed || !reserved.effects.is_empty() {
+                WAKE_DRAIN
+            } else {
+                0
+            },
+        );
+        Ok(PreparedUiCommit {
+            expected_ui_revision: self.accepted_ui_revision,
+            next_ui_revision,
+            changed: reserved.changed,
+            effects: reserved.effects,
+            tree: reserved.tree,
+            resources: reserved.resources,
+            roots_added: reserved.roots_added,
+            roots_removed: reserved.roots_removed,
+            result,
+        })
+    }
+
+    pub fn commit_ui(&mut self, batch: &UiCommit) -> Result<AppliedUiCommit, UiRejection> {
+        let prepared = self.prepare_ui_commit(batch)?;
+        Ok(self.apply_prepared_ui_commit(prepared))
+    }
+
+    pub fn apply_prepared_ui_commit(&mut self, prepared: PreparedUiCommit) -> AppliedUiCommit {
+        assert_eq!(
+            self.accepted_ui_revision, prepared.expected_ui_revision,
+            "prepared UI commit belongs to another accepted revision"
+        );
+        let PreparedUiCommit {
+            next_ui_revision,
+            tree,
+            resources,
+            roots_added,
+            roots_removed,
+            result,
+            ..
+        } = prepared;
+        apply_tree_plan(&mut self.nodes, &mut self.portals_by_owner, tree);
+        apply_resource_plan(
+            &mut self.ports,
+            &mut self.connectors,
+            &mut self.controls,
+            &mut self.port_owners,
+            &mut self.control_owners,
+            &mut self.connectors_by_port,
+            &mut self.ports_by_selected_connector,
+            resources,
+        );
+        for root in roots_removed {
+            self.roots.remove(&root);
+        }
+        for root in roots_added {
+            self.roots.insert(root);
+        }
+        self.accepted_ui_revision = next_ui_revision;
+        result
+    }
+
+    fn rejection(&self, index: Option<usize>, issue: CommitIssue) -> UiRejection {
+        rejection_at_revision(self.accepted_ui_revision, index, issue)
     }
 }
 
@@ -3414,6 +4389,7 @@ mod tests {
         let mut style = UiCommit::new(document.accepted_ui_revision());
         style.push(UiOperation::SetStyleState {
             node: node_ref(node),
+            layer: 0,
             key: "selected".to_owned(),
             value: "on".to_owned(),
         });
@@ -3422,6 +4398,7 @@ mod tests {
         for value in ["on", "off", "on"] {
             style_coalesced.push(UiOperation::SetStyleState {
                 node: node_ref(node),
+                layer: 0,
                 key: "selected".to_owned(),
                 value: value.to_owned(),
             });
@@ -3457,6 +4434,7 @@ mod tests {
         let mut invalid = UiCommit::new(document.accepted_ui_revision());
         invalid.push(UiOperation::SetStyleState {
             node: node_ref(node),
+            layer: 0,
             key: "selected".to_owned(),
             value: String::new(),
         });
@@ -3474,801 +4452,5 @@ mod tests {
                 .style_states
                 .is_empty()
         );
-    }
-}
-
-fn local_creation(operation: &UiOperation) -> Option<(u32, LocalFamily)> {
-    match operation {
-        UiOperation::CreateNode { local_ordinal, .. }
-        | UiOperation::CreateRoot { local_ordinal, .. } => {
-            Some((*local_ordinal, LocalFamily::Node))
-        }
-        UiOperation::CreatePort { local_ordinal, .. } => Some((*local_ordinal, LocalFamily::Port)),
-        UiOperation::CreateConnector { local_ordinal, .. } => {
-            Some((*local_ordinal, LocalFamily::Connector))
-        }
-        UiOperation::CreateControl { local_ordinal, .. } => {
-            Some((*local_ordinal, LocalFamily::Control))
-        }
-        _ => None,
-    }
-}
-
-fn validate_commit_configs(
-    batch: &UiCommit,
-    local_specs: &BTreeMap<u32, LocalFamily>,
-) -> Result<(), CommitIssue> {
-    for (&ordinal, config) in &batch.control_configs {
-        let Some(LocalFamily::Control) = local_specs.get(&ordinal) else {
-            return Err(CommitIssue::new(
-                CommitDetail::InvalidTopology,
-                "control config must target a local Control creation",
-            ));
-        };
-        let kind = batch
-            .operations
-            .iter()
-            .find_map(|operation| match operation {
-                UiOperation::CreateControl {
-                    local_ordinal,
-                    kind,
-                    ..
-                } if *local_ordinal == ordinal => Some(*kind),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                CommitIssue::new(
-                    CommitDetail::Invariant,
-                    "control config creation is missing its kind",
-                )
-            })?;
-        config.validate_for(kind).map_err(config_issue)?;
-    }
-    for &ordinal in batch.root_configs.keys() {
-        let Some(LocalFamily::Node) = local_specs.get(&ordinal) else {
-            return Err(CommitIssue::new(
-                CommitDetail::InvalidTopology,
-                "root config must target a local root creation",
-            ));
-        };
-        let role = batch
-            .operations
-            .iter()
-            .find_map(|operation| match operation {
-                UiOperation::CreateRoot {
-                    local_ordinal,
-                    role,
-                    ..
-                } if *local_ordinal == ordinal => Some(*role),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                CommitIssue::new(
-                    CommitDetail::Invariant,
-                    "root config creation is missing its role",
-                )
-            })?;
-        batch
-            .root_config(ordinal)
-            .validate_for(role)
-            .map_err(config_issue)?;
-    }
-    Ok(())
-}
-
-fn config_issue(error: ConfigError) -> CommitIssue {
-    CommitIssue::new(
-        match error {
-            ConfigError::WrongKind => CommitDetail::InvalidTopology,
-            ConfigError::InvalidValue => CommitDetail::InvalidProperty,
-        },
-        "typed UI config does not match its creation kind",
-    )
-}
-
-const fn local_family_index(family: LocalFamily) -> usize {
-    match family {
-        LocalFamily::Node => 0,
-        LocalFamily::Port => 1,
-        LocalFamily::Connector => 2,
-        LocalFamily::Control => 3,
-    }
-}
-
-fn assign_local_objects(
-    specifications: &BTreeMap<u32, LocalFamily>,
-    node_keys: Vec<NodeKey>,
-    port_keys: Vec<ResourceKey>,
-    connector_keys: Vec<ResourceKey>,
-    control_keys: Vec<ResourceKey>,
-) -> BTreeMap<u32, LocalObject> {
-    let mut nodes = node_keys.into_iter();
-    let mut ports = port_keys.into_iter();
-    let mut connectors = connector_keys.into_iter();
-    let mut controls = control_keys.into_iter();
-    specifications
-        .iter()
-        .map(|(ordinal, family)| {
-            let object = match family {
-                LocalFamily::Node => LocalObject::Node(
-                    nodes
-                        .next()
-                        .expect("node reservation count matches local declarations"),
-                ),
-                LocalFamily::Port => LocalObject::Resource(
-                    ports
-                        .next()
-                        .expect("Port reservation count matches local declarations"),
-                ),
-                LocalFamily::Connector => LocalObject::Resource(
-                    connectors
-                        .next()
-                        .expect("Connector reservation count matches local declarations"),
-                ),
-                LocalFamily::Control => LocalObject::Resource(
-                    controls
-                        .next()
-                        .expect("control reservation count matches local declarations"),
-                ),
-            };
-            (*ordinal, object)
-        })
-        .collect()
-}
-
-fn insert_provisional(
-    operation: &UiOperation,
-    local_objects: &BTreeMap<u32, LocalObject>,
-    tree: &mut TreeDraft<'_>,
-    resources: &mut ResourceDraft<'_>,
-) -> Result<(), CommitIssue> {
-    match operation {
-        UiOperation::CreateNode {
-            local_ordinal,
-            kind,
-        } => {
-            let key = local_node_object(local_objects, *local_ordinal)?;
-            tree.insert_created(key, Occurrence::new(*kind, None))
-                .map_err(tree_issue)
-        }
-        UiOperation::CreateRoot {
-            local_ordinal,
-            role,
-            ..
-        } => {
-            if *role == RootRole::Body {
-                return Err(CommitIssue::new(
-                    CommitDetail::InvalidTopology,
-                    "the host body root already exists",
-                ));
-            }
-            let key = local_node_object(local_objects, *local_ordinal)?;
-            tree.insert_created(key, Occurrence::new(HostKind::Box, Some(*role)))
-                .map_err(tree_issue)
-        }
-        UiOperation::CreatePort {
-            local_ordinal,
-            content_family,
-            ownership,
-            owner,
-        } => {
-            if *ownership == OwnershipMode::OccurrenceOwned && owner.is_none() {
-                return Err(CommitIssue::new(
-                    CommitDetail::InvalidTopology,
-                    "occurrence-owned Port requires an occurrence owner",
-                ));
-            }
-            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Port)?;
-            resources.insert_created(key, ResourceRecord::port(*ownership, None, *content_family))
-        }
-        UiOperation::CreateConnector {
-            local_ordinal,
-            source_index,
-            port,
-            ownership,
-        } => {
-            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Connector)?;
-            let port = provisional_resource_key(port, local_objects, resources.document)?;
-            if port.kind != HandleKind::Port {
-                return Err(CommitIssue::new(
-                    CommitDetail::WrongKind,
-                    "Connector creation requires a Port",
-                ));
-            }
-            resources.insert_created(
-                key,
-                ResourceRecord::connector(*ownership, port, *source_index),
-            )
-        }
-        UiOperation::CreateControl {
-            local_ordinal,
-            kind,
-            ownership,
-            owner,
-        } => {
-            if *ownership == OwnershipMode::OccurrenceOwned && owner.is_none() {
-                return Err(CommitIssue::new(
-                    CommitDetail::InvalidTopology,
-                    "occurrence-owned control requires an occurrence owner",
-                ));
-            }
-            let key = local_resource_object(local_objects, *local_ordinal, HandleKind::Control)?;
-            resources.insert_created(key, ResourceRecord::control(*ownership, None, *kind))
-        }
-        _ => Ok(()),
-    }
-}
-
-impl OccurrenceDocument {
-    fn apply_operation(
-        &self,
-        operation: &UiOperation,
-        index: usize,
-        local_objects: &BTreeMap<u32, LocalObject>,
-        tree: &mut TreeDraft<'_>,
-        resources: &mut ResourceDraft<'_>,
-        roots_added: &mut Vec<NodeKey>,
-        roots_removed: &mut Vec<NodeKey>,
-        effects: &mut EffectMask,
-        property_initials: &mut HashMap<NodeKey, PropertyLayers>,
-        style_state_initials: &mut HashMap<(NodeKey, String), Option<String>>,
-        interaction_initials: &mut HashMap<NodeKey, (bool, u64)>,
-    ) -> Result<bool, CommitIssue> {
-        let _ = index;
-        match operation {
-            UiOperation::CreateNode { .. } => {
-                *effects = effects
-                    .union(EFFECT_STRUCTURE_GUARD)
-                    .union(EFFECT_LAYOUT_INPUT);
-                Ok(true)
-            }
-            UiOperation::CreateRoot {
-                local_ordinal,
-                role,
-                owner,
-            } => {
-                let root = local_node_object(local_objects, *local_ordinal)?;
-                let owner = owner
-                    .as_ref()
-                    .map(|value| resolve_node_ref(self, tree, local_objects, value))
-                    .transpose()?;
-                if *role == RootRole::Portal && owner.is_none() {
-                    return Err(CommitIssue::new(
-                        CommitDetail::InvalidTopology,
-                        "Portal roots require an owning occurrence",
-                    ));
-                }
-                tree.set_root_owner(root, owner).map_err(tree_issue)?;
-                roots_added.push(root);
-                *effects = effects
-                    .union(EFFECT_STRUCTURE_GUARD)
-                    .union(EFFECT_LAYOUT_INPUT);
-                Ok(true)
-            }
-            UiOperation::HistoryAction { root, action_id } => {
-                let root = resolve_node_ref(self, tree, local_objects, root)?;
-                if *action_id != 1 && *action_id != 2 {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Unsupported,
-                        "History action is not supported by the current host",
-                    ));
-                }
-                let record = tree.edit(root).map_err(tree_issue)?;
-                if record.root_role != Some(RootRole::LegacyHistoryUnit) {
-                    return Err(CommitIssue::new(
-                        CommitDetail::InvalidTopology,
-                        "History action requires a LegacyHistoryUnit root",
-                    ));
-                }
-                if record.history_action == Some(*action_id) {
-                    return Ok(false);
-                }
-                record.history_action = Some(*action_id);
-                *effects = effects.union(EFFECT_STRUCTURE_GUARD);
-                Ok(true)
-            }
-            UiOperation::InsertBefore {
-                parent,
-                child,
-                before,
-            } => {
-                let parent = resolve_node_ref(self, tree, local_objects, parent)?;
-                let child = resolve_node_ref(self, tree, local_objects, child)?;
-                let before = before
-                    .as_ref()
-                    .map(|value| resolve_node_ref(self, tree, local_objects, value))
-                    .transpose()?;
-                let previous_parent = tree.read(child).map_err(tree_issue)?.links.parent;
-                let changed = tree
-                    .insert_before(parent, child, before)
-                    .map_err(tree_issue)?;
-                if changed {
-                    let keys = previous_parent
-                        .into_iter()
-                        .chain(std::iter::once(parent))
-                        .chain(std::iter::once(child))
-                        .chain(before);
-                    mark_structure(tree, keys, effects)?;
-                }
-                Ok(changed)
-            }
-            UiOperation::Detach { parent, child } => {
-                let parent = resolve_node_ref(self, tree, local_objects, parent)?;
-                let child = resolve_node_ref(self, tree, local_objects, child)?;
-                let changed = tree.detach(parent, child).map_err(tree_issue)?;
-                if changed {
-                    mark_structure(tree, [parent, child], effects)?;
-                }
-                Ok(changed)
-            }
-            UiOperation::RetireSubtree { root } => {
-                let root = resolve_node_ref(self, tree, local_objects, root)?;
-                if tree.read(root).map_err(tree_issue)?.root_role.is_some() {
-                    return Err(tree_issue(TreeError::ProtectedRoot(root)));
-                }
-                let members = tree.retirement_keys(root).map_err(tree_issue)?;
-                let attachments = members
-                    .iter()
-                    .map(|key| tree.read(*key).map(|record| record.attachments))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(tree_issue)?;
-                let parent = tree.read(root).map_err(tree_issue)?.links.parent;
-                tree.retire_subtree_with_keys(root, &members)
-                    .map_err(tree_issue)?;
-                for attachment in attachments {
-                    resources.detach_occurrence_resources(attachment)?;
-                }
-                roots_removed.extend(members.iter().copied().filter(|member| {
-                    tree.read_any(*member)
-                        .is_ok_and(|record| record.root_role.is_some())
-                }));
-                if let Some(parent) = parent {
-                    mark_structure(tree, [parent], effects)?;
-                }
-                Ok(true)
-            }
-            UiOperation::RetireRoot { root } => {
-                let root = resolve_node_ref(self, tree, local_objects, root)?;
-                let root_role = tree.read(root).map_err(tree_issue)?.root_role;
-                if root_role.is_none() || root_role == Some(RootRole::Body) {
-                    return Err(tree_issue(TreeError::ProtectedRoot(root)));
-                }
-                let members = tree.retirement_keys(root).map_err(tree_issue)?;
-                let attachments = members
-                    .iter()
-                    .map(|key| tree.read(*key).map(|record| record.attachments))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(tree_issue)?;
-                let parent = tree.read(root).map_err(tree_issue)?.links.parent;
-                tree.retire_subtree_with_keys(root, &members)
-                    .map_err(tree_issue)?;
-                for attachment in attachments {
-                    resources.detach_occurrence_resources(attachment)?;
-                }
-                roots_removed.extend(members.iter().copied().filter(|member| {
-                    tree.read_any(*member)
-                        .is_ok_and(|record| record.root_role.is_some())
-                }));
-                if let Some(parent) = parent {
-                    mark_structure(tree, [parent], effects)?;
-                }
-                Ok(true)
-            }
-            UiOperation::AttachPort { node, port } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let port = port
-                    .as_ref()
-                    .map(|value| {
-                        resolve_resource_ref(
-                            self,
-                            resources,
-                            local_objects,
-                            value,
-                            ResourceFamily::Port,
-                        )
-                    })
-                    .transpose()?;
-                let changed = resources.attach_port(tree, node, port)?;
-                if changed {
-                    mark_interaction(tree, node, effects)?;
-                }
-                Ok(changed)
-            }
-            UiOperation::AttachControl { node, control } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let control = control
-                    .as_ref()
-                    .map(|value| {
-                        resolve_resource_ref(
-                            self,
-                            resources,
-                            local_objects,
-                            value,
-                            ResourceFamily::Control,
-                        )
-                    })
-                    .transpose()?;
-                let changed = resources.attach_control(tree, node, control)?;
-                if changed {
-                    mark_interaction(tree, node, effects)?;
-                }
-                Ok(changed)
-            }
-            UiOperation::CreatePort {
-                local_ordinal,
-                owner,
-                ..
-            } => {
-                let port = local_resource_object(local_objects, *local_ordinal, HandleKind::Port)?;
-                if let Some(owner) = owner {
-                    let owner = resolve_node_ref(self, tree, local_objects, owner)?;
-                    resources.attach_port(tree, owner, Some(port))?;
-                    mark_interaction(tree, owner, effects)?;
-                }
-                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                Ok(true)
-            }
-            UiOperation::CreateConnector {
-                local_ordinal,
-                port,
-                ..
-            } => {
-                let connector =
-                    local_resource_object(local_objects, *local_ordinal, HandleKind::Connector)?;
-                let port = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    port,
-                    ResourceFamily::Port,
-                )?;
-                resources.edit(connector)?.port = Some(port);
-                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                Ok(true)
-            }
-            UiOperation::SelectConnector { port, connector } => {
-                let port = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    port,
-                    ResourceFamily::Port,
-                )?;
-                let connector = connector
-                    .as_ref()
-                    .map(|value| {
-                        resolve_resource_ref(
-                            self,
-                            resources,
-                            local_objects,
-                            value,
-                            ResourceFamily::Connector,
-                        )
-                    })
-                    .transpose()?;
-                let changed = resources.select_connector(port, connector)?;
-                if changed {
-                    *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                }
-                Ok(changed)
-            }
-            UiOperation::DisposePort { port } => {
-                let port = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    port,
-                    ResourceFamily::Port,
-                )?;
-                let changed = resources.dispose_port(port)?;
-                if changed {
-                    *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                }
-                Ok(changed)
-            }
-            UiOperation::DisposeConnector { connector } => {
-                let connector = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    connector,
-                    ResourceFamily::Connector,
-                )?;
-                let changed = resources.dispose_connector(connector)?;
-                if changed {
-                    *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                }
-                Ok(changed)
-            }
-            UiOperation::SetLiteralFunnel { port, .. } => {
-                let port = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    port,
-                    ResourceFamily::Port,
-                )?;
-                let record = resources.read(port)?;
-                if record.ownership != OwnershipMode::OccurrenceOwned {
-                    return Err(CommitIssue::new(
-                        CommitDetail::InvalidTopology,
-                        "literal Funnel requires an occurrence-owned Port",
-                    ));
-                }
-                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                Ok(true)
-            }
-            UiOperation::ReplaceLiteral {
-                port,
-                content_format,
-                content,
-                annotations,
-            } => {
-                let port = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    port,
-                    ResourceFamily::Port,
-                )?;
-                let record = resources.read(port)?;
-                if record.ownership != OwnershipMode::OccurrenceOwned {
-                    return Err(CommitIssue::new(
-                        CommitDetail::InvalidTopology,
-                        "literal replacement requires an occurrence-owned Port",
-                    ));
-                }
-                if *content_format != 1 {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Unsupported,
-                        "literal content format is unsupported",
-                    ));
-                }
-                std::str::from_utf8(content).map_err(|_| {
-                    CommitIssue::new(CommitDetail::Malformed, "literal content is not UTF-8")
-                })?;
-                let _ = annotations;
-                *effects = effects.union(EFFECT_CONTENT_PROJECTION);
-                Ok(true)
-            }
-            UiOperation::CreateControl {
-                local_ordinal,
-                owner,
-                ..
-            } => {
-                let control =
-                    local_resource_object(local_objects, *local_ordinal, HandleKind::Control)?;
-                if let Some(owner) = owner {
-                    let owner = resolve_node_ref(self, tree, local_objects, owner)?;
-                    resources.attach_control(tree, owner, Some(control))?;
-                    mark_interaction(tree, owner, effects)?;
-                }
-                *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
-                Ok(true)
-            }
-            UiOperation::DisposeControl { control } => {
-                let control = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    control,
-                    ResourceFamily::Control,
-                )?;
-                let changed = resources.dispose_control(control)?;
-                if changed {
-                    *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
-                }
-                Ok(changed)
-            }
-            UiOperation::SetDeclared {
-                node,
-                property,
-                value,
-            } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let kind = tree.read(node).map_err(tree_issue)?.kind;
-                capture_property_initial(tree, node, property_initials)?;
-                let change = tree
-                    .edit(node)
-                    .map_err(tree_issue)?
-                    .properties
-                    .apply(PropertyLayer::Declared, kind, *property, value.clone())
-                    .map_err(property_issue)?;
-                let _ = change;
-                Ok(false)
-            }
-            UiOperation::ResetDeclared { node, property } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let kind = tree.read(node).map_err(tree_issue)?.kind;
-                capture_property_initial(tree, node, property_initials)?;
-                let change = tree
-                    .edit(node)
-                    .map_err(tree_issue)?
-                    .properties
-                    .reset_declared(kind, *property)
-                    .map_err(property_issue)?;
-                let _ = change;
-                Ok(false)
-            }
-            UiOperation::SetOverride {
-                node,
-                property,
-                value,
-            } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let kind = tree.read(node).map_err(tree_issue)?.kind;
-                capture_property_initial(tree, node, property_initials)?;
-                let change = tree
-                    .edit(node)
-                    .map_err(tree_issue)?
-                    .properties
-                    .apply(PropertyLayer::Override, kind, *property, value.clone())
-                    .map_err(property_issue)?;
-                let _ = change;
-                Ok(false)
-            }
-            UiOperation::ClearOverride { node, property } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let kind = tree.read(node).map_err(tree_issue)?.kind;
-                capture_property_initial(tree, node, property_initials)?;
-                let change = tree
-                    .edit(node)
-                    .map_err(tree_issue)?
-                    .properties
-                    .clear_override(kind, *property)
-                    .map_err(property_issue)?;
-                let _ = change;
-                Ok(false)
-            }
-            UiOperation::SetHidden { node, hidden } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                capture_interaction_initial(tree, node, interaction_initials)?;
-                let record = tree.edit(node).map_err(tree_issue)?;
-                if record.renderer_hidden == *hidden {
-                    return Ok(false);
-                }
-                record.renderer_hidden = *hidden;
-                Ok(false)
-            }
-            UiOperation::SetStyleState { node, key, value } => {
-                if key.is_empty() || key.contains('\0') || value.is_empty() || value.contains('\0')
-                {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Malformed,
-                        "style state keys and values must be nonempty UTF-8 without NUL",
-                    ));
-                }
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                capture_style_state_initial(tree, node, key, style_state_initials)?;
-                let record = tree.edit(node).map_err(tree_issue)?;
-                if record.style_states.get(key) == Some(value) {
-                    return Ok(false);
-                }
-                record.style_states.insert(key.clone(), value.clone());
-                Ok(false)
-            }
-            UiOperation::SetStyleStateLayered {
-                node,
-                layer,
-                key,
-                value,
-            } => {
-                if *layer > 1
-                    || key.is_empty()
-                    || key.contains('\0')
-                    || value.is_empty()
-                    || value.contains('\0')
-                {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Malformed,
-                        "style state layer/value is invalid",
-                    ));
-                }
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                if *layer == 0 {
-                    capture_style_state_initial(tree, node, key, style_state_initials)?;
-                }
-                let record = tree.edit(node).map_err(tree_issue)?;
-                let states = if *layer == 0 {
-                    &mut record.style_states
-                } else {
-                    &mut record.style_overrides
-                };
-                if states.get(key) == Some(value) {
-                    return Ok(false);
-                }
-                states.insert(key.clone(), value.clone());
-                mark_style_state(tree, node, effects)?;
-                Ok(true)
-            }
-            UiOperation::ClearStyleState { node, key } => {
-                if key.is_empty() || key.contains('\0') {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Malformed,
-                        "style state keys must be nonempty UTF-8 without NUL",
-                    ));
-                }
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                capture_style_state_initial(tree, node, key, style_state_initials)?;
-                let record = tree.edit(node).map_err(tree_issue)?;
-                if record.style_states.remove(key).is_none() {
-                    return Ok(false);
-                }
-                Ok(false)
-            }
-            UiOperation::ClearStyleStateLayered { node, layer, key } => {
-                if *layer > 1 || key.is_empty() || key.contains('\0') {
-                    return Err(CommitIssue::new(
-                        CommitDetail::Malformed,
-                        "style state layer/key is invalid",
-                    ));
-                }
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                if *layer == 0 {
-                    capture_style_state_initial(tree, node, key, style_state_initials)?;
-                }
-                let record = tree.edit(node).map_err(tree_issue)?;
-                let states = if *layer == 0 {
-                    &mut record.style_states
-                } else {
-                    &mut record.style_overrides
-                };
-                if states.remove(key).is_none() {
-                    return Ok(false);
-                }
-                mark_style_state(tree, node, effects)?;
-                Ok(true)
-            }
-            UiOperation::SetSubscriptions {
-                node,
-                mask_low,
-                mask_high,
-            } => {
-                let node = resolve_node_ref(self, tree, local_objects, node)?;
-                let mask = u64::from(*mask_low) | (u64::from(*mask_high) << 32);
-                capture_interaction_initial(tree, node, interaction_initials)?;
-                let record = tree.edit(node).map_err(tree_issue)?;
-                if record.subscriptions == mask {
-                    return Ok(false);
-                }
-                record.subscriptions = mask;
-                Ok(false)
-            }
-            UiOperation::ControlCommand {
-                control,
-                command_id,
-                operands,
-            } => {
-                let _ = command_id;
-                let _ = operands;
-                let _ = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    control,
-                    ResourceFamily::Control,
-                )?;
-                *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
-                Ok(true)
-            }
-            UiOperation::ReplaceEditorContent {
-                control,
-                content,
-                expected_edit_revision: _,
-            } => {
-                let _ = resolve_resource_ref(
-                    self,
-                    resources,
-                    local_objects,
-                    control,
-                    ResourceFamily::Control,
-                )?;
-                std::str::from_utf8(content).map_err(|_| {
-                    CommitIssue::new(CommitDetail::Malformed, "editor content is not UTF-8")
-                })?;
-                *effects = effects.union(EFFECT_INTERACTION_RUNTIME);
-                Ok(true)
-            }
-        }
     }
 }

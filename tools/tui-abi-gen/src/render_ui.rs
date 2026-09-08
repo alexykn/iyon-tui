@@ -51,199 +51,11 @@ pub fn rust_schema(document: &UiAbiDocument, schema_hash: &str, generator_hash: 
         .expect("writing generated host cardinality metadata cannot fail");
     }
     output.push_str("        }\n    }\n}\n\n");
-    render_rust_code_enum(&mut output, "ControlKind", &document.control_kinds);
-    output.push_str(
-        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct ControlCommandDescriptor {\n    pub name: &'static str,\n    pub code: u32,\n    pub control_kind: ControlKind,\n    pub operands: &'static [&'static str],\n}\n\npub const CONTROL_COMMAND_DESCRIPTORS: &[ControlCommandDescriptor] = &[\n",
-    );
-    for command in &document.control_commands {
-        writeln!(
-            output,
-            "    ControlCommandDescriptor {{ name: {:?}, code: {}, control_kind: ControlKind::{}, operands: &[{}] }},",
-            command.name,
-            command.code,
-            command.control_kind,
-            command
-                .operands
-                .iter()
-                .map(|operand| format!("{operand:?}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-        .expect("writing generated control command cannot fail");
-    }
-    output.push_str(
-        "];\n\npub fn control_command_descriptor(code: u32) -> Option<&'static ControlCommandDescriptor> {\n    CONTROL_COMMAND_DESCRIPTORS.iter().find(|command| command.code == code)\n}\n\n",
-    );
-    output.push_str(
-        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct UiConfigDescriptor {\n    pub name: &'static str,\n    pub owner: &'static str,\n    pub kind: &'static str,\n    pub value: &'static str,\n}\n\npub const UI_CONFIG_DESCRIPTORS: &[UiConfigDescriptor] = &[\n",
-    );
-    for config in &document.configs {
-        writeln!(
-            output,
-            "    UiConfigDescriptor {{ name: {:?}, owner: {:?}, kind: {:?}, value: {:?} }},",
-            config.name, config.owner, config.kind, config.value,
-        )
-        .expect("writing generated UI config cannot fail");
-    }
-    output.push_str("];\n\n");
-    render_rust_code_enum(&mut output, "RootRole", &document.root_roles);
-    render_rust_code_enum(&mut output, "HandleKind", &document.handle_kinds);
-    render_rust_code_enum(&mut output, "OwnershipMode", &document.ownership_modes);
-    render_rust_code_enum(&mut output, "ValueKind", &document.value_kinds);
-    output.push_str(
-        "#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingDescriptor {\n    pub value_kind: ValueKind,\n    pub encoding: &'static str,\n    pub min_words: usize,\n    pub max_words: usize,\n    pub metadata_words: usize,\n    pub forms: &'static [ValueEncodingForm],\n}\n\n#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingForm {\n    pub name: &'static str,\n    pub word_count: usize,\n    pub tags: &'static [u32],\n    pub values: &'static [u32],\n    pub mask: Option<u32>,\n    pub max_value: Option<u32>,\n}\n\npub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[\n",
-    );
-    for encoding in &document.value_encodings {
-        writeln!(
-            output,
-            "    ValueEncodingDescriptor {{ value_kind: ValueKind::{}, encoding: {:?}, min_words: {}, max_words: {}, metadata_words: {}, forms: &[{}] }},",
-            encoding.value_kind,
-            encoding.encoding,
-            encoding.min_words,
-            encoding.max_words,
-            encoding.metadata_words,
-            encoding
-                .forms
-                .iter()
-                .map(|form| format!(
-                    "ValueEncodingForm {{ name: {:?}, word_count: {}, tags: &{:?}, values: &{:?}, mask: {:?}, max_value: {:?} }}",
-                    form.name,
-                    form.word_count,
-                    form.tags,
-                    form.values,
-                    form.mask,
-                    form.max_value,
-                ))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-        .expect("writing generated value encoding cannot fail");
-    }
-    output.push_str(
-        "];\n\npub fn value_encoding(value_kind: ValueKind) -> &'static ValueEncodingDescriptor {\n    VALUE_ENCODING_DESCRIPTORS.iter().find(|descriptor| descriptor.value_kind as u32 == value_kind as u32).expect(\"validated value encoding descriptor\")\n}\n\npub fn value_encoding_form(value_kind: ValueKind, name: &str) -> &'static ValueEncodingForm {\n    value_encoding(value_kind).forms.iter().find(|form| form.name == name).expect(\"validated value encoding form\")\n}\n\n",
-    );
+    render_rust_control_schema(&mut output, document);
 
-    output.push_str(
-        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum Effect {\n",
-    );
-    for effect in &document.effects {
-        writeln!(output, "    {} = {},", effect.name, effect.code)
-            .expect("writing generated effect cannot fail");
-    }
-    output.push_str("}\n\n#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]\npub struct EffectMask(pub u32);\n\nimpl EffectMask {\n    pub const NONE: Self = Self(0);\n    pub const fn contains(self, other: Self) -> bool { self.0 & other.0 == other.0 }\n    pub const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }\n    pub const fn is_empty(self) -> bool { self.0 == 0 }\n}\n\n");
-    for effect in &document.effects {
-        writeln!(
-            output,
-            "pub const EFFECT_{}: EffectMask = EffectMask(1 << {});",
-            upper_snake(&effect.name),
-            effect.code
-        )
-        .expect("writing generated effect mask cannot fail");
-    }
-    output.push('\n');
-
-    output.push_str(
-        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum UiSection {\n",
-    );
-    for section in &document.sections {
-        writeln!(output, "    {} = {},", pascal(&section.name), section.code)
-            .expect("writing generated UI section cannot fail");
-    }
-    output.push_str("}\n\n");
-    output.push_str(
-        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum UiOpcode {\n",
-    );
-    for opcode in &document.opcodes {
-        writeln!(output, "    {} = 0x{:02x},", opcode.name, opcode.code)
-            .expect("writing generated opcode cannot fail");
-    }
-    output.push_str("}\n\n");
-    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct OpcodeDescriptor {\n    pub opcode: UiOpcode,\n    pub section: UiSection,\n    pub name: &'static str,\n    pub operands: &'static [&'static str],\n}\n\npub const OPCODE_DESCRIPTORS: &[OpcodeDescriptor] = &[\n");
-    for opcode in &document.opcodes {
-        writeln!(
-            output,
-            "    OpcodeDescriptor {{ opcode: UiOpcode::{}, section: UiSection::{}, name: {:?}, operands: &[{}] }},",
-            opcode.name,
-            pascal(&opcode.section),
-            opcode.name,
-            opcode
-                .operands
-                .iter()
-                .map(|operand| format!("{:?}", operand))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-        .expect("writing generated opcode descriptor cannot fail");
-    }
-    output.push_str("];\n\n");
-
-    output.push_str(
-        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum PropertyId {\n",
-    );
-    for property in &document.properties {
-        writeln!(
-            output,
-            "    {} = 0x{:04x},",
-            pascal(&property.name),
-            property.id
-        )
-        .expect("writing generated property id cannot fail");
-    }
-    output.push_str("}\n\nimpl PropertyId {\n    pub const ALL: &[Self] = &[\n");
-    for property in &document.properties {
-        writeln!(output, "        Self::{},", pascal(&property.name))
-            .expect("writing generated property list cannot fail");
-    }
-    output.push_str("    ];\n\n    pub const fn from_raw(value: u32) -> Option<Self> {\n        match value {\n");
-    for property in &document.properties {
-        writeln!(
-            output,
-            "            0x{:04x} => Some(Self::{}),",
-            property.id,
-            pascal(&property.name)
-        )
-        .expect("writing generated property lookup cannot fail");
-    }
-    output.push_str("            _ => None,\n        }\n    }\n\n    pub const fn index(self) -> usize {\n        match self {\n");
-    for (index, property) in document.properties.iter().enumerate() {
-        writeln!(
-            output,
-            "            Self::{} => {},",
-            pascal(&property.name),
-            index
-        )
-        .expect("writing generated property index cannot fail");
-    }
-    output.push_str("        }\n    }\n}\n\n");
-
-    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct PropertyDescriptor {\n    pub id: PropertyId,\n    pub name: &'static str,\n    pub domain: &'static str,\n    pub value_kind: ValueKind,\n    pub legal_kinds: &'static [HostKind],\n    pub normalizer: &'static str,\n    pub default: &'static str,\n    pub reset: &'static str,\n    pub override_behavior: &'static str,\n    pub inheritance: &'static str,\n    pub effects: EffectMask,\n    pub realization: &'static str,\n    pub nullable: bool,\n    pub clearable: bool,\n}\n\npub const PROPERTY_DESCRIPTORS: &[PropertyDescriptor] = &[\n");
-    for property in &document.properties {
-        writeln!(
-            output,
-            "    PropertyDescriptor {{ id: PropertyId::{}, name: {:?}, domain: {:?}, value_kind: ValueKind::{}, legal_kinds: &[{}], normalizer: {:?}, default: {:?}, reset: {:?}, override_behavior: {:?}, inheritance: {:?}, effects: {}, realization: {:?}, nullable: {}, clearable: {} }},",
-            pascal(&property.name),
-            property.name,
-            property.domain,
-            property.value,
-            property
-                .legal_kinds
-                .iter()
-                .map(|kind| format!("HostKind::{kind}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            property.normalizer,
-            property.default,
-            property.reset,
-            property.override_behavior,
-            property.inheritance,
-            effect_mask_expression(document, &property.effects),
-            property.realization,
-            property.nullable,
-            property.clearable,
-        )
-        .expect("writing generated property descriptor cannot fail");
-    }
-    output.push_str("];\n\npub const PROPERTY_COUNT: usize = PROPERTY_DESCRIPTORS.len();\n\npub const fn property_descriptor(id: PropertyId) -> &'static PropertyDescriptor {\n    &PROPERTY_DESCRIPTORS[id.index()]\n}\n");
+    render_rust_effect_schema(&mut output, document);
+    render_rust_wire_schema(&mut output, document);
+    render_rust_properties(&mut output, document);
     crate::render_rust::format_rust(output)
 }
 
@@ -374,36 +186,7 @@ pub fn typescript_schema(
     render_typescript_codes(&mut output, "HANDLE_KINDS", &document.handle_kinds);
     render_typescript_codes(&mut output, "OWNERSHIP_MODES", &document.ownership_modes);
     render_typescript_codes(&mut output, "VALUE_KINDS", &document.value_kinds);
-    output.push_str("export interface UiValueEncodingDescriptor {\n  readonly valueKind: ValueKindName;\n  readonly encoding: string;\n  readonly minWords: number;\n  readonly maxWords: number;\n  readonly metadataWords: number;\n  readonly forms: readonly UiValueEncodingForm[];\n}\n\nexport interface UiValueEncodingForm {\n  readonly name: string;\n  readonly wordCount: number;\n  readonly tags: readonly number[];\n  readonly values: readonly number[];\n  readonly mask: number | undefined;\n  readonly maxValue: number | undefined;\n}\n\nexport const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [\n");
-    for encoding in &document.value_encodings {
-        writeln!(
-            output,
-            "  {{ valueKind: {:?}, encoding: {:?}, minWords: {}, maxWords: {}, metadataWords: {}, forms: [{}] }},",
-            encoding.value_kind,
-            encoding.encoding,
-            encoding.min_words,
-            encoding.max_words,
-            encoding.metadata_words,
-            encoding
-                .forms
-                .iter()
-                .map(|form| format!(
-                    "{{ name: {:?}, wordCount: {}, tags: {:?}, values: {:?}, mask: {}, maxValue: {} }}",
-                    form.name,
-                    form.word_count,
-                    form.tags,
-                    form.values,
-                    form.mask
-                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
-                    form.max_value
-                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
-                ))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-        .expect("writing generated TS value encoding cannot fail");
-    }
-    output.push_str("];\n\nexport function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {\n  const descriptor = UI_VALUE_ENCODING_DESCRIPTORS.find((value) => value.valueKind === valueKind);\n  if (!descriptor) throw new Error(\"unknown UI value encoding: \" + valueKind);\n  return descriptor;\n}\n\nexport function uiValueEncodingForm(valueKind: ValueKindName, name: string): UiValueEncodingForm {\n  const descriptor = uiValueEncoding(valueKind).forms.find((value) => value.name === name);\n  if (!descriptor) throw new Error(\"unknown UI value encoding form: \" + valueKind + \"/\" + name);\n  return descriptor;\n}\n\n");
+    render_typescript_value_encodings(&mut output, document);
     render_typescript_codes(&mut output, "EFFECTS", &document.effects);
     output.push_str("export const UI_SECTIONS = {\n");
     for section in &document.sections {
@@ -444,44 +227,7 @@ pub fn typescript_schema(
         .expect("writing generated TypeScript opcode descriptor cannot fail");
     }
     output.push_str("];\n\n");
-    output.push_str("export const UI_PROPERTIES = {\n");
-    for property in &document.properties {
-        writeln!(output, "  {}: 0x{:04x},", property.name, property.id)
-            .expect("writing generated TypeScript property id cannot fail");
-    }
-    output.push_str("} as const;\nexport type UiPropertyName = keyof typeof UI_PROPERTIES;\nexport type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];\n\nexport interface UiPropertyDescriptor {\n  readonly id: number;\n  readonly name: UiPropertyName;\n  readonly domain: string;\n  readonly valueKind: ValueKindName;\n  readonly legalKinds: readonly HostKindName[];\n  readonly normalizer: string;\n  readonly default: string;\n  readonly reset: string;\n  readonly overrideBehavior: string;\n  readonly inheritance: string;\n  readonly effects: readonly EffectName[];\n  readonly realization: string;\n  readonly nullable: boolean;\n  readonly clearable: boolean;\n}\n\nexport const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [\n");
-    for property in &document.properties {
-        writeln!(
-            output,
-            "  {{ id: 0x{:04x}, name: {:?}, domain: {:?}, valueKind: {:?}, legalKinds: [{}], normalizer: {:?}, default: {:?}, reset: {:?}, overrideBehavior: {:?}, inheritance: {:?}, effects: [{}], realization: {:?}, nullable: {}, clearable: {} }},",
-            property.id,
-            property.name,
-            property.domain,
-            property.value,
-            property
-                .legal_kinds
-                .iter()
-                .map(|kind| format!("{kind:?}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            property.normalizer,
-            property.default,
-            property.reset,
-            property.override_behavior,
-            property.inheritance,
-            property
-                .effects
-                .iter()
-                .map(|effect| format!("{effect:?}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            property.realization,
-            property.nullable,
-            property.clearable,
-        )
-        .expect("writing generated TypeScript property descriptor cannot fail");
-    }
-    output.push_str("];\n\nexport function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {\n  return UI_PROPERTY_DESCRIPTORS.find((property) => property.id === id);\n}\n");
+    render_typescript_properties(&mut output, document);
     output
 }
 
@@ -746,4 +492,284 @@ fn typescript_type_name(value: &str) -> &str {
         "EFFECTS" => "Effect",
         _ => "UiCode",
     }
+}
+
+fn render_rust_value_encodings(output: &mut String, document: &UiAbiDocument) {
+    output.push_str(
+        "#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingDescriptor {\n    pub value_kind: ValueKind,\n    pub encoding: &'static str,\n    pub min_words: usize,\n    pub max_words: usize,\n    pub metadata_words: usize,\n    pub forms: &'static [ValueEncodingForm],\n}\n\n#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingForm {\n    pub name: &'static str,\n    pub word_count: usize,\n    pub tags: &'static [u32],\n    pub values: &'static [u32],\n    pub mask: Option<u32>,\n    pub max_value: Option<u32>,\n}\n\npub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[\n",
+    );
+    for encoding in &document.value_encodings {
+        writeln!(
+            output,
+            "    ValueEncodingDescriptor {{ value_kind: ValueKind::{}, encoding: {:?}, min_words: {}, max_words: {}, metadata_words: {}, forms: &[{}] }},",
+            encoding.value_kind,
+            encoding.encoding,
+            encoding.min_words,
+            encoding.max_words,
+            encoding.metadata_words,
+            encoding
+                .forms
+                .iter()
+                .map(|form| format!(
+                    "ValueEncodingForm {{ name: {:?}, word_count: {}, tags: &{:?}, values: &{:?}, mask: {:?}, max_value: {:?} }}",
+                    form.name,
+                    form.word_count,
+                    form.tags,
+                    form.values,
+                    form.mask,
+                    form.max_value,
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated value encoding cannot fail");
+    }
+    output.push_str(
+        "];\n\npub fn value_encoding(value_kind: ValueKind) -> &'static ValueEncodingDescriptor {\n    VALUE_ENCODING_DESCRIPTORS.iter().find(|descriptor| descriptor.value_kind as u32 == value_kind as u32).expect(\"validated value encoding descriptor\")\n}\n\npub fn value_encoding_form(value_kind: ValueKind, name: &str) -> &'static ValueEncodingForm {\n    value_encoding(value_kind).forms.iter().find(|form| form.name == name).expect(\"validated value encoding form\")\n}\n\n",
+    );
+}
+
+fn render_rust_properties(output: &mut String, document: &UiAbiDocument) {
+    output.push_str(
+        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum PropertyId {\n",
+    );
+    for property in &document.properties {
+        writeln!(
+            output,
+            "    {} = 0x{:04x},",
+            pascal(&property.name),
+            property.id
+        )
+        .expect("writing generated property id cannot fail");
+    }
+    output.push_str("}\n\nimpl PropertyId {\n    pub const ALL: &[Self] = &[\n");
+    for property in &document.properties {
+        writeln!(output, "        Self::{},", pascal(&property.name))
+            .expect("writing generated property list cannot fail");
+    }
+    output.push_str("    ];\n\n    pub const fn from_raw(value: u32) -> Option<Self> {\n        match value {\n");
+    for property in &document.properties {
+        writeln!(
+            output,
+            "            0x{:04x} => Some(Self::{}),",
+            property.id,
+            pascal(&property.name)
+        )
+        .expect("writing generated property lookup cannot fail");
+    }
+    output.push_str("            _ => None,\n        }\n    }\n\n    pub const fn index(self) -> usize {\n        match self {\n");
+    for (index, property) in document.properties.iter().enumerate() {
+        writeln!(
+            output,
+            "            Self::{} => {},",
+            pascal(&property.name),
+            index
+        )
+        .expect("writing generated property index cannot fail");
+    }
+    output.push_str("        }\n    }\n}\n\n");
+
+    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct PropertyDescriptor {\n    pub id: PropertyId,\n    pub name: &'static str,\n    pub domain: &'static str,\n    pub value_kind: ValueKind,\n    pub legal_kinds: &'static [HostKind],\n    pub normalizer: &'static str,\n    pub default: &'static str,\n    pub reset: &'static str,\n    pub override_behavior: &'static str,\n    pub inheritance: &'static str,\n    pub effects: EffectMask,\n    pub realization: &'static str,\n    pub nullable: bool,\n    pub clearable: bool,\n}\n\npub const PROPERTY_DESCRIPTORS: &[PropertyDescriptor] = &[\n");
+    for property in &document.properties {
+        writeln!(
+            output,
+            "    PropertyDescriptor {{ id: PropertyId::{}, name: {:?}, domain: {:?}, value_kind: ValueKind::{}, legal_kinds: &[{}], normalizer: {:?}, default: {:?}, reset: {:?}, override_behavior: {:?}, inheritance: {:?}, effects: {}, realization: {:?}, nullable: {}, clearable: {} }},",
+            pascal(&property.name),
+            property.name,
+            property.domain,
+            property.value,
+            property
+                .legal_kinds
+                .iter()
+                .map(|kind| format!("HostKind::{kind}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            property.normalizer,
+            property.default,
+            property.reset,
+            property.override_behavior,
+            property.inheritance,
+            effect_mask_expression(document, &property.effects),
+            property.realization,
+            property.nullable,
+            property.clearable,
+        )
+        .expect("writing generated property descriptor cannot fail");
+    }
+    output.push_str("];\n\npub const PROPERTY_COUNT: usize = PROPERTY_DESCRIPTORS.len();\n\npub const fn property_descriptor(id: PropertyId) -> &'static PropertyDescriptor {\n    &PROPERTY_DESCRIPTORS[id.index()]\n}\n");
+}
+
+fn render_typescript_value_encodings(output: &mut String, document: &UiAbiDocument) {
+    output.push_str("export interface UiValueEncodingDescriptor {\n  readonly valueKind: ValueKindName;\n  readonly encoding: string;\n  readonly minWords: number;\n  readonly maxWords: number;\n  readonly metadataWords: number;\n  readonly forms: readonly UiValueEncodingForm[];\n}\n\nexport interface UiValueEncodingForm {\n  readonly name: string;\n  readonly wordCount: number;\n  readonly tags: readonly number[];\n  readonly values: readonly number[];\n  readonly mask: number | undefined;\n  readonly maxValue: number | undefined;\n}\n\nexport const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [\n");
+    for encoding in &document.value_encodings {
+        writeln!(
+            output,
+            "  {{ valueKind: {:?}, encoding: {:?}, minWords: {}, maxWords: {}, metadataWords: {}, forms: [{}] }},",
+            encoding.value_kind,
+            encoding.encoding,
+            encoding.min_words,
+            encoding.max_words,
+            encoding.metadata_words,
+            encoding
+                .forms
+                .iter()
+                .map(|form| format!(
+                    "{{ name: {:?}, wordCount: {}, tags: {:?}, values: {:?}, mask: {}, maxValue: {} }}",
+                    form.name,
+                    form.word_count,
+                    form.tags,
+                    form.values,
+                    form.mask
+                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
+                    form.max_value
+                        .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated TS value encoding cannot fail");
+    }
+    output.push_str("];\n\nexport function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {\n  const descriptor = UI_VALUE_ENCODING_DESCRIPTORS.find((value) => value.valueKind === valueKind);\n  if (!descriptor) throw new Error(\"unknown UI value encoding: \" + valueKind);\n  return descriptor;\n}\n\nexport function uiValueEncodingForm(valueKind: ValueKindName, name: string): UiValueEncodingForm {\n  const descriptor = uiValueEncoding(valueKind).forms.find((value) => value.name === name);\n  if (!descriptor) throw new Error(\"unknown UI value encoding form: \" + valueKind + \"/\" + name);\n  return descriptor;\n}\n\n");
+}
+
+fn render_rust_control_schema(output: &mut String, document: &UiAbiDocument) {
+    render_rust_code_enum(output, "ControlKind", &document.control_kinds);
+    output.push_str(
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct ControlCommandDescriptor {\n    pub name: &'static str,\n    pub code: u32,\n    pub control_kind: ControlKind,\n    pub operands: &'static [&'static str],\n}\n\npub const CONTROL_COMMAND_DESCRIPTORS: &[ControlCommandDescriptor] = &[\n",
+    );
+    for command in &document.control_commands {
+        writeln!(
+            output,
+            "    ControlCommandDescriptor {{ name: {:?}, code: {}, control_kind: ControlKind::{}, operands: &[{}] }},",
+            command.name,
+            command.code,
+            command.control_kind,
+            command
+                .operands
+                .iter()
+                .map(|operand| format!("{operand:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated control command cannot fail");
+    }
+    output.push_str(
+        "];\n\npub fn control_command_descriptor(code: u32) -> Option<&'static ControlCommandDescriptor> {\n    CONTROL_COMMAND_DESCRIPTORS.iter().find(|command| command.code == code)\n}\n\n",
+    );
+    output.push_str(
+        "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub struct UiConfigDescriptor {\n    pub name: &'static str,\n    pub owner: &'static str,\n    pub kind: &'static str,\n    pub value: &'static str,\n}\n\npub const UI_CONFIG_DESCRIPTORS: &[UiConfigDescriptor] = &[\n",
+    );
+    for config in &document.configs {
+        writeln!(
+            output,
+            "    UiConfigDescriptor {{ name: {:?}, owner: {:?}, kind: {:?}, value: {:?} }},",
+            config.name, config.owner, config.kind, config.value,
+        )
+        .expect("writing generated UI config cannot fail");
+    }
+    output.push_str("];\n\n");
+    render_rust_code_enum(output, "RootRole", &document.root_roles);
+    render_rust_code_enum(output, "HandleKind", &document.handle_kinds);
+    render_rust_code_enum(output, "OwnershipMode", &document.ownership_modes);
+    render_rust_code_enum(output, "ValueKind", &document.value_kinds);
+    render_rust_value_encodings(output, document);
+}
+
+fn render_rust_effect_schema(output: &mut String, document: &UiAbiDocument) {
+    output.push_str(
+        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum Effect {\n",
+    );
+    for effect in &document.effects {
+        writeln!(output, "    {} = {},", effect.name, effect.code)
+            .expect("writing generated effect cannot fail");
+    }
+    output.push_str("}\n\n#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]\npub struct EffectMask(pub u32);\n\nimpl EffectMask {\n    pub const NONE: Self = Self(0);\n    pub const fn contains(self, other: Self) -> bool { self.0 & other.0 == other.0 }\n    pub const fn union(self, other: Self) -> Self { Self(self.0 | other.0) }\n    pub const fn is_empty(self) -> bool { self.0 == 0 }\n}\n\n");
+    for effect in &document.effects {
+        writeln!(
+            output,
+            "pub const EFFECT_{}: EffectMask = EffectMask(1 << {});",
+            upper_snake(&effect.name),
+            effect.code
+        )
+        .expect("writing generated effect mask cannot fail");
+    }
+    output.push('\n');
+}
+
+fn render_rust_wire_schema(output: &mut String, document: &UiAbiDocument) {
+    output.push_str(
+        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum UiSection {\n",
+    );
+    for section in &document.sections {
+        writeln!(output, "    {} = {},", pascal(&section.name), section.code)
+            .expect("writing generated UI section cannot fail");
+    }
+    output.push_str("}\n\n");
+    output.push_str(
+        "#[repr(u32)]\n#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum UiOpcode {\n",
+    );
+    for opcode in &document.opcodes {
+        writeln!(output, "    {} = 0x{:02x},", opcode.name, opcode.code)
+            .expect("writing generated opcode cannot fail");
+    }
+    output.push_str("}\n\n");
+    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct OpcodeDescriptor {\n    pub opcode: UiOpcode,\n    pub section: UiSection,\n    pub name: &'static str,\n    pub operands: &'static [&'static str],\n}\n\npub const OPCODE_DESCRIPTORS: &[OpcodeDescriptor] = &[\n");
+    for opcode in &document.opcodes {
+        writeln!(
+            output,
+            "    OpcodeDescriptor {{ opcode: UiOpcode::{}, section: UiSection::{}, name: {:?}, operands: &[{}] }},",
+            opcode.name,
+            pascal(&opcode.section),
+            opcode.name,
+            opcode
+                .operands
+                .iter()
+                .map(|operand| format!("{:?}", operand))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+        .expect("writing generated opcode descriptor cannot fail");
+    }
+    output.push_str("];\n\n");
+}
+
+fn render_typescript_properties(output: &mut String, document: &UiAbiDocument) {
+    output.push_str("export const UI_PROPERTIES = {\n");
+    for property in &document.properties {
+        writeln!(output, "  {}: 0x{:04x},", property.name, property.id)
+            .expect("writing generated TypeScript property id cannot fail");
+    }
+    output.push_str("} as const;\nexport type UiPropertyName = keyof typeof UI_PROPERTIES;\nexport type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];\n\nexport interface UiPropertyDescriptor {\n  readonly id: number;\n  readonly name: UiPropertyName;\n  readonly domain: string;\n  readonly valueKind: ValueKindName;\n  readonly legalKinds: readonly HostKindName[];\n  readonly normalizer: string;\n  readonly default: string;\n  readonly reset: string;\n  readonly overrideBehavior: string;\n  readonly inheritance: string;\n  readonly effects: readonly EffectName[];\n  readonly realization: string;\n  readonly nullable: boolean;\n  readonly clearable: boolean;\n}\n\nexport const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [\n");
+    for property in &document.properties {
+        writeln!(
+            output,
+            "  {{ id: 0x{:04x}, name: {:?}, domain: {:?}, valueKind: {:?}, legalKinds: [{}], normalizer: {:?}, default: {:?}, reset: {:?}, overrideBehavior: {:?}, inheritance: {:?}, effects: [{}], realization: {:?}, nullable: {}, clearable: {} }},",
+            property.id,
+            property.name,
+            property.domain,
+            property.value,
+            property
+                .legal_kinds
+                .iter()
+                .map(|kind| format!("{kind:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            property.normalizer,
+            property.default,
+            property.reset,
+            property.override_behavior,
+            property.inheritance,
+            property
+                .effects
+                .iter()
+                .map(|effect| format!("{effect:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            property.realization,
+            property.nullable,
+            property.clearable,
+        )
+        .expect("writing generated TypeScript property descriptor cannot fail");
+    }
+    output.push_str("];\n\nexport function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {\n  return UI_PROPERTY_DESCRIPTORS.find((property) => property.id === id);\n}\n");
 }

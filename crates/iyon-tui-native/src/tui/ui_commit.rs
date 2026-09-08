@@ -679,41 +679,28 @@ fn decode_record(
             let layer = o[4];
             let key = metadata_string(metadata_slice(metadata, o[5], o[6])?, record.index)?;
             let value = metadata_string(metadata_slice(metadata, o[7], o[8])?, record.index)?;
-            if layer == 0 {
-                commit.push(UiOperation::SetStyleState {
-                    node: node(0)?,
-                    key,
-                    value,
-                });
-            } else if layer == 1 {
-                commit.push(UiOperation::SetStyleStateLayered {
-                    node: node(0)?,
-                    layer,
-                    key,
-                    value,
-                });
-            } else {
+            if layer > 1 {
                 return Err(malformed_at("style-state layer", record.index));
             }
+            commit.push(UiOperation::SetStyleState {
+                node: node(0)?,
+                layer,
+                key,
+                value,
+            });
             Ok(())
         }
         OP_CLEAR_STYLE_STATE if section == 1 => {
             expect_len(o, 7, record.index)?;
             let key = metadata_string(metadata_slice(metadata, o[5], o[6])?, record.index)?;
-            if o[4] == 0 {
-                commit.push(UiOperation::ClearStyleState {
-                    node: node(0)?,
-                    key,
-                });
-            } else if o[4] == 1 {
-                commit.push(UiOperation::ClearStyleStateLayered {
-                    node: node(0)?,
-                    layer: o[4],
-                    key,
-                });
-            } else {
+            if o[4] > 1 {
                 return Err(malformed_at("style-state layer", record.index));
             }
+            commit.push(UiOperation::ClearStyleState {
+                node: node(0)?,
+                layer: o[4],
+                key,
+            });
             Ok(())
         }
         OP_SET_SUBSCRIPTIONS if section == 3 => {

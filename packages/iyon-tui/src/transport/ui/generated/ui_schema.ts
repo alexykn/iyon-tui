@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
 // schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c
-// generator_blake3 = 18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d
+// generator_blake3 = 21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d
 
 /** Generated direct-occurrence UI schema; do not edit. */
 export const UI_ABI_NAME = "iyon_tui_ui" as const;

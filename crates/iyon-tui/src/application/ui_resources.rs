@@ -1105,7 +1105,7 @@ impl ResourceCommitPlan {
     fn prepare_source_mutations(
         &mut self,
         owner: &UiResourceOwner,
-        prepared: &crate::occurrence::PreparedUiCommit,
+        prepared: &crate::occurrence::commit::PreparedUiCommit,
         environment: &TuiEnvironment,
         sources: &[HostContentSource],
     ) -> std::result::Result<
@@ -1123,7 +1123,7 @@ impl ResourceCommitPlan {
     fn plan_retired_resources(
         &mut self,
         owner: &UiResourceOwner,
-        prepared: &crate::occurrence::PreparedUiCommit,
+        prepared: &crate::occurrence::commit::PreparedUiCommit,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         for key in prepared.retired_resource_keys() {
             match key.kind {

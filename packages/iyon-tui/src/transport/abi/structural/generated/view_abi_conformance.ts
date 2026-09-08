@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
 // schema_blake3 = c697c2a2064686fae3f39ee1c120ea7da763069faf1fdaff4434b95119a65817
-// generator_blake3 = 18764c1d251ed63f4ec23d780e42a9daa7acffc0916c422405938a797ab2555d
+// generator_blake3 = 21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d
 import type { NativeTuiHostContract } from "../../../native/addon.ts";
 import type { NativeViewAbiHandle } from "./view_abi";
 

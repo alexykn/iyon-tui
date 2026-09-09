@@ -156,6 +156,14 @@ export interface NativeTuiHostContract {
   nativeHistoryRows(): string[];
   epochs(): NativeHostEpochs;
   uiNamespace(): number;
+  /** Private React adapter seam; never expose occurrence internals publicly. */
+  uiBodyHandle(): {
+    readonly host_namespace: number;
+    readonly slot: number;
+    readonly generation: number;
+    readonly kind: number;
+  };
+  closeUiState(): void;
   commitUiV1(
     words: Uint32Array,
     metadata: Uint8Array,

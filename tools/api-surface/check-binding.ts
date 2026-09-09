@@ -15,7 +15,7 @@ const ROOT_ALLOWED_PUBLIC_MODULES = new Set(["binding", "perf_bench"]);
 // blend of §5.3 lanes; the check compares sets, order is documentary.
 const BLESSED_BINDING = new Set([
   "Alignment", "AlignmentAxis", "AnimationState", "ColorValue", "CommitDetail", "ConfigError", "ControlConfig", "ControlError", "ControlKind", "ControlState", "Edges", "EditorState", "FunnelSpec", "GlyphsValue",
-  "HandleKind", "HostKind", "HostNamespace", "LayerValue", "NodeRef", "OccurrenceDocument", "OwnershipMode",
+  "HandleKind", "HostKind", "HostNamespace", "LayerValue", "LayoutMode", "NodeRef", "OccurrenceDocument", "OwnershipMode",
   "UiOpcode", "UI_ACK_HEADER_WORDS", "UI_ACK_WORDS_PER_CREATED_HANDLE", "UI_BATCH_HEADER_WORDS",
   "UI_BATCH_MAGIC", "UI_BATCH_VERSION", "UI_HANDLE_WORDS",
   "NodeKey", "PropertyId", "PropertyLayer", "PropertyValue", "ResourceKey", "ResourceRef", "RootConfig", "RootRole", "SizeMode",

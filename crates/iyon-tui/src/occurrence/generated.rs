@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
-// schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c
-// generator_blake3 = 21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d
+// schema_blake3 = b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0
+// generator_blake3 = 46129672d7e8216a8601be2bb6e665542a8cc397cb6eeffd96ba5f87bf06663a
 
 #![allow(dead_code)]
 
@@ -370,6 +370,7 @@ pub enum ValueKind {
     Glyphs = 8,
     TextAttributes = 9,
     Style = 10,
+    LayoutMode = 11,
 }
 
 impl ValueKind {
@@ -385,6 +386,7 @@ impl ValueKind {
             8 => Some(Self::Glyphs),
             9 => Some(Self::TextAttributes),
             10 => Some(Self::Style),
+            11 => Some(Self::LayoutMode),
             _ => None,
         }
     }
@@ -584,6 +586,21 @@ pub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[
                 max_value: None,
             },
         ],
+    },
+    ValueEncodingDescriptor {
+        value_kind: ValueKind::LayoutMode,
+        encoding: "u32_enum",
+        min_words: 1,
+        max_words: 1,
+        metadata_words: 0,
+        forms: &[ValueEncodingForm {
+            name: "layout",
+            word_count: 1,
+            tags: &[],
+            values: &[0, 1, 2, 3],
+            mask: None,
+            max_value: None,
+        }],
     },
 ];
 
@@ -905,6 +922,7 @@ pub enum PropertyId {
     BorderGlyphs = 0x0205,
     TextAttributes = 0x0206,
     Style = 0x0207,
+    Layout = 0x010b,
 }
 
 impl PropertyId {
@@ -926,6 +944,7 @@ impl PropertyId {
         Self::BorderGlyphs,
         Self::TextAttributes,
         Self::Style,
+        Self::Layout,
     ];
 
     pub const fn from_raw(value: u32) -> Option<Self> {
@@ -947,6 +966,7 @@ impl PropertyId {
             0x0205 => Some(Self::BorderGlyphs),
             0x0206 => Some(Self::TextAttributes),
             0x0207 => Some(Self::Style),
+            0x010b => Some(Self::Layout),
             _ => None,
         }
     }
@@ -970,6 +990,7 @@ impl PropertyId {
             Self::BorderGlyphs => 14,
             Self::TextAttributes => 15,
             Self::Style => 16,
+            Self::Layout => 17,
         }
     }
 }
@@ -1367,6 +1388,22 @@ pub const PROPERTY_DESCRIPTORS: &[PropertyDescriptor] = &[
             .union(EffectMask(1 << 4)),
         realization: "paint",
         nullable: true,
+        clearable: true,
+    },
+    PropertyDescriptor {
+        id: PropertyId::Layout,
+        name: "layout",
+        domain: "geometry",
+        value_kind: ValueKind::LayoutMode,
+        legal_kinds: &[HostKind::Box],
+        normalizer: "layout",
+        default: "box",
+        reset: "unset",
+        override_behavior: "explicit",
+        inheritance: "none",
+        effects: EffectMask::NONE.union(EffectMask(1 << 2)),
+        realization: "layout",
+        nullable: false,
         clearable: true,
     },
 ];

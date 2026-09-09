@@ -1,4 +1,4 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c; generator_blake3 = 21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0; generator_blake3 = 46129672d7e8216a8601be2bb6e665542a8cc397cb6eeffd96ba5f87bf06663a -->
 
 # Direct UI ABI
 
@@ -50,6 +50,7 @@
 | Glyphs | metadata_pairs_x8 | 16 | 16 | 16 | metadata_pairs_x8 |
 | TextAttributes | set_or_clear_bits_v1 | 1 | 2 | 0 | set_or_clear |
 | Style | direct_or_themed_style_v1 | 9 | 12 | 2 | direct, themed |
+| LayoutMode | u32_enum | 1 | 1 | 0 | layout |
 
 ## Control commands
 
@@ -143,4 +144,5 @@
 | 0x00000205 | presentation | borderGlyphs | Glyphs | Box, ContentHost, Editor, Scroll, Animation | Presentation | glyphs | true | true |
 | 0x00000206 | presentation | textAttributes | TextAttributes | Box, ContentHost, Editor, Scroll, Animation | Presentation | text_attributes | false | true |
 | 0x00000207 | presentation | style | Style | Box, ContentHost, Editor, Scroll, Animation | Presentation, HostEnvironmentDependent | style | true | true |
+| 0x0000010b | geometry | layout | LayoutMode | Box | LayoutInput | layout | false | true |
 

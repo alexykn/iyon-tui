@@ -253,7 +253,7 @@
     "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
     "docs/architecture/generated/UI-ABI-REFERENCE.md"
   ],
-  "generator_blake3": "21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d",
+  "generator_blake3": "46129672d7e8216a8601be2bb6e665542a8cc397cb6eeffd96ba5f87bf06663a",
   "handle_kinds": [
     {
       "code": 1,
@@ -990,6 +990,26 @@
       "realization": "paint",
       "reset": "unset",
       "value": "Style"
+    },
+    {
+      "clearable": true,
+      "default": "box",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 267,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box"
+      ],
+      "name": "layout",
+      "normalizer": "layout",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "layout",
+      "reset": "unset",
+      "value": "LayoutMode"
     }
   ],
   "root_roles": [
@@ -1006,7 +1026,7 @@
       "name": "LegacyHistoryUnit"
     }
   ],
-  "schema_blake3": "09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c",
+  "schema_blake3": "b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0",
   "sections": [
     {
       "code": 1,
@@ -1241,6 +1261,28 @@
       "metadata_words": 2,
       "min_words": 9,
       "value_kind": "Style"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "layout",
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "LayoutMode"
     }
   ],
   "value_kinds": [
@@ -1283,6 +1325,10 @@
     {
       "code": 10,
       "name": "Style"
+    },
+    {
+      "code": 11,
+      "name": "LayoutMode"
     }
   ]
 }

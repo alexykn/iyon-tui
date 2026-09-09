@@ -41,6 +41,7 @@ import type { TuiEvent } from "./events.ts";
 import { themeDefinitionFor } from "../api/presentation/theme.ts";
 import type { Theme } from "../api/presentation/theme.ts";
 import type { NativeHistoryContract, NativeTuiHostContract, NativeTuiOutputContract } from "../transport/native/addon.ts";
+import { registerReactHost } from "../react/host-registry.ts";
 
 /** Current terminal dimensions reported by a runtime. */
 export interface TerminalMetadata {
@@ -142,6 +143,7 @@ export class Tui implements TuiRuntime {
 
   private constructor(host: NativeTuiHostContract, width: number, height: number) {
     this.host = host;
+    registerReactHost(this, host);
     this.width = width;
     this.height = height;
     const owner = new WeakRef(this);

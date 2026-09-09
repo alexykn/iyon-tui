@@ -3953,6 +3953,77 @@ mod tests {
     }
 
     #[test]
+    fn explicit_port_retains_selected_connector_after_occurrence_detach() {
+        let mut document = document();
+        let body = document.body_handle();
+        let mut create = UiCommit::new(document.accepted_ui_revision());
+        create.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        create.push(UiOperation::InsertBefore {
+            parent: node_ref(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        create.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::Explicit,
+            owner: Some(NodeRef::Local(1)),
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 3,
+            source_index: 0,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::Explicit,
+        });
+        create.push(UiOperation::SelectConnector {
+            port: ResourceRef::Local(2),
+            connector: Some(ResourceRef::Local(3)),
+        });
+        let result = document.commit_ui(&create).expect("selected resources");
+        let port = result.acknowledgement.created[1];
+        let connector = result.acknowledgement.created[2];
+        let port_key = document
+            .resource_key(port, ResourceFamily::Port)
+            .expect("Port handle");
+        let connector_key = document
+            .resource_key(connector, ResourceFamily::Connector)
+            .expect("Connector handle");
+
+        let mut detach = UiCommit::new(document.accepted_ui_revision());
+        detach.push(UiOperation::AttachPort {
+            node: node_ref(result.acknowledgement.created[0]),
+            port: None,
+        });
+        document.commit_ui(&detach).expect("detach explicit Port");
+        assert_eq!(
+            document
+                .ports
+                .get(port_key.slot, port_key.generation)
+                .expect("detached Port")
+                .selected,
+            Some(connector_key),
+        );
+
+        let mut dispose = UiCommit::new(document.accepted_ui_revision());
+        dispose.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: None,
+        });
+        dispose.push(UiOperation::DisposeConnector {
+            connector: ResourceRef::Existing(connector),
+        });
+        dispose.push(UiOperation::DisposePort {
+            port: ResourceRef::Existing(port),
+        });
+        document
+            .commit_ui(&dispose)
+            .expect("deselect and dispose detached resources");
+    }
+
+    #[test]
     fn disposing_a_connector_then_its_port_is_atomic_within_one_batch() {
         let mut document = document();
         let mut create = UiCommit::new(document.accepted_ui_revision());

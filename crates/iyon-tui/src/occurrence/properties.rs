@@ -13,6 +13,14 @@ pub enum SizeMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayoutMode {
+    Box,
+    Row,
+    Column,
+    Grid,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AlignmentAxis {
     Start,
     Center,
@@ -39,6 +47,7 @@ impl Alignment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PropertyValue {
     SizeMode(SizeMode),
+    LayoutMode(LayoutMode),
     U16(u16),
     Insets(Insets),
     Alignment(Alignment),
@@ -54,6 +63,7 @@ impl PropertyValue {
     pub(crate) const fn value_kind(&self) -> ValueKind {
         match self {
             Self::SizeMode(_) => ValueKind::SizeMode,
+            Self::LayoutMode(_) => ValueKind::LayoutMode,
             Self::U16(_) => ValueKind::U16,
             Self::Insets(_) => ValueKind::Insets,
             Self::Alignment(_) => ValueKind::Alignment,

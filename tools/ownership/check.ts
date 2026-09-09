@@ -162,6 +162,8 @@ function tsImportGate(): void {
     for (const spec of specifiers) {
       if (!spec.startsWith(".") && !spec.startsWith("/")) {
         if (/^(bun|node):/.test(spec)) continue;
+        const owner = relative(FRAMEWORK_SRC, file).replaceAll("\\", "/");
+        if (owner.startsWith("react/") && (spec === "react" || spec === "react-reconciler" || spec === "react-reconciler/constants.js")) continue;
         violations.push(`${relative(ROOT, file)} -> "${spec}"`);
         continue;
       }
@@ -726,11 +728,13 @@ function cut5PackagePublicationGate(): void {
   const manifests: readonly [string, Record<string, string>][] = [
     ["package.json", {
       ".": "./packages/iyon-tui/src/index.ts",
+      "./react": "./packages/iyon-tui/src/react/index.ts",
       "./testing": "./packages/iyon-tui/src/testing/index.ts",
       "./native-stage": "./packages/iyon-tui/scripts/stage-native.ts",
     }],
     ["packages/iyon-tui/package.json", {
       ".": "./src/index.ts",
+      "./react": "./src/react/index.ts",
       "./testing": "./src/testing/index.ts",
       "./native-stage": "./scripts/stage-native.ts",
     }],
@@ -800,7 +804,7 @@ function napiTransportGate(): void {
 
 function consumerFixtureGate(): void {
   const fixtureRoot = join(ROOT, "packages/tui-consumer-fixture/src");
-  const allowedEntrypoints = new Set(["@iyon/tui", "@iyon/tui/testing"]);
+  const allowedEntrypoints = new Set(["@iyon/tui", "@iyon/tui/testing", "@iyon/tui/react", "react"]);
   const violations: string[] = [];
   for (const file of walk(fixtureRoot)) {
     for (const spec of specifiersOf(readFileSync(file, "utf8"))) {
@@ -819,18 +823,18 @@ function consumerFixtureGate(): void {
   const fixturePackageRoot = join(ROOT, "packages/tui-consumer-fixture");
   for (const file of walk(fixturePackageRoot)) {
     for (const specifier of specifiersOf(readFileSync(file, "utf8"))) {
-      if (specifier.startsWith("@iyon/tui/") && specifier !== "@iyon/tui/testing") {
+      if (specifier.startsWith("@iyon/tui/") && specifier !== "@iyon/tui/testing" && specifier !== "@iyon/tui/react") {
         violations.push(`${relative(ROOT, file)} -> undocumented deep import "${specifier}"`);
       }
     }
   }
   const packageManifest = JSON.parse(readFileSync(join(fixturePackageRoot, "package.json"), "utf8"));
   const dependencies = Object.keys(packageManifest.dependencies ?? {}).sort();
-  if (dependencies.length !== 1 || dependencies[0] !== "@iyon/tui") {
+  if (dependencies.length !== 2 || dependencies[0] !== "@iyon/tui" || dependencies[1] !== "react") {
     violations.push(`package dependencies are [${dependencies.join(", ")}]`);
   }
   if (violations.length > 0) fail("standalone-consumer-public-entrypoint", violations.join("; "));
-  else pass("standalone-consumer-public-entrypoint", "fixture source and dependency manifest use only documented @iyon/tui root/testing entrypoints");
+  else pass("standalone-consumer-public-entrypoint", "fixture source and dependency manifest use only documented @iyon/tui root/testing/react entrypoints");
 }
 
 // ---------------------------------------------------------------------------

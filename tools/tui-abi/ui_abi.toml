@@ -37,8 +37,8 @@ name = "content_descriptor"
 code = 5
 
 # Host kinds are semantic behavior families.  Layout conveniences such as
-# rows, columns, grids and decorators are represented by Box properties and
-# are intentionally not additional wire kinds.
+# rows, columns, grids and decorators are represented by finite Box properties
+# and are intentionally not additional structural wire kinds.
 [[host_kind]]
 name = "Box"
 code = 1
@@ -152,6 +152,10 @@ code = 9
 name = "Style"
 code = 10
 
+[[value_kind]]
+name = "LayoutMode"
+code = 11
+
 [[value_encoding]]
 value_kind = "SizeMode"
 encoding = "u32_enum"
@@ -229,6 +233,13 @@ forms = [
   { name = "direct", word_count = 9, tags = [0, 1, 2], mask = 0x3f },
   { name = "themed", word_count = 12, tags = [0, 1, 2], mask = 0x3f }
 ]
+
+[[value_encoding]]
+value_kind = "LayoutMode"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "layout", word_count = 1, values = [0, 1, 2, 3] }]
 
 [[effect]]
 name = "Presentation"
@@ -871,4 +882,20 @@ inheritance = "theme"
 effects = ["Presentation", "HostEnvironmentDependent"]
 realization = "paint"
 nullable = true
+clearable = true
+
+[[property]]
+id = 0x010b
+domain = "geometry"
+name = "layout"
+value = "LayoutMode"
+legal_kinds = ["Box"]
+normalizer = "layout"
+default = "box"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "layout"
+nullable = false
 clearable = true

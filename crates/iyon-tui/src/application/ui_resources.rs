@@ -37,7 +37,7 @@ impl SourceIdentity {
 
 pub struct UiResourceOwner {
     pub namespace: HostNamespace,
-    pub document: crate::occurrence::OccurrenceDocument,
+    pub document: Option<crate::occurrence::OccurrenceDocument>,
     pub environment: TuiEnvironment,
     pub ports: HashSet<ResourceKey>,
     pub connectors: HashMap<ResourceKey, (SourceIdentity, FunnelSpec)>,
@@ -45,6 +45,14 @@ pub struct UiResourceOwner {
     pub private_sources: HashMap<ResourceKey, SourceIdentity>,
     pub controls: HashMap<ResourceKey, ControlState>,
     pub root_configs: HashMap<NodeKey, RootConfig>,
+    lifecycle: UiResourceLifecycle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UiResourceLifecycle {
+    Open,
+    Closing,
+    Closed,
 }
 
 const _: () = {
@@ -56,7 +64,7 @@ impl UiResourceOwner {
     pub fn new(namespace: HostNamespace, environment: TuiEnvironment) -> Self {
         Self {
             namespace,
-            document: crate::occurrence::OccurrenceDocument::new(namespace),
+            document: Some(crate::occurrence::OccurrenceDocument::new(namespace)),
             environment,
             ports: HashSet::new(),
             connectors: HashMap::new(),
@@ -64,10 +72,34 @@ impl UiResourceOwner {
             private_sources: HashMap::new(),
             controls: HashMap::new(),
             root_configs: HashMap::new(),
+            lifecycle: UiResourceLifecycle::Open,
         }
     }
 
+    fn document_ref(&self) -> &crate::occurrence::OccurrenceDocument {
+        self.document
+            .as_ref()
+            .expect("open UI resource owner has an occurrence document")
+    }
+
+    fn document_mut(&mut self) -> &mut crate::occurrence::OccurrenceDocument {
+        self.document
+            .as_mut()
+            .expect("open UI resource owner has an occurrence document")
+    }
+
+    pub fn body_handle(&self) -> std::result::Result<crate::binding::UiHandle, String> {
+        if self.lifecycle != UiResourceLifecycle::Open {
+            return Err("UI resource owner is closing or closed".to_owned());
+        }
+        Ok(self.document_ref().body_handle())
+    }
+
     pub fn close(&mut self) -> std::result::Result<(), String> {
+        if self.lifecycle == UiResourceLifecycle::Closed {
+            return Ok(());
+        }
+        self.lifecycle = UiResourceLifecycle::Closing;
         let connector_keys = self.connectors.keys().copied().collect::<Vec<_>>();
         let mut errors = Vec::new();
         for key in connector_keys {
@@ -115,10 +147,25 @@ impl UiResourceOwner {
             self.ports.clear();
             self.controls.clear();
             self.root_configs.clear();
+            self.document = None;
+            self.lifecycle = UiResourceLifecycle::Closed;
             Ok(())
         } else {
             Err(errors.join("; "))
         }
+    }
+
+    fn ensure_open(&self) -> std::result::Result<(), crate::binding::UiRejection> {
+        if self.lifecycle == UiResourceLifecycle::Open && self.document.is_some() {
+            return Ok(());
+        }
+        Err(crate::binding::UiRejection::internal(
+            self.document
+                .as_ref()
+                .map_or(0, |document| document.accepted_ui_revision()),
+            crate::binding::CommitDetail::Invariant,
+            "UI resource owner is closed",
+        ))
     }
 }
 
@@ -291,6 +338,9 @@ enum UiResourceAction {
     },
     DisposePort {
         key: crate::binding::ResourceKey,
+    },
+    DisposeLiteral {
+        port: crate::binding::ResourceKey,
     },
     InstallControl {
         key: crate::binding::ResourceKey,
@@ -709,6 +759,9 @@ impl ResourceCommitPlan {
                     smooth: *smooth,
                 },
             ),
+            UiOperation::SelectConnector { port, connector } => {
+                self.interpret_select_connector(owner, acknowledgement, port, connector)
+            }
             UiOperation::DisposeConnector { connector } => {
                 self.interpret_dispose_connector(owner, acknowledgement, connector)
             }
@@ -796,7 +849,7 @@ impl ResourceCommitPlan {
             self.revision,
         )?;
         resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             port,
             acknowledgement,
             HandleKind::Port,
@@ -825,6 +878,33 @@ impl ResourceCommitPlan {
         Ok(())
     }
 
+    fn interpret_select_connector(
+        &mut self,
+        owner: &UiResourceOwner,
+        acknowledgement: &UiAcknowledgement,
+        port: &ResourceRef,
+        connector: &Option<ResourceRef>,
+    ) -> std::result::Result<(), crate::binding::UiRejection> {
+        if connector.is_none() {
+            return Ok(());
+        }
+        let port_key = resolve_native_resource(
+            owner.document_ref(),
+            port,
+            acknowledgement,
+            HandleKind::Port,
+            &self.planned_ports,
+        )?;
+        if owner.literal_sources.contains_key(&port_key)
+            && !self.binding_plan.entries.contains_key(&port_key)
+        {
+            self.binding_plan.set(port_key, None);
+            self.actions
+                .push(UiResourceAction::DisposeLiteral { port: port_key });
+        }
+        Ok(())
+    }
+
     fn interpret_replace_literal(
         &mut self,
         owner: &UiResourceOwner,
@@ -844,7 +924,7 @@ impl ResourceCommitPlan {
             ));
         }
         let port = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             port,
             acknowledgement,
             HandleKind::Port,
@@ -932,7 +1012,7 @@ impl ResourceCommitPlan {
         funnel: FunnelSpec,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let port = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             port,
             acknowledgement,
             HandleKind::Port,
@@ -964,7 +1044,7 @@ impl ResourceCommitPlan {
         connector: &ResourceRef,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let key = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             connector,
             acknowledgement,
             HandleKind::Connector,
@@ -988,7 +1068,7 @@ impl ResourceCommitPlan {
         port: &ResourceRef,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let key = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             port,
             acknowledgement,
             HandleKind::Port,
@@ -1051,7 +1131,7 @@ impl ResourceCommitPlan {
         operands: &[u32],
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let key = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             control,
             acknowledgement,
             HandleKind::Control,
@@ -1072,7 +1152,7 @@ impl ResourceCommitPlan {
         expected_edit_revision: u64,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let key = resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             control,
             acknowledgement,
             HandleKind::Control,
@@ -1091,7 +1171,7 @@ impl ResourceCommitPlan {
         control: &ResourceRef,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         resolve_native_resource(
-            &owner.document,
+            owner.document_ref(),
             control,
             acknowledgement,
             HandleKind::Control,
@@ -1355,12 +1435,13 @@ impl UiResourceOwner {
         batch: UiCommit,
         sources: &[HostContentSource],
     ) -> std::result::Result<UiOperationResult, crate::binding::UiRejection> {
+        self.ensure_open()?;
         // The three phases are intentionally visible: the document validates
         // topology, this owner prepares concrete resource actions and Source
         // mutations, then installation performs the only fallible write step.
-        let prepared = self.document.prepare_ui_commit(&batch)?;
+        let prepared = self.document_mut().prepare_ui_commit(&batch)?;
         let acknowledgement = prepared.acknowledgement().clone();
-        let revision = self.document.accepted_ui_revision();
+        let revision = self.document_ref().accepted_ui_revision();
         let mut plan = ResourceCommitPlan::new(
             self,
             batch.operations().len(),
@@ -1377,7 +1458,11 @@ impl UiResourceOwner {
 
         // Both owners are now applied without fallible operations. Wake
         // scheduling is deliberately last, after the UI document is accepted.
-        let result = self.document.apply_prepared_ui_commit(prepared);
+        let result = self
+            .document
+            .as_mut()
+            .expect("open UI owner retains document")
+            .apply_prepared_ui_commit(prepared);
         self.apply_actions(plan.actions);
         HostContentSource::finish_prepared_wakes(wakes);
         // Accepted candidate ownership has moved into the private Source
@@ -1429,6 +1514,11 @@ impl UiResourceOwner {
                     self.literal_sources.remove(&key);
                     self.private_sources.remove(&key);
                     self.ports.remove(&key);
+                }
+                UiResourceAction::DisposeLiteral { port } => {
+                    self.connectors.remove(&port);
+                    self.literal_sources.remove(&port);
+                    self.private_sources.remove(&port);
                 }
                 UiResourceAction::InstallControl { key, state } => {
                     self.controls.insert(key, state);

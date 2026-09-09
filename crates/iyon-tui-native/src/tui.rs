@@ -672,6 +672,40 @@ impl NativeTuiHost {
             .map(|state| state.namespace().get())
     }
 
+    /// Returns the qualified body occurrence used by the mutation renderer.
+    /// The value is consumed only by the package's private React adapter; it
+    /// is not a public tree-editing handle or a general native escape hatch.
+    #[napi(js_name = "uiBodyHandle")]
+    pub fn ui_body_handle(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let handle = self
+            .ui_state
+            .lock()
+            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))?
+            .body_handle()
+            .map_err(crate::NativeError::internal)?;
+        Ok(serde_json::json!({
+            "host_namespace": handle.host_namespace,
+            "slot": handle.slot,
+            "generation": handle.generation,
+            "kind": handle.kind as u32,
+        }))
+    }
+
+    /// Explicitly releases the private occurrence document and its owned
+    /// content/control resources without tearing down the terminal host.
+    /// React uses this only for root-fault cleanup; normal roots unmount
+    /// through the acknowledged mutation journal first.
+    #[napi(js_name = "closeUiState")]
+    pub fn close_ui_state(&self) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.ui_state
+            .lock()
+            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))?
+            .close()
+            .map_err(crate::NativeError::internal)
+    }
+
     /// Accepts a native retained root as desired structure without presenting
     /// it. The next environment drain performs the frame transaction.
     #[napi(js_name = "setDesiredViewRef")]

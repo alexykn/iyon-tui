@@ -26,8 +26,8 @@ pub use config::{ConfigError, ControlConfig, RootConfig};
 pub use control::{AnimationState, ControlError, ControlState, EditorState, ScrollState};
 pub use generated::{ControlKind, HandleKind, HostKind, OwnershipMode, PropertyId, RootRole};
 pub use properties::{
-    Alignment, AlignmentAxis, ColorValue, Edges, GlyphsValue, LayerValue, PropertyError,
-    PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
+    Alignment, AlignmentAxis, ColorValue, Edges, GlyphsValue, LayerValue, LayoutMode,
+    PropertyError, PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
 };
 pub(crate) use tree::{Attachments, Occurrence};
 

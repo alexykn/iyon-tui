@@ -6,6 +6,7 @@
   "description": "Generic terminal UI framework for Bun and TypeScript consumers",
   "exports": {
     ".": "./src/index.ts",
+    "./react": "./src/react/index.ts",
     "./testing": "./src/testing/index.ts",
     "./native-stage": "./scripts/stage-native.ts"
   },
@@ -20,6 +21,12 @@
     "test": "bun test tests"
   },
   "devDependencies": {
+    "@types/react": "19.2.8",
+    "@types/react-reconciler": "0.33.0",
     "bun-types": "1.4.0"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-reconciler": "0.33.0"
   }
 }

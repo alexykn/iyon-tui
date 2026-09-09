@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
-// schema_blake3 = 09dd685297f387935269f2709a426f341b8d833d9469e222425dcb3a3182759c
-// generator_blake3 = 21a374704490d608ade5c8894d0de2d01caec2c069c7f8db8839fb5a2832fe3d
+// schema_blake3 = b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0
+// generator_blake3 = 46129672d7e8216a8601be2bb6e665542a8cc397cb6eeffd96ba5f87bf06663a
 
 /** Generated direct-occurrence UI schema; do not edit. */
 export const UI_ABI_NAME = "iyon_tui_ui" as const;
@@ -135,11 +135,12 @@ export const VALUE_KINDS = {
   glyphs: 8,
   textAttributes: 9,
   style: 10,
+  layoutMode: 11,
 } as const;
 export type ValueKind = typeof VALUE_KINDS[keyof typeof VALUE_KINDS];
 
 
-export type ValueKindName = "SizeMode" | "U16" | "Insets" | "Alignment" | "Edges" | "Color" | "BorderStyle" | "Glyphs" | "TextAttributes" | "Style";
+export type ValueKindName = "SizeMode" | "U16" | "Insets" | "Alignment" | "Edges" | "Color" | "BorderStyle" | "Glyphs" | "TextAttributes" | "Style" | "LayoutMode";
 
 export interface UiValueEncodingDescriptor {
   readonly valueKind: ValueKindName;
@@ -170,6 +171,7 @@ export const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[]
   { valueKind: "Glyphs", encoding: "metadata_pairs_x8", minWords: 16, maxWords: 16, metadataWords: 16, forms: [{ name: "metadata_pairs_x8", wordCount: 16, tags: [], values: [], mask: undefined, maxValue: undefined }] },
   { valueKind: "TextAttributes", encoding: "set_or_clear_bits_v1", minWords: 1, maxWords: 2, metadataWords: 0, forms: [{ name: "set_or_clear", wordCount: 2, tags: [], values: [], mask: 63, maxValue: undefined }] },
   { valueKind: "Style", encoding: "direct_or_themed_style_v1", minWords: 9, maxWords: 12, metadataWords: 2, forms: [{ name: "direct", wordCount: 9, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }, { name: "themed", wordCount: 12, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }] },
+  { valueKind: "LayoutMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "layout", wordCount: 1, tags: [], values: [0, 1, 2, 3], mask: undefined, maxValue: undefined }] },
 ];
 
 export function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {
@@ -292,6 +294,7 @@ export const UI_PROPERTIES = {
   borderGlyphs: 0x0205,
   textAttributes: 0x0206,
   style: 0x0207,
+  layout: 0x010b,
 } as const;
 export type UiPropertyName = keyof typeof UI_PROPERTIES;
 export type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];
@@ -331,8 +334,156 @@ export const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [
   { id: 0x0205, name: "borderGlyphs", domain: "presentation", valueKind: "Glyphs", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "glyphs", default: "style_default", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true },
   { id: 0x0206, name: "textAttributes", domain: "presentation", valueKind: "TextAttributes", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "text_attributes", default: "inherit", reset: "unset", overrideBehavior: "sparse", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: false, clearable: true },
   { id: 0x0207, name: "style", domain: "presentation", valueKind: "Style", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "style", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation", "HostEnvironmentDependent"], realization: "paint", nullable: true, clearable: true },
+  { id: 0x010b, name: "layout", domain: "geometry", valueKind: "LayoutMode", legalKinds: ["Box"], normalizer: "layout", default: "box", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true },
 ];
 
 export function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {
   return UI_PROPERTY_DESCRIPTORS.find((property) => property.id === id);
+}
+
+export function uiPropertyDescriptorByName(name: UiPropertyName): UiPropertyDescriptor {
+  const descriptor = UI_PROPERTY_DESCRIPTORS.find((property) => property.name === name);
+  if (!descriptor) throw new Error("unknown UI property: " + name);
+  return descriptor;
+}
+
+function uiCanonicalField(value: string): string {
+  return value.length + ":" + value;
+}
+
+function uiCanonicalFields(values: readonly string[]): string {
+  return values.map(uiCanonicalField).join("|");
+}
+
+function uiColorValueKey(value: unknown): string {
+  if (value === undefined) return "unset";
+  if (typeof value !== "object" || value === null) throw new TypeError("finite color value must be an object");
+  const color = value as { readonly type?: string; readonly value?: string | number; readonly r?: number; readonly g?: number; readonly b?: number };
+  switch (color.type) {
+    case "named":
+    case "indexed": return uiCanonicalFields([color.type, String(color.value)]);
+    case "rgb": return uiCanonicalFields(["rgb", String(color.r), String(color.g), String(color.b)]);
+    case "theme": return uiCanonicalFields(["theme", String(color.value)]);
+    default: throw new TypeError("unknown finite color form");
+  }
+}
+
+function uiFiniteValueKey(normalizer: string, value: unknown): string {
+  switch (normalizer) {
+    case "size_mode":
+    case "layout":
+    case "u16":
+    case "border_style": return String(value);
+    case "insets": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return uiCanonicalFields([String(item.top), String(item.right), String(item.bottom), String(item.left)]); }
+    case "alignment": { const item = value as { readonly horizontal: number; readonly vertical: number }; return uiCanonicalFields([String(item.horizontal), String(item.vertical)]); }
+    case "border_edges": return uiCanonicalFields((value as readonly boolean[]).map((part) => part ? "1" : "0"));
+    case "color": return uiColorValueKey(value);
+    case "glyphs": { const item = value as Record<string, string>; return uiCanonicalFields(["top", "right", "bottom", "left", "topLeft", "topRight", "bottomLeft", "bottomRight"].map((key) => item[key])); }
+    case "text_attributes": { const item = value as Record<string, boolean>; return uiCanonicalFields(["bold", "dim", "italic", "underline", "reversed", "strikethrough"].map((key) => item[key] === undefined ? "-" : item[key] ? "1" : "0")); }
+    case "style": { const item = value as { readonly foreground?: unknown; readonly background?: unknown; readonly attributes: Record<string, boolean>; readonly theme?: string }; return uiCanonicalFields([uiColorValueKey(item.foreground), uiColorValueKey(item.background), item.theme ?? "", uiFiniteValueKey("text_attributes", item.attributes)]); }
+    default: throw new TypeError("unknown generated UI property normalizer: " + normalizer);
+  }
+}
+
+/** Generated finite normalization/equality contract consumed by the React adapter. */
+export function uiPropertyValueKey(name: UiPropertyName, value: unknown): string {
+  const descriptor = uiPropertyDescriptorByName(name);
+  return uiCanonicalFields([descriptor.normalizer, uiFiniteValueKey(descriptor.normalizer, value)]);
+}
+
+export function uiPropertyValuesEqual(name: UiPropertyName, left: unknown, right: unknown): boolean {
+  return uiPropertyValueKey(name, left) === uiPropertyValueKey(name, right);
+}
+
+export function uiPropertyEncoding(name: UiPropertyName): UiValueEncodingDescriptor {
+  return uiValueEncoding(uiPropertyDescriptorByName(name).valueKind);
+}
+
+
+export type UiMetadataWriter = (value: string) => readonly [number, number];
+
+const UI_ANSI_NAMES = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "gray", "darkGray", "lightRed", "lightGreen", "lightYellow", "lightBlue", "lightMagenta", "lightCyan", "white"] as const;
+
+function uiRequiredNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new TypeError(name + " must be an integer");
+  return value;
+}
+
+function uiEncodingTag(valueKind: ValueKindName, formName: string, index: number): number {
+  const tag = uiValueEncodingForm(valueKind, formName).tags[index];
+  if (tag === undefined) throw new Error(valueKind + " / " + formName + " is missing generated tag " + index);
+  return tag;
+}
+
+function uiPackColor(value: unknown, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null) throw new TypeError("finite color value must be an object");
+  const color = value as { readonly type?: string; readonly value?: string | number; readonly r?: number; readonly g?: number; readonly b?: number };
+  if (color.type === "rgb") return [uiEncodingTag(valueKind, valueKind === "Color" ? "rgb" : "direct", valueKind === "Color" ? 0 : 2), uiRequiredNumber(color.r, "color.r"), uiRequiredNumber(color.g, "color.g"), uiRequiredNumber(color.b, "color.b")];
+  if (color.type === "indexed") return [uiRequiredNumber(color.value, "color.value")];
+  if (color.type === "named") {
+    const index = UI_ANSI_NAMES.indexOf(color.value as typeof UI_ANSI_NAMES[number]);
+    if (index < 0) throw new RangeError("unknown ANSI color " + String(color.value));
+    return [index];
+  }
+  throw new TypeError("theme colors require a themed Style value");
+}
+
+function uiPackAttributes(value: unknown, valueKind: ValueKindName, formName: string): [number, number] {
+  if (typeof value !== "object" || value === null) throw new TypeError("finite text attributes must be an object");
+  const bits: Record<string, number> = { bold: 1, dim: 2, italic: 4, underline: 8, reversed: 16, strikethrough: 32 };
+  const mask = uiValueEncodingForm(valueKind, formName).mask;
+  if (mask === undefined) throw new Error(valueKind + " / " + formName + " is missing generated attribute mask");
+  let set = 0;
+  let clear = 0;
+  for (const [name, enabled] of Object.entries(value as Record<string, boolean>)) {
+    const bit = bits[name];
+    if (bit === undefined || typeof enabled !== "boolean") throw new RangeError("unknown finite text attribute " + name);
+    if (enabled) set |= bit & mask;
+    else clear |= bit & mask;
+  }
+  return [set, clear];
+}
+
+function uiPackStyle(value: unknown, metadata: UiMetadataWriter, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null) throw new TypeError("finite Style value must be an object");
+  const style = value as { readonly foreground?: unknown; readonly background?: unknown; readonly attributes: Record<string, boolean>; readonly theme?: string };
+  const words = [...uiPackStyleColorImpl(style.foreground, valueKind), ...uiPackStyleColorImpl(style.background, valueKind)];
+  const attributes = uiPackAttributes(style.attributes, valueKind, "direct");
+  if (style.theme === undefined) return [...words, attributes[0]];
+  return [...words, ...attributes, ...metadata(style.theme)];
+}
+
+function uiPackStyleColorImpl(value: unknown, valueKind: ValueKindName): number[] {
+  const unset = uiEncodingTag(valueKind, "direct", 0);
+  if (value === undefined) return [unset, 0, 0, 0];
+  const color = value as { readonly type?: string; readonly value?: string | number; readonly r?: number; readonly g?: number; readonly b?: number };
+  if (color.type === "rgb") return [uiEncodingTag(valueKind, "direct", 2), uiRequiredNumber(color.r, "style.r"), uiRequiredNumber(color.g, "style.g"), uiRequiredNumber(color.b, "style.b")];
+  const ansi = uiEncodingTag(valueKind, "direct", 1);
+  if (color.type === "indexed") return [ansi, uiRequiredNumber(color.value, "style.value"), 0, 0];
+  if (color.type === "named") {
+    const index = UI_ANSI_NAMES.indexOf(color.value as typeof UI_ANSI_NAMES[number]);
+    if (index < 0) throw new RangeError("unknown ANSI color " + String(color.value));
+    return [ansi, index, 0, 0];
+  }
+  throw new TypeError("unsupported Style color form");
+}
+
+/** Generated finite property packing; metadata is the sole sidecar writer. */
+export function uiEncodePropertyValue(name: UiPropertyName, value: unknown, metadata: UiMetadataWriter): number[] {
+  const descriptor = uiPropertyDescriptorByName(name);
+  const valueKind = descriptor.valueKind;
+  switch (descriptor.normalizer) {
+    case "size_mode": return [value === "fill" ? 1 : 0];
+    case "layout": { const values = uiValueEncodingForm(valueKind, "layout").values; const index = ["box", "row", "column", "grid"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown layout mode"); return [encoded]; }
+    case "u16": return [uiRequiredNumber(value, name)];
+    case "insets": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return [uiRequiredNumber(item.top, name + ".top"), uiRequiredNumber(item.right, name + ".right"), uiRequiredNumber(item.bottom, name + ".bottom"), uiRequiredNumber(item.left, name + ".left")]; }
+    case "alignment": { const item = value as { readonly horizontal: number; readonly vertical: number }; return [uiRequiredNumber(item.horizontal, name + ".horizontal"), uiRequiredNumber(item.vertical, name + ".vertical")]; }
+    case "border_edges": return (value as readonly boolean[]).map((part) => part ? 1 : 0);
+    case "color": return uiPackColor(value, valueKind);
+    case "border_style": { const values = uiValueEncodingForm(valueKind, "border").values; const index = ["plain", "rounded", "double"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown border style"); return [encoded]; }
+    case "glyphs": { const item = value as Record<string, string>; const words: number[] = []; for (const key of ["top", "right", "bottom", "left", "topLeft", "topRight", "bottomLeft", "bottomRight"]) words.push(...metadata(item[key])); return words; }
+    case "text_attributes": return uiPackAttributes(value, valueKind, "set_or_clear");
+    case "style": return uiPackStyle(value, metadata, valueKind);
+    default: throw new TypeError("unknown generated UI property normalizer: " + descriptor.normalizer);
+  }
 }

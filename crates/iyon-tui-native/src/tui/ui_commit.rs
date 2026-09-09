@@ -18,8 +18,8 @@ use napi::{
 
 use iyon_tui::binding::{
     Alignment, AlignmentAxis, BorderStyle, ColorSpec, ControlConfig, ControlKind, Edges,
-    FunnelSpec, HostContentSource, HostKind, HostNamespace, Insets, LayerValue, NodeRef,
-    OwnershipMode, PropertyId, PropertyValue, ResourceRef, RootConfig, RootRole, SizeMode,
+    FunnelSpec, HostContentSource, HostKind, HostNamespace, Insets, LayerValue, LayoutMode,
+    NodeRef, OwnershipMode, PropertyId, PropertyValue, ResourceRef, RootConfig, RootRole, SizeMode,
     StyleRef, StyleSpec, TextAttribute, TextAttributeSpec, UI_ACK_HEADER_WORDS,
     UI_ACK_WORDS_PER_CREATED_HANDLE, UI_BATCH_HEADER_WORDS, UI_BATCH_MAGIC, UI_BATCH_VERSION,
     UiCommit, UiHandle, UiOpcode, UiOperation, UiOperationResult, ValueKind, value_encoding,
@@ -52,8 +52,8 @@ impl NativeUiState {
         self.resources.namespace
     }
 
-    pub(crate) fn body_handle(&self) -> UiHandle {
-        self.resources.document.body_handle()
+    pub(crate) fn body_handle(&self) -> Result<UiHandle, String> {
+        self.resources.body_handle()
     }
 
     pub(crate) fn close(&mut self) -> Result<(), String> {
@@ -1089,6 +1089,23 @@ fn decode_property_value(
             };
             (PropertyValue::SizeMode(mode), 1)
         }
+        ValueKind::LayoutMode => {
+            let word = *words
+                .first()
+                .ok_or_else(|| malformed_at("layout mode", index))?;
+            let form = value_encoding_form(kind, "layout");
+            if !form.values.contains(&word) {
+                return Err(malformed_at("layout mode", index));
+            }
+            let mode = match word {
+                0 => LayoutMode::Box,
+                1 => LayoutMode::Row,
+                2 => LayoutMode::Column,
+                3 => LayoutMode::Grid,
+                _ => return Err(malformed_at("layout mode", index)),
+            };
+            (PropertyValue::LayoutMode(mode), 1)
+        }
         ValueKind::U16 => {
             let word = *words.first().ok_or_else(|| malformed_at("u16", index))?;
             let form = value_encoding_form(kind, "u16");
@@ -1531,7 +1548,7 @@ mod tests {
         let source = environment
             .create_content_source(TextSourceKind::Stream)
             .expect("test Source");
-        let body = state.body_handle();
+        let body = state.body_handle().expect("open UI body handle");
         let mut batch = UiCommit::new(0);
         batch.push(UiOperation::CreateNode {
             local_ordinal: 1,
@@ -1718,6 +1735,48 @@ mod tests {
     }
 
     #[test]
+    fn literal_binding_cleanup_waits_for_connector_selection() {
+        let environment = TuiEnvironment::new();
+        let mut state = NativeUiState::new(
+            HostNamespace::new(67).expect("namespace"),
+            environment.clone(),
+        );
+        let (source, _node, port) = mount_literal(&mut state, &environment);
+        let port_key = port.resource_key().expect("Port key");
+        let private_identity = state.resources.literal_sources[&port_key];
+        let mut candidate = UiCommit::new(2);
+        candidate.push(UiOperation::CreateConnector {
+            local_ordinal: 1,
+            source_index: 0,
+            port: ResourceRef::Existing(port),
+            ownership: OwnershipMode::Explicit,
+        });
+        let candidate_result = state
+            .commit(candidate, std::slice::from_ref(&source))
+            .expect("unselected Connector candidate");
+        let connector = candidate_result.acknowledgement.created[0];
+        assert!(
+            environment
+                .lookup_content_source(private_identity.id, private_identity.generation)
+                .is_ok()
+        );
+
+        let mut select = UiCommit::new(3);
+        select.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector)),
+        });
+        state
+            .commit(select, std::slice::from_ref(&source))
+            .expect("selected Connector replaces literal binding");
+        assert!(
+            environment
+                .lookup_content_source(private_identity.id, private_identity.generation)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn native_state_close_releases_private_literal_resources() {
         let environment = TuiEnvironment::new();
         let mut state = NativeUiState::new(
@@ -1741,6 +1800,9 @@ mod tests {
                 .lookup_content_source(identity.id, identity.generation)
                 .is_err()
         );
+        assert!(state.body_handle().is_err());
+        assert!(state.commit(UiCommit::new(1), &[]).is_err());
+        state.close().expect("closed UI state is idempotent");
     }
 
     #[test]

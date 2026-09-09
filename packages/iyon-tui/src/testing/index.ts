@@ -14,6 +14,7 @@ import type { View } from "../api/view/view.ts";
 import type { TuiEvent } from "../runtime/events.ts";
 import type { TuiRuntime, TerminalMetadata, TuiOpenOptions } from "../runtime/runtime.ts";
 import type { Theme } from "../api/presentation/theme.ts";
+import { nativeHostForReact, registerReactHost } from "../react/host-registry.ts";
 
 interface AppHarnessContract extends TuiRuntime {
   createHistory(): HistoryContract;
@@ -40,6 +41,9 @@ export class AppHarness implements AppHarnessContract {
 
   private constructor(tui: Tui) {
     this.tui = tui;
+    const host = nativeHostForReact(tui);
+    if (host === undefined) throw new Error("TUI React host registration is unavailable");
+    registerReactHost(this, host);
   }
 
   static async open(options: TuiOpenOptions = {}): Promise<AppHarness> {

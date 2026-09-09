@@ -385,8 +385,8 @@ mod tests {
         assert_eq!(document.opcodes.len(), 28);
         assert_eq!(document.control_commands.len(), 24);
         assert_eq!(document.configs.len(), 4);
-        assert_eq!(document.properties.len(), 17);
-        assert_eq!(document.value_encodings.len(), 10);
+        assert_eq!(document.properties.len(), 18);
+        assert_eq!(document.value_encodings.len(), 11);
         assert!(
             document
                 .properties

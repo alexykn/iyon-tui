@@ -1,6 +1,6 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T2. This document is the implementation ledger for
+**Scope:** T0 through T3. This document is the implementation ledger for
 IYON-DOM-LIKE-RUNTIME-HANDOFF.md; it is not a claim that the M1/M2 migration
 is complete.
 
@@ -19,7 +19,7 @@ the current-source authority.
 | T0 — baseline and behavior map | **complete** | Baseline commands and route evidence below; no production source was changed while the baseline was collected. |
 | T1 — finite schema and occurrence core | **accepted; committed bb0c599** | Parent source review and focused/ownership reruns accepted the typed schema/core tranche. |
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
-| T3 — minimal React renderer | remaining | React mutation host config and JS-only candidates; no second reconciler or immutable-View compatibility path. |
+| T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | remaining | One-way native adapter, native scheduling, controls/content/History integration, exact receipt state. |
 | T5 — M1 cutover/publication deletion | remaining | React-only production frontend; delete old composition, View publication, leases, paths and ordinary ViewState after consumer gates. |
 | T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
@@ -304,7 +304,8 @@ replacement and closed ControlCommand now enter the typed Send-safe UI state;
 parser/layout/output and renderer/frame realization remain explicit later
 seams. Typed editor/scroll/animation control identities and command/editor
 state are prepared without entering the renderer; full native control
-input/tick lifecycle remains a later controls tranche. No T3 work has started.
+input/tick lifecycle remains a later controls tranche. The T3 renderer below
+consumes the accepted UI seam without claiming frame realization.
 Source replacement and membership now use one sparse guard-scoped multi-Source
 transaction: the final binding map computes each membership delta once, all
 ordered Source guards, revision/liveness/count checks, and prepared storage
@@ -338,6 +339,148 @@ private-resource cleanup remains explicit on retirement and host close/drop.
 Full-suite evidence remains applicable to the parent changes above; focused
 checks cover their affected behavior. No full migration, native frame-driver,
 React, renderer or Taffy acceptance is implied.
+
+## T3 minimal React renderer (accepted)
+
+The tranche based on `17f116c` contains the first React mutation route plus
+the ownership/lifecycle corrections described below. Parent source review and
+current-source verification accept this bounded T3 implementation, not an
+M1/M2 cutover:
+
+- `packages/iyon-tui/src/react/host-config.ts` is the isolated React
+  19.2.8/reconciler 0.33.0 HostConfig shim. It declares mutation mode,
+  disables persistence/hydration, uses non-null host context, installs the
+  current update-priority/scheduling hooks, and keeps React's internal Fiber
+  handle opaque;
+- `packages/iyon-tui/src/react/instance.ts` creates pure JS HostInstance and
+  HostTextInstance candidates. It normalizes the finite generated-schema
+  property inventory (including colors, Insets, edges, attributes and direct
+  or themed styles), callback presence, finite Box/Row/Column/Grid layout
+  kind, literal text, Source/Funnel and editor/control declarations before
+  native mutation. The accepted React Port surface is the qualified lazy
+  token, not the old ContentPort attachment identity;
+- `tools/tui-abi-gen/src/render_ui.rs` emits generated property descriptor
+  lookup, finite value-key/equality helpers, value-encoding lookup, and
+  `uiEncodePropertyValue` packing used by the React path. Regenerated outputs
+  retain all pre-existing T2 wire IDs and value forms. T3 adds the finite
+  LayoutMode/layout property required for distinct Row/Column/Grid desired
+  state, and refreshes the generator fingerprint and corresponding snapshot.
+  The generated Style packer has one owned color implementation, explicit
+  attribute-mask contracts, and no speculative zero fallbacks;
+- `packages/iyon-tui/src/react/commit.ts` owns one per-commit journal. It
+  traverses each newly materialized subtree once, collapses overlapping
+  candidate roots, assigns local creation ordinals, and encodes generated
+  schema records/forms and sidecars. It calls `commitUiV1` once for nonempty
+  native work, assigns acknowledgement handles, then promotes accepted
+  snapshots and ownership links. Candidate creation, abandoned render and
+  callback identity-only updates do not allocate native resources or send
+  semantic UI work. Anchored insertion uses the anchor's actual previous
+  sibling, including prepend/first-node cases; keyed placement uses React's
+  ordered mutation callbacks with no second list reconciler or immutable View
+  translation. Initial anchor lookup memoizes skipped candidate/portal runs
+  and stops at the next accepted ordinary sibling; it does not scan a parent's
+  clean child list. Resource encoding receives its already-assigned node ordinal
+  directly. Sidecar copying does not spread payload bytes into function arguments,
+  with a one-million-character literal regression. Accepted token maps are
+  changed only after acknowledgement;
+  Port and Connector hook owners are independent, explicit resources retain one
+  qualified handle across consumer gaps/transfers, and dependency-aware cleanup
+  disposes Connector before Port through this same coordinator. Deleted-instance
+  cleanup only detaches the consumer. A committed connector-hook dependency
+  replacement releases the old token after acknowledgement, even when its
+  consumer is absent; an inactive live Connector is not disposed by another
+  consumer's selection. Blocked Port cleanup waits for the dependent Connector
+  notification instead of re-scanning every render. Accepted selection
+  bookkeeping follows acknowledged initial handles, Port replacement, subtree
+  detachment, hook disposal and close. Occurrence-owned detached resources
+  lose their selection with retirement; caller-owned explicit Ports retain
+  their selected Connector under the accepted T2 contract until React
+  explicitly deselects or disposes them. A rejected commit leaves accepted
+  token identity and native membership untouched;
+- `packages/iyon-tui/src/react/root.ts` exposes `createReactRoot` for a
+  public `TuiRuntime`/`AppHarness`, a Promise that resolves on accepted UI
+  desired state, one root authority per host, same-host portals, explicit
+  root cleanup, unmount/close, and separate
+  `whenVisible`/`whenContentVisible` barriers. Those barriers reject with
+  `T3_FRAME_BARRIER_UNREALIZED` until T4 installs frame scheduling/presentation;
+  they do not pretend acceptance is terminal output;
+- `packages/iyon-tui/src/react/components.ts` adds Box/Row/Column/Grid,
+  Content/Text, Editor/Scroll/Animation conveniences. Text and raw JSX text
+  lower to ordinary childless ContentHost occurrences; no structural Text or
+  Hanging kind was introduced. Controls create only the existing typed
+  Editor/Scroll/Animation state. `hooks.ts` adds immutable JS-only lazy
+  Port/Connector binding tokens, which materialize only when a committed
+  Content occurrence uses the binding. Port and Connector hooks have separate
+  lifecycle owners bound to the coordinator only after acknowledgement;
+  cleanup is microtask-coalesced for StrictMode replay, stale superseded
+  tokens are revisited after their memoized consumer detaches, and owner
+  release failures fault the root rather than escaping a microtask. Component
+  conveniences normalize finite props during render as well as at the
+  HostConfig/native boundary. Token owner/coordinator state remains internal,
+  presentation values are copied through the semantic finite validators, and
+  React literals are the plain string/number/bigint path only;
+- generated finite equality keys use length-delimited canonical fields rather
+  than separator-joined glyph/theme strings. Public occurrence refs expose the
+  supported override/clear publication commands through the coordinator. The
+  React host shim uses the installed reconciler runtime priority constants and
+  defaults NoEventPriority to DefaultEventPriority for ordinary state updates;
+- the private native host seam now provides a qualified body occurrence
+  handle without exposing it through the package root. `Tui` and `AppHarness`
+  carry the association privately, so the consumer fixture uses only
+  `@iyon/tui`, `@iyon/tui/testing` and `@iyon/tui/react` imports;
+- `packages/tui-consumer-fixture/src/react-consumer.ts` and its acceptance
+  witness exercise the public consumer path while all existing old production
+  routes remain in place for T5 disposition.
+
+The published artifact provenance was checked before this renderer run:
+
+    react=19.2.8 (registry dist integrity sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw==)
+    react-reconciler=0.33.0 (registry dist integrity sha512-KetWRytFv1epdpJc3J4G75I4WrplZE5jOL7Yq0p34+OVOKF4Se7WrdIdVC45XsSSmUTlht2FM/fM1FZb1mfQeA==)
+    @types/react=19.2.8
+    @types/react-reconciler=0.33.0
+    installed manifests: packages/iyon-tui/node_modules/{react,react-reconciler}/package.json
+
+The installed `@types/react-reconciler` HostConfig declaration was read rather
+than copied from an older renderer tutorial; the runtime factory was also
+inspected because its 0.33.0 object does not expose the stale declaration's
+`flushSync` helper. T3 uses the installed `updateContainerSync` and
+`flushSyncFromReconciler` methods. The resolved React, reconciler, scheduler,
+React type and `csstype` entries are locked in `bun.lock`.
+
+The native boundary was rebuilt and staged after the final generated outputs,
+private body-handle method and closed UI-state lifecycle used by the renderer:
+
+    artifact=packages/iyon-tui/native/iyon-tui-native.node
+    sha256=ed29f621ef2df91174fac1d466d5c66756341777279f773561a08871f9b49f9d
+    bytes=6980224
+    target=aarch64-apple-darwin
+    features=default N-API (napi8 type-tag qualification enabled)
+
+The final lifecycle-correction checks and exact current counts are recorded in
+the durable handoff artifact. They include staged-native React/consumer tests
+covering committed dependency replacement with an absent consumer, stale
+memoized-consumer detachment, ordinary useState plus layout/passive effect
+scheduling, same-instance and independent A/B/A selection, inactive-owner
+cleanup, blocked Port dependency release, implicit source/literal/Port
+transitions, typed portal-root reorder/retirement/owner transfer,
+hook-owner detach/restore/cleanup under StrictMode, cross-root authority
+rejection, token disposal/transfer, ref publication, fault cleanup retry and
+the native UI commit lifecycle tests. `cargo fmt`, `cargo check`, TypeScript,
+Biome and the generator check pass on the current source. After the final parent
+anchor correction, the full Bun workspace pass reports 164 tests, 0 failures
+and 3502 expectations across 38 files. Parent reran the native UI commit tests
+(12 passed), formatting, generator, binding and ownership checks. The unchanged
+Rust source also retains the delegate's occurrence (26 passed), generator
+(19 passed) and workspace/all-features check evidence. Parent Clippy with
+`-W clippy::cognitive_complexity` completed without errors; warnings remain,
+including documentation/style warnings in touched Rust files. This is not a
+warning-free lint claim. The staged addon above is unchanged by the final
+TypeScript-only corrections.
+
+T3 is accepted. T4 owns terminal frame
+realization, scheduling, content/control integration and exact presentation
+barriers; T5 owns canonical production cutover and deletion of old composition
+and View publication.
 
 ### Occurrence ownership and transaction contract
 
@@ -402,11 +545,13 @@ silently kept on a test-only compatibility runtime.
 
 | Consumer/route | Planned tranche | Status |
 |---|---|---|
-| packages/tui-consumer-fixture/src/consumer.ts | T3 | pending React port using only documented @iyon/tui entrypoints |
-| packages/tui-consumer-fixture/tests/consumer.test.ts | T3/T5 | pending production occurrence-root witness |
+| packages/tui-consumer-fixture/src/consumer.ts | T3 | legacy route retained until T5; React port is in `src/react-consumer.ts` using only documented entrypoints |
+| packages/tui-consumer-fixture/src/react-consumer.ts | T3 | accepted public React consumer |
+| packages/tui-consumer-fixture/tests/consumer.test.ts | T3/T5 | legacy behavior tests retained; React acceptance is in `tests/react-consumer.test.ts` |
+| packages/tui-consumer-fixture/tests/react-consumer.test.ts | T3 | accepted public React occurrence-root witness |
 | packages/tui-consumer-fixture/tests/scoped-invalidation.test.ts | T3/T5 | pending replacement with occurrence delta/invalidation witness |
 | packages/iyon-tui/scripts/smoke-native.ts | T2/T3/T5 | pending new production bridge smoke route |
-| packages/iyon-tui/tests/fixtures/tui_demo.ts | T3/T5 | pending React fixture |
+| packages/iyon-tui/tests/fixtures/tui_demo.ts | T3/T5 | old fixture retained until production cutover; React route covered by `tui_react_renderer.test.ts` |
 | controls (TextInput, ScrollPane, ViewSlot) | T4 | native mechanics retained; composition-only slots are not ported in T1 |
 | content Source/Funnel/Port/Connector | T2/T4 | existing direct Source data lane retained; no payload fallback added |
 | History/native scrollback | T4/T8 | current physical behavior retained until Surface migration |
@@ -414,9 +559,9 @@ silently kept on a test-only compatibility runtime.
 
 ## Remaining proof and risks
 
-- The new document is not connected to a renderer or frame presenter; the
-  qualified native addon ingress is present and remains separate from those
-  later seams.
+- The occurrence document is now connected to the bounded T3 React mutation
+  renderer and qualified native acceptance seam. Native frame presentation,
+  scheduling receipts and the terminal renderer remain T4 work.
 - T2 native ingress qualification and acknowledgement allocation have focused
   witnesses, including napi8 type-tag rejection for wrong wrapped classes and
   prototype spoofing, detached-buffer rejection, and local-count admission.
@@ -425,9 +570,46 @@ silently kept on a test-only compatibility runtime.
   soundness fix.
 - The accepted T2 correction adds sparse final binding planning, individually
   validated/coalesced literal actions, and pre-write multi-Source guard
-  validation. Renderer integration remains a separate acceptance gate.
-- T3 must pin and isolate the approved React/reconciler contract; no React
-  dependency was added in T2.
+  validation. The minimal React acceptance route is accepted in T3; physical
+  renderer integration remains the T4 acceptance gate.
+- T3's React/reconciler contract is pinned and isolated; native frame and
+  presentation realization are intentionally still unrealized until T4.
+- Each Iyon React root owns its pinned reconciler instance. This prevents a
+  rejected commit's scheduled work from contaminating a later root; the
+  original-order focused suite includes a faulted duplicate-token root followed
+  by a healthy new host/root mount, update and unmount.
+- Same-host portal roots use their typed owner correspondence: same-owner
+  reorder does not enter the ordinary child list, mixed ordinary/portal
+  placement skips portal anchors, owner transfer retires/recreates the typed
+  root, and root retirement plus cross-host rejection are covered by focused
+  tests. Presentation ordering remains a later T4 concern.
+- Lazy Port/Connector tokens are immutable and occurrence materialization is
+  commit-only. Port and Connector hook owners are independent; resources
+  survive occurrence retirement and consumer gaps until their real owner
+  cleanup, preserve identity during live transfer, and dispose in dependency
+  order through the coordinator. Caller-owned public Source resources remain
+  outside this renderer's disposal path. Focused tests cover split-owner
+  lifetime, committed absent-consumer replacement, same-instance and
+  independent A/B/A selection, source/literal/lazy transitions, transfer,
+  blocked dependency release, cross-root rejection, and StrictMode cleanup;
+  parent source review accepted the bounded cross-host/portal ownership contract.
+- React literal Content is intentionally plain-only in T3: strings, numbers,
+  and bigints are supported, while legacy `TextContent`/`RawText` wrappers and
+  Markdown/diff/ANSI/annotation lowering are rejected explicitly rather than
+  silently discarded. Broader content families and semantic span lowering
+  remain bounded T4/T7 work.
+- Native UI close now has Open/Closing/Closed state, drops the occurrence
+  document only after all resource cleanup succeeds, rejects body-handle and
+  commit ingress after close, and retains failed cleanup ownership for retry.
+  JS root close likewise avoids a fallback second close and clears accepted JS
+  references only after native cleanup succeeds.
+- The abandoned-render witness now confirms actual HostConfig candidate
+  creation followed by a render error and zero native creation calls. A true
+  concurrent scheduler interruption remains a separate witness.
+- Public refs publish supported overrides/clear operations through the same
+  coordinator. Focus remains an explicit T4 interaction-executor error, and
+  visible geometry rejects with `T3_GEOMETRY_UNREALIZED`; neither is fabricated
+  from desired state.
 - Existing strict lint debt is recorded, not swept: baseline architecture
   checks passed, while broad warning/clippy cleanup remains outside this slice.
 - The generated old View ABI remains intentionally present until M1. Its

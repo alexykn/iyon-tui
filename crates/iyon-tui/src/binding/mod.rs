@@ -74,10 +74,10 @@ pub use crate::occurrence::generated::{
 pub use crate::occurrence::{
     Alignment, AlignmentAxis, AnimationState, ColorValue, CommitDetail, ConfigError, ControlConfig,
     ControlError, ControlKind, ControlState, Edges, EditorState, FunnelSpec, GlyphsValue, HostKind,
-    HostNamespace, LayerValue, NodeKey, NodeRef, OccurrenceDocument, OwnershipMode, PropertyId,
-    PropertyLayer, PropertyValue, ResourceKey, ResourceRef, RootConfig, RootRole, ScrollState,
-    SizeMode, StyleValue, TextAttributes, UiAcknowledgement, UiCommit, UiHandle, UiOperation,
-    UiOperationResult, UiRejection,
+    HostNamespace, LayerValue, LayoutMode, NodeKey, NodeRef, OccurrenceDocument, OwnershipMode,
+    PropertyId, PropertyLayer, PropertyValue, ResourceKey, ResourceRef, RootConfig, RootRole,
+    ScrollState, SizeMode, StyleValue, TextAttributes, UiAcknowledgement, UiCommit, UiHandle,
+    UiOperation, UiOperationResult, UiRejection,
 };
 
 // HOST: desired publication, barriers, and native control integration.

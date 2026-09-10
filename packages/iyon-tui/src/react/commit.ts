@@ -44,6 +44,11 @@ import {
 	validateStyleState,
 	validateStyleStateKey,
 } from "./instance.ts";
+import {
+	ReactContentConnector,
+	ReactContentPort,
+	type ExplicitResourceCoordinator,
+} from "./resources.ts";
 
 export interface NativeUiEvent {
 	readonly host_namespace: number;
@@ -73,6 +78,10 @@ interface RecordValue {
 	readonly section: 0 | 1 | 2 | 3 | 4;
 	readonly opcode: number;
 	readonly operands: readonly number[];
+	readonly explicitSelection?: {
+		readonly port: ReactContentPort;
+		readonly connector: ReactContentConnector | undefined;
+	};
 }
 
 class SidecarBuilder {
@@ -163,6 +172,8 @@ interface PendingContentUpdate {
 	readonly previousConnectorToken?: ContentConnectorToken;
 	readonly releasePreviousPortToken: boolean;
 	readonly releasePreviousConnectorToken: boolean;
+	readonly explicitPort?: ReactContentPort;
+	readonly explicitConnector?: ReactContentConnector;
 }
 
 interface HookReleaseResources {
@@ -175,8 +186,9 @@ interface HookReleaseResources {
 }
 
 type ResourceOwner = {
-	readonly instance: HostInstance;
+	readonly instance: HostInstance | undefined;
 	readonly resource: "port" | "connector" | "control";
+	readonly onHandle?: (handle: UiHandle) => void;
 };
 
 export class RootContainer {
@@ -212,7 +224,7 @@ export class RootContainer {
 	}
 }
 
-export class CommitCoordinator {
+export class CommitCoordinator implements ExplicitResourceCoordinator {
 	private readonly root: RootContainer;
 	private journal: Journal | undefined;
 	private nextOrdinal = 1;
@@ -232,6 +244,11 @@ export class CommitCoordinator {
 	private tokenPorts = new WeakMap<object, AcceptedTokenResource>();
 	private tokenConnectors = new WeakMap<object, AcceptedTokenResource>();
 	private readonly selectedConnectors = new Map<string, UiHandle>();
+	private readonly explicitPorts = new Map<string, ReactContentPort>();
+	private readonly explicitConnectors = new Map<
+		string,
+		ReactContentConnector
+	>();
 
 	constructor(root: RootContainer) {
 		this.root = root;
@@ -248,6 +265,189 @@ export class CommitCoordinator {
 	}
 	get staleNativeEvents(): number {
 		return this.staleNativeEventCount;
+	}
+
+	createExplicitPort(family = "text"): ReactContentPort {
+		if (family !== "text")
+			throw new TypeError("unsupported ContentPort family");
+		let handle: UiHandle | undefined;
+		this.begin();
+		const journal = this.requireJournal();
+		const ordinal = this.nextOrdinal++;
+		journal.created.set(ordinal, {
+			instance: undefined,
+			resource: "port",
+			onHandle: (created) => {
+				handle = created;
+			},
+		});
+		journal.records.push({
+			section: 2,
+			opcode: UI_OPCODES.createPort,
+			operands: [ordinal, 0, 2, ...NULL_HANDLE],
+		});
+		this.finish(true);
+		if (handle === undefined)
+			throw new Error("native acknowledgement omitted explicit Port");
+		const port = new ReactContentPort(this, handle);
+		this.explicitPorts.set(handleKey(handle), port);
+		return port;
+	}
+
+	createExplicitConnector(
+		port: ReactContentPort,
+		source: ContentSource,
+		funnel: TextFunnel,
+	): ReactContentConnector {
+		this.assertExplicitPort(port);
+		let handle: UiHandle | undefined;
+		this.begin();
+		const journal = this.requireJournal();
+		const ordinal = this.nextOrdinal++;
+		let sourceIndex: number;
+		try {
+			sourceIndex = sourceIndexFor(source, journal);
+		} catch (error) {
+			this.abort();
+			throw error;
+		}
+		let funnelReference: [number, number];
+		try {
+			funnelReference = funnelMetadata(funnel, journal.metadata);
+		} catch (error) {
+			this.abort();
+			throw error;
+		}
+		journal.created.set(ordinal, {
+			instance: undefined,
+			resource: "connector",
+			onHandle: (created) => {
+				handle = created;
+			},
+		});
+		journal.records.push({
+			section: 2,
+			opcode: UI_OPCODES.createConnector,
+			operands: [
+				ordinal,
+				sourceIndex,
+				...resourceRef(port.handle),
+				...funnelReference,
+				2,
+			],
+		});
+		this.finish(true);
+		if (handle === undefined)
+			throw new Error("native acknowledgement omitted explicit Connector");
+		const connector = new ReactContentConnector(
+			this,
+			handle,
+			port,
+			source,
+			funnel,
+		);
+		this.explicitConnectors.set(handleKey(handle), connector);
+		return connector;
+	}
+
+	selectExplicitConnector(
+		port: ReactContentPort,
+		connector: ReactContentConnector | undefined,
+	): void {
+		this.assertExplicitPort(port);
+		if (connector !== undefined) {
+			this.assertExplicitConnector(connector);
+			if (connector.attachedPort !== port)
+				throw new TypeError("Connector belongs to another ContentPort");
+		}
+		this.begin();
+		const journal = this.requireJournal();
+		journal.records.push(explicitSelectionRecord(port, connector));
+		this.finish(true);
+	}
+
+	explicitSelectedConnector(
+		port: ReactContentPort,
+	): ReactContentConnector | undefined {
+		this.assertExplicitPort(port);
+		const selected = this.selectedConnectors.get(handleKey(port.handle));
+		return selected === undefined
+			? undefined
+			: this.explicitConnectors.get(handleKey(selected));
+	}
+
+	deactivateExplicitConnector(connector: ReactContentConnector): void {
+		this.assertExplicitConnector(connector);
+		const selected = this.selectedConnectors.get(
+			handleKey(connector.attachedPort.handle),
+		);
+		if (
+			selected === undefined ||
+			handleKey(selected) !== handleKey(connector.handle)
+		)
+			return;
+		this.selectExplicitConnector(connector.attachedPort, undefined);
+	}
+
+	disposeExplicitConnector(connector: ReactContentConnector): void {
+		this.assertExplicitConnector(connector);
+		this.begin();
+		const journal = this.requireJournal();
+		journal.records.push({
+			section: 2,
+			opcode: UI_OPCODES.disposeConnector,
+			operands: resourceRef(connector.handle),
+		});
+		this.finish(true);
+		this.explicitConnectors.delete(handleKey(connector.handle));
+		connector.markDisposed();
+	}
+
+	disposeExplicitPort(port: ReactContentPort): void {
+		this.assertExplicitPort(port);
+		this.begin();
+		const journal = this.requireJournal();
+		journal.records.push({
+			section: 2,
+			opcode: UI_OPCODES.disposePort,
+			operands: resourceRef(port.handle),
+		});
+		this.finish(true);
+		this.explicitPorts.delete(handleKey(port.handle));
+		port.markDisposed();
+	}
+
+	explicitPortMounted(port: ReactContentPort): boolean {
+		this.assertExplicitPort(port);
+		const read = this.root.host.uiPortMounted;
+		if (read === undefined)
+			throw new Error("native UI Port status is unavailable");
+		return read.call(this.root.host, resourceRef(port.handle));
+	}
+
+	explicitConnectorStatus(
+		connector: ReactContentConnector,
+	): import("../api/content/retained.ts").ContentConnectorStatus {
+		this.assertExplicitConnector(connector);
+		const read = this.root.host.uiConnectorStatus;
+		if (read === undefined)
+			throw new Error("native UI Connector status is unavailable");
+		return read.call(
+			this.root.host,
+			resourceRef(connector.handle),
+		) as import("../api/content/retained.ts").ContentConnectorStatus;
+	}
+
+	private assertExplicitPort(port: ReactContentPort): void {
+		if (this.explicitPorts.get(handleKey(port.handle)) !== port)
+			throw new Error(
+				"ContentPort belongs to another React root or is disposed",
+			);
+	}
+
+	private assertExplicitConnector(connector: ReactContentConnector): void {
+		if (this.explicitConnectors.get(handleKey(connector.handle)) !== connector)
+			throw new Error("Connector belongs to another React root or is disposed");
 	}
 
 	registerAccepted(instance: HostInstance): void {
@@ -495,6 +695,11 @@ export class CommitCoordinator {
 		this.deferredTokenInstances = new WeakMap();
 		this.pendingHookOwnerDrain = false;
 		this.selectedConnectors.clear();
+		for (const connector of this.explicitConnectors.values())
+			connector.markDisposed();
+		for (const port of this.explicitPorts.values()) port.markDisposed();
+		this.explicitConnectors.clear();
+		this.explicitPorts.clear();
 		this.acceptedInstances.clear();
 		this.cleanupMode = false;
 		this.journal = undefined;
@@ -593,7 +798,7 @@ export class CommitCoordinator {
 			});
 	}
 
-	finish(): void {
+	finish(callerOperation = false): void {
 		const journal = this.requireJournal();
 		try {
 			if (this.cleanupMode) return;
@@ -619,7 +824,8 @@ export class CommitCoordinator {
 			);
 			this.acceptAcknowledgement(ack, journal);
 		} catch (error) {
-			this.faultRoot(error);
+			if (!callerOperation || !isRecoverableCallerRejection(error))
+				this.faultRoot(error);
 			throw error;
 		} finally {
 			this.cleanupMode = false;
@@ -860,6 +1066,33 @@ export class CommitCoordinator {
 		content: NormalizedContent,
 		journal: Journal,
 	): void {
+		if (content.explicitPort !== undefined) {
+			const explicitPort = content.explicitPort as ReactContentPort;
+			this.assertExplicitPort(explicitPort);
+			instance.port = explicitPort.handle;
+			instance.explicitPort = explicitPort;
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.attachPort,
+				operands: [
+					...localRef(nodeOrdinal, 1),
+					...resourceRef(explicitPort.handle),
+				],
+			});
+			if (content.explicitConnector !== undefined) {
+				const explicitConnector =
+					content.explicitConnector as ReactContentConnector;
+				this.assertExplicitConnector(explicitConnector);
+				if (explicitConnector.attachedPort !== explicitPort)
+					throw new TypeError("Connector belongs to another ContentPort");
+				instance.connector = explicitConnector.handle;
+				instance.explicitConnector = explicitConnector;
+				journal.records.push(
+					explicitSelectionRecord(explicitPort, explicitConnector),
+				);
+			}
+			return;
+		}
 		const token = content.portToken;
 		const port = this.preparePort(
 			instance,
@@ -917,6 +1150,7 @@ export class CommitCoordinator {
 		content: NormalizedContent,
 		journal: Journal,
 	): void {
+		if (content.explicitConnector !== undefined) return;
 		if (content.mode === "literal")
 			this.encodeLiteralResource(instance.port, content, journal);
 		if (
@@ -1087,6 +1321,17 @@ export class CommitCoordinator {
 		this.applyContentUpdates(journal, ack);
 		this.acceptedRevision = (ack[1] ?? 0) + (ack[2] ?? 0) * 0x1_0000_0000;
 		this.promoteTouched(journal);
+		// Only accepted selection operations change caller-owned selection.
+		// An unrelated React prop update must not restore an earlier Connector.
+		for (const record of journal.records) {
+			const selection = record.explicitSelection;
+			if (selection !== undefined)
+				this.replaceSelection(
+					undefined,
+					selection.port.handle,
+					selection.connector?.handle,
+				);
+		}
 		for (const [token, pending] of journal.tokenPorts)
 			this.acceptTokenResource(
 				this.tokenPorts,
@@ -1111,6 +1356,7 @@ export class CommitCoordinator {
 	private applyContentUpdates(journal: Journal, ack: Uint32Array): void {
 		for (const [instance, update] of journal.contentUpdates) {
 			const previousPort = instance.port;
+			const previousExplicitPort = instance.explicitPort;
 			const previousConnectorToken = instance.connectorToken;
 			instance.port = this.acknowledgePending(update.port, ack);
 			instance.portToken = update.portToken;
@@ -1119,13 +1365,19 @@ export class CommitCoordinator {
 					? undefined
 					: this.acknowledgePending(update.connector, ack);
 			instance.connectorToken = update.connectorToken;
+			instance.explicitPort = update.explicitPort;
+			instance.explicitConnector = update.explicitConnector;
 			if (
 				previousConnectorToken !== undefined &&
 				previousConnectorToken !== update.connectorToken &&
 				this.deferredTokenInstances.get(previousConnectorToken) === instance
 			)
 				queueMicrotask(() => this.releaseDeferredHookTokens(instance));
-			this.replaceSelection(previousPort, instance.port, instance.connector);
+			this.replaceSelection(
+				previousExplicitPort === undefined ? previousPort : undefined,
+				instance.explicitPort === undefined ? instance.port : undefined,
+				instance.connector,
+			);
 			if (
 				update.previousPortToken !== undefined &&
 				update.previousPortToken !== update.portToken &&
@@ -1210,7 +1462,11 @@ export class CommitCoordinator {
 		for (const [ordinal, owner] of journal.created) {
 			const handle = acknowledgementHandle(ack, ordinal);
 			if (owner instanceof HostInstance) owner.handle = handle;
-			else this.assignResource(owner.instance, handle, owner.resource);
+			else {
+				if (owner.instance !== undefined)
+					this.assignResource(owner.instance, handle, owner.resource);
+				owner.onHandle?.(handle);
+			}
 		}
 	}
 
@@ -1239,7 +1495,8 @@ export class CommitCoordinator {
 		}
 		this.refreshPortTokenOwner(instance);
 		this.refreshConnectorTokenOwner(instance);
-		this.replaceSelection(instance.port, instance.port, instance.connector);
+		if (instance.explicitPort === undefined)
+			this.replaceSelection(instance.port, instance.port, instance.connector);
 	}
 
 	private replaceSelection(
@@ -1277,7 +1534,11 @@ export class CommitCoordinator {
 		// Connector.  An explicit Port survives with its selected Connector;
 		// retain that accepted selection until the hook owner deliberately
 		// deselects or disposes it.
-		if (instance.portToken === undefined && instance.port !== undefined)
+		if (
+			instance.portToken === undefined &&
+			instance.explicitPort === undefined &&
+			instance.port !== undefined
+		)
 			this.clearSelectedConnector(instance.port);
 		let child = instance.firstChild;
 		while (child !== undefined) {
@@ -1506,6 +1767,15 @@ export class CommitCoordinator {
 			contentValuesEqual(previous, next)
 		)
 			return;
+		const explicitChanged =
+			previous?.explicitPort !== next.explicitPort ||
+			previous?.explicitConnector !== next.explicitConnector;
+		if (explicitChanged) {
+			if (next.explicitPort !== undefined)
+				this.encodeExplicitContentChange(instance, next, journal);
+			else this.encodePortChange(instance, previous, next, journal);
+			return;
+		}
 		if (previous?.portToken !== next.portToken) {
 			this.encodePortChange(instance, previous, next, journal);
 			return;
@@ -1575,6 +1845,51 @@ export class CommitCoordinator {
 			false,
 			releaseConnector,
 		);
+	}
+
+	private encodeExplicitContentChange(
+		instance: HostInstance,
+		next: NormalizedContent,
+		journal: Journal,
+	): void {
+		const port = next.explicitPort as ReactContentPort;
+		this.assertExplicitPort(port);
+		if (instance.port === undefined)
+			throw new Error("ContentPort is unavailable");
+		if (handleKey(instance.port) !== handleKey(port.handle)) {
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.attachPort,
+				operands: [...nodeRef(instance), ...NULL_HANDLE],
+			});
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.attachPort,
+				operands: [...nodeRef(instance), ...resourceRef(port.handle)],
+			});
+		}
+		const connector = next.explicitConnector as
+			| ReactContentConnector
+			| undefined;
+		if (connector !== undefined) {
+			this.assertExplicitConnector(connector);
+			if (connector.attachedPort !== port)
+				throw new TypeError("Connector belongs to another ContentPort");
+			journal.records.push(explicitSelectionRecord(port, connector));
+		}
+		journal.contentUpdates.set(instance, {
+			port: { handle: port.handle },
+			portToken: undefined,
+			connector:
+				connector === undefined ? undefined : { handle: connector.handle },
+			connectorToken: undefined,
+			previousPortToken: undefined,
+			previousConnectorToken: undefined,
+			releasePreviousPortToken: false,
+			releasePreviousConnectorToken: false,
+			explicitPort: port,
+			explicitConnector: connector,
+		});
 	}
 
 	private encodePortChange(
@@ -2167,6 +2482,33 @@ function reportNativeEventError(error: unknown): void {
 		// A broken diagnostic sink cannot change accepted native state or stop
 		// delivery of later owned events.
 	}
+}
+
+function explicitSelectionRecord(
+	port: ReactContentPort,
+	connector: ReactContentConnector | undefined,
+): RecordValue {
+	return {
+		section: 2,
+		opcode: UI_OPCODES.selectConnector,
+		operands: [
+			...resourceRef(port.handle),
+			...(connector === undefined
+				? NULL_HANDLE
+				: resourceRef(connector.handle)),
+		],
+		explicitSelection: { port, connector },
+	};
+}
+
+/** Native admission rejections are caller errors only for explicit resource
+ * operations. Malformed acknowledgements, transport failures and invariant
+ * violations still fault the root under the renderer contract. */
+function isRecoverableCallerRejection(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /native UI commit rejected \(detail [3-7], record \d+\)/u.test(
+		message,
+	);
 }
 
 function linkChild(

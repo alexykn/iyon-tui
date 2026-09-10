@@ -244,6 +244,32 @@ pub(crate) struct FrameFailure {
     pub(crate) diagnostic: String,
 }
 
+/// One typed notification from the native scheduler, content projector or
+/// presentation backend. The automatic observer consumes these records
+/// directly; it does not poll a status table or drive another frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UiFailureNotification {
+    pub phase: String,
+    pub code: String,
+    pub attempted_ui_revision: u64,
+    pub attempted_work_epoch: u64,
+    pub diagnostic: String,
+    pub retryable: bool,
+}
+
+impl From<&FrameFailure> for UiFailureNotification {
+    fn from(failure: &FrameFailure) -> Self {
+        Self {
+            phase: failure.phase.to_owned(),
+            code: failure.code.to_owned(),
+            attempted_ui_revision: failure.attempted_ui_revision,
+            attempted_work_epoch: failure.attempted_work_epoch,
+            diagnostic: failure.diagnostic.clone(),
+            retryable: failure.retryable,
+        }
+    }
+}
+
 pub(crate) enum PresentationState {
     Idle,
     Prepared(PreparedFrame),

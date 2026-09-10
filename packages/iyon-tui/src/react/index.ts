@@ -40,3 +40,9 @@ export {
 	type ReactCommit,
 	ReactFrameBarrierError,
 } from "./root.ts";
+export {
+	ReactContentConnector,
+	ReactContentPort,
+	isExplicitContentConnector,
+	isExplicitContentPort,
+} from "./resources.ts";

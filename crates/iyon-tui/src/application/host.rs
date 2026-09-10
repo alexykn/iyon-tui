@@ -22,7 +22,7 @@ use super::{
     frame::{
         FrameFailure, HistoryReceipt as HostHistoryReceipt, PreparedFrame, PreparedFrameProduct,
         PreparedSceneProducts, PresentReceipt, PresentationState, SceneDisposition,
-        blocking_receive,
+        UiFailureNotification, blocking_receive,
     },
     legacy_scene::LegacySceneAdapter,
     ui_resources::UiResourceOwner,
@@ -43,6 +43,8 @@ use crate::{
     scene::{PreparedSceneFrame, SceneHostError},
     terminal::{TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };
+
+const MAX_FAILURE_NOTIFICATIONS: usize = 64;
 
 /// One caller-defined routed output produced by native interaction routing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -446,6 +448,12 @@ pub(crate) struct HostInner {
     ui_event_limits: UiEventQueueLimits,
     deferred_terminal_input: Option<TerminalEvent>,
     scheduler_failure: Option<FrameFailure>,
+    /// Bounded native failure notifications consumed by the one automatic
+    /// diagnostic observer. Each preparation/receipt failure is queued at its
+    /// authoritative owner, preserving distinct recoverable failures in one
+    /// work epoch without retaining an unbounded log.
+    failure_notifications: VecDeque<UiFailureNotification>,
+    dropped_failure_notifications: u64,
     #[cfg(test)]
     ui_control_keys_visited: usize,
     #[cfg(test)]
@@ -1353,6 +1361,8 @@ impl TuiHost {
                 ui_event_limits: UiEventQueueLimits::default(),
                 deferred_terminal_input: None,
                 scheduler_failure: None,
+                failure_notifications: VecDeque::new(),
+                dropped_failure_notifications: 0,
                 #[cfg(test)]
                 ui_control_keys_visited: 0,
                 #[cfg(test)]
@@ -1429,6 +1439,49 @@ impl TuiHost {
             return Ok(false);
         }
         inner.content.ui_content_visible(&inner.ui_resources)
+    }
+
+    pub fn ui_port_mounted(&self, handle: crate::occurrence::UiHandle) -> Result<bool> {
+        let inner = self.lock()?;
+        inner.ensure_open()?;
+        if handle.host_namespace != inner.ui_resources.namespace.get() {
+            return Err(anyhow::anyhow!(
+                "STALE_HANDLE: resource belongs to another host"
+            ));
+        }
+        let key = handle
+            .resource_key()
+            .ok_or_else(|| anyhow::anyhow!("WRONG_KIND: expected a UI Port"))?;
+        if key.kind != crate::occurrence::HandleKind::Port {
+            return Err(anyhow::anyhow!("WRONG_KIND: expected a UI Port"));
+        }
+        if !inner.ui_resources.resource_is_live(key) {
+            return Err(anyhow::anyhow!("STALE_HANDLE: UI Port is unavailable"));
+        }
+        inner.content.ui_port_mounted(key)
+    }
+
+    pub fn ui_connector_status(
+        &self,
+        handle: crate::occurrence::UiHandle,
+    ) -> Result<super::content::ContentConnectorStatus> {
+        let inner = self.lock()?;
+        inner.ensure_open()?;
+        if handle.host_namespace != inner.ui_resources.namespace.get() {
+            return Err(anyhow::anyhow!(
+                "STALE_HANDLE: resource belongs to another host"
+            ));
+        }
+        let key = handle
+            .resource_key()
+            .ok_or_else(|| anyhow::anyhow!("WRONG_KIND: expected a UI Connector"))?;
+        if key.kind != crate::occurrence::HandleKind::Connector {
+            return Err(anyhow::anyhow!("WRONG_KIND: expected a UI Connector"));
+        }
+        if !inner.ui_resources.resource_is_live(key) {
+            return Err(anyhow::anyhow!("STALE_HANDLE: UI Connector is unavailable"));
+        }
+        inner.content.ui_connector_status(&inner.ui_resources, key)
     }
 
     pub fn focus_ui(&self, handle: crate::occurrence::UiHandle) -> Result<()> {
@@ -1656,6 +1709,49 @@ impl TuiHost {
         }
     }
 
+    /// Waits for the next native scheduler/content/presentation failure.
+    /// Registration precedes queue inspection, so a failure published between
+    /// those steps cannot be lost. The observer consumes an owned bounded
+    /// notification; it never drives work or scans failed resources.
+    pub async fn wait_for_ui_failure(&self) -> Result<Option<UiFailureNotification>> {
+        loop {
+            let notification = self.presentation_notification()?;
+            let notified = notification.notified();
+            tokio::pin!(notified);
+            let failure = {
+                let mut inner = self.lock_mut()?;
+                if matches!(
+                    inner.lifecycle,
+                    HostLifecycle::Closing(_) | HostLifecycle::Closed(_)
+                ) || !inner.ui_resources.is_open()
+                {
+                    return Ok(None);
+                }
+                if inner.dropped_failure_notifications != 0 {
+                    let dropped = std::mem::take(&mut inner.dropped_failure_notifications);
+                    let mut overflow = inner
+                        .failure_notifications
+                        .front()
+                        .expect("overflow must retain a bounded failure queue")
+                        .clone();
+                    overflow.phase = "host".to_owned();
+                    overflow.code = "LIMIT_EXCEEDED".to_owned();
+                    overflow.retryable = false;
+                    overflow.diagnostic = format!(
+                        "native diagnostic observer fell behind: {dropped} failure notifications were dropped before this retained attempt"
+                    );
+                    Some(overflow)
+                } else {
+                    inner.failure_notifications.pop_front()
+                }
+            };
+            if let Some(failure) = failure {
+                return Ok(Some(failure));
+            }
+            notified.await;
+        }
+    }
+
     pub fn fail_ui_connector_for_test(
         &self,
         handle: crate::occurrence::UiHandle,
@@ -1669,10 +1765,15 @@ impl TuiHost {
                 "STALE_HANDLE: UI Connector belongs to another host"
             ));
         }
-        let key = handle
+        let connector_key = handle
             .resource_key()
             .ok_or_else(|| anyhow::anyhow!("STALE_HANDLE: invalid UI Connector handle"))?;
-        inner.content.fail_ui_connector(key, diagnostic)?;
+        let owner_key = inner
+            .ui_resources
+            .resource_port_key(connector_key)
+            .or_else(|| inner.content.ui_connector_owner_key(connector_key))
+            .unwrap_or(connector_key);
+        inner.content.fail_ui_connector(owner_key, diagnostic)?;
         // The test seam models a failure on the next actual candidate
         // preparation. Re-admit the host after installing the injection so
         // the native scheduler, rather than a caller-side flush, observes it.
@@ -2161,6 +2262,50 @@ impl TuiHost {
                 route_id: route_id.clone(),
                 payload: Some(text),
             });
+        Ok(())
+    }
+
+    /// Routes paste for an accepted React Editor occurrence through the
+    /// existing native router.  The occurrence handle is validated while the
+    /// host lock is held; callback routing remains native and global-before-
+    /// local, just like the legacy HostTextInput entrypoint.
+    pub fn intercept_ui_paste(
+        &self,
+        handle: crate::occurrence::UiHandle,
+        route_id: impl Into<String>,
+    ) -> Result<()> {
+        let mut inner = self.lock_mut()?;
+        inner.ensure_open()?;
+        if handle.host_namespace != inner.ui_resources.namespace.get() {
+            return Err(anyhow::anyhow!(
+                "STALE_HANDLE: occurrence belongs to another host"
+            ));
+        }
+        let key = handle
+            .node_key()
+            .ok_or_else(|| anyhow::anyhow!("PASTE_UNSUPPORTED: requires an occurrence"))?;
+        let snapshot = inner
+            .ui_resources
+            .document_snapshot(key)
+            .map_err(anyhow::Error::msg)?;
+        let control = snapshot
+            .control
+            .ok_or_else(|| anyhow::anyhow!("PASTE_UNSUPPORTED: occurrence is not an Editor"))?;
+        let input = inner
+            .ui_editors
+            .get(&control)
+            .ok_or_else(|| anyhow::anyhow!("PASTE_UNAVAILABLE: Editor is not mounted"))?;
+        let id = input
+            .component_id()
+            .ok_or_else(|| anyhow::anyhow!("PASTE_UNAVAILABLE: Editor is not mounted"))?;
+        let route_id = route_id.into();
+        inner.running.host_intercept_paste(
+            ComponentHandle::<MountedTextInput>::from_raw_id(id),
+            move |text| RoutedOutput {
+                route_id: route_id.clone(),
+                payload: Some(text),
+            },
+        );
         Ok(())
     }
 
@@ -3230,6 +3375,36 @@ impl HostInner {
         self.presentation_notify.notify_waiters();
     }
 
+    fn publish_failure_notification(&mut self, failure: &FrameFailure) {
+        if self.failure_notifications.len() >= MAX_FAILURE_NOTIFICATIONS {
+            self.failure_notifications.pop_front();
+            self.dropped_failure_notifications =
+                self.dropped_failure_notifications.saturating_add(1);
+        }
+        self.failure_notifications
+            .push_back(UiFailureNotification::from(failure));
+        self.presentation_notify.notify_waiters();
+    }
+
+    fn publish_attempt_failure(
+        &mut self,
+        phase: &'static str,
+        code: &'static str,
+        retryable: bool,
+        attempted_ui_revision: u64,
+        attempted_work_epoch: u64,
+        diagnostic: String,
+    ) {
+        self.publish_failure_notification(&FrameFailure {
+            phase,
+            code,
+            attempted_ui_revision,
+            attempted_work_epoch,
+            retryable,
+            diagnostic,
+        });
+    }
+
     #[cfg(test)]
     fn install_test_final_receipt(
         &mut self,
@@ -3536,7 +3711,7 @@ impl HostInner {
                 Ok(wake)
             }
             Err(error) => {
-                self.scheduler_failure = Some(FrameFailure {
+                let failure = FrameFailure {
                     phase: "scheduler",
                     code: "ENVIRONMENT_WAKE_FAILED",
                     attempted_ui_revision: self.ui_resources.document.as_ref().map_or(
@@ -3546,8 +3721,9 @@ impl HostInner {
                     attempted_work_epoch: self.pending_epoch,
                     retryable: true,
                     diagnostic: error.to_string(),
-                });
-                self.presentation_notify.notify_waiters();
+                };
+                self.scheduler_failure = Some(failure.clone());
+                self.publish_failure_notification(&failure);
                 Err(error)
             }
         }
@@ -3795,14 +3971,27 @@ impl HostInner {
                 inner.backend = Some(backend);
                 inner.fail_history_transfer();
                 inner.history_work = None;
-                inner.presentation_notify.notify_waiters();
+                let diagnostic = format!("terminal History submission failed: {error}");
+                let ui_revision = inner.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                let work_epoch = inner.pending_epoch;
+                inner.publish_attempt_failure(
+                    "backend",
+                    "HISTORY_TRANSFER_FAILED",
+                    true,
+                    ui_revision,
+                    work_epoch,
+                    diagnostic.clone(),
+                );
                 drop(inner);
                 wake.notify()?;
                 return Err(host_attempt_error(
                     "backend",
                     "HISTORY_TRANSFER_FAILED",
                     true,
-                    format!("terminal History submission failed: {error}"),
+                    diagnostic,
                 ));
             }
         }
@@ -3885,11 +4074,24 @@ impl HostInner {
                     }
                     Err(error) => {
                         self.fail_history_transfer();
+                        let diagnostic = error.to_string();
+                        let ui_revision = self.ui_resources.document.as_ref().map_or(
+                            0,
+                            crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                        );
+                        self.publish_attempt_failure(
+                            "backend",
+                            "HISTORY_TRANSFER_FAILED",
+                            true,
+                            ui_revision,
+                            self.pending_epoch,
+                            diagnostic.clone(),
+                        );
                         Err(host_attempt_error(
                             "backend",
                             "HISTORY_TRANSFER_FAILED",
                             true,
-                            error.to_string(),
+                            diagnostic,
                         ))
                     }
                 }
@@ -3897,11 +4099,24 @@ impl HostInner {
             std::task::Poll::Ready(Err(error)) => {
                 self.backend = Some(backend);
                 self.fail_history_transfer();
+                let diagnostic = format!("terminal History transfer failed: {error}");
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.publish_attempt_failure(
+                    "backend",
+                    "HISTORY_TRANSFER_FAILED",
+                    true,
+                    ui_revision,
+                    self.pending_epoch,
+                    diagnostic.clone(),
+                );
                 Err(host_attempt_error(
                     "backend",
                     "HISTORY_TRANSFER_FAILED",
                     true,
-                    format!("terminal History transfer failed: {error}"),
+                    diagnostic,
                 ))
             }
         }
@@ -3959,7 +4174,22 @@ impl HostInner {
         candidate.occurrence_geometry = self
             .legacy_scene
             .occurrence_geometry(&candidate.view_geometry);
-        if let Some(diagnostic) = self.content.ui_content_failure() {
+        let content_failure = match self.content.ui_content_failure() {
+            Ok(failure) => failure,
+            Err(error) => {
+                let failure =
+                    host_attempt_error("content", "INTERNAL_INVARIANT", false, error.to_string());
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.record_failed_frame(&failure, "content", ui_revision, target_epoch);
+                self.content.abort_candidate();
+                self.running.host_discard_candidate();
+                return Err(failure);
+            }
+        };
+        if let Some(diagnostic) = content_failure {
             let error = host_attempt_error("content", "PROJECTION_FAILED", true, diagnostic);
             self.record_failed_frame(
                 &error,
@@ -4117,7 +4347,8 @@ impl HostInner {
         let changes = self.pending_ui_changes.take();
         let sync_result = (|| {
             self.sync_ui_controls(changes.as_ref())?;
-            self.legacy_scene
+            let changed_content_ports = self
+                .legacy_scene
                 .synchronize(&self.ui_resources, &mut self.content, changes.as_ref())
                 .map_err(|error| {
                     host_attempt_error(
@@ -4127,6 +4358,14 @@ impl HostInner {
                         format!("occurrence renderer synchronization failed: {error}"),
                     )
                 })?;
+            for port_id in changed_content_ports {
+                self.running
+                    .host_invalidate_content(crate::presentation::ContentDirty::new(
+                        port_id,
+                        None,
+                        crate::presentation::ContentDirtyReason::SelectionLifecycle,
+                    ));
+            }
             let history_units = self
                 .legacy_scene
                 .history_units(&self.ui_resources, changes.as_ref())?;
@@ -4635,21 +4874,43 @@ impl HostInner {
                     Err(error) if crate::terminal::is_terminal_worker_stopped(&error) => {
                         self.mark_faulted();
                         self.physical_sync_unknown = true;
-                        return Err(host_attempt_error(
+                        let failure = host_attempt_error(
                             "backend",
                             "BACKEND_NOT_READY",
                             false,
                             error.to_string(),
-                        ));
+                        );
+                        let ui_revision = self.ui_resources.document.as_ref().map_or(
+                            0,
+                            crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                        );
+                        self.record_failed_frame(
+                            &failure,
+                            "backend",
+                            ui_revision,
+                            self.pending_epoch,
+                        );
+                        return Err(failure);
                     }
                     Err(error) => {
                         self.physical_sync_unknown = true;
-                        return Err(host_attempt_error(
+                        let failure = host_attempt_error(
                             "backend",
                             "BACKEND_IO_FAILED",
                             true,
                             error.to_string(),
-                        ));
+                        );
+                        let ui_revision = self.ui_resources.document.as_ref().map_or(
+                            0,
+                            crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                        );
+                        self.record_failed_frame(
+                            &failure,
+                            "backend",
+                            ui_revision,
+                            self.pending_epoch,
+                        );
+                        return Err(failure);
                     }
                 }
             }
@@ -4687,39 +4948,37 @@ impl HostInner {
                             self.physical_sync_unknown = true;
                             self.view_states
                                 .clear_in_flight_prepared(frame.state_in_flight_ids());
-                            self.presentation_state = PresentationState::Failed(FrameFailure {
-                                phase: "backend",
-                                code: "BACKEND_NOT_READY",
-                                attempted_ui_revision: frame.ui_revision,
-                                attempted_work_epoch: frame.work_epoch,
-                                retryable: false,
-                                diagnostic: error.to_string(),
-                            });
-                            return Err(host_attempt_error(
+                            let failure = host_attempt_error(
                                 "backend",
                                 "BACKEND_NOT_READY",
                                 false,
                                 error.to_string(),
-                            ));
+                            );
+                            self.record_failed_frame(
+                                &failure,
+                                "backend",
+                                frame.ui_revision,
+                                frame.work_epoch,
+                            );
+                            return Err(failure);
                         }
                         Err(error) => {
                             self.physical_sync_unknown = true;
                             self.view_states
                                 .clear_in_flight_prepared(frame.state_in_flight_ids());
-                            self.presentation_state = PresentationState::Failed(FrameFailure {
-                                phase: "backend",
-                                code: "BACKEND_IO_FAILED",
-                                attempted_ui_revision: frame.ui_revision,
-                                attempted_work_epoch: frame.work_epoch,
-                                retryable: true,
-                                diagnostic: error.to_string(),
-                            });
-                            return Err(host_attempt_error(
+                            let failure = host_attempt_error(
                                 "backend",
                                 "BACKEND_IO_FAILED",
                                 true,
                                 error.to_string(),
-                            ));
+                            );
+                            self.record_failed_frame(
+                                &failure,
+                                "backend",
+                                frame.ui_revision,
+                                frame.work_epoch,
+                            );
+                            return Err(failure);
                         }
                     }
                 } else {
@@ -4760,20 +5019,14 @@ impl HostInner {
                 let diagnostic = error.to_string();
                 self.view_states
                     .clear_in_flight_prepared(frame.state_in_flight_ids());
-                self.presentation_state = PresentationState::Failed(FrameFailure {
-                    phase: "backend",
-                    code: "BACKEND_IO_FAILED",
-                    attempted_ui_revision: frame.ui_revision,
-                    attempted_work_epoch: frame.work_epoch,
-                    retryable: true,
-                    diagnostic: diagnostic.clone(),
-                });
-                Err(host_attempt_error(
+                let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
                     true,
                     format!("terminal presentation failed: {diagnostic}"),
-                ))
+                );
+                self.record_failed_frame(&failure, "backend", frame.ui_revision, frame.work_epoch);
+                Err(failure)
             }
         }
     }
@@ -4786,12 +5039,18 @@ impl HostInner {
             Poll::Ready(Ok(())) => Ok(()),
             Poll::Ready(Err(error)) => {
                 self.physical_sync_unknown = true;
-                Err(host_attempt_error(
+                let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
                     true,
                     format!("terminal presentation failed: {error}"),
-                ))
+                );
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.record_failed_frame(&failure, "backend", ui_revision, self.pending_epoch);
+                Err(failure)
             }
             Poll::Pending => {
                 self.bootstrap_receipt = Some(receipt);
@@ -4852,6 +5111,20 @@ impl HostInner {
                 match self.content.commit_prepared(content) {
                     Ok(deferred_source_cleanup) => deferred_source_cleanup,
                     Err(error) => {
+                        let (code, retryable) = error
+                            .downcast_ref::<super::environment::HostAttemptError>()
+                            .map_or(("FRAME_PREPARATION_FAILED", true), |failure| {
+                                (failure.code, failure.retryable)
+                            });
+                        let failure = FrameFailure {
+                            phase: "frame",
+                            code,
+                            attempted_ui_revision: candidate_ui_revision,
+                            attempted_work_epoch: candidate_epoch,
+                            retryable,
+                            diagnostic: error.to_string(),
+                        };
+                        self.publish_failure_notification(&failure);
                         self.failed_attempt = Some(AttemptStamp {
                             revision: self.attempt_revision,
                             work_epoch: candidate_epoch,
@@ -4991,20 +5264,21 @@ impl HostInner {
             .map_or(("FRAME_PREPARATION_FAILED", true), |failure| {
                 (failure.code, failure.retryable)
             });
-        self.presentation_state = PresentationState::Failed(FrameFailure {
+        let failure = FrameFailure {
             phase,
             code,
             attempted_ui_revision: ui_revision,
             attempted_work_epoch: work_epoch,
             retryable,
             diagnostic: error.to_string(),
-        });
+        };
+        self.publish_failure_notification(&failure);
+        self.presentation_state = PresentationState::Failed(failure);
         self.failed_attempt = Some(AttemptStamp {
             revision: self.attempt_revision,
             work_epoch,
             desired_revision: self.desired_structural_revision,
         });
-        self.presentation_notify.notify_waiters();
     }
 
     fn discard_candidate_frame(&mut self) {
@@ -5073,12 +5347,18 @@ impl HostInner {
         if let Some(receipt) = self.bootstrap_receipt.take() {
             if let Err(error) = receipt.blocking_recv() {
                 self.physical_sync_unknown = true;
-                return Err(host_attempt_error(
+                let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
                     true,
                     format!("terminal presentation failed: {error}"),
-                ));
+                );
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.record_failed_frame(&failure, "backend", ui_revision, self.pending_epoch);
+                return Err(failure);
             }
         }
         let presentation = std::mem::replace(&mut self.presentation_state, PresentationState::Idle);
@@ -5087,20 +5367,14 @@ impl HostInner {
                 self.physical_sync_unknown = true;
                 self.view_states
                     .clear_in_flight_prepared(frame.state_in_flight_ids());
-                self.presentation_state = PresentationState::Failed(FrameFailure {
-                    phase: "backend",
-                    code: "BACKEND_IO_FAILED",
-                    attempted_ui_revision: frame.ui_revision,
-                    attempted_work_epoch: frame.work_epoch,
-                    retryable: true,
-                    diagnostic: error.to_string(),
-                });
-                return Err(host_attempt_error(
+                let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
                     true,
                     format!("terminal presentation failed: {error}"),
-                ));
+                );
+                self.record_failed_frame(&failure, "backend", frame.ui_revision, frame.work_epoch);
+                return Err(failure);
             }
             self.presentation_state = PresentationState::Completing { frame };
         } else {
@@ -5333,7 +5607,8 @@ mod tests {
 
     use super::super::environment::TuiEnvironment;
     use super::{
-        ClosePhase, HostTextInput, NativeUiEvent, PresentationState, RoutedOutput, TuiHost,
+        ClosePhase, HostTextInput, MAX_FAILURE_NOTIFICATIONS, NativeUiEvent, PresentationState,
+        RoutedOutput, TuiHost,
     };
     use crate::occurrence::{HostKind, NodeRef, OwnershipMode, ResourceRef, UiCommit, UiOperation};
     use crate::{
@@ -5859,7 +6134,7 @@ mod tests {
     }
 
     #[test]
-    fn native_global_key_fallback_preserves_local_component_precedence() {
+    fn native_global_key_binding_precedes_local_component_input() {
         let host = TuiHost::open(20, 4, true).unwrap();
         let input = host.create_text_input(false).unwrap();
         let key = KeyStroke::new(Key::Char('q'));
@@ -5868,7 +6143,16 @@ mod tests {
             .unwrap();
 
         host.dispatch_key(key).unwrap();
-        assert_eq!(input.text().unwrap(), "q");
+        assert_eq!(input.text().unwrap(), "");
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "global".to_owned(),
+                payload: None,
+            })
+        );
+        host.dispatch_key(KeyStroke::new(Key::Char('u'))).unwrap();
+        assert_eq!(input.text().unwrap(), "u");
         assert_eq!(host.next_output(), None);
 
         host.render(vf::text("unfocused")).unwrap();
@@ -7149,6 +7433,331 @@ mod tests {
         host.close_ui_state().unwrap();
         assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
         host.close().unwrap();
+    }
+
+    #[test]
+    fn native_failure_waiter_reports_distinct_attempts_and_wakes_on_close() {
+        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        host.fail_next_frame_for_test("first native failure")
+            .unwrap();
+        host.set_desired_view(vf::text("failure observer")).unwrap();
+        let first_waiter_host = host.clone();
+        let first_waiter =
+            runtime.spawn(async move { first_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let first_report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(first_report.errors.len(), 1);
+        let first = runtime.block_on(first_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(first.phase, "frame");
+        assert_eq!(first.code, "FRAME_PREPARATION_FAILED");
+        assert_eq!(first.diagnostic, "first native failure");
+        assert!(first.retryable);
+
+        // A second recoverable failure in the same pending work epoch is a
+        // distinct notification. The observer must not deduplicate by epoch
+        // and silently lose the later diagnostic.
+        host.fail_next_frame_for_test("second native failure")
+            .unwrap();
+        let second_waiter_host = host.clone();
+        let second_waiter =
+            runtime.spawn(async move { second_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let second_report = host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(second_report.errors.len(), 1);
+        let second = runtime.block_on(second_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(second.phase, "frame");
+        assert_eq!(second.code, "FRAME_PREPARATION_FAILED");
+        assert_eq!(second.diagnostic, "second native failure");
+        assert_eq!(second.attempted_work_epoch, first.attempted_work_epoch);
+        assert_ne!(second.diagnostic, first.diagnostic);
+
+        {
+            let mut inner = host.lock_mut().unwrap();
+            for _ in 0..MAX_FAILURE_NOTIFICATIONS + 2 {
+                inner.publish_attempt_failure(
+                    "frame",
+                    "FRAME_PREPARATION_FAILED",
+                    true,
+                    second.attempted_ui_revision,
+                    second.attempted_work_epoch,
+                    "bounded observer failure".to_owned(),
+                );
+            }
+            assert_eq!(inner.failure_notifications.len(), MAX_FAILURE_NOTIFICATIONS);
+        }
+        let overflow = runtime
+            .block_on(host.wait_for_ui_failure())
+            .unwrap()
+            .unwrap();
+        assert_eq!(overflow.code, "LIMIT_EXCEEDED");
+        assert!(overflow.diagnostic.contains("2 failure notifications"));
+        for _ in 0..MAX_FAILURE_NOTIFICATIONS {
+            let retained = runtime
+                .block_on(host.wait_for_ui_failure())
+                .unwrap()
+                .unwrap();
+            assert_eq!(retained.diagnostic, "bounded observer failure");
+        }
+
+        let close_waiter_host = host.clone();
+        let close_waiter =
+            runtime.spawn(async move { close_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        host.close_ui_state().unwrap();
+        assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_ui_adapter_switches_keep_qualified_identity_and_bounded_owners() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
+        let source_a = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        let source_b = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source_a.append_utf8(b"A", &[], &[]).unwrap();
+        source_b.append_utf8(b"B", &[], &[]).unwrap();
+
+        let mut create = UiCommit::new(0);
+        create.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        create.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 3,
+            source_index: 0,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::OccurrenceOwned,
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 4,
+            source_index: 1,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::OccurrenceOwned,
+        });
+        create.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(host.ui_body_handle().unwrap()),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        create.push(UiOperation::AttachPort {
+            node: NodeRef::Local(1),
+            port: Some(ResourceRef::Local(2)),
+        });
+        create.push(UiOperation::SelectConnector {
+            port: ResourceRef::Local(2),
+            connector: Some(ResourceRef::Local(3)),
+        });
+        let created = host
+            .commit_ui(create, &[source_a.clone(), source_b.clone()])
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let node = created
+            .acknowledgement
+            .created
+            .iter()
+            .find(|handle| handle.kind == crate::occurrence::HandleKind::Node)
+            .copied()
+            .expect("content occurrence acknowledgement");
+        let port = created
+            .acknowledgement
+            .created
+            .iter()
+            .find(|handle| handle.kind == crate::occurrence::HandleKind::Port)
+            .copied()
+            .expect("content Port acknowledgement");
+        let connectors = created
+            .acknowledgement
+            .created
+            .iter()
+            .filter(|handle| handle.kind == crate::occurrence::HandleKind::Connector)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(connectors.len(), 2);
+        let connector_a = connectors[0];
+        let connector_b = connectors[1];
+        let port_key = port.resource_key().unwrap();
+        let connector_a_key = connector_a.resource_key().unwrap();
+        let connector_b_key = connector_b.resource_key().unwrap();
+
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            assert_eq!(
+                inner
+                    .content
+                    .ui_connector_status(&inner.ui_resources, connector_a_key)
+                    .unwrap()
+                    .visible,
+                true
+            );
+            assert_eq!(source_a.subscriber_count(), 1);
+            assert_eq!(source_b.subscriber_count(), 0);
+        }
+
+        let mut select_b = UiCommit::new(1);
+        select_b.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_b)),
+        });
+        host.commit_ui(select_b, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            let status = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_b_key)
+                .unwrap();
+            assert!(status.requested);
+            assert!(status.visible);
+            assert_eq!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .unwrap()
+                    .0,
+                connector_b_key
+            );
+        }
+
+        // A failed switch preserves B's confirmed product while retaining at
+        // most one current failed adapter. The identity comparison is
+        // qualified by HandleKind, so a Port key can never be promoted as a
+        // Connector key.
+        host.fail_next_ui_connector_for_test("failed A".to_owned())
+            .unwrap();
+        let mut select_a = UiCommit::new(2);
+        select_a.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_a)),
+        });
+        host.commit_ui(select_a, &[]).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let failure_waiter_host = host.clone();
+        let failure_waiter =
+            runtime.spawn(async move { failure_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let failed_report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(failed_report.errors.len(), 1);
+        assert_eq!(failed_report.errors[0].code, "PROJECTION_FAILED");
+        let failure = runtime.block_on(failure_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(failure.phase, "content");
+        assert_eq!(failure.code, "PROJECTION_FAILED");
+        assert_eq!(
+            failure.attempted_ui_revision,
+            failed_report.errors[0].desired_revision
+        );
+        {
+            let inner = host.inner.lock().unwrap();
+            let failed = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_a_key)
+                .unwrap();
+            assert!(failed.requested);
+            assert!(!failed.visible);
+            assert_eq!(
+                failed.error.as_ref().map(|error| error.code.as_str()),
+                Some("PROJECTION_FAILED")
+            );
+            let confirmed = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_b_key)
+                .unwrap();
+            assert!(confirmed.visible);
+            assert_eq!(inner.content.test_ui_adapter_count(), 2);
+        }
+        source_a.append_utf8(b" recovered", &[], &[]).unwrap();
+        let recovery_report = host.flush_pending_hosts(8, true).unwrap();
+        assert!(recovery_report.errors.is_empty());
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            let recovered = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_a_key)
+                .unwrap();
+            assert!(recovered.visible);
+            assert_eq!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .unwrap()
+                    .0,
+                connector_a_key
+            );
+        }
+
+        // Successful A/B/A churn must retire each superseded execution
+        // adapter at its receipt instead of growing the host registry.
+        let mut switch_b_again = UiCommit::new(3);
+        switch_b_again.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_b)),
+        });
+        host.commit_ui(switch_b_again, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let mut switch_a_again = UiCommit::new(4);
+        switch_a_again.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_a)),
+        });
+        host.commit_ui(switch_a_again, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(
+            host.inner.lock().unwrap().content.test_ui_adapter_count(),
+            1
+        );
+        assert!(source_a.dispose().is_err());
+        assert!(source_b.dispose().is_err());
+
+        // Retiring the occurrence unmounts the Port, releases both accepted
+        // Source memberships and removes the final derived adapter/Port.
+        let mut retire = UiCommit::new(5);
+        retire.push(UiOperation::RetireSubtree {
+            root: NodeRef::Existing(node),
+        });
+        host.commit_ui(retire, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 0);
+            assert!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .is_none()
+            );
+            assert_eq!(inner.content.test_port_count(), 0);
+            assert_eq!(inner.content.test_connector_count(), 0);
+        }
+        assert_eq!(source_a.subscriber_count(), 0);
+        assert_eq!(source_b.subscriber_count(), 0);
+        host.close().unwrap();
+        source_a.dispose().unwrap();
+        source_b.dispose().unwrap();
     }
 
     #[test]

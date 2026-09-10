@@ -1,8 +1,9 @@
 /** Opaque semantic key resolved by a Theme. */
 export class ThemeKey {
-  readonly kind = "theme-key" as const;
+	readonly kind = "theme-key" as const;
 
-  constructor(readonly value: string) {
-    if (typeof value !== "string" || value.length === 0) throw new RangeError("theme key cannot be empty");
-  }
+	constructor(readonly value: string) {
+		if (typeof value !== "string" || value.length === 0)
+			throw new RangeError("theme key cannot be empty");
+	}
 }

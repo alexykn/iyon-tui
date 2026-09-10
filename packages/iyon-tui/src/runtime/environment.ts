@@ -1,46 +1,23 @@
 import {
-  type NativeResourceRegistry,
-  runtimeResourceEnvironment,
-  runtimeResourceRegistry,
+	runtimeResourceEnvironment,
+	runtimeResourceRegistry,
+	type NativeResourceRegistry,
 } from "./native-resource-registry.ts";
-import type { RuntimeErrorChannel } from "./error-channel.ts";
-import {
-  EnvironmentWakeBroker,
-  type NativeFrameHost,
-  type NativeHostCommit,
-  type RuntimeHostRegistration,
-} from "./wake-broker.ts";
 
 export interface RuntimeEnvironment {
-  readonly token: object;
-  readonly resources: NativeResourceRegistry;
-  readonly wakeBroker: EnvironmentWakeBroker;
-  registerHost(
-    native: NativeFrameHost,
-    errors: RuntimeErrorChannel,
-    onCommitted: (commit?: NativeHostCommit) => void,
-  ): RuntimeHostRegistration;
-}
-
-class EnvironmentRuntime implements RuntimeEnvironment {
-  readonly token = runtimeResourceEnvironment();
-  readonly resources = runtimeResourceRegistry();
-  readonly wakeBroker = new EnvironmentWakeBroker();
-
-  registerHost(
-    native: NativeFrameHost,
-    errors: RuntimeErrorChannel,
-    onCommitted: (commit?: NativeHostCommit) => void,
-  ): RuntimeHostRegistration {
-    return this.wakeBroker.register(native, errors, onCommitted);
-  }
+	readonly token: object;
+	readonly resources: NativeResourceRegistry;
 }
 
 const ENVIRONMENT_KEY = Symbol.for("iyon:tui:runtime-environment");
-type RuntimeGlobals = typeof globalThis & { [ENVIRONMENT_KEY]?: RuntimeEnvironment };
-const globals = globalThis as RuntimeGlobals;
+const globals = globalThis as typeof globalThis & {
+	[ENVIRONMENT_KEY]?: RuntimeEnvironment;
+};
 
-/** One runtime environment per JavaScript realm/module instance. */
+/** Sources retain their realm lifetime without a JavaScript frame or receipt poller. */
 export function runtimeEnvironment(): RuntimeEnvironment {
-  return globals[ENVIRONMENT_KEY] ??= new EnvironmentRuntime();
+	return (globals[ENVIRONMENT_KEY] ??= {
+		token: runtimeResourceEnvironment(),
+		resources: runtimeResourceRegistry(),
+	});
 }

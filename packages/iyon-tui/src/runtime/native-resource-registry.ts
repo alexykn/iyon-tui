@@ -4,15 +4,15 @@
  * on runtime ownership, while callers have one runtime-level import point.
  */
 export {
-  NativeResourceRegistry,
-  PreparedResourceLease,
-  runtimeResourceEnvironment,
-  runtimeResourceRegistry,
+	NativeResourceRegistry,
+	PreparedResourceLease,
+	runtimeResourceEnvironment,
+	runtimeResourceRegistry,
 } from "../transport/native/resource-registry.ts";
 export type {
-  NativeResourceKind,
-  NativeResourceStats,
-  ResourceLifecycle,
-  ResourceOwner,
-  ResourceRegistration,
+	NativeResourceKind,
+	NativeResourceStats,
+	ResourceLifecycle,
+	ResourceOwner,
+	ResourceRegistration,
 } from "../transport/native/resource-registry.ts";

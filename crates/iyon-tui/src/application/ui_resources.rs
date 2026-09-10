@@ -455,6 +455,21 @@ impl UiResourceOwner {
         Ok(Some((connector, source, funnel)))
     }
 
+    pub(crate) fn connector_requested(&self, connector: ResourceKey) -> bool {
+        self.document_ref()
+            .resource_port(connector)
+            .and_then(|port| self.document_ref().selected_connector(port))
+            == Some(connector)
+    }
+
+    pub(crate) fn resource_is_live(&self, key: ResourceKey) -> bool {
+        self.document_ref().resource_is_live(key)
+    }
+
+    pub(crate) fn resource_port_key(&self, key: ResourceKey) -> Option<ResourceKey> {
+        self.document_ref().resource_port(key)
+    }
+
     pub(crate) fn control_state(
         &self,
         key: ResourceKey,

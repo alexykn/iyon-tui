@@ -3279,6 +3279,16 @@ struct PortRecord {
     id: u64,
     generation: u32,
     family: ContentFamily,
+    /// Qualified occurrence Port identity for the derived UI adapter, when
+    /// this Port was created by `sync_ui_resources`. Generic host-owned
+    /// ContentPorts leave this unset. Capturing it on the Port record lets a
+    /// receipt promote/retire only the touched adapter without reverse-
+    /// scanning the whole UI registry.
+    ui_key: Option<ResourceKey>,
+    /// A retired occurrence Port remains in the native execution registry
+    /// until the receipt that confirms its unmount has removed its derived
+    /// Connector. This keeps stale-resource cleanup receipt-safe.
+    ui_retire_after_receipt: bool,
     lifecycle: PortLifecycle,
     host: Weak<Mutex<HostInner>>,
     connector_ids: HashSet<u64>,
@@ -3350,6 +3360,8 @@ struct ConnectorRecord {
 struct PreparedContentPort {
     id: u64,
     record: Arc<Mutex<PortRecord>>,
+    ui_key: Option<ResourceKey>,
+    ui_retire_after_receipt: bool,
     mounted: bool,
     old_connector_id: Option<u64>,
     old_connector_index: Option<usize>,
@@ -3607,6 +3619,15 @@ pub(crate) struct ContentHostRegistry {
     ui_ports: HashMap<ResourceKey, u64>,
     ui_connectors: HashMap<ResourceKey, u64>,
     ui_connector_keys: HashMap<ResourceKey, ResourceKey>,
+    /// Every derived adapter retains its qualified occurrence Connector key
+    /// until the receipt that supersedes it permits retirement. This is an
+    /// identity-to-execution-owner index, not a second Source-membership or
+    /// status authority.
+    ui_connector_keys_by_id: HashMap<u64, ResourceKey>,
+    /// Qualified Connector identity and native execution owner confirmed by
+    /// the last successful receipt for each UI Port. The occurrence owner
+    /// remains authoritative for identity and Source membership.
+    ui_confirmed_connectors: HashMap<ResourceKey, (ResourceKey, u64)>,
     ui_failure_injections: HashMap<ResourceKey, String>,
     ui_next_failure_injection: Option<String>,
     #[cfg(test)]
@@ -3651,6 +3672,8 @@ impl ContentHostRegistry {
             ui_ports: HashMap::new(),
             ui_connectors: HashMap::new(),
             ui_connector_keys: HashMap::new(),
+            ui_connector_keys_by_id: HashMap::new(),
+            ui_confirmed_connectors: HashMap::new(),
             ui_failure_injections: HashMap::new(),
             ui_next_failure_injection: None,
             #[cfg(test)]
@@ -3685,7 +3708,7 @@ impl ContentHostRegistry {
         let synced_keys = port_keys.clone();
         stale_keys.sort_unstable_by_key(|key| (key.slot, key.generation));
         stale_keys.dedup();
-        self.remove_stale_ui_ports(stale_keys);
+        self.remove_stale_ui_ports(stale_keys)?;
 
         let demanded_keys = self.demanded_ui_ports(owner, &port_keys, initial)?;
         for key in port_keys {
@@ -3820,18 +3843,52 @@ impl ContentHostRegistry {
         self.ui_owner_nodes_visited
     }
 
-    fn remove_stale_ui_ports(&mut self, keys: Vec<ResourceKey>) {
+    #[cfg(test)]
+    pub(crate) fn test_ui_adapter_count(&self) -> usize {
+        self.ui_connector_keys_by_id.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_ui_confirmed_connector(
+        &self,
+        port: ResourceKey,
+    ) -> Option<(ResourceKey, u64)> {
+        self.ui_confirmed_connectors.get(&port).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_port_count(&self) -> usize {
+        self.ports.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_connector_count(&self) -> usize {
+        self.connectors.len()
+    }
+
+    fn remove_stale_ui_ports(&mut self, keys: Vec<ResourceKey>) -> Result<()> {
         for key in keys {
             if let Some(connector_id) = self.ui_connectors.remove(&key) {
-                self.remove_connector(connector_id);
+                let visible = self.connector_is_visible(connector_id)?;
+                self.ui_connector_keys.remove(&key);
+                if visible {
+                    self.request_deactivation(connector_id)?;
+                } else {
+                    self.ui_connector_keys_by_id.remove(&connector_id);
+                    self.remove_connector(connector_id);
+                }
             }
-            self.ui_connector_keys.remove(&key);
             if let Some(port_id) = self.ui_ports.remove(&key)
                 && let Some(port) = self.ports.get(&port_id).cloned()
             {
-                let _ = self.dispose_port(&port);
+                self.set_desired_sparse(&[(port_id, false)])?;
+                port.lock()
+                    .map_err(|_| anyhow!("ContentPort lock is poisoned during stale cleanup"))?
+                    .ui_retire_after_receipt = true;
             }
+            self.ui_confirmed_connectors.remove(&key);
         }
+        Ok(())
     }
 
     fn sync_ui_port(
@@ -3845,6 +3902,10 @@ impl ContentHostRegistry {
         } else {
             let port = self.create_port(host.clone(), ContentFamily::Text)?;
             let port_id = port.id();
+            port.record
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned during UI sync"))?
+                .ui_key = Some(key);
             self.ui_ports.insert(key, port_id);
             port_id
         };
@@ -3852,7 +3913,19 @@ impl ContentHostRegistry {
         let current_connector = self.ui_connectors.get(&key).copied();
         let Some((connector_key, source, funnel)) = binding else {
             if let Some(connector_id) = self.ui_connectors.remove(&key) {
-                self.remove_connector(connector_id);
+                let visible = self.connector_is_visible(connector_id)?;
+                if let Some(old_key) = self.ui_connector_keys.get(&key).copied()
+                    && visible
+                {
+                    self.ui_confirmed_connectors
+                        .insert(key, (old_key, connector_id));
+                }
+                if visible {
+                    self.request_deactivation(connector_id)?;
+                } else {
+                    self.ui_connector_keys_by_id.remove(&connector_id);
+                    self.remove_connector(connector_id);
+                }
             }
             self.ui_connector_keys.remove(&key);
             return Ok(());
@@ -3865,7 +3938,19 @@ impl ContentHostRegistry {
             return Ok(());
         }
         if let Some(connector_id) = self.ui_connectors.remove(&key) {
-            self.remove_connector(connector_id);
+            let visible = self.connector_is_visible(connector_id)?;
+            if let Some(old_key) = self.ui_connector_keys.get(&key).copied()
+                && visible
+            {
+                self.ui_confirmed_connectors
+                    .insert(key, (old_key, connector_id));
+            }
+            if visible {
+                self.request_deactivation(connector_id)?;
+            } else {
+                self.ui_connector_keys_by_id.remove(&connector_id);
+                self.remove_connector(connector_id);
+            }
         }
         let port = self
             .ports
@@ -3893,21 +3978,14 @@ impl ContentHostRegistry {
                 ContentDelivery::Immediate
             },
         );
-        let connector = self.connect(&port, &source, funnel)?;
+        let connector = self.connect_derived(&port, &source, funnel)?;
         let connector_id = connector.id();
         // UiResourceOwner already owns the accepted Source membership. The
-        // derived ContentProvider wrapper shares that binding but must not
-        // make Source disposal depend on a hidden second membership.
-        source.release_connector()?;
-        if let Some(record) = self.connectors.get(&connector_id) {
-            let mut state = record
-                .lock()
-                .map_err(|_| anyhow!("Connector lock is poisoned during UI sync"))?;
-            state.membership_owned = false;
-            state.membership_released = true;
-        }
+        // derived ContentProvider wrapper has no independent lease.
         self.ui_connectors.insert(key, connector_id);
         self.ui_connector_keys.insert(key, connector_key);
+        self.ui_connector_keys_by_id
+            .insert(connector_id, connector_key);
         if let Some(diagnostic) = self
             .ui_failure_injections
             .remove(&key)
@@ -3931,6 +4009,85 @@ impl ContentHostRegistry {
 
     pub(crate) fn ui_port_id(&self, key: ResourceKey) -> Option<u64> {
         self.ui_ports.get(&key).copied()
+    }
+
+    pub(crate) fn ui_connector_owner_key(&self, connector: ResourceKey) -> Option<ResourceKey> {
+        self.ui_connector_keys
+            .iter()
+            .find(|(_, connector_key)| **connector_key == connector)
+            .map(|(port_key, _)| *port_key)
+            .or_else(|| {
+                self.ui_confirmed_connectors
+                    .iter()
+                    .find(|(_, (connector_key, _))| *connector_key == connector)
+                    .map(|(port_key, _)| *port_key)
+            })
+    }
+
+    fn connector_is_visible(&self, connector_id: u64) -> Result<bool> {
+        let connector = self.connectors.get(&connector_id).ok_or_else(|| {
+            anyhow!(
+                "INTERNAL_INVARIANT: UI Connector {connector_id} disappeared during visibility read"
+            )
+        })?;
+        Ok(connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned during visibility read"))?
+            .visible)
+    }
+
+    /// Reads the native execution status for an occurrence-owned UI resource.
+    /// The UI resource key remains the identity authority; this map is only the
+    /// derived ContentProvider execution mapping.
+    pub(crate) fn ui_port_mounted(&self, key: ResourceKey) -> Result<bool> {
+        let Some(port_id) = self.ui_ports.get(&key).copied() else {
+            return Ok(false);
+        };
+        self.port_status(port_id)
+    }
+
+    pub(crate) fn ui_connector_status(
+        &self,
+        owner: &UiResourceOwner,
+        key: ResourceKey,
+    ) -> Result<ContentConnectorStatus> {
+        if let Some((port_key, _)) = self
+            .ui_connector_keys
+            .iter()
+            .find(|(_, connector_key)| **connector_key == key)
+        {
+            let connector_id = self.ui_connectors.get(port_key).copied().ok_or_else(|| {
+                anyhow!("INTERNAL_INVARIANT: UI Connector {key:?} has no derived execution owner")
+            })?;
+            return self.connector_status(connector_id);
+        }
+        if let Some((connector_key, connector_id)) = self
+            .ui_confirmed_connectors
+            .values()
+            .find(|(connector_key, _)| *connector_key == key)
+            .copied()
+        {
+            debug_assert_eq!(connector_key, key);
+            return self.connector_status(connector_id);
+        }
+        if owner.connectors.contains_key(&key) {
+            let requested = owner.connector_requested(key);
+            return Ok(ContentConnectorStatus {
+                phase: if requested {
+                    "waiting-for-mount"
+                } else {
+                    "idle"
+                }
+                .to_owned(),
+                requested,
+                visible: false,
+                projected_source_revision: None,
+                error: None,
+                cleanup_pending: false,
+                cleanup_error: None,
+            });
+        }
+        Err(anyhow!("STALE_HANDLE: UI Connector is unavailable"))
     }
 
     pub(crate) fn ui_content_visible(&self, owner: &UiResourceOwner) -> Result<bool> {
@@ -3973,16 +4130,24 @@ impl ContentHostRegistry {
         Ok(true)
     }
 
-    pub(crate) fn ui_content_failure(&self) -> Option<String> {
-        self.ui_connectors.values().find_map(|connector_id| {
-            let connector = self.connectors.get(connector_id)?;
-            let state = connector.lock().ok()?;
-            state
-                .error
-                .as_ref()
-                .filter(|_| state.requested && !state.visible)
-                .map(|error| format!("{}: {}", error.code, error.diagnostic))
-        })
+    pub(crate) fn ui_content_failure(&self) -> Result<Option<String>> {
+        for connector_id in self.ui_connectors.values().copied() {
+            let connector = self.connectors.get(&connector_id).ok_or_else(|| {
+                anyhow!(
+                    "INTERNAL_INVARIANT: UI Connector {connector_id} disappeared during failure read"
+                )
+            })?;
+            let state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned during failure read"))?;
+            if state.requested
+                && !state.visible
+                && let Some(error) = state.error.as_ref()
+            {
+                return Ok(Some(format!("{}: {}", error.code, error.diagnostic)));
+            }
+        }
+        Ok(None)
     }
 
     pub(crate) fn fail_ui_connector(
@@ -4050,6 +4215,8 @@ impl ContentHostRegistry {
             id: port_id,
             generation: self.next_generation,
             family,
+            ui_key: None,
+            ui_retire_after_receipt: false,
             lifecycle: PortLifecycle::Live,
             host: host.clone(),
             connector_ids: HashSet::new(),
@@ -4073,6 +4240,28 @@ impl ContentHostRegistry {
         port: &Arc<Mutex<PortRecord>>,
         source: &HostContentSource,
         funnel: HostContentFunnel,
+    ) -> Result<HostContentConnector> {
+        self.connect_with_membership(port, source, funnel, true)
+    }
+
+    /// Builds the execution-only Connector used by an occurrence-owned UI
+    /// resource. Source membership was accepted by `UiResourceOwner`; the
+    /// derived adapter must not acquire a hidden second lease.
+    fn connect_derived(
+        &mut self,
+        port: &Arc<Mutex<PortRecord>>,
+        source: &HostContentSource,
+        funnel: HostContentFunnel,
+    ) -> Result<HostContentConnector> {
+        self.connect_with_membership(port, source, funnel, false)
+    }
+
+    fn connect_with_membership(
+        &mut self,
+        port: &Arc<Mutex<PortRecord>>,
+        source: &HostContentSource,
+        funnel: HostContentFunnel,
+        membership_owned: bool,
     ) -> Result<HostContentConnector> {
         let (port_id, port_family, port_live) = {
             let port = port
@@ -4110,22 +4299,28 @@ impl ContentHostRegistry {
                 "CONTENT_FAMILY_MISMATCH: ContentPort and Source/Funnel families differ"
             ));
         }
-        source.acquire_connector()?;
+        if membership_owned {
+            source.acquire_connector()?;
+        }
         self.next_connector_id = match self.next_connector_id.checked_add(1) {
             Some(id) => id,
             None => {
-                source
-                    .release_connector()
-                    .expect("Connector rollback must release Source membership");
+                if membership_owned {
+                    source
+                        .release_connector()
+                        .expect("Connector rollback must release Source membership");
+                }
                 return Err(anyhow!("Connector identity exhausted"));
             }
         };
         self.next_generation = match self.next_generation.checked_add(1) {
             Some(generation) => generation,
             None => {
-                source
-                    .release_connector()
-                    .expect("Connector rollback must release Source membership");
+                if membership_owned {
+                    source
+                        .release_connector()
+                        .expect("Connector rollback must release Source membership");
+                }
                 return Err(anyhow!("Connector generation exhausted"));
             }
         };
@@ -4140,8 +4335,8 @@ impl ContentHostRegistry {
             requested: false,
             visible: false,
             subscribed: false,
-            membership_released: false,
-            membership_owned: true,
+            membership_released: !membership_owned,
+            membership_owned,
             cleanup_error: None,
             phase: "idle",
             error: None,
@@ -5430,13 +5625,15 @@ impl ContentHostRegistry {
                     "INTERNAL_INVARIANT: ContentPort {port_id} disappeared during candidate preparation"
                 )
             })?;
-            let (old_id, port_live) = {
+            let (old_id, port_live, ui_key, ui_retire_after_receipt) = {
                 let state = record.lock().map_err(|_| {
                     anyhow!("ContentPort lock is poisoned during candidate preparation")
                 })?;
                 (
                     state.visible_connector,
                     state.lifecycle == PortLifecycle::Live,
+                    state.ui_key,
+                    state.ui_retire_after_receipt,
                 )
             };
             if !port_live {
@@ -5501,6 +5698,8 @@ impl ContentHostRegistry {
             ports.push(PreparedContentPort {
                 id: port_id,
                 record,
+                ui_key,
+                ui_retire_after_receipt,
                 mounted,
                 old_connector_id: old_id,
                 old_connector_index: None,
@@ -6013,6 +6212,47 @@ impl ContentHostRegistry {
                 );
             }
         }
+        // Promote the qualified confirmed product only for UI Ports captured
+        // in this receipt. The Port record carries its occurrence identity,
+        // while the adapter index carries the exact native Connector owner;
+        // neither side needs a whole-host scan or a Port key masquerading as
+        // a Connector key. A superseded derived adapter is marked Disposing
+        // here and removed by the same captured Source-cleanup plan below.
+        for port in &plan.ports {
+            let Some(ui_key) = port.ui_key else {
+                continue;
+            };
+            let visible_id = port
+                .record
+                .lock()
+                .expect("prepared ContentPort lock must remain usable after preflight")
+                .visible_connector;
+            if let Some(visible_id) = visible_id {
+                let connector_key = self
+                    .ui_connector_keys_by_id
+                    .get(&visible_id)
+                    .copied()
+                    .expect("visible UI adapter must retain its qualified Connector key");
+                self.ui_confirmed_connectors
+                    .insert(ui_key, (connector_key, visible_id));
+            } else {
+                self.ui_confirmed_connectors.remove(&ui_key);
+            }
+            if port.old_connector_id != visible_id
+                && let Some(old_id) = port.old_connector_id
+                && self.ui_connector_keys_by_id.remove(&old_id).is_some()
+            {
+                // An unmounted Port has no replacement adapter.  Clear the
+                // execution index only when it still points at the retired
+                // adapter; a successful A/B switch already installed the new
+                // candidate under this UI key and must retain that mapping.
+                if self.ui_connectors.get(&ui_key).copied() == Some(old_id) {
+                    self.ui_connectors.remove(&ui_key);
+                    self.ui_connector_keys.remove(&ui_key);
+                }
+                self.retire_derived_connector(old_id);
+            }
+        }
         for change in &plan.binding_changes {
             let port = &plan.ports[change.port_index];
             let unresolved = {
@@ -6220,6 +6460,28 @@ impl ContentHostRegistry {
                 continue;
             }
             remove_prepared_connector_committed(&mut self.connectors, connector);
+        }
+        for port in &plan.ports {
+            if !port.ui_retire_after_receipt {
+                continue;
+            }
+            let removable = port
+                .record
+                .lock()
+                .expect("prepared ContentPort lock must remain usable during retirement")
+                .connector_ids
+                .is_empty();
+            if removable {
+                let mut state = port
+                    .record
+                    .lock()
+                    .expect("prepared ContentPort lock must remain usable during retirement");
+                state.lifecycle = PortLifecycle::Disposed;
+                drop(state);
+                self.ports
+                    .remove(&port.id)
+                    .expect("retired UI ContentPort must remain owned until receipt cleanup");
+            }
         }
         self.candidate_binding_changes.clear();
         self.candidate_binding_revisions.clear();
@@ -6601,6 +6863,8 @@ impl ContentHostRegistry {
         self.ui_ports.clear();
         self.ui_connectors.clear();
         self.ui_connector_keys.clear();
+        self.ui_connector_keys_by_id.clear();
+        self.ui_confirmed_connectors.clear();
         self.ui_failure_injections.clear();
     }
 
@@ -6872,6 +7136,31 @@ impl ContentHostRegistry {
             if port_state.visible_connector == Some(connector_id) {
                 port_state.visible_connector = None;
             }
+        }
+    }
+
+    /// Retires a derived UI Connector after its superseding binding has been
+    /// accepted by a native receipt. Source subscription/membership cleanup
+    /// remains owned by the captured commit plan; marking the lifecycle here
+    /// lets that cleanup defer safely if the Source lock is poisoned without
+    /// retaining one adapter per A/B switch.
+    fn retire_derived_connector(&mut self, connector_id: u64) {
+        let connector = self
+            .connectors
+            .get(&connector_id)
+            .cloned()
+            .expect("derived UI Connector must remain owned until receipt retirement");
+        let mut state = connector
+            .lock()
+            .expect("derived UI Connector lock must remain usable at receipt retirement");
+        assert!(
+            !state.visible,
+            "a derived UI Connector may retire only after visibility promotion"
+        );
+        if state.lifecycle == ConnectorLifecycle::Live {
+            state.lifecycle = ConnectorLifecycle::Disposing;
+            state.requested = false;
+            state.phase = "disposing";
         }
     }
 

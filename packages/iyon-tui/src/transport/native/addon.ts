@@ -12,287 +12,383 @@ import { resolveNativeArtifact } from "./artifact.ts";
 export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {
-  readonly output?: unknown;
+	readonly output?: unknown;
 }
 
 export interface NativeHistoryContract {
-  dispose(): void;
-  layout(): object;
-  setLayout(layout: object): void;
-  isDetached(): boolean;
-  pushRef(viewRef: number): number;
-  freezeRef(unit: number, viewRef: number): void;
-  discardLive(unit: number): void;
+	dispose(): void;
+	layout(): object;
+	setLayout(layout: object): void;
+	isDetached(): boolean;
+	pushRef(viewRef: number): number;
+	freezeRef(unit: number, viewRef: number): void;
+	discardLive(unit: number): void;
 }
 
 export interface NativeStateWake {
-  readonly schedule_environment_drain: boolean;
+	readonly schedule_environment_drain: boolean;
 }
 
 export interface NativeStructuralAttachmentContract {
-  attachmentId(): number;
+	attachmentId(): number;
 }
 
-export interface NativeViewStateContract extends NativeStructuralAttachmentContract {
-  dispose(): void;
-  stateId(): number;
-  validateNodeKind(targetNodeKind: number): void;
-  setGeometry(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): number;
-  clearGeometry(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): number;
-  setPresentation(setMask: number, nullMask: number, clearMask: number, words: readonly number[], strings: readonly string[]): number;
-  clearPresentation(setMask: number, nullMask: number, clearMask: number, clearAll: boolean): number;
-  setStyleState(key: string, value: string): number;
-  clearStyleState(key: string): number;
+export interface NativeViewStateContract
+	extends NativeStructuralAttachmentContract {
+	dispose(): void;
+	stateId(): number;
+	validateNodeKind(targetNodeKind: number): void;
+	setGeometry(
+		setMask: number,
+		nullMask: number,
+		clearMask: number,
+		words: readonly number[],
+		strings: readonly string[],
+	): number;
+	clearGeometry(
+		setMask: number,
+		nullMask: number,
+		clearMask: number,
+		clearAll: boolean,
+	): number;
+	setPresentation(
+		setMask: number,
+		nullMask: number,
+		clearMask: number,
+		words: readonly number[],
+		strings: readonly string[],
+	): number;
+	clearPresentation(
+		setMask: number,
+		nullMask: number,
+		clearMask: number,
+		clearAll: boolean,
+	): number;
+	setStyleState(key: string, value: string): number;
+	clearStyleState(key: string): number;
 }
 
 export interface NativeTextInputContract {
-  dispose(): void;
-  text(): string;
-  cursorBytes(): number;
-  setText(value: string): void;
-  clear(): void;
-  submitted(): NativeTuiOutputContract;
-  setMultiline(enabled: boolean): void;
-  isMultiline(): boolean;
-  componentId(): number | null;
+	dispose(): void;
+	text(): string;
+	cursorBytes(): number;
+	setText(value: string): void;
+	clear(): void;
+	submitted(): NativeTuiOutputContract;
+	setMultiline(enabled: boolean): void;
+	isMultiline(): boolean;
+	componentId(): number | null;
 }
 
 export interface NativeTextSourceContract {
-  dispose(): void;
-  sourceId(): number;
-  sourceGeneration(): number;
-  environmentSlot(): number;
-  environmentGeneration(): number;
-  contentGeneration(): string | number;
-  snapshot(): object;
-  stats(): object;
-  family(): string;
+	dispose(): void;
+	sourceId(): number;
+	sourceGeneration(): number;
+	environmentSlot(): number;
+	environmentGeneration(): number;
+	contentGeneration(): string | number;
+	snapshot(): object;
+	stats(): object;
+	family(): string;
 }
 
 export interface NativeContentConnectorContract {
-  activate(): NativeStateWake;
-  deactivate(): NativeStateWake;
-  dispose(): NativeStateWake;
-  status(): object;
+	activate(): NativeStateWake;
+	deactivate(): NativeStateWake;
+	dispose(): NativeStateWake;
+	status(): object;
 }
 
-export interface NativeContentPortContract extends NativeStructuralAttachmentContract {
-  dispose(): void;
-  portId(): number;
-  portGeneration(): number;
-  family(): string;
-  deactivate(): NativeStateWake;
-  connect(
-    source: NativeTextSourceContract,
-    kind: "plain" | "markdown" | "diff" | "ansi",
-    wrap: "word" | "grapheme" | "noWrap",
-    hyperlinks: boolean,
-    smooth: boolean,
-    tickIntervalMs: number,
-    spring: number,
-    minUnitsPerSecond: number,
-    maxUnitsPerSecond: number,
-  ): NativeContentConnectorContract;
-  mounted(): boolean;
+export interface NativeContentPortContract
+	extends NativeStructuralAttachmentContract {
+	dispose(): void;
+	portId(): number;
+	portGeneration(): number;
+	family(): string;
+	deactivate(): NativeStateWake;
+	connect(
+		source: NativeTextSourceContract,
+		kind: "plain" | "markdown" | "diff" | "ansi",
+		wrap: "word" | "grapheme" | "noWrap",
+		hyperlinks: boolean,
+		smooth: boolean,
+		tickIntervalMs: number,
+		spring: number,
+		minUnitsPerSecond: number,
+		maxUnitsPerSecond: number,
+	): NativeContentConnectorContract;
+	mounted(): boolean;
 }
 
 export interface NativeViewSlotContract {
-  dispose(): void;
-  revision(): number;
-  componentId(): number | null;
-  setViewRef(viewRef: number): void;
-  setAnimationRef1(ref0: number, intervalMs: number): void;
-  setAnimationRef2(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
-  setAnimationRef1AtCycleBoundary(ref0: number, intervalMs: number): void;
-  setAnimationRef2AtCycleBoundary(ref0: number, ref1: number, intervalMs: number): void;
-  setAnimationRef3AtCycleBoundary(ref0: number, ref1: number, ref2: number, intervalMs: number): void;
-  setAnimationRef4AtCycleBoundary(ref0: number, ref1: number, ref2: number, ref3: number, intervalMs: number): void;
-  setAnimationRefs(refs: Uint32Array, usedCount: number, intervalMs: number): void;
-  setAnimationRefsAtCycleBoundary(refs: Uint32Array, usedCount: number, intervalMs: number): void;
-  stopAnimation(view: object): void;
-  stopAnimationRef(viewRef: number): void;
+	dispose(): void;
+	revision(): number;
+	componentId(): number | null;
+	setViewRef(viewRef: number): void;
+	setAnimationRef1(ref0: number, intervalMs: number): void;
+	setAnimationRef2(ref0: number, ref1: number, intervalMs: number): void;
+	setAnimationRef3(
+		ref0: number,
+		ref1: number,
+		ref2: number,
+		intervalMs: number,
+	): void;
+	setAnimationRef4(
+		ref0: number,
+		ref1: number,
+		ref2: number,
+		ref3: number,
+		intervalMs: number,
+	): void;
+	setAnimationRef1AtCycleBoundary(ref0: number, intervalMs: number): void;
+	setAnimationRef2AtCycleBoundary(
+		ref0: number,
+		ref1: number,
+		intervalMs: number,
+	): void;
+	setAnimationRef3AtCycleBoundary(
+		ref0: number,
+		ref1: number,
+		ref2: number,
+		intervalMs: number,
+	): void;
+	setAnimationRef4AtCycleBoundary(
+		ref0: number,
+		ref1: number,
+		ref2: number,
+		ref3: number,
+		intervalMs: number,
+	): void;
+	setAnimationRefs(
+		refs: Uint32Array,
+		usedCount: number,
+		intervalMs: number,
+	): void;
+	setAnimationRefsAtCycleBoundary(
+		refs: Uint32Array,
+		usedCount: number,
+		intervalMs: number,
+	): void;
+	stopAnimation(view: object): void;
+	stopAnimationRef(viewRef: number): void;
 }
 
 export interface NativeScrollPaneContract {
-  dispose(): void;
-  componentId(): number | null;
-  setContentRef(viewRef: number): void;
-  followEnd(): void;
+	dispose(): void;
+	componentId(): number | null;
+	setContentRef(viewRef: number): void;
+	followEnd(): void;
 }
 
 export interface NativeHostEpochs {
-  readonly host_id: string | number;
-  readonly desired_structural_revision: string | number;
-  readonly visible_structural_revision: string | number;
-  readonly visible_frame_revision: string | number;
-  readonly pending_epoch: string | number;
-  readonly committed_epoch: string | number;
+	readonly host_id: string | number;
+	readonly desired_structural_revision: string | number;
+	readonly visible_structural_revision: string | number;
+	readonly visible_frame_revision: string | number;
+	readonly pending_epoch: string | number;
+	readonly committed_epoch: string | number;
 }
 
 export interface NativeTuiHostContract {
-  dispose(): void;
-  exit(): void;
-  history(): object;
-  viewState(): NativeViewStateContract;
-  contentPort(family?: string): NativeContentPortContract;
-  disposeContentResources(): void;
-  textInput(multiline?: boolean, border?: object): NativeTextInputContract;
-  setTheme(theme: object): void;
-  setHistory(history: object): void;
-  exited(): boolean;
-  bindKey(key: string, modifiers: readonly string[] | undefined, routeId: string): void;
-  route(output: NativeTuiOutputContract, routeId: string): void;
-  interceptPaste(input: object, routeId: string): void;
-  dispatchKey(key: string, modifiers?: readonly string[]): void;
-  dispatchPaste(text: string): void;
-  forwardPaste(text: string): void;
-  pollTerminal(): void;
-  nextWakeMs(): number;
-  nextOutput(): { route_id: string; payload?: string | null } | null;
-  waitForOutput(): Promise<{ route_id: string; payload?: string | null } | null>;
-  screenRows(): string[];
-  nativeHistoryRows(): string[];
-  epochs(): NativeHostEpochs;
-  uiNamespace(): number;
-  /** Private React adapter seam; never expose occurrence internals publicly. */
-  uiBodyHandle(): {
-    readonly host_namespace: number;
-    readonly slot: number;
-    readonly generation: number;
-    readonly kind: number;
-  };
-  uiHistoryUnitIdentity(handle: readonly number[]): number | string | null;
-  uiContentVisible(): boolean;
-  waitForUiPresentation(revision: number, contentVisible: boolean): Promise<void>;
-  /** Waits for one owned native event batch; null means the UI lane closed. */
-  waitForUiEvents(): Promise<readonly {
-    readonly host_namespace: number;
-    readonly slot: number;
-    readonly generation: number;
-    readonly kind: number;
-    readonly mask: number;
-    readonly text?: string | null;
-    readonly cursor_bytes?: number | null;
-    readonly key?: string | null;
-    readonly revision?: number | string | null;
-  }[] | null>;
-  focusUi(handle: readonly number[]): void;
-  uiVisibleGeometry(handle: readonly number[]): {
-    readonly x: number;
-    readonly y: number;
-    readonly width: number;
-    readonly height: number;
-  } | null;
-  drainUiEvents(): readonly {
-    readonly host_namespace: number;
-    readonly slot: number;
-    readonly generation: number;
-    readonly kind: number;
-    readonly mask: number;
-    readonly text?: string | null;
-    readonly cursor_bytes?: number | null;
-    readonly key?: string | null;
-    readonly revision?: number | string | null;
-  }[];
-  setUiEventQueueLimits(maxRecords: number, maxBytes: number): void;
-  failUiConnectorForTest(handle: readonly number[], diagnostic: string): void;
-  closeUiState(): void;
-  commitUiV1(
-    words: Uint32Array,
-    metadata: Uint8Array,
-    ownedContent: Uint8Array,
-    sources: readonly NativeTextSourceContract[],
-  ): Uint32Array;
-  setDesiredViewRef(viewRef: number): {
-    readonly host_id: string | number;
-    readonly schedule_environment_drain: boolean;
-  };
-  clearViewStateBindings(): void;
-  flushPendingHosts(budget?: number, forceRetry?: boolean): {
-    readonly rearm: boolean;
-    readonly waiting_for_presentation: boolean;
-    readonly attempted: number;
-    readonly commits: readonly {
-      readonly host_id: string | number;
-      readonly committed_epoch: string | number;
-      readonly visible_structural_revision: string | number;
-    }[];
-    readonly errors: readonly {
-      readonly host_id: string | number;
-      readonly attempted_epoch: string | number;
-      readonly desired_revision: string | number;
-      readonly phase: string;
-      readonly code: string;
-      readonly retryable: boolean;
-      readonly diagnostic: string;
-    }[];
-    readonly wake_epoch: string | number;
-  };
-  resize(width: number, height: number): void;
-  advanceTime(milliseconds: number): void;
-  createViewSlotRef(viewRef: number): object;
-  scrollPaneRef(viewRef: number): object;
-  styleAt(row: number, column: number): object | null;
-  cellXOfText(row: number, text: string): number | null;
+	dispose(): void;
+	exit(): void;
+	history(): object;
+	viewState(): NativeViewStateContract;
+	contentPort(family?: string): NativeContentPortContract;
+	disposeContentResources(): void;
+	textInput(multiline?: boolean, border?: object): NativeTextInputContract;
+	setTheme(theme: object): void;
+	setHistory(history: object): void;
+	exited(): boolean;
+	bindKey(
+		key: string,
+		modifiers: readonly string[] | undefined,
+		routeId: string,
+	): void;
+	route(output: NativeTuiOutputContract, routeId: string): void;
+	interceptPaste(input: object, routeId: string): void;
+	dispatchKey(key: string, modifiers?: readonly string[]): void;
+	dispatchPaste(text: string): void;
+	forwardPaste(text: string): void;
+	pollTerminal(): void;
+	nextWakeMs(): number;
+	nextOutput(): { route_id: string; payload?: string | null } | null;
+	waitForOutput(): Promise<{
+		route_id: string;
+		payload?: string | null;
+	} | null>;
+	screenRows(): string[];
+	nativeHistoryRows(): string[];
+	epochs(): NativeHostEpochs;
+	uiNamespace(): number;
+	/** Private React adapter seam; never expose occurrence internals publicly. */
+	uiBodyHandle(): {
+		readonly host_namespace: number;
+		readonly slot: number;
+		readonly generation: number;
+		readonly kind: number;
+	};
+	uiHistoryUnitIdentity(handle: readonly number[]): number | string | null;
+	uiContentVisible(): boolean;
+	/** Authoritative status of a qualified UI ContentPort/Connector resource. */
+	uiPortMounted?(handle: readonly number[]): boolean;
+	uiConnectorStatus?(handle: readonly number[]): object;
+	interceptPasteUi?(handle: readonly number[], routeId: string): void;
+	waitForUiPresentation(
+		revision: number,
+		contentVisible: boolean,
+	): Promise<void>;
+	/** Waits for one owned native event batch; null means the UI lane closed. */
+	waitForUiEvents(): Promise<
+		| readonly {
+				readonly host_namespace: number;
+				readonly slot: number;
+				readonly generation: number;
+				readonly kind: number;
+				readonly mask: number;
+				readonly text?: string | null;
+				readonly cursor_bytes?: number | null;
+				readonly key?: string | null;
+				readonly revision?: number | string | null;
+		  }[]
+		| null
+	>;
+	waitForUiFailure(): Promise<{
+		readonly phase: string;
+		readonly code: string;
+		readonly attempted_ui_revision: string;
+		readonly attempted_work_epoch: string;
+		readonly diagnostic: string;
+		readonly retryable: boolean;
+	} | null>;
+	focusUi(handle: readonly number[]): void;
+	uiVisibleGeometry(handle: readonly number[]): {
+		readonly x: number;
+		readonly y: number;
+		readonly width: number;
+		readonly height: number;
+	} | null;
+	drainUiEvents(): readonly {
+		readonly host_namespace: number;
+		readonly slot: number;
+		readonly generation: number;
+		readonly kind: number;
+		readonly mask: number;
+		readonly text?: string | null;
+		readonly cursor_bytes?: number | null;
+		readonly key?: string | null;
+		readonly revision?: number | string | null;
+	}[];
+	setUiEventQueueLimits(maxRecords: number, maxBytes: number): void;
+	failUiConnectorForTest(handle: readonly number[], diagnostic: string): void;
+	closeUiState(): void;
+	commitUiV1(
+		words: Uint32Array,
+		metadata: Uint8Array,
+		ownedContent: Uint8Array,
+		sources: readonly NativeTextSourceContract[],
+	): Uint32Array;
+	setDesiredViewRef(viewRef: number): {
+		readonly host_id: string | number;
+		readonly schedule_environment_drain: boolean;
+	};
+	clearViewStateBindings(): void;
+	flushPendingHosts(
+		budget?: number,
+		forceRetry?: boolean,
+	): {
+		readonly rearm: boolean;
+		readonly waiting_for_presentation: boolean;
+		readonly attempted: number;
+		readonly commits: readonly {
+			readonly host_id: string | number;
+			readonly committed_epoch: string | number;
+			readonly visible_structural_revision: string | number;
+		}[];
+		readonly errors: readonly {
+			readonly host_id: string | number;
+			readonly attempted_epoch: string | number;
+			readonly desired_revision: string | number;
+			readonly phase: string;
+			readonly code: string;
+			readonly retryable: boolean;
+			readonly diagnostic: string;
+		}[];
+		readonly wake_epoch: string | number;
+	};
+	resize(width: number, height: number): void;
+	advanceTime(milliseconds: number): void;
+	createViewSlotRef(viewRef: number): object;
+	scrollPaneRef(viewRef: number): object;
+	styleAt(row: number, column: number): object | null;
+	cellXOfText(row: number, text: string): number | null;
 }
 
 export interface NativeTuiAddon {
-  nativeVersion(): string;
-  tuiSmoke(): string;
-  tuiViewAbiMaintain?: (full?: boolean) => {
-    full: boolean;
-    semantic_cache_entries: number;
-    native_ref_slots: number;
-    scavenge_queue_len: number;
-    scavenge_processed: number;
-    semantic_cache_full_sweeps: number;
-  };
-  tuiViewRuntimeMemorySnapshot?: (countLive?: boolean) => {
-    semantic_cache_entries: number;
-    semantic_cache_live: number;
-    native_ref_slots: number;
-    native_ref_pages: number;
-    native_ref_pages_freed: number;
-    leased_slots: number;
-    unleased_live_slots: number;
-    node_ref_entries: number;
-    path_nodes: number;
-    path_keys: number;
-    builders: number;
-    edit_txns: number;
-    style_refs: number;
-    string_bytes: number | null;
-    scavenge_queue: number;
-    scavenge_processed: number;
-    semantic_cache_expired_seen: number;
-    semantic_cache_full_sweeps: number;
-    semantic_cache_entries_removed: number;
-    native_ref_expired_slots_removed: number;
-    nodes_inserted_since_full_sweep: number;
-    generation: number;
-    alive: boolean;
-  };
-  tuiViewAbiSession: () => NativeViewAbiHandle;
-  tuiViewEnvironmentCount(): number;
-  NativeHistory?: new () => NativeHistoryContract;
-  NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
-  NativeTuiHost?: new (width?: number, height?: number, headless?: boolean) => NativeTuiHostContract;
-  NativeTuiOutput?: new () => NativeTuiOutputContract;
-  NativeTextSource?: new (kind?: "block" | "stream", options?: object) => NativeTextSourceContract;
+	nativeVersion(): string;
+	tuiSmoke(): string;
+	tuiViewAbiMaintain?: (full?: boolean) => {
+		full: boolean;
+		semantic_cache_entries: number;
+		native_ref_slots: number;
+		scavenge_queue_len: number;
+		scavenge_processed: number;
+		semantic_cache_full_sweeps: number;
+	};
+	tuiViewRuntimeMemorySnapshot?: (countLive?: boolean) => {
+		semantic_cache_entries: number;
+		semantic_cache_live: number;
+		native_ref_slots: number;
+		native_ref_pages: number;
+		native_ref_pages_freed: number;
+		leased_slots: number;
+		unleased_live_slots: number;
+		node_ref_entries: number;
+		path_nodes: number;
+		path_keys: number;
+		builders: number;
+		edit_txns: number;
+		style_refs: number;
+		string_bytes: number | null;
+		scavenge_queue: number;
+		scavenge_processed: number;
+		semantic_cache_expired_seen: number;
+		semantic_cache_full_sweeps: number;
+		semantic_cache_entries_removed: number;
+		native_ref_expired_slots_removed: number;
+		nodes_inserted_since_full_sweep: number;
+		generation: number;
+		alive: boolean;
+	};
+	tuiViewAbiSession: () => NativeViewAbiHandle;
+	tuiViewEnvironmentCount(): number;
+	NativeHistory?: new () => NativeHistoryContract;
+	NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
+	NativeTuiHost?: new (
+		width?: number,
+		height?: number,
+		headless?: boolean,
+	) => NativeTuiHostContract;
+	NativeTuiOutput?: new () => NativeTuiOutputContract;
+	NativeTextSource?: new (
+		kind?: "block" | "stream",
+		options?: object,
+	) => NativeTextSourceContract;
 }
 
 // The Node-API and direct loaders resolve this same canonical artifact path.
 export const nativeArtifact = resolveNativeArtifact(import.meta.url);
 const loadedNative = require(nativeArtifact.absolutePath) as NativeTuiAddon;
 if (loadedNative.nativeVersion?.() !== nativeArtifact.packageBuildId) {
-  throw new Error(`iyon-tui-native build identity mismatch at ${nativeArtifact.absolutePath}`);
+	throw new Error(
+		`iyon-tui-native build identity mismatch at ${nativeArtifact.absolutePath}`,
+	);
 }
 export const native = loadedNative;
 
 /** Requires a native constructor without exposing addon details to callers. */
 export function requireNativeClass<T>(factory: T | undefined, name: string): T {
-  if (factory === undefined) throw tuiError("runtime", `${name} is unavailable in the native addon`);
-  return factory;
+	if (factory === undefined)
+		throw tuiError("runtime", `${name} is unavailable in the native addon`);
+	return factory;
 }

@@ -90,9 +90,9 @@ impl LegacySceneAdapter {
         owner: &UiResourceOwner,
         content: &mut ContentHostRegistry,
         changes: Option<&UiChangeSet>,
-    ) -> Result<()> {
+    ) -> Result<Vec<u64>> {
         let initial = self.recipes.is_empty();
-        content.sync_ui_resources(owner, changes)?;
+        let changed_content_ports = content.sync_ui_resources(owner, changes)?;
         let body = owner
             .document
             .as_ref()
@@ -148,7 +148,7 @@ impl LegacySceneAdapter {
                 self.build_node(owner, content, root, &dirty, initial)?;
             }
         }
-        Ok(())
+        Ok(changed_content_ports)
     }
 
     pub(crate) fn history_units(

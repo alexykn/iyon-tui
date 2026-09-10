@@ -1,158 +1,201 @@
-import { asTuiError, tuiError } from "../api/errors.ts";
-import { Tui } from "../runtime/runtime.ts";
-import { runtimeAccess } from "../runtime/access.ts";
-import type { Output } from "../api/controls/output.ts";
-import type { History as HistoryContract } from "../api/controls/history.ts";
-import type { ScrollPane as ScrollPaneContract } from "../api/controls/scroll-pane.ts";
-import type { TextInput as TextInputContract, TextInputOptions } from "../api/controls/text-input.ts";
-import type { ViewSlot as ViewSlotContract } from "../api/controls/view-slot.ts";
-import type { ViewState as ViewStateContract } from "../api/view/retained-state.ts";
-import type { ContentPort as ContentPortContract, ContentPortOptions } from "../api/content/retained.ts";
-import type { TextContent } from "../api/content/text-content.ts";
-import type { SceneProducer } from "../api/view/scene.ts";
-import type { View } from "../api/view/view.ts";
+import { tuiError } from "../api/errors.ts";
+import type { ContentPort } from "../api/content/explicit.ts";
+import type { ContentPortOptions } from "../api/content/retained.ts";
+import { TextContent } from "../api/content/text-content.ts";
+import { materializeTheme, type Theme } from "../api/presentation/theme.ts";
+import type { RuntimeErrorReporter } from "../runtime/error-channel.ts";
+import { setRuntimeErrorReporter } from "../runtime/diagnostics.ts";
 import type { TuiEvent } from "../runtime/events.ts";
-import type { TuiRuntime, TerminalMetadata, TuiOpenOptions } from "../runtime/runtime.ts";
-import type { Theme } from "../api/presentation/theme.ts";
-import { nativeHostForReact, registerReactHost } from "../react/host-registry.ts";
+import { OutputWaitOwner } from "../runtime/output-waiter.ts";
+import type {
+	TerminalMetadata,
+	TuiOpenOptions,
+	TuiRuntime,
+} from "../runtime/runtime.ts";
+import {
+	markReactHostClosed,
+	nativeHostForReact,
+	reactRootAuthority,
+	registerReactHost,
+} from "../react/host-registry.ts";
+import {
+	native,
+	requireNativeClass,
+	type NativeTuiHostContract,
+} from "../transport/native/addon.ts";
 
-interface AppHarnessContract extends TuiRuntime {
-  createHistory(): HistoryContract;
-  viewState(): ViewStateContract;
-  contentPort(options?: ContentPortOptions | typeof TextContent): ContentPortContract;
-  createTextInput(options?: TextInputOptions): TextInputContract;
-  createViewSlot(initial: View): ViewSlotContract;
-  createScrollPane(initial: View): ScrollPaneContract;
-  pressKey(key: string, modifiers?: readonly string[]): void;
-  paste(text: string): void;
-  advance(ms: number): void;
-  screenRows(): readonly string[];
-  nativeHistoryRows(): readonly string[];
-  styleAt(row: number, column: number): Readonly<Record<string, unknown>>;
-  cellXOfText(row: number, text: string): number | null;
-  exited(): boolean;
-  now(): number;
+export interface AppHarnessContract extends TuiRuntime {
+	pressKey(key: string, modifiers?: readonly string[]): void;
+	paste(text: string): void;
+	advance(ms: number): void;
+	screenRows(): readonly string[];
+	nativeHistoryRows(): readonly string[];
+	styleAt(row: number, column: number): Readonly<Record<string, unknown>>;
+	cellXOfText(row: number, text: string): number | null;
+	exited(): boolean;
+	now(): number;
+	epochs(): AppHarnessEpochs;
+}
+
+export interface AppHarnessEpochs {
+	readonly host_id: string | number;
+	readonly desired_structural_revision: string | number;
+	readonly visible_structural_revision: string | number;
+	readonly visible_frame_revision: string | number;
+	readonly pending_epoch: string | number;
+	readonly committed_epoch: string | number;
 }
 
 export class AppHarness implements AppHarnessContract {
-  private readonly tui: Tui;
-  private clock = 0;
-  private terminalExited = false;
+	private readonly host: NativeTuiHostContract;
+	private width: number;
+	private height: number;
+	private clock = 0;
+	private terminalExited = false;
+	private readonly outputWaiter: OutputWaitOwner;
 
-  private constructor(tui: Tui) {
-    this.tui = tui;
-    const host = nativeHostForReact(tui);
-    if (host === undefined) throw new Error("TUI React host registration is unavailable");
-    registerReactHost(this, host);
-  }
+	private constructor(
+		host: NativeTuiHostContract,
+		width: number,
+		height: number,
+	) {
+		this.host = host;
+		this.width = width;
+		this.height = height;
+		this.outputWaiter = new OutputWaitOwner(() => this.host.waitForOutput());
+	}
 
-  static async open(options: TuiOpenOptions = {}): Promise<AppHarness> {
-    const tui = await Tui.open({ ...options, headless: true });
-    return new AppHarness(tui);
-  }
+	static async open(options: TuiOpenOptions = {}): Promise<AppHarness> {
+		if (options.signal?.aborted)
+			throw tuiError("cancelled", "TUI open was cancelled");
+		const Host = requireNativeClass(native.NativeTuiHost, "NativeTuiHost");
+		const width = options.width ?? 80;
+		const height = options.height ?? 24;
+		const host = new Host(width, height, true);
+		const harness = new AppHarness(host, width, height);
+		registerReactHost(harness, host);
+		if (options.theme !== undefined) harness.setTheme(options.theme);
+		return harness;
+	}
 
-  get size(): TerminalMetadata { return this.tui.size; }
-  nextEvent(signal?: AbortSignal): Promise<TuiEvent> { return this.tui.nextEvent(signal); }
+	get size(): TerminalMetadata {
+		return { width: this.width, height: this.height };
+	}
 
-  render(scene: SceneProducer, signal?: AbortSignal): void {
-    this.tui.render(scene, signal);
-    this.callTesting(() => runtimeAccess(this.tui).advance(0));
-  }
+	contentPort(
+		options: ContentPortOptions | typeof TextContent = {},
+	): ContentPort {
+		const authority = reactRootAuthority(this);
+		if (authority === undefined)
+			throw tuiError(
+				"terminal",
+				"TUI_CONTENT_PORT_REQUIRES_REACT_ROOT: createReactRoot(harness) must be called first",
+			);
+		const family =
+			options === TextContent
+				? "text"
+				: ((options as ContentPortOptions).family ?? "text");
+		return authority.coordinator.createExplicitPort(family);
+	}
 
-  flush(): void { this.tui.flush(); }
-  onRuntimeError(listener: Parameters<TuiRuntime["onRuntimeError"]>[0]): () => void {
-    return this.tui.onRuntimeError(listener);
-  }
+	async nextEvent(signal?: AbortSignal): Promise<TuiEvent> {
+		if (signal?.aborted)
+			throw tuiError("cancelled", "TUI event wait was cancelled");
+		const output = await this.outputWaiter.wait(signal);
+		if (output === null) return { type: "terminate", reason: "closed" };
+		return {
+			type: "output",
+			routeId: output.route_id,
+			...(output.payload == null ? {} : { payload: output.payload }),
+		};
+	}
 
-  createHistory(): HistoryContract { return this.tui.createHistory(); }
-  viewState(): ViewStateContract { return this.tui.viewState(); }
-  contentPort(options: ContentPortOptions | typeof TextContent = {}): ContentPortContract {
-    return this.tui.contentPort(options);
-  }
-  createTextInput(options: TextInputOptions = {}): TextInputContract { return this.tui.createTextInput(options); }
-  createViewSlot(initial: View): ViewSlotContract { return this.tui.createViewSlot(initial); }
-  createScrollPane(initial: View): ScrollPaneContract { return this.tui.createScrollPane(initial); }
-  bindKey(key: string, actionId: string, modifiers?: readonly string[]): void { this.tui.bindKey(key, actionId, modifiers); }
-  route(output: Output<string>, actionId: string): void { this.tui.route(output, actionId); }
-  interceptPaste(input: TextInputContract, actionId: string): void { this.tui.interceptPaste(input, actionId); }
-  forwardPaste(text: string): void { this.tui.forwardPaste(text); }
-  setTheme(theme: Theme): void { this.tui.setTheme(theme); }
+	onRuntimeError(listener: RuntimeErrorReporter): () => void {
+		setRuntimeErrorReporter(this, listener);
+		return () => setRuntimeErrorReporter(this, undefined);
+	}
 
-  resize(width: number, height: number): void { this.tui.resize(width, height); }
+	resize(width: number, height: number): void {
+		this.host.resize(width, height);
+		this.width = width;
+		this.height = height;
+	}
+	bindKey(key: string, routeId: string, modifiers?: readonly string[]): void {
+		this.host.bindKey(key, modifiers, routeId);
+	}
+	forwardPaste(text: string): void {
+		this.host.forwardPaste(text);
+	}
+	setTheme(theme: Theme): void {
+		this.host.setTheme(materializeTheme(theme));
+	}
 
-  close(): void {
-    this.tui.close();
-  }
+	pressKey(key: string, modifiers?: readonly string[]): void {
+		this.host.dispatchKey(key, modifiers);
+	}
+	paste(text: string): void {
+		this.host.dispatchPaste(text);
+	}
+	advance(ms: number): void {
+		if (!Number.isSafeInteger(ms) || ms < 0)
+			throw tuiError("validation", "clock advancement must be non-negative");
+		this.host.advanceTime(ms);
+		this.clock += ms;
+	}
+	screenRows(): readonly string[] {
+		this.flush();
+		return this.host.screenRows();
+	}
+	nativeHistoryRows(): readonly string[] {
+		this.flush();
+		return this.host.nativeHistoryRows();
+	}
+	styleAt(row: number, column: number): Readonly<Record<string, unknown>> {
+		this.flush();
+		return (this.host.styleAt(row, column) ?? {}) as Readonly<
+			Record<string, unknown>
+		>;
+	}
+	cellXOfText(row: number, text: string): number | null {
+		this.flush();
+		return this.host.cellXOfText(row, text);
+	}
+	exited(): boolean {
+		return this.terminalExited || this.host.exited();
+	}
+	now(): number {
+		return this.clock;
+	}
 
-  exit(): void {
-    this.terminalExited = true;
-    this.tui.exit();
-  }
+	epochs(): AppHarnessEpochs {
+		return this.host.epochs();
+	}
 
-  pressKey(key: string, modifiers?: readonly string[]): void {
-    this.callTesting(() => {
-      const access = runtimeAccess(this.tui);
-      access.flush();
-      access.enqueue({ type: "key", key, modifiers });
-    });
-  }
-  paste(text: string): void {
-    this.callTesting(() => {
-      const access = runtimeAccess(this.tui);
-      access.flush();
-      access.enqueue({ type: "paste", text });
-    });
-  }
-  advance(ms: number): void {
-    if (!Number.isSafeInteger(ms) || ms < 0 || ms > Number.MAX_SAFE_INTEGER - this.clock) {
-      throw tuiError("validation", "clock advancement must keep the deterministic clock within safe integer range");
-    }
-    // Keep the public deterministic clock transactional: a failed native
-    // advancement must not make now() report time that was never applied.
-    this.callTesting(() => {
-      const access = runtimeAccess(this.tui);
-      access.flush();
-      access.advance(ms);
-    });
-    this.clock += ms;
-  }
-  screenRows(): readonly string[] {
-    return this.inspect((access) => access.screenRows());
-  }
-  nativeHistoryRows(): readonly string[] {
-    return this.inspect((access) => access.nativeHistoryRows());
-  }
-  styleAt(row: number, column: number): Readonly<Record<string, unknown>> {
-    return this.inspect((access) => access.styleAt(row, column));
-  }
-  cellXOfText(row: number, text: string): number | null {
-    return this.inspect((access) => access.cellXOfText(row, text));
-  }
-  exited(): boolean { return this.callTesting(() => runtimeAccess(this.tui).exited()); }
-  now(): number { return this.clock; }
+	flush(): void {
+		this.host.flushPendingHosts(1024, true);
+	}
 
-  private inspect<R>(operation: (access: ReturnType<typeof runtimeAccess>) => R): R {
-    return this.callTesting(() => {
-      const access = runtimeAccess(this.tui);
-      // Flush retained/native zero-time work before a deterministic snapshot
-      // while the host is live. After terminal exit the final frame is already
-      // committed; read-only inspection must remain available for diagnostics
-      // without reopening a closed Tui barrier.
-      if (!this.terminalExited) {
-        access.flush();
-        access.advance(0);
-      }
-      return operation(access);
-    });
-  }
+	close(): void {
+		if (this.terminalExited) return;
+		this.outputWaiter.close();
+		markReactHostClosed(this);
+		try {
+			reactRootAuthority(this)?.close();
+		} finally {
+			setRuntimeErrorReporter(this, undefined);
+			this.host.dispose();
+		}
+	}
 
-  private callTesting<R>(operation: () => R): R {
-    try {
-      return operation();
-    } catch (error) {
-      throw asTuiError(error);
-    }
-  }
+	exit(): void {
+		if (this.terminalExited) return;
+		this.terminalExited = true;
+		this.outputWaiter.close();
+		markReactHostClosed(this);
+		this.host.exit();
+		reactRootAuthority(this)?.closeAfterHostExit();
+		setRuntimeErrorReporter(this, undefined);
+	}
 }
 
 export const createAppHarness = AppHarness.open;

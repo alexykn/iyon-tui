@@ -308,6 +308,26 @@ fn decode_ui_node_handle(words: &[u32]) -> Result<iyon_tui::binding::UiHandle> {
     .ok_or_else(|| crate::NativeError::invalid_input("invalid UI occurrence handle"))
 }
 
+fn decode_ui_resource_handle(
+    words: &[u32],
+    kind: iyon_tui::binding::HandleKind,
+) -> Result<iyon_tui::binding::UiHandle> {
+    if words.len() != iyon_tui::binding::UI_HANDLE_WORDS {
+        return Err(crate::NativeError::invalid_input(
+            "UI resource handle must contain four words",
+        ));
+    }
+    if iyon_tui::binding::HandleKind::from_code(words[3]) != Some(kind) {
+        return Err(crate::NativeError::invalid_input(
+            "UI resource handle has the wrong kind",
+        ));
+    }
+    let namespace = iyon_tui::binding::HostNamespace::new(words[0])
+        .ok_or_else(|| crate::NativeError::invalid_input("invalid UI host namespace"))?;
+    iyon_tui::binding::UiHandle::new(namespace, words[1], words[2], kind)
+        .ok_or_else(|| crate::NativeError::invalid_input("invalid UI resource handle"))
+}
+
 fn resolve_native_view(runtime: usize, view_ref: i64) -> Result<View> {
     let view_ref = u32::try_from(view_ref)
         .map_err(|_| crate::NativeError::invalid_input("native View reference must fit in u32"))?;
@@ -734,6 +754,54 @@ impl NativeTuiHost {
             .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
+    #[napi(js_name = "uiPortMounted")]
+    pub fn ui_port_mounted(&self, handle: Vec<u32>) -> Result<bool> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .ui_port_mounted(decode_ui_resource_handle(
+                &handle,
+                iyon_tui::binding::HandleKind::Port,
+            )?)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
+    #[napi(js_name = "uiConnectorStatus")]
+    pub fn ui_connector_status(&self, handle: Vec<u32>) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let status = self
+            .host
+            .ui_connector_status(decode_ui_resource_handle(
+                &handle,
+                iyon_tui::binding::HandleKind::Connector,
+            )?)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(serde_json::json!({
+            "phase": status.phase,
+            "requested": status.requested,
+            "visible": status.visible,
+            "projectedSourceRevision": status
+                .projected_source_revision
+                .map(|revision| revision.to_string()),
+            "error": status.error.map(|error| serde_json::json!({
+                "code": error.code,
+                "diagnostic": error.diagnostic,
+            })),
+            "cleanupPending": status.cleanup_pending,
+            "cleanupError": status.cleanup_error.map(|error| serde_json::json!({
+                "code": error.code,
+                "diagnostic": error.diagnostic,
+            })),
+        }))
+    }
+
+    #[napi(js_name = "interceptPasteUi")]
+    pub fn intercept_paste_ui(&self, handle: Vec<u32>, route_id: String) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .intercept_ui_paste(decode_ui_node_handle(&handle)?, route_id)
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+    }
+
     #[napi(js_name = "waitForUiPresentation")]
     pub async fn wait_for_ui_presentation(
         &self,
@@ -903,6 +971,27 @@ impl NativeTuiHost {
             "host_id": epochs.host_id.to_string(),
             "schedule_environment_drain": disposition.schedule_environment_drain,
         }))
+    }
+
+    #[napi(js_name = "waitForUiFailure")]
+    pub async fn wait_for_ui_failure(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let failure = self
+            .host
+            .wait_for_ui_failure()
+            .await
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(match failure {
+            None => Value::Null,
+            Some(failure) => serde_json::json!({
+                "phase": failure.phase,
+                "code": failure.code,
+                "attempted_ui_revision": failure.attempted_ui_revision.to_string(),
+                "attempted_work_epoch": failure.attempted_work_epoch.to_string(),
+                "diagnostic": failure.diagnostic,
+                "retryable": failure.retryable,
+            }),
+        })
     }
 
     #[napi(js_name = "commitUiV1")]

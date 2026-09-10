@@ -672,18 +672,16 @@ impl NativeRuntime {
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
         }
+        if let Some(output) = self.global_bindings.output(key) {
+            self.pending_outputs.push_back(output);
+            return Ok(InteractionResult::Consumed);
+        }
         let previous_focus = self.scene_host.focused_component();
         let result = self
             .scene_host
             .dispatch_key_local(key, &mut self.components);
         let next_focus = self.scene_host.focused_component();
         self.drain_outputs_to_pending()?;
-        if result == InteractionResult::Ignored
-            && let Some(output) = self.global_bindings.output(key)
-        {
-            self.pending_outputs.push_back(output);
-            return Ok(InteractionResult::Consumed);
-        }
         if result == InteractionResult::Consumed {
             self.invalidate_interaction_components(previous_focus, next_focus);
             self.dirty = true;

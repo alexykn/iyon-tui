@@ -9,10 +9,18 @@ import {
 	RootContainer,
 } from "./commit.ts";
 import { hostConfig } from "./host-config.ts";
-import { nativeHostForReact } from "./host-registry.ts";
+import {
+	nativeHostForReact,
+	hasClosedReactRoot,
+	isReactHostClosed,
+	reserveReactRootAuthority,
+	unregisterReactRootAuthority,
+} from "./host-registry.ts";
+import {
+	normalizeNativeFailure,
+	reportRuntimeError,
+} from "../runtime/diagnostics.ts";
 
-const activeRoots = new WeakSet<object>();
-const closedHosts = new WeakSet<object>();
 type RootLifecycle = "open" | "closing" | "closed";
 
 export interface ReactCommit {
@@ -47,18 +55,28 @@ export function createReactRoot(host: TuiRuntime): IyonReactRoot {
 		| undefined;
 	if (nativeHost === undefined)
 		throw new TypeError("createReactRoot requires a live TuiRuntime host");
-	if (activeRoots.has(nativeHost) || closedHosts.has(nativeHost))
+	if (isReactHostClosed(host))
+		throw new Error("createReactRoot requires a live TuiRuntime host");
+	if (hasClosedReactRoot(nativeHost))
 		throw new Error("a React root is already attached to this Tui host");
-	const root = new IyonRoot(nativeHost);
-	activeRoots.add(nativeHost);
-	return root;
+	const reservation = reserveReactRootAuthority(host, nativeHost);
+	try {
+		const root = new IyonRoot(nativeHost, host);
+		reservation.commit(root);
+		root.startNativeEventLane();
+		return root;
+	} catch (error) {
+		reservation.release();
+		throw error;
+	}
 }
 
 class IyonRoot implements IyonReactRoot {
 	private readonly host: NativeTuiHostContract;
+	private readonly runtime: TuiRuntime;
 	private readonly reconciler: ReturnType<typeof Reconciler>;
 	private readonly container: RootContainer;
-	private readonly coordinator: CommitCoordinator;
+	readonly coordinator: CommitCoordinator;
 	private readonly opaqueRoot: ReturnType<
 		typeof this.reconciler.createContainer
 	>;
@@ -69,8 +87,9 @@ class IyonRoot implements IyonReactRoot {
 		reject(error: unknown): void;
 	}>();
 
-	constructor(host: NativeTuiHostContract) {
+	constructor(host: NativeTuiHostContract, runtime: TuiRuntime) {
 		this.host = host;
+		this.runtime = runtime;
 		this.reconciler = Reconciler(hostConfig);
 		this.container = new RootContainer(host);
 		this.coordinator = this.container.coordinator;
@@ -92,7 +111,6 @@ class IyonRoot implements IyonReactRoot {
 			(error) => this.rejectPending(error),
 			() => {},
 		);
-		this.startNativeEventLane();
 	}
 
 	get faulted(): boolean {
@@ -162,6 +180,14 @@ class IyonRoot implements IyonReactRoot {
 	}
 
 	close(): void {
+		this.closeImpl(false);
+	}
+
+	closeAfterHostExit(): void {
+		this.closeImpl(true);
+	}
+
+	private closeImpl(hostAlreadyExited: boolean): void {
 		if (this.lifecycle === "closed") return;
 		// Stop delivery before any React/native teardown.  The native wait is
 		// awakened by closeUiState, and its already-owned batch is discarded by
@@ -180,22 +206,23 @@ class IyonRoot implements IyonReactRoot {
 				this.coordinator.abortCleanup();
 			}
 		}
-		try {
-			this.host.closeUiState();
-		} catch (cleanupError) {
-			failure =
-				failure === undefined
-					? cleanupError
-					: new AggregateError(
-							[failure, cleanupError],
-							"React root cleanup failed",
-						);
+		if (!hostAlreadyExited) {
+			try {
+				this.host.closeUiState();
+			} catch (cleanupError) {
+				failure =
+					failure === undefined
+						? cleanupError
+						: new AggregateError(
+								[failure, cleanupError],
+								"React root cleanup failed",
+							);
+			}
 		}
 		if (failure === undefined) {
 			this.coordinator.finalizeCleanup();
 			this.lifecycle = "closed";
-			activeRoots.delete(this.host);
-			closedHosts.add(this.host);
+			unregisterReactRootAuthority(this.runtime);
 			this.rejectPending(new Error("React root was closed"));
 		}
 		if (failure !== undefined) throw failure;
@@ -219,6 +246,8 @@ class IyonRoot implements IyonReactRoot {
 			await this.host.waitForUiPresentation(target, contentVisible);
 			return;
 		} catch (error) {
+			// Native failure notifications own diagnostics. A caller's barrier
+			// rejection must not fabricate a second record with different metadata.
 			if (error instanceof ReactFrameBarrierError) throw error;
 			throw new ReactFrameBarrierError(
 				error instanceof Error ? error.message : String(error),
@@ -232,8 +261,31 @@ class IyonRoot implements IyonReactRoot {
 	 * content work can produce events without a JS frame pump, while this
 	 * consumer remains the sole owner that takes batches from the native queue.
 	 */
-	private startNativeEventLane(): void {
+	startNativeEventLane(): void {
 		void this.consumeNativeEventLane();
+		void this.consumeNativeFailureLane();
+	}
+
+	private async consumeNativeFailureLane(): Promise<void> {
+		while (this.lifecycle === "open") {
+			try {
+				const failure = await this.host.waitForUiFailure();
+				if (this.lifecycle !== "open" || failure === null) return;
+				const record = normalizeNativeFailure(
+					String(this.host.epochs().host_id),
+					failure,
+				);
+				if (record === undefined)
+					throw new Error("malformed native UI failure notification");
+				reportRuntimeError(this.runtime, record);
+			} catch (error) {
+				if (this.lifecycle === "open") {
+					this.coordinator.faultFromReact(error);
+					reportNativeEventError(error);
+				}
+				return;
+			}
+		}
 	}
 
 	private async consumeNativeEventLane(): Promise<void> {
@@ -242,7 +294,9 @@ class IyonRoot implements IyonReactRoot {
 			try {
 				batch = await this.host.waitForUiEvents();
 			} catch (error) {
-				if (this.lifecycle === "open") reportNativeEventError(error);
+				if (this.lifecycle === "open") {
+					reportNativeEventError(error);
+				}
 				return;
 			}
 			if (this.lifecycle !== "open" || batch === null) return;

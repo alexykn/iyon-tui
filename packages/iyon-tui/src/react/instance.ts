@@ -21,7 +21,11 @@ import {
 	validateTextAttribute,
 } from "../api/presentation/style.ts";
 import type { ColorSpec } from "../api/presentation/theme.ts";
-import { type Insets, type InsetsValue, insets } from "../api/view/geometry.ts";
+import {
+	type Insets,
+	type InsetsValue,
+	insets,
+} from "../api/presentation/geometry.ts";
 import {
 	HOST_KINDS,
 	type HostKind,
@@ -31,6 +35,14 @@ import {
 	type UiPropertyName,
 } from "../transport/ui/generated/ui_schema.ts";
 import type { RootContainer } from "./commit.ts";
+import type {
+	ContentConnector as ExplicitContentConnector,
+	ContentPort as ExplicitContentPort,
+} from "../api/content/explicit.ts";
+import {
+	isExplicitContentConnector,
+	isExplicitContentPort,
+} from "./resources.ts";
 
 export type HostType =
 	| "box"
@@ -143,6 +155,7 @@ export interface OccurrenceRef {
 		readonly accepted: true;
 	};
 	focus(): void;
+	interceptPaste(routeId: string): void;
 	visibleGeometry(): Promise<UiGeometry | null>;
 	historyIdentity(): number | string;
 }
@@ -170,7 +183,11 @@ export interface BoxProps extends LayoutProps, EventProps {
 
 export interface ContentProps extends LayoutProps, EventProps, BoxProps {
 	readonly source?: ContentSource;
-	readonly port?: ContentPortToken | ContentConnectorToken;
+	readonly port?:
+		| ContentPortToken
+		| ContentConnectorToken
+		| ExplicitContentPort
+		| ExplicitContentConnector;
 	readonly funnel?: Funnel;
 	/** Internal Text/Content lowering marker; not part of the public props. */
 	readonly literal?: ReactNode;
@@ -257,6 +274,8 @@ export interface NormalizedContent {
 	readonly source?: ContentSource;
 	readonly portToken?: ContentPortToken;
 	readonly connectorToken?: ContentConnectorToken;
+	readonly explicitPort?: ExplicitContentPort;
+	readonly explicitConnector?: ExplicitContentConnector;
 	readonly funnel: TextFunnel;
 }
 
@@ -289,6 +308,8 @@ export function contentValuesEqual(
 	if (left.source !== right.source) return false;
 	if (left.portToken !== right.portToken) return false;
 	if (left.connectorToken !== right.connectorToken) return false;
+	if (left.explicitPort !== right.explicitPort) return false;
+	if (left.explicitConnector !== right.explicitConnector) return false;
 	return funnelsEqual(left.funnel, right.funnel);
 }
 
@@ -335,6 +356,8 @@ export class HostInstance {
 	control: UiHandle | undefined;
 	portToken: ContentPortToken | undefined;
 	connectorToken: ContentConnectorToken | undefined;
+	explicitPort: ExplicitContentPort | undefined;
+	explicitConnector: ExplicitContentConnector | undefined;
 	localOrdinal: number | undefined;
 	accepted: AcceptedSnapshot | undefined;
 	pending: NormalizedProps;
@@ -345,6 +368,8 @@ export class HostInstance {
 		this.initial = props;
 		this.rootRole = undefined;
 		this.portalOwner = undefined;
+		this.explicitPort = undefined;
+		this.explicitConnector = undefined;
 		this.pending = props;
 	}
 }
@@ -766,7 +791,11 @@ function normalizeFunnel(value: unknown): TextFunnel {
 }
 
 function normalizePort(
-	port: ContentPortToken | ContentConnectorToken,
+	port:
+		| ContentPortToken
+		| ContentConnectorToken
+		| ExplicitContentPort
+		| ExplicitContentConnector,
 	funnel: TextFunnel,
 ): NormalizedContent {
 	if (typeof port !== "object" || port === null)
@@ -797,6 +826,24 @@ function normalizePort(
 		return {
 			mode: "lazy",
 			portToken: token,
+			funnel,
+		};
+	}
+	if (isExplicitContentConnector(port)) {
+		if (port.disposed) throw new TypeError("Content Connector is disposed");
+		return {
+			mode: "lazy",
+			explicitPort: port.attachedPort,
+			explicitConnector: port,
+			source: port.attachedSource,
+			funnel: port.funnel,
+		};
+	}
+	if (isExplicitContentPort(port)) {
+		if (port.disposed) throw new TypeError("Content Port is disposed");
+		return {
+			mode: "lazy",
+			explicitPort: port,
 			funnel,
 		};
 	}

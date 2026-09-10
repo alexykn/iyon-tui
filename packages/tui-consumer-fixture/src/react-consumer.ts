@@ -153,27 +153,32 @@ export async function openReactConsumerSession(): Promise<ReactConsumerSession> 
 		root,
 		source,
 		render: (state) =>
-			root.render(
-				createElement(ConsumerApp, {
-					state,
-					source,
-					onEditorRef: (value) => {
-						editorRef = value ?? undefined;
-					},
-					onHistoryRef: (value) => {
-						historyRef = value ?? undefined;
-					},
-					onInput: (text) => {
-						lastInput = text;
-						events.push(`input:${text}`);
-					},
-					onSubmit: (text) => {
-						submitted = text;
-						events.push(`submit:${text}`);
-						for (const resolve of submitWaiters.splice(0)) resolve(text);
-					},
+			root
+				.render(
+					createElement(ConsumerApp, {
+						state,
+						source,
+						onEditorRef: (value) => {
+							editorRef = value ?? undefined;
+						},
+						onHistoryRef: (value) => {
+							historyRef = value ?? undefined;
+						},
+						onInput: (text) => {
+							lastInput = text;
+							events.push(`input:${text}`);
+						},
+						onSubmit: (text) => {
+							submitted = text;
+							events.push(`submit:${text}`);
+							for (const resolve of submitWaiters.splice(0)) resolve(text);
+						},
+					}),
+				)
+				.then(async (commit) => {
+					await root.whenVisible(commit.revision);
+					return commit;
 				}),
-			),
 		focusEditor(): void {
 			if (editorRef === undefined) throw new Error("editor ref is unavailable");
 			editorRef.focus();

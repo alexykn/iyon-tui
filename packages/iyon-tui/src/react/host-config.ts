@@ -110,6 +110,21 @@ function publicInstance(
 				handle.kind,
 			]);
 		},
+		interceptPaste: (routeId) => {
+			if (typeof routeId !== "string" || routeId.length === 0)
+				throw new TypeError("paste routeId must be a nonempty string");
+			const handle = node.accepted?.handle;
+			if (handle === undefined)
+				throw new Error("cannot intercept paste before occurrence acceptance");
+			const intercept = node.root.host.interceptPasteUi;
+			if (intercept === undefined)
+				throw new Error("native occurrence paste interception is unavailable");
+			intercept.call(
+				node.root.host,
+				[handle.host_namespace, handle.slot, handle.generation, handle.kind],
+				routeId,
+			);
+		},
 		visibleGeometry: async () => {
 			const handle = node.accepted?.handle;
 			if (handle === undefined)

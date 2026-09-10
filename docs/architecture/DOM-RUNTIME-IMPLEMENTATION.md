@@ -1,7 +1,9 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T4 and the T5 React and presentation/state prerequisites, accepted after
-parent source and design review. This is not full T5/M1 acceptance.
+**Scope:** T0 through T5 TypeScript cutover. Native old View ABI/generated
+outputs and ordinary Rust ViewState remain only as the explicitly approved
+next-slice residue; handwritten TypeScript View/composition/structural
+publication and old authoring controls are deleted.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
 
@@ -22,9 +24,74 @@ the current-source authority.
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
-| T5 — M1 cutover/publication deletion | **React and presentation/state prerequisites accepted; M1 remaining** | Parent reviewed the production shim, finite public refs, speculative ownership witness, consumer/demo behavior, effective style-state ownership, complete border/style lowering, and supported/rejected M1 alignment. Old composition/View publication, leases, paths and ordinary ViewState remain until the full cutover gate. |
+| T5 — M1 TypeScript cutover/publication deletion | **TypeScript slice accepted; M1 incomplete** | Parent reviewed the canonical React route, explicit resource/receipt lifetimes, native diagnostics/input, output cancellation, consumer ports and physical History witness. Handwritten View/composition/structural publication and JS frame polling are deleted. Native old View ABI/generated outputs and ordinary Rust ViewState deletion plus the final M1 broad gate remain next. |
 | T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
+
+### T5 canonical React resource seam (current source)
+
+The canonical caller setup is now `Tui.open` → `createReactRoot(tui)` →
+`Tui.contentPort()`/`root.render` → a visibility barrier. `contentPort()`
+rejects before root creation and no longer calls the legacy native host
+`contentPort()` factory. Explicit Port and Connector facades are nominal,
+caller-owned values. Their create/select/deactivate/dispose operations use the
+same React `CommitCoordinator` revision stream as occurrence commits; React
+unmount detaches them without disposing them, and explicit disposal is
+rejected while the accepted resource graph still uses a resource.
+
+The native status seam reports desired/confirmed Connector state and Port
+mounted visibility from the current host execution owner. The native Port's
+confirmed adapter identity is promoted only for touched receipt products;
+superseded adapters retire after receipt-safe Source cleanup. Status snapshots
+are not cached. Failed selection retains the confirmed product, successful
+replacement clears it, and unmount clears visibility. React refs expose the finite
+`interceptPaste(routeId)` operation, resolved atomically against the accepted
+Editor and existing native paste router.
+
+The approved next-slice residue is limited to native old View ABI/generated
+outputs, native old control mechanics still used by the private renderer, and
+ordinary Rust ViewState. None is a TypeScript production route or ownership
+authority.
+
+### T5 TypeScript slice — parent acceptance evidence
+
+Parent review corrected duplicate root construction, lost/duplicated output
+after cancellation, missing automatic diagnostics, stale Connector selection,
+and native confirmed-identity/adapter-retirement defects before acceptance.
+Explicit selection now changes from accepted selection records, not from an
+unrelated React property update. A single FIFO output owner serves runtime and
+harness callers. Native diagnostics have a bounded queue and explicitly report
+overflow rather than silently losing notifications; malformed N-API diagnostic
+identities fault the observer/root instead of being defaulted or truncated.
+
+The native global-key test now asserts the required global-before-local
+contract, including continued local handling of unbound keys. Its prior failure
+was caused by this slice's intentional routing change, not an unrelated baseline
+failure. Public tests exercise focused global routing, intercepted paste,
+`forwardPaste`, stale refs, and physical History transfer on exit. The real
+candidate-interruption witness remains intact.
+
+Final normal addon (darwin-arm64, default N-API):
+
+    packages/iyon-tui/native/iyon-tui-native.node
+    SHA-256 f3198b60883af4e4eb21b6f0acb37c70948a690313045c3e86739b065907c4df
+    7,725,040 bytes
+
+Parent checks: TypeScript; declaration/binding/generated-ABI/ownership gates;
+83 package/consumer tests; packaged native smoke; rustfmt; 61 native host tests;
+Clippy on core/native all-targets; pinned Biome format for changed permanent
+TypeScript plus lint/complexity. Biome/Clippy warning debt remains reported,
+not a warning-free claim. Native correction-stage evidence of 55 content tests
+and 66 N-API tests (one ignored) remains applicable to unchanged owners.
+Broad Rust workspace testing waits for the native/schema/state M1 deletion gate.
+
+The benchmark now reads actual opt-in Rust projection/layout/paint counters,
+counts submitted UI records separately, and observes native output and a visible
+receipt. Parent ran it with `perf-counters`, then restored the normal addon above.
+Logs are `/tmp/t5-parent-*.log` and `/tmp/t5-parent-benchmark.jsonl`.
+External migration and benchmark instructions are in
+`docs/migration/REACT-RUNTIME.md`. The T4/prerequisite sections below retain their
+historical validation results; they do not override this current slice status.
 
 ### T4 handoff boundary
 
@@ -122,16 +189,12 @@ unchanged by those Rust-only corrections and are listed above with their
 original logs. Durable command logs are in `/tmp/iyon-t4-broad-*.log`,
 `/tmp/iyon-t4-final-*.log`, and `/tmp/iyon-t4-native-stage-final2.log`.
 
-Remaining migration risks and deletion gates are explicit: the T5 prerequisite
-slice now supplies the scheduler interruption witness, but the production
-cutover still requires the full M1 deletion review; uncertain physical History
-suffixes remain conservatively blocked pending an explicit resynchronization
-owner; the private legacy adapter remains until T7; old composition/View/
-publication machinery remains until T5; direct Taffy layout and semantic
-content lowering remain T6/T7; and component-only Surface, physical export,
-and GPUI integration remain outside this tranche. Parent acceptance is limited
-to the T4 current-renderer contract; it does not claim the T5 production
-cutover, M2 layout/content deletion, or Surface work is done.
+The T5 cutover now removes all handwritten TypeScript View/composition/
+publication and old consumer routes. Remaining gates are native old View
+ABI/generated-output and ordinary Rust ViewState deletion, direct Taffy layout,
+semantic content lowering, and the separately scoped Surface/physical-export/
+GPUI work. Uncertain physical History suffixes remain conservatively blocked
+pending an explicit resynchronization owner.
 
 ### T4 parent-review correction: zero-progress History close
 
@@ -698,19 +761,19 @@ silently kept on a test-only compatibility runtime.
 
 | Consumer/route | Planned tranche | Status |
 |---|---|---|
-| packages/tui-consumer-fixture/src/consumer.ts | T3 | legacy route retained until T5; React port is in `src/react-consumer.ts` using only documented entrypoints |
-| packages/tui-consumer-fixture/src/react-consumer.ts | T3/T5 prerequisite | Public React consumer now exercises editor callbacks/focus, keyed Scroll, Animation, Source/Port/Connector and typed HistoryUnit refs; old `consumer.ts` remains separate until cutover. |
-| packages/tui-consumer-fixture/tests/consumer.test.ts | T3/T5 | legacy behavior tests retained; React behavior is in `tests/react-consumer.test.ts` |
-| packages/tui-consumer-fixture/tests/react-consumer.test.ts | T3/T5 prerequisite | Public React acceptance plus editor, keyed list, control, content lifecycle, and History identity witnesses. |
-| packages/tui-consumer-fixture/tests/scoped-invalidation.test.ts | T3/T5 | pending replacement with occurrence delta/invalidation witness |
-| packages/iyon-tui/scripts/smoke-native.ts | T2/T3/T5 | pending new production bridge smoke route |
-| packages/iyon-tui/tests/fixtures/tui_demo.ts | T3/T5 prerequisite | Ported to the public React root/components/refs/content/History route; returns observed editor, content, focus, and History evidence. |
-| controls (TextInput, ScrollPane, ViewSlot) | T4 | native mechanics retained; composition-only slots are not ported in T1 |
+| packages/tui-consumer-fixture/src/react-consumer.ts | T5 | sole public consumer route; exercises editor callbacks/focus, keyed Scroll, Animation, Source/Port/Connector and typed HistoryUnit refs |
+| packages/tui-consumer-fixture/tests/react-consumer.test.ts | T5 | public React acceptance plus editor, keyed list, control, content lifecycle, and History identity witnesses |
+| packages/iyon-tui/scripts/smoke-native.ts | T5 | packaged React root/content smoke route |
+| controls (Editor, Scroll, Animation) | T5 | finite React occurrence controls; old TextInput/ScrollPane/ViewSlot authoring facades deleted |
 | content Source/Funnel/Port/Connector | T2/T4 | existing direct Source data lane retained; no payload fallback added |
 | History/native scrollback | T4 / Surface gate | current physical behavior retained until the component-only Surface migration and explicit physical-export policy |
-| old composition/structural/state tests and benchmarks | T5 | baseline-only in this tranche; replace/delete at cutover, never duplicate in a fake runtime |
+| old composition/structural/state tests and benchmarks | T5 | deleted as superseded View/publication-only suites; generated native ABI conformance residue remains under the next-slice gate |
 
 ### T5 prerequisite slice (not M1 acceptance)
+
+> Historical note: this subsection records the prerequisite review evidence
+> collected before the T5 cutover. The current T5 row and consumer ledger
+> above supersede its old-route retention statements.
 
 Parent acceptance covers the following prerequisite contracts and evidence:
 

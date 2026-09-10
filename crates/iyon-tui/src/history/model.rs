@@ -69,6 +69,20 @@ impl History {
         self.units.is_empty()
     }
 
+    pub(crate) fn contains_unit(&self, id: HistoryUnitId) -> bool {
+        self.units.iter().any(|unit| unit.id == id)
+    }
+
+    pub(crate) fn unit_is_live(&self, id: HistoryUnitId) -> Option<bool> {
+        self.units.iter().find_map(|unit| {
+            (unit.id == id).then_some(matches!(unit.content, HistoryUnitContent::Live(_)))
+        })
+    }
+
+    pub(crate) fn unit_ids(&self) -> impl Iterator<Item = HistoryUnitId> + '_ {
+        self.units.iter().map(|unit| unit.id)
+    }
+
     pub fn push(&mut self, view: View) -> Result<HistoryUnitId, HistoryError> {
         self.push_with_boundary(view, FlowBoundary::Default)
     }
@@ -96,6 +110,68 @@ impl History {
         Ok(id)
     }
 
+    pub(crate) fn push_with_identity(
+        &mut self,
+        id: HistoryUnitId,
+        view: View,
+        boundary: FlowBoundary,
+    ) -> Result<HistoryUnitId, HistoryError> {
+        if self.units.iter().any(|unit| unit.id == id) {
+            return Err(HistoryError::DuplicateUnit { unit: id });
+        }
+        let content = if view.contains_component_identity() {
+            HistoryUnitContent::Live(view)
+        } else {
+            HistoryUnitContent::Static(view)
+        };
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
+        self.units.push_back(HistoryUnit {
+            id,
+            boundary,
+            content,
+            layout: RefCell::new(HistoryUnitLayout::default()),
+        });
+        self.bump_revision();
+        Ok(id)
+    }
+
+    pub(crate) fn push_live_with_identity(
+        &mut self,
+        id: HistoryUnitId,
+        view: View,
+        boundary: FlowBoundary,
+    ) -> Result<HistoryUnitId, HistoryError> {
+        if self.units.iter().any(|unit| unit.id == id) {
+            return Err(HistoryError::DuplicateUnit { unit: id });
+        }
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
+        self.units.push_back(HistoryUnit {
+            id,
+            boundary,
+            content: HistoryUnitContent::Live(view),
+            layout: RefCell::new(HistoryUnitLayout::default()),
+        });
+        self.bump_revision();
+        Ok(id)
+    }
+
+    pub(crate) fn replace_live(
+        &mut self,
+        unit: HistoryUnitId,
+        view: View,
+    ) -> Result<(), HistoryError> {
+        let index = self.index_of(unit)?;
+        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
+            return Err(HistoryError::UnitNotLive { unit });
+        }
+        self.units[index].content = HistoryUnitContent::Live(view);
+        self.invalidate_unit_layout(index);
+        self.bump_revision();
+        Ok(())
+    }
+
     /// Discards a transient tail Live unit without creating spacing or native
     /// history rows.
     pub fn discard_live(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
@@ -106,6 +182,15 @@ impl History {
         if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
             return Err(HistoryError::UnitNotLive { unit });
         }
+        self.units.remove(index);
+        self.cached_total_height.set(None);
+        self.stale_cached_heights.set(0);
+        self.bump_revision();
+        Ok(())
+    }
+
+    pub(crate) fn retire_unit(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
+        let index = self.index_of(unit)?;
         self.units.remove(index);
         self.cached_total_height.set(None);
         self.stale_cached_heights.set(0);
@@ -136,7 +221,8 @@ impl History {
             Some(HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view))
                 if view.contains_content_identity() =>
             {
-                Some(view.content_attachment_id().unwrap_or(0))
+                view.content_history_transfer()
+                    .map(|transfer| transfer.port_id)
             }
             Some(HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_)) | None => None,
         }
@@ -281,6 +367,10 @@ impl History {
     /// recovery marker, never permission to replay or roll back History.
     pub(crate) fn native_synchronization_unknown(&self) -> bool {
         self.native.synchronization_unknown
+    }
+
+    pub(crate) fn mark_native_synchronization_unknown(&mut self) {
+        self.native.mark_synchronization_unknown();
     }
 
     pub(crate) fn recover_native_synchronization(&mut self) {

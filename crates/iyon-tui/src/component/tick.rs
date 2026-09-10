@@ -11,7 +11,7 @@ use crate::{
     output::{EventCx, OutputQueue},
 };
 
-trait TickDriver {
+trait TickDriver: Send {
     fn tick(
         &mut self,
         handle: ComponentId,
@@ -22,7 +22,9 @@ trait TickDriver {
 }
 
 struct CapabilityTickDriver {
-    callback: Arc<dyn for<'a> Fn(&mut dyn std::any::Any, Instant, &mut EventCx<'a>) -> bool>,
+    callback: Arc<
+        dyn for<'a> Fn(&mut dyn std::any::Any, Instant, &mut EventCx<'a>) -> bool + Send + Sync,
+    >,
 }
 
 impl TickDriver for CapabilityTickDriver {

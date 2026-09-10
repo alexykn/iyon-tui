@@ -1,15 +1,25 @@
-import { createElement, type ReactElement } from "react";
+import { createElement, type ReactElement, type ReactNode } from "react";
 import type {
 	AnimationProps,
 	BoxProps,
 	ContentProps,
 	EditorProps,
+	HistoryProps,
+	HistoryUnitProps,
 	LayoutProps,
 } from "./instance.ts";
 import { normalizeProps } from "./instance.ts";
 
 function checkedElement(
-	type: "box" | "row" | "column" | "grid" | "editor" | "scroll" | "animation",
+	type:
+		| "box"
+		| "row"
+		| "column"
+		| "grid"
+		| "editor"
+		| "scroll"
+		| "animation"
+		| "historyUnit",
 	props: object,
 ): ReactElement {
 	normalizeProps(type, props);
@@ -56,10 +66,22 @@ export function Animation(props: AnimationProps): ReactElement {
 	return checkedElement("animation", props);
 }
 
+/** Logical root for one or more typed HistoryUnit occurrence roots. */
+export function History(props: HistoryProps): ReactNode {
+	return props.children ?? null;
+}
+
+/** Host-owned History unit root; children are validated by the native History adapter. */
+export function HistoryUnit(props: HistoryUnitProps): ReactElement {
+	return checkedElement("historyUnit", props);
+}
+
 export type {
 	AnimationProps,
 	BoxProps,
 	ContentProps,
 	EditorProps,
+	HistoryProps,
+	HistoryUnitProps,
 	LayoutProps,
 };

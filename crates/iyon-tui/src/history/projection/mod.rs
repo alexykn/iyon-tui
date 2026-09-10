@@ -166,18 +166,13 @@ fn project_into_session_with_mode(
         .width
         .saturating_sub(layout.padding.left.saturating_add(layout.padding.right));
     let units = history.units().collect::<Vec<_>>();
+    let state_overlay = session.overlay().clone();
     let mut plans = units
         .iter()
         .enumerate()
         .map(|(index, unit)| match &unit.content {
             HistoryUnitContent::Static(view) => {
-                let cache_key = view.content_attachment_id().map_or_else(
-                    || HistoryUnitLayoutKey::Static(view.id()),
-                    |port_id| HistoryUnitLayoutKey::Content {
-                        view: view.id(),
-                        projection: content.projection_revision(port_id, content_width),
-                    },
-                );
+                let cache_key = static_layout_key(view, content, content_width, &state_overlay);
                 let height = history.prepare_unit_layout(index, content_width, cache_key.clone());
                 Ok(UnitPlan {
                     boundary: unit.boundary,
@@ -192,6 +187,8 @@ fn project_into_session_with_mode(
                 let cache_key = HistoryUnitLayoutKey::Live {
                     view: view.id(),
                     dependencies,
+                    content_dependencies: content_dependencies(view, content, content_width),
+                    state_dependencies: state_dependencies(view, &state_overlay),
                 };
                 let height = history.prepare_unit_layout(index, content_width, cache_key.clone());
                 Ok(UnitPlan {
@@ -524,6 +521,56 @@ fn project_into_session_with_mode(
         frozen_overlay,
         overflow_rows,
     })
+}
+
+fn static_layout_key(
+    view: &View,
+    content: &dyn ContentProvider,
+    content_width: u16,
+    state_overlay: &ResolutionOverlay,
+) -> HistoryUnitLayoutKey {
+    let attachments = view.content_attachment_ids();
+    let state_dependencies = state_dependencies(view, state_overlay);
+    if attachments.is_empty() {
+        return HistoryUnitLayoutKey::Static {
+            view: view.id(),
+            state_dependencies,
+        };
+    }
+    let dependencies = attachments
+        .into_iter()
+        .map(|port_id| (port_id, content.projection_revision(port_id, content_width)))
+        .collect();
+    HistoryUnitLayoutKey::Content {
+        view: view.id(),
+        dependencies,
+        state_dependencies,
+    }
+}
+
+fn state_dependencies(view: &View, overlay: &ResolutionOverlay) -> Vec<(u64, u64, u64)> {
+    view.state_attachment_ids()
+        .into_iter()
+        .map(|id| {
+            let snapshot = overlay.state(id);
+            (
+                id,
+                snapshot.map_or(0, |snapshot| snapshot.geometry_revision),
+                snapshot.map_or(0, |snapshot| snapshot.presentation_revision),
+            )
+        })
+        .collect()
+}
+
+fn content_dependencies(
+    view: &View,
+    content: &dyn ContentProvider,
+    content_width: u16,
+) -> Vec<(u64, u64)> {
+    view.content_attachment_ids()
+        .into_iter()
+        .map(|port_id| (port_id, content.projection_revision(port_id, content_width)))
+        .collect()
 }
 
 fn protected_content_tail_bounds(

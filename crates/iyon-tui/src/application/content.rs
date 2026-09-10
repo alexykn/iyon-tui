@@ -42,6 +42,8 @@ use super::source_store::{
     CONTENT_ANNOTATION_KIND_TAG, ChunkView, MAX_ANNOTATION_PAYLOAD_BYTES, MAX_SOURCE_ANNOTATIONS,
     MAX_SOURCE_PAYLOAD_BYTES, SourceAnnotation, StoredSource, ValidatedAnnotation, ValidatedInput,
 };
+use super::ui_resources::UiResourceOwner;
+use crate::occurrence::{HandleKind, ResourceKey, UiChangeSet};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ContentFamily {
     Text,
@@ -3301,6 +3303,9 @@ struct ConnectorRecord {
     /// Source membership is independent from wake subscription. This receipt
     /// bit makes disposal/retry release the Source membership exactly once.
     membership_released: bool,
+    /// False for the terminal projection adapter's derived wrapper.  The
+    /// canonical occurrence owner owns that Source membership.
+    membership_owned: bool,
     /// A post-promotion Source cleanup that could not acquire its Source lock.
     /// This status is distinct from projection/activation failure: the
     /// logical frame is already visible and the Source membership remains
@@ -3596,6 +3601,18 @@ pub(crate) struct ContentHostRegistry {
     candidate_capture_active: bool,
     candidate_commit_prepared: bool,
     history_adapter: HistoryTerminalAdapter,
+    /// Derived terminal resources for the canonical occurrence document.
+    /// The occurrence owner remains authoritative; these handles are only
+    /// the existing `ContentProvider` execution objects used by the M1 adapter.
+    ui_ports: HashMap<ResourceKey, u64>,
+    ui_connectors: HashMap<ResourceKey, u64>,
+    ui_connector_keys: HashMap<ResourceKey, ResourceKey>,
+    ui_failure_injections: HashMap<ResourceKey, String>,
+    ui_next_failure_injection: Option<String>,
+    #[cfg(test)]
+    ui_demand_nodes_visited: usize,
+    #[cfg(test)]
+    ui_owner_nodes_visited: usize,
 }
 
 impl ContentHostRegistry {
@@ -3631,7 +3648,274 @@ impl ContentHostRegistry {
             candidate_capture_active: false,
             candidate_commit_prepared: false,
             history_adapter: HistoryTerminalAdapter::new(),
+            ui_ports: HashMap::new(),
+            ui_connectors: HashMap::new(),
+            ui_connector_keys: HashMap::new(),
+            ui_failure_injections: HashMap::new(),
+            ui_next_failure_injection: None,
+            #[cfg(test)]
+            ui_demand_nodes_visited: 0,
+            #[cfg(test)]
+            ui_owner_nodes_visited: 0,
         }
+    }
+
+    pub(crate) fn sync_ui_resources(
+        &mut self,
+        owner: &UiResourceOwner,
+        changes: Option<&UiChangeSet>,
+    ) -> Result<Vec<u64>> {
+        let host = self.owner_host.clone();
+        if host.strong_count() == 0 {
+            return Err(anyhow!("UI content adapter has no owning host"));
+        }
+        let initial = changes.is_none();
+        let (mut port_keys, mut stale_keys, owner_visited) =
+            Self::ui_sync_port_keys(&self.ui_ports, owner, changes)?;
+        crate::perf::add(
+            crate::perf::Counter::ContentOwnerNodesVisited,
+            u64::try_from(owner_visited).unwrap_or(u64::MAX),
+        );
+        #[cfg(test)]
+        {
+            self.ui_owner_nodes_visited = self.ui_owner_nodes_visited.saturating_add(owner_visited);
+        }
+        port_keys.sort_unstable_by_key(|key| (key.slot, key.generation));
+        port_keys.dedup();
+        let synced_keys = port_keys.clone();
+        stale_keys.sort_unstable_by_key(|key| (key.slot, key.generation));
+        stale_keys.dedup();
+        self.remove_stale_ui_ports(stale_keys);
+
+        let demanded_keys = self.demanded_ui_ports(owner, &port_keys, initial)?;
+        for key in port_keys {
+            if !owner.ports.contains(&key) {
+                continue;
+            }
+            self.sync_ui_port(owner, &host, key)?;
+        }
+        let desired_changes = if initial {
+            self.ui_ports
+                .iter()
+                .map(|(key, port_id)| (*port_id, demanded_keys.contains(key)))
+                .collect::<Vec<_>>()
+        } else {
+            synced_keys
+                .into_iter()
+                .filter_map(|key| {
+                    self.ui_ports
+                        .get(&key)
+                        .map(|port_id| (*port_id, demanded_keys.contains(&key)))
+                })
+                .collect::<Vec<_>>()
+        };
+        self.set_desired_sparse(&desired_changes)?;
+        Ok(desired_changes
+            .into_iter()
+            .filter_map(|(port_id, mounted)| mounted.then_some(port_id))
+            .collect())
+    }
+
+    fn ui_sync_port_keys(
+        ui_ports: &HashMap<ResourceKey, u64>,
+        owner: &UiResourceOwner,
+        changes: Option<&UiChangeSet>,
+    ) -> Result<(Vec<ResourceKey>, Vec<ResourceKey>, usize)> {
+        if changes.is_none() {
+            return Ok((
+                owner.ports.iter().copied().collect(),
+                ui_ports
+                    .keys()
+                    .copied()
+                    .filter(|key| !owner.ports.contains(key))
+                    .collect(),
+                0,
+            ));
+        }
+        let mut touched_ports = HashSet::new();
+        let mut owner_visited = 0usize;
+        let changes = changes.expect("non-initial UI sync has changes");
+        for key in &changes.changed_resources {
+            if key.kind == HandleKind::Port {
+                touched_ports.insert(*key);
+            } else if key.kind == HandleKind::Connector {
+                if let Some(port) = changes
+                    .resource_ports
+                    .iter()
+                    .find_map(|(resource, port)| (*resource == *key).then_some(*port))
+                    .flatten()
+                {
+                    touched_ports.insert(port);
+                }
+            }
+        }
+        if changes.physical_work {
+            let (membership_ports, visited) = owner.ports_under_nodes(&changes.membership_nodes)?;
+            owner_visited = owner_visited.saturating_add(visited);
+            touched_ports.extend(membership_ports);
+            for key in &changes.changed_resources {
+                if key.kind != HandleKind::Control
+                    || !owner.control_state(*key).is_some_and(|state| {
+                        state.kind() == crate::occurrence::ControlKind::Animation
+                    })
+                {
+                    continue;
+                }
+                let Some(node) = owner
+                    .document
+                    .as_ref()
+                    .and_then(|document| document.control_owner(*key))
+                else {
+                    continue;
+                };
+                let (animation_ports, visited) = owner.ports_under_nodes(&[node])?;
+                owner_visited = owner_visited.saturating_add(visited);
+                touched_ports.extend(animation_ports);
+            }
+        }
+        let stale = touched_ports
+            .iter()
+            .copied()
+            .filter(|key| !owner.ports.contains(key))
+            .collect();
+        Ok((touched_ports.into_iter().collect(), stale, owner_visited))
+    }
+
+    fn demanded_ui_ports(
+        &mut self,
+        owner: &UiResourceOwner,
+        port_keys: &[ResourceKey],
+        initial: bool,
+    ) -> Result<HashSet<ResourceKey>> {
+        if initial {
+            return owner
+                .demanded_ports()
+                .map(|ports| ports.into_iter().collect());
+        }
+        let mut demanded = HashSet::new();
+        for key in port_keys {
+            let (is_demanded, visited) = owner.demanded_port(*key)?;
+            crate::perf::add(
+                crate::perf::Counter::ContentDemandNodesVisited,
+                visited as u64,
+            );
+            #[cfg(test)]
+            {
+                self.ui_demand_nodes_visited = self.ui_demand_nodes_visited.saturating_add(visited);
+            }
+            if is_demanded {
+                demanded.insert(*key);
+            }
+        }
+        Ok(demanded)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_ui_demand_nodes_visited(&self) -> usize {
+        self.ui_demand_nodes_visited
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_ui_owner_nodes_visited(&self) -> usize {
+        self.ui_owner_nodes_visited
+    }
+
+    fn remove_stale_ui_ports(&mut self, keys: Vec<ResourceKey>) {
+        for key in keys {
+            if let Some(connector_id) = self.ui_connectors.remove(&key) {
+                self.remove_connector(connector_id);
+            }
+            self.ui_connector_keys.remove(&key);
+            if let Some(port_id) = self.ui_ports.remove(&key)
+                && let Some(port) = self.ports.get(&port_id).cloned()
+            {
+                let _ = self.dispose_port(&port);
+            }
+        }
+    }
+
+    fn sync_ui_port(
+        &mut self,
+        owner: &UiResourceOwner,
+        host: &Weak<Mutex<HostInner>>,
+        key: ResourceKey,
+    ) -> Result<()> {
+        let port_id = if let Some(port_id) = self.ui_ports.get(&key).copied() {
+            port_id
+        } else {
+            let port = self.create_port(host.clone(), ContentFamily::Text)?;
+            let port_id = port.id();
+            self.ui_ports.insert(key, port_id);
+            port_id
+        };
+        let binding = owner.content_binding(key)?;
+        let current_connector = self.ui_connectors.get(&key).copied();
+        let Some((connector_key, source, funnel)) = binding else {
+            if let Some(connector_id) = self.ui_connectors.remove(&key) {
+                self.remove_connector(connector_id);
+            }
+            self.ui_connector_keys.remove(&key);
+            return Ok(());
+        };
+        let needs_new = current_connector
+            .and_then(|id| self.connectors.get(&id))
+            .is_none()
+            || self.ui_connector_keys.get(&key).copied() != Some(connector_key);
+        if current_connector.is_some() && !needs_new {
+            return Ok(());
+        }
+        if let Some(connector_id) = self.ui_connectors.remove(&key) {
+            self.remove_connector(connector_id);
+        }
+        let port = self
+            .ports
+            .get(&port_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("UI ContentPort disappeared during sync"))?;
+        let funnel = HostContentFunnel::new(
+            match funnel.kind {
+                0 => TextFunnelKind::Plain,
+                1 => TextFunnelKind::Markdown,
+                2 => TextFunnelKind::Diff,
+                3 => TextFunnelKind::Ansi,
+                _ => return Err(anyhow!("invalid UI Funnel kind")),
+            },
+            match funnel.wrap {
+                0 => TextWrapMode::Word,
+                1 => TextWrapMode::Grapheme,
+                2 => TextWrapMode::NoWrap,
+                _ => return Err(anyhow!("invalid UI Funnel wrap")),
+            },
+            funnel.hyperlinks,
+            if funnel.smooth {
+                ContentDelivery::Smooth(SmoothConfig::default())
+            } else {
+                ContentDelivery::Immediate
+            },
+        );
+        let connector = self.connect(&port, &source, funnel)?;
+        let connector_id = connector.id();
+        // UiResourceOwner already owns the accepted Source membership. The
+        // derived ContentProvider wrapper shares that binding but must not
+        // make Source disposal depend on a hidden second membership.
+        source.release_connector()?;
+        if let Some(record) = self.connectors.get(&connector_id) {
+            let mut state = record
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned during UI sync"))?;
+            state.membership_owned = false;
+            state.membership_released = true;
+        }
+        self.ui_connectors.insert(key, connector_id);
+        self.ui_connector_keys.insert(key, connector_key);
+        if let Some(diagnostic) = self
+            .ui_failure_injections
+            .remove(&key)
+            .or_else(|| self.ui_next_failure_injection.take())
+        {
+            self.fail_next_activation(connector_id, diagnostic)?;
+        }
+        self.request_activation(connector_id, host).map(|_| ())
     }
 
     fn touch_connector(&mut self, connector_id: u64) {
@@ -3639,6 +3923,87 @@ impl ContentHostRegistry {
             return;
         }
         self.candidate_touched_connectors.insert(connector_id);
+    }
+
+    pub(crate) fn set_owner_host(&mut self, host: Weak<Mutex<HostInner>>) {
+        self.owner_host = host;
+    }
+
+    pub(crate) fn ui_port_id(&self, key: ResourceKey) -> Option<u64> {
+        self.ui_ports.get(&key).copied()
+    }
+
+    pub(crate) fn ui_content_visible(&self, owner: &UiResourceOwner) -> Result<bool> {
+        for key in owner.demanded_ports()? {
+            let Some(port_id) = self.ui_ports.get(&key).copied() else {
+                return Ok(false);
+            };
+            let Some(port) = self.ports.get(&port_id) else {
+                return Ok(false);
+            };
+            let (mounted, connector_id) = {
+                let state = port
+                    .lock()
+                    .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
+                (state.visible_mounted, state.visible_connector)
+            };
+            let Some(connector_id) = connector_id else {
+                return Ok(false);
+            };
+            if !mounted {
+                return Ok(false);
+            }
+            let Some(connector) = self.connectors.get(&connector_id) else {
+                return Ok(false);
+            };
+            let state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            if !state.visible || state.committed_projection.is_none() {
+                return Ok(false);
+            }
+            let Some((_, source, _)) = owner.content_binding(key)? else {
+                return Ok(false);
+            };
+            let source_revision = source.snapshot()?.revision;
+            if state.projected_source_revision != Some(source_revision) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn ui_content_failure(&self) -> Option<String> {
+        self.ui_connectors.values().find_map(|connector_id| {
+            let connector = self.connectors.get(connector_id)?;
+            let state = connector.lock().ok()?;
+            state
+                .error
+                .as_ref()
+                .filter(|_| state.requested && !state.visible)
+                .map(|error| format!("{}: {}", error.code, error.diagnostic))
+        })
+    }
+
+    pub(crate) fn fail_ui_connector(
+        &mut self,
+        owner_key: ResourceKey,
+        diagnostic: String,
+    ) -> Result<()> {
+        if let Some(connector_id) = self.ui_connectors.get(&owner_key).copied() {
+            self.fail_next_activation(connector_id, diagnostic)
+        } else {
+            self.ui_failure_injections.insert(owner_key, diagnostic);
+            Ok(())
+        }
+    }
+
+    pub(crate) fn fail_next_ui_connector_for_test(&mut self, diagnostic: String) -> Result<()> {
+        if diagnostic.is_empty() {
+            return Err(anyhow!("UI Connector failure diagnostic cannot be empty"));
+        }
+        self.ui_next_failure_injection = Some(diagnostic);
+        Ok(())
     }
 
     fn touch_port(&mut self, port_id: u64) {
@@ -3776,6 +4141,7 @@ impl ContentHostRegistry {
             visible: false,
             subscribed: false,
             membership_released: false,
+            membership_owned: true,
             cleanup_error: None,
             phase: "idle",
             error: None,
@@ -3841,31 +4207,63 @@ impl ContentHostRegistry {
             crate::perf::Counter::ContentRegistryPortScans,
             port_ids.len() as u64,
         );
-        for port_id in port_ids {
-            let Some(port) = self.ports.get(&port_id).cloned() else {
+        let changes = port_ids
+            .into_iter()
+            .map(|port_id| (port_id, target_set.contains(&port_id)))
+            .collect::<Vec<_>>();
+        self.set_desired_sparse(&changes)
+    }
+
+    /// Updates only the ContentPorts whose occurrence membership changed.
+    /// Unlike the legacy full-target operation this does not walk every live
+    /// derived port, so a sparse occurrence commit cannot turn into a registry
+    /// scan merely to preserve unchanged bindings.
+    pub(crate) fn set_desired_sparse(&mut self, changes: &[(u64, bool)]) -> Result<()> {
+        let mut seen = HashSet::with_capacity(changes.len());
+        for (port_id, _) in changes {
+            if !seen.insert(*port_id) {
+                return Err(anyhow!(
+                    "DUPLICATE_CONTENT_PORT_ATTACHMENT: ContentPort {port_id} occurs more than once"
+                ));
+            }
+            let Some(port) = self.ports.get(port_id) else {
+                return Err(anyhow!(
+                    "STALE_HANDLE: ContentPort {port_id} is not owned by this host"
+                ));
+            };
+            if port
+                .lock()
+                .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+                .lifecycle
+                != PortLifecycle::Live
+            {
+                return Err(anyhow!("PORT_DISPOSED: ContentPort {port_id} is disposed"));
+            }
+        }
+        for (port_id, desired_mounted) in changes {
+            let Some(port) = self.ports.get(port_id).cloned() else {
                 continue;
             };
-            let desired_mounted = target_set.contains(&port_id);
             {
                 let mut port_state = port
                     .lock()
                     .map_err(|_| anyhow!("ContentPort lock is poisoned"))?;
                 let was_mounted = port_state.desired_mounted;
-                port_state.desired_mounted = desired_mounted;
+                port_state.desired_mounted = *desired_mounted;
                 let desired_connector = port_state.desired_connector;
                 let host = port_state.host.clone();
                 drop(port_state);
-                if was_mounted != desired_mounted {
-                    self.mark_binding_change(port_id);
-                    self.touch_port(port_id);
+                if was_mounted != *desired_mounted {
+                    self.mark_binding_change(*port_id);
+                    self.touch_port(*port_id);
                 }
                 if let Some(connector_id) = desired_connector {
                     self.refresh_requested_phase(
                         connector_id,
-                        desired_mounted,
-                        !was_mounted && desired_mounted,
+                        *desired_mounted,
+                        !was_mounted && *desired_mounted,
                     )?;
-                    if desired_mounted {
+                    if *desired_mounted {
                         self.ensure_requested_subscription(connector_id, &host)?;
                     } else {
                         self.unsubscribe_requested_if_not_visible(connector_id)?;
@@ -6200,6 +6598,10 @@ impl ContentHostRegistry {
         self.candidate_capture_active = false;
         self.candidate_commit_prepared = false;
         self.history_adapter = HistoryTerminalAdapter::new();
+        self.ui_ports.clear();
+        self.ui_connectors.clear();
+        self.ui_connector_keys.clear();
+        self.ui_failure_injections.clear();
     }
 
     fn refresh_requested_phase(
@@ -6447,7 +6849,7 @@ impl ContentHostRegistry {
             );
             state.subscribed = false;
         }
-        if !membership_released {
+        if !membership_released && state.membership_owned {
             release_source_membership_locked(&mut source_guard);
             state.membership_released = true;
         }
@@ -6568,7 +6970,16 @@ impl ContentHostRegistry {
             let state = port.lock().ok()?;
             state.visible_connector.or(state.desired_connector)
         }?;
-        let insets = self.history_adapter.insets(port_id);
+        let raw_insets = self.history_adapter.insets(port_id);
+        // Match the layout compiler's width-safe horizontal padding clamp.
+        // History rows are placed at the offered terminal width, so using the
+        // raw semantic inset here would otherwise export a different product
+        // at narrow widths while silently dropping the right-side geometry.
+        let left = raw_insets.left.min(offered_width.saturating_sub(1));
+        let right = raw_insets
+            .right
+            .min(offered_width.saturating_sub(left.saturating_add(1)));
+        let insets = crate::Insets::new(raw_insets.top, right, raw_insets.bottom, left);
         let committed_rows = self.history_adapter.committed_rows(port_id);
         let connector = self.connectors.get(&connector_id)?.lock().ok()?;
         let snapshot = self.source_snapshot_for(&connector.source).ok()?;
@@ -6979,9 +7390,10 @@ impl ContentProvider for ContentHostRegistry {
     }
 
     fn history_view(&self, view: &crate::presentation::View) -> crate::presentation::View {
-        let Some(port_id) = view.content_attachment_id() else {
+        let Some(transfer) = view.content_history_transfer() else {
             return view.clone();
         };
+        let port_id = transfer.port_id;
         let mut insets = view.decoration().padding;
         if self.history_adapter.leading_padding_rows(port_id) > 0 {
             insets.top = 0;
@@ -7021,8 +7433,8 @@ impl ContentProvider for ContentHostRegistry {
             return true;
         }
         drop(state);
-        self.history_rows(port_id, offered_width)
-            .is_none_or(|rows| rows.rows.is_empty() && !rows.complete)
+        let rows = self.history_rows(port_id, offered_width);
+        rows.is_none_or(|rows| rows.rows.is_empty() && !rows.complete)
     }
 }
 
@@ -7730,7 +8142,7 @@ mod tests {
 
     #[test]
     fn poisoned_subscriber_wake_reports_accepted_revision_and_healthy_drain() {
-        let environment = TuiEnvironment::new();
+        let environment = TuiEnvironment::new_manual();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let source = environment
@@ -7808,7 +8220,7 @@ mod tests {
 
     #[test]
     fn stale_source_wake_error_is_dropped_after_subscriber_membership_ends() {
-        let environment = TuiEnvironment::new();
+        let environment = TuiEnvironment::new_manual();
         let failed = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let healthy = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let source = environment

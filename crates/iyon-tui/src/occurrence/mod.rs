@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 
 pub(crate) use arena::Arena;
 pub use arena::{ArenaError, HostNamespace, NodeKey, ResourceKey, UiHandle};
+pub(crate) use commit::UiChangeSet;
 pub use commit::{
     CommitDetail, FunnelSpec, NodeRef, ResourceRef, UiAcknowledgement, UiCommit, UiOperation,
     UiOperationResult, UiRejection,
@@ -65,6 +66,27 @@ pub struct ResourceRecord {
     pub(crate) source_index: Option<u32>,
     pub(crate) content_family: Option<u32>,
     pub(crate) control_kind: Option<ControlKind>,
+}
+
+/// Immutable renderer-facing occurrence data.  This is intentionally a
+/// value snapshot: the legacy adapter never retains a reference into the
+/// mutable document while a terminal frame is being prepared.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OccurrenceSnapshot {
+    pub(crate) key: NodeKey,
+    pub(crate) kind: HostKind,
+    pub(crate) root_role: Option<RootRole>,
+    pub(crate) children: Vec<NodeKey>,
+    pub(crate) port: Option<ResourceKey>,
+    pub(crate) control: Option<ResourceKey>,
+    pub(crate) hidden: bool,
+    pub(crate) subscriptions: u64,
+    pub(crate) history_action: Option<u32>,
+    pub(crate) properties: Vec<(PropertyId, LayerValue)>,
+    pub(crate) structure_revision: u64,
+    pub(crate) geometry_revision: u64,
+    pub(crate) presentation_revision: u64,
+    pub(crate) interaction_revision: u64,
 }
 
 impl ResourceRecord {
@@ -201,6 +223,271 @@ impl OccurrenceDocument {
     #[must_use]
     pub fn resource_is_live(&self, key: ResourceKey) -> bool {
         self.resource_record(key).is_ok()
+    }
+
+    pub(crate) fn snapshot(&self, key: NodeKey) -> Result<OccurrenceSnapshot, HandleError> {
+        let occurrence = self
+            .nodes
+            .get(key.slot, key.generation)
+            .map_err(|error| match error {
+                ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                ArenaError::StaleKey => HandleError::Stale,
+            })?;
+        let mut children = Vec::with_capacity(occurrence.links.child_count as usize);
+        let mut child = occurrence.links.first_child;
+        while let Some(key) = child {
+            let record = self
+                .nodes
+                .get(key.slot, key.generation)
+                .map_err(|error| match error {
+                    ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                    ArenaError::StaleKey => HandleError::Stale,
+                })?;
+            children.push(key);
+            child = record.links.next_sibling;
+            if children.len() > occurrence.links.child_count as usize {
+                return Err(HandleError::Invalid);
+            }
+        }
+        Ok(OccurrenceSnapshot {
+            key,
+            kind: occurrence.kind,
+            root_role: occurrence.root_role,
+            children,
+            port: occurrence.attachments.port,
+            control: occurrence.attachments.control,
+            hidden: occurrence.renderer_hidden,
+            subscriptions: occurrence.subscriptions,
+            history_action: occurrence.history_action,
+            properties: occurrence.properties.effective_values(),
+            structure_revision: occurrence.revisions.structure,
+            geometry_revision: occurrence.revisions.geometry,
+            presentation_revision: occurrence.revisions.presentation,
+            interaction_revision: occurrence.revisions.interaction,
+        })
+    }
+
+    pub(crate) fn selected_connector(&self, port: ResourceKey) -> Option<ResourceKey> {
+        self.resource_record(port)
+            .ok()
+            .and_then(|record| record.selected)
+    }
+
+    pub(crate) fn nodes_for_control(&self, control: ResourceKey) -> Vec<NodeKey> {
+        self.nodes
+            .iter()
+            .filter_map(|(slot, generation, occurrence)| {
+                (occurrence.attachments.control == Some(control))
+                    .then_some(NodeKey { slot, generation })
+            })
+            .collect()
+    }
+
+    pub(crate) fn nodes_for_port(&self, port: ResourceKey) -> Vec<NodeKey> {
+        self.nodes
+            .iter()
+            .filter_map(|(slot, generation, occurrence)| {
+                (occurrence.attachments.port == Some(port)).then_some(NodeKey { slot, generation })
+            })
+            .collect()
+    }
+
+    pub(crate) fn port_owner(&self, port: ResourceKey) -> Option<NodeKey> {
+        self.port_owners.get(&port).copied()
+    }
+
+    pub(crate) fn control_owner(&self, control: ResourceKey) -> Option<NodeKey> {
+        self.control_owners.get(&control).copied()
+    }
+
+    pub(crate) fn ports_under_nodes(
+        &self,
+        roots: &[NodeKey],
+    ) -> Result<(Vec<ResourceKey>, usize), HandleError> {
+        let mut stack = roots.to_vec();
+        let mut seen = HashSet::new();
+        let mut ports = Vec::new();
+        let mut visited = 0usize;
+        while let Some(key) = stack.pop() {
+            if !seen.insert(key) {
+                continue;
+            }
+            let occurrence =
+                self.nodes
+                    .get(key.slot, key.generation)
+                    .map_err(|error| match error {
+                        ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                        ArenaError::StaleKey => HandleError::Stale,
+                    })?;
+            visited = visited.saturating_add(1);
+            if let Some(port) = occurrence.attachments.port {
+                ports.push(port);
+            }
+            let mut child = occurrence.links.first_child;
+            while let Some(child_key) = child {
+                stack.push(child_key);
+                child = self
+                    .nodes
+                    .get(child_key.slot, child_key.generation)
+                    .map_err(|error| match error {
+                        ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                        ArenaError::StaleKey => HandleError::Stale,
+                    })?
+                    .links
+                    .next_sibling;
+            }
+            if let Some(portals) = self.portals_by_owner.get(&key) {
+                stack.extend(portals.iter().copied());
+            }
+        }
+        ports.sort_unstable_by_key(|key| (key.kind as u32, key.slot, key.generation));
+        ports.dedup();
+        Ok((ports, visited))
+    }
+
+    pub(crate) fn demanded_node<F>(
+        &self,
+        node: NodeKey,
+        active_animation: F,
+    ) -> Result<(bool, usize), HandleError>
+    where
+        F: Fn(ResourceKey) -> Option<usize>,
+    {
+        let mut current = node;
+        let mut visited = 0usize;
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(current) {
+                return Err(HandleError::Invalid);
+            }
+            let occurrence = self
+                .nodes
+                .get(current.slot, current.generation)
+                .map_err(|error| match error {
+                    ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                    ArenaError::StaleKey => HandleError::Stale,
+                })?;
+            visited = visited.saturating_add(1);
+            if occurrence.renderer_hidden {
+                return Ok((false, visited));
+            }
+            if let Some(parent) = occurrence.links.parent {
+                let parent_record = self.nodes.get(parent.slot, parent.generation).map_err(
+                    |error| match error {
+                        ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                        ArenaError::StaleKey => HandleError::Stale,
+                    },
+                )?;
+                if parent_record.kind == HostKind::Animation {
+                    let active = parent_record
+                        .attachments
+                        .control
+                        .and_then(&active_animation);
+                    if self.child_at(parent, active.unwrap_or(0))? != Some(current) {
+                        return Ok((false, visited));
+                    }
+                }
+                current = parent;
+                continue;
+            }
+            if let Some(owner) = occurrence.root_owner {
+                current = owner;
+                continue;
+            }
+            if occurrence.root_role.is_some() {
+                return Ok((true, visited));
+            }
+            return Err(HandleError::Invalid);
+        }
+    }
+
+    fn child_at(&self, parent: NodeKey, index: usize) -> Result<Option<NodeKey>, HandleError> {
+        let parent_record = self
+            .nodes
+            .get(parent.slot, parent.generation)
+            .map_err(|error| match error {
+                ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                ArenaError::StaleKey => HandleError::Stale,
+            })?;
+        let mut child = parent_record.links.first_child;
+        let mut position = 0usize;
+        while let Some(key) = child {
+            if position == index {
+                return Ok(Some(key));
+            }
+            let child_record =
+                self.nodes
+                    .get(key.slot, key.generation)
+                    .map_err(|error| match error {
+                        ArenaError::InvalidKey | ArenaError::Capacity => HandleError::Invalid,
+                        ArenaError::StaleKey => HandleError::Stale,
+                    })?;
+            position = position.saturating_add(1);
+            if position > parent_record.links.child_count as usize {
+                return Err(HandleError::Invalid);
+            }
+            child = child_record.links.next_sibling;
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn control_for_node(&self, node: NodeKey) -> Option<ResourceKey> {
+        self.nodes
+            .get(node.slot, node.generation)
+            .ok()
+            .and_then(|occurrence| occurrence.attachments.control)
+    }
+
+    pub(crate) fn parent_of(&self, node: NodeKey) -> Option<NodeKey> {
+        self.nodes
+            .get(node.slot, node.generation)
+            .ok()
+            .and_then(|occurrence| occurrence.links.parent)
+    }
+
+    pub(crate) fn root_owner(&self, node: NodeKey) -> Option<NodeKey> {
+        self.nodes
+            .get(node.slot, node.generation)
+            .ok()
+            .and_then(|occurrence| occurrence.root_owner)
+    }
+
+    pub(crate) fn resource_port(&self, key: ResourceKey) -> Option<ResourceKey> {
+        match key.kind {
+            HandleKind::Port => Some(key),
+            HandleKind::Connector => self.resource_record(key).ok()?.port,
+            HandleKind::Control | HandleKind::Node => None,
+        }
+    }
+
+    pub(crate) fn portal_roots(&self) -> Vec<NodeKey> {
+        let mut roots = self
+            .roots
+            .iter()
+            .copied()
+            .filter(|key| {
+                self.nodes
+                    .get(key.slot, key.generation)
+                    .is_ok_and(|record| record.root_role == Some(RootRole::Portal))
+            })
+            .collect::<Vec<_>>();
+        roots.sort_unstable_by_key(|key| (key.slot, key.generation));
+        roots
+    }
+
+    pub(crate) fn history_roots(&self) -> Vec<NodeKey> {
+        let mut roots = self
+            .roots
+            .iter()
+            .copied()
+            .filter(|key| {
+                self.nodes
+                    .get(key.slot, key.generation)
+                    .is_ok_and(|record| record.root_role == Some(RootRole::LegacyHistoryUnit))
+            })
+            .collect::<Vec<_>>();
+        roots.sort_unstable_by_key(|key| (key.slot, key.generation));
+        roots
     }
 
     fn node_key(&self, handle: UiHandle) -> Result<NodeKey, HandleError> {

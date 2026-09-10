@@ -20,7 +20,7 @@ const BLESSED_BINDING = new Set([
   "UI_BATCH_MAGIC", "UI_BATCH_VERSION", "UI_HANDLE_WORDS",
   "NodeKey", "PropertyId", "PropertyLayer", "PropertyValue", "ResourceKey", "ResourceRef", "RootConfig", "RootRole", "SizeMode",
   "StyleValue", "TextAttributes", "UiAcknowledgement", "UiCommit", "UiHandle", "UiOperation",
-  "UiOperationResult", "UiRejection", "ValueKind", "property_descriptor", "value_encoding", "value_encoding_form",
+  "UiOperationResult", "UiRejection", "UiCommitOutput", "ValueKind", "property_descriptor", "value_encoding", "value_encoding_form",
   "AnsiColor", "BorderEdges", "BorderGlyphs", "BorderSpec", "BorderStyle",
   "ColorSpec", "ContentAnnotationRecord", "ContentDelivery", "ContentFamily",
   "ContentMutationResult", "Counter", "DiffHunk", "DiffLine", "DiffLineNumber",

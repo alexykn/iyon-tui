@@ -6,11 +6,15 @@ use super::host::RoutedOutput;
 
 #[derive(Default)]
 pub(crate) struct GlobalBindings {
-    bindings: HashMap<KeyStroke, Box<dyn Fn() -> RoutedOutput>>,
+    bindings: HashMap<KeyStroke, Box<dyn Fn() -> RoutedOutput + Send>>,
 }
 
 impl GlobalBindings {
-    pub(crate) fn bind(&mut self, key: KeyStroke, factory: impl Fn() -> RoutedOutput + 'static) {
+    pub(crate) fn bind(
+        &mut self,
+        key: KeyStroke,
+        factory: impl Fn() -> RoutedOutput + Send + 'static,
+    ) {
         self.bindings.insert(key, Box::new(factory));
     }
 
@@ -21,14 +25,14 @@ impl GlobalBindings {
 
 #[derive(Default)]
 pub(crate) struct PasteInterceptors {
-    interceptors: HashMap<ComponentId, Box<dyn Fn(String) -> RoutedOutput>>,
+    interceptors: HashMap<ComponentId, Box<dyn Fn(String) -> RoutedOutput + Send>>,
 }
 
 impl PasteInterceptors {
     pub(crate) fn intercept<C>(
         &mut self,
         component: ComponentHandle<C>,
-        map: impl Fn(String) -> RoutedOutput + 'static,
+        map: impl Fn(String) -> RoutedOutput + Send + 'static,
     ) where
         C: Component,
     {

@@ -12,7 +12,7 @@ use super::{
 
 struct Route<A> {
     payload_type: TypeId,
-    map: Box<dyn Fn(Box<dyn Any>) -> A>,
+    map: Box<dyn Fn(Box<dyn Any + Send>) -> A + Send>,
 }
 
 /// Failure to add a second route for an output channel.
@@ -55,10 +55,10 @@ impl<A> OutputRouter<A> {
         }
     }
 
-    pub fn route<T: 'static>(
+    pub fn route<T: Send + 'static>(
         &mut self,
         output: Output<T>,
-        map: impl Fn(T) -> A + 'static,
+        map: impl Fn(T) -> A + Send + 'static,
     ) -> Result<(), RouteConflict> {
         if self.routes.contains_key(&output.id()) {
             return Err(RouteConflict);

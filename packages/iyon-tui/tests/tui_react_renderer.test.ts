@@ -1,23 +1,34 @@
 import { describe, expect, test } from "bun:test";
 import {
 	createElement,
+	Fragment,
 	memo,
+	type ReactNode,
 	StrictMode,
 	useEffect,
 	useLayoutEffect,
 	useState,
 } from "react";
 import { StyleRef, TextBlockSource, TextContent } from "../src/index.ts";
-import { hostCandidateCreations } from "../src/react/host-config.ts";
+import { RootContainer } from "../src/react/commit.ts";
+import {
+	hostCandidateCreations,
+	hostConfig,
+	withNativeEventPriority,
+} from "../src/react/host-config.ts";
 import { nativeHostForReact } from "../src/react/host-registry.ts";
 import {
+	Animation,
 	Box,
 	Column,
 	Content,
 	type ContentConnectorToken,
 	type ContentPortToken,
 	createReactRoot,
+	Editor,
 	Grid,
+	History,
+	HistoryUnit,
 	Row,
 	Text,
 	useContentConnector,
@@ -330,21 +341,442 @@ describe("T3 React mutation renderer", () => {
 		}
 	});
 
-	test("acceptance and presentation barriers are distinct in T3", async () => {
+	test("acceptance and presentation barriers complete on the native drain", async () => {
 		const tui = await AppHarness.open();
 		const root = createReactRoot(tui);
 		try {
 			const result = await root.render(createElement(Text, {}, "accepted"));
-			expect(root.whenVisible(result.revision)).rejects.toMatchObject({
-				code: "T3_FRAME_BARRIER_UNREALIZED",
-			});
+			await root.whenVisible(result.revision);
+			expect(tui.screenRows().some((row) => row.includes("accepted"))).toBe(
+				true,
+			);
 		} finally {
 			await root.unmount();
 			tui.close();
 		}
 	});
 
-	test("public refs publish overrides and reject unrealized focus/geometry", async () => {
+	test("native frame realizes React content and editor controls", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const source = TextBlockSource.create();
+		source.replace("source one");
+		function SourceContent() {
+			const port = useContentPort();
+			const connector = useContentConnector({ port, source });
+			return createElement(Content, { port: connector });
+		}
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					Column,
+					{},
+					createElement(Text, {}, "literal"),
+					createElement(SourceContent),
+					createElement(Editor, { defaultValue: "edit" }),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().some((row) => row.includes("literal"))).toBe(
+				true,
+			);
+			expect(tui.screenRows().some((row) => row.includes("source one"))).toBe(
+				true,
+			);
+			tui.pressKey("x");
+			await root.whenVisible();
+			expect(tui.screenRows().some((row) => row.includes("editx"))).toBe(true);
+			source.replace("source two");
+			await root.whenContentVisible();
+			expect(tui.screenRows().some((row) => row.includes("source two"))).toBe(
+				true,
+			);
+		} finally {
+			await root.unmount();
+			tui.close();
+			source.dispose();
+		}
+	});
+
+	test("native editor events dispatch captured callbacks after the host lock", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const events: string[] = [];
+		let resolveDelivered: (() => void) | undefined;
+		const delivered = new Promise<void>((resolve) => {
+			resolveDelivered = resolve;
+		});
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, {
+					defaultValue: "edit",
+					onInput: () => events.push("input"),
+					onEdit: () => events.push("edit"),
+					onChange: () => {
+						events.push("change");
+						if (events.includes("input") && events.includes("edit"))
+							resolveDelivered?.();
+					},
+					onSelectionChange: () => events.push("selection"),
+				}),
+			);
+			await root.whenVisible();
+			tui.pressKey("x");
+			await delivered;
+			expect(events).toContain("input");
+			expect(events).toContain("edit");
+			expect(events).toContain("change");
+		} finally {
+			await root.unmount();
+			tui.close();
+		}
+	});
+
+	test("native event priorities restore after callback failure", () => {
+		expect(
+			withNativeEventPriority("discrete", () =>
+				hostConfig.getCurrentUpdatePriority(),
+			),
+		).toBe(2);
+		expect(hostConfig.getCurrentUpdatePriority()).toBe(0);
+		expect(() =>
+			withNativeEventPriority("continuous", () => {
+				expect(hostConfig.getCurrentUpdatePriority()).toBe(8);
+				throw new Error("priority callback failed");
+			}),
+		).toThrow("priority callback failed");
+		expect(hostConfig.getCurrentUpdatePriority()).toBe(0);
+	});
+
+	test("stale native event generations increment the diagnostic count", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		const container = new RootContainer(host);
+		try {
+			container.coordinator.dispatchNativeEvents([
+				{
+					host_namespace: host.uiNamespace(),
+					slot: 999,
+					generation: 7,
+					kind: 1,
+					mask: 2,
+					text: "stale",
+					cursor_bytes: 0,
+					revision: 1,
+				},
+			]);
+			expect(container.coordinator.staleNativeEvents).toBe(1);
+		} finally {
+			tui.close();
+		}
+	});
+
+	test("native event lane delivers edits without a presentation barrier", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const seen: string[] = [];
+		const reported: unknown[] = [];
+		let resolveDelivered: (() => void) | undefined;
+		const delivered = new Promise<void>((resolve) => {
+			resolveDelivered = resolve;
+		});
+		const previousReportError = (
+			globalThis as unknown as { reportError?: (error: unknown) => void }
+		).reportError;
+		(
+			globalThis as unknown as { reportError?: (error: unknown) => void }
+		).reportError = (error) => reported.push(error);
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, {
+					defaultValue: "edit",
+					onInput: (event) => {
+						expect(Object.isFrozen(event)).toBe(true);
+						expect(Object.isFrozen(event.target)).toBe(true);
+						seen.push(event.text);
+						if (seen.length === 2) resolveDelivered?.();
+						if (event.text === "editx")
+							throw new Error("input observer failed");
+					},
+				}),
+			);
+			await root.whenVisible();
+			// This lane is intentionally independent from whenVisible().
+			tui.pressKey("x");
+			tui.pressKey("y");
+			await delivered;
+			expect(seen).toEqual(["editx", "editxy"]);
+			expect(reported).toHaveLength(1);
+		} finally {
+			root.close();
+			tui.close();
+			(
+				globalThis as unknown as { reportError?: (error: unknown) => void }
+			).reportError = previousReportError;
+		}
+	});
+
+	test("native key payload keeps Key identity and decoded submit semantics", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const events: string[] = [];
+		let resolveShift: (() => void) | undefined;
+		const shiftDelivered = new Promise<void>((resolve) => {
+			resolveShift = resolve;
+		});
+		let resolveSubmit: (() => void) | undefined;
+		const submitDelivered = new Promise<void>((resolve) => {
+			resolveSubmit = resolve;
+		});
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, {
+					multiline: true,
+					defaultValue: "edit",
+					onEdit: (event) => {
+						events.push(`edit:${event.key}`);
+						if (event.text.endsWith("\n")) resolveShift?.();
+					},
+					onPress: (event) => events.push(`press:${event.key}`),
+					onSubmit: () => {
+						events.push("submit");
+						resolveSubmit?.();
+					},
+				}),
+			);
+			await root.whenVisible();
+			tui.pressKey("Enter", ["Shift"]);
+			await shiftDelivered;
+			expect(events).toEqual(["edit:Enter"]);
+			tui.pressKey("Enter");
+			await submitDelivered;
+			expect(events).toEqual(["edit:Enter", "press:Enter", "submit"]);
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("callback-triggered root close stops the native event lane", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const calls: string[] = [];
+		let resolveClosed: (() => void) | undefined;
+		const closed = new Promise<void>((resolve) => {
+			resolveClosed = resolve;
+		});
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, {
+					defaultValue: "edit",
+					onInput: (event) => {
+						calls.push(event.text);
+						root.close();
+						resolveClosed?.();
+					},
+				}),
+			);
+			await root.whenVisible();
+			tui.pressKey("x");
+			await closed;
+			expect(calls).toEqual(["editx"]);
+			await expect(root.render(createElement(Editor, {}))).rejects.toThrow(
+				"React root is closed",
+			);
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("native event admission rejects byte overflow before editor mutation", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		// Keep the one root event waiter from consuming the queue so this test
+		// exercises native admission rather than a racing JS drain.
+		host.waitForUiEvents = () => new Promise(() => {});
+		host.setUiEventQueueLimits(4096, 4);
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, { defaultValue: "edit", onInput: () => {} }),
+			);
+			await root.whenVisible();
+			expect(() => tui.pressKey("x")).toThrow("one native UI event batch");
+			expect(host.screenRows().some((row) => row.includes("edit"))).toBe(true);
+			expect(host.drainUiEvents()).toEqual([]);
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("native event admission preserves queued order across record backpressure", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		host.waitForUiEvents = () => new Promise(() => {});
+		host.setUiEventQueueLimits(1, 1024);
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, { defaultValue: "edit", onInput: () => {} }),
+			);
+			await root.whenVisible();
+			tui.pressKey("x");
+			expect(() => tui.pressKey("y")).toThrow("native UI event queue is full");
+			expect(host.screenRows().some((row) => row.includes("editx"))).toBe(true);
+			const first = host.drainUiEvents();
+			expect(first).toHaveLength(1);
+			expect(first[0]?.text).toBe("editx");
+			tui.pressKey("y");
+			const second = host.drainUiEvents();
+			expect(second).toHaveLength(1);
+			expect(second[0]?.text).toBe("editxy");
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("native cursor and paste events preserve editor revision filters", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const events: string[] = [];
+		let resolveCursor: (() => void) | undefined;
+		const cursorDelivered = new Promise<void>((resolve) => {
+			resolveCursor = resolve;
+		});
+		let resolvePaste: (() => void) | undefined;
+		const pasteDelivered = new Promise<void>((resolve) => {
+			resolvePaste = resolve;
+		});
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(Editor, {
+					defaultValue: "edit",
+					onEdit: (event) => {
+						const value = `edit:${event.text}:${event.cursorBytes}`;
+						events.push(value);
+						if (value === "edit:edit:3") resolveCursor?.();
+						if (value === "edit:edi!t:4") resolvePaste?.();
+					},
+					onChange: (event) => {
+						events.push(`change:${event.text}`);
+						if (event.text === "edi!t") resolvePaste?.();
+					},
+					onSelectionChange: (event) => {
+						events.push(`selection:${event.cursorBytes}`);
+						if (event.cursorBytes === 3) resolveCursor?.();
+					},
+				}),
+			);
+			await root.whenVisible();
+			tui.pressKey("Left");
+			await cursorDelivered;
+			expect(events).toContain("edit:edit:3");
+			expect(events).toContain("selection:3");
+			expect(events).not.toContain("change:edit");
+			tui.paste("!");
+			await pasteDelivered;
+			expect(events).toContain("edit:edi!t:4");
+			expect(events).toContain("change:edi!t");
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("failed native content switch retains the prior confirmed projection", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		const sourceA = TextBlockSource.create();
+		const sourceB = TextBlockSource.create();
+		sourceA.replace("confirmed-a");
+		sourceB.replace("candidate-b");
+		function DynamicContent({ source }: { readonly source: TextBlockSource }) {
+			const port = useContentPort();
+			const connector = useContentConnector({ port, source });
+			return createElement(Content, { port: connector });
+		}
+		const root = createReactRoot(tui);
+		try {
+			await root.render(createElement(DynamicContent, { source: sourceA }));
+			await root.whenContentVisible();
+			expect(host.screenRows().some((row) => row.includes("confirmed-a"))).toBe(
+				true,
+			);
+			// Arm the existing native failure seam before React accepts the
+			// replacement. The all-zero private handle means "next newly
+			// prepared UI Connector"; this avoids racing native auto-presentation.
+			host.failUiConnectorForTest(
+				[0, 0, 0, 0],
+				"injected candidate projection failure",
+			);
+			await root.render(createElement(DynamicContent, { source: sourceB }));
+			await expect(root.whenVisible()).rejects.toBeInstanceOf(Error);
+			expect(host.screenRows().some((row) => row.includes("confirmed-a"))).toBe(
+				true,
+			);
+		} finally {
+			root.close();
+			tui.close();
+			sourceA.dispose();
+			sourceB.dispose();
+		}
+	});
+
+	test("animation identity advances on the native deadline without React work", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		let nativeCommits = 0;
+		const originalCommit = host.commitUiV1.bind(host);
+		host.commitUiV1 = (...args) => {
+			nativeCommits += 1;
+			return originalCommit(...args);
+		};
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					Animation,
+					{ intervalMs: 10 },
+					createElement(Box, {}, createElement(Text, {}, "frame-a")),
+					createElement(Box, {}, createElement(Text, {}, "frame-b")),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().some((row) => row.includes("frame-a"))).toBe(
+				true,
+			);
+			const acceptedCommits = nativeCommits;
+			tui.advance(20);
+			await root.whenVisible();
+			expect(nativeCommits).toBe(acceptedCommits);
+			expect(tui.screenRows().some((row) => row.includes("frame-b"))).toBe(
+				true,
+			);
+		} finally {
+			await root.unmount();
+			tui.close();
+		}
+	});
+
+	test("public refs publish overrides and resolve confirmed ordinary geometry", async () => {
 		const tui = await AppHarness.open();
 		const root = createReactRoot(tui);
 		let ref:
@@ -360,18 +792,23 @@ describe("T3 React mutation renderer", () => {
 						readonly revision: number;
 						readonly accepted: true;
 					};
-					focus(): never;
-					visibleGeometry(): Promise<never>;
+					focus(): void;
+					visibleGeometry(): Promise<unknown>;
 			  }
 			| undefined;
 		try {
 			await root.render(
-				createElement(Box, {
-					ref: (value) => {
-						if (value !== null) ref = value as NonNullable<typeof ref>;
+				createElement(
+					Box,
+					{
+						ref: (value) => {
+							if (value !== null) ref = value as NonNullable<typeof ref>;
+						},
 					},
-				}),
+					"box",
+				),
 			);
+			await root.whenVisible();
 			if (ref === undefined) throw new Error("ref was not published");
 			const instance = ref;
 			expect(
@@ -379,12 +816,454 @@ describe("T3 React mutation renderer", () => {
 					.accepted,
 			).toBe(true);
 			expect(instance.clearOverride("background").accepted).toBe(true);
-			expect(() => instance.focus()).toThrow("T4 interaction executor");
-			expect(instance.visibleGeometry()).rejects.toMatchObject({
-				code: "T3_GEOMETRY_UNREALIZED",
+			expect(() => instance.focus()).toThrow("FOCUS_UNSUPPORTED");
+			expect(await instance.visibleGeometry()).toEqual({
+				x: 0,
+				y: 23,
+				width: 3,
+				height: 1,
 			});
 		} finally {
 			await root.unmount();
+			tui.close();
+		}
+	});
+
+	test("native-control refs focus and reject hidden or retired occurrences", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const root = createReactRoot(tui);
+		let editorRef:
+			| {
+					focus(): void;
+					visibleGeometry(): Promise<unknown>;
+			  }
+			| undefined;
+		let hiddenRef:
+			| {
+					focus(): void;
+					visibleGeometry(): Promise<unknown>;
+			  }
+			| undefined;
+		try {
+			await root.render(
+				createElement(
+					Column,
+					{},
+					createElement(Editor, {
+						defaultValue: "visible",
+						ref: (value) => {
+							if (value !== null)
+								editorRef = value as NonNullable<typeof editorRef>;
+						},
+					}),
+					createElement(
+						Box,
+						{ hidden: true },
+						createElement(Editor, {
+							ref: (value) => {
+								if (value !== null)
+									hiddenRef = value as NonNullable<typeof hiddenRef>;
+							},
+						}),
+					),
+				),
+			);
+			await root.whenVisible();
+			if (editorRef === undefined || hiddenRef === undefined)
+				throw new Error("native control refs were not published");
+			const editor = editorRef;
+			const hidden = hiddenRef;
+			editor.focus();
+			expect(await editor.visibleGeometry()).toMatchObject({
+				x: 0,
+				width: 24,
+				height: 1,
+			});
+			expect(await hidden.visibleGeometry()).toBeNull();
+			expect(() => hidden.focus()).toThrow("FOCUS_UNAVAILABLE");
+			await root.unmount();
+			await expect(editor.visibleGeometry()).rejects.toThrow("accepted");
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("React History units publish ordered typed roots", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, {}, "first"),
+					createElement(
+						HistoryUnit,
+						{ flowBoundary: "attachToPrevious" },
+						"second",
+					),
+				),
+			);
+			await root.whenVisible();
+			expect(
+				tui
+					.screenRows()
+					.filter((row) => row.trim() !== "")
+					.map((row) => row.trim()),
+			).toEqual(["first", "second"]);
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("React History units support live replacement, discard, and freeze", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const root = createReactRoot(tui);
+		let firstRef: { historyIdentity(): number | string } | undefined;
+		try {
+			const renderHistory = (first: string): ReactNode =>
+				createElement(
+					History,
+					{},
+					createElement(
+						HistoryUnit,
+						{
+							ref: (value) => {
+								if (value !== null)
+									firstRef = value as NonNullable<typeof firstRef>;
+							},
+						},
+						createElement(Editor, { value: first }),
+					),
+					createElement(
+						HistoryUnit,
+						{},
+						createElement(Editor, { defaultValue: "tail" }),
+					),
+				);
+			await root.render(renderHistory("live"));
+			await root.whenVisible();
+			if (firstRef === undefined)
+				throw new Error("History unit ref was not published");
+			const firstIdentity = firstRef.historyIdentity();
+			expect(tui.screenRows().some((row) => row.includes("live"))).toBe(true);
+			expect(tui.screenRows().some((row) => row.includes("tail"))).toBe(true);
+
+			await root.render(renderHistory("replacement"));
+			await root.whenVisible();
+			expect(firstRef.historyIdentity()).toBe(firstIdentity);
+			expect(tui.screenRows().some((row) => row.includes("replacement"))).toBe(
+				true,
+			);
+
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(
+						HistoryUnit,
+						{},
+						createElement(Editor, { value: "replacement" }),
+					),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().some((row) => row.includes("replacement"))).toBe(
+				true,
+			);
+			expect(tui.screenRows().some((row) => row.includes("tail"))).toBe(false);
+		} finally {
+			root.close();
+			tui.close();
+		}
+
+		const staticTui = await AppHarness.open({ width: 24, height: 6 });
+		const staticRoot = createReactRoot(staticTui);
+		try {
+			await staticRoot.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { action: "freeze" }, "frozen"),
+				),
+			);
+			await staticRoot.whenVisible();
+			expect(staticTui.screenRows().some((row) => row.includes("frozen"))).toBe(
+				true,
+			);
+		} finally {
+			staticRoot.close();
+			staticTui.close();
+		}
+
+		const freezeTui = await AppHarness.open({ width: 24, height: 6 });
+		const freezeRoot = createReactRoot(freezeTui);
+		try {
+			await expect(
+				freezeRoot.render(
+					createElement(
+						History,
+						{},
+						createElement(
+							HistoryUnit,
+							{ action: "freeze" },
+							createElement(Editor, { defaultValue: "live control" }),
+						),
+					),
+				),
+			).rejects.toThrow("native UI commit rejected");
+		} finally {
+			freezeRoot.close();
+			freezeTui.close();
+		}
+	});
+
+	test("React History freeze installs the accepted final recipe and keyed removal discards the tail", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 4 });
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, {}, "transient"),
+					createElement(HistoryUnit, {}, "tail"),
+					createElement(HistoryUnit, {}, "third"),
+					createElement(HistoryUnit, {}, "fourth"),
+				),
+			);
+			await root.whenVisible();
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { action: "freeze" }, "final"),
+					createElement(HistoryUnit, {}, "tail"),
+					createElement(HistoryUnit, {}, "third"),
+					createElement(HistoryUnit, {}, "fourth"),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().join("\n")).toContain("final");
+			expect(tui.screenRows().join("\n")).toContain("tail");
+
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { action: "freeze" }, "final"),
+					createElement(HistoryUnit, {}, "tail"),
+					createElement(HistoryUnit, {}, "third"),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().join("\n")).not.toContain("fourth");
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("History keyed removal works through a Fragment and a component wrapper", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 4 });
+		const nativeHost = nativeHostForReact(tui) as
+			| NativeTuiHostContract
+			| undefined;
+		if (nativeHost === undefined)
+			throw new Error("native host association is unavailable");
+		let lastCommitOpcodes: number[] = [];
+		const nativeCommit = nativeHost.commitUiV1.bind(nativeHost);
+		nativeHost.commitUiV1 = (words, ...args) => {
+			lastCommitOpcodes = commitOpcodes(words);
+			return nativeCommit(words, ...args);
+		};
+		const root = createReactRoot(tui);
+		const WrappedUnit = (props: { readonly children?: ReactNode }): ReactNode =>
+			createElement(HistoryUnit, {}, props.children);
+		try {
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(
+						Fragment,
+						{ key: "fragment" },
+						createElement(HistoryUnit, { key: "single" }, "single"),
+					),
+					createElement(WrappedUnit, { key: "wrapped" }, "wrapped"),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().join("\n")).toContain("single");
+			expect(tui.screenRows().join("\n")).toContain("wrapped");
+
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(
+						Fragment,
+						{ key: "fragment" },
+						createElement(HistoryUnit, { key: "single" }, "single"),
+					),
+				),
+			);
+			await root.whenVisible();
+			expect(tui.screenRows().join("\n")).toContain("single");
+			expect(tui.screenRows().join("\n")).not.toContain("wrapped");
+			expect(lastCommitOpcodes).toContain(UI_OPCODES.historyAction);
+			expect(lastCommitOpcodes).not.toContain(UI_OPCODES.retireRoot);
+		} finally {
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("History removal rejects a non-tail or frozen unit", async () => {
+		const nonTailTui = await AppHarness.open({ width: 24, height: 4 });
+		const nonTailRoot = createReactRoot(nonTailTui);
+		try {
+			await nonTailRoot.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { key: "first" }, "first"),
+					createElement(HistoryUnit, { key: "tail" }, "tail"),
+				),
+			);
+			await nonTailRoot.whenVisible();
+			await expect(
+				nonTailRoot.render(
+					createElement(
+						History,
+						{},
+						createElement(HistoryUnit, { key: "tail" }, "tail"),
+					),
+				),
+			).rejects.toThrow("native UI commit rejected");
+		} finally {
+			nonTailRoot.close();
+			nonTailTui.close();
+		}
+
+		const frozenTui = await AppHarness.open({ width: 24, height: 4 });
+		const frozenRoot = createReactRoot(frozenTui);
+		try {
+			await frozenRoot.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { action: "freeze" }, "frozen"),
+				),
+			);
+			await frozenRoot.whenVisible();
+			await expect(frozenRoot.render(null)).rejects.toThrow(
+				"native UI commit rejected",
+			);
+		} finally {
+			frozenRoot.close();
+			frozenTui.close();
+		}
+	});
+
+	test("nested History Source changes update the confirmed unit metrics", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const source = TextBlockSource.create();
+		source.replace("one");
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, {}, createElement(Content, { source })),
+				),
+			);
+			await root.whenContentVisible();
+			expect(tui.screenRows().some((row) => row.includes("one"))).toBe(true);
+			source.replace("two longer");
+			await root.whenContentVisible();
+			expect(tui.screenRows().some((row) => row.includes("two longer"))).toBe(
+				true,
+			);
+		} finally {
+			root.close();
+			tui.close();
+			source.dispose();
+		}
+	});
+
+	test("composite History metrics include every nested Content source", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 8 });
+		const first = TextBlockSource.create();
+		const second = TextBlockSource.create();
+		first.replace("first");
+		second.replace("second");
+		const root = createReactRoot(tui);
+		const render = (): ReactNode =>
+			createElement(
+				Fragment,
+				{},
+				createElement(
+					History,
+					{},
+					createElement(HistoryUnit, { key: "following" }, "following"),
+					createElement(
+						HistoryUnit,
+						{ key: "composite" },
+						createElement(
+							Column,
+							{},
+							createElement(Content, { source: first }),
+							createElement(Content, { source: second }),
+						),
+					),
+				),
+				createElement(Box, {}, "body"),
+			);
+		try {
+			await root.render(render());
+			await root.whenContentVisible();
+			const before = tui
+				.screenRows()
+				.findIndex((row) => row.includes("following"));
+			expect(before).toBeGreaterThanOrEqual(0);
+			second.replace("second\nthird\nfourth");
+			await root.whenContentVisible();
+			const after = tui
+				.screenRows()
+				.findIndex((row) => row.includes("following"));
+			expect(after).toBeLessThan(before);
+			expect(tui.screenRows().some((row) => row.includes("body"))).toBe(true);
+		} finally {
+			root.close();
+			tui.close();
+			first.dispose();
+			second.dispose();
+		}
+	});
+
+	test("History unit reorder is rejected by the native ownership contract", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		const root = createReactRoot(tui);
+		const renderOrder = (order: readonly string[]): ReactNode =>
+			createElement(
+				History,
+				{},
+				...order.map((label) =>
+					createElement(HistoryUnit, { key: label }, label),
+				),
+			);
+		try {
+			await root.render(renderOrder(["a", "b"]));
+			await root.whenVisible();
+			await expect(root.render(renderOrder(["b", "a"]))).rejects.toThrow(
+				"native UI commit rejected",
+			);
+		} finally {
+			root.close();
 			tui.close();
 		}
 	});
@@ -1536,6 +2415,9 @@ describe("T3 React mutation renderer", () => {
 			};
 			expect(() => root.close()).toThrow("injected cleanup failure");
 			expect(root.faulted).toBe(true);
+			await expect(
+				root.render(createElement(Box, {}, "after close failure")),
+			).rejects.toThrow("React root is closed");
 			root.close();
 		} finally {
 			tui.close();

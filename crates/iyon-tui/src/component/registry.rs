@@ -5,12 +5,12 @@ use crate::interaction::{ComponentCapabilities, ComponentCx};
 use crate::perf::{self, Counter};
 use crate::presentation::View;
 
-trait ErasedComponent {
+trait ErasedComponent: Send {
     fn view(&self) -> View;
     fn capabilities(&self) -> ComponentCapabilities;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
 }
 
 impl<C> ErasedComponent for C
@@ -38,7 +38,7 @@ where
         self
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send> {
         self
     }
 }

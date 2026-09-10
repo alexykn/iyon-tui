@@ -52,6 +52,10 @@ interface HostEntry {
   readonly registration: RuntimeHostRegistrationImpl;
   readonly errorChannel: WeakRef<RuntimeErrorChannel>;
   readonly onCommitted: (commit?: NativeHostCommit) => void;
+  lastAcknowledgedCommit?: {
+    readonly committedEpoch: bigint;
+    readonly visibleStructuralRevision: bigint;
+  };
 }
 
 const hostRegistrationFinalizer = new FinalizationRegistry<{
@@ -221,6 +225,11 @@ export class EnvironmentWakeBroker {
       }
       const epochs = readEpochs(registration.native);
       if (epochs.committed >= capturedEpoch) {
+        this.acknowledgeCommit(registration.id, {
+          host_id: epochs.hostId.toString(),
+          committed_epoch: epochs.committed.toString(),
+          visible_structural_revision: epochs.visibleStructural.toString(),
+        });
         this.pending.delete(registration.id);
         this.scheduleRemainingAfterBarrier(report);
         return;
@@ -334,7 +343,10 @@ export class EnvironmentWakeBroker {
         traceWake({ kind: "rearm" });
       }
       this.consumeReport(report, !forceRetry);
-      this.refreshPendingHints(report.rearm ? driver.id : undefined);
+      this.refreshPendingHints(
+        report.rearm ? driver.id : undefined,
+        new Set(report.commits.map((commit) => String(commit.host_id))),
+      );
       return report;
     } finally {
       this.draining = false;
@@ -355,15 +367,38 @@ export class EnvironmentWakeBroker {
       const entry = this.hosts.get(id);
       if (entry === undefined) continue;
       try {
-        wakeCounters.frames_committed += 1;
-        traceWake({ kind: "commit", hostId: id });
-        entry.onCommitted(revisioned);
-        entry.errorChannel.deref()?.markCommitted(id);
+        this.acknowledgeCommit(id, revisioned);
         this.pending.delete(id);
       } catch (error) {
         entry.errorChannel.deref()?.accept(drainError(id, error instanceof Error ? error.message : String(error)));
       }
     }
+  }
+
+  private acknowledgeCommit(id: string, commit: NativeHostCommit): void {
+    const entry = this.hosts.get(id);
+    if (entry === undefined) return;
+    const committedEpoch = toBigInt(commit.committed_epoch);
+    const visibleStructuralRevision = toBigInt(commit.visible_structural_revision);
+    const previous = entry.lastAcknowledgedCommit;
+    if (previous !== undefined) {
+      if (
+        committedEpoch < previous.committedEpoch
+        || visibleStructuralRevision < previous.visibleStructuralRevision
+      )
+        throw new Error("native confirmed snapshot revision regressed");
+      if (
+        committedEpoch === previous.committedEpoch
+        && visibleStructuralRevision === previous.visibleStructuralRevision
+      ) return;
+    }
+    // Record the stamp only after both lease observers accept the exact
+    // confirmed snapshot. A callback failure leaves the stamp retryable.
+    wakeCounters.frames_committed += 1;
+    traceWake({ kind: "commit", hostId: id });
+    entry.onCommitted(commit);
+    entry.errorChannel.deref()?.markCommitted(id);
+    entry.lastAcknowledgedCommit = { committedEpoch, visibleStructuralRevision };
   }
 
   private throwHostError(hostId: string): void {
@@ -389,9 +424,16 @@ export class EnvironmentWakeBroker {
     this.presentationPollTimer = undefined;
   }
 
-  private refreshPendingHints(retainedDriverId?: string): void {
+  private refreshPendingHints(
+    retainedDriverId: string | undefined,
+    reportedCommitHostIds: ReadonlySet<string>,
+  ): void {
     for (const id of [...this.pending]) {
       if (id === retainedDriverId) continue;
+      // A reported commit was already sent through consumeReport. If its
+      // observer failed, do not invoke it again in this same drain merely
+      // because the native epoch recheck also sees the confirmed snapshot.
+      if (reportedCommitHostIds.has(id)) continue;
       const entry = this.hosts.get(id);
       if (entry === undefined) {
         this.pending.delete(id);
@@ -404,8 +446,48 @@ export class EnvironmentWakeBroker {
       }
       const epochs = readEpochs(native);
       if (epochs.pending === epochs.committed) {
-        this.pending.delete(id);
+        this.acknowledgePendingHint(id, entry, epochs);
       }
+    }
+  }
+
+  private acknowledgePendingHint(
+    id: string,
+    entry: HostEntry,
+    epochs: ReturnType<typeof readEpochs>,
+  ): void {
+    // The native driver can finish a receipt between this broker's drain and
+    // the epoch recheck. In that race the native drain report contains no
+    // commit, but the confirmed snapshot is still new. Run the same exact
+    // acknowledgement path before dropping the hint so visible leases and
+    // legacy observers cannot remain stale.
+    const previous = entry.lastAcknowledgedCommit;
+    const hasNewSnapshot =
+      previous === undefined
+        ? epochs.committed > 0n || epochs.visibleStructural > 0n
+        : epochs.committed > previous.committedEpoch
+          || epochs.visibleStructural > previous.visibleStructuralRevision;
+    if (!hasNewSnapshot) {
+      // A pending hint can represent a scheduler wake that produced no new
+      // confirmed snapshot (for example, a source wake diagnostic).  Dropping
+      // that hint must not invoke markCommitted and erase the independent
+      // error observation.
+      this.pending.delete(id);
+      return;
+    }
+    try {
+      this.acknowledgeCommit(id, {
+        host_id: epochs.hostId.toString(),
+        committed_epoch: epochs.committed.toString(),
+        visible_structural_revision: epochs.visibleStructural.toString(),
+      });
+      this.pending.delete(id);
+    } catch (error) {
+      // Observer failures are retryable at an explicit barrier. Keep the
+      // pending hint instead of marking the exact snapshot acknowledged.
+      entry.errorChannel.deref()?.accept(
+        drainError(id, error instanceof Error ? error.message : String(error)),
+      );
     }
   }
 
@@ -457,6 +539,7 @@ function readEpochs(native: NativeFrameHost): {
   readonly hostId: bigint;
   readonly desired: bigint;
   readonly visible: bigint;
+  readonly visibleStructural: bigint;
   readonly pending: bigint;
   readonly committed: bigint;
 } {
@@ -465,6 +548,7 @@ function readEpochs(native: NativeFrameHost): {
     hostId: toBigInt(value.host_id),
     desired: toBigInt(value.desired_structural_revision),
     visible: toBigInt(value.visible_frame_revision),
+    visibleStructural: toBigInt(value.visible_structural_revision),
     pending: toBigInt(value.pending_epoch),
     committed: toBigInt(value.committed_epoch),
   };

@@ -8,6 +8,9 @@ use super::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::command::TextInputCommand;
+use crate::presentation::wrap::input_wrap_ranges;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TextBuffer {
     text: String,
@@ -256,6 +259,51 @@ impl TextBuffer {
 
     pub(crate) fn logical_rows(&self) -> Vec<Range<usize>> {
         logical_line_ranges(&self.text)
+    }
+
+    /// Applies one already-decoded editor command to the buffer. This is the
+    /// authoritative command operation shared by live dispatch and the
+    /// editor-local admission preview; callers own submit/output/scroll side
+    /// effects.
+    pub(crate) fn apply_command(
+        &mut self,
+        command: TextInputCommand,
+        multiline: bool,
+        layout_width: Option<u16>,
+    ) -> bool {
+        match command {
+            TextInputCommand::Insert(character) => {
+                self.insert_text(&character.to_string(), multiline)
+            }
+            TextInputCommand::Submit => false,
+            TextInputCommand::InsertNewline => self.insert_text("\n", multiline),
+            TextInputCommand::Backspace => self.backspace(),
+            TextInputCommand::Delete => self.delete(),
+            TextInputCommand::DeleteWordBackward => self.delete_word_backward(),
+            TextInputCommand::DeleteWordForward => self.delete_word_forward(),
+            TextInputCommand::KillToLineStart => self.kill_to_line_start(),
+            TextInputCommand::Yank => self.yank(),
+            TextInputCommand::MoveLeft => self.move_left(),
+            TextInputCommand::MoveRight => self.move_right(),
+            TextInputCommand::MoveWordLeft => self.move_word_left(),
+            TextInputCommand::MoveWordRight => self.move_word_right(),
+            TextInputCommand::MoveLineStart => self.move_line_start(),
+            TextInputCommand::MoveLineEnd => self.move_line_end(),
+            TextInputCommand::MoveUp => {
+                let rows = layout_width.map_or_else(
+                    || self.logical_rows(),
+                    |width| input_wrap_ranges(self.text(), width),
+                );
+                self.move_up_in_rows(&rows)
+            }
+            TextInputCommand::MoveDown => {
+                let rows = layout_width.map_or_else(
+                    || self.logical_rows(),
+                    |width| input_wrap_ranges(self.text(), width),
+                );
+                self.move_down_in_rows(&rows)
+            }
+        }
     }
 
     fn set_cursor_if_changed(&mut self, position: usize) -> bool {

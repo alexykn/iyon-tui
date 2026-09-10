@@ -34,7 +34,7 @@ test(`${PERF13B} applies presentation overrides without republishing structure`,
     state.setPresentation({ foreground: indexed(3), textAttributes: { bold: true } });
     const pending = host.epochs();
     expect(pending.desired_structural_revision).toBe(before.desired_structural_revision);
-    expect(pending.pending_epoch).not.toBe(pending.committed_epoch);
+    expect(BigInt(pending.pending_epoch)).toBeGreaterThan(BigInt(before.pending_epoch));
     expect(tui.styleAt(2, 0).foreground).toBe("ansi:3");
     expect(tui.styleAt(2, 0).bold).toBe(true);
 

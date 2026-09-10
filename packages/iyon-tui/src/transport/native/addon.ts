@@ -163,6 +163,41 @@ export interface NativeTuiHostContract {
     readonly generation: number;
     readonly kind: number;
   };
+  uiHistoryUnitIdentity(handle: readonly number[]): number | string | null;
+  uiContentVisible(): boolean;
+  waitForUiPresentation(revision: number, contentVisible: boolean): Promise<void>;
+  /** Waits for one owned native event batch; null means the UI lane closed. */
+  waitForUiEvents(): Promise<readonly {
+    readonly host_namespace: number;
+    readonly slot: number;
+    readonly generation: number;
+    readonly kind: number;
+    readonly mask: number;
+    readonly text?: string | null;
+    readonly cursor_bytes?: number | null;
+    readonly key?: string | null;
+    readonly revision?: number | string | null;
+  }[] | null>;
+  focusUi(handle: readonly number[]): void;
+  uiVisibleGeometry(handle: readonly number[]): {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  } | null;
+  drainUiEvents(): readonly {
+    readonly host_namespace: number;
+    readonly slot: number;
+    readonly generation: number;
+    readonly kind: number;
+    readonly mask: number;
+    readonly text?: string | null;
+    readonly cursor_bytes?: number | null;
+    readonly key?: string | null;
+    readonly revision?: number | string | null;
+  }[];
+  setUiEventQueueLimits(maxRecords: number, maxBytes: number): void;
+  failUiConnectorForTest(handle: readonly number[], diagnostic: string): void;
   closeUiState(): void;
   commitUiV1(
     words: Uint32Array,

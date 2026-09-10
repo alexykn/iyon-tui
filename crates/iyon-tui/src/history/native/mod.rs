@@ -5,9 +5,7 @@ pub(super) mod frontier;
 use crate::{
     backend::NativeHistorySink,
     physical::PhysicalRow,
-    presentation::{
-        ContentProvider, EmptyContentProvider, HistoryContentRows, layout::compile_view_with_theme,
-    },
+    presentation::{ContentProvider, EmptyContentProvider, layout::compile_view_with_theme},
 };
 
 use super::{FlowBoundary, History, HistoryUnitContent, HistoryUnitId};
@@ -47,6 +45,371 @@ pub(crate) enum NativeTransferError<E> {
     Sink(E),
     InvalidAcknowledgement { requested: usize, accepted: usize },
     SynchronizationUnknown,
+}
+
+/// An immutable physical History write captured from one semantic frontier.
+/// The rows and acknowledgement metadata remain tied to the exact unit and
+/// ContentHost that produced them; a later desired mutation cannot retarget
+/// acknowledgement to whichever unit happens to be current.
+#[derive(Debug, Clone)]
+pub(crate) struct NativeTransferPlan {
+    pub(crate) rows: Vec<PhysicalRow>,
+    pub(crate) requested: usize,
+    operation: NativeTransferOperation,
+}
+
+#[derive(Clone, Debug)]
+enum NativeTransferOperation {
+    Spacing {
+        leading_gap: bool,
+    },
+    Static {
+        unit: HistoryUnitId,
+    },
+    Content {
+        unit: HistoryUnitId,
+        port_id: u64,
+        complete: bool,
+        content_start: usize,
+        content_end: usize,
+        leading_padding: usize,
+        trailing_padding: usize,
+    },
+    FrozenStatic {
+        unit: HistoryUnitId,
+    },
+    FrozenContent {
+        unit: HistoryUnitId,
+        port_id: u64,
+        complete: bool,
+        content_start: usize,
+        content_end: usize,
+        leading_padding: usize,
+        trailing_padding: usize,
+    },
+    Retire {
+        unit: HistoryUnitId,
+    },
+}
+
+impl NativeTransferPlan {
+    pub(crate) fn rows(&self) -> &[PhysicalRow] {
+        &self.rows[..self.requested]
+    }
+}
+
+/// Captures the next native History operation without touching the semantic
+/// or physical frontier. Callers may therefore release the host acceptance
+/// lock, submit `plan.rows()` to the terminal worker, and apply the exact
+/// acknowledgement later.
+pub(crate) fn prepare_native_transfer_with_theme_and_content(
+    history: &History,
+    width: u16,
+    max_rows: usize,
+    theme: &crate::Theme,
+    content: &dyn ContentProvider,
+) -> Option<NativeTransferPlan> {
+    if max_rows == 0 || width == 0 || history.units.is_empty() {
+        return None;
+    }
+
+    if let Some(rows) = spacing_rows(
+        &history.native.top_padding,
+        width,
+        usize::from(history.layout().padding.top),
+    ) && !rows.is_empty()
+    {
+        return Some(spacing_plan(rows, max_rows, false));
+    }
+
+    if history.native.last_native_unit.is_some()
+        && matches!(
+            history.units.front().expect("nonempty History").boundary,
+            FlowBoundary::Default
+        )
+    {
+        let gap = usize::from(history.layout().gap);
+        let state = history
+            .native
+            .leading_gap
+            .as_ref()
+            .unwrap_or(&SpacingTransferState::Semantic);
+        if let Some(rows) = spacing_rows(state, width, gap)
+            && !rows.is_empty()
+        {
+            return Some(spacing_plan(rows, max_rows, true));
+        }
+    }
+
+    if let Some(frozen) = history.native.frozen_content.as_ref() {
+        return Some(content_plan(
+            frozen.rows.as_slice().to_vec(),
+            max_rows,
+            NativeTransferOperation::FrozenContent {
+                unit: frozen.unit,
+                port_id: frozen.port_id,
+                complete: frozen.complete,
+                content_start: frozen.content_start,
+                content_end: frozen.content_end,
+                leading_padding: frozen.leading_padding,
+                trailing_padding: frozen.trailing_padding,
+            },
+        ));
+    }
+    if let Some(frozen) = history.native.frozen_static.as_ref() {
+        return Some(content_plan(
+            frozen.rows.as_slice().to_vec(),
+            max_rows,
+            NativeTransferOperation::FrozenStatic { unit: frozen.unit },
+        ));
+    }
+
+    let unit = history.units.front().expect("nonempty History");
+    match &unit.content {
+        HistoryUnitContent::Live(_) => None,
+        HistoryUnitContent::Static(view) => {
+            if let Some(transfer) = view.content_history_transfer() {
+                let rows = content.history_rows(transfer.port_id, width)?;
+                if rows.rows.is_empty() {
+                    return rows.complete.then(|| NativeTransferPlan {
+                        rows: Vec::new(),
+                        requested: 0,
+                        operation: NativeTransferOperation::Retire { unit: unit.id },
+                    });
+                }
+                Some(content_plan(
+                    rows.rows,
+                    max_rows,
+                    NativeTransferOperation::Content {
+                        unit: unit.id,
+                        port_id: transfer.port_id,
+                        complete: rows.complete,
+                        content_start: rows.content_start,
+                        content_end: rows.content_end,
+                        leading_padding: rows.leading_padding,
+                        trailing_padding: rows.trailing_padding,
+                    },
+                ))
+            } else if view.contains_content_identity() {
+                // A composite/nested ContentHost is intentionally blocked;
+                // it cannot be represented by the ContentHost product alone.
+                None
+            } else {
+                let rows = static_rows(view, width, history.layout(), theme);
+                if rows.is_empty() {
+                    Some(NativeTransferPlan {
+                        rows: Vec::new(),
+                        requested: 0,
+                        operation: NativeTransferOperation::Retire { unit: unit.id },
+                    })
+                } else {
+                    Some(content_plan(
+                        rows,
+                        max_rows,
+                        NativeTransferOperation::Static { unit: unit.id },
+                    ))
+                }
+            }
+        }
+    }
+}
+
+fn spacing_plan(rows: Vec<PhysicalRow>, max_rows: usize, leading_gap: bool) -> NativeTransferPlan {
+    NativeTransferPlan {
+        requested: rows.len().min(max_rows),
+        rows,
+        operation: NativeTransferOperation::Spacing { leading_gap },
+    }
+}
+
+fn content_plan(
+    rows: Vec<PhysicalRow>,
+    max_rows: usize,
+    operation: NativeTransferOperation,
+) -> NativeTransferPlan {
+    NativeTransferPlan {
+        requested: rows.len().min(max_rows),
+        rows,
+        operation,
+    }
+}
+
+/// Applies an acknowledgement to the exact previously captured operation.
+/// This function performs no terminal I/O; it only advances native/content
+/// ownership after the sink has confirmed the physical prefix.
+pub(crate) fn commit_native_transfer_with_content(
+    history: &mut History,
+    plan: NativeTransferPlan,
+    accepted: usize,
+    content: &mut dyn ContentProvider,
+) -> Result<NativeTransferOutcome, NativeTransferError<anyhow::Error>> {
+    if accepted > plan.requested {
+        return Err(NativeTransferError::InvalidAcknowledgement {
+            requested: plan.requested,
+            accepted,
+        });
+    }
+    if history.native.synchronization_unknown {
+        return Err(NativeTransferError::SynchronizationUnknown);
+    }
+
+    let requested = plan.requested;
+    if matches!(plan.operation, NativeTransferOperation::Retire { .. }) {
+        let NativeTransferOperation::Retire { unit } = plan.operation else {
+            unreachable!();
+        };
+        if history.units.front().is_none_or(|front| front.id != unit) {
+            return Err(NativeTransferError::InvalidAcknowledgement {
+                requested: 0,
+                accepted,
+            });
+        }
+        retire_front(history);
+        return Ok(finalize_transfer(
+            history,
+            content,
+            outcome(0, 0, NativeTransferStatus::Progress),
+        ));
+    }
+    if accepted == 0 {
+        return Ok(outcome(requested, 0, NativeTransferStatus::SinkBlocked));
+    }
+
+    let operation = plan.operation;
+    match operation {
+        NativeTransferOperation::Spacing { leading_gap } => {
+            let state = if accepted == plan.rows.len() {
+                SpacingTransferState::Native
+            } else {
+                SpacingTransferState::Frozen(FrozenPhysicalRows::new(
+                    plan.rows[accepted..].to_vec(),
+                ))
+            };
+            if leading_gap {
+                history.native.leading_gap = Some(state);
+            } else {
+                history.native.top_padding = state;
+            }
+        }
+        NativeTransferOperation::Static { unit } => {
+            verify_front_unit(history, unit)?;
+            cross_zero_spacing(history);
+            if accepted == plan.rows.len() {
+                retire_front(history);
+            } else {
+                history.native.frozen_static = Some(FrozenStaticRemainder {
+                    unit,
+                    rows: FrozenPhysicalRows::new(plan.rows[accepted..].to_vec()),
+                });
+            }
+        }
+        NativeTransferOperation::Content {
+            unit,
+            port_id,
+            complete,
+            content_start,
+            content_end,
+            leading_padding,
+            trailing_padding,
+        }
+        | NativeTransferOperation::FrozenContent {
+            unit,
+            port_id,
+            complete,
+            content_start,
+            content_end,
+            leading_padding,
+            trailing_padding,
+        } => {
+            verify_front_unit(history, unit)?;
+            let accepted_content = accepted
+                .saturating_sub(content_start)
+                .min(content_end.saturating_sub(content_start));
+            let accepted_leading = accepted.min(leading_padding);
+            let accepted_trailing = accepted.saturating_sub(content_end).min(trailing_padding);
+            content.history_rows_committed(
+                port_id,
+                accepted,
+                accepted_content,
+                accepted_leading,
+                accepted_trailing,
+            );
+            cross_zero_spacing(history);
+            if accepted == plan.rows.len() {
+                history.native.frozen_content = None;
+                if complete {
+                    retire_front(history);
+                }
+            } else {
+                let next_start = content_start.saturating_sub(accepted);
+                let next_end = content_end.saturating_sub(accepted);
+                let next_trailing =
+                    trailing_padding.saturating_sub(accepted.saturating_sub(content_end));
+                history.native.frozen_content = Some(FrozenContentRemainder {
+                    unit,
+                    port_id,
+                    rows: FrozenPhysicalRows::new(plan.rows[accepted..].to_vec()),
+                    complete,
+                    content_start: next_start,
+                    content_end: next_end,
+                    leading_padding: leading_padding.saturating_sub(accepted),
+                    trailing_padding: next_trailing,
+                });
+            }
+        }
+        NativeTransferOperation::FrozenStatic { unit } => {
+            verify_front_unit(history, unit)?;
+            if accepted == plan.rows.len() {
+                retire_front(history);
+            } else {
+                history.native.frozen_static = Some(FrozenStaticRemainder {
+                    unit,
+                    rows: FrozenPhysicalRows::new(plan.rows[accepted..].to_vec()),
+                });
+            }
+        }
+        NativeTransferOperation::Retire { .. } => unreachable!(),
+    }
+    Ok(finalize_transfer(
+        history,
+        content,
+        outcome(requested, accepted, NativeTransferStatus::Progress),
+    ))
+}
+
+fn finalize_transfer(
+    history: &mut History,
+    content: &mut dyn ContentProvider,
+    mut outcome: NativeTransferOutcome,
+) -> NativeTransferOutcome {
+    let mut retired_units = std::mem::take(&mut history.native.retired_units);
+    let retired = !retired_units.is_empty();
+    for unit_id in retired_units.drain(..) {
+        content.history_unit_retired(unit_id.value());
+    }
+    history.native.retired_units = retired_units;
+    if retired && outcome.inserted == 0 && !matches!(outcome.status, NativeTransferStatus::Progress)
+    {
+        outcome.status = NativeTransferStatus::Progress;
+    }
+    history.native.record_physical_rows(outcome.inserted);
+    if outcome.inserted > 0 || retired || matches!(outcome.status, NativeTransferStatus::Progress) {
+        history.bump_native_revision();
+    }
+    outcome
+}
+
+fn verify_front_unit(
+    history: &History,
+    unit: HistoryUnitId,
+) -> Result<(), NativeTransferError<anyhow::Error>> {
+    if history.units.front().is_none_or(|front| front.id != unit) {
+        return Err(NativeTransferError::InvalidAcknowledgement {
+            requested: 0,
+            accepted: 0,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -89,16 +452,7 @@ pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink
         return Err(NativeTransferError::SynchronizationUnknown);
     }
     let result = transfer_native_prefix_inner(history, sink, width, max_rows, theme, content);
-    // Retirements are recorded by the native frontier itself. Drain them
-    // before interpreting the transfer result so a later sink error cannot
-    // strand a retired ContentHost binding.
-    let mut retired_units = std::mem::take(&mut history.native.retired_units);
-    let retired = !retired_units.is_empty();
-    for unit_id in retired_units.drain(..) {
-        content.history_unit_retired(unit_id.value());
-    }
-    history.native.retired_units = retired_units;
-    let mut outcome = match result {
+    let outcome = match result {
         Ok(outcome) => outcome,
         Err(
             error @ (NativeTransferError::Sink(_)
@@ -112,23 +466,6 @@ pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink
         }
         Err(error @ NativeTransferError::SynchronizationUnknown) => return Err(error),
     };
-    if retired && outcome.inserted == 0 && !matches!(outcome.status, NativeTransferStatus::Progress)
-    {
-        // A zero-row retirement can recurse into a blocked/live successor and
-        // therefore return a non-progress status even though the History
-        // frontier changed. Expose that semantic transition so SceneHost
-        // re-resolves instead of painting a candidate that still contains the
-        // retired unit.
-        outcome.status = NativeTransferStatus::Progress;
-    }
-    history.native.record_physical_rows(outcome.inserted);
-    // Native promotion changes the display frontier even when it inserts no
-    // physical rows (for example, retiring a zero-row stream/unit). Keep that
-    // revision separate from semantic History revision so retained SceneHost
-    // frames can refresh the History branch without rebuilding the body.
-    if outcome.inserted > 0 || retired || matches!(outcome.status, NativeTransferStatus::Progress) {
-        history.bump_native_revision();
-    }
     Ok(outcome)
 }
 
@@ -140,100 +477,64 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
     theme: &crate::Theme,
     content: &mut dyn ContentProvider,
 ) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    if max_rows == 0 || width == 0 || history.units.is_empty() {
-        return Ok(outcome(0, 0, NativeTransferStatus::Idle));
-    }
-
-    if let Some(rows) = prepare_top_padding(history, width) {
-        return transfer_spacing(&mut history.native.top_padding, sink, rows, max_rows);
-    }
-
-    let gap_was_uninitialized = history.native.leading_gap.is_none();
-    if let Some(rows) = prepare_leading_gap(history, width) {
-        let result = transfer_spacing(
-            history.native.leading_gap.as_mut().expect("gap state"),
-            sink,
-            rows,
-            max_rows,
-        );
-        if gap_was_uninitialized
-            && result
-                .as_ref()
-                .map_or(true, |outcome| outcome.inserted == 0)
-        {
-            history.native.leading_gap = None;
-        }
-        return result;
-    }
-
-    if history.native.frozen_content.is_some() {
-        return transfer_frozen_content(history, sink, max_rows, content);
-    }
-
-    if history.native.frozen_static.is_some() {
-        return transfer_frozen_static(history, sink, max_rows);
-    }
-
-    let unit_id = history.units.front().expect("nonempty History").id;
-    match &history.units.front().expect("nonempty History").content {
-        HistoryUnitContent::Live(_) => Ok(outcome(
-            0,
-            0,
-            NativeTransferStatus::SemanticBlocked {
-                unit: unit_id,
-                reason: NativeBlockReason::Live,
-            },
-        )),
-        HistoryUnitContent::Static(view) if view.contains_content_identity() => {
-            let Some(port_id) = view.content_attachment_id() else {
-                return Ok(outcome(
-                    0,
-                    0,
+    let Some(plan) =
+        prepare_native_transfer_with_theme_and_content(history, width, max_rows, theme, content)
+    else {
+        let status = history
+            .units
+            .front()
+            .map(|unit| match &unit.content {
+                HistoryUnitContent::Live(_) => NativeTransferStatus::SemanticBlocked {
+                    unit: unit.id,
+                    reason: NativeBlockReason::Live,
+                },
+                HistoryUnitContent::Static(view) if view.contains_content_identity() => {
                     NativeTransferStatus::SemanticBlocked {
-                        unit: unit_id,
+                        unit: unit.id,
                         reason: NativeBlockReason::ContentHost,
-                    },
-                ));
-            };
-            let Some(rows) = content.history_rows(port_id, width) else {
-                return Ok(outcome(
-                    0,
-                    0,
-                    NativeTransferStatus::SemanticBlocked {
-                        unit: unit_id,
-                        reason: NativeBlockReason::ContentHost,
-                    },
-                ));
-            };
-            if rows.rows.is_empty() {
-                if rows.complete {
-                    retire_front(history);
-                    return transfer_native_prefix_inner(
-                        history, sink, width, max_rows, theme, content,
-                    );
+                    }
                 }
-                return Ok(outcome(
-                    0,
-                    0,
-                    NativeTransferStatus::SemanticBlocked {
-                        unit: unit_id,
-                        reason: NativeBlockReason::ContentHost,
-                    },
-                ));
-            }
-            transfer_content(history, sink, port_id, rows, max_rows, content)
-        }
-        HistoryUnitContent::Static(view) => {
-            let rows = static_rows(view, width, history.layout(), theme);
-            if rows.is_empty() {
-                retire_front(history);
-                return transfer_native_prefix_inner(
-                    history, sink, width, max_rows, theme, content,
-                );
-            }
-            transfer_static(history, sink, rows, max_rows)
-        }
+                HistoryUnitContent::Static(_) => NativeTransferStatus::Idle,
+            })
+            .unwrap_or(NativeTransferStatus::Idle);
+        return Ok(outcome(0, 0, status));
+    };
+    if plan.requested == 0 {
+        return map_plan_result(commit_native_transfer_with_content(
+            history, plan, 0, content,
+        ));
     }
+    let requested = plan.requested;
+    let accepted = sink
+        .insert_history_rows(plan.rows())
+        .map_err(NativeTransferError::Sink)?;
+    if accepted > requested {
+        return Err(NativeTransferError::InvalidAcknowledgement {
+            requested,
+            accepted,
+        });
+    }
+    map_plan_result(commit_native_transfer_with_content(
+        history, plan, accepted, content,
+    ))
+}
+
+fn map_plan_result<E>(
+    result: Result<NativeTransferOutcome, NativeTransferError<anyhow::Error>>,
+) -> Result<NativeTransferOutcome, NativeTransferError<E>> {
+    result.map_err(|error| match error {
+        NativeTransferError::InvalidAcknowledgement {
+            requested,
+            accepted,
+        } => NativeTransferError::InvalidAcknowledgement {
+            requested,
+            accepted,
+        },
+        NativeTransferError::SynchronizationUnknown => NativeTransferError::SynchronizationUnknown,
+        NativeTransferError::Sink(error) => {
+            unreachable!("physical transfer plan cannot produce sink error: {error}")
+        }
+    })
 }
 
 fn outcome(
@@ -260,248 +561,6 @@ fn spacing_rows(
             (semantic_count > 0).then(|| NativeFrontier::blank_rows(width, semantic_count))
         }
     }
-}
-
-fn prepare_top_padding(history: &mut History, width: u16) -> Option<Vec<PhysicalRow>> {
-    spacing_rows(
-        &history.native.top_padding,
-        width,
-        usize::from(history.layout().padding.top),
-    )
-}
-
-fn prepare_leading_gap(history: &mut History, width: u16) -> Option<Vec<PhysicalRow>> {
-    history.native.last_native_unit?;
-    let unit = history.units.front().expect("nonempty History");
-    if !matches!(unit.boundary, FlowBoundary::Default) {
-        return None;
-    }
-    if history.native.leading_gap.is_none() {
-        if history.layout().gap == 0 {
-            return None;
-        }
-        history.native.leading_gap = Some(SpacingTransferState::Semantic);
-    }
-    let state = history.native.leading_gap.as_ref().expect("gap state");
-    spacing_rows(state, width, usize::from(history.layout().gap))
-}
-
-struct InsertAck {
-    requested: usize,
-    accepted: usize,
-}
-
-fn insert_prefix<S: NativeHistorySink>(
-    sink: &mut S,
-    rows: &[PhysicalRow],
-    max_rows: usize,
-) -> Result<InsertAck, NativeTransferError<S::Error>> {
-    let requested = rows.len().min(max_rows);
-    let accepted = sink
-        .insert_history_rows(&rows[..requested])
-        .map_err(NativeTransferError::Sink)?;
-    if accepted > requested {
-        return Err(NativeTransferError::InvalidAcknowledgement {
-            requested,
-            accepted,
-        });
-    }
-    Ok(InsertAck {
-        requested,
-        accepted,
-    })
-}
-
-fn transfer_spacing<S: NativeHistorySink>(
-    state: &mut SpacingTransferState,
-    sink: &mut S,
-    rows: Vec<PhysicalRow>,
-    max_rows: usize,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let ack = insert_prefix(sink, &rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-    if ack.accepted == rows.len() {
-        *state = SpacingTransferState::Native;
-    } else {
-        *state =
-            SpacingTransferState::Frozen(FrozenPhysicalRows::new(rows[ack.accepted..].to_vec()));
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
-}
-
-fn transfer_static<S: NativeHistorySink>(
-    history: &mut History,
-    sink: &mut S,
-    rows: Vec<PhysicalRow>,
-    max_rows: usize,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let ack = insert_prefix(sink, &rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-    if ack.accepted == rows.len() {
-        cross_zero_spacing(history);
-        retire_front(history);
-    } else {
-        cross_zero_spacing(history);
-        history.native.frozen_static = Some(FrozenStaticRemainder {
-            unit: history.units.front().expect("static unit").id,
-            rows: FrozenPhysicalRows::new(rows[ack.accepted..].to_vec()),
-        });
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
-}
-
-fn transfer_content<S: NativeHistorySink>(
-    history: &mut History,
-    sink: &mut S,
-    port_id: u64,
-    payload: HistoryContentRows,
-    max_rows: usize,
-    content: &mut dyn ContentProvider,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let unit_id = history.units.front().expect("content unit").id;
-    let ack = insert_prefix(sink, &payload.rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-    let accepted_content = ack
-        .accepted
-        .saturating_sub(payload.content_start)
-        .min(payload.content_end.saturating_sub(payload.content_start));
-    let accepted_leading = ack.accepted.min(payload.leading_padding);
-    let accepted_trailing = ack
-        .accepted
-        .saturating_sub(payload.content_end)
-        .min(payload.trailing_padding);
-    content.history_rows_committed(
-        port_id,
-        ack.accepted,
-        accepted_content,
-        accepted_leading,
-        accepted_trailing,
-    );
-    cross_zero_spacing(history);
-    if ack.accepted < payload.rows.len() {
-        let content_start = payload.content_start.saturating_sub(ack.accepted);
-        let content_end = payload.content_end.saturating_sub(ack.accepted);
-        let trailing_padding = payload
-            .trailing_padding
-            .saturating_sub(ack.accepted.saturating_sub(payload.content_end));
-        history.native.frozen_content = Some(FrozenContentRemainder {
-            unit: unit_id,
-            port_id,
-            rows: FrozenPhysicalRows::new(payload.rows[ack.accepted..].to_vec()),
-            complete: payload.complete,
-            content_start,
-            content_end,
-            leading_padding: payload.leading_padding.saturating_sub(ack.accepted),
-            trailing_padding,
-        });
-    } else if payload.complete {
-        retire_front(history);
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
-}
-
-fn transfer_frozen_content<S: NativeHistorySink>(
-    history: &mut History,
-    sink: &mut S,
-    max_rows: usize,
-    content: &mut dyn ContentProvider,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let frozen = history
-        .native
-        .frozen_content
-        .as_ref()
-        .expect("frozen content");
-    let port_id = frozen.port_id;
-    let content_start = frozen.content_start;
-    let content_end = frozen.content_end;
-    let complete = frozen.complete;
-    let leading_padding = frozen.leading_padding;
-    let trailing_padding = frozen.trailing_padding;
-    let rows = frozen.rows.as_slice().to_vec();
-    let ack = insert_prefix(sink, &rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-    let accepted_content = ack
-        .accepted
-        .saturating_sub(content_start)
-        .min(content_end.saturating_sub(content_start));
-    let accepted_leading = ack.accepted.min(leading_padding);
-    let accepted_trailing = ack
-        .accepted
-        .saturating_sub(content_end)
-        .min(trailing_padding);
-    content.history_rows_committed(
-        port_id,
-        ack.accepted,
-        accepted_content,
-        accepted_leading,
-        accepted_trailing,
-    );
-    if ack.accepted == rows.len() {
-        history.native.frozen_content = None;
-        if complete {
-            retire_front(history);
-        }
-    } else if let Some(frozen) = history.native.frozen_content.as_mut() {
-        frozen.rows = FrozenPhysicalRows::new(rows[ack.accepted..].to_vec());
-        frozen.content_start = content_start.saturating_sub(ack.accepted);
-        frozen.content_end = content_end.saturating_sub(ack.accepted);
-        frozen.leading_padding = leading_padding.saturating_sub(ack.accepted);
-        frozen.trailing_padding =
-            trailing_padding.saturating_sub(ack.accepted.saturating_sub(content_end));
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
-}
-
-fn transfer_frozen_static<S: NativeHistorySink>(
-    history: &mut History,
-    sink: &mut S,
-    max_rows: usize,
-) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
-    let frozen = history
-        .native
-        .frozen_static
-        .as_ref()
-        .expect("frozen static");
-    let rows = frozen.rows.as_slice();
-    let ack = insert_prefix(sink, rows, max_rows)?;
-    if ack.accepted == 0 {
-        return Ok(outcome(ack.requested, 0, NativeTransferStatus::SinkBlocked));
-    }
-    if ack.accepted == rows.len() {
-        retire_front(history);
-    } else {
-        let remainder = rows[ack.accepted..].to_vec();
-        history.native.frozen_static.as_mut().unwrap().rows = FrozenPhysicalRows::new(remainder);
-    }
-    Ok(outcome(
-        ack.requested,
-        ack.accepted,
-        NativeTransferStatus::Progress,
-    ))
 }
 
 fn static_rows(

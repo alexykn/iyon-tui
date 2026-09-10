@@ -132,6 +132,18 @@ pub(crate) struct PreparedSceneFrame {
     pub(crate) surface: Surface,
     pub(crate) history_overlay: Option<crate::history::HistoryPhysicalOverlay>,
     pub(crate) damage: DamageRegion,
+    /// Component geometry captured with the same resolved scene and surface.
+    /// The host only exposes this map after the corresponding frame receipt
+    /// succeeds; a candidate must never answer visibility queries.
+    pub(crate) component_geometry: crate::presentation::layout::ComponentGeometryMap,
+    /// Geometry keyed by retained View identity for ordinary occurrence
+    /// references that do not own a native component.
+    pub(crate) view_geometry: HashMap<ViewId, crate::presentation::layout::ComponentGeometry>,
+    /// Confirmed-frame geometry keyed directly by qualified occurrence key.
+    /// The application adapter fills this while the candidate is captured;
+    /// queries never resolve an occurrence through mutable desired recipes.
+    pub(crate) occurrence_geometry:
+        HashMap<crate::occurrence::NodeKey, crate::presentation::layout::ComponentGeometry>,
     /// State identities encountered in this fully prepared candidate tree.
     /// The host holds an in-flight lifecycle pin for these IDs until backend
     /// presentation succeeds; visible binding promotion happens at commit.
@@ -896,6 +908,34 @@ impl SceneHost {
         self.focus.focused()
     }
 
+    pub(crate) fn focus_component(
+        &mut self,
+        target: crate::component::ComponentId,
+        geometry: &crate::presentation::layout::ComponentGeometryMap,
+        registry: &mut crate::component::ComponentRegistry,
+    ) -> bool {
+        self.focus.focus_component(
+            target,
+            &self.graph,
+            &self.capabilities,
+            Some(geometry),
+            registry,
+        )
+    }
+
+    pub(crate) fn confirmed_component_geometry(
+        &self,
+        target: crate::component::ComponentId,
+    ) -> Option<crate::presentation::layout::ComponentGeometry> {
+        self.retained
+            .as_ref()?
+            .layout
+            .components
+            .entries
+            .get(&target)
+            .copied()
+    }
+
     #[cfg(test)]
     pub(crate) fn focused(&self) -> Option<crate::component::ComponentId> {
         self.focused_component()
@@ -1118,6 +1158,82 @@ impl SceneHost {
                 }
             }
         }
+    }
+
+    /// Resolves and paints one candidate while owning, rather than executing,
+    /// the next native History operation. The returned plan is the exact
+    /// semantic frontier used by the candidate; callers submit its rows only
+    /// after releasing their acceptance guard and acknowledge that plan once.
+    /// This is the asynchronous host path. Synchronous compatibility callers
+    /// continue to use `render_at_with_states` above, whose sink performs the
+    /// same prepare/ack operation inline.
+    pub(crate) fn prepare_at_with_states(
+        &mut self,
+        now: Instant,
+        scene: &mut Scene,
+        registry: &mut ComponentRegistry,
+        size: Size,
+        theme: &Theme,
+        states: &StateFrameView<'_>,
+        content: &mut dyn ContentProvider,
+    ) -> Result<
+        (
+            PreparedSceneFrame,
+            Option<crate::history::NativeTransferPlan>,
+        ),
+        SceneHostError<anyhow::Error>,
+    > {
+        let resolved = self.resolve_stable_at_with_anchor(
+            scene,
+            registry,
+            size,
+            now,
+            HistoryViewportAnchor::FollowEnd,
+            states,
+            content,
+        )?;
+
+        if scene
+            .history()
+            .is_some_and(crate::History::native_synchronization_unknown)
+        {
+            return Ok((self.paint_with_content(resolved, theme, content), None));
+        }
+
+        let front_content_blocked = scene
+            .history()
+            .and_then(crate::History::front_content_attachment_id)
+            .is_some_and(|port_id| content.history_transfer_blocked(port_id, size.width));
+        if resolved.root.history_overflow_rows == 0 || front_content_blocked {
+            return Ok((self.paint_with_content(resolved, theme, content), None));
+        }
+
+        let plan = scene.history().and_then(|history| {
+            crate::history::prepare_native_transfer_with_theme_and_content(
+                history,
+                size.width,
+                resolved.root.history_overflow_rows,
+                theme,
+                content,
+            )
+        });
+
+        // A missing plan means semantic work is blocked (for example, a live
+        // unit or an unsupported composite ContentHost). Pin the candidate to
+        // the current frontier exactly as the synchronous sink path does.
+        // A present plan is also painted front-pinned because its physical
+        // acknowledgement has not happened yet.
+        self.retained = Some(resolved);
+        let pinned = self.resolve_stable_at_with_anchor(
+            scene,
+            registry,
+            size,
+            now,
+            HistoryViewportAnchor::NativeFrontier,
+            states,
+            content,
+        )?;
+        Ok((self.paint_with_content(pinned, theme, content), plan))
     }
 
     #[cfg(test)]
@@ -2185,6 +2301,9 @@ impl SceneHost {
                                 DamageRegion::from_rects(rects, retained.layout.tree.size)
                             }
                         }),
+                        component_geometry: retained.layout.components.clone(),
+                        view_geometry: retained.layout.tree.view_geometry(),
+                        occurrence_geometry: HashMap::new(),
                         state_bindings,
                     };
                 }
@@ -2221,6 +2340,9 @@ impl SceneHost {
                 .pending_damage
                 .take()
                 .unwrap_or_else(|| DamageRegion::full(retained.layout.tree.size)),
+            component_geometry: retained.layout.components.clone(),
+            view_geometry: retained.layout.tree.view_geometry(),
+            occurrence_geometry: HashMap::new(),
             state_bindings,
         }
     }

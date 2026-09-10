@@ -71,7 +71,8 @@ test(`${PERF13D} preserves the visible Connector across candidate failure`, asyn
     (nativeResourceOf(second) as { failNextActivation(diagnostic: string): void })
       .failNextActivation("synthetic projection failure");
     second.activate();
-    expect(second.status().phase).toBe("activation-pending");
+    expect(second.status()).toMatchObject({ requested: true, visible: false });
+    expect(first.status()).toMatchObject({ phase: "active", visible: true });
     tui.flush();
     expect(first.status()).toMatchObject({ phase: "active", visible: true, requested: false });
     expect(second.status()).toMatchObject({ phase: "failed", visible: false, requested: true });

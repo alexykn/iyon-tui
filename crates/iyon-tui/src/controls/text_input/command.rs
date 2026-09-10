@@ -1,6 +1,6 @@
 use crate::{EventCx, InteractionResult, Key, KeyStroke, Modifiers};
 
-use super::TextInput;
+use super::{TextBuffer, TextInput};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextInputCommand {
@@ -84,28 +84,11 @@ pub(crate) fn handle_command(
     command: TextInputCommand,
     cx: &mut EventCx<'_>,
 ) -> InteractionResult {
-    let changed = match command {
-        TextInputCommand::Insert(character) => input.insert_text(&character.to_string()),
-        TextInputCommand::InsertNewline => input.insert_text("\n"),
-        TextInputCommand::Backspace => input.buffer.backspace(),
-        TextInputCommand::Delete => input.buffer.delete(),
-        TextInputCommand::DeleteWordBackward => input.buffer.delete_word_backward(),
-        TextInputCommand::DeleteWordForward => input.buffer.delete_word_forward(),
-        TextInputCommand::KillToLineStart => input.buffer.kill_to_line_start(),
-        TextInputCommand::Yank => input.buffer.yank(),
-        TextInputCommand::MoveLeft => input.buffer.move_left(),
-        TextInputCommand::MoveRight => input.buffer.move_right(),
-        TextInputCommand::MoveWordLeft => input.buffer.move_word_left(),
-        TextInputCommand::MoveWordRight => input.buffer.move_word_right(),
-        TextInputCommand::MoveLineStart => input.buffer.move_line_start(),
-        TextInputCommand::MoveLineEnd => input.buffer.move_line_end(),
-        TextInputCommand::MoveUp => input.move_up(),
-        TextInputCommand::MoveDown => input.move_down(),
-        TextInputCommand::Submit => {
-            cx.emit(input.submitted, input.buffer.text().to_owned());
-            return InteractionResult::Consumed;
-        }
-    };
+    if command == TextInputCommand::Submit {
+        cx.emit(input.submitted, input.buffer.text().to_owned());
+        return InteractionResult::Consumed;
+    }
+    let changed = apply_buffer_command(input, command);
 
     if changed {
         input.emit_change(cx);
@@ -113,6 +96,23 @@ pub(crate) fn handle_command(
     } else {
         InteractionResult::Ignored
     }
+}
+
+pub(crate) fn apply_buffer_command(input: &mut TextInput, command: TextInputCommand) -> bool {
+    let layout_width = input.command_layout_width();
+    let changed =
+        apply_buffer_command_to_buffer(&mut input.buffer, command, input.multiline, layout_width);
+    input.repair_scroll();
+    changed
+}
+
+pub(crate) fn apply_buffer_command_to_buffer(
+    buffer: &mut TextBuffer,
+    command: TextInputCommand,
+    multiline: bool,
+    layout_width: Option<u16>,
+) -> bool {
+    buffer.apply_command(command, multiline, layout_width)
 }
 
 fn is_word_modifier(modifiers: Modifiers) -> bool {

@@ -12,7 +12,11 @@ import {
 } from "../src/runtime/native-resource-registry.ts";
 import { AttachmentBindingState, prepareSemanticAttachments } from "../src/runtime/attachments.ts";
 import { RuntimeErrorChannel } from "../src/runtime/error-channel.ts";
-import { EnvironmentWakeBroker } from "../src/runtime/wake-broker.ts";
+import {
+  EnvironmentWakeBroker,
+  resetWakeBrokerCounters,
+  wakeBrokerCounterSnapshot,
+} from "../src/runtime/wake-broker.ts";
 import { native } from "../src/transport/native/addon.ts";
 import {
   nativeViewAbiSession,
@@ -206,6 +210,150 @@ test(`${PERF13A} coalesces automatic wakes and retries only at an explicit barri
   registration.dispose();
 });
 
+test(`${PERF13A} acknowledges an auto-native completion once across repeated flushes`, () => {
+  let committed = 0n;
+  let callbacks = 0;
+  const nativeHost = {
+    epochs: () => ({
+      host_id: "1",
+      desired_structural_revision: "1",
+      visible_structural_revision: committed === 0n ? "0" : "7",
+      visible_frame_revision: committed.toString(),
+      pending_epoch: committed === 0n ? "1" : "1",
+      committed_epoch: committed.toString(),
+    }),
+    flushPendingHosts: () => {
+      // Model the native environment driver completing the receipt without
+      // the JavaScript broker's drain call receiving a commit report.
+      committed = 1n;
+      return {
+        rearm: false,
+        waiting_for_presentation: false,
+        attempted: 0,
+        commits: [],
+        errors: [],
+        wake_epoch: "1",
+      };
+    },
+  };
+  resetWakeBrokerCounters();
+  const broker = new EnvironmentWakeBroker(1);
+  const registration = broker.register(nativeHost, new RuntimeErrorChannel(() => true), (commit) => {
+    callbacks += 1;
+    expect(commit?.committed_epoch).toBe("1");
+    expect(commit?.visible_structural_revision).toBe("7");
+  });
+  registration.flush();
+  registration.flush();
+  expect(callbacks).toBe(1);
+  expect(wakeBrokerCounterSnapshot().frames_committed).toBe(1);
+  registration.dispose();
+});
+
+test(`${PERF13A} promotes leases when native completion races the broker`, () => {
+  let committed = 0n;
+  const nativeHost = {
+    epochs: () => ({
+      host_id: "1",
+      desired_structural_revision: "1",
+      visible_structural_revision: committed === 0n ? "0" : "7",
+      visible_frame_revision: committed.toString(),
+      pending_epoch: "1",
+      committed_epoch: committed.toString(),
+    }),
+    flushPendingHosts: () => {
+      committed = 1n;
+      return {
+        rearm: false,
+        waiting_for_presentation: false,
+        attempted: 0,
+        commits: [],
+        errors: [],
+        wake_epoch: "1",
+      };
+    },
+  };
+  const environment = {};
+  const host = {};
+  const registry = new NativeResourceRegistry(environment);
+  const resource = {};
+  const handleId = nextFrameworkHandleTestId();
+  const owner: ResourceOwner = { environment, host };
+  registry.registerInternal(resource, handleId, "state", resource, owner, new Set([SEMANTIC_VIEW_KIND.text]));
+  const attached = attachSemanticResourceForTesting(View.text("visible"), "stateAttachment", handleId, resource);
+  const binding = new AttachmentBindingState();
+  binding.commitDesired(prepareSemanticAttachments(semanticNodeOf(attached), registry, environment, host), "7");
+  const broker = new EnvironmentWakeBroker(1);
+  const registration = broker.register(nativeHost, new RuntimeErrorChannel(() => true), (commit) => {
+    binding.commitVisible(commit?.visible_structural_revision);
+  });
+  try {
+    registration.flush();
+    expect(binding.visibleCount()).toBe(1);
+    expect(registry.stats().visibleLeases).toBe(1);
+  } finally {
+    registration.dispose();
+    binding.dispose();
+    registry.beginDisposal(handleId);
+    registry.release(handleId);
+  }
+});
+
+test(`${PERF13A} does not replay a failed commit observer in one drain`, async () => {
+  let committed = 0n;
+  let callbacks = 0;
+  const nativeHost = {
+    epochs: () => ({
+      host_id: "1",
+      desired_structural_revision: "1",
+      visible_structural_revision: committed === 0n ? "0" : "1",
+      visible_frame_revision: committed.toString(),
+      pending_epoch: "1",
+      committed_epoch: committed.toString(),
+    }),
+    flushPendingHosts: () => {
+      if (committed === 0n) {
+        committed = 1n;
+        return {
+          rearm: false,
+          waiting_for_presentation: false,
+          attempted: 1,
+          commits: [{ host_id: "1", committed_epoch: "1", visible_structural_revision: "1" }],
+          errors: [],
+          wake_epoch: "1",
+        };
+      }
+      return {
+        rearm: false,
+        waiting_for_presentation: false,
+        attempted: 0,
+        commits: [],
+        errors: [],
+        wake_epoch: "1",
+      };
+    },
+  };
+  let failObserver = true;
+  const errors = new RuntimeErrorChannel(() => true);
+  const broker = new EnvironmentWakeBroker(1);
+  const registration = broker.register(nativeHost, errors, () => {
+    callbacks += 1;
+    if (failObserver) {
+      failObserver = false;
+      throw new Error("observer failed once");
+    }
+  });
+  registration.markPending();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(callbacks).toBe(1);
+  expect(errors.latestFor("1")?.diagnostic).toBe("observer failed once");
+  registration.flush();
+  expect(callbacks).toBe(2);
+  expect(errors.latestFor("1")).toBeUndefined();
+  registration.dispose();
+});
+
 test(`${PERF13A} preserves a Source wake failure in the failed host channel without spinning`, async () => {
   let calls = 0;
   const nativeHost = {
@@ -305,7 +453,7 @@ test(`${PERF13A} polls asynchronous presentation receipts without a microtask sp
   registration.dispose();
 });
 
-test(`${PERF13A} separates desired structural publication from visible frame commit`, () => {
+test(`${PERF13A} publishes desired structure and confirms visible frames with the native driver`, () => {
   const session = nativeViewAbiSession();
   const Host = native.NativeTuiHost;
   if (session === undefined || Host === undefined) throw new Error("native PERF-13-A surface is unavailable");
@@ -323,8 +471,10 @@ test(`${PERF13A} separates desired structural publication from visible frame com
     firstPublication.commit();
     const pending = host.epochs?.();
     expect(pending?.desired_structural_revision).toBe("1");
-    expect(pending?.visible_frame_revision).toBe("0");
-    expect(pending?.pending_epoch).not.toBe(pending?.committed_epoch);
+    expect(BigInt(pending?.visible_structural_revision ?? "0")).toBeLessThanOrEqual(1n);
+    expect(BigInt(pending?.committed_epoch ?? "0")).toBeLessThanOrEqual(
+      BigInt(pending?.pending_epoch ?? "0"),
+    );
 
     const firstReport = host.flushPendingHosts?.(8, true);
     expect(firstReport?.errors).toEqual([]);
@@ -337,8 +487,10 @@ test(`${PERF13A} separates desired structural publication from visible frame com
     secondPublication.commit();
     const superseded = host.epochs?.();
     expect(superseded?.desired_structural_revision).toBe("2");
-    expect(superseded?.visible_frame_revision).toBe("1");
-    expect(host.screenRows().some((row) => row.includes("first"))).toBe(true);
+    expect(BigInt(superseded?.visible_structural_revision ?? "0")).toBeLessThanOrEqual(2n);
+    expect(BigInt(superseded?.committed_epoch ?? "0")).toBeLessThanOrEqual(
+      BigInt(superseded?.pending_epoch ?? "0"),
+    );
 
     const secondReport = host.flushPendingHosts?.(8, true);
     expect(secondReport?.errors).toEqual([]);

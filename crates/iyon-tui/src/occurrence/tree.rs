@@ -138,6 +138,11 @@ pub(crate) struct TreeDraft<'a> {
     pub(crate) retired: Vec<NodeKey>,
     retired_set: HashSet<NodeKey>,
     link_touched: HashSet<NodeKey>,
+    /// Keys whose accepted effective tree/property state changed.  This is
+    /// distinct from `edits`: an overlay can contain a cloned record for a
+    /// validated no-op property write.
+    changed_nodes: HashSet<NodeKey>,
+    pub(crate) membership_nodes: HashSet<NodeKey>,
     created_portals_by_owner: HashMap<NodeKey, HashSet<NodeKey>>,
 }
 
@@ -146,6 +151,8 @@ pub(crate) struct TreePlan {
     pub(crate) created: Vec<NodeKey>,
     pub(crate) retired: Vec<NodeKey>,
     pub(crate) retired_set: HashSet<NodeKey>,
+    pub(crate) changed_nodes: HashSet<NodeKey>,
+    pub(crate) membership_nodes: HashSet<NodeKey>,
     pub(crate) portal_buckets: HashMap<NodeKey, HashSet<NodeKey>>,
     pub(crate) portal_touched: HashSet<NodeKey>,
 }
@@ -164,6 +171,8 @@ impl<'a> TreeDraft<'a> {
             retired: Vec::new(),
             retired_set: HashSet::new(),
             link_touched: HashSet::new(),
+            changed_nodes: HashSet::new(),
+            membership_nodes: HashSet::new(),
             created_portals_by_owner: HashMap::new(),
         }
     }
@@ -185,6 +194,12 @@ impl<'a> TreeDraft<'a> {
             .try_reserve(additional)
             .map_err(|_| TreeError::Capacity)?;
         self.link_touched
+            .try_reserve(additional)
+            .map_err(|_| TreeError::Capacity)?;
+        self.changed_nodes
+            .try_reserve(additional)
+            .map_err(|_| TreeError::Capacity)?;
+        self.membership_nodes
             .try_reserve(additional)
             .map_err(|_| TreeError::Capacity)?;
         self.created_portals_by_owner
@@ -213,6 +228,7 @@ impl<'a> TreeDraft<'a> {
         }
         self.edits.insert(key, occurrence);
         self.link_touched.insert(key);
+        self.changed_nodes.insert(key);
         Ok(())
     }
 
@@ -228,6 +244,18 @@ impl<'a> TreeDraft<'a> {
 
     pub(crate) fn is_retired(&self, key: NodeKey) -> bool {
         self.retired_set.contains(&key)
+    }
+
+    pub(crate) fn mark_changed(&mut self, key: NodeKey) {
+        self.changed_nodes.insert(key);
+    }
+
+    pub(crate) fn changed_keys(&self) -> impl Iterator<Item = NodeKey> + '_ {
+        self.changed_nodes.iter().copied()
+    }
+
+    pub(crate) fn mark_membership(&mut self, key: NodeKey) {
+        self.membership_nodes.insert(key);
     }
 
     pub(crate) fn retirement_keys(&self, root: NodeKey) -> Result<Vec<NodeKey>, TreeError> {
@@ -300,6 +328,7 @@ impl<'a> TreeDraft<'a> {
         let is_created_portal = self.read(root)?.root_role == Some(RootRole::Portal)
             && self.created_set.contains(&root);
         self.edit(root)?.root_owner = owner;
+        self.changed_nodes.insert(root);
         if is_created_portal {
             if let Some(owner) = owner {
                 self.created_portals_by_owner
@@ -369,6 +398,11 @@ impl<'a> TreeDraft<'a> {
             self.read(parent)?.links.last_child
         };
         self.touch_links([Some(parent), Some(child), previous, before]);
+        self.changed_nodes.extend(
+            [Some(parent), Some(child), previous, before]
+                .into_iter()
+                .flatten(),
+        );
 
         if let Some(previous) = previous {
             self.edit(previous)?.links.next_sibling = Some(child);
@@ -418,6 +452,16 @@ impl<'a> TreeDraft<'a> {
             links.previous_sibling,
             links.next_sibling,
         ]);
+        self.changed_nodes.extend(
+            [
+                Some(parent),
+                Some(child),
+                links.previous_sibling,
+                links.next_sibling,
+            ]
+            .into_iter()
+            .flatten(),
+        );
         if let Some(previous) = links.previous_sibling {
             if self.read(previous)?.links.next_sibling != Some(child) {
                 return Err(TreeError::BrokenLink(previous));
@@ -533,6 +577,8 @@ impl<'a> TreeDraft<'a> {
             created: self.created,
             retired: self.retired,
             retired_set: self.retired_set,
+            changed_nodes: self.changed_nodes,
+            membership_nodes: self.membership_nodes,
             portal_buckets: HashMap::new(),
             portal_touched: HashSet::new(),
         }

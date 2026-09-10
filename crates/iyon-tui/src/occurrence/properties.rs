@@ -259,6 +259,13 @@ impl PropertyLayers {
             value => value.clone(),
         }
     }
+
+    pub(crate) fn effective_values(&self) -> Vec<(PropertyId, LayerValue)> {
+        PropertyId::ALL
+            .iter()
+            .map(|property| (*property, self.effective(*property)))
+            .collect()
+    }
 }
 
 fn validate_value(

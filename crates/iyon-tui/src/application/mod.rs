@@ -9,11 +9,15 @@ pub(crate) mod content;
 #[cfg(feature = "native-host")]
 pub(crate) mod environment;
 #[cfg(feature = "native-host")]
+pub(crate) mod frame;
+#[cfg(feature = "native-host")]
 pub(crate) mod host;
 #[cfg(feature = "native-host")]
 mod input;
 #[cfg(feature = "native-host")]
 mod kernel;
+#[cfg(feature = "native-host")]
+pub(crate) mod legacy_scene;
 #[cfg(feature = "native-host")]
 mod run;
 #[cfg(feature = "native-host")]

@@ -134,6 +134,13 @@ impl ControlState {
         }
     }
 
+    pub fn editor_multiline(&self) -> Option<bool> {
+        match self {
+            Self::Editor(editor) => Some(editor.multiline),
+            _ => None,
+        }
+    }
+
     pub fn scroll_top(&self) -> Option<u32> {
         match self {
             Self::Scroll(scroll) => Some(scroll.top_row),
@@ -144,6 +151,27 @@ impl ControlState {
     pub fn animation_running(&self) -> Option<bool> {
         match self {
             Self::Animation(animation) => Some(animation.running),
+            _ => None,
+        }
+    }
+
+    pub fn animation_frame_count(&self) -> Option<u32> {
+        match self {
+            Self::Animation(animation) => Some(animation.frame_count),
+            _ => None,
+        }
+    }
+
+    pub fn animation_active_frame(&self) -> Option<u32> {
+        match self {
+            Self::Animation(animation) => Some(animation.active_frame),
+            _ => None,
+        }
+    }
+
+    pub fn animation_interval_ms(&self) -> Option<Option<u32>> {
+        match self {
+            Self::Animation(animation) => Some(animation.interval_ms),
             _ => None,
         }
     }
@@ -262,6 +290,14 @@ impl ScrollState {
 }
 
 impl AnimationState {
+    pub fn active_frame(&self) -> u32 {
+        self.active_frame
+    }
+
+    pub fn interval_ms(&self) -> Option<u32> {
+        self.interval_ms
+    }
+
     fn apply_command(&mut self, command_id: u32, operands: &[u32]) -> Result<(), ControlError> {
         let descriptor = generated::control_command_descriptor(command_id)
             .ok_or(ControlError::UnknownCommand)?;

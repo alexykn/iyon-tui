@@ -65,7 +65,7 @@ pub use crate::projection::SmoothConfig;
 // source qualification; the core owns typed operations and transactional
 // desired-state installation. This does not expose renderer/View transport.
 #[cfg(feature = "native-host")]
-pub use crate::application::ui_resources::{SourceIdentity, UiResourceOwner};
+pub use crate::application::ui_resources::{SourceIdentity, UiCommitOutput, UiResourceOwner};
 pub use crate::occurrence::generated::{
     HandleKind, UI_ACK_HEADER_WORDS, UI_ACK_WORDS_PER_CREATED_HANDLE, UI_BATCH_HEADER_WORDS,
     UI_BATCH_MAGIC, UI_BATCH_VERSION, UI_HANDLE_WORDS, UiOpcode, ValueKind, property_descriptor,

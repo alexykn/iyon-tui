@@ -10,11 +10,48 @@ use crate::binding::{
     ContentAnnotationRecord, ContentFamily, ControlError, ControlState, FunnelSpec, HandleKind,
     HostContentSource, HostNamespace, NodeKey, ResourceKey, ResourceRef, RootConfig, RootRole,
     SourceInstallDisposition, TextFunnelKind, TuiEnvironment, UiAcknowledgement, UiCommit,
-    UiOperation, UiOperationResult,
+    UiOperation,
 };
 
 use super::content::TextSourceKind;
 use crate::history::HistoryUnitId;
+
+pub struct UiCommitOutput {
+    pub result: crate::binding::UiOperationResult,
+    pub wakes: crate::application::content::PreparedSourceWakes,
+    pub(crate) changes: crate::occurrence::UiChangeSet,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HistoryUnitStatus {
+    Live,
+    Frozen,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HistoryUnitOwner {
+    pub(crate) id: HistoryUnitId,
+    pub(crate) flow_boundary: u32,
+    pub(crate) status: HistoryUnitStatus,
+}
+
+/// Fully prepared but not yet accepted UI/resource work. The host reserves
+/// its projection frontier using this exact summary before this value is
+/// installed; dropping it leaves the authoritative document, Sources, and
+/// pending projection frontier unchanged.
+pub(crate) struct PreparedUiResources {
+    prepared: crate::occurrence::commit::PreparedUiCommit,
+    plan: ResourceCommitPlan,
+    source_mutations: Vec<crate::application::content::PreparedSourceMutation>,
+    changes: crate::occurrence::UiChangeSet,
+    history_updates: Vec<(NodeKey, Option<HistoryUnitOwner>)>,
+}
+
+impl PreparedUiResources {
+    pub(crate) fn changes(&self) -> &crate::occurrence::UiChangeSet {
+        &self.changes
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SourceIdentity {
@@ -45,6 +82,7 @@ pub struct UiResourceOwner {
     pub private_sources: HashMap<ResourceKey, SourceIdentity>,
     pub controls: HashMap<ResourceKey, ControlState>,
     pub root_configs: HashMap<NodeKey, RootConfig>,
+    pub(crate) history_units: HashMap<NodeKey, HistoryUnitOwner>,
     lifecycle: UiResourceLifecycle,
 }
 
@@ -56,8 +94,8 @@ enum UiResourceLifecycle {
 }
 
 const _: () = {
-    const fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<UiResourceOwner>();
+    const fn assert_send<T: Send>() {}
+    assert_send::<UiResourceOwner>();
 };
 
 impl UiResourceOwner {
@@ -72,6 +110,7 @@ impl UiResourceOwner {
             private_sources: HashMap::new(),
             controls: HashMap::new(),
             root_configs: HashMap::new(),
+            history_units: HashMap::new(),
             lifecycle: UiResourceLifecycle::Open,
         }
     }
@@ -93,6 +132,334 @@ impl UiResourceOwner {
             return Err("UI resource owner is closing or closed".to_owned());
         }
         Ok(self.document_ref().body_handle())
+    }
+
+    pub(crate) fn is_open(&self) -> bool {
+        self.lifecycle == UiResourceLifecycle::Open && self.document.is_some()
+    }
+
+    pub(crate) fn document_snapshot(
+        &self,
+        key: NodeKey,
+    ) -> std::result::Result<crate::occurrence::OccurrenceSnapshot, String> {
+        self.document_ref()
+            .snapshot(key)
+            .map_err(|error| format!("occurrence snapshot failed for {key:?}: {error:?}"))
+    }
+
+    pub(crate) fn demanded_ports(&self) -> anyhow::Result<Vec<ResourceKey>> {
+        let document = self.document_ref();
+        let mut demanded = Vec::new();
+        let mut stack = vec![document.body_root()];
+        stack.extend(document.history_roots());
+        for root in document.portal_roots() {
+            if self.portal_is_demanded(root)? {
+                stack.push(root);
+            }
+        }
+        while let Some(node) = stack.pop() {
+            let snapshot = self.document_snapshot(node).map_err(anyhow::Error::msg)?;
+            if let Some(port) = snapshot.port {
+                demanded.push(port);
+            }
+            if snapshot.kind == crate::occurrence::HostKind::Animation {
+                let active = snapshot
+                    .control
+                    .and_then(|key| self.control_state(key))
+                    .and_then(crate::occurrence::ControlState::animation_active_frame)
+                    .unwrap_or(0) as usize;
+                if let Some(child) = snapshot.children.get(active) {
+                    stack.push(*child);
+                }
+            } else {
+                stack.extend(snapshot.children.iter().rev().copied());
+            }
+        }
+        Ok(demanded)
+    }
+
+    pub(crate) fn demanded_port(&self, port: ResourceKey) -> anyhow::Result<(bool, usize)> {
+        let Some(node) = self.document_ref().port_owner(port) else {
+            return Ok((false, 0));
+        };
+        let active_animation = |control| {
+            self.control_state(control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame)
+                .map(|frame| frame as usize)
+        };
+        self.document_ref()
+            .demanded_node(node, active_animation)
+            .map_err(|error| anyhow!("occurrence demand lookup failed: {error:?}"))
+    }
+
+    pub(crate) fn ports_under_nodes(
+        &self,
+        roots: &[NodeKey],
+    ) -> anyhow::Result<(Vec<ResourceKey>, usize)> {
+        self.document_ref()
+            .ports_under_nodes(roots)
+            .map_err(|error| anyhow!("occurrence content membership lookup failed: {error:?}"))
+    }
+
+    pub(crate) fn portal_is_demanded(&self, root: NodeKey) -> anyhow::Result<bool> {
+        let active_animation = |control| {
+            self.control_state(control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame)
+                .map(|frame| frame as usize)
+        };
+        self.document_ref()
+            .demanded_node(root, active_animation)
+            .map(|(demanded, _)| demanded)
+            .map_err(|error| anyhow!("occurrence Portal demand lookup failed: {error:?}"))
+    }
+
+    pub(crate) fn history_roots(&self) -> Vec<NodeKey> {
+        self.document_ref().history_roots()
+    }
+
+    pub(crate) fn root_config(&self, root: NodeKey) -> Option<RootConfig> {
+        self.root_configs.get(&root).copied()
+    }
+
+    pub(crate) fn history_unit(&self, root: NodeKey) -> Option<HistoryUnitOwner> {
+        self.history_units.get(&root).copied()
+    }
+
+    fn prepare_history_updates(
+        &self,
+        prepared: &crate::occurrence::commit::PreparedUiCommit,
+        plan: &ResourceCommitPlan,
+        existing_history: &HashMap<HistoryUnitId, bool>,
+    ) -> std::result::Result<Vec<(NodeKey, Option<HistoryUnitOwner>)>, crate::binding::UiRejection>
+    {
+        // A rejection describes the still-accepted document.  The prepared
+        // acknowledgement carries the revision that would be accepted, which
+        // must not leak out as though this transaction had committed.
+        let revision = self.document_ref().accepted_ui_revision();
+        let mut updates = Vec::new();
+        updates
+            .try_reserve(prepared.history_root_summaries().len())
+            .map_err(|_| self.history_rejection(revision, "History owner update capacity"))?;
+        let added = prepared.added_root_keys();
+        let retired_nodes = prepared.retired_node_keys();
+        let mut supplied_ids = HashSet::new();
+        for summary in prepared.history_root_summaries() {
+            let config = plan
+                .root_config_for(summary.root)
+                .or_else(|| self.root_configs.get(&summary.root).copied())
+                .ok_or_else(|| {
+                    self.history_rejection(revision, "History root config is missing")
+                })?;
+            let current = self.history_units.get(&summary.root).copied();
+            if current.is_none() && !added.contains(&summary.root) {
+                return Err(self.history_rejection(
+                    revision,
+                    "History root has no accepted native unit identity",
+                ));
+            }
+            if current.is_none() && added.contains(&summary.root) {
+                if plan.supplied_history_identity(summary.root) {
+                    let id = HistoryUnitId::from_value(
+                        config
+                            .unit_identity
+                            .expect("supplied History identity is present in its config"),
+                    )
+                    .ok_or_else(|| {
+                        self.history_rejection(revision, "History unit identity is invalid")
+                    })?;
+                    if !supplied_ids.insert(id)
+                        || self.history_units.values().any(|owner| owner.id == id)
+                    {
+                        return Err(self.history_rejection(
+                            revision,
+                            "History unit identity is already owned by this UI document",
+                        ));
+                    }
+                    let expected_live = match summary.action {
+                        Some(1) => false,
+                        None => true,
+                        Some(2) => {
+                            return Err(self.history_rejection(
+                                revision,
+                                "History discard requires an accepted live tail root",
+                            ));
+                        }
+                        Some(_) => unreachable!("History action was validated by occurrence owner"),
+                    };
+                    if existing_history.get(&id).copied() != Some(expected_live) {
+                        return Err(self.history_rejection(
+                            revision,
+                            "History identity must adapt a same-host unit with matching status",
+                        ));
+                    }
+                }
+            }
+            if let Some(owner) = current {
+                if config.flow_boundary != owner.flow_boundary
+                    || config
+                        .unit_identity
+                        .is_some_and(|id| id != owner.id.value())
+                {
+                    return Err(self.history_rejection(
+                        revision,
+                        "History root config does not match its accepted native unit",
+                    ));
+                }
+            }
+            let owner = match current {
+                Some(owner) => match (owner.status, summary.action) {
+                    (HistoryUnitStatus::Frozen, None) => {
+                        return Err(
+                            self.history_rejection(revision, "a frozen History unit cannot change")
+                        );
+                    }
+                    (HistoryUnitStatus::Frozen, Some(1)) => {
+                        return Err(
+                            self.history_rejection(revision, "a frozen History unit cannot change")
+                        );
+                    }
+                    (HistoryUnitStatus::Live, Some(1)) => {
+                        if summary.has_live_control {
+                            return Err(self.history_rejection(
+                                revision,
+                                "History freeze final content cannot contain a live control",
+                            ));
+                        }
+                        HistoryUnitOwner {
+                            status: HistoryUnitStatus::Frozen,
+                            ..owner
+                        }
+                    }
+                    (HistoryUnitStatus::Live, None) => owner,
+                    (HistoryUnitStatus::Live, Some(2)) => {
+                        if !retired_nodes.contains(&summary.root) {
+                            return Err(self.history_rejection(
+                                revision,
+                                "History discard must retire its live tail root",
+                            ));
+                        }
+                        // The retirement update below removes the owner.  Do
+                        // not leave a transient accepted state that the
+                        // renderer could observe as a surviving unit.
+                        continue;
+                    }
+                    (HistoryUnitStatus::Frozen, Some(2)) => {
+                        return Err(self.history_rejection(
+                            revision,
+                            "History discard requires a live tail root",
+                        ));
+                    }
+                    (_, Some(action)) => {
+                        return Err(self.history_rejection(
+                            revision,
+                            if action == 1 {
+                                "History freeze action is invalid"
+                            } else {
+                                "History action is invalid"
+                            },
+                        ));
+                    }
+                },
+                None => {
+                    if summary.action == Some(2) {
+                        return Err(self.history_rejection(
+                            revision,
+                            "History discard requires an accepted live tail root",
+                        ));
+                    }
+                    HistoryUnitOwner {
+                        id: HistoryUnitId::from_value(
+                            config
+                                .unit_identity
+                                .expect("History root preflight allocated its unit identity"),
+                        )
+                        .expect("History root identity is non-zero"),
+                        flow_boundary: config.flow_boundary,
+                        status: if summary.action == Some(1) {
+                            if summary.has_live_control {
+                                return Err(self.history_rejection(
+                                    revision,
+                                    "History freeze final content cannot contain a live control",
+                                ));
+                            }
+                            HistoryUnitStatus::Frozen
+                        } else {
+                            HistoryUnitStatus::Live
+                        },
+                    }
+                }
+            };
+            updates.push((summary.root, Some(owner)));
+        }
+        let current_history_roots = self.document_ref().history_roots();
+        let current_tail = current_history_roots.last().copied();
+        for root in prepared.retired_node_keys() {
+            let Some(owner) = self.history_units.get(&root).copied() else {
+                continue;
+            };
+            if owner.status != HistoryUnitStatus::Live || current_tail != Some(root) {
+                return Err(self.history_rejection(
+                    revision,
+                    "RetireRoot cannot bypass History live-tail restrictions",
+                ));
+            }
+            updates.push((root, None));
+        }
+        Ok(updates)
+    }
+
+    fn history_rejection(
+        &self,
+        revision: u64,
+        message: &'static str,
+    ) -> crate::binding::UiRejection {
+        crate::binding::UiRejection::internal(
+            revision,
+            crate::binding::CommitDetail::InvalidTopology,
+            message,
+        )
+    }
+
+    fn apply_history_updates(&mut self, updates: Vec<(NodeKey, Option<HistoryUnitOwner>)>) {
+        for (root, owner) in updates {
+            match owner {
+                Some(owner) => {
+                    self.history_units.insert(root, owner);
+                }
+                None => {
+                    self.history_units.remove(&root);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn content_binding(
+        &self,
+        port: ResourceKey,
+    ) -> anyhow::Result<Option<(ResourceKey, HostContentSource, FunnelSpec)>> {
+        let connector = self
+            .document_ref()
+            .selected_connector(port)
+            .or_else(|| self.literal_sources.contains_key(&port).then_some(port));
+        let Some(connector) = connector else {
+            return Ok(None);
+        };
+        let Some((identity, funnel)) = self.connectors.get(&connector).copied() else {
+            return Err(anyhow!(
+                "UI connector {connector:?} is selected but has no accepted Source"
+            ));
+        };
+        let source = self
+            .environment
+            .lookup_content_source(identity.id, identity.generation)?;
+        Ok(Some((connector, source, funnel)))
+    }
+
+    pub(crate) fn control_state(
+        &self,
+        key: ResourceKey,
+    ) -> Option<&crate::occurrence::ControlState> {
+        self.controls.get(&key)
     }
 
     pub fn close(&mut self) -> std::result::Result<(), String> {
@@ -147,6 +514,7 @@ impl UiResourceOwner {
             self.ports.clear();
             self.controls.clear();
             self.root_configs.clear();
+            self.history_units.clear();
             self.document = None;
             self.lifecycle = UiResourceLifecycle::Closed;
             Ok(())
@@ -349,6 +717,7 @@ enum UiResourceAction {
     InstallRootConfig {
         key: crate::binding::NodeKey,
         config: RootConfig,
+        identity_supplied: bool,
     },
     DisposeRootConfig {
         key: crate::binding::NodeKey,
@@ -581,6 +950,48 @@ struct ResourceCommitPlan {
 }
 
 impl ResourceCommitPlan {
+    fn root_config_for(&self, root: NodeKey) -> Option<RootConfig> {
+        self.actions.iter().find_map(|action| match action {
+            UiResourceAction::InstallRootConfig { key, config, .. } if *key == root => {
+                Some(*config)
+            }
+            _ => None,
+        })
+    }
+
+    fn supplied_history_identity(&self, root: NodeKey) -> bool {
+        self.actions.iter().any(|action| {
+            matches!(
+                action,
+                UiResourceAction::InstallRootConfig {
+                    key,
+                    identity_supplied: true,
+                    ..
+                } if *key == root
+            )
+        })
+    }
+
+    fn touched_resource_keys(&self) -> Vec<crate::binding::ResourceKey> {
+        self.actions
+            .iter()
+            .filter_map(|action| match action {
+                UiResourceAction::CreatePort { key }
+                | UiResourceAction::DisposePort { key }
+                | UiResourceAction::CreateConnector { key, .. }
+                | UiResourceAction::DisposeConnector { key }
+                | UiResourceAction::InstallControl { key, .. }
+                | UiResourceAction::DisposeControl { key } => Some(*key),
+                UiResourceAction::ReplaceLiteral { port, .. }
+                | UiResourceAction::SetLiteralFunnel { port, .. }
+                | UiResourceAction::DisposeLiteral { port } => Some(*port),
+                UiResourceAction::InstallRootConfig { .. }
+                | UiResourceAction::DisposeRootConfig { .. } => None,
+            })
+            .filter(|key| key.kind != crate::binding::HandleKind::Node)
+            .collect()
+    }
+
     fn new(
         owner: &mut UiResourceOwner,
         operation_count: usize,
@@ -810,9 +1221,14 @@ impl ResourceCommitPlan {
         role: RootRole,
     ) -> std::result::Result<(), crate::binding::UiRejection> {
         let key = acknowledged_node(acknowledgement, local_ordinal, self.revision)?;
+        let supplied_identity = role == RootRole::LegacyHistoryUnit
+            && batch.root_config(local_ordinal).unit_identity.is_some();
         let config = prepare_root_config(role, batch.root_config(local_ordinal));
-        self.actions
-            .push(UiResourceAction::InstallRootConfig { key, config });
+        self.actions.push(UiResourceAction::InstallRootConfig {
+            key,
+            config,
+            identity_supplied: supplied_identity,
+        });
         Ok(())
     }
 
@@ -1430,17 +1846,19 @@ impl ResourceCommitPlan {
 }
 
 impl UiResourceOwner {
-    pub fn commit(
+    pub(crate) fn prepare_commit(
         &mut self,
         batch: UiCommit,
         sources: &[HostContentSource],
-    ) -> std::result::Result<UiOperationResult, crate::binding::UiRejection> {
+        existing_history: &HashMap<HistoryUnitId, bool>,
+    ) -> std::result::Result<PreparedUiResources, crate::binding::UiRejection> {
         self.ensure_open()?;
         // The three phases are intentionally visible: the document validates
         // topology, this owner prepares concrete resource actions and Source
         // mutations, then installation performs the only fallible write step.
         let prepared = self.document_mut().prepare_ui_commit(&batch)?;
         let acknowledgement = prepared.acknowledgement().clone();
+        let mut changes = prepared.change_set();
         let revision = self.document_ref().accepted_ui_revision();
         let mut plan = ResourceCommitPlan::new(
             self,
@@ -1451,8 +1869,37 @@ impl UiResourceOwner {
         )?;
         let environment = self.environment.clone();
         plan.interpret_operations(self, &batch, &acknowledgement, &environment, sources)?;
+        let history_updates = self.prepare_history_updates(&prepared, &plan, existing_history)?;
         let source_mutations =
             plan.prepare_source_mutations(self, &prepared, &environment, sources)?;
+        changes
+            .changed_resources
+            .extend(plan.touched_resource_keys());
+        changes
+            .changed_resources
+            .sort_unstable_by_key(|key| (key.kind as u32, key.slot, key.generation));
+        changes.changed_resources.dedup();
+        changes.physical_work |= !changes.changed_resources.is_empty();
+        Ok(PreparedUiResources {
+            prepared,
+            plan,
+            source_mutations,
+            changes,
+            history_updates,
+        })
+    }
+
+    pub(crate) fn apply_prepared_commit(
+        &mut self,
+        prepared: PreparedUiResources,
+    ) -> std::result::Result<UiCommitOutput, crate::binding::UiRejection> {
+        let PreparedUiResources {
+            prepared,
+            mut plan,
+            source_mutations,
+            changes,
+            history_updates,
+        } = prepared;
         let wakes = HostContentSource::install_prepared_mutations(source_mutations)
             .map_err(|error| plan.source_rejection(error))?;
 
@@ -1464,12 +1911,26 @@ impl UiResourceOwner {
             .expect("open UI owner retains document")
             .apply_prepared_ui_commit(prepared);
         self.apply_actions(plan.actions);
-        HostContentSource::finish_prepared_wakes(wakes);
+        self.apply_history_updates(history_updates);
         // Accepted candidate ownership has moved into the private Source
         // map through the final literal action. The local guard can release
         // its clone without scanning all bindings.
         plan.candidates.0.clear();
-        Ok(result)
+        Ok(UiCommitOutput {
+            result,
+            wakes,
+            changes,
+        })
+    }
+
+    pub fn commit(
+        &mut self,
+        batch: UiCommit,
+        sources: &[HostContentSource],
+        existing_history: &HashMap<HistoryUnitId, bool>,
+    ) -> std::result::Result<UiCommitOutput, crate::binding::UiRejection> {
+        let prepared = self.prepare_commit(batch, sources, existing_history)?;
+        self.apply_prepared_commit(prepared)
     }
 
     fn apply_actions(&mut self, actions: Vec<UiResourceAction>) {
@@ -1523,7 +1984,7 @@ impl UiResourceOwner {
                 UiResourceAction::InstallControl { key, state } => {
                     self.controls.insert(key, state);
                 }
-                UiResourceAction::InstallRootConfig { key, config } => {
+                UiResourceAction::InstallRootConfig { key, config, .. } => {
                     self.root_configs.insert(key, config);
                 }
                 UiResourceAction::DisposeRootConfig { key } => {

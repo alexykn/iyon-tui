@@ -17,6 +17,10 @@ import {
 	uiPropertyValuesEqual,
 } from "../transport/ui/generated/ui_schema.ts";
 import {
+	type NativeEventPriority,
+	withNativeEventPriority,
+} from "./host-config.ts";
+import {
 	type ContentConnectorToken,
 	type ContentPortToken,
 	contentTokenOwner,
@@ -33,8 +37,31 @@ import {
 	normalizeProps,
 	normalizePublicProperty,
 	publicUiPropertyId,
+	type UiEditEvent,
+	type UiEvent,
 	type UiHandle,
+	type UiPressEvent,
 } from "./instance.ts";
+
+export interface NativeUiEvent {
+	readonly host_namespace: number;
+	readonly slot: number;
+	readonly generation: number;
+	readonly kind: number;
+	readonly mask: number;
+	readonly text?: string | null;
+	readonly cursor_bytes?: number | null;
+	readonly key?: string | null;
+	readonly revision?: number | string | null;
+}
+
+interface NormalizedNativeUiEvent
+	extends Omit<NativeUiEvent, "cursor_bytes" | "key" | "revision" | "text"> {
+	readonly cursor_bytes?: number;
+	readonly key?: string;
+	readonly revision?: number;
+	readonly text?: string;
+}
 
 const NULL_HANDLE = [0, 0, 0, 0] as const;
 const ALL_EDIT_REVISIONS = [0xffff_ffff, 0xffff_ffff] as const;
@@ -89,6 +116,23 @@ interface Journal {
 	readonly tokenConnectors: Map<object, PendingTokenResource>;
 	readonly metadata: SidecarBuilder;
 	readonly content: ContentBuilder;
+}
+
+function newJournal(): Journal {
+	return {
+		records: [],
+		touched: new Set(),
+		candidateRoots: new Set(),
+		retired: new Set(),
+		created: new Map(),
+		contentUpdates: new Map(),
+		sources: [],
+		sourceIndices: new Map(),
+		tokenPorts: new Map(),
+		tokenConnectors: new Map(),
+		metadata: new SidecarBuilder(),
+		content: new ContentBuilder(),
+	};
 }
 
 interface PendingTokenResource {
@@ -152,6 +196,7 @@ export class RootContainer {
 		this.body.lifecycle = "accepted";
 		this.body.handle = bodyHandle;
 		this.body.accepted = { props: this.body.pending, handle: bodyHandle };
+		this.coordinator.registerAccepted(this.body);
 	}
 
 	get children(): HostInstance[] {
@@ -175,6 +220,9 @@ export class CommitCoordinator {
 	private readonly touchedCallbacks = new Set<HostInstance>();
 	private readonly hookOwners = new Set<HookOwner>();
 	private readonly pendingHookOwners = new Set<HookOwner>();
+	/** Accepted correspondence used by the native event lane. */
+	private readonly acceptedInstances = new Map<string, HostInstance>();
+	private staleNativeEventCount = 0;
 	/** Superseded tokens retained only by a stale accepted consumer. */
 	private deferredHookTokens = new WeakMap<HostInstance, Set<object>>();
 	private deferredTokenInstances = new WeakMap<object, HostInstance>();
@@ -195,6 +243,80 @@ export class CommitCoordinator {
 	}
 	get faultError(): Error | undefined {
 		return this.fault;
+	}
+	get staleNativeEvents(): number {
+		return this.staleNativeEventCount;
+	}
+
+	registerAccepted(instance: HostInstance): void {
+		if (instance.handle !== undefined)
+			this.acceptedInstances.set(handleKey(instance.handle), instance);
+	}
+
+	private unregisterAcceptedSubtree(instance: HostInstance): void {
+		if (instance.handle !== undefined)
+			this.acceptedInstances.delete(handleKey(instance.handle));
+		let child = instance.firstChild;
+		while (child !== undefined) {
+			this.unregisterAcceptedSubtree(child);
+			child = child.nextSibling;
+		}
+	}
+
+	dispatchNativeEvents(
+		events: readonly NativeUiEvent[],
+		shouldContinue: () => boolean = () => true,
+	): void {
+		for (const event of events) {
+			if (!shouldContinue()) return;
+			const normalized = normalizeNativeUiEvent(event);
+			if (normalized === undefined) continue;
+			this.dispatchNativeEvent(normalized, shouldContinue);
+		}
+	}
+
+	private dispatchNativeEvent(
+		event: NormalizedNativeUiEvent,
+		shouldContinue: () => boolean,
+	): void {
+		const instance = this.acceptedInstances.get(
+			`${event.host_namespace}:${event.slot}:${event.generation}:${event.kind}`,
+		);
+		if (instance === undefined) {
+			this.staleNativeEventCount += 1;
+			return;
+		}
+		for (const [bit, name] of [
+			[1, "onPress"],
+			[2, "onInput"],
+			[4, "onEdit"],
+			[8, "onChange"],
+			[16, "onSelectionChange"],
+			[32, "onSubmit"],
+		] as const) {
+			if (!shouldContinue()) return;
+			if ((event.mask & bit) === 0) continue;
+			this.dispatchNativeEventCallback(instance, event, name);
+		}
+	}
+
+	private dispatchNativeEventCallback(
+		instance: HostInstance,
+		event: NormalizedNativeUiEvent,
+		name: string,
+	): void {
+		const callback = instance.accepted?.props.events.get(name);
+		if (callback === undefined) return;
+		try {
+			withNativeEventPriority(nativeEventPriority(name), () =>
+				callback(nativeEventPayload(event, name)),
+			);
+		} catch (error) {
+			// Event handlers are application callbacks, not commit acceptance.
+			// Report one failure and continue the owned batch so a throwing
+			// handler cannot strand later native events.
+			reportNativeEventError(error);
+		}
 	}
 
 	drainReleasedHookOwners(): void {
@@ -278,29 +400,21 @@ export class CommitCoordinator {
 
 	begin(): void {
 		if (this.fault !== undefined && !this.cleanupMode) throw this.fault;
+		if (this.cleanupMode) {
+			if (this.journal === undefined) this.journal = newJournal();
+			return;
+		}
 		if (this.journal !== undefined)
 			throw new Error("React opened a nested UI commit");
 		this.nextOrdinal = 1;
-		this.journal = {
-			records: [],
-			touched: new Set(),
-			candidateRoots: new Set(),
-			retired: new Set(),
-			created: new Map(),
-			contentUpdates: new Map(),
-			sources: [],
-			sourceIndices: new Map(),
-			tokenPorts: new Map(),
-			tokenConnectors: new Map(),
-			metadata: new SidecarBuilder(),
-			content: new ContentBuilder(),
-		};
+		this.journal = newJournal();
 	}
 
 	beginCleanup(): void {
 		this.abortCleanup();
 		this.cleanupMode = true;
 		this.nextOrdinal = 1;
+		this.journal = newJournal();
 	}
 
 	abortCleanup(): void {
@@ -333,6 +447,7 @@ export class CommitCoordinator {
 		this.deferredTokenInstances = new WeakMap();
 		this.pendingHookOwnerDrain = false;
 		this.selectedConnectors.clear();
+		this.acceptedInstances.clear();
 		this.cleanupMode = false;
 		this.journal = undefined;
 		this.touchedCallbacks.clear();
@@ -475,6 +590,7 @@ export class CommitCoordinator {
 		child: HostInstance,
 		before: HostInstance | undefined,
 	): void {
+		this.validateHistoryAttach(parent, child);
 		if (child === before) return;
 		if (child.parent === parent && child.nextSibling === before) return;
 		if (
@@ -496,7 +612,7 @@ export class CommitCoordinator {
 			(previousParent === undefined || previousParent.lifecycle === "candidate")
 		)
 			return;
-		if (child.rootRole === "portal") return;
+		if (child.rootRole === "portal" || child.rootRole === "historyUnit") return;
 		const journal = this.requireJournal();
 		const anchor = nativeAnchor(before);
 		journal.touched.add(child);
@@ -511,29 +627,54 @@ export class CommitCoordinator {
 		});
 	}
 
+	private validateHistoryAttach(
+		parent: HostInstance,
+		child: HostInstance,
+	): void {
+		if (child.rootRole !== "historyUnit") return;
+		if (parent !== this.root.body)
+			throw new Error("HistoryUnit must be a root-level child");
+		if (child.lifecycle === "accepted" && child.parent === this.root.body)
+			throw new Error("HistoryUnit reorder is unsupported");
+	}
+
 	private remove(parent: HostInstance, child: HostInstance): void {
 		if (child.parent !== parent)
 			throw new Error("React removed an occurrence from the wrong parent");
+		const journal = this.requireJournal();
 		unlinkChild(child);
 		if (child.lifecycle === "candidate") {
 			const journal = this.journal;
 			journal?.candidateRoots.delete(child);
 			if (journal !== undefined) this.releaseTokenSubtree(child, journal);
+			if (this.cleanupMode) retireJsSubtree(child);
 			return;
 		}
-		const journal = this.requireJournal();
 		this.releaseTokenSubtree(child, journal);
 		if (journal.retired.has(child)) return;
 		journal.retired.add(child);
 		journal.touched.add(child);
-		journal.records.push({
-			section: 0,
-			opcode:
-				child.rootRole === "portal"
-					? UI_OPCODES.retireRoot
-					: UI_OPCODES.retireSubtree,
-			operands: nodeRef(child),
-		});
+		if (child.rootRole === "historyUnit") {
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.historyAction,
+				operands: [...nodeRef(child), 2],
+			});
+		} else {
+			journal.records.push({
+				section: 0,
+				opcode:
+					child.rootRole === "portal"
+						? UI_OPCODES.retireRoot
+						: UI_OPCODES.retireSubtree,
+				operands: nodeRef(child),
+			});
+		}
+		if (this.cleanupMode) {
+			this.unregisterAcceptedSubtree(child);
+			retireJsSubtree(child);
+			clearJsOwnership(child);
+		}
 	}
 
 	private materializeCandidates(journal: Journal): void {
@@ -543,7 +684,8 @@ export class CommitCoordinator {
 			if (child.lifecycle !== "candidate" || child.parent === undefined)
 				continue;
 			this.materializeSubtree(child, journal);
-			if (child.rootRole === "portal") continue;
+			if (child.rootRole === "portal" || child.rootRole === "historyUnit")
+				continue;
 			const parent = child.parent;
 			const anchor = anchors.get(child);
 			journal.records.push({
@@ -562,24 +704,7 @@ export class CommitCoordinator {
 		if (instance.lifecycle !== "candidate") return;
 		const nodeOrdinal = this.allocate(instance, journal);
 		instance.localOrdinal = nodeOrdinal;
-		if (instance.rootRole === "portal")
-			journal.records.push({
-				section: 0,
-				opcode: UI_OPCODES.createRoot,
-				operands: [
-					nodeOrdinal,
-					2,
-					...nodeRef(instance.parent ?? this.root.body),
-					0,
-					0,
-				],
-			});
-		else
-			journal.records.push({
-				section: 0,
-				opcode: UI_OPCODES.createNode,
-				operands: [nodeOrdinal, instance.kind],
-			});
+		this.encodeInitialCreation(instance, nodeOrdinal, journal);
 		this.encodeInitialResources(instance, nodeOrdinal, journal);
 		for (const property of instance.pending.properties.values())
 			this.encodeSetDeclared(instance, property, journal);
@@ -596,6 +721,52 @@ export class CommitCoordinator {
 				opcode: UI_OPCODES.setSubscriptions,
 				operands: [...localRef(nodeOrdinal, 1), mask, 0],
 			});
+		this.encodeInitialChildren(instance, nodeOrdinal, journal);
+		journal.touched.add(instance);
+	}
+
+	private encodeInitialCreation(
+		instance: HostInstance,
+		nodeOrdinal: number,
+		journal: Journal,
+	): void {
+		if (instance.rootRole === "portal" || instance.rootRole === "historyUnit") {
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.createRoot,
+				operands: [
+					nodeOrdinal,
+					instance.rootRole === "historyUnit" ? 3 : 2,
+					...(instance.rootRole === "historyUnit"
+						? NULL_HANDLE
+						: nodeRef(instance.parent ?? this.root.body)),
+					...(instance.rootRole === "historyUnit"
+						? historyRootConfig(instance.pending, journal.metadata)
+						: [0, 0]),
+				],
+			});
+		} else {
+			journal.records.push({
+				section: 0,
+				opcode: UI_OPCODES.createNode,
+				operands: [nodeOrdinal, instance.kind],
+			});
+		}
+		if (instance.rootRole !== "historyUnit") return;
+		const action = instance.pending.historyUnit?.action ?? 0;
+		if (action === 0) return;
+		journal.records.push({
+			section: 0,
+			opcode: UI_OPCODES.historyAction,
+			operands: [...localRef(nodeOrdinal, 1), action],
+		});
+	}
+
+	private encodeInitialChildren(
+		instance: HostInstance,
+		nodeOrdinal: number,
+		journal: Journal,
+	): void {
 		let child = instance.firstChild;
 		while (child !== undefined) {
 			this.materializeSubtree(child, journal);
@@ -603,22 +774,18 @@ export class CommitCoordinator {
 		}
 		child = instance.firstChild;
 		while (child !== undefined) {
-			if (child.rootRole === "portal") {
-				child = child.nextSibling;
-				continue;
-			}
-			journal.records.push({
-				section: 0,
-				opcode: UI_OPCODES.insertBefore,
-				operands: [
-					...localRef(nodeOrdinal, 1),
-					...nodeRef(child),
-					...NULL_HANDLE,
-				],
-			});
+			if (child.rootRole !== "portal" && child.rootRole !== "historyUnit")
+				journal.records.push({
+					section: 0,
+					opcode: UI_OPCODES.insertBefore,
+					operands: [
+						...localRef(nodeOrdinal, 1),
+						...nodeRef(child),
+						...NULL_HANDLE,
+					],
+				});
 			child = child.nextSibling;
 		}
-		journal.touched.add(instance);
 	}
 
 	private encodeInitialResources(
@@ -855,6 +1022,7 @@ export class CommitCoordinator {
 		}
 		for (const instance of journal.retired) {
 			this.clearSelectionSubtree(instance);
+			this.unregisterAcceptedSubtree(instance);
 			retireJsSubtree(instance);
 		}
 	}
@@ -881,6 +1049,7 @@ export class CommitCoordinator {
 			);
 		for (const instance of journal.retired) {
 			this.clearSelectionSubtree(instance);
+			this.unregisterAcceptedSubtree(instance);
 			retireJsSubtree(instance);
 		}
 	}
@@ -1004,6 +1173,7 @@ export class CommitCoordinator {
 			if (handle === undefined)
 				throw new Error("native acknowledgement omitted a node handle");
 			instance.accepted = { props: instance.pending, handle };
+			this.registerAccepted(instance);
 		} else if (
 			instance.lifecycle !== "retired" &&
 			instance.accepted !== undefined
@@ -1134,6 +1304,31 @@ export class CommitCoordinator {
 			journal,
 		);
 		this.encodeControlledEditorChange(instance, previous, next, journal);
+		this.encodeHistoryUnitChange(instance, previous, next, journal);
+	}
+
+	private encodeHistoryUnitChange(
+		instance: HostInstance,
+		previous: NormalizedProps,
+		next: NormalizedProps,
+		journal: Journal,
+	): void {
+		if (instance.rootRole !== "historyUnit") return;
+		const before = previous.historyUnit;
+		const after = next.historyUnit;
+		if (after === undefined)
+			throw new Error("HistoryUnit lost its root configuration");
+		if (before !== undefined && before.flowBoundary !== after.flowBoundary)
+			throw new Error("HistoryUnit identity and flow boundary are immutable");
+		const previousAction = before?.action ?? 0;
+		if (previousAction === 1 && after.action === 0)
+			throw new Error("a frozen HistoryUnit cannot become live again");
+		if (previousAction === after.action || after.action === 0) return;
+		journal.records.push({
+			section: 0,
+			opcode: UI_OPCODES.historyAction,
+			operands: [...nodeRef(instance), after.action],
+		});
 	}
 
 	private encodePropertyFields(
@@ -1716,6 +1911,172 @@ function handleKey(handle: UiHandle): string {
 	return `${handle.host_namespace}:${handle.slot}:${handle.generation}:${handle.kind}`;
 }
 
+const NATIVE_EVENT_MASK = 1 | 2 | 4 | 8 | 16 | 32;
+
+function nativeEventPriority(name: string): NativeEventPriority {
+	// The current native event schema contains application input only. Key,
+	// paste, submit, and cursor actions are discrete; continuous pointer and
+	// scroll events can be assigned their own lane when the schema grows them.
+	if (name === "onScroll" || name === "onPointerMove") return "continuous";
+	if (
+		name === "onPress" ||
+		name === "onInput" ||
+		name === "onEdit" ||
+		name === "onChange" ||
+		name === "onSelectionChange" ||
+		name === "onSubmit"
+	)
+		return "discrete";
+	return "default";
+}
+
+function normalizeNativeUiEvent(
+	event: NativeUiEvent,
+): NormalizedNativeUiEvent | undefined {
+	if (!isSafeU32(event.host_namespace) || event.host_namespace === 0)
+		throw new TypeError("native UI event has an invalid host namespace");
+	if (!isSafeU32(event.slot) || event.slot === 0)
+		throw new TypeError("native UI event has an invalid occurrence slot");
+	if (!isSafeU32(event.generation) || event.generation === 0)
+		throw new TypeError("native UI event has an invalid occurrence generation");
+	if (event.kind !== HOST_KINDS.box)
+		throw new TypeError("native UI event target is not an occurrence");
+	if (!isSafeU32(event.mask) || (event.mask & ~NATIVE_EVENT_MASK) !== 0)
+		throw new TypeError("native UI event has an invalid subscription mask");
+	const text = nullableString(event.text, "text");
+	const key = nullableString(event.key, "key");
+	const cursorBytes = nullableNonNegativeInteger(
+		event.cursor_bytes,
+		"cursor_bytes",
+	);
+	const revision = nullableRevision(event.revision);
+	if (event.mask === 0) return undefined;
+	if ((event.mask & 1) !== 0 && key === undefined)
+		throw new TypeError("native press event is missing its key");
+	if (
+		(event.mask & (2 | 4 | 8 | 16 | 32)) !== 0 &&
+		(text === undefined || cursorBytes === undefined || revision === undefined)
+	)
+		throw new TypeError(
+			"native editor event is missing its snapshot or revision",
+		);
+	return {
+		host_namespace: event.host_namespace,
+		slot: event.slot,
+		generation: event.generation,
+		kind: 1,
+		mask: event.mask,
+		text,
+		cursor_bytes: cursorBytes,
+		key,
+		revision,
+	};
+}
+
+function isSafeU32(value: number): boolean {
+	return Number.isSafeInteger(value) && value >= 0 && value <= 0xffff_ffff;
+}
+
+function nullableString(
+	value: string | null | undefined,
+	name: string,
+): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string")
+		throw new TypeError(`native UI event ${name} must be a string or null`);
+	return value;
+}
+
+function nullableNonNegativeInteger(
+	value: number | null | undefined,
+	name: string,
+): number | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (!Number.isSafeInteger(value) || value < 0)
+		throw new TypeError(
+			`native UI event ${name} must be a non-negative integer`,
+		);
+	return value;
+}
+
+function nullableRevision(
+	value: number | string | null | undefined,
+): number | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value === "number") {
+		if (!Number.isSafeInteger(value) || value < 0)
+			throw new TypeError(
+				"native UI event revision must be a non-negative integer",
+			);
+		return value;
+	}
+	if (!/^\d+$/u.test(value))
+		throw new TypeError(
+			"native UI event revision must be a decimal integer string",
+		);
+	const revision = BigInt(value);
+	if (revision > BigInt(Number.MAX_SAFE_INTEGER))
+		throw new RangeError(
+			"native UI event revision exceeds JavaScript precision",
+		);
+	return Number(revision);
+}
+
+function nativeEventPayload(
+	event: NormalizedNativeUiEvent,
+	name: string,
+): UiEvent {
+	const target = {
+		host_namespace: event.host_namespace,
+		slot: event.slot,
+		generation: event.generation,
+		kind: event.kind,
+	};
+	if (name === "onPress") {
+		const payload: UiPressEvent = {
+			type: "press",
+			target: Object.freeze(target),
+			key: event.key ?? undefined,
+		};
+		return Object.freeze(payload);
+	}
+	const text = event.text;
+	const cursorBytes = event.cursor_bytes;
+	if (text === undefined || cursorBytes === undefined)
+		throw new Error("validated native editor event has no snapshot");
+	const editTypes: Readonly<Record<string, UiEditEvent["type"]>> = {
+		onInput: "input",
+		onEdit: "edit",
+		onChange: "change",
+		onSelectionChange: "selectionChange",
+		onSubmit: "submit",
+	};
+	const payload: UiEditEvent = {
+		type: editTypes[name] ?? "submit",
+		target: Object.freeze(target),
+		text,
+		cursorBytes,
+		key: event.key ?? undefined,
+		...(event.revision === undefined ? {} : { revision: event.revision }),
+	};
+	return Object.freeze(payload);
+}
+
+function reportNativeEventError(error: unknown): void {
+	try {
+		const reportError = (
+			globalThis as unknown as {
+				reportError?: (error: unknown) => void;
+			}
+		).reportError;
+		if (typeof reportError === "function") reportError(error);
+		else console.error(error);
+	} catch {
+		// A broken diagnostic sink cannot change accepted native state or stop
+		// delivery of later owned events.
+	}
+}
+
 function linkChild(
 	parent: HostInstance,
 	child: HostInstance,
@@ -1759,7 +2120,9 @@ function nativeAnchor(
 	let anchor = before;
 	while (
 		anchor !== undefined &&
-		(anchor.lifecycle === "candidate" || anchor.rootRole === "portal")
+		(anchor.lifecycle === "candidate" ||
+			anchor.rootRole === "portal" ||
+			anchor.rootRole === "historyUnit")
 	)
 		anchor = anchor.nextSibling;
 	return anchor;
@@ -1771,12 +2134,14 @@ function candidateAnchors(
 	const anchors = new Map<HostInstance, HostInstance | undefined>();
 	const suffixes = new Map<HostInstance, HostInstance | undefined>();
 	for (const root of roots) {
-		if (root.rootRole === "portal") continue;
+		if (root.rootRole === "portal" || root.rootRole === "historyUnit") continue;
 		const skipped: HostInstance[] = [];
 		let anchor = root.nextSibling;
 		while (
 			anchor !== undefined &&
-			(anchor.lifecycle === "candidate" || anchor.rootRole === "portal")
+			(anchor.lifecycle === "candidate" ||
+				anchor.rootRole === "portal" ||
+				anchor.rootRole === "historyUnit")
 		) {
 			if (suffixes.has(anchor)) {
 				anchor = suffixes.get(anchor);
@@ -1964,6 +2329,18 @@ function controlMetadata(
 		return [0, 0];
 	const bytes = new Uint8Array(4);
 	new DataView(bytes.buffer).setUint32(0, control.intervalMs, true);
+	return metadata.addBytes(bytes);
+}
+
+function historyRootConfig(
+	props: NormalizedProps,
+	metadata: SidecarBuilder,
+): [number, number] {
+	const config = props.historyUnit;
+	if (config === undefined)
+		throw new Error("HistoryUnit is missing its root configuration");
+	const bytes = new Uint8Array(10);
+	bytes[0] = config.flowBoundary;
 	return metadata.addBytes(bytes);
 }
 

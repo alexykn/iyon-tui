@@ -26,7 +26,7 @@ impl<'a> TextChange<'a> {
     }
 }
 
-pub(super) trait ChangeProjector {
+pub(super) trait ChangeProjector: Send {
     fn emit(&self, buffer: &TextBuffer, cx: &mut EventCx<'_>);
 }
 
@@ -37,8 +37,8 @@ struct TypedProjector<R: 'static, F> {
 
 impl<R, F> ChangeProjector for TypedProjector<R, F>
 where
-    R: 'static,
-    F: for<'change> Fn(TextChange<'change>) -> R + 'static,
+    R: Send + 'static,
+    F: for<'change> Fn(TextChange<'change>) -> R + Send + 'static,
 {
     fn emit(&self, buffer: &TextBuffer, cx: &mut EventCx<'_>) {
         let change = TextChange {
@@ -57,8 +57,8 @@ pub(super) struct ChangeOutputs {
 impl ChangeOutputs {
     pub(super) fn register<R, F>(&mut self, project: F) -> Output<R>
     where
-        R: 'static,
-        F: for<'change> Fn(TextChange<'change>) -> R + 'static,
+        R: Send + 'static,
+        F: for<'change> Fn(TextChange<'change>) -> R + Send + 'static,
     {
         let output = Output::new();
         self.projectors

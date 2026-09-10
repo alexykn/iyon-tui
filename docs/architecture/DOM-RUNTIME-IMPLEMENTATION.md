@@ -1,8 +1,8 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T3. This document is the implementation ledger for
-IYON-DOM-LIKE-RUNTIME-HANDOFF.md; it is not a claim that the M1/M2 migration
-is complete.
+**Scope:** T0 through T4, accepted after parent source and design review.
+This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
+it is not a claim that the M1/M2 migration is complete.
 
 **Baseline:** branch agent/dom-occurrence-runtime, accepted T1 source HEAD
 bb0c599fce1a35b8e478d2868e72a851194f4297. The handoff identifies
@@ -20,10 +20,162 @@ the current-source authority.
 | T1 — finite schema and occurrence core | **accepted; committed bb0c599** | Parent source review and focused/ownership reruns accepted the typed schema/core tranche. |
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
-| T4 — current renderer, controls, exact frame state | remaining | One-way native adapter, native scheduling, controls/content/History integration, exact receipt state. |
+| T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 cutover/publication deletion | remaining | React-only production frontend; delete old composition, View publication, leases, paths and ordinary ViewState after consumer gates. |
 | T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
+
+### T4 handoff boundary
+
+The React route now installs accepted UI mutations into the same native host
+that owns terminal presentation. `UiResourceOwner` is the sole occurrence,
+resource, and Source-membership authority; `application/legacy_scene.rs` is a
+private one-way recipe projection into the existing renderer and is explicitly
+scheduled for deletion at T7. Literal ContentHost occurrences and Source-backed
+Connectors are adapted into the existing ContentProvider, including source
+subscription/wake behavior. The terminal host drains accepted work without a
+required TypeScript pump, and `whenVisible` observes the native visible
+revision after that drain.
+
+The Rust coordinator now stores one typed `PresentationState` in
+`HostInner`; the superseded correlated candidate fields and receipt slot are
+removed. A separate bootstrap receipt exists only for the initial physical
+frame, which has no desired UI candidate. T5 still owns old-route/publication
+deletion; T6 owns direct Taffy layout; T7 owns semantic content lowering and
+deletion of the legacy adapter. The component-only Surface migration, explicit
+physical export policy, and GPUI host remain later work under the separate
+Surface gate; they are not T4 acceptance claims.
+
+### T4 implementation and integration-gate evidence
+
+This records the accepted T4 implementation and its verification. Acceptance
+includes parent review of the resulting ownership and execution paths, not
+only the delegate reports or test counts. The T4 implementation has these
+ownership boundaries:
+
+- `application/legacy_scene.rs` is the single private, one-way
+  occurrence-to-current-renderer adapter allowed by the M1 migration boundary.
+  It is not a public View authoring surface. Its deletion gate is T7, after
+  the direct Taffy/content route and its parity evidence are accepted.
+- `application/frame.rs` owns the exact presentation products and one native
+  receipt per physical submission. `PresentationState` keeps the candidate
+  and receipt correlated until completion; metadata-only `NoOutput` products
+  advance confirmed frame metadata without claiming a terminal write. The
+  close path joins an in-flight receipt and final submission under the
+  mutex/predicate contract instead of racing a second close.
+- `application/environment.rs`, `application/host.rs`, and
+  `application/content.rs` own native scheduling, completion wakeups, typed
+  controls, Source/ContentPort projection, and deferred post-lock Source
+  wakes. The `UiCommitOutput` return seam carries accepted typed work and
+  deferred wakes; its `changes` field remains private. It is the only new
+  `iyon_tui::binding` export added for this seam, and the binding check now
+  deliberately names it in the exact blessed set (179 exports), without
+  widening the binding pattern or the package's public TypeScript surface.
+- React editor/control events use a bounded native admission lane and direct
+  callbacks. Callback invocation occurs after the acceptance lock is released;
+  admission failure is reported rather than silently dropped. Confirmed
+  geometry, not desired geometry, is used by focus and visibility barriers.
+- History roots and units use typed accepted state. Native History action
+  handling is separate from persistent React discard props; live-tail
+  restrictions and root ownership are checked during acceptance. History
+  logical preparation captures an owned transfer plan under the host lock;
+  terminal submission and receipt waits happen outside the UI acceptance lock.
+  A failed or lost native receipt preserves the confirmed prefix, marks the
+  physical/History synchronization barrier unknown, and conservatively blocks
+  suffix replay until an explicit owner-level resynchronization policy exists.
+- The exact History physical-export predicate accepts only a complete
+  one-content adapter shape and supported transparent padding; nested metric
+  dependencies are still traversed independently for layout invalidation. A
+  composite or otherwise physically incomplete unit is blocked rather than
+  exported as content-only rows.
+
+The final integration checks were run after the small T4 gate corrections (the
+History transfer regression now asserts supported root padding around a
+transparent one-child shell; `PendingPresentation` boxes its large frame;
+the source fixture uses an escaped byte literal so Rust files remain text;
+and the binding allowlist names `UiCommitOutput` deliberately):
+
+| Command | Result | Current-source evidence |
+|---|---|---|
+| `cargo fmt --all -- --check` | passed | Final source is rustfmt-clean. |
+| `cargo test --workspace` | passed | 762 core tests, 66 native tests, 5 ABI tests, 19 generator tests, and doctests passed; one existing ignored test remains ignored. |
+| `cargo test -p iyon-tui --features native-host` | passed | 761 tests passed, 1 ignored; includes the native-host History/close/signal witnesses. |
+| `bun run native:stage` | passed | Canonical darwin-arm64 default N-API addon rebuilt from the final Rust source: SHA-256 `bb685057f27b491fbae933dc17897d32a1b880b2e602e409fcaa4ce1ec645d2e`, 7,606,864 bytes. |
+| `bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests` | passed | 188 tests, 3,587 expectations, 0 failures across 38 files against that addon. |
+| `bun run typecheck` | passed | TypeScript declarations type-check. |
+| `bun run lint:ts` | passed | Biome exit 0; 382 warning diagnostics and 22 informational suggestions remain visible. |
+| `bun run lint:ts:complexity` | passed | Biome exit 0; 48 warning diagnostics remain visible under the configured warn-mode complexity check. |
+| `bun run check:tui-abi` | passed | Generated ABI output matches. |
+| `bun run check:tui-declarations` | passed | 37 reachable public declaration files remain closed over supported paths. |
+| `bun run check:tui-binding` | passed | Native core imports remain on the seam; 179 exports match the exact blessed list and no authoring names leak. |
+| `bun run check:ownership` | passed | Rust/TypeScript ownership and surface snapshots pass. |
+| `bun run rust:clippy` | passed | The strict project gate completed with exit 0; warnings remain and are not a warning-free claim. |
+| `bun run native:smoke` | passed | Packaged native content route rendered the smoke frame. |
+
+The first broad pass exposed one stale physical-shape assertion and three
+strict Clippy errors in T4 additions; those were corrected and the affected
+Rust tests, format check, strict gate, rebuilt addon, full workspace Rust/Bun
+tests, and smoke route were rerun. The initial broad pass's other successful
+checks (TypeScript, Biome, generated ABI/declarations, binding, ownership) are
+unchanged by those Rust-only corrections and are listed above with their
+original logs. Durable command logs are in `/tmp/iyon-t4-broad-*.log`,
+`/tmp/iyon-t4-final-*.log`, and `/tmp/iyon-t4-native-stage-final2.log`.
+
+Remaining migration risks and deletion gates are explicit: T5 must add a
+genuinely concurrent React scheduler interruption witness before the production
+cutover gate; uncertain
+physical History suffixes remain conservatively blocked pending an explicit
+resynchronization owner; the private legacy adapter remains until T7; old
+composition/View/publication machinery remains until T5; direct Taffy layout
+and semantic content lowering remain T6/T7; and component-only Surface,
+physical export, and GPUI integration remain outside this tranche. Parent
+acceptance is limited to the T4 current-renderer contract; it does not claim
+the T5 production cutover, M2 layout/content deletion, or Surface work is done.
+
+### T4 parent-review correction: zero-progress History close
+
+The current source includes a narrow correction for the final-exit History
+settlement loop. `settle_history_plan_with_backend` now returns the typed
+`NativeTransferOutcome` from the exact captured acknowledgement instead of
+flattening it to `()`. A successful nonempty transfer with
+`inserted == 0` and `NativeTransferStatus::SinkBlocked` marks the existing
+`history_sink_blocked` path and prepares one front-pinned final candidate;
+close does not submit the unchanged captured prefix again. The same outcome
+classification is applied when close joins an already in-flight History
+receipt. Zero-row semantic retirement remains `Progress`, so it is not
+classified as a sink block. No synchronization-unknown marker or requested
+History rows are fabricated or discarded by this correction. The existing
+final-frame positioning and restoration/`CloseOperation` ownership remain
+unchanged.
+
+The production close seam is covered by
+`application::host::tests::inline_exit_zero_progress_history_receipt_does_not_resubmit`:
+a nonempty captured plan receives `Ok(0)` through the existing receipt hook,
+exit completes after the receipt, the retained semantic prefix remains
+the only prefix visible before the final frame, and the next History row is
+not submitted a second time. Existing final History, in-flight receipt,
+failed-receipt, and captured-row tests remain green. Parent review accepted
+this correction as part of T4. The full Rust workspace evidence predates
+this narrow correction; the focused native checks, strict Clippy gate,
+rebuilt-addon Bun suite, and smoke checks below cover the final source.
+
+Final correction-gate provenance after rebuilding the canonical default
+N-API addon from the stabilized Rust source:
+
+    artifact=packages/iyon-tui/native/iyon-tui-native.node
+    sha256=bb685057f27b491fbae933dc17897d32a1b880b2e602e409fcaa4ce1ec645d2e
+    bytes=7606864
+    target=aarch64-apple-darwin
+    features=default N-API (napi8 type-tag qualification enabled)
+
+Current correction checks: `cargo fmt --all -- --check`, `cargo check -p
+iyon-tui --features native-host`, the strict project Clippy gate, and the five
+focused native-host History/close tests passed. The affected staged-native
+React History/renderer, History-prefix, native harness, and wake-broker tests
+passed (66 tests), the full Bun workspace/consumer suite passed (188 tests,
+3,587 expectations), and `bun run native:smoke` passed. The prior broad
+workspace Rust/ABI/declaration/binding/ownership evidence remains applicable
+to unchanged surfaces; T4 parent source/design review remains required.
 
 ## Post-T2 permanent-code quality gate
 
@@ -401,9 +553,10 @@ M1/M2 cutover:
   public `TuiRuntime`/`AppHarness`, a Promise that resolves on accepted UI
   desired state, one root authority per host, same-host portals, explicit
   root cleanup, unmount/close, and separate
-  `whenVisible`/`whenContentVisible` barriers. Those barriers reject with
-  `T3_FRAME_BARRIER_UNREALIZED` until T4 installs frame scheduling/presentation;
-  they do not pretend acceptance is terminal output;
+  `whenVisible`/`whenContentVisible` barriers. Native environment scheduling,
+  receipt notification and exact confirmed revisions settle those barriers
+  without a JavaScript frame pump; they do not pretend acceptance is terminal
+  output;
 - `packages/iyon-tui/src/react/components.ts` adds Box/Row/Column/Grid,
   Content/Text, Editor/Scroll/Animation conveniences. Text and raw JSX text
   lower to ordinary childless ContentHost occurrences; no structural Text or
@@ -477,10 +630,9 @@ including documentation/style warnings in touched Rust files. This is not a
 warning-free lint claim. The staged addon above is unchanged by the final
 TypeScript-only corrections.
 
-T3 is accepted. T4 owns terminal frame
-realization, scheduling, content/control integration and exact presentation
-barriers; T5 owns canonical production cutover and deletion of old composition
-and View publication.
+T3 and T4 are accepted. T4 owns terminal frame realization, native scheduling,
+content/control integration and exact presentation barriers; T5 owns canonical
+production cutover and deletion of old composition and View publication.
 
 ### Occurrence ownership and transaction contract
 
@@ -554,26 +706,38 @@ silently kept on a test-only compatibility runtime.
 | packages/iyon-tui/tests/fixtures/tui_demo.ts | T3/T5 | old fixture retained until production cutover; React route covered by `tui_react_renderer.test.ts` |
 | controls (TextInput, ScrollPane, ViewSlot) | T4 | native mechanics retained; composition-only slots are not ported in T1 |
 | content Source/Funnel/Port/Connector | T2/T4 | existing direct Source data lane retained; no payload fallback added |
-| History/native scrollback | T4/T8 | current physical behavior retained until Surface migration |
+| History/native scrollback | T4 / Surface gate | current physical behavior retained until the component-only Surface migration and explicit physical-export policy |
 | old composition/structural/state tests and benchmarks | T5 | baseline-only in this tranche; replace/delete at cutover, never duplicate in a fake runtime |
 
 ## Remaining proof and risks
 
-- The occurrence document is now connected to the bounded T3 React mutation
-  renderer and qualified native acceptance seam. Native frame presentation,
-  scheduling receipts and the terminal renderer remain T4 work.
+- The occurrence document is connected to the React mutation renderer and the
+  existing terminal renderer through one-way M1 adaptation. Native frame
+  presentation, receipt ownership, environment scheduling, controls, typed
+  events and History routing are implemented in the T4 working tree; parent
+  review remains the acceptance gate.
 - T2 native ingress qualification and acknowledgement allocation have focused
   witnesses, including napi8 type-tag rejection for wrong wrapped classes and
   prototype spoofing, detached-buffer rejection, and local-count admission.
-- The existing TuiHost/TuiEnvironment Send/Sync assertions and erased callback
-  payloads remain untouched; moving the document to a mutex is not a
-  soundness fix.
+- T4 scheduler ownership now relies on compiler-checked `Send` data rather
+  than unsafe TuiHost/TuiEnvironment markers. Erased components, queued
+  output payloads, retained callbacks/routes, tick drivers and text-output
+  projectors carry the required portable bounds; only the actual mutex-owned
+  core crosses the native driver boundary. This is a deliberate tightening of
+  the in-repo Rust callback/component API, not an overall T4 completion claim.
+- Presentation receipts retain one native oneshot receiver and register a
+  queue-only weak waker. The environment has a separate external lifetime
+  owner from worker queue state; receipt completion wakes all host-local
+  presentation observers without a per-receipt thread or correlated result
+  slot. Deterministic owner tests opt into the explicit manual environment;
+  production construction uses the same testable driver loop.
 - The accepted T2 correction adds sparse final binding planning, individually
   validated/coalesced literal actions, and pre-write multi-Source guard
   validation. The minimal React acceptance route is accepted in T3; physical
   renderer integration remains the T4 acceptance gate.
-- T3's React/reconciler contract is pinned and isolated; native frame and
-  presentation realization are intentionally still unrealized until T4.
+- T3's React/reconciler contract remains pinned and isolated; native frame
+  realization is now driven by the environment's native scheduler and receipt
+  notifications rather than a TS frame loop.
 - Each Iyon React root owns its pinned reconciler instance. This prevents a
   rejected commit's scheduled work from contaminating a later root; the
   original-order focused suite includes a faulted duplicate-token root followed
@@ -582,7 +746,8 @@ silently kept on a test-only compatibility runtime.
   reorder does not enter the ordinary child list, mixed ordinary/portal
   placement skips portal anchors, owner transfer retires/recreates the typed
   root, and root retirement plus cross-host rejection are covered by focused
-  tests. Presentation ordering remains a later T4 concern.
+  tests. Current terminal presentation ordering is now covered by the T4
+  confirmed-frame path; parent review remains the acceptance gate.
 - Lazy Port/Connector tokens are immutable and occurrence materialization is
   commit-only. Port and Connector hook owners are independent; resources
   survive occurrence retirement and consumer gaps until their real owner
@@ -607,9 +772,9 @@ silently kept on a test-only compatibility runtime.
   creation followed by a render error and zero native creation calls. A true
   concurrent scheduler interruption remains a separate witness.
 - Public refs publish supported overrides/clear operations through the same
-  coordinator. Focus remains an explicit T4 interaction-executor error, and
-  visible geometry rejects with `T3_GEOMETRY_UNREALIZED`; neither is fabricated
-  from desired state.
+  coordinator. Focus and visible geometry use confirmed frame metadata and
+  native control ownership; unsupported non-control occurrences reject
+  explicitly rather than fabricating geometry from desired state.
 - Existing strict lint debt is recorded, not swept: baseline architecture
   checks passed, while broad warning/clippy cleanup remains outside this slice.
 - The generated old View ABI remains intentionally present until M1. Its

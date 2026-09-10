@@ -16,15 +16,24 @@ use super::{FlowBoundary, HistoryUnitId};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum HistoryUnitLayoutKey {
     /// Component-free unit: only the semantic identity and the width matter.
-    Static(ViewId),
+    Static {
+        view: ViewId,
+        state_dependencies: Vec<(u64, u64, u64)>,
+    },
     /// A static semantic unit containing a retained `ContentPort`. The provider
     /// revision participates so Source/Funnel/delivery changes remeasure the
     /// History flow instead of reusing the empty pre-mutation height.
-    Content { view: ViewId, projection: u64 },
+    Content {
+        view: ViewId,
+        dependencies: Vec<(u64, u64)>,
+        state_dependencies: Vec<(u64, u64, u64)>,
+    },
     /// Component-bearing unit: also every reachable component revision.
     Live {
         view: ViewId,
         dependencies: Vec<(ComponentId, ComponentRevision)>,
+        content_dependencies: Vec<(u64, u64)>,
+        state_dependencies: Vec<(u64, u64, u64)>,
     },
 }
 

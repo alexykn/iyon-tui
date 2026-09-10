@@ -9,7 +9,7 @@ use crate::{
 /// Host-owned semantic focus state.
 pub(crate) struct FocusState {
     focused: Option<ComponentId>,
-    focused_handler: Option<Arc<dyn Fn(&mut dyn Any, bool)>>,
+    focused_handler: Option<Arc<dyn Fn(&mut dyn Any, bool) + Send + Sync>>,
     active_modal: Option<ComponentId>,
     modal_restore: Vec<(Option<ComponentId>, Option<ComponentId>)>,
     geometry: Option<ComponentGeometryMap>,
@@ -216,6 +216,33 @@ impl FocusState {
         self.focus_step(graph, capabilities, registry, false)
     }
 
+    /// Requests focus for a concrete mounted component selected by a native
+    /// control handle.  The caller supplies the confirmed geometry so a
+    /// hidden or clipped component cannot become focused merely because its
+    /// occurrence is still desired.
+    pub(crate) fn focus_component(
+        &mut self,
+        target: ComponentId,
+        graph: &MountGraph,
+        capabilities: &MountedCapabilities,
+        geometry: Option<&crate::presentation::layout::ComponentGeometryMap>,
+        registry: &mut ComponentRegistry,
+    ) -> bool {
+        let visible = geometry
+            .and_then(|map| map.entries.get(&target))
+            .and_then(|entry| entry.visible)
+            .is_some();
+        if !visible
+            || !graph.contains(target)
+            || !capabilities
+                .get(target)
+                .is_some_and(|value| value.focusable)
+        {
+            return false;
+        }
+        self.set_focus(Some(target), capabilities, registry)
+    }
+
     fn focus_step(
         &mut self,
         graph: &MountGraph,
@@ -327,7 +354,7 @@ pub(crate) fn is_descendant_or_self(
 
 fn notify_focus_handler(
     id: ComponentId,
-    handler: Arc<dyn Fn(&mut dyn Any, bool)>,
+    handler: Arc<dyn Fn(&mut dyn Any, bool) + Send + Sync>,
     focused: bool,
     registry: &mut ComponentRegistry,
 ) {

@@ -1,4 +1,7 @@
-use std::{cell::Cell, rc::Rc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use crate::output::{EventCx, Output, OutputQueue, OutputRouter};
 
@@ -9,13 +12,13 @@ struct NonClone {
 
 enum PayloadAction {
     NonClone(String),
-    Local(Rc<String>),
+    Local(Arc<String>),
 }
 
 #[test]
-fn event_context_owns_non_clone_and_non_send_payloads() {
+fn event_context_owns_non_clone_and_send_payloads() {
     let non_clone = Output::<NonClone>::new();
-    let local = Output::<Rc<String>>::new();
+    let local = Output::<Arc<String>>::new();
     let mut queue = OutputQueue::new();
     {
         let mut cx = queue.event_cx();
@@ -25,7 +28,7 @@ fn event_context_owns_non_clone_and_non_send_payloads() {
                 text: String::from("owned"),
             },
         );
-        cx.emit(local, Rc::new(String::from("same thread")));
+        cx.emit(local, Arc::new(String::from("portable")));
     }
 
     let mut router = OutputRouter::<PayloadAction>::new();
@@ -37,7 +40,7 @@ fn event_context_owns_non_clone_and_non_send_payloads() {
     let actions = router.drain(&mut queue).unwrap();
     assert!(queue.is_empty());
     assert!(matches!(&actions[0], PayloadAction::NonClone(value) if value == "owned"));
-    assert!(matches!(&actions[1], PayloadAction::Local(value) if value.as_str() == "same thread"));
+    assert!(matches!(&actions[1], PayloadAction::Local(value) if value.as_str() == "portable"));
 }
 
 #[derive(Debug)]
@@ -81,23 +84,23 @@ fn event_payload_contains_post_mutation_state() {
 #[test]
 fn event_context_only_queues_until_its_borrow_ends() {
     let output = Output::<()>::new();
-    let called = Rc::new(Cell::new(false));
+    let called = Arc::new(AtomicBool::new(false));
     let mut queue = OutputQueue::new();
     let mut router = OutputRouter::<()>::new();
-    let route_called = Rc::clone(&called);
+    let route_called = Arc::clone(&called);
     router
         .route(output, move |()| {
-            route_called.set(true);
+            route_called.store(true, Ordering::Relaxed);
         })
         .unwrap();
 
     {
         let mut cx = queue.event_cx();
         cx.emit(output, ());
-        assert!(!called.get());
+        assert!(!called.load(Ordering::Relaxed));
     }
-    assert!(!called.get());
+    assert!(!called.load(Ordering::Relaxed));
 
     router.drain(&mut queue).unwrap();
-    assert!(called.get());
+    assert!(called.load(Ordering::Relaxed));
 }

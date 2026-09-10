@@ -23,7 +23,9 @@ pub use model::History;
 #[cfg(test)]
 pub(crate) use native::transfer_native_prefix;
 pub(crate) use native::{
-    NativeTransferError, NativeTransferStatus, transfer_native_prefix_with_theme_and_content,
+    NativeTransferError, NativeTransferOutcome, NativeTransferPlan, NativeTransferStatus,
+    commit_native_transfer_with_content, prepare_native_transfer_with_theme_and_content,
+    transfer_native_prefix_with_theme_and_content,
 };
 #[allow(unused_imports)]
 pub(crate) use projection::{

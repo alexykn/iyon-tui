@@ -67,10 +67,15 @@ pub enum Counter {
     ContentDueConnectors,
     ContentCandidateRecordsPrepared,
     ContentPathIndexNodesVisited,
+    LegacyRecipeBuilds,
+    LegacyRecipeCacheHits,
+    ContentDemandNodesVisited,
+    ContentOwnerNodesVisited,
+    UiControlKeysVisited,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::ContentPathIndexNodesVisited as usize + 1;
+    pub const COUNT: usize = Self::UiControlKeysVisited as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -132,6 +137,11 @@ const NAMES: [&str; Counter::COUNT] = [
     "content_due_connectors",
     "content_candidate_records_prepared",
     "content_path_index_nodes_visited",
+    "legacy_recipe_builds",
+    "legacy_recipe_cache_hits",
+    "content_demand_nodes_visited",
+    "content_owner_nodes_visited",
+    "ui_control_keys_visited",
 ];
 
 #[cfg(feature = "perf-counters")]

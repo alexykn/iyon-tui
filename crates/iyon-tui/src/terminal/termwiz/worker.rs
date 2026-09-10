@@ -18,7 +18,7 @@ pub(crate) enum TerminalCommand {
     },
     InsertHistory {
         rows: Vec<crate::physical::PhysicalRow>,
-        reply: Reply<usize>,
+        reply: AsyncReply<usize>,
     },
     PositionAfterFinalFrame {
         reply: Reply<()>,
@@ -27,6 +27,11 @@ pub(crate) enum TerminalCommand {
         reply: Reply<()>,
     },
 }
+
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<TerminalCommand>();
+};
 
 pub(crate) struct Startup {
     pub(crate) size: crate::geometry::Size,

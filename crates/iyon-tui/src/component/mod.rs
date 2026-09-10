@@ -26,7 +26,7 @@ pub(crate) use revision::ComponentRevision;
 pub(crate) use tick::{TickOutcome, TickScheduler};
 
 /// Public retained-state rendering and capability declaration contract.
-pub trait Component: 'static {
+pub trait Component: Send + 'static {
     fn view(&self) -> View;
 
     fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>)

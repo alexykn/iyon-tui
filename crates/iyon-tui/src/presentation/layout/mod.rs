@@ -45,7 +45,9 @@ pub(crate) use engine::{
     measure_view_with_overlay, measure_view_with_overlay_and_cache,
     measure_view_with_overlay_and_cache_and_content,
 };
-pub(crate) use tree::{ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree};
+pub(crate) use tree::{
+    ComponentGeometry, ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree,
+};
 
 #[cfg(test)]
 use crate::geometry::Size;

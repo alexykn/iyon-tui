@@ -284,6 +284,30 @@ fn ensure_alive(alive: &AtomicBool) -> Result<()> {
     ))
 }
 
+fn decode_ui_node_handle(words: &[u32]) -> Result<iyon_tui::binding::UiHandle> {
+    if words.len() != iyon_tui::binding::UI_HANDLE_WORDS {
+        return Err(crate::NativeError::invalid_input(
+            "UI occurrence handle must contain four words",
+        ));
+    }
+    if iyon_tui::binding::HandleKind::from_code(words[3])
+        != Some(iyon_tui::binding::HandleKind::Node)
+    {
+        return Err(crate::NativeError::invalid_input(
+            "UI handle must identify an occurrence",
+        ));
+    }
+    let namespace = iyon_tui::binding::HostNamespace::new(words[0])
+        .ok_or_else(|| crate::NativeError::invalid_input("invalid UI host namespace"))?;
+    iyon_tui::binding::UiHandle::new(
+        namespace,
+        words[1],
+        words[2],
+        iyon_tui::binding::HandleKind::Node,
+    )
+    .ok_or_else(|| crate::NativeError::invalid_input("invalid UI occurrence handle"))
+}
+
 fn resolve_native_view(runtime: usize, view_ref: i64) -> Result<View> {
     let view_ref = u32::try_from(view_ref)
         .map_err(|_| crate::NativeError::invalid_input("native View reference must fit in u32"))?;
@@ -605,7 +629,6 @@ pub struct NativeTuiHost {
     host: Box<TuiHost>,
     alive: AtomicBool,
     view_runtime: usize,
-    ui_state: Mutex<ui_commit::NativeUiState>,
     ui_environment: iyon_tui::binding::TuiEnvironment,
 }
 
@@ -626,21 +649,23 @@ impl NativeTuiHost {
             .map_err(|_| crate::NativeError::invalid_input("height must fit in u16"))?;
         let environment = host_environment_for_env(&env)?;
         let ui_environment = environment.clone();
-        let host = Box::new(
-            TuiHost::open_in_environment(width, height, headless.unwrap_or(false), environment)
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?,
-        );
-        let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
         let ui_namespace = iyon_tui::binding::HostNamespace::allocate()
             .ok_or_else(|| crate::NativeError::internal("UI host namespace exhausted"))?;
+        let host = Box::new(
+            TuiHost::open_in_environment_with_ui(
+                width,
+                height,
+                headless.unwrap_or(false),
+                environment,
+                ui_namespace,
+            )
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?,
+        );
+        let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
         Ok(Self {
             host,
             alive: AtomicBool::new(true),
             view_runtime,
-            ui_state: Mutex::new(ui_commit::NativeUiState::new(
-                ui_namespace,
-                ui_environment.clone(),
-            )),
             ui_environment,
         })
     }
@@ -666,10 +691,9 @@ impl NativeTuiHost {
     #[napi(js_name = "uiNamespace")]
     pub fn ui_namespace(&self) -> Result<u32> {
         ensure_alive(&self.alive)?;
-        self.ui_state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))
-            .map(|state| state.namespace().get())
+        self.host
+            .ui_namespace()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     /// Returns the qualified body occurrence used by the mutation renderer.
@@ -679,17 +703,174 @@ impl NativeTuiHost {
     pub fn ui_body_handle(&self) -> Result<Value> {
         ensure_alive(&self.alive)?;
         let handle = self
-            .ui_state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))?
-            .body_handle()
-            .map_err(crate::NativeError::internal)?;
+            .host
+            .ui_body_handle()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
         Ok(serde_json::json!({
             "host_namespace": handle.host_namespace,
             "slot": handle.slot,
             "generation": handle.generation,
             "kind": handle.kind as u32,
         }))
+    }
+
+    #[napi(js_name = "uiHistoryUnitIdentity")]
+    pub fn ui_history_unit_identity(&self, handle: Vec<u32>) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let identity = self
+            .host
+            .ui_history_unit_identity(decode_ui_node_handle(&handle)?)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(identity.map_or(serde_json::Value::Null, |value| {
+            serde_json::Value::String(value.to_string())
+        }))
+    }
+
+    #[napi(js_name = "uiContentVisible")]
+    pub fn ui_content_visible(&self) -> Result<bool> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .ui_content_visible()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
+    #[napi(js_name = "waitForUiPresentation")]
+    pub async fn wait_for_ui_presentation(
+        &self,
+        revision: i64,
+        content_visible: bool,
+    ) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        let revision = u64::try_from(revision)
+            .map_err(|_| crate::NativeError::invalid_input("UI revision must be non-negative"))?;
+        self.host
+            .wait_for_ui_presentation(revision, content_visible)
+            .await
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
+    /// Waits for one owned asynchronous React event batch.  The native host
+    /// owns queueing and stale-generation filtering; this boundary only
+    /// converts the detached batch into JS values after the native await.
+    #[napi(js_name = "waitForUiEvents")]
+    pub async fn wait_for_ui_events(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let events = self
+            .host
+            .wait_for_ui_events()
+            .await
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(match events {
+            None => Value::Null,
+            Some(events) => serde_json::json!(
+                events
+                    .into_iter()
+                    .map(|event| serde_json::json!({
+                        "host_namespace": event.handle.host_namespace,
+                        "slot": event.handle.slot,
+                        "generation": event.handle.generation,
+                        "kind": event.handle.kind as u32,
+                        "mask": event.mask,
+                        "text": event.text,
+                        "cursor_bytes": event.cursor_bytes,
+                        "key": event.key,
+                        "revision": event.revision,
+                    }))
+                    .collect::<Vec<_>>()
+            ),
+        })
+    }
+
+    #[napi(js_name = "focusUi")]
+    pub fn focus_ui(&self, handle: Vec<u32>) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        self.host
+            .focus_ui(decode_ui_node_handle(&handle)?)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
+    }
+
+    #[napi(js_name = "uiVisibleGeometry")]
+    pub fn ui_visible_geometry(&self, handle: Vec<u32>) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let geometry = self
+            .host
+            .ui_visible_geometry(decode_ui_node_handle(&handle)?)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(geometry.map_or_else(
+            || serde_json::Value::Null,
+            |(x, y, width, height)| {
+                serde_json::json!({
+                    "x": x,
+                    "y": y,
+                    "width": width,
+                    "height": height,
+                })
+            },
+        ))
+    }
+
+    #[napi(js_name = "drainUiEvents")]
+    pub fn drain_ui_events(&self) -> Result<Value> {
+        ensure_alive(&self.alive)?;
+        let events = self
+            .host
+            .drain_ui_events()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
+        Ok(serde_json::json!(
+            events
+                .into_iter()
+                .map(|event| serde_json::json!({
+                    "host_namespace": event.handle.host_namespace,
+                    "slot": event.handle.slot,
+                    "generation": event.handle.generation,
+                    "kind": event.handle.kind as u32,
+                    "mask": event.mask,
+                    "text": event.text,
+                    "cursor_bytes": event.cursor_bytes,
+                    "key": event.key,
+                    "revision": event.revision,
+                }))
+                .collect::<Vec<_>>()
+        ))
+    }
+
+    /// Private downward-only event queue configuration used by focused
+    /// admission tests; normal callers use the normative default bounds.
+    #[napi(js_name = "setUiEventQueueLimits")]
+    pub fn set_ui_event_queue_limits(&self, max_records: i64, max_bytes: i64) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        let max_records = usize::try_from(max_records)
+            .map_err(|_| crate::NativeError::invalid_input("event max records must be positive"))?;
+        let max_bytes = usize::try_from(max_bytes)
+            .map_err(|_| crate::NativeError::invalid_input("event max bytes must be positive"))?;
+        self.host
+            .set_ui_event_limits(max_records, max_bytes)
+            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
+    }
+
+    #[napi(js_name = "failUiConnectorForTest")]
+    pub fn fail_ui_connector_for_test(&self, handle: Vec<u32>, diagnostic: String) -> Result<()> {
+        ensure_alive(&self.alive)?;
+        if handle.len() != iyon_tui::binding::UI_HANDLE_WORDS {
+            return Err(crate::NativeError::invalid_input(
+                "UI Connector handle must contain four words",
+            ));
+        }
+        if handle.iter().all(|word| *word == 0) {
+            return self
+                .host
+                .fail_next_ui_connector_for_test(diagnostic)
+                .map_err(|error| crate::NativeError::internal(error.to_string()));
+        }
+        let kind = iyon_tui::binding::HandleKind::from_code(handle[3])
+            .ok_or_else(|| crate::NativeError::invalid_input("invalid UI handle kind"))?;
+        let namespace = iyon_tui::binding::HostNamespace::new(handle[0])
+            .ok_or_else(|| crate::NativeError::invalid_input("invalid UI host namespace"))?;
+        let handle = iyon_tui::binding::UiHandle::new(namespace, handle[1], handle[2], kind)
+            .ok_or_else(|| crate::NativeError::invalid_input("invalid UI Connector handle"))?;
+        self.host
+            .fail_ui_connector_for_test(handle, diagnostic)
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     /// Explicitly releases the private occurrence document and its owned
@@ -699,11 +880,9 @@ impl NativeTuiHost {
     #[napi(js_name = "closeUiState")]
     pub fn close_ui_state(&self) -> Result<()> {
         ensure_alive(&self.alive)?;
-        self.ui_state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("UI state lock is poisoned"))?
-            .close()
-            .map_err(crate::NativeError::internal)
+        self.host
+            .close_ui_state()
+            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     /// Accepts a native retained root as desired structure without presenting
@@ -811,20 +990,12 @@ impl NativeTuiHost {
         if self.alive.load(Ordering::Acquire) {
             view_abi::abort_all_edit_txns(self.view_runtime as *mut view_abi::NativeViewRuntime);
             let host_error = self.host.close().err();
-            let ui_error = self
-                .ui_state
-                .lock()
-                .map_err(|_| "UI state lock is poisoned".to_owned())
-                .and_then(|mut state| state.close());
-            match (host_error, ui_error) {
-                (None, Ok(())) => self.alive.store(false, Ordering::Release),
-                (host_error, ui_error) => {
+            match host_error {
+                None => self.alive.store(false, Ordering::Release),
+                host_error => {
                     let mut diagnostics = Vec::new();
                     if let Some(error) = host_error {
                         diagnostics.push(format!("host close failed: {error:#}"));
-                    }
-                    if let Err(error) = ui_error {
-                        diagnostics.push(format!("UI resource cleanup failed: {error}"));
                     }
                     return Err(crate::NativeError::internal(diagnostics.join("; ")));
                 }
@@ -1026,15 +1197,13 @@ impl NativeTuiHost {
         ensure_alive(&self.alive)?;
         self.host
             .dispatch_key(parse_key(&key, modifiers.as_deref())?)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
+            .map_err(native_input_error)
     }
 
     #[napi(js_name = "dispatchPaste")]
     pub fn dispatch_paste(&self, text: String) -> Result<()> {
         ensure_alive(&self.alive)?;
-        self.host
-            .dispatch_paste(&text)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
+        self.host.dispatch_paste(&text).map_err(native_input_error)
     }
 
     #[napi(js_name = "forwardPaste")]
@@ -1048,9 +1217,7 @@ impl NativeTuiHost {
     #[napi(js_name = "pollTerminal")]
     pub fn poll_terminal(&self) -> Result<()> {
         ensure_alive(&self.alive)?;
-        self.host
-            .poll_terminal()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
+        self.host.poll_terminal().map_err(native_input_error)
     }
 
     #[napi(js_name = "nextOutput")]
@@ -1121,6 +1288,25 @@ impl NativeTuiHost {
         }
         self as *const Self as usize as i64
     }
+}
+
+fn native_input_error(error: impl std::fmt::Display) -> napi::Error {
+    let message = error.to_string();
+    if let Some(detail) = message.strip_prefix("EVENT_BACKPRESSURE:") {
+        return crate::NativeError::coded(
+            napi::Status::GenericFailure,
+            "ION_EVENT_BACKPRESSURE",
+            detail.trim(),
+        );
+    }
+    if let Some(detail) = message.strip_prefix("EVENT_TOO_LARGE:") {
+        return crate::NativeError::coded(
+            napi::Status::InvalidArg,
+            "ION_EVENT_TOO_LARGE",
+            detail.trim(),
+        );
+    }
+    crate::NativeError::internal(message)
 }
 
 fn parse_key(key: &str, modifiers: Option<&[String]>) -> Result<KeyStroke> {

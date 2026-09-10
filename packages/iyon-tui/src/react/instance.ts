@@ -42,7 +42,11 @@ export type HostType =
 	| "text"
 	| "editor"
 	| "scroll"
-	| "animation";
+	| "animation"
+	| "historyUnit";
+
+export type HistoryFlowBoundary = "default" | "attachToPrevious";
+export type HistoryUnitAction = "live" | "freeze";
 
 export type LayoutKind = "box" | "row" | "column" | "grid";
 
@@ -69,13 +73,40 @@ export interface LayoutProps {
 		  };
 }
 
+export interface UiEventTarget {
+	readonly host_namespace: number;
+	readonly slot: number;
+	readonly generation: number;
+	readonly kind: number;
+}
+
+export interface UiEventBase {
+	readonly target: UiEventTarget;
+	readonly revision?: number;
+}
+
+export interface UiPressEvent extends UiEventBase {
+	readonly type: "press";
+	readonly key?: string;
+}
+
+export interface UiEditEvent extends UiEventBase {
+	readonly type: "input" | "edit" | "change" | "selectionChange" | "submit";
+	readonly text: string;
+	readonly cursorBytes: number;
+	readonly key?: string;
+}
+
+export type UiEvent = UiPressEvent | UiEditEvent;
+export type UiEventHandler<E extends UiEvent = UiEvent> = (event: E) => void;
+
 export interface EventProps {
-	readonly onPress?: (() => void) | undefined;
-	readonly onInput?: (() => void) | undefined;
-	readonly onEdit?: (() => void) | undefined;
-	readonly onChange?: (() => void) | undefined;
-	readonly onSelectionChange?: (() => void) | undefined;
-	readonly onSubmit?: (() => void) | undefined;
+	readonly onPress?: UiEventHandler<UiPressEvent> | undefined;
+	readonly onInput?: UiEventHandler<UiEditEvent> | undefined;
+	readonly onEdit?: UiEventHandler<UiEditEvent> | undefined;
+	readonly onChange?: UiEventHandler<UiEditEvent> | undefined;
+	readonly onSelectionChange?: UiEventHandler<UiEditEvent> | undefined;
+	readonly onSubmit?: UiEventHandler<UiEditEvent> | undefined;
 }
 
 export interface BoxProps extends LayoutProps, EventProps {
@@ -141,6 +172,7 @@ export function contentTokenOwner(token: object): HookOwner | undefined {
 
 export interface EditorProps extends LayoutProps, EventProps {
 	readonly children?: ReactNode;
+	readonly ref?: Ref<unknown>;
 	readonly multiline?: boolean;
 	readonly value?: string;
 	readonly defaultValue?: string;
@@ -155,6 +187,15 @@ export interface EditorProps extends LayoutProps, EventProps {
 
 export interface AnimationProps extends BoxProps {
 	readonly intervalMs?: number;
+}
+
+export interface HistoryProps {
+	readonly children?: ReactNode;
+}
+
+export interface HistoryUnitProps extends BoxProps {
+	readonly flowBoundary?: HistoryFlowBoundary;
+	readonly action?: HistoryUnitAction;
 }
 
 export interface NormalizedProperty {
@@ -183,7 +224,11 @@ export interface NormalizedProps {
 		readonly intervalMs?: number;
 		readonly controlled?: boolean;
 	};
-	readonly events: Map<string, () => void>;
+	readonly events: Map<string, UiEventHandler>;
+	readonly historyUnit?: {
+		readonly flowBoundary: 0 | 1;
+		readonly action: 0 | 1;
+	};
 }
 
 export function contentValuesEqual(
@@ -226,7 +271,7 @@ export class HostInstance {
 	readonly root: RootContainer;
 	readonly kind: HostKind;
 	readonly initial: NormalizedProps;
-	rootRole: "portal" | undefined;
+	rootRole: "portal" | "historyUnit" | undefined;
 	/** Accepted owner correspondence for a typed portal root. */
 	portalOwner: HostInstance | undefined;
 	parent: HostInstance | undefined;
@@ -296,6 +341,8 @@ export function hostKindForType(type: string): HostKind {
 			return HOST_KINDS.scroll;
 		case "animation":
 			return HOST_KINDS.animation;
+		case "historyUnit":
+			return HOST_KINDS.box;
 		default:
 			throw new TypeError(`unsupported iyon host type ${JSON.stringify(type)}`);
 	}
@@ -330,6 +377,7 @@ export function isHostType(type: unknown): type is string {
 			"editor",
 			"scroll",
 			"animation",
+			"historyUnit",
 		].includes(type)
 	);
 }
@@ -343,7 +391,7 @@ const EVENT_BITS: Readonly<Record<string, number>> = {
 	onSubmit: 32,
 };
 
-export function eventMask(events: ReadonlyMap<string, () => void>): number {
+export function eventMask(events: ReadonlyMap<string, UiEventHandler>): number {
 	let mask = 0;
 	for (const name of events.keys()) mask |= EVENT_BITS[name] ?? 0;
 	return mask >>> 0;
@@ -368,6 +416,8 @@ export function normalizeProps(type: string, input: unknown): NormalizedProps {
 	const content =
 		kind === HOST_KINDS.contentHost ? normalizeContent(props) : undefined;
 	const control = normalizeControl(kind, props);
+	const historyUnit =
+		type === "historyUnit" ? normalizeHistoryUnit(props) : undefined;
 	assertKnownProps(
 		type,
 		props,
@@ -381,6 +431,7 @@ export function normalizeProps(type: string, input: unknown): NormalizedProps {
 		...(content === undefined ? {} : { content }),
 		...(control === undefined ? {} : { control }),
 		events,
+		...(historyUnit === undefined ? {} : { historyUnit }),
 	};
 }
 
@@ -477,14 +528,14 @@ function normalizeHidden(props: Record<string, unknown>): boolean {
 
 function normalizeEvents(
 	props: Record<string, unknown>,
-): Map<string, () => void> {
-	const events = new Map<string, () => void>();
+): Map<string, UiEventHandler> {
+	const events = new Map<string, UiEventHandler>();
 	for (const name of Object.keys(EVENT_BITS)) {
 		const value = props[name];
 		if (value === undefined) continue;
 		if (typeof value !== "function")
 			throw new TypeError(`${name} must be a function`);
-		events.set(name, value as () => void);
+		events.set(name, value as UiEventHandler);
 	}
 	return events;
 }
@@ -510,6 +561,21 @@ function normalizeControl(
 		multiline: false,
 		...(intervalMs === undefined ? {} : { intervalMs }),
 		controlled: false,
+	};
+}
+
+function normalizeHistoryUnit(
+	props: Record<string, unknown>,
+): NonNullable<NormalizedProps["historyUnit"]> {
+	const flowBoundary = props.flowBoundary ?? "default";
+	if (flowBoundary !== "default" && flowBoundary !== "attachToPrevious")
+		throw new RangeError("HistoryUnit flowBoundary is invalid");
+	const action = props.action ?? "live";
+	if (action !== "live" && action !== "freeze")
+		throw new RangeError("HistoryUnit action is invalid");
+	return {
+		flowBoundary: flowBoundary === "attachToPrevious" ? 1 : 0,
+		action: action === "freeze" ? 1 : 0,
 	};
 }
 
@@ -562,6 +628,7 @@ function assertKnownProps(
 		...(content ? ["source", "port", "funnel", "literal"] : []),
 		...(editor ? ["multiline", "value", "defaultValue"] : []),
 		...(type === "portal" ? ["portalOwner"] : []),
+		...(type === "historyUnit" ? ["flowBoundary", "action"] : []),
 		...(hostKindForType(type) === HOST_KINDS.animation ? ["intervalMs"] : []),
 	]);
 	for (const name of Object.keys(props))

@@ -617,6 +617,16 @@ impl LayoutTree {
         }
     }
 
+    /// Captures geometry for every retained View identity. The occurrence
+    /// adapter uses this index for ordinary nodes that do not own a native
+    /// component; the caller promotes it only with the confirmed frame.
+    pub(crate) fn view_geometry(&self) -> HashMap<ViewId, ComponentGeometry> {
+        let mut entries = HashMap::new();
+        let root = SignedRect::from(Rect::new(0, 0, self.size.width, self.size.height));
+        self.collect_view_geometry(self.root, 0, root, &mut entries);
+        entries
+    }
+
     fn content_extent_in_subtree(&self, id: LayoutNodeId) -> Option<Size> {
         let node = self.node(id);
         match node.content {
@@ -750,6 +760,44 @@ impl LayoutTree {
         };
         for child in &node.children {
             self.collect_component_geometry(*child, child_offset, clip, entries);
+        }
+    }
+
+    fn collect_view_geometry(
+        &self,
+        id: LayoutNodeId,
+        offset_y: i32,
+        inherited_clip: SignedRect,
+        entries: &mut HashMap<ViewId, ComponentGeometry>,
+    ) {
+        let node = self.node(id);
+        let rect = SignedRect::from(node.rect).translate_y(offset_y);
+        let content = SignedRect::from(node.content_rect).translate_y(offset_y);
+        let clip = SignedRect::from(node.clip_rect)
+            .translate_y(offset_y)
+            .intersection(inherited_clip)
+            .unwrap_or(SignedRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            });
+        entries.insert(
+            node.view_id,
+            ComponentGeometry {
+                outer: rect.to_rect(),
+                content: content.to_rect(),
+                visible: rect.intersection(clip).and_then(SignedRect::to_rect_opt),
+            },
+        );
+        let child_offset = match node.content {
+            LayoutContent::RowViewport { skip_rows } => {
+                offset_y.saturating_sub(i32::from(skip_rows))
+            }
+            _ => offset_y,
+        };
+        for child in &node.children {
+            self.collect_view_geometry(*child, child_offset, clip, entries);
         }
     }
 

@@ -10,17 +10,16 @@ use crate::{component::ComponentId, geometry::Size, output::EventCx};
 
 use super::{InteractionResult, KeyStroke};
 
-type MapCommand = dyn Fn(&dyn Any, KeyStroke) -> Option<Box<dyn Any>>;
-type HandleCommand =
-    dyn for<'a> Fn(&mut dyn Any, Box<dyn Any>, &mut EventCx<'a>) -> InteractionResult;
-type FocusChanged = dyn Fn(&mut dyn Any, bool);
-type PasteHandler = dyn for<'paste, 'event> Fn(
-    &mut dyn Any,
-    &'paste str,
-    &mut EventCx<'event>,
-) -> InteractionResult;
-type TickHandler = dyn for<'a> Fn(&mut dyn Any, Instant, &mut EventCx<'a>) -> bool;
-type LayoutChanged = dyn Fn(&mut dyn Any, Size);
+type MapCommand = dyn Fn(&dyn Any, KeyStroke) -> Option<Box<dyn Any + Send>> + Send + Sync;
+type HandleCommand = dyn for<'a> Fn(&mut dyn Any, Box<dyn Any + Send>, &mut EventCx<'a>) -> InteractionResult
+    + Send
+    + Sync;
+type FocusChanged = dyn Fn(&mut dyn Any, bool) + Send + Sync;
+type PasteHandler = dyn for<'paste, 'event> Fn(&mut dyn Any, &'paste str, &mut EventCx<'event>) -> InteractionResult
+    + Send
+    + Sync;
+type TickHandler = dyn for<'a> Fn(&mut dyn Any, Instant, &mut EventCx<'a>) -> bool + Send + Sync;
+type LayoutChanged = dyn Fn(&mut dyn Any, Size) + Send + Sync;
 
 #[derive(Clone)]
 pub(crate) struct KeyCommandCapability {
@@ -148,7 +147,7 @@ impl<'a, C> ComponentCx<'a, C> {
     }
 
     /// Registers an ordered typed local key-command mapping and handler.
-    pub fn key_commands<Command: 'static>(
+    pub fn key_commands<Command: Send + 'static>(
         &mut self,
         map: fn(&C, KeyStroke) -> Option<Command>,
         handle: for<'event> fn(&mut C, Command, &mut EventCx<'event>) -> InteractionResult,
@@ -160,7 +159,7 @@ impl<'a, C> ComponentCx<'a, C> {
                 let component = component
                     .downcast_ref::<C>()
                     .expect("component key mapping type mismatch");
-                map(component, key).map(|command| Box::new(command) as Box<dyn Any>)
+                map(component, key).map(|command| Box::new(command) as Box<dyn Any + Send>)
             }),
             handle: Arc::new(move |component, command, cx| {
                 let component = component

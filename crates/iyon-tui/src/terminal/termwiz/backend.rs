@@ -12,7 +12,7 @@ use crate::{
     geometry::Size,
     physical::PhysicalRow,
     scene::PreparedSceneFrame,
-    terminal::{PresentReceipt, TerminalBackend, TerminalEvent},
+    terminal::{HistoryReceipt, PresentReceipt, TerminalBackend, TerminalEvent},
 };
 
 use super::worker::{Startup, TerminalCommand};
@@ -95,14 +95,9 @@ impl NativeHistorySink for TermwizBackend {
     type Error = anyhow::Error;
 
     fn insert_history_rows(&mut self, rows: &[PhysicalRow]) -> Result<usize, Self::Error> {
-        let (reply, receiver) = mpsc::channel();
-        self.send(
-            TerminalCommand::InsertHistory {
-                rows: rows.to_vec(),
-                reply,
-            },
-            receiver,
-        )
+        self.begin_history_rows(rows.to_vec())?
+            .blocking_recv()
+            .map_err(|_| anyhow!("terminal History reply lost"))?
     }
 }
 
@@ -132,6 +127,14 @@ impl TerminalBackend for TermwizBackend {
         let desired = super::lower::desired_surface(frame);
         self.commands
             .send(TerminalCommand::Present { desired, reply })
+            .map_err(|_| crate::terminal::backend::terminal_worker_stopped())?;
+        Ok(receiver)
+    }
+
+    fn begin_history_rows(&mut self, rows: Vec<PhysicalRow>) -> Result<HistoryReceipt> {
+        let (reply, receiver) = oneshot::channel();
+        self.commands
+            .send(TerminalCommand::InsertHistory { rows, reply })
             .map_err(|_| crate::terminal::backend::terminal_worker_stopped())?;
         Ok(receiver)
     }

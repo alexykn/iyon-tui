@@ -2,12 +2,17 @@ import { createElement, type ReactNode } from "react";
 import Reconciler from "react-reconciler";
 import type { TuiRuntime } from "../runtime/runtime.ts";
 import type { NativeTuiHostContract } from "../transport/native/addon.ts";
-import { type CommitCoordinator, RootContainer } from "./commit.ts";
+import {
+	type CommitCoordinator,
+	type NativeUiEvent,
+	RootContainer,
+} from "./commit.ts";
 import { hostConfig } from "./host-config.ts";
 import { nativeHostForReact } from "./host-registry.ts";
 
 const activeRoots = new WeakSet<object>();
 const closedHosts = new WeakSet<object>();
+type RootLifecycle = "open" | "closing" | "closed";
 
 export interface ReactCommit {
 	readonly revision: number;
@@ -15,12 +20,12 @@ export interface ReactCommit {
 }
 
 export class ReactFrameBarrierError extends Error {
-	readonly code = "T3_FRAME_BARRIER_UNREALIZED" as const;
+	readonly code = "FRAME_BARRIER_UNAVAILABLE" as const;
 
-	constructor() {
-		super(
-			"React UI acceptance succeeded, but T3 does not implement a terminal presentation barrier yet",
-		);
+	constructor(
+		message = "The requested native presentation barrier could not be completed",
+	) {
+		super(message);
 		this.name = "ReactFrameBarrierError";
 	}
 }
@@ -56,7 +61,7 @@ class IyonRoot implements IyonReactRoot {
 	private readonly opaqueRoot: ReturnType<
 		typeof this.reconciler.createContainer
 	>;
-	private closed = false;
+	private lifecycle: RootLifecycle = "open";
 	private reactCleanupAttempted = false;
 	private pending = new Set<{
 		resolve(value: ReactCommit): void;
@@ -83,6 +88,7 @@ class IyonRoot implements IyonReactRoot {
 			(error) => this.rejectPending(error),
 			() => {},
 		);
+		this.startNativeEventLane();
 	}
 
 	get faulted(): boolean {
@@ -90,7 +96,8 @@ class IyonRoot implements IyonReactRoot {
 	}
 
 	render(children: ReactNode): Promise<ReactCommit> {
-		if (this.closed) return Promise.reject(new Error("React root is closed"));
+		if (this.lifecycle !== "open")
+			return Promise.reject(new Error("React root is closed"));
 		if (this.coordinator.isFaulted)
 			return Promise.reject(this.coordinator.faultError);
 		return new Promise<ReactCommit>((resolve, reject) => {
@@ -130,7 +137,7 @@ class IyonRoot implements IyonReactRoot {
 	}
 
 	createPortal(children: ReactNode, key?: string): ReactNode {
-		if (this.closed) throw new Error("React root is closed");
+		if (this.lifecycle !== "open") throw new Error("React root is closed");
 		return createElement(
 			"portal",
 			{ key, portalOwner: this.container },
@@ -138,12 +145,12 @@ class IyonRoot implements IyonReactRoot {
 		);
 	}
 
-	whenVisible(_revision?: number): Promise<void> {
-		return Promise.reject(new ReactFrameBarrierError());
+	whenVisible(revision?: number): Promise<void> {
+		return this.awaitPresentation(revision, false);
 	}
 
-	whenContentVisible(_revision?: number): Promise<void> {
-		return Promise.reject(new ReactFrameBarrierError());
+	whenContentVisible(revision?: number): Promise<void> {
+		return this.awaitPresentation(revision, true);
 	}
 
 	async unmount(): Promise<ReactCommit> {
@@ -151,12 +158,16 @@ class IyonRoot implements IyonReactRoot {
 	}
 
 	close(): void {
-		if (this.closed) return;
+		if (this.lifecycle === "closed") return;
+		// Stop delivery before any React/native teardown.  The native wait is
+		// awakened by closeUiState, and its already-owned batch is discarded by
+		// the lane guard rather than calling a callback after close begins.
+		this.lifecycle = "closing";
 		let failure: unknown;
 		if (!this.reactCleanupAttempted) {
 			this.reactCleanupAttempted = true;
 			try {
-				if (this.coordinator.isFaulted) this.coordinator.beginCleanup();
+				this.coordinator.beginCleanup();
 				this.reconciler.updateContainerSync(null, this.opaqueRoot, null, null);
 				this.reconciler.flushSyncFromReconciler();
 				this.reconciler.flushSyncWork();
@@ -178,7 +189,7 @@ class IyonRoot implements IyonReactRoot {
 		}
 		if (failure === undefined) {
 			this.coordinator.finalizeCleanup();
-			this.closed = true;
+			this.lifecycle = "closed";
 			activeRoots.delete(this.host);
 			closedHosts.add(this.host);
 			this.rejectPending(new Error("React root was closed"));
@@ -189,5 +200,74 @@ class IyonRoot implements IyonReactRoot {
 	private rejectPending(error: unknown): void {
 		for (const pending of this.pending) pending.reject(error);
 		this.pending.clear();
+	}
+
+	private async awaitPresentation(
+		revision: number | undefined,
+		contentVisible: boolean,
+	): Promise<void> {
+		if (this.lifecycle !== "open")
+			return Promise.reject(new Error("React root is closed"));
+		const target = revision ?? this.coordinator.acceptedUiRevision;
+		try {
+			// Native owns queue service, receipt waiting, deadlines, and exact
+			// barrier completion. This call does not require a JS frame/tick pump.
+			await this.host.waitForUiPresentation(target, contentVisible);
+			return;
+		} catch (error) {
+			if (error instanceof ReactFrameBarrierError) throw error;
+			throw new ReactFrameBarrierError(
+				error instanceof Error ? error.message : String(error),
+			);
+		}
+	}
+
+	/**
+	 * One root-owned asynchronous native event consumer.  It is deliberately
+	 * separate from presentation barriers: native animation, input, and
+	 * content work can produce events without a JS frame pump, while this
+	 * consumer remains the sole owner that takes batches from the native queue.
+	 */
+	private startNativeEventLane(): void {
+		void this.consumeNativeEventLane();
+	}
+
+	private async consumeNativeEventLane(): Promise<void> {
+		while (this.lifecycle === "open") {
+			let batch: readonly NativeUiEvent[] | null;
+			try {
+				batch = await this.host.waitForUiEvents();
+			} catch (error) {
+				if (this.lifecycle === "open") reportNativeEventError(error);
+				return;
+			}
+			if (this.lifecycle !== "open" || batch === null) return;
+			if (batch.length === 0) continue;
+			try {
+				this.coordinator.dispatchNativeEvents(
+					batch,
+					() => this.lifecycle === "open",
+				);
+			} catch (error) {
+				// A malformed native envelope is an explicit transport failure, not
+				// an unhandled rejection from the long-lived event lane.
+				reportNativeEventError(error);
+				return;
+			}
+		}
+	}
+}
+
+function reportNativeEventError(error: unknown): void {
+	try {
+		const reportError = (
+			globalThis as unknown as {
+				reportError?: (error: unknown) => void;
+			}
+		).reportError;
+		if (typeof reportError === "function") reportError(error);
+		else console.error(error);
+	} catch {
+		// A broken diagnostic sink cannot restart or invalidate the native lane.
 	}
 }

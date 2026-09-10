@@ -94,7 +94,10 @@ function categoryForNativeCode(code: string | undefined): TuiErrorCategory {
     case "ION_INTERNAL_INVARIANT":
     case "ION_RUNTIME_POISONED":
     case "ION_INTERNAL_PANIC":
+    case "ION_EVENT_BACKPRESSURE":
       return "runtime";
+    case "ION_EVENT_TOO_LARGE":
+      return "validation";
     case "ION_CANCELLED":
 
       return "cancelled";

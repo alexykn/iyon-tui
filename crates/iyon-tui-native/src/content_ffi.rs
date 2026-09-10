@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn accepted_wake_failure_keeps_direct_ffi_result_and_healthy_fanout() {
-        let environment = TuiEnvironment::new();
+        let environment = TuiEnvironment::new_manual();
         let environment_slot = environment.environment_slot();
         crate::tui::register_content_environment_for_test(&environment);
 

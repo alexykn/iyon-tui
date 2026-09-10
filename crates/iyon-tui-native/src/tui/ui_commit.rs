@@ -7,7 +7,7 @@
 //! transaction is prepared; only the already-owned acknowledgement is returned
 //! after the core apply.
 
-use std::mem::size_of;
+use std::{collections::HashMap, mem::size_of};
 
 use napi::{
     Env, Error, Status,
@@ -65,7 +65,12 @@ impl NativeUiState {
         batch: UiCommit,
         sources: &[HostContentSource],
     ) -> Result<UiOperationResult, iyon_tui::binding::UiRejection> {
-        self.resources.commit(batch, sources)
+        let no_existing_history = HashMap::new();
+        let output = self
+            .resources
+            .commit(batch, sources, &no_existing_history)?;
+        HostContentSource::finish_prepared_wakes(output.wakes);
+        Ok(output.result)
     }
 }
 
@@ -127,11 +132,9 @@ pub(crate) fn commit_ui_v1(
     let metadata = checked_u8_input(env, &metadata, "metadata")?;
     let owned_content = checked_u8_input(env, &owned_content, "ownedContent")?;
     let ui_namespace = native_host
-        .ui_state
-        .lock()
-        .map_err(|_| Error::new(Status::GenericFailure, "UI state lock is poisoned"))?
-        .namespace()
-        .get();
+        .host
+        .ui_namespace()
+        .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?;
     let header = decode_header(
         &words,
         metadata.len(),
@@ -182,12 +185,7 @@ pub(crate) fn commit_ui_v1(
     // Decode/source qualification and all typed validation occur before this
     // call. The occurrence core performs its own final desired-state checks and
     // reserves all apply storage before installing anything.
-    match native_host
-        .ui_state
-        .lock()
-        .map_err(|_| Error::new(Status::GenericFailure, "UI state lock is poisoned"))?
-        .commit(commit, &source_values)
-    {
+    match native_host.host.commit_ui(commit, &source_values) {
         Ok(result) => copy_acknowledgement(&mut acknowledgement, &result),
         Err(rejection) => copy_acknowledgement(&mut acknowledgement, &rejection.result),
     }
@@ -1923,7 +1921,7 @@ mod tests {
         annotations.extend_from_slice(&0u32.to_le_bytes());
         annotations.extend_from_slice(&7u32.to_le_bytes());
         annotations.extend_from_slice(&[0u8; 8]);
-        annotations.extend_from_slice(b"ns name");
+        annotations.extend_from_slice(b"ns\x00name");
 
         let mut replacements = UiCommit::new(2);
         replacements.push(UiOperation::ReplaceLiteral {

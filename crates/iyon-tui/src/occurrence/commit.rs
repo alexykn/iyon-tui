@@ -465,6 +465,7 @@ struct ResourceDraft<'a> {
     retired: Vec<ResourceKey>,
     retired_set: HashSet<ResourceKey>,
     owner_changes: HashMap<ResourceKey, Option<NodeKey>>,
+    resource_ports: HashMap<ResourceKey, Option<ResourceKey>>,
 }
 
 pub struct PreparedUiCommit {
@@ -472,11 +473,88 @@ pub struct PreparedUiCommit {
     next_ui_revision: u64,
     pub(crate) changed: bool,
     pub(crate) effects: EffectMask,
+    pub(crate) physical_work: bool,
     tree: TreePlan,
     resources: ResourcePlan,
     roots_added: Vec<NodeKey>,
     roots_removed: Vec<NodeKey>,
+    pub(crate) history_roots: Vec<HistoryRootSummary>,
     result: UiOperationResult,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HistoryRootSummary {
+    pub(crate) root: NodeKey,
+    pub(crate) action: Option<u32>,
+    pub(crate) has_live_control: bool,
+}
+
+/// Native-only summary of one accepted occurrence commit.  It is the bridge
+/// between the validated commit plan and derived renderer projections; it is
+/// not a replayable operation log or a second semantic protocol.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct UiChangeSet {
+    pub(crate) ui_revision: u64,
+    pub(crate) changed_nodes: Vec<NodeKey>,
+    pub(crate) retired_nodes: Vec<NodeKey>,
+    pub(crate) history_roots: Vec<NodeKey>,
+    pub(crate) changed_resources: Vec<ResourceKey>,
+    pub(crate) resource_ports: Vec<(ResourceKey, Option<ResourceKey>)>,
+    pub(crate) membership_nodes: Vec<NodeKey>,
+    pub(crate) effects: EffectMask,
+    pub(crate) physical_work: bool,
+}
+
+impl UiChangeSet {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.changed_nodes.is_empty()
+            && self.retired_nodes.is_empty()
+            && self.history_roots.is_empty()
+            && self.changed_resources.is_empty()
+            && self.resource_ports.is_empty()
+            && self.membership_nodes.is_empty()
+            && !self.physical_work
+    }
+
+    pub(crate) fn has_work(&self) -> bool {
+        !self.is_empty()
+    }
+
+    pub(crate) fn merge(&mut self, next: UiChangeSet) {
+        self.ui_revision = next.ui_revision;
+        self.changed_nodes.extend(next.changed_nodes);
+        self.retired_nodes.extend(next.retired_nodes);
+        self.history_roots.extend(next.history_roots);
+        self.changed_resources.extend(next.changed_resources);
+        self.resource_ports.extend(next.resource_ports);
+        self.membership_nodes.extend(next.membership_nodes);
+        self.effects = self.effects.union(next.effects);
+        self.physical_work |= next.physical_work;
+        self.changed_nodes
+            .sort_unstable_by_key(|key| (key.slot, key.generation));
+        self.changed_nodes.dedup();
+        self.retired_nodes
+            .sort_unstable_by_key(|key| (key.slot, key.generation));
+        self.retired_nodes.dedup();
+        self.history_roots
+            .sort_unstable_by_key(|key| (key.slot, key.generation));
+        self.history_roots.dedup();
+        self.changed_resources
+            .sort_unstable_by_key(|key| (key.kind as u32, key.slot, key.generation));
+        self.changed_resources.dedup();
+        self.resource_ports
+            .sort_unstable_by_key(|(key, _)| (key.kind as u32, key.slot, key.generation));
+        self.resource_ports.dedup_by_key(|(key, _)| *key);
+        self.membership_nodes
+            .sort_unstable_by_key(|key| (key.slot, key.generation));
+        self.membership_nodes.dedup();
+        self.changed_nodes
+            .retain(|key| !self.retired_nodes.contains(key));
+        self.membership_nodes
+            .retain(|key| !self.retired_nodes.contains(key));
+        self.history_roots
+            .retain(|key| !self.retired_nodes.contains(key));
+    }
 }
 
 impl PreparedUiCommit {
@@ -494,6 +572,44 @@ impl PreparedUiCommit {
     pub fn retired_node_keys(&self) -> Vec<NodeKey> {
         self.tree.retired.clone()
     }
+
+    pub(crate) fn added_root_keys(&self) -> &[NodeKey] {
+        &self.roots_added
+    }
+
+    pub(crate) fn change_set(&self) -> UiChangeSet {
+        let mut changed_nodes = self.tree.changed_nodes.iter().copied().collect::<Vec<_>>();
+        changed_nodes.sort_unstable_by_key(|key| (key.slot, key.generation));
+        let mut changed_resources = self.resources.changed_keys();
+        changed_resources.sort_unstable_by_key(|key| (key.kind as u32, key.slot, key.generation));
+        changed_resources.dedup();
+        let mut resource_ports = self
+            .resources
+            .resource_ports
+            .iter()
+            .map(|(key, port)| (*key, *port))
+            .collect::<Vec<_>>();
+        resource_ports.sort_unstable_by_key(|(key, _)| (key.kind as u32, key.slot, key.generation));
+        UiChangeSet {
+            ui_revision: self.next_ui_revision,
+            changed_nodes,
+            retired_nodes: self.tree.retired.clone(),
+            history_roots: self
+                .history_roots
+                .iter()
+                .map(|summary| summary.root)
+                .collect(),
+            physical_work: self.physical_work || !changed_resources.is_empty(),
+            changed_resources,
+            resource_ports,
+            membership_nodes: self.tree.membership_nodes.iter().copied().collect(),
+            effects: self.effects,
+        }
+    }
+
+    pub(crate) fn history_root_summaries(&self) -> &[HistoryRootSummary] {
+        &self.history_roots
+    }
 }
 
 struct ResourcePlan {
@@ -502,10 +618,22 @@ struct ResourcePlan {
     retired: Vec<ResourceKey>,
     retired_set: HashSet<ResourceKey>,
     owner_changes: HashMap<ResourceKey, Option<NodeKey>>,
+    resource_ports: HashMap<ResourceKey, Option<ResourceKey>>,
     connector_buckets: HashMap<ResourceKey, HashSet<ResourceKey>>,
     connector_touched: HashSet<ResourceKey>,
     selected_buckets: HashMap<ResourceKey, HashSet<ResourceKey>>,
     selected_touched: HashSet<ResourceKey>,
+}
+
+impl ResourcePlan {
+    fn changed_keys(&self) -> Vec<ResourceKey> {
+        self.edits
+            .keys()
+            .copied()
+            .chain(self.created.iter().copied())
+            .chain(self.retired.iter().copied())
+            .collect()
+    }
 }
 
 impl<'a> ResourceDraft<'a> {
@@ -519,6 +647,7 @@ impl<'a> ResourceDraft<'a> {
             retired: Vec::new(),
             retired_set: HashSet::new(),
             owner_changes: HashMap::new(),
+            resource_ports: HashMap::new(),
         }
     }
 
@@ -546,6 +675,9 @@ impl<'a> ResourceDraft<'a> {
         self.owner_changes
             .try_reserve(additional)
             .map_err(|_| CommitIssue::new(CommitDetail::Capacity, "resource owner capacity"))?;
+        self.resource_ports.try_reserve(additional).map_err(|_| {
+            CommitIssue::new(CommitDetail::Capacity, "resource association capacity")
+        })?;
         Ok(())
     }
 
@@ -569,6 +701,9 @@ impl<'a> ResourceDraft<'a> {
                 .insert(key);
         }
         self.edits.insert(key, record);
+        if key.kind == HandleKind::Connector {
+            self.resource_ports.insert(key, self.edits[&key].port);
+        }
         Ok(())
     }
 
@@ -600,6 +735,9 @@ impl<'a> ResourceDraft<'a> {
                     CommitIssue::new(CommitDetail::StaleHandle, "resource handle is stale")
                 })?
                 .clone();
+            if key.kind == HandleKind::Connector {
+                self.resource_ports.insert(key, record.port);
+            }
             self.edits.insert(key, record);
         }
         self.edits
@@ -654,6 +792,9 @@ impl<'a> ResourceDraft<'a> {
         })?;
         if self.retired_set.insert(key) {
             self.retired.push(key);
+            if key.kind == HandleKind::Connector {
+                self.resource_ports.insert(key, record.port);
+            }
             if matches!(
                 record.family,
                 ResourceFamily::Port | ResourceFamily::Control
@@ -1080,6 +1221,7 @@ impl<'a> ResourceDraft<'a> {
             retired: self.retired,
             retired_set: self.retired_set,
             owner_changes: self.owner_changes,
+            resource_ports: self.resource_ports,
             connector_buckets: HashMap::new(),
             connector_touched: HashSet::new(),
             selected_buckets: HashMap::new(),
@@ -1099,6 +1241,10 @@ struct CommitDraft<'a> {
     property_initials: HashMap<NodeKey, PropertyLayers>,
     style_state_initials: HashMap<(NodeKey, String), Option<String>>,
     interaction_initials: HashMap<NodeKey, (bool, u64)>,
+    /// True when the accepted change can alter native output or native
+    /// resources.  Subscription presence and a declared value hidden by an
+    /// override intentionally do not set this bit.
+    physical_work: bool,
 }
 
 impl<'a> CommitDraft<'a> {
@@ -1138,6 +1284,7 @@ impl<'a> CommitDraft<'a> {
     fn apply_structure_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
         match operation {
             UiOperation::CreateNode { .. } => {
+                self.physical_work = true;
                 self.effects = self
                     .effects
                     .union(EFFECT_STRUCTURE_GUARD)
@@ -1165,6 +1312,7 @@ impl<'a> CommitDraft<'a> {
                 }
                 self.tree.set_root_owner(root, owner).map_err(tree_issue)?;
                 self.roots_added.push(root);
+                self.physical_work = true;
                 self.effects = self
                     .effects
                     .union(EFFECT_STRUCTURE_GUARD)
@@ -1190,7 +1338,20 @@ impl<'a> CommitDraft<'a> {
                 if record.history_action == Some(*action_id) {
                     return Ok(false);
                 }
+                if *action_id == 2 {
+                    if self.document.history_roots().last().copied() != Some(root) {
+                        return Err(CommitIssue::new(
+                            CommitDetail::InvalidTopology,
+                            "History discard requires the live tail root",
+                        ));
+                    }
+                    record.history_action = Some(*action_id);
+                    self.retire_root(root)?;
+                    return Ok(true);
+                }
                 record.history_action = Some(*action_id);
+                self.tree.mark_changed(root);
+                self.physical_work = true;
                 self.effects = self.effects.union(EFFECT_STRUCTURE_GUARD);
                 Ok(true)
             }
@@ -1216,6 +1377,7 @@ impl<'a> CommitDraft<'a> {
                     .insert_before(parent, child, before)
                     .map_err(tree_issue)?;
                 if changed {
+                    self.physical_work = true;
                     let keys = previous_parent
                         .into_iter()
                         .chain(std::iter::once(parent))
@@ -1233,6 +1395,7 @@ impl<'a> CommitDraft<'a> {
                     resolve_node_ref(self.document, &self.tree, &self.local_objects, child)?;
                 let changed = self.tree.detach(parent, child).map_err(tree_issue)?;
                 if changed {
+                    self.physical_work = true;
                     mark_structure(&mut self.tree, [parent, child], &mut self.effects)?;
                 }
                 Ok(changed)
@@ -1259,6 +1422,7 @@ impl<'a> CommitDraft<'a> {
                 self.tree
                     .retire_subtree_with_keys(root, &members)
                     .map_err(tree_issue)?;
+                self.physical_work = true;
                 for attachment in attachments {
                     self.resources.detach_occurrence_resources(attachment)?;
                 }
@@ -1280,33 +1444,38 @@ impl<'a> CommitDraft<'a> {
                 if root_role.is_none() || root_role == Some(RootRole::Body) {
                     return Err(tree_issue(TreeError::ProtectedRoot(root)));
                 }
-                let members = self.tree.retirement_keys(root).map_err(tree_issue)?;
-                let attachments = members
-                    .iter()
-                    .map(|key| self.tree.read(*key).map(|record| record.attachments))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(tree_issue)?;
-                let parent = self.tree.read(root).map_err(tree_issue)?.links.parent;
-                self.tree
-                    .retire_subtree_with_keys(root, &members)
-                    .map_err(tree_issue)?;
-                for attachment in attachments {
-                    self.resources.detach_occurrence_resources(attachment)?;
-                }
-                self.roots_removed
-                    .extend(members.iter().copied().filter(|member| {
-                        self.tree
-                            .read_any(*member)
-                            .is_ok_and(|record| record.root_role.is_some())
-                    }));
-                if let Some(parent) = parent {
-                    mark_structure(&mut self.tree, [parent], &mut self.effects)?;
-                }
-                Ok(true)
+                self.retire_root(root)
             }
 
             _ => unreachable!("operation dispatched to the wrong draft phase"),
         }
+    }
+
+    fn retire_root(&mut self, root: NodeKey) -> Result<bool, CommitIssue> {
+        let members = self.tree.retirement_keys(root).map_err(tree_issue)?;
+        let attachments = members
+            .iter()
+            .map(|key| self.tree.read(*key).map(|record| record.attachments))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(tree_issue)?;
+        let parent = self.tree.read(root).map_err(tree_issue)?.links.parent;
+        self.tree
+            .retire_subtree_with_keys(root, &members)
+            .map_err(tree_issue)?;
+        self.physical_work = true;
+        for attachment in attachments {
+            self.resources.detach_occurrence_resources(attachment)?;
+        }
+        self.roots_removed
+            .extend(members.iter().copied().filter(|member| {
+                self.tree
+                    .read_any(*member)
+                    .is_ok_and(|record| record.root_role.is_some())
+            }));
+        if let Some(parent) = parent {
+            mark_structure(&mut self.tree, [parent], &mut self.effects)?;
+        }
+        Ok(true)
     }
 
     fn apply_resource_operation(&mut self, operation: &UiOperation) -> Result<bool, CommitIssue> {
@@ -1327,6 +1496,7 @@ impl<'a> CommitDraft<'a> {
                     .transpose()?;
                 let changed = self.resources.attach_port(&mut self.tree, node, port)?;
                 if changed {
+                    self.physical_work = true;
                     mark_interaction(&mut self.tree, node, &mut self.effects)?;
                 }
                 Ok(changed)
@@ -1350,6 +1520,7 @@ impl<'a> CommitDraft<'a> {
                     .resources
                     .attach_control(&mut self.tree, node, control)?;
                 if changed {
+                    self.physical_work = true;
                     mark_interaction(&mut self.tree, node, &mut self.effects)?;
                 }
                 Ok(changed)
@@ -1370,6 +1541,7 @@ impl<'a> CommitDraft<'a> {
                     mark_interaction(&mut self.tree, owner, &mut self.effects)?;
                 }
                 self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                self.physical_work = true;
                 Ok(true)
             }
 
@@ -1392,6 +1564,7 @@ impl<'a> CommitDraft<'a> {
                 )?;
                 self.resources.edit(connector)?.port = Some(port);
                 self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                self.physical_work = true;
                 Ok(true)
             }
 
@@ -1417,6 +1590,7 @@ impl<'a> CommitDraft<'a> {
                     .transpose()?;
                 let changed = self.resources.select_connector(port, connector)?;
                 if changed {
+                    self.physical_work = true;
                     self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
                 }
                 Ok(changed)
@@ -1432,6 +1606,7 @@ impl<'a> CommitDraft<'a> {
                 )?;
                 let changed = self.resources.dispose_port(port)?;
                 if changed {
+                    self.physical_work = true;
                     self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
                 }
                 Ok(changed)
@@ -1447,6 +1622,7 @@ impl<'a> CommitDraft<'a> {
                 )?;
                 let changed = self.resources.dispose_connector(connector)?;
                 if changed {
+                    self.physical_work = true;
                     self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
                 }
                 Ok(changed)
@@ -1468,6 +1644,7 @@ impl<'a> CommitDraft<'a> {
                     ));
                 }
                 self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                self.physical_work = true;
                 Ok(true)
             }
 
@@ -1502,6 +1679,7 @@ impl<'a> CommitDraft<'a> {
                 })?;
                 let _ = annotations;
                 self.effects = self.effects.union(EFFECT_CONTENT_PROJECTION);
+                self.physical_work = true;
                 Ok(true)
             }
 
@@ -1523,6 +1701,7 @@ impl<'a> CommitDraft<'a> {
                     mark_interaction(&mut self.tree, owner, &mut self.effects)?;
                 }
                 self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
+                self.physical_work = true;
                 Ok(true)
             }
 
@@ -1536,6 +1715,7 @@ impl<'a> CommitDraft<'a> {
                 )?;
                 let changed = self.resources.dispose_control(control)?;
                 if changed {
+                    self.physical_work = true;
                     self.effects = self.effects.union(EFFECT_INTERACTION_RUNTIME);
                 }
                 Ok(changed)
@@ -1785,29 +1965,40 @@ struct FinalizedDraft {
     resources: ResourcePlan,
     roots_added: Vec<NodeKey>,
     roots_removed: Vec<NodeKey>,
+    history_roots: Vec<HistoryRootSummary>,
     effects: EffectMask,
+    physical_work: bool,
     changed: bool,
 }
 
 impl<'a> CommitDraft<'a> {
     fn finalize(mut self, mut changed: bool) -> Result<FinalizedDraft, CommitIssue> {
-        changed |= finalize_property_changes(
+        let (property_changed, property_physical) = finalize_property_changes(
             &mut self.tree,
             std::mem::take(&mut self.property_initials),
             &mut self.effects,
         )?;
-        changed |= finalize_style_state_changes(
+        changed |= property_changed;
+        self.physical_work |= property_physical;
+        let style_changed = finalize_style_state_changes(
             &mut self.tree,
             std::mem::take(&mut self.style_state_initials),
             &mut self.effects,
         )?;
-        changed |= finalize_interaction_changes(
-            &mut self.tree,
-            std::mem::take(&mut self.interaction_initials),
-            &mut self.effects,
-        )?;
+        changed |= style_changed;
+        self.physical_work |= style_changed;
+        let (interaction_changed, interaction_physical, membership_nodes) =
+            finalize_interaction_changes(
+                &mut self.tree,
+                std::mem::take(&mut self.interaction_initials),
+                &mut self.effects,
+            )?;
+        self.tree.membership_nodes.extend(membership_nodes);
+        changed |= interaction_changed;
+        self.physical_work |= interaction_physical;
         self.tree.validate().map_err(tree_issue)?;
         validate_root_roles(self.document, &self.tree)?;
+        let history_roots = history_root_summaries(&self.tree)?;
         self.resources.validate(&self.tree)?;
         for object in self.local_objects.values() {
             match object {
@@ -1832,7 +2023,9 @@ impl<'a> CommitDraft<'a> {
             resources: self.resources.into_plan(),
             roots_added: self.roots_added,
             roots_removed: self.roots_removed,
+            history_roots,
             effects: self.effects,
+            physical_work: self.physical_work,
             changed,
         })
     }
@@ -2097,8 +2290,9 @@ fn finalize_property_changes(
     tree: &mut TreeDraft<'_>,
     initials: HashMap<NodeKey, PropertyLayers>,
     effects: &mut EffectMask,
-) -> Result<bool, CommitIssue> {
+) -> Result<(bool, bool), CommitIssue> {
     let mut changed = false;
+    let mut physical = false;
     let mut domain_changes: HashMap<NodeKey, (bool, bool)> = HashMap::new();
     let mut effective_effects: HashMap<NodeKey, EffectMask> = HashMap::new();
     for (node, before) in initials {
@@ -2113,6 +2307,11 @@ fn finalize_property_changes(
                 continue;
             }
             changed = true;
+            // A masked declaration still advances the accepted UI revision.
+            // Retain the node in the native frontier so a later effective
+            // reveal can reuse this coalesced dependency instead of
+            // rediscovering the write from the whole document.
+            tree.mark_changed(node);
             let descriptor = property_descriptor(*property);
             let domains = domain_changes.entry(node).or_default();
             if descriptor.domain == "geometry" {
@@ -2121,6 +2320,8 @@ fn finalize_property_changes(
                 domains.1 = true;
             }
             if before.effective(*property) != after.effective(*property) {
+                physical = true;
+                tree.mark_changed(node);
                 let entry = effective_effects.entry(node).or_default();
                 *entry = entry.union(descriptor.effects);
             }
@@ -2148,7 +2349,7 @@ fn finalize_property_changes(
             *effects = effects.union(node_effects);
         }
     }
-    Ok(changed)
+    Ok((changed, physical))
 }
 
 fn finalize_style_state_changes(
@@ -2169,6 +2370,7 @@ fn finalize_style_state_changes(
             .cloned();
         if current != initial {
             changed_nodes.insert(node);
+            tree.mark_changed(node);
         }
     }
     for node in changed_nodes.iter().copied() {
@@ -2181,21 +2383,34 @@ fn finalize_interaction_changes(
     tree: &mut TreeDraft<'_>,
     initials: HashMap<NodeKey, (bool, u64)>,
     effects: &mut EffectMask,
-) -> Result<bool, CommitIssue> {
+) -> Result<(bool, bool, HashSet<NodeKey>), CommitIssue> {
     let mut changed_nodes = HashSet::new();
+    let mut membership_nodes = HashSet::new();
+    let mut physical = false;
     for (node, (hidden, subscriptions)) in initials {
         if tree.is_retired(node) {
             continue;
         }
-        let record = tree.read(node).map_err(tree_issue)?;
-        if record.renderer_hidden != hidden || record.subscriptions != subscriptions {
+        let (hidden_changed, subscriptions_changed) = {
+            let record = tree.read(node).map_err(tree_issue)?;
+            (
+                record.renderer_hidden != hidden,
+                record.subscriptions != subscriptions,
+            )
+        };
+        if hidden_changed || subscriptions_changed {
             changed_nodes.insert(node);
+            tree.mark_changed(node);
+            physical |= hidden_changed;
+            if hidden_changed {
+                membership_nodes.insert(node);
+            }
         }
     }
     for node in changed_nodes.iter().copied() {
         mark_interaction(tree, node, effects)?;
     }
-    Ok(!changed_nodes.is_empty())
+    Ok((!changed_nodes.is_empty(), physical, membership_nodes))
 }
 
 fn mark_style_state(
@@ -2203,6 +2418,7 @@ fn mark_style_state(
     node: NodeKey,
     effects: &mut EffectMask,
 ) -> Result<(), CommitIssue> {
+    tree.mark_changed(node);
     let record = tree.edit(node).map_err(tree_issue)?;
     record.revisions.presentation =
         record
@@ -2222,6 +2438,7 @@ fn mark_interaction(
     node: NodeKey,
     effects: &mut EffectMask,
 ) -> Result<(), CommitIssue> {
+    tree.mark_changed(node);
     let record = tree.edit(node).map_err(tree_issue)?;
     record.revisions.interaction =
         record.revisions.interaction.checked_add(1).ok_or_else(|| {
@@ -2288,6 +2505,92 @@ fn validate_root_roles(
     Ok(())
 }
 
+fn history_root_summaries(tree: &TreeDraft<'_>) -> Result<Vec<HistoryRootSummary>, CommitIssue> {
+    // Descendant edits are already marked by the draft's changed frontier.
+    // Walk only those keys to their owning root; an ordinary leaf update must
+    // not rescan every child of every History unit just to rediscover which
+    // unit changed.  A final-content scan is retained below only for an
+    // actual Freeze action, where the whole final subtree is the contract.
+    let mut root_set = HashSet::new();
+    for key in tree.changed_keys() {
+        if tree.is_retired(key) {
+            continue;
+        }
+        let mut cursor = Some(key);
+        let mut seen = HashSet::new();
+        while let Some(current) = cursor {
+            if !seen.insert(current) {
+                return Err(CommitIssue::new(
+                    CommitDetail::InvalidTopology,
+                    "History root ownership links contain a cycle",
+                ));
+            }
+            let record = tree.read(current).map_err(tree_issue)?;
+            if record.root_role == Some(RootRole::LegacyHistoryUnit) {
+                root_set.insert(current);
+                break;
+            }
+            cursor = record.root_owner.or(record.links.parent);
+        }
+    }
+    let mut roots = root_set.into_iter().collect::<Vec<_>>();
+    roots.sort_unstable_by_key(|key| (key.slot, key.generation));
+    let mut summaries = Vec::with_capacity(roots.len());
+    for root in roots {
+        let record = tree.read(root).map_err(tree_issue)?;
+        let has_live_control = if record.history_action == Some(1) {
+            // Freeze is the one operation whose validity depends on the
+            // complete final subtree, including unchanged descendants.
+            history_subtree_has_control(tree, root)?
+        } else {
+            false
+        };
+        if record.history_action == Some(1) && has_live_control {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "History freeze final content cannot contain a live control",
+            ));
+        }
+        summaries.push(HistoryRootSummary {
+            root,
+            action: record.history_action,
+            has_live_control,
+        });
+    }
+    Ok(summaries)
+}
+
+fn history_subtree_has_control(tree: &TreeDraft<'_>, root: NodeKey) -> Result<bool, CommitIssue> {
+    let mut stack = vec![root];
+    let mut seen = HashSet::new();
+    while let Some(node) = stack.pop() {
+        if !seen.insert(node) {
+            return Err(CommitIssue::new(
+                CommitDetail::InvalidTopology,
+                "History root child links contain a cycle",
+            ));
+        }
+        let record = tree.read(node).map_err(tree_issue)?;
+        if record.attachments.control.is_some() {
+            return Ok(true);
+        }
+        let mut child = record.links.first_child;
+        while let Some(child_key) = child {
+            if tree.is_retired(child_key) {
+                child = tree
+                    .read_any(child_key)
+                    .map_err(tree_issue)?
+                    .links
+                    .next_sibling;
+                continue;
+            }
+            stack.push(child_key);
+            child = tree.read(child_key).map_err(tree_issue)?.links.next_sibling;
+        }
+    }
+    Ok(false)
+}
+
 fn apply_tree_plan(
     arena: &mut super::Arena<Occurrence>,
     portals_by_owner: &mut HashMap<NodeKey, HashSet<NodeKey>>,
@@ -2298,6 +2601,8 @@ fn apply_tree_plan(
         created,
         retired,
         retired_set,
+        changed_nodes: _,
+        membership_nodes: _,
         portal_buckets,
         portal_touched,
     } = plan;
@@ -2389,6 +2694,7 @@ fn apply_resource_plan(
         retired,
         retired_set,
         owner_changes,
+        resource_ports: _,
         connector_buckets,
         connector_touched,
         selected_buckets,
@@ -2918,7 +3224,9 @@ struct ReservedDraft {
     resources: ResourcePlan,
     roots_added: Vec<NodeKey>,
     roots_removed: Vec<NodeKey>,
+    history_roots: Vec<HistoryRootSummary>,
     effects: EffectMask,
+    physical_work: bool,
     changed: bool,
 }
 
@@ -3057,6 +3365,7 @@ impl OccurrenceDocument {
             property_initials: HashMap::new(),
             style_state_initials: HashMap::new(),
             interaction_initials: HashMap::new(),
+            physical_work: false,
         };
         draft
             .property_initials
@@ -3095,7 +3404,9 @@ impl OccurrenceDocument {
             resources,
             roots_added,
             roots_removed,
+            history_roots,
             effects,
+            physical_work,
             changed,
         } = finalized;
         let mut tree = tree;
@@ -3202,7 +3513,9 @@ impl OccurrenceDocument {
             resources,
             roots_added,
             roots_removed,
+            history_roots,
             effects,
+            physical_work,
             changed,
         })
     }
@@ -3266,10 +3579,12 @@ impl OccurrenceDocument {
             next_ui_revision,
             changed: reserved.changed,
             effects: reserved.effects,
+            physical_work: reserved.physical_work,
             tree: reserved.tree,
             resources: reserved.resources,
             roots_added: reserved.roots_added,
             roots_removed: reserved.roots_removed,
+            history_roots: reserved.history_roots,
             result,
         })
     }
@@ -4095,6 +4410,49 @@ mod tests {
             .commit_ui(&wrong_root)
             .expect_err("body is not a history root");
         assert_eq!(rejection.detail, CommitDetail::InvalidTopology);
+    }
+
+    #[test]
+    fn discard_history_action_retires_only_the_live_tail_root() {
+        let mut document = document();
+        let mut create = UiCommit::new(document.accepted_ui_revision());
+        create.push(UiOperation::CreateRoot {
+            local_ordinal: 1,
+            role: RootRole::LegacyHistoryUnit,
+            owner: None,
+        });
+        create.push(UiOperation::CreateRoot {
+            local_ordinal: 2,
+            role: RootRole::LegacyHistoryUnit,
+            owner: None,
+        });
+        let roots = document
+            .commit_ui(&create)
+            .expect("History roots")
+            .acknowledgement
+            .created;
+
+        let mut non_tail = UiCommit::new(document.accepted_ui_revision());
+        non_tail.push(UiOperation::HistoryAction {
+            root: NodeRef::Existing(roots[0]),
+            action_id: 2,
+        });
+        let rejection = document
+            .commit_ui(&non_tail)
+            .expect_err("non-tail History discard");
+        assert_eq!(rejection.detail, CommitDetail::InvalidTopology);
+
+        let mut discard = UiCommit::new(document.accepted_ui_revision());
+        discard.push(UiOperation::HistoryAction {
+            root: NodeRef::Existing(roots[1]),
+            action_id: 2,
+        });
+        document.commit_ui(&discard).expect("tail History discard");
+        assert_eq!(document.history_roots().len(), 1);
+        assert_eq!(
+            document.history_roots()[0],
+            roots[0].node_key().expect("node root")
+        );
     }
 
     #[test]

@@ -1,10 +1,15 @@
-use std::{collections::VecDeque, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Instant,
+};
 
 use anyhow::Result;
 
+use crate::history::FlowBoundary;
 use crate::presentation::factory as vf;
 use crate::{
-    ComponentHandle, InteractionResult, OutputRouter, Scene, View,
+    ComponentHandle, HistoryUnitId, InteractionResult, OutputRouter, Scene, View,
     backend::NativeHistorySink,
     component::ComponentRegistry,
     geometry::Size,
@@ -17,6 +22,7 @@ use crate::{
 use super::{
     host::RoutedOutput,
     input::{GlobalBindings, PasteInterceptors},
+    ui_resources::HistoryUnitStatus,
 };
 
 const OUTPUT_BATCH_BUDGET: usize = 128;
@@ -26,6 +32,13 @@ pub(crate) struct ReadyStatus {
     pub(crate) dirty: bool,
     pub(crate) exiting: bool,
     pub(crate) more_ready: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PasteDispatchOutcome {
+    Disabled,
+    Intercepted(RoutedOutput),
+    Local,
 }
 
 /// Native retained runtime owned by `HostInner`.
@@ -42,6 +55,12 @@ pub(crate) struct NativeRuntime {
     pending_outputs: VecDeque<RoutedOutput>,
     global_bindings: GlobalBindings,
     paste_interceptors: PasteInterceptors,
+    /// Correspondence for roots adapted from the occurrence document.  The
+    /// semantic History model can remove a unit after its physical prefix is
+    /// confirmed; retaining this root mapping prevents the next UI sync from
+    /// replaying that already-exported unit.  Public History units are never
+    /// entered here and therefore cannot be retired by occurrence sync.
+    ui_history_units: HashMap<crate::occurrence::NodeKey, UiHistoryBinding>,
     /// PERF-12 T13.1 R8: component ids whose language handle was disposed and
     /// which may be physically reclaimed once the last SUCCESSFULLY reconciled
     /// mount graph no longer contains them (deferred retirement — never
@@ -52,6 +71,28 @@ pub(crate) struct NativeRuntime {
     routed_outputs: VecDeque<RoutedOutput>,
     dirty: bool,
     exit_requested: bool,
+}
+
+#[derive(Clone, Copy)]
+struct UiHistoryBinding {
+    id: HistoryUnitId,
+    status: HistoryUnitStatus,
+}
+
+enum UiHistoryMutation {
+    PushLive(HistoryUnitId, View, FlowBoundary),
+    PushFrozen(HistoryUnitId, View, FlowBoundary),
+    ReplaceLive(HistoryUnitId, View),
+    Freeze(HistoryUnitId, View),
+    BindContent(HistoryUnitId, View),
+    Retire(HistoryUnitId),
+}
+
+#[derive(Default)]
+struct UiHistoryDelta {
+    mutations: Vec<UiHistoryMutation>,
+    updates: Vec<(crate::occurrence::NodeKey, UiHistoryBinding)>,
+    retired_roots: Vec<crate::occurrence::NodeKey>,
 }
 
 impl NativeRuntime {
@@ -65,15 +106,15 @@ impl NativeRuntime {
     pub(crate) fn host_bind_key(
         &mut self,
         key: crate::KeyStroke,
-        factory: impl Fn() -> RoutedOutput + 'static,
+        factory: impl Fn() -> RoutedOutput + Send + 'static,
     ) {
         self.global_bindings.bind(key, factory);
     }
 
-    pub(crate) fn host_route<T: 'static>(
+    pub(crate) fn host_route<T: Send + 'static>(
         &mut self,
         output: crate::Output<T>,
-        map: impl Fn(T) -> RoutedOutput + 'static,
+        map: impl Fn(T) -> RoutedOutput + Send + 'static,
     ) -> Result<(), crate::RouteConflict> {
         self.outputs.route(output, map)
     }
@@ -81,7 +122,7 @@ impl NativeRuntime {
     pub(crate) fn host_intercept_paste<C>(
         &mut self,
         component: ComponentHandle<C>,
-        map: impl Fn(String) -> RoutedOutput + 'static,
+        map: impl Fn(String) -> RoutedOutput + Send + 'static,
     ) where
         C: crate::Component,
     {
@@ -164,16 +205,46 @@ impl NativeRuntime {
         self.scene_host.abort_content_candidate();
     }
 
+    /// Records that an asynchronous History receipt may have crossed the
+    /// native boundary before failing. The logical frontier remains at its
+    /// last confirmed prefix; subsequent candidates must not replay the
+    /// unacknowledged suffix.
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_recover_native_history_synchronization(&mut self) {
+    pub(crate) fn host_mark_native_history_synchronization_unknown(&mut self) {
         if let Some(history) = self.scene.history_mut() {
-            history.recover_native_synchronization();
+            history.mark_native_synchronization_unknown();
         }
     }
 
     #[cfg(feature = "native-host")]
     pub(crate) fn host_has_invalidated_components(&self) -> bool {
         self.scene_host.has_invalidated_components()
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_focus_component(
+        &mut self,
+        id: u64,
+        geometry: &crate::presentation::layout::ComponentGeometryMap,
+    ) -> bool {
+        let focused = self.scene_host.focus_component(
+            crate::component::ComponentId::from_raw(id),
+            geometry,
+            &mut self.components,
+        );
+        if focused {
+            self.invalidate_frame();
+        }
+        focused
+    }
+
+    #[cfg(feature = "native-host")]
+    pub(crate) fn host_focused_component(&self) -> Option<u64> {
+        self.scene_host.focused_component().map(|id| id.value())
+    }
+
+    pub(crate) fn input_disabled(&self) -> bool {
+        self.exit_requested
     }
 
     /// Materializes component snapshots without running layout so H3 can
@@ -395,8 +466,161 @@ impl NativeRuntime {
 
     pub(crate) fn host_set_history(&mut self, history: crate::History) {
         self.scene.set_history(history);
+        self.ui_history_units.clear();
         self.scene_host.invalidate_root();
         self.invalidate_frame();
+    }
+
+    pub(crate) fn host_sync_ui_history(
+        &mut self,
+        units: Vec<crate::application::legacy_scene::HistoryUnitRecipe>,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+        content: &mut crate::application::content::ContentHostRegistry,
+    ) -> anyhow::Result<()> {
+        let delta = self.prepare_ui_history_delta(units, changes)?;
+        let history = self
+            .scene
+            .history_mut()
+            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
+        for mutation in delta.mutations {
+            match mutation {
+                UiHistoryMutation::PushLive(id, view, boundary) => {
+                    history.push_live_with_identity(id, view, boundary)?;
+                }
+                UiHistoryMutation::PushFrozen(id, view, boundary) => {
+                    history.push_with_identity(id, view.clone(), boundary)?;
+                    Self::bind_ui_history_content(content, id, &view)?;
+                }
+                UiHistoryMutation::ReplaceLive(id, view) => history.replace_live(id, view)?,
+                UiHistoryMutation::Freeze(id, view) => {
+                    content.clear_history_unit(id.value());
+                    history.freeze(id, view.clone())?;
+                    Self::bind_ui_history_content(content, id, &view)?;
+                }
+                UiHistoryMutation::BindContent(id, view) => {
+                    Self::bind_ui_history_content(content, id, &view)?;
+                }
+                UiHistoryMutation::Retire(id) => {
+                    content.clear_history_unit(id.value());
+                    history.retire_unit(id)?;
+                }
+            }
+        }
+        for root in delta.retired_roots {
+            self.ui_history_units.remove(&root);
+        }
+        for (root, binding) in delta.updates {
+            self.ui_history_units.insert(root, binding);
+        }
+        self.scene_host.invalidate_root();
+        self.dirty = true;
+        Ok(())
+    }
+
+    fn prepare_ui_history_delta(
+        &self,
+        units: Vec<crate::application::legacy_scene::HistoryUnitRecipe>,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+    ) -> anyhow::Result<UiHistoryDelta> {
+        let history = self
+            .scene
+            .history()
+            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
+        let mut delta = UiHistoryDelta::default();
+        delta
+            .mutations
+            .try_reserve(units.len())
+            .map_err(|_| anyhow::anyhow!("accepted History transition capacity is exhausted"))?;
+        for unit in units {
+            let binding = UiHistoryBinding {
+                id: unit.unit_identity,
+                status: unit.status,
+            };
+            let present = history.unit_is_live(binding.id);
+            match (self.ui_history_units.get(&unit.root).copied(), present) {
+                (Some(previous), Some(is_live)) => {
+                    if previous.id != binding.id {
+                        return Err(anyhow::anyhow!(
+                            "accepted History root changed its native unit identity"
+                        ));
+                    }
+                    match (previous.status, binding.status, is_live) {
+                        (HistoryUnitStatus::Live, HistoryUnitStatus::Live, true) => delta
+                            .mutations
+                            .push(UiHistoryMutation::ReplaceLive(binding.id, unit.view)),
+                        (HistoryUnitStatus::Live, HistoryUnitStatus::Frozen, true) => delta
+                            .mutations
+                            .push(UiHistoryMutation::Freeze(binding.id, unit.view)),
+                        (HistoryUnitStatus::Frozen, HistoryUnitStatus::Frozen, true) => delta
+                            .mutations
+                            .push(UiHistoryMutation::BindContent(binding.id, unit.view)),
+                        (HistoryUnitStatus::Frozen, HistoryUnitStatus::Frozen, false) => {}
+                        (previous_status, next_status, actual_live) => {
+                            return Err(anyhow::anyhow!(
+                                "accepted History status diverged (previous={previous_status:?}, next={next_status:?}, live={actual_live})"
+                            ));
+                        }
+                    }
+                }
+                (Some(previous), None) => {
+                    if !(previous.status == HistoryUnitStatus::Frozen
+                        && binding.status == HistoryUnitStatus::Frozen)
+                    {
+                        return Err(anyhow::anyhow!(
+                            "accepted live History unit disappeared from semantic History"
+                        ));
+                    }
+                }
+                (None, Some(is_live)) => {
+                    if is_live != (binding.status == HistoryUnitStatus::Live) {
+                        return Err(anyhow::anyhow!(
+                            "existing History unit status does not match its accepted root"
+                        ));
+                    }
+                    if binding.status == HistoryUnitStatus::Live {
+                        delta
+                            .mutations
+                            .push(UiHistoryMutation::ReplaceLive(binding.id, unit.view));
+                    } else {
+                        delta
+                            .mutations
+                            .push(UiHistoryMutation::BindContent(binding.id, unit.view));
+                    }
+                }
+                (None, None) => delta.mutations.push(match binding.status {
+                    HistoryUnitStatus::Live => {
+                        UiHistoryMutation::PushLive(binding.id, unit.view, unit.flow_boundary)
+                    }
+                    HistoryUnitStatus::Frozen => {
+                        UiHistoryMutation::PushFrozen(binding.id, unit.view, unit.flow_boundary)
+                    }
+                }),
+            }
+            delta.updates.push((unit.root, binding));
+        }
+        if let Some(changes) = changes {
+            for root in changes.retired_nodes.iter().copied() {
+                let Some(binding) = self.ui_history_units.get(&root).copied() else {
+                    continue;
+                };
+                if history.contains_unit(binding.id) {
+                    delta.mutations.push(UiHistoryMutation::Retire(binding.id));
+                }
+                delta.retired_roots.push(root);
+            }
+        }
+        Ok(delta)
+    }
+
+    fn bind_ui_history_content(
+        content: &mut crate::application::content::ContentHostRegistry,
+        id: HistoryUnitId,
+        view: &View,
+    ) -> anyhow::Result<()> {
+        if let Some(transfer) = view.content_history_transfer() {
+            content.set_history_unit(transfer.port_id, id.value(), transfer.padding)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn host_exited(&self) -> bool {
@@ -433,6 +657,7 @@ impl NativeRuntime {
             pending_outputs: VecDeque::new(),
             global_bindings: GlobalBindings::default(),
             paste_interceptors: PasteInterceptors::default(),
+            ui_history_units: HashMap::new(),
             deferred_pastes: VecDeque::new(),
             routed_outputs: VecDeque::new(),
             dirty: true,
@@ -466,18 +691,32 @@ impl NativeRuntime {
         Ok(result)
     }
 
-    pub(crate) fn dispatch_paste(
+    pub(crate) fn prepare_paste_route(&mut self, text: &str) -> PasteDispatchOutcome {
+        if self.exit_requested {
+            return PasteDispatchOutcome::Disabled;
+        }
+        if let Some(output) = self.intercept_paste(text) {
+            return PasteDispatchOutcome::Intercepted(output);
+        }
+        PasteDispatchOutcome::Local
+    }
+
+    pub(crate) fn intercept_paste(&mut self, text: &str) -> Option<RoutedOutput> {
+        self.scene_host.intercept_paste(text, |component, _text| {
+            self.paste_interceptors.output(component, text)
+        })
+    }
+
+    pub(crate) fn queue_intercepted_paste(&mut self, output: RoutedOutput) {
+        self.pending_outputs.push_back(output);
+    }
+
+    pub(crate) fn dispatch_paste_local(
         &mut self,
         text: &str,
     ) -> Result<InteractionResult, OutputDispatchError> {
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
-        }
-        if let Some(output) = self.scene_host.intercept_paste(text, |component, _text| {
-            self.paste_interceptors.output(component, text)
-        }) {
-            self.pending_outputs.push_back(output);
-            return Ok(InteractionResult::Consumed);
         }
 
         let previous_focus = self.scene_host.focused_component();
@@ -558,6 +797,37 @@ impl NativeRuntime {
         // Retirement is deferred until this successful reconciliation has
         // replaced the committed mount graph. A retired component that was
         // still mounted during the prior frame is now safe to reclaim.
+        self.reap_retired_components();
+        self.dirty = false;
+        Ok(frame)
+    }
+
+    /// Prepares a frame and the exact native History operation that must be
+    /// acknowledged after its rows are submitted. No sink or terminal I/O is
+    /// involved here; the caller owns submission and receipt settlement.
+    pub(crate) fn prepare_frame_for_history(
+        &mut self,
+        now: Instant,
+        size: Size,
+        states: &StateFrameView<'_>,
+        content: &mut dyn ContentProvider,
+    ) -> anyhow::Result<(
+        PreparedSceneFrame,
+        Option<crate::history::NativeTransferPlan>,
+    )> {
+        content.set_theme(&self.theme);
+        let frame = self
+            .scene_host
+            .prepare_at_with_states(
+                now,
+                &mut self.scene,
+                &mut self.components,
+                size,
+                &self.theme,
+                states,
+                content,
+            )
+            .map_err(|error| anyhow::anyhow!("logical render failed: {error:?}"))?;
         self.reap_retired_components();
         self.dirty = false;
         Ok(frame)

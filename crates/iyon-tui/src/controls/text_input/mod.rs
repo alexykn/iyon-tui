@@ -26,11 +26,20 @@ use crate::{
 };
 
 use self::{
-    command::{command_for_key, handle_command},
+    command::{apply_buffer_command_to_buffer, command_for_key, handle_command},
     output::ChangeOutputs,
 };
 
 pub use output::TextChange;
+
+/// Exact post-input text/cursor facts prepared without mutating the live
+/// editor.  The host uses this small editor-local value to admit its native
+/// event batch before applying input; it never clones the owning runtime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TextInputPreview {
+    pub(crate) text: String,
+    pub(crate) cursor_bytes: usize,
+}
 
 /// Retained generic Unicode text editor state.
 ///
@@ -112,6 +121,34 @@ impl TextInput {
         self.buffer.cursor_bytes()
     }
 
+    pub(crate) fn preview_key(&self, key: crate::KeyStroke) -> Option<TextInputPreview> {
+        let command = command_for_key(self, key)?;
+        let mut buffer = self.buffer.clone();
+        apply_buffer_command_to_buffer(
+            &mut buffer,
+            command,
+            self.multiline,
+            self.command_layout_width(),
+        );
+        Some(TextInputPreview {
+            text: buffer.text().to_owned(),
+            cursor_bytes: buffer.cursor_bytes(),
+        })
+    }
+
+    pub(crate) fn is_submit_key(&self, key: crate::KeyStroke) -> bool {
+        matches!(command_for_key(self, key), Some(TextInputCommand::Submit))
+    }
+
+    pub(crate) fn preview_paste(&self, text: &str) -> TextInputPreview {
+        let mut buffer = self.buffer.clone();
+        buffer.insert_text(text, self.multiline);
+        TextInputPreview {
+            text: buffer.text().to_owned(),
+            cursor_bytes: buffer.cursor_bytes(),
+        }
+    }
+
     /// Replaces the canonical text and moves the cursor to its end.
     pub fn set_text(&mut self, text: impl AsRef<str>) {
         self.buffer.set_text(text, self.multiline);
@@ -131,9 +168,9 @@ impl TextInput {
     }
 
     /// Registers an ordered synchronous projection of user text changes.
-    pub fn output_on_change<R: 'static>(
+    pub fn output_on_change<R: Send + 'static>(
         &mut self,
-        project: impl for<'change> Fn(TextChange<'change>) -> R + 'static,
+        project: impl for<'change> Fn(TextChange<'change>) -> R + Send + 'static,
     ) -> Output<R> {
         self.change_outputs.register(project)
     }
@@ -148,30 +185,6 @@ impl TextInput {
 
     fn emit_change(&self, cx: &mut EventCx<'_>) {
         self.change_outputs.emit(&self.buffer, cx);
-    }
-
-    fn move_up(&mut self) -> bool {
-        let changed = if let Some(size) = self.layout_size {
-            let rows = input_wrap_ranges(self.text(), self.inner_size(size).width);
-            self.buffer.move_up_in_rows(&rows)
-        } else {
-            let rows = self.buffer.logical_rows();
-            self.buffer.move_up_in_rows(&rows)
-        };
-        self.repair_scroll();
-        changed
-    }
-
-    fn move_down(&mut self) -> bool {
-        let changed = if let Some(size) = self.layout_size {
-            let rows = input_wrap_ranges(self.text(), self.inner_size(size).width);
-            self.buffer.move_down_in_rows(&rows)
-        } else {
-            let rows = self.buffer.logical_rows();
-            self.buffer.move_down_in_rows(&rows)
-        };
-        self.repair_scroll();
-        changed
     }
 
     fn can_execute(&self, command: TextInputCommand) -> bool {
@@ -247,6 +260,10 @@ impl TextInput {
             size.height
                 .saturating_sub(border.top_height().saturating_add(border.bottom_height())),
         )
+    }
+
+    pub(crate) fn command_layout_width(&self) -> Option<u16> {
+        self.layout_size.map(|size| self.inner_size(size).width)
     }
 
     fn repair_scroll(&mut self) {

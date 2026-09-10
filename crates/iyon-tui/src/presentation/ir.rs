@@ -743,6 +743,30 @@ pub(crate) struct ViewNodeParts {
     pub(crate) kind: ViewKind,
 }
 
+/// The only semantic shape whose physical rows can be transferred to native
+/// History without projecting away part of the unit.
+///
+/// History is an irreversible physical export.  A nested ContentHost is not
+/// enough to make its containing View exportable: siblings, wrappers,
+/// clipping, backgrounds, borders, bounds, and inherited style all have
+/// physical effects that `ContentProvider::history_rows` does not encode.
+/// Root padding is the one supported transform because the content adapter
+/// explicitly emits its transparent rows and horizontal offset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ContentHistoryTransfer {
+    pub(crate) port_id: u64,
+    pub(crate) padding: Insets,
+}
+
+fn add_history_padding(left: Insets, right: Insets) -> Option<Insets> {
+    Some(Insets::new(
+        left.top.checked_add(right.top)?,
+        left.right.checked_add(right.right)?,
+        left.bottom.checked_add(right.bottom)?,
+        left.left.checked_add(right.left)?,
+    ))
+}
+
 impl ViewNodeParts {
     /// Destructures a base view into candidate parts. Payloads stay shared
     /// behind their existing allocations; only the outer node identity is
@@ -1037,6 +1061,172 @@ impl View {
 
     pub(crate) fn contains_content_identity(&self) -> bool {
         self.flags().contains_content_attachment()
+    }
+
+    /// Returns the complete physical transfer contract for this View, if it
+    /// is represented by exactly one ContentHost product and only transforms
+    /// implemented by the native History adapter.
+    ///
+    /// Recursive attachment traversal remains available through
+    /// `content_attachment_ids` for metric/cache dependencies.  This method
+    /// intentionally does not use that traversal for export eligibility.
+    pub(crate) fn content_history_transfer(&self) -> Option<ContentHistoryTransfer> {
+        let mut padding = Insets::ZERO;
+        let port_id = self.collect_content_history_transfer(&mut padding, true)?;
+        Some(ContentHistoryTransfer { port_id, padding })
+    }
+
+    fn collect_content_history_transfer(
+        &self,
+        padding: &mut Insets,
+        allow_content_padding: bool,
+    ) -> Option<u64> {
+        let decoration = self.decoration();
+        if (!allow_content_padding && decoration.padding != Insets::ZERO)
+            || self.state_attachment_id().is_some()
+            || *self.view_style_states() != StyleStates::default()
+            || *self.view_style_facts() != StyleFacts::default()
+            || self.height() != HeightRule::Fit
+            || decoration.bounds != ViewBounds::default()
+            || decoration.surface_background.is_some()
+            || decoration.border.is_some()
+            || decoration.text_style != StyleRef::default()
+        {
+            return None;
+        }
+        *padding = add_history_padding(*padding, decoration.padding)?;
+        match self.kind() {
+            ViewKind::ContentHost
+                if self.width() == WidthRule::Fit || self.width() == WidthRule::Fill =>
+            {
+                self.content_attachment_id()
+            }
+            // The M1 History adapter can preserve these one-child shells
+            // exactly. Any sibling, gap, alignment, viewport, or clamp would
+            // add physical geometry that a content-row product cannot carry.
+            ViewKind::Container(container) if self.width() == WidthRule::Fit => container
+                .child
+                .collect_content_history_transfer(padding, false),
+            ViewKind::Column(column)
+                if self.width() == WidthRule::Fit
+                    && column.gap == 0
+                    && column.children.len() == 1 =>
+            {
+                column
+                    .children
+                    .get(0)
+                    .expect("one-child Column has a child")
+                    .view
+                    .collect_content_history_transfer(padding, false)
+            }
+            ViewKind::Row(row)
+                if self.width() == WidthRule::Fit
+                    && row.gap == 0
+                    && row.vertical_align == VerticalAlign::Top
+                    && row.children.len() == 1 =>
+            {
+                row.children
+                    .get(0)
+                    .expect("one-child Row has a child")
+                    .view
+                    .collect_content_history_transfer(padding, false)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn state_attachment_ids(&self) -> Vec<u64> {
+        let mut ids = Vec::new();
+        self.collect_state_attachment_ids(&mut ids);
+        ids
+    }
+
+    fn collect_state_attachment_ids(&self, ids: &mut Vec<u64>) {
+        if let Some(id) = self.state_attachment_id() {
+            ids.push(id);
+        }
+        match &self.inner.kind {
+            ViewKind::Container(container) => container.child.collect_state_attachment_ids(ids),
+            ViewKind::Hanging(hanging) => {
+                hanging.prefix.collect_state_attachment_ids(ids);
+                hanging
+                    .continuation_prefix
+                    .collect_state_attachment_ids(ids);
+                hanging.body.collect_state_attachment_ids(ids);
+            }
+            ViewKind::ClampRows(clamp) => clamp.child.collect_state_attachment_ids(ids),
+            ViewKind::RowViewport(viewport) => viewport.child.collect_state_attachment_ids(ids),
+            ViewKind::Column(column) => {
+                for child in column.children.iter() {
+                    child.view.collect_state_attachment_ids(ids);
+                }
+            }
+            ViewKind::Row(row) => {
+                for child in row.children.iter() {
+                    child.view.collect_state_attachment_ids(ids);
+                }
+            }
+            ViewKind::Grid(grid) => {
+                for cell in grid.cells.iter() {
+                    cell.view.collect_state_attachment_ids(ids);
+                }
+            }
+            ViewKind::Text(_)
+            | ViewKind::Spacer { .. }
+            | ViewKind::ComponentSlot(_)
+            | ViewKind::ContentHost => {}
+        }
+    }
+
+    pub(crate) fn content_attachment_ids(&self) -> Vec<u64> {
+        let mut ids = Vec::new();
+        self.collect_content_attachment_ids(&mut ids);
+        ids
+    }
+
+    fn collect_content_attachment_ids(&self, ids: &mut Vec<u64>) {
+        if let Some(id) = self.content_attachment_id() {
+            ids.push(id);
+        }
+        match &self.inner.kind {
+            ViewKind::Container(container) => container.child.collect_content_attachment_ids(ids),
+            ViewKind::Hanging(hanging) => {
+                hanging.prefix.collect_content_attachment_ids(ids);
+                hanging
+                    .continuation_prefix
+                    .collect_content_attachment_ids(ids);
+                hanging.body.collect_content_attachment_ids(ids);
+            }
+            ViewKind::ClampRows(clamp) => clamp.child.collect_content_attachment_ids(ids),
+            ViewKind::RowViewport(viewport) => viewport.child.collect_content_attachment_ids(ids),
+            ViewKind::Column(column) => {
+                for child in column.children.iter() {
+                    child.view.collect_content_attachment_ids(ids);
+                }
+            }
+            ViewKind::Row(row) => {
+                for child in row.children.iter() {
+                    child.view.collect_content_attachment_ids(ids);
+                }
+            }
+            ViewKind::Grid(grid) => {
+                for cell in grid.cells.iter() {
+                    cell.view.collect_content_attachment_ids(ids);
+                }
+            }
+            ViewKind::Text(_)
+            | ViewKind::Spacer { .. }
+            | ViewKind::ComponentSlot(_)
+            | ViewKind::ContentHost => {}
+        }
+    }
+
+    pub(crate) fn single_content_attachment_id(&self) -> Option<u64> {
+        let ids = self.content_attachment_ids();
+        if ids.len() == 1 {
+            return ids.into_iter().next();
+        }
+        None
     }
 
     /// Constructs an axis from scalar track words and already-materialized
@@ -2246,6 +2436,51 @@ mod tests {
         assert!(View::ptr_eq(&original, &cloned));
         assert_eq!(original.id(), cloned.id());
         assert_eq!(std::sync::Arc::strong_count(&original.inner), 2);
+    }
+
+    #[test]
+    fn content_history_transfer_accepts_only_the_complete_adapter_shape() {
+        let content = crate::presentation::factory::content_host(1).expect("positive port");
+        assert_eq!(
+            content.content_history_transfer(),
+            Some(super::ContentHistoryTransfer {
+                port_id: 1,
+                padding: crate::Insets::ZERO,
+            })
+        );
+
+        let transparent_shell = crate::presentation::factory::column(vec![content.clone()], 0);
+        assert!(transparent_shell.content_history_transfer().is_some());
+        let padded = crate::presentation::factory::padding(transparent_shell, 2);
+        assert_eq!(
+            padded
+                .content_history_transfer()
+                .expect("root padding around a transparent shell is transferable")
+                .padding,
+            crate::Insets::all(2)
+        );
+        let padded_content = crate::presentation::factory::padding(content.clone(), 2);
+        assert_eq!(
+            padded_content
+                .content_history_transfer()
+                .expect("root ContentHost padding is an adapter-supported transform")
+                .padding,
+            crate::Insets::all(2)
+        );
+
+        let composite = crate::presentation::factory::column(
+            vec![
+                crate::presentation::factory::text("heading"),
+                content.clone(),
+            ],
+            0,
+        );
+        assert!(composite.content_history_transfer().is_none());
+        let decorated = crate::presentation::factory::background(
+            crate::presentation::factory::column(vec![content], 0),
+            crate::ColorSpec::ansi(1),
+        );
+        assert!(decorated.content_history_transfer().is_none());
     }
 
     #[test]

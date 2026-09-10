@@ -9,7 +9,9 @@
 import { createContext } from "react";
 import type ReactReconciler from "react-reconciler";
 import {
+	ContinuousEventPriority,
 	DefaultEventPriority,
+	DiscreteEventPriority,
 	NoEventPriority,
 } from "react-reconciler/constants.js";
 import type { RootContainer } from "./commit.ts";
@@ -44,8 +46,16 @@ export interface PublicInstance {
 		readonly revision: number;
 		readonly accepted: true;
 	};
-	focus(): never;
-	visibleGeometry(): Promise<never>;
+	focus(): void;
+	visibleGeometry(): Promise<UiGeometry | null>;
+	historyIdentity(): number | string;
+}
+
+export interface UiGeometry {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
 }
 
 const NO_TIMEOUT = -1;
@@ -56,6 +66,27 @@ const NO_TIMEOUT = -1;
 let currentPriority = NoEventPriority;
 const publicInstances = new WeakMap<HostInstance, PublicInstance>();
 let hostCandidateCount = 0;
+
+export type NativeEventPriority = "discrete" | "continuous" | "default";
+
+/** Runs a native callback at its React priority and always restores the lane. */
+export function withNativeEventPriority<T>(
+	priority: NativeEventPriority,
+	callback: () => T,
+): T {
+	const previous = currentPriority;
+	currentPriority =
+		priority === "discrete"
+			? DiscreteEventPriority
+			: priority === "continuous"
+				? ContinuousEventPriority
+				: DefaultEventPriority;
+	try {
+		return callback();
+	} finally {
+		currentPriority = previous;
+	}
+}
 
 /** @internal Test evidence for speculative HostConfig creation. */
 export function hostCandidateCreations(): number {
@@ -92,18 +123,44 @@ function publicInstance(
 		clearOverride: (property) =>
 			node.root.coordinator.clearOverride(node, property),
 		focus: () => {
-			const error = new Error(
-				"focus publication is deferred until the T4 interaction executor",
-			);
-			(error as Error & { code: string }).code = "T4_FOCUS_UNREALIZED";
-			throw error;
+			const handle = node.accepted?.handle;
+			if (handle === undefined)
+				throw new Error("cannot focus an occurrence before native acceptance");
+			node.root.host.focusUi([
+				handle.host_namespace,
+				handle.slot,
+				handle.generation,
+				handle.kind,
+			]);
 		},
-		visibleGeometry: () => {
-			const error = new Error(
-				"visible geometry is unavailable before T4 frame realization",
-			);
-			(error as Error & { code: string }).code = "T3_GEOMETRY_UNREALIZED";
-			return Promise.reject(error);
+		visibleGeometry: async () => {
+			const handle = node.accepted?.handle;
+			if (handle === undefined)
+				throw new Error(
+					"cannot query geometry before the occurrence is accepted",
+				);
+			return node.root.host.uiVisibleGeometry([
+				handle.host_namespace,
+				handle.slot,
+				handle.generation,
+				handle.kind,
+			]);
+		},
+		historyIdentity: () => {
+			const handle = node.accepted?.handle;
+			if (handle === undefined)
+				throw new Error("cannot query History identity before native acceptance");
+			if (node.rootRole !== "historyUnit")
+				throw new Error("History identity requires a HistoryUnit occurrence");
+			const identity = node.root.host.uiHistoryUnitIdentity([
+				handle.host_namespace,
+				handle.slot,
+				handle.generation,
+				handle.kind,
+			]);
+			if (identity === null)
+				throw new Error("History identity is not installed for the accepted unit");
+			return identity;
 		},
 	};
 	publicInstances.set(node, value);
@@ -145,6 +202,7 @@ export const hostConfig: HostConfig = {
 			normalizeProps(type, props),
 		);
 		if (type === "portal") instance.rootRole = "portal";
+		if (type === "historyUnit") instance.rootRole = "historyUnit";
 		return instance;
 	},
 	createTextInstance(text, rootContainer): HostTextInstance {

@@ -15,13 +15,9 @@
 import { Insets, Scene, Style, View } from "@iyon/tui";
 import { AppHarness } from "@iyon/tui/testing";
 import type { History, ScrollPane, TextInput, TuiRuntime, View as ViewValue, ViewSlot } from "@iyon/tui";
+import type { ConsumerState } from "./consumer-state.ts";
 
-export interface ConsumerState {
-  readonly title: string;
-  readonly status: string;
-  readonly items: readonly string[];
-  readonly showHint: boolean;
-}
+export type { ConsumerState } from "./consumer-state.ts";
 
 const TITLE_STYLE = Style.new().foreground({ type: "theme", key: "text.heading" });
 const MUTED_STYLE = Style.new().foreground({ type: "theme", key: "text.muted" });

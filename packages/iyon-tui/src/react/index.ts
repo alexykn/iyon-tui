@@ -31,6 +31,8 @@ export type {
 	HistoryUnitProps,
 	HostType,
 	LayoutKind,
+	OccurrenceRef,
+	UiGeometry,
 } from "./instance.ts";
 export {
 	createReactRoot,

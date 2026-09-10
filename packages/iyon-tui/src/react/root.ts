@@ -1,5 +1,6 @@
 import { createElement, type ReactNode } from "react";
 import Reconciler from "react-reconciler";
+import { ConcurrentRoot } from "react-reconciler/constants.js";
 import type { TuiRuntime } from "../runtime/runtime.ts";
 import type { NativeTuiHostContract } from "../transport/native/addon.ts";
 import {
@@ -73,9 +74,12 @@ class IyonRoot implements IyonReactRoot {
 		this.reconciler = Reconciler(hostConfig);
 		this.container = new RootContainer(host);
 		this.coordinator = this.container.coordinator;
+		// Keep the installed reconciler's named root constant at this API
+		// boundary. react-reconciler@0.33.0 already forces ConcurrentRoot and
+		// the root fiber's ConcurrentMode bit, regardless of this argument.
 		this.opaqueRoot = this.reconciler.createContainer(
 			this.container,
-			0,
+			ConcurrentRoot,
 			null,
 			false,
 			null,

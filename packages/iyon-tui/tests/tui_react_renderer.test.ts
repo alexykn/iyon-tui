@@ -5,6 +5,7 @@ import {
 	memo,
 	type ReactNode,
 	StrictMode,
+	startTransition,
 	useEffect,
 	useLayoutEffect,
 	useState,
@@ -29,6 +30,7 @@ import {
 	Grid,
 	History,
 	HistoryUnit,
+	type OccurrenceRef,
 	Row,
 	Text,
 	useContentConnector,
@@ -147,6 +149,25 @@ async function waitForNativeCommits(
 			throw new Error(`timed out waiting for ${minimum} native commits`);
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
+}
+
+async function waitForCandidateYield(
+	before: number,
+	getCandidates: () => number,
+	getNativeCommits: () => number,
+	expectedNativeCommits: number,
+): Promise<void> {
+	for (let attempt = 0; attempt < 100; attempt += 1) {
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const nativeCommits = getNativeCommits();
+		if (nativeCommits > expectedNativeCommits)
+			throw new Error("native commit overtook candidate-yield observation");
+		if (getCandidates() > before && nativeCommits === expectedNativeCommits)
+			return;
+	}
+	throw new Error(
+		"the concurrent render did not yield before its native commit",
+	);
 }
 
 describe("T3 React mutation renderer", () => {
@@ -2388,6 +2409,146 @@ describe("T3 React mutation renderer", () => {
 		} finally {
 			root.close();
 			tui.close();
+		}
+	});
+
+	test("a yielded transition is abandoned by a synchronous replacement", async () => {
+		const tui = await AppHarness.open({ width: 40, height: 8 });
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		const source = TextBlockSource.create();
+		source.replace("candidate content");
+		let beginTransition: (() => void) | undefined;
+		let nativeCalls = 0;
+		const committedOpcodes: number[][] = [];
+		let candidateEffectMounts = 0;
+		let candidateRefCallbacks = 0;
+		const originalCommit = host.commitUiV1.bind(host);
+		host.commitUiV1 = (words, ...args) => {
+			nativeCalls += 1;
+			const opcodes = commitOpcodes(words);
+			committedOpcodes.push(opcodes);
+			return originalCommit(words, ...args);
+		};
+
+		function Candidate({ id }: { readonly id: number }) {
+			const port = useContentPort();
+			const connector = useContentConnector({ port, source });
+			useLayoutEffect(() => {
+				candidateEffectMounts += 1;
+			}, []);
+			return createElement(Content, {
+				key: id,
+				port: connector,
+				ref: (_value: OccurrenceRef | null) => {
+					candidateRefCallbacks += 1;
+				},
+			});
+		}
+
+		function App() {
+			const [interrupted, setInterrupted] = useState(false);
+			beginTransition = () =>
+				startTransition(() => {
+					setInterrupted(true);
+				});
+			const children = interrupted
+				? Array.from({ length: 2_048 }, (_, id) =>
+						createElement(Candidate, { key: id, id }),
+					)
+				: [createElement(Text, { key: "accepted" }, "accepted")];
+			return createElement(Box, {}, children);
+		}
+
+		const root = createReactRoot(tui);
+		try {
+			await root.render(createElement(App));
+			expect(nativeCalls).toBe(1);
+			expect(candidateEffectMounts).toBe(0);
+			expect(candidateRefCallbacks).toBe(0);
+			const candidatesBefore = hostCandidateCreations();
+			required(beginTransition, "transition trigger was not published")();
+
+			// Let the installed Scheduler run the transition.  The condition is
+			// candidate creation, not elapsed time: a changed count while the
+			// native commit count is unchanged is direct evidence that the
+			// concurrent render yielded before its mutation phase.
+			await waitForCandidateYield(
+				candidatesBefore,
+				() => hostCandidateCreations(),
+				() => nativeCalls,
+				1,
+			);
+			expect(committedOpcodes).toHaveLength(1);
+
+			// This is the ordinary public render API, intentionally kept
+			// synchronous. It supersedes the yielded transition without giving
+			// any candidate Content token a native owner.
+			await root.render(createElement(Text, {}, "replacement"));
+			expect(nativeCalls).toBe(2);
+			expect(committedOpcodes.at(-1)).toEqual(
+				expect.arrayContaining([UI_OPCODES.replaceLiteral]),
+			);
+			expect(tui.screenRows().some((row) => row.includes("replacement"))).toBe(
+				true,
+			);
+			expect(candidateEffectMounts).toBe(0);
+			expect(candidateRefCallbacks).toBe(0);
+			expect(committedOpcodes.flat()).not.toContain(UI_OPCODES.createConnector);
+
+			// Mount the stateful app again and unmount while a second transition is
+			// still yielded. This checks that the public unmount Promise supersedes
+			// pending work and that close can then finish ordinary cleanup.
+			await root.render(createElement(App));
+			expect(nativeCalls).toBe(3);
+			const unmountCandidatesBefore = hostCandidateCreations();
+			required(beginTransition, "transition trigger was not republished")();
+			await waitForCandidateYield(
+				unmountCandidatesBefore,
+				() => hostCandidateCreations(),
+				() => nativeCalls,
+				3,
+			);
+			const unmounted = await root.unmount();
+			expect(unmounted.accepted).toBe(true);
+			expect(nativeCalls).toBe(4);
+			expect(candidateEffectMounts).toBe(0);
+			expect(candidateRefCallbacks).toBe(0);
+
+			// A subsequent public render proves that the root was not faulted or
+			// left with an abandoned ownership journal.
+			await root.render(createElement(Text, {}, "healthy"));
+			expect(nativeCalls).toBe(5);
+			expect(root.faulted).toBe(false);
+			expect(tui.screenRows().some((row) => row.includes("healthy"))).toBe(
+				true,
+			);
+
+			// Close itself must also supersede pending work, not only a public
+			// unmount. Start one final yielded transition and close the root before
+			// its mutation phase can materialize the lazy resources.
+			await root.render(createElement(App));
+			expect(nativeCalls).toBe(6);
+			const closeCandidatesBefore = hostCandidateCreations();
+			required(beginTransition, "transition trigger was not republished")();
+			await waitForCandidateYield(
+				closeCandidatesBefore,
+				() => hostCandidateCreations(),
+				() => nativeCalls,
+				6,
+			);
+			root.close();
+			await new Promise<void>((resolve) => setTimeout(resolve, 0));
+			expect(nativeCalls).toBe(6);
+			expect(candidateEffectMounts).toBe(0);
+			expect(candidateRefCallbacks).toBe(0);
+			expect(committedOpcodes.flat()).not.toContain(UI_OPCODES.createConnector);
+		} finally {
+			root.close();
+			tui.close();
+			source.dispose();
 		}
 	});
 

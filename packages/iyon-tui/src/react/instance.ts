@@ -109,9 +109,43 @@ export interface EventProps {
 	readonly onSubmit?: UiEventHandler<UiEditEvent> | undefined;
 }
 
+/**
+ * The finite public surface exposed by a committed occurrence ref.
+ *
+ * Ref values are occurrence targets, not reconciler instances or native
+ * pointers.  They remain useful for imperative overrides, focus, geometry,
+ * diagnostics, and History identity while keeping renderer internals private.
+ */
+export interface OccurrenceRef {
+	readonly kind: string;
+	readonly lifecycle: "candidate" | "accepted" | "retired";
+	diagnostics(): {
+		readonly lifecycle: string;
+		readonly hasAcceptedHandle: boolean;
+	};
+	setOverride(
+		property: string,
+		value: unknown,
+	): { readonly revision: number; readonly accepted: true };
+	clearOverride(property: string): {
+		readonly revision: number;
+		readonly accepted: true;
+	};
+	focus(): void;
+	visibleGeometry(): Promise<UiGeometry | null>;
+	historyIdentity(): number | string;
+}
+
+export interface UiGeometry {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+}
+
 export interface BoxProps extends LayoutProps, EventProps {
 	readonly children?: ReactNode;
-	readonly ref?: Ref<unknown>;
+	readonly ref?: Ref<OccurrenceRef>;
 	readonly foreground?: ColorSpec;
 	readonly background?: ColorSpec;
 	readonly borderColor?: ColorSpec;
@@ -172,7 +206,7 @@ export function contentTokenOwner(token: object): HookOwner | undefined {
 
 export interface EditorProps extends LayoutProps, EventProps {
 	readonly children?: ReactNode;
-	readonly ref?: Ref<unknown>;
+	readonly ref?: Ref<OccurrenceRef>;
 	readonly multiline?: boolean;
 	readonly value?: string;
 	readonly defaultValue?: string;

@@ -23,6 +23,7 @@ import {
 	hostKindForType,
 	hostNode,
 	normalizeProps,
+	type OccurrenceRef,
 } from "./instance.ts";
 
 export type HostContainer = RootContainer;
@@ -31,40 +32,13 @@ export interface HostContext {
 	readonly root: RootContainer;
 }
 
-export interface PublicInstance {
-	readonly kind: string;
-	readonly lifecycle: "candidate" | "accepted" | "retired";
-	diagnostics(): {
-		readonly lifecycle: string;
-		readonly hasAcceptedHandle: boolean;
-	};
-	setOverride(
-		property: string,
-		value: unknown,
-	): { readonly revision: number; readonly accepted: true };
-	clearOverride(property: string): {
-		readonly revision: number;
-		readonly accepted: true;
-	};
-	focus(): void;
-	visibleGeometry(): Promise<UiGeometry | null>;
-	historyIdentity(): number | string;
-}
-
-export interface UiGeometry {
-	readonly x: number;
-	readonly y: number;
-	readonly width: number;
-	readonly height: number;
-}
-
 const NO_TIMEOUT = -1;
 // The installed reconciler runtime uses the numeric constants exported by
 // react-reconciler/constants.js.  In particular, its DefaultEventPriority is
 // 32 (the published type declaration uses a different bit spelling), so do
 // not duplicate the value or treat NoEventPriority as a schedulable default.
 let currentPriority = NoEventPriority;
-const publicInstances = new WeakMap<HostInstance, PublicInstance>();
+const publicInstances = new WeakMap<HostInstance, OccurrenceRef>();
 let hostCandidateCount = 0;
 
 export type NativeEventPriority = "discrete" | "continuous" | "default";
@@ -95,11 +69,11 @@ export function hostCandidateCreations(): number {
 
 function publicInstance(
 	instance: HostInstance | HostTextInstance,
-): PublicInstance {
+): OccurrenceRef {
 	const node = hostNode(instance);
 	const existing = publicInstances.get(node);
 	if (existing !== undefined) return existing;
-	const value: PublicInstance = {
+	const value: OccurrenceRef = {
 		get kind() {
 			return node.kind === 1
 				? "box"
@@ -149,7 +123,9 @@ function publicInstance(
 		historyIdentity: () => {
 			const handle = node.accepted?.handle;
 			if (handle === undefined)
-				throw new Error("cannot query History identity before native acceptance");
+				throw new Error(
+					"cannot query History identity before native acceptance",
+				);
 			if (node.rootRole !== "historyUnit")
 				throw new Error("History identity requires a HistoryUnit occurrence");
 			const identity = node.root.host.uiHistoryUnitIdentity([
@@ -159,7 +135,9 @@ function publicInstance(
 				handle.kind,
 			]);
 			if (identity === null)
-				throw new Error("History identity is not installed for the accepted unit");
+				throw new Error(
+					"History identity is not installed for the accepted unit",
+				);
 			return identity;
 		},
 	};
@@ -176,7 +154,7 @@ type HostConfig = ReactReconciler.HostConfig<
 	never,
 	never,
 	never,
-	PublicInstance,
+	OccurrenceRef,
 	HostContext,
 	never,
 	number,

@@ -11,12 +11,15 @@ use anyhow::{Result, anyhow};
 
 use crate::history::{FlowBoundary, HistoryUnitId};
 use crate::occurrence::{
-    AlignmentAxis, HostKind, LayerValue, LayoutMode, NodeKey, OccurrenceSnapshot, PropertyId,
-    PropertyValue, ResourceKey, SizeMode, UiChangeSet,
+    HostKind, LayerValue, LayoutMode, NodeKey, OccurrenceSnapshot, PropertyId, PropertyValue,
+    ResourceKey, SizeMode, UiChangeSet,
 };
 use crate::presentation::factory as vf;
 use crate::presentation::ir::ViewId;
-use crate::presentation::{BorderSpec, BorderStyle, StyleRef, StyleSpec, TextAttribute, View};
+use crate::presentation::{
+    BorderSpec, BorderStyle, StyleRef, StyleSpec, StyleStateKey, StyleStateValue, TextAttribute,
+    VerticalAlign, View,
+};
 
 use super::content::ContentHostRegistry;
 use super::ui_resources::{HistoryUnitStatus, UiResourceOwner};
@@ -246,7 +249,7 @@ impl LegacySceneAdapter {
             children.push(self.build_node(owner, content, child, dirty, force)?);
         }
         let mut view = self.lower_node(owner, content, &snapshot, children)?;
-        view = apply_properties(view, &snapshot.properties);
+        view = apply_properties(view, &snapshot);
         if snapshot.hidden {
             view = vf::spacer(0);
         }
@@ -267,9 +270,22 @@ impl LegacySceneAdapter {
         snapshot: &OccurrenceSnapshot,
         children: Vec<View>,
     ) -> Result<View> {
+        let vertical_alignment = supported_alignment(snapshot)?;
         match snapshot.kind {
             HostKind::Box => Ok(match layout_mode(snapshot) {
-                LayoutMode::Row => vf::row(children, gap(snapshot)),
+                LayoutMode::Row => vf::row_specs(
+                    children
+                        .into_iter()
+                        .map(|view| {
+                            (
+                                crate::presentation::ir::TrackSize::Content { max: None },
+                                view,
+                            )
+                        })
+                        .collect(),
+                    gap(snapshot),
+                    vertical_alignment.unwrap_or(VerticalAlign::Top),
+                ),
                 LayoutMode::Grid => {
                     return Err(anyhow!(
                         "grid layout is not available in the M1 terminal adapter"
@@ -338,9 +354,10 @@ fn effective_u16(snapshot: &OccurrenceSnapshot, property: PropertyId) -> Option<
     })?
 }
 
-fn apply_properties(view: View, properties: &[(PropertyId, LayerValue)]) -> View {
+fn apply_properties(view: View, snapshot: &OccurrenceSnapshot) -> View {
     let mut view = view;
-    for (property, value) in properties {
+    let presentation = lower_presentation(snapshot);
+    for (property, value) in &snapshot.properties {
         let LayerValue::Value(value) = value else {
             continue;
         };
@@ -354,31 +371,48 @@ fn apply_properties(view: View, properties: &[(PropertyId, LayerValue)]) -> View
             (PropertyId::MaxWidth, PropertyValue::U16(width)) => vf::max_width(view, *width),
             (PropertyId::MinHeight, PropertyValue::U16(height)) => vf::min_height(view, *height),
             (PropertyId::MaxHeight, PropertyValue::U16(height)) => vf::max_height(view, *height),
-            (PropertyId::Foreground, PropertyValue::Color(color)) => {
-                vf::foreground(view, color.clone())
-            }
             (PropertyId::Background, PropertyValue::Color(color)) => {
                 vf::background(view, color.clone())
             }
+            _ => view,
+        };
+    }
+    apply_presentation(view, presentation, &snapshot.style_states)
+}
+
+#[derive(Default)]
+struct LoweredPresentation {
+    border_style: Option<BorderStyle>,
+    border_edges: Option<crate::occurrence::Edges>,
+    border_color: Option<crate::occurrence::ColorValue>,
+    border_glyphs: Option<crate::occurrence::GlyphsValue>,
+    style: Option<StyleRef>,
+    direct_style: StyleSpec,
+}
+
+fn lower_presentation(snapshot: &OccurrenceSnapshot) -> LoweredPresentation {
+    let mut lowered = LoweredPresentation::default();
+    for (property, value) in &snapshot.properties {
+        let LayerValue::Value(value) = value else {
+            continue;
+        };
+        match (property, value) {
+            (PropertyId::Foreground, PropertyValue::Color(color)) => {
+                lowered.direct_style.set_foreground(color.clone());
+            }
             (PropertyId::BorderStyle, PropertyValue::BorderStyle(style)) => {
-                let border = match style {
-                    BorderStyle::Plain => BorderSpec::plain(),
-                    BorderStyle::Rounded => BorderSpec::rounded(),
-                    BorderStyle::Double => BorderSpec::double(),
-                };
-                vf::border(view, border)
+                lowered.border_style = Some(*style);
             }
             (PropertyId::BorderEdges, PropertyValue::Edges(edges)) => {
-                vf::border(view, BorderSpec::plain().edges(*edges))
+                lowered.border_edges = Some(*edges);
             }
             (PropertyId::BorderColor, PropertyValue::Color(color)) => {
-                vf::border(view, BorderSpec::plain().color(color.clone()))
+                lowered.border_color = Some(color.clone());
             }
             (PropertyId::BorderGlyphs, PropertyValue::Glyphs(glyphs)) => {
-                vf::border(view, BorderSpec::custom(glyphs.clone()))
+                lowered.border_glyphs = Some(glyphs.clone());
             }
             (PropertyId::TextAttributes, PropertyValue::TextAttributes(attributes)) => {
-                let mut style = StyleSpec::new();
                 for attribute in [
                     TextAttribute::Bold,
                     TextAttribute::Dim,
@@ -388,31 +422,104 @@ fn apply_properties(view: View, properties: &[(PropertyId, LayerValue)]) -> View
                     TextAttribute::Strikethrough,
                 ] {
                     if let Some(enabled) = attributes.attribute_value(attribute) {
-                        style.set_attribute(attribute, enabled);
+                        lowered.direct_style.set_attribute(attribute, enabled);
                     }
                 }
-                vf::style(view, StyleRef::direct(style))
             }
-            (PropertyId::Style, PropertyValue::Style(style)) => vf::style(view, style.clone()),
-            (PropertyId::Alignment, PropertyValue::Alignment(alignment)) => {
-                apply_alignment(view, *alignment)
+            (PropertyId::Style, PropertyValue::Style(style)) => {
+                lowered.style = Some(style.clone());
             }
-            _ => view,
+            _ => {}
+        }
+    }
+    lowered
+}
+
+fn apply_presentation(
+    mut view: View,
+    mut lowered: LoweredPresentation,
+    style_states: &[(String, String)],
+) -> View {
+    if let Some(style) = lowered.style.as_mut() {
+        style.overlay(&lowered.direct_style);
+        view = vf::style(view, style.clone());
+    } else if lowered.direct_style != StyleSpec::new() {
+        view = vf::style(view, StyleRef::direct(lowered.direct_style));
+    }
+    if lowered.border_style.is_some()
+        || lowered.border_edges.is_some()
+        || lowered.border_color.is_some()
+        || lowered.border_glyphs.is_some()
+    {
+        let mut border = match lowered.border_style.unwrap_or(BorderStyle::Plain) {
+            BorderStyle::Plain => BorderSpec::plain(),
+            BorderStyle::Rounded => BorderSpec::rounded(),
+            BorderStyle::Double => BorderSpec::double(),
         };
+        if let Some(edges) = lowered.border_edges {
+            border.set_edges(edges);
+        }
+        if let Some(color) = lowered.border_color {
+            border.set_color(Some(color));
+        }
+        if let Some(glyphs) = lowered.border_glyphs {
+            border.set_glyphs(glyphs);
+        }
+        view = vf::border(view, border);
+    }
+    if !style_states.is_empty() {
+        view = vf::style_states(
+            view,
+            style_states.iter().map(|(key, value)| {
+                (
+                    StyleStateKey::new(key.clone()),
+                    StyleStateValue::new(value.clone()),
+                )
+            }),
+        );
     }
     view
 }
 
-fn apply_alignment(view: View, alignment: crate::occurrence::Alignment) -> View {
-    // The current factories expose horizontal/vertical alignment through
-    // text and row constructors.  Keep this adapter conservative for Box
-    // geometry until the Taffy driver owns the full alignment vocabulary.
-    let _ = alignment.horizontal.map(|axis| match axis {
-        AlignmentAxis::Start | AlignmentAxis::Top => 0,
-        AlignmentAxis::Center => 1,
-        AlignmentAxis::End | AlignmentAxis::Bottom => 2,
-    });
-    view
+fn supported_alignment(snapshot: &OccurrenceSnapshot) -> Result<Option<VerticalAlign>> {
+    let Some(LayerValue::Value(PropertyValue::Alignment(alignment))) = snapshot
+        .properties
+        .iter()
+        .find_map(|(property, value)| (*property == PropertyId::Alignment).then_some(value))
+    else {
+        return Ok(None);
+    };
+    if alignment
+        .horizontal
+        .is_some_and(|axis| axis != crate::occurrence::AlignmentAxis::Start)
+    {
+        return Err(anyhow!(
+            "alignment.horizontal is unsupported in the M1 terminal adapter; text alignment remains content-owned"
+        ));
+    }
+    let Some(vertical) = alignment.vertical else {
+        return Ok(None);
+    };
+    if matches!(
+        vertical,
+        crate::occurrence::AlignmentAxis::Start | crate::occurrence::AlignmentAxis::Top
+    ) {
+        return Ok(None);
+    }
+    if snapshot.kind != HostKind::Box || layout_mode(snapshot) != LayoutMode::Row {
+        return Err(anyhow!(
+            "alignment.vertical is unsupported in the M1 terminal adapter except for Box rows"
+        ));
+    }
+    Ok(Some(match vertical {
+        crate::occurrence::AlignmentAxis::Start | crate::occurrence::AlignmentAxis::Top => {
+            VerticalAlign::Top
+        }
+        crate::occurrence::AlignmentAxis::Center => VerticalAlign::Center,
+        crate::occurrence::AlignmentAxis::End | crate::occurrence::AlignmentAxis::Bottom => {
+            VerticalAlign::Bottom
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -420,10 +527,12 @@ mod tests {
     use super::super::environment::TuiEnvironment;
     use super::super::host::TuiHost;
     use crate::application::content::TextSourceKind;
+    use crate::binding::{BorderStyle, Edges, GlyphsValue as BorderGlyphs, TextAttributes};
     use crate::occurrence::{
-        HostKind, LayerValue, NodeRef, OwnershipMode, PropertyId, PropertyValue, ResourceRef,
-        UiCommit, UiOperation,
+        Alignment, AlignmentAxis, HostKind, LayerValue, LayoutMode, NodeRef, OwnershipMode,
+        PropertyId, PropertyValue, ResourceRef, SizeMode, UiCommit, UiOperation,
     };
+    use crate::{ColorSpec, StyleRef, StyleSelector, StyleSpec, TextAttribute, Theme};
     use tokio::sync::oneshot;
 
     #[test]
@@ -470,6 +579,491 @@ mod tests {
             root: NodeRef::Existing(node),
         });
         host.commit_ui(retire, &[]).expect("retire UI subtree");
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn presentation_lowering_composes_border_and_named_style_fields_once() {
+        let host =
+            TuiHost::open_in_environment(20, 8, true, TuiEnvironment::new_manual()).expect("host");
+        host.set_theme(Theme::new().with_style(
+            "named-base",
+            StyleSpec::new().foreground(ColorSpec::ansi(1)).bold(),
+        ))
+        .expect("theme");
+        let body = host.ui_body_handle().expect("body");
+        let glyphs =
+            BorderGlyphs::new("=", "!", "=", "!", "A", "B", "C", "D").expect("one-cell glyphs");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 3,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Local(1),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(2),
+            port: Some(ResourceRef::Local(3)),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(3),
+            content_format: 1,
+            content: b"styled".to_vec(),
+            annotations: Vec::new(),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::BorderStyle,
+            value: LayerValue::Value(PropertyValue::BorderStyle(BorderStyle::Rounded)),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::BorderEdges,
+            value: LayerValue::Value(PropertyValue::Edges(Edges::new(true, true, false, true))),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::BorderColor,
+            value: LayerValue::Value(PropertyValue::Color(ColorSpec::ansi(4))),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::BorderGlyphs,
+            value: LayerValue::Value(PropertyValue::Glyphs(glyphs)),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Style,
+            value: LayerValue::Value(PropertyValue::Style(StyleRef::theme("named-base"))),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Foreground,
+            value: LayerValue::Value(PropertyValue::Color(ColorSpec::ansi(2))),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::TextAttributes,
+            value: LayerValue::Value(PropertyValue::TextAttributes(
+                TextAttributes::new().attribute(TextAttribute::Italic, true),
+            )),
+        });
+        let mounted = host.commit_ui(mount, &[]).expect("presentation mount");
+        host.flush_pending_hosts(8, true)
+            .expect("presentation frame");
+        let rows = host.screen_rows();
+        assert!(
+            rows.iter().any(|row| row.starts_with("A======B")),
+            "custom border shape: {rows:?}"
+        );
+        let border_row = rows
+            .iter()
+            .position(|row| row.starts_with("A======B"))
+            .expect("custom border row") as u16;
+        assert_eq!(
+            host.style_at(border_row, 0)
+                .expect("custom border pixel")
+                .foreground
+                .as_deref(),
+            Some("ansi:4"),
+            "border color must reach a painted border cell"
+        );
+        let text_handle = mounted.acknowledgement.created[1];
+        let (x, y, _, _) = host
+            .ui_visible_geometry(text_handle)
+            .expect("content geometry")
+            .expect("visible content geometry");
+        let style = host.style_at(y, x).expect("content style");
+        assert_eq!(style.foreground.as_deref(), Some("ansi:2"));
+        assert!(style.bold);
+        assert!(style.italic);
+
+        let node = mounted.acknowledgement.created[0];
+        let mut override_commit = UiCommit::new(1);
+        override_commit.push(UiOperation::SetOverride {
+            node: NodeRef::Existing(node),
+            property: PropertyId::BorderColor,
+            value: LayerValue::Value(PropertyValue::Color(ColorSpec::ansi(5))),
+        });
+        host.commit_ui(override_commit, &[])
+            .expect("border color override");
+        host.flush_pending_hosts(8, true)
+            .expect("border color override frame");
+        assert_eq!(
+            host.style_at(border_row, 0)
+                .expect("override style")
+                .foreground
+                .as_deref(),
+            Some("ansi:5")
+        );
+
+        let mut masked = UiCommit::new(2);
+        masked.push(UiOperation::SetDeclared {
+            node: NodeRef::Existing(node),
+            property: PropertyId::BorderColor,
+            value: LayerValue::Value(PropertyValue::Color(ColorSpec::ansi(6))),
+        });
+        host.commit_ui(masked, &[])
+            .expect("masked border color declaration");
+        host.flush_pending_hosts(8, true)
+            .expect("masked border color frame");
+        assert_eq!(
+            host.style_at(border_row, 0)
+                .expect("masked style")
+                .foreground
+                .as_deref(),
+            Some("ansi:5")
+        );
+
+        let mut clear = UiCommit::new(3);
+        clear.push(UiOperation::ClearOverride {
+            node: NodeRef::Existing(node),
+            property: PropertyId::BorderColor,
+        });
+        host.commit_ui(clear, &[])
+            .expect("clear border color override");
+        host.flush_pending_hosts(8, true)
+            .expect("clear border color override frame");
+        assert_eq!(
+            host.style_at(border_row, 0)
+                .expect("revealed style")
+                .foreground
+                .as_deref(),
+            Some("ansi:6")
+        );
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn occurrence_style_states_drive_theme_and_reveal_new_declaration_after_clear() {
+        let host =
+            TuiHost::open_in_environment(20, 8, true, TuiEnvironment::new_manual()).expect("host");
+        host.set_theme(
+            Theme::new()
+                .with_style("severity", StyleSpec::new().foreground(ColorSpec::ansi(1)))
+                .with_style_variant(
+                    "severity",
+                    StyleSelector::state("severity", "error"),
+                    StyleSpec::new().foreground(ColorSpec::ansi(2)),
+                )
+                .with_style_variant(
+                    "severity",
+                    StyleSelector::state("severity", "warning"),
+                    StyleSpec::new().foreground(ColorSpec::ansi(3)),
+                ),
+        )
+        .expect("theme");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(1),
+            port: Some(ResourceRef::Local(2)),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(2),
+            content_format: 1,
+            content: b"state".to_vec(),
+            annotations: Vec::new(),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Style,
+            value: LayerValue::Value(PropertyValue::Style(StyleRef::theme("severity"))),
+        });
+        mount.push(UiOperation::SetStyleState {
+            node: NodeRef::Local(1),
+            layer: 0,
+            key: "severity".to_owned(),
+            value: "info".to_owned(),
+        });
+        let mounted = host.commit_ui(mount, &[]).expect("state mount");
+        host.flush_pending_hosts(8, true).expect("state frame");
+        let node = mounted.acknowledgement.created[0];
+        let foreground = || {
+            host.screen_rows()
+                .iter()
+                .enumerate()
+                .find_map(|(row, line)| {
+                    let column = line.find("state")?;
+                    host.style_at(u16::try_from(row).ok()?, u16::try_from(column).ok()?)
+                        .and_then(|style| style.foreground)
+                })
+        };
+        assert_eq!(foreground().as_deref(), Some("ansi:1"));
+
+        let mut declared = UiCommit::new(1);
+        declared.push(UiOperation::SetStyleState {
+            node: NodeRef::Existing(node),
+            layer: 0,
+            key: "severity".to_owned(),
+            value: "error".to_owned(),
+        });
+        host.commit_ui(declared, &[])
+            .expect("declared state change");
+        host.flush_pending_hosts(8, true)
+            .expect("declared state frame");
+        assert_eq!(foreground().as_deref(), Some("ansi:2"));
+
+        let mut override_state = UiCommit::new(2);
+        override_state.push(UiOperation::SetStyleState {
+            node: NodeRef::Existing(node),
+            layer: 1,
+            key: "severity".to_owned(),
+            value: "warning".to_owned(),
+        });
+        host.commit_ui(override_state, &[]).expect("state override");
+        host.flush_pending_hosts(8, true)
+            .expect("state override frame");
+        assert_eq!(foreground().as_deref(), Some("ansi:3"));
+        let masked_before = host.epochs().expect("masked state epochs");
+        let masked_recipe_builds = host
+            .inner
+            .lock()
+            .expect("host lock")
+            .legacy_scene
+            .recipe_builds;
+
+        let mut masked = UiCommit::new(3);
+        masked.push(UiOperation::SetStyleState {
+            node: NodeRef::Existing(node),
+            layer: 0,
+            key: "severity".to_owned(),
+            value: "info".to_owned(),
+        });
+        let masked_result = host
+            .commit_ui(masked, &[])
+            .expect("masked state declaration");
+        assert_eq!(
+            masked_result.acknowledgement.accepted_ui_revision, 4,
+            "masked declarations still advance the desired UI revision"
+        );
+        host.flush_pending_hosts(8, true)
+            .expect("masked state frame");
+        assert_eq!(foreground().as_deref(), Some("ansi:3"));
+        let masked_after = host.epochs().expect("masked state result epochs");
+        assert!(
+            masked_after.visible_structural_revision > masked_before.visible_structural_revision
+        );
+        assert_eq!(
+            masked_after.visible_frame_revision, masked_before.visible_frame_revision,
+            "a declared style state masked by an override is metadata-only"
+        );
+        assert_eq!(
+            host.inner
+                .lock()
+                .expect("host lock")
+                .legacy_scene
+                .recipe_builds,
+            masked_recipe_builds,
+            "a masked style state must not rebuild occurrence recipes"
+        );
+
+        let mut clear = UiCommit::new(masked_result.acknowledgement.accepted_ui_revision);
+        clear.push(UiOperation::ClearStyleState {
+            node: NodeRef::Existing(node),
+            layer: 1,
+            key: "severity".to_owned(),
+        });
+        let cleared = host.commit_ui(clear, &[]).expect("clear state override");
+        host.flush_pending_hosts(8, true)
+            .expect("clear state frame");
+        assert_eq!(foreground().as_deref(), Some("ansi:1"));
+        let cleared_epochs = host.epochs().expect("cleared state epochs");
+        assert!(
+            cleared_epochs.visible_frame_revision > masked_after.visible_frame_revision,
+            "clearing the override reveals a physical presentation change"
+        );
+        assert!(
+            host.inner
+                .lock()
+                .expect("host lock")
+                .legacy_scene
+                .recipe_builds
+                > masked_recipe_builds,
+            "revealing a declared style state rebuilds the affected recipe"
+        );
+
+        let mut coalesced = UiCommit::new(cleared.acknowledgement.accepted_ui_revision);
+        coalesced.push(UiOperation::SetStyleState {
+            node: NodeRef::Existing(node),
+            layer: 1,
+            key: "severity".to_owned(),
+            value: "temporary".to_owned(),
+        });
+        coalesced.push(UiOperation::ClearStyleState {
+            node: NodeRef::Existing(node),
+            layer: 1,
+            key: "severity".to_owned(),
+        });
+        let coalesced_result = host
+            .commit_ui(coalesced, &[])
+            .expect("coalesced style state no-op");
+        assert_eq!(
+            coalesced_result.acknowledgement.accepted_ui_revision,
+            cleared.acknowledgement.accepted_ui_revision,
+            "set-clear back to the declared base is a coalesced no-op"
+        );
+        let coalesced_epochs = host.epochs().expect("coalesced state epochs");
+        let coalesced_recipe_builds = host
+            .inner
+            .lock()
+            .expect("host lock")
+            .legacy_scene
+            .recipe_builds;
+        host.flush_pending_hosts(8, true)
+            .expect("coalesced state frame");
+        assert_eq!(
+            host.epochs().expect("coalesced settled epochs"),
+            coalesced_epochs
+        );
+        assert_eq!(
+            host.inner
+                .lock()
+                .expect("host lock")
+                .legacy_scene
+                .recipe_builds,
+            coalesced_recipe_builds,
+            "coalesced set-clear must not rebuild the affected recipe"
+        );
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn unsupported_m1_alignment_is_reported_instead_of_ignored() {
+        let host =
+            TuiHost::open_in_environment(20, 8, true, TuiEnvironment::new_manual()).expect("host");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Alignment,
+            value: LayerValue::Value(PropertyValue::Alignment(Alignment::new(
+                Some(AlignmentAxis::Center),
+                None,
+            ))),
+        });
+        host.commit_ui(mount, &[]).expect("alignment admission");
+        let frame = host
+            .flush_pending_hosts(8, false)
+            .expect("alignment frame result");
+        assert!(!frame.errors.is_empty());
+        assert!(frame.errors.iter().any(|error| {
+            error
+                .diagnostic
+                .contains("alignment.horizontal is unsupported in the M1 terminal adapter")
+        }));
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn row_vertical_alignment_reaches_the_existing_factory() {
+        let host =
+            TuiHost::open_in_environment(20, 8, true, TuiEnvironment::new_manual()).expect("host");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 3,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Local(1),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(2),
+            port: Some(ResourceRef::Local(3)),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(3),
+            content_format: 1,
+            content: b"row".to_vec(),
+            annotations: Vec::new(),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Layout,
+            value: LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Height,
+            value: LayerValue::Value(PropertyValue::SizeMode(SizeMode::Fill)),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Alignment,
+            value: LayerValue::Value(PropertyValue::Alignment(Alignment::new(
+                None,
+                Some(AlignmentAxis::Bottom),
+            ))),
+        });
+        host.commit_ui(mount, &[]).expect("row alignment admission");
+        host.flush_pending_hosts(8, true)
+            .expect("row alignment frame");
+        let rows = host.screen_rows();
+        let row = rows
+            .iter()
+            .position(|line| line.contains("row"))
+            .expect("row text");
+        assert_eq!(row, rows.len() - 1, "bottom-aligned row output: {rows:?}");
         host.close().expect("close");
     }
 

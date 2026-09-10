@@ -41,6 +41,8 @@ import {
 	type UiEvent,
 	type UiHandle,
 	type UiPressEvent,
+	validateStyleState,
+	validateStyleStateKey,
 } from "./instance.ts";
 
 export interface NativeUiEvent {
@@ -393,6 +395,52 @@ export class CommitCoordinator {
 		return { revision: this.acceptedRevision, accepted: true };
 	}
 
+	publishStyleState(
+		instance: HostInstance,
+		key: string,
+		value: string,
+	): { readonly revision: number; readonly accepted: true } {
+		validateStyleState(key, value);
+		if (instance.lifecycle !== "accepted" || instance.handle === undefined)
+			throw new Error("cannot set a style state on a non-accepted occurrence");
+		this.begin();
+		const journal = this.requireJournal();
+		journal.touched.add(instance);
+		journal.records.push({
+			section: 1,
+			opcode: UI_OPCODES.setStyleState,
+			operands: [
+				...nodeRef(instance),
+				1,
+				...journal.metadata.addText(key),
+				...journal.metadata.addText(value),
+			],
+		});
+		this.finish();
+		return { revision: this.acceptedRevision, accepted: true };
+	}
+
+	clearStyleState(
+		instance: HostInstance,
+		key: string,
+	): { readonly revision: number; readonly accepted: true } {
+		validateStyleStateKey(key);
+		if (instance.lifecycle !== "accepted" || instance.handle === undefined)
+			throw new Error(
+				"cannot clear a style state on a non-accepted occurrence",
+			);
+		this.begin();
+		const journal = this.requireJournal();
+		journal.touched.add(instance);
+		journal.records.push({
+			section: 1,
+			opcode: UI_OPCODES.clearStyleState,
+			operands: [...nodeRef(instance), 1, ...journal.metadata.addText(key)],
+		});
+		this.finish();
+		return { revision: this.acceptedRevision, accepted: true };
+	}
+
 	faultFromReact(error: unknown): void {
 		this.abortCleanup();
 		this.faultRoot(error);
@@ -708,6 +756,12 @@ export class CommitCoordinator {
 		this.encodeInitialResources(instance, nodeOrdinal, journal);
 		for (const property of instance.pending.properties.values())
 			this.encodeSetDeclared(instance, property, journal);
+		this.encodeStyleStateChanges(
+			instance,
+			new Map(),
+			instance.pending.styleStates,
+			journal,
+		);
 		if (instance.pending.hidden)
 			journal.records.push({
 				section: 1,
@@ -1283,6 +1337,12 @@ export class CommitCoordinator {
 		journal: Journal,
 	): void {
 		this.encodePropertyFields(instance, previous, next, journal);
+		this.encodeStyleStateChanges(
+			instance,
+			previous.styleStates,
+			next.styleStates,
+			journal,
+		);
 		if (previous.hidden !== next.hidden)
 			journal.records.push({
 				section: 1,
@@ -1357,6 +1417,38 @@ export class CommitCoordinator {
 					operands: [...nodeRef(instance), UI_PROPERTIES[name]],
 				});
 			else this.encodeSetDeclared(instance, after, journal);
+		}
+	}
+
+	private encodeStyleStateChanges(
+		instance: HostInstance,
+		previous: ReadonlyMap<string, string>,
+		next: ReadonlyMap<string, string>,
+		journal: Journal,
+	): void {
+		const keys = new Set([...previous.keys(), ...next.keys()]);
+		for (const key of keys) {
+			const before = previous.get(key);
+			const after = next.get(key);
+			if (before === after) continue;
+			if (after === undefined) {
+				journal.records.push({
+					section: 1,
+					opcode: UI_OPCODES.clearStyleState,
+					operands: [...nodeRef(instance), 0, ...journal.metadata.addText(key)],
+				});
+			} else {
+				journal.records.push({
+					section: 1,
+					opcode: UI_OPCODES.setStyleState,
+					operands: [
+						...nodeRef(instance),
+						0,
+						...journal.metadata.addText(key),
+						...journal.metadata.addText(after),
+					],
+				});
+			}
 		}
 	}
 

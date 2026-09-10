@@ -83,6 +83,7 @@ pub(crate) struct OccurrenceSnapshot {
     pub(crate) subscriptions: u64,
     pub(crate) history_action: Option<u32>,
     pub(crate) properties: Vec<(PropertyId, LayerValue)>,
+    pub(crate) style_states: Vec<(String, String)>,
     pub(crate) structure_revision: u64,
     pub(crate) geometry_revision: u64,
     pub(crate) presentation_revision: u64,
@@ -260,11 +261,20 @@ impl OccurrenceDocument {
             subscriptions: occurrence.subscriptions,
             history_action: occurrence.history_action,
             properties: occurrence.properties.effective_values(),
+            style_states: Self::effective_style_states(occurrence),
             structure_revision: occurrence.revisions.structure,
             geometry_revision: occurrence.revisions.geometry,
             presentation_revision: occurrence.revisions.presentation,
             interaction_revision: occurrence.revisions.interaction,
         })
+    }
+
+    fn effective_style_states(occurrence: &Occurrence) -> Vec<(String, String)> {
+        let mut states = occurrence.style_states.clone();
+        for (key, value) in &occurrence.style_overrides {
+            states.insert(key.clone(), value.clone());
+        }
+        states.into_iter().collect()
     }
 
     pub(crate) fn selected_connector(&self, port: ResourceKey) -> Option<ResourceKey> {

@@ -10,7 +10,14 @@ import {
 	useLayoutEffect,
 	useState,
 } from "react";
-import { StyleRef, TextBlockSource, TextContent } from "../src/index.ts";
+import {
+	StyleRef,
+	StyleSelector,
+	StyleSpec,
+	TextBlockSource,
+	TextContent,
+	Theme,
+} from "../src/index.ts";
 import { RootContainer } from "../src/react/commit.ts";
 import {
 	hostCandidateCreations,
@@ -318,6 +325,148 @@ describe("T3 React mutation renderer", () => {
 		} finally {
 			await root.unmount();
 			tui.close();
+		}
+	});
+
+	test("public style states lower through the theme and explicit ref overrides", async () => {
+		const tui = await AppHarness.open({ width: 24, height: 6 });
+		tui.setTheme(
+			Theme.new()
+				.withStyle(
+					"severity",
+					new StyleSpec().foreground({ type: "named", value: "red" }),
+				)
+				.withStyleVariant(
+					"severity",
+					StyleSelector.state("severity", "error"),
+					new StyleSpec().foreground({ type: "named", value: "green" }),
+				)
+				.withStyleVariant(
+					"severity",
+					StyleSelector.state("severity", "warning"),
+					new StyleSpec().foreground({ type: "named", value: "yellow" }),
+				),
+		);
+		const root = createReactRoot(tui);
+		let ref: OccurrenceRef | undefined;
+		let nativeCalls = 0;
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		const originalCommit = host.commitUiV1.bind(host);
+		host.commitUiV1 = (...args) => {
+			nativeCalls += 1;
+			return originalCommit(...args);
+		};
+		try {
+			await root.render(
+				createElement(
+					Box,
+					{
+						style: StyleRef.theme("severity"),
+						styleStates: { severity: "info" },
+						ref: (value) => {
+							if (value !== null) ref = value;
+						},
+					},
+					"state",
+				),
+			);
+			await root.whenVisible();
+			const row = tui.screenRows().findIndex((line) => line.includes("state"));
+			const column = tui.cellXOfText(row, "state");
+			if (row < 0 || column === null || ref === undefined)
+				throw new Error("style-state text/ref was not published");
+			const styleRef = ref;
+			expect(() => styleRef.setStyleState("severity", "")).toThrow(
+				"style state values must be nonempty NUL-free strings",
+			);
+			expect(() => styleRef.clearStyleState("\0")).toThrow(
+				"style state keys must be nonempty and NUL-free",
+			);
+			expect(tui.styleAt(row, column).foreground).toBe("Red");
+			const acceptedCalls = nativeCalls;
+			await root.render(
+				createElement(
+					Box,
+					{
+						style: StyleRef.theme("severity"),
+						styleStates: { severity: "info" },
+					},
+					"state",
+				),
+			);
+			expect(nativeCalls).toBe(acceptedCalls);
+			expect(styleRef.setStyleState("severity", "warning").accepted).toBe(true);
+			await root.whenVisible();
+			expect(tui.styleAt(row, column).foreground).toBe("Yellow");
+			const changedCalls = nativeCalls;
+			await root.render(
+				createElement(
+					Box,
+					{
+						style: StyleRef.theme("severity"),
+						styleStates: { severity: "error" },
+					},
+					"state",
+				),
+			);
+			expect(nativeCalls).toBeGreaterThan(changedCalls);
+			expect(tui.styleAt(row, column).foreground).toBe("Yellow");
+			expect(styleRef.clearStyleState("severity").accepted).toBe(true);
+			await root.whenVisible();
+			expect(tui.styleAt(row, column).foreground).toBe("Green");
+		} finally {
+			await root.unmount();
+			root.close();
+			tui.close();
+		}
+	});
+
+	test("public alignment accepts neutral axes, maps row bottom, and rejects horizontal center", async () => {
+		const verticalTui = await AppHarness.open({ width: 20, height: 6 });
+		const verticalRoot = createReactRoot(verticalTui);
+		try {
+			await verticalRoot.render(createElement(Box, {}, "neutral"));
+			await verticalRoot.whenVisible();
+			const defaultRows = verticalTui.screenRows();
+			await verticalRoot.render(
+				createElement(Box, { alignment: {} }, "neutral"),
+			);
+			await verticalRoot.whenVisible();
+			expect(verticalTui.screenRows()).toEqual(defaultRows);
+			await verticalRoot.render(
+				createElement(
+					Row,
+					{ height: "fill", alignment: { vertical: "bottom" } },
+					createElement(Text, {}, "row"),
+				),
+			);
+			await verticalRoot.whenVisible();
+			const rows = verticalTui.screenRows();
+			expect(rows[rows.length - 1]).toContain("row");
+		} finally {
+			verticalRoot.close();
+			verticalTui.close();
+		}
+
+		const horizontalTui = await AppHarness.open({ width: 20, height: 6 });
+		const horizontalRoot = createReactRoot(horizontalTui);
+		try {
+			await horizontalRoot.render(
+				createElement(
+					Row,
+					{ alignment: { horizontal: "center" } },
+					createElement(Text, {}, "row"),
+				),
+			);
+			await expect(horizontalRoot.whenVisible()).rejects.toThrow(
+				"alignment.horizontal is unsupported in the M1 terminal adapter",
+			);
+		} finally {
+			horizontalRoot.close();
+			horizontalTui.close();
 		}
 	});
 
@@ -1348,6 +1497,12 @@ describe("T3 React mutation renderer", () => {
 		expect(() =>
 			Box({ style: StyleRef.theme("bad theme key") } as never),
 		).toThrow("theme key must be non-empty");
+		expect(() => Box({ styleStates: { severity: "" } } as never)).toThrow(
+			"style state values must be nonempty NUL-free strings",
+		);
+		expect(() => Box({ styleStates: { "\0": "error" } } as never)).toThrow(
+			"style state keys must be nonempty and NUL-free",
+		);
 		expect(() =>
 			Text({ children: TextContent.markdown("**legacy**") } as never),
 		).toThrow("text content must be a string, number, or bigint");

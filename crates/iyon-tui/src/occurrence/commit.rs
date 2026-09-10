@@ -1239,7 +1239,7 @@ struct CommitDraft<'a> {
     roots_removed: Vec<NodeKey>,
     effects: EffectMask,
     property_initials: HashMap<NodeKey, PropertyLayers>,
-    style_state_initials: HashMap<(NodeKey, String), Option<String>>,
+    style_state_initials: HashMap<(NodeKey, String), (Option<String>, Option<String>)>,
     interaction_initials: HashMap<NodeKey, (bool, u64)>,
     /// True when the accepted change can alter native output or native
     /// resources.  Subscription presence and a declared value hidden by an
@@ -1819,14 +1819,7 @@ impl<'a> CommitDraft<'a> {
                     ));
                 }
                 let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
-                if *layer == 0 {
-                    capture_style_state_initial(
-                        &self.tree,
-                        node,
-                        key,
-                        &mut self.style_state_initials,
-                    )?;
-                }
+                capture_style_state_initial(&self.tree, node, key, &mut self.style_state_initials)?;
                 let record = self.tree.edit(node).map_err(tree_issue)?;
                 let states = if *layer == 0 {
                     &mut record.style_states
@@ -1837,11 +1830,7 @@ impl<'a> CommitDraft<'a> {
                     return Ok(false);
                 }
                 states.insert(key.clone(), value.clone());
-                if *layer == 0 {
-                    return Ok(false);
-                }
-                mark_style_state(&mut self.tree, node, &mut self.effects)?;
-                Ok(true)
+                Ok(false)
             }
 
             UiOperation::ClearStyleState { node, layer, key } => {
@@ -1852,14 +1841,7 @@ impl<'a> CommitDraft<'a> {
                     ));
                 }
                 let node = resolve_node_ref(self.document, &self.tree, &self.local_objects, node)?;
-                if *layer == 0 {
-                    capture_style_state_initial(
-                        &self.tree,
-                        node,
-                        key,
-                        &mut self.style_state_initials,
-                    )?;
-                }
+                capture_style_state_initial(&self.tree, node, key, &mut self.style_state_initials)?;
                 let record = self.tree.edit(node).map_err(tree_issue)?;
                 let states = if *layer == 0 {
                     &mut record.style_states
@@ -1869,11 +1851,7 @@ impl<'a> CommitDraft<'a> {
                 if states.remove(key).is_none() {
                     return Ok(false);
                 }
-                if *layer == 0 {
-                    return Ok(false);
-                }
-                mark_style_state(&mut self.tree, node, &mut self.effects)?;
-                Ok(true)
+                Ok(false)
             }
 
             _ => unreachable!("operation dispatched to the wrong draft phase"),
@@ -1980,13 +1958,13 @@ impl<'a> CommitDraft<'a> {
         )?;
         changed |= property_changed;
         self.physical_work |= property_physical;
-        let style_changed = finalize_style_state_changes(
+        let (style_changed, style_physical) = finalize_style_state_changes(
             &mut self.tree,
             std::mem::take(&mut self.style_state_initials),
             &mut self.effects,
         )?;
         changed |= style_changed;
-        self.physical_work |= style_changed;
+        self.physical_work |= style_physical;
         let (interaction_changed, interaction_physical, membership_nodes) =
             finalize_interaction_changes(
                 &mut self.tree,
@@ -2257,19 +2235,20 @@ fn capture_style_state_initial(
     tree: &TreeDraft<'_>,
     node: NodeKey,
     key: &str,
-    initials: &mut HashMap<(NodeKey, String), Option<String>>,
+    initials: &mut HashMap<(NodeKey, String), (Option<String>, Option<String>)>,
 ) -> Result<(), CommitIssue> {
     let entry = (node, key.to_owned());
     if initials.contains_key(&entry) {
         return Ok(());
     }
-    let value = tree
-        .read(node)
-        .map_err(tree_issue)?
-        .style_states
-        .get(key)
-        .cloned();
-    initials.insert(entry, value);
+    let record = tree.read(node).map_err(tree_issue)?;
+    initials.insert(
+        entry,
+        (
+            record.style_states.get(key).cloned(),
+            record.style_overrides.get(key).cloned(),
+        ),
+    );
     Ok(())
 }
 
@@ -2354,29 +2333,35 @@ fn finalize_property_changes(
 
 fn finalize_style_state_changes(
     tree: &mut TreeDraft<'_>,
-    initials: HashMap<(NodeKey, String), Option<String>>,
+    initials: HashMap<(NodeKey, String), (Option<String>, Option<String>)>,
     effects: &mut EffectMask,
-) -> Result<bool, CommitIssue> {
-    let mut changed_nodes = HashSet::new();
+) -> Result<(bool, bool), CommitIssue> {
+    let mut changed = false;
+    let mut effective_changed_nodes = HashSet::new();
     for ((node, key), initial) in initials {
         if tree.is_retired(node) {
             continue;
         }
-        let current = tree
-            .read(node)
-            .map_err(tree_issue)?
-            .style_states
-            .get(&key)
-            .cloned();
+        let record = tree.read(node).map_err(tree_issue)?;
+        let current = (
+            record.style_states.get(&key).cloned(),
+            record.style_overrides.get(&key).cloned(),
+        );
         if current != initial {
-            changed_nodes.insert(node);
+            changed = true;
             tree.mark_changed(node);
+            let before_effective = initial.1.as_ref().or(initial.0.as_ref());
+            let after_effective = current.1.as_ref().or(current.0.as_ref());
+            if before_effective != after_effective {
+                effective_changed_nodes.insert(node);
+            }
         }
     }
-    for node in changed_nodes.iter().copied() {
+    let physical = !effective_changed_nodes.is_empty();
+    for node in effective_changed_nodes {
         mark_style_state(tree, node, effects)?;
     }
-    Ok(!changed_nodes.is_empty())
+    Ok((changed, physical))
 }
 
 fn finalize_interaction_changes(
@@ -3768,6 +3753,66 @@ mod tests {
         assert_eq!(
             record.properties.effective(PropertyId::Background),
             LayerValue::Value(PropertyValue::Color(ColorValue::Ansi(3)))
+        );
+    }
+
+    #[test]
+    fn style_state_layers_preserve_masked_base_then_reveal_after_clear() {
+        let mut document = document();
+        let (node, _) = mount_two_children(&mut document);
+        let mut base = UiCommit::new(document.accepted_ui_revision());
+        base.push(UiOperation::SetStyleState {
+            node: node_ref(node),
+            layer: 0,
+            key: "severity".to_owned(),
+            value: "info".to_owned(),
+        });
+        document.commit_ui(&base).expect("declared style state");
+
+        let mut override_commit = UiCommit::new(document.accepted_ui_revision());
+        override_commit.push(UiOperation::SetStyleState {
+            node: node_ref(node),
+            layer: 1,
+            key: "severity".to_owned(),
+            value: "warning".to_owned(),
+        });
+        document
+            .commit_ui(&override_commit)
+            .expect("style state override");
+
+        let mut masked_base = UiCommit::new(document.accepted_ui_revision());
+        masked_base.push(UiOperation::SetStyleState {
+            node: node_ref(node),
+            layer: 0,
+            key: "severity".to_owned(),
+            value: "error".to_owned(),
+        });
+        document
+            .commit_ui(&masked_base)
+            .expect("masked style state declaration");
+        let snapshot = document
+            .snapshot(document.node_key(node).expect("node key"))
+            .expect("snapshot");
+        assert_eq!(
+            snapshot.style_states,
+            vec![("severity".to_owned(), "warning".to_owned())]
+        );
+
+        let mut clear = UiCommit::new(document.accepted_ui_revision());
+        clear.push(UiOperation::ClearStyleState {
+            node: node_ref(node),
+            layer: 1,
+            key: "severity".to_owned(),
+        });
+        document
+            .commit_ui(&clear)
+            .expect("clear style state override");
+        let snapshot = document
+            .snapshot(document.node_key(node).expect("node key"))
+            .expect("snapshot");
+        assert_eq!(
+            snapshot.style_states,
+            vec![("severity".to_owned(), "error".to_owned())]
         );
     }
 

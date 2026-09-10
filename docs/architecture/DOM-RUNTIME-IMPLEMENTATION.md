@@ -1,6 +1,6 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T4 and the first T5/M1 prerequisite slice, accepted after
+**Scope:** T0 through T4 and the T5 React and presentation/state prerequisites, accepted after
 parent source and design review. This is not full T5/M1 acceptance.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
@@ -22,7 +22,7 @@ the current-source authority.
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
-| T5 — M1 cutover/publication deletion | **prerequisite slice accepted; M1 remaining** | Parent reviewed the production shim, finite public refs, speculative ownership witness, consumer/demo behavior, and controlled negative evidence. Old composition/View publication, leases, paths and ordinary ViewState remain until the full cutover gate. |
+| T5 — M1 cutover/publication deletion | **React and presentation/state prerequisites accepted; M1 remaining** | Parent reviewed the production shim, finite public refs, speculative ownership witness, consumer/demo behavior, effective style-state ownership, complete border/style lowering, and supported/rejected M1 alignment. Old composition/View publication, leases, paths and ordinary ViewState remain until the full cutover gate. |
 | T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
 
@@ -767,24 +767,35 @@ consecutive isolated runs. The controlled discrete-priority negative run
 failed as expected (exit 1) and is logged outside the repository. The permanent
 negative-control test was removed rather than retained as workload/priority
 confounding evidence. The previous full Bun evidence (192 tests and 3,619
-expectations) remains reusable because no unrelated behavior, Rust source,
-dependencies, or native artifact changed; the current focused
-React/consumer/demo, typecheck, declarations, Biome, and ownership checks cover
-this correction. The staged T4 addon above is the reused validation artifact.
+expectations) remains reusable for unaffected paths; this correction changed
+the Rust adapter and native artifact, so the current focused
+React/consumer/demo, typecheck, declarations, Biome, ownership, and native
+alignment checks are the applicable evidence. The staged T4 addon above is
+historical prerequisite provenance, not the artifact used by those alignment
+checks.
 Parent's final source check reran the 56 focused tests, TypeScript, and Biome
 after removing duplicate demo submit bookkeeping and adding a post-close
 scheduler turn. Biome's two import-order findings were fixed; the interruption
 test then passed again. Logs are `/tmp/iyon-t5-parent-*.log`.
 
-Parent source review also identified required follow-on T5 parity work before
-M1 acceptance: the private adapter currently ignores alignment, applies border
-fields as competing replacement specifications, and omits effective caller
-style states from its occurrence snapshot. These must be corrected through the
-occurrence owner, not a mirrored ViewState registry. Physical History export
-must also be exercised through the public React consumer route; a resident
-History row and stable unit identity do not establish transfer behavior.
+The bounded T5 presentation/state parity correction is accepted after parent
+source/design review of the occurrence owner, adapter, and public boundary.
+Border fields are composed into one
+effective specification, direct foreground/text attributes overlay a named
+style base, effective declared/override style states are snapshotted and
+lowered into the existing theme selector, and Box-row vertical alignment uses
+the existing `row_specs` path. Neutral/default axes are accepted as identity
+layout, while only non-neutral Box-row vertical axes are mapped; unsupported
+non-neutral axes are reported at the frame
+barrier rather than ignored. The correction does not remove the legacy route,
+ordinary ViewState, or the adapter; physical History export still requires a
+public React consumer witness before M1 acceptance.
 T4's accepted source is `ca1216335d57569a4171d10b86bcf3aad0872671`; prior
 acceptance does not exempt these M1 parity requirements.
+The earlier React prerequisite is committed at
+`a6d70b22373eefb11e28670eff8e4576008a774c`. This alignment scope does not claim
+horizontal text alignment or general Flex/Grid parity; their content/layout
+ownership remains required work in the T6/T7 migration.
 
 ## Remaining proof and risks
 
@@ -792,7 +803,7 @@ acceptance does not exempt these M1 parity requirements.
   existing terminal renderer through one-way M1 adaptation. Native frame
   presentation, receipt ownership, environment scheduling, controls, typed
   events and History routing were accepted in T4. Full T5 production cutover
-  and the additional parity requirements above remain unaccepted.
+  and the public physical-History consumer witness remain unaccepted.
 - T2 native ingress qualification and acknowledgement allocation have focused
   witnesses, including napi8 type-tag rejection for wrong wrapped classes and
   prototype spoofing, detached-buffer rejection, and local-count admission.
@@ -857,6 +868,29 @@ acceptance does not exempt these M1 parity requirements.
   coordinator. Focus and visible geometry use confirmed frame metadata and
   native control ownership; unsupported non-control occurrences reject
   explicitly rather than fabricating geometry from desired state.
+- React presentation-capable props now accept finite NUL-free `styleStates`
+  records, and occurrence refs publish layer-1 style-state overrides through
+  the same UI commit coordinator. Declared updates remain masked by active
+  overrides and clearing reveals the newest declaration. Focused Rust/native
+  and React boundary tests cover border/style precedence, theme selection,
+  override masking/clear, no-op style-state rerenders, supported row alignment,
+  and explicit unsupported alignment errors. This remains a T5 prerequisite
+  correction, not M1 publication/deletion acceptance.
+- Parent's final neutral-axis correction rebuilt the canonical darwin-arm64
+  default N-API addon: `packages/iyon-tui/native/iyon-tui-native.node`, SHA-256
+  `d11862d1a4f2f9625286c9fd1aafb5a42959f0a247c5bada45379ce43f8b98eb`,
+  7,609,376 bytes. The public alignment witness compares neutral Box output
+  with the default, checks bottom-aligned Row output, and rejects horizontal
+  center through the production/native boundary. The expected pre-fix failures
+  are in `/tmp/iyon-t5-parent-alignment-prefix-failure.log` and
+  `/tmp/iyon-t5-parent-neutral-negative.log`.
+- Final current-source checks passed 58 React/consumer/demo tests with 271
+  expectations, 21 legacy-adapter Rust tests, native-host check and Clippy,
+  rustfmt, TypeScript, and pinned Biome. Logs are
+  `/tmp/iyon-t5-parent-parity-*.log`. The correction pass's 28 occurrence-commit
+  tests, declaration, binding and ownership checks are reused for unchanged
+  paths. Full workspace Rust/Bun validation remains the final M1 gate, not a
+  claim of this bounded prerequisite acceptance.
 - Existing strict lint debt is recorded, not swept: baseline architecture
   checks passed, while broad warning/clippy cleanup remains outside this slice.
 - The generated old View ABI remains intentionally present until M1. Its

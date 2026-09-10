@@ -96,6 +96,9 @@ function publicInstance(
 			node.root.coordinator.publishOverride(node, property, value),
 		clearOverride: (property) =>
 			node.root.coordinator.clearOverride(node, property),
+		setStyleState: (key, value) =>
+			node.root.coordinator.publishStyleState(node, key, value),
+		clearStyleState: (key) => node.root.coordinator.clearStyleState(node, key),
 		focus: () => {
 			const handle = node.accepted?.handle;
 			if (handle === undefined)

@@ -131,6 +131,17 @@ export interface OccurrenceRef {
 		readonly revision: number;
 		readonly accepted: true;
 	};
+	setStyleState(
+		key: string,
+		value: string,
+	): {
+		readonly revision: number;
+		readonly accepted: true;
+	};
+	clearStyleState(key: string): {
+		readonly revision: number;
+		readonly accepted: true;
+	};
 	focus(): void;
 	visibleGeometry(): Promise<UiGeometry | null>;
 	historyIdentity(): number | string;
@@ -153,6 +164,7 @@ export interface BoxProps extends LayoutProps, EventProps {
 	readonly borderGlyphs?: BorderGlyphs;
 	readonly textAttributes?: Partial<Record<TextAttribute, boolean>>;
 	readonly style?: StyleSpecValue | StyleSpec | StyleRef;
+	readonly styleStates?: Readonly<Record<string, string>>;
 	readonly hidden?: boolean;
 }
 
@@ -216,6 +228,7 @@ export interface EditorProps extends LayoutProps, EventProps {
 	readonly borderStyle?: BorderStyle;
 	readonly borderGlyphs?: BorderGlyphs;
 	readonly textAttributes?: Partial<Record<TextAttribute, boolean>>;
+	readonly styleStates?: Readonly<Record<string, string>>;
 	readonly hidden?: boolean;
 }
 
@@ -250,6 +263,7 @@ export interface NormalizedContent {
 export interface NormalizedProps {
 	readonly layout: LayoutKind;
 	readonly properties: ReadonlyMap<UiPropertyName, NormalizedProperty>;
+	readonly styleStates: ReadonlyMap<string, string>;
 	readonly hidden: boolean;
 	readonly content?: NormalizedContent;
 	readonly control?: {
@@ -446,6 +460,7 @@ export function normalizeProps(type: string, input: unknown): NormalizedProps {
 		});
 	}
 	const hidden = normalizeHidden(props);
+	const styleStates = normalizeStyleStates(props.styleStates);
 	const events = normalizeEvents(props);
 	const content =
 		kind === HOST_KINDS.contentHost ? normalizeContent(props) : undefined;
@@ -461,6 +476,7 @@ export function normalizeProps(type: string, input: unknown): NormalizedProps {
 	return {
 		layout: layoutKindForType(type),
 		properties,
+		styleStates,
 		hidden,
 		...(content === undefined ? {} : { content }),
 		...(control === undefined ? {} : { control }),
@@ -558,6 +574,36 @@ function normalizeHidden(props: Record<string, unknown>): boolean {
 	if (typeof hidden !== "boolean")
 		throw new TypeError("hidden must be boolean");
 	return hidden;
+}
+
+/** Shared validation for props and imperative style-state entry points. */
+export function validateStyleStateKey(key: unknown): asserts key is string {
+	if (typeof key !== "string" || key.length === 0 || key.includes("\0"))
+		throw new RangeError("style state keys must be nonempty and NUL-free");
+}
+
+export function validateStyleState(
+	key: unknown,
+	value: unknown,
+): asserts value is string {
+	validateStyleStateKey(key);
+	if (typeof value !== "string" || value.length === 0 || value.includes("\0"))
+		throw new RangeError(
+			"style state values must be nonempty NUL-free strings",
+		);
+}
+
+function normalizeStyleStates(value: unknown): ReadonlyMap<string, string> {
+	if (value === undefined) return new Map();
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		throw new TypeError("styleStates must be an object");
+	const result = new Map<string, string>();
+	for (const key of Object.keys(value as Record<string, unknown>)) {
+		const stateValue = (value as Record<string, unknown>)[key];
+		validateStyleState(key, stateValue);
+		result.set(key, stateValue);
+	}
+	return result;
 }
 
 function normalizeEvents(
@@ -658,6 +704,7 @@ function assertKnownProps(
 		"borderGlyphs",
 		"textAttributes",
 		"style",
+		"styleStates",
 		...Object.keys(EVENT_BITS),
 		...(content ? ["source", "port", "funnel", "literal"] : []),
 		...(editor ? ["multiline", "value", "defaultValue"] : []),

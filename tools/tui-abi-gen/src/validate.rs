@@ -314,12 +314,21 @@ fn validate_ui_value_encodings(document: &UiAbiDocument) -> Result<(), Validatio
         }
         let mut form_names = HashSet::new();
         for form in &encoding.forms {
+            let mut enum_names = HashSet::new();
+            let mut tags = HashSet::new();
             if form.name.is_empty()
                 || form.name.chars().any(char::is_whitespace)
                 || !form_names.insert(form.name.as_str())
                 || form.word_count < encoding.min_words
                 || form.word_count > encoding.max_words
                 || form.mask.is_some_and(|mask| mask == 0)
+                || (!form.names.is_empty()
+                    && (form.names.len() != form.values.len()
+                        || form
+                            .names
+                            .iter()
+                            .any(|name| name.is_empty() || !enum_names.insert(name.as_str())))
+                    || form.tags.iter().any(|tag| !tags.insert(*tag)))
             {
                 return invalid(format!(
                     "UI value encoding {} has an invalid or duplicated form",
@@ -426,6 +435,15 @@ fn validate_ui_property(
     {
         return invalid(format!(
             "UI property {} has incomplete metadata",
+            property.name
+        ));
+    }
+    let mut allowed = HashSet::new();
+    if property.allowed_values.iter().any(|value| {
+        value.is_empty() || value.chars().any(char::is_whitespace) || !allowed.insert(value)
+    }) {
+        return invalid(format!(
+            "UI property {} has invalid or duplicate allowed values",
             property.name
         ));
     }

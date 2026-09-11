@@ -1,6 +1,6 @@
 // DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml.
-// schema_blake3 = b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0
-// generator_blake3 = 732ae63011ebca451790b255bd2dcd717711d161f047569545ea473c0cdac5c3
+// schema_blake3 = aa92c1c46995f6daeab87f08ef493788c1b96ad6cb842a7322220675e9d1691e
+// generator_blake3 = b24c4f5ded660a7363e3f0d9d7d248d155511bdaf4384d128827ac15e778f08d
 
 /** Generated direct-occurrence UI schema; do not edit. */
 export const UI_ABI_NAME = "iyon_tui_ui" as const;
@@ -125,7 +125,6 @@ export type OwnershipMode = typeof OWNERSHIP_MODES[keyof typeof OWNERSHIP_MODES]
 export type OwnershipModeName = "OccurrenceOwned" | "Explicit";
 
 export const VALUE_KINDS = {
-  sizeMode: 1,
   u16: 2,
   insets: 3,
   alignment: 4,
@@ -136,11 +135,23 @@ export const VALUE_KINDS = {
   textAttributes: 9,
   style: 10,
   layoutMode: 11,
+  dimension: 12,
+  f32: 13,
+  display: 14,
+  direction: 15,
+  flexDirection: 16,
+  flexWrap: 17,
+  position: 18,
+  alignmentMode: 19,
+  gridAutoFlow: 20,
+  insetsF32: 21,
+  trackList: 22,
+  gridPlacement: 23,
 } as const;
 export type ValueKind = typeof VALUE_KINDS[keyof typeof VALUE_KINDS];
 
 
-export type ValueKindName = "SizeMode" | "U16" | "Insets" | "Alignment" | "Edges" | "Color" | "BorderStyle" | "Glyphs" | "TextAttributes" | "Style" | "LayoutMode";
+export type ValueKindName = "U16" | "Insets" | "Alignment" | "Edges" | "Color" | "BorderStyle" | "Glyphs" | "TextAttributes" | "Style" | "LayoutMode" | "Dimension" | "F32" | "Display" | "Direction" | "FlexDirection" | "FlexWrap" | "Position" | "AlignmentMode" | "GridAutoFlow" | "InsetsF32" | "TrackList" | "GridPlacement";
 
 export interface UiValueEncodingDescriptor {
   readonly valueKind: ValueKindName;
@@ -155,23 +166,35 @@ export interface UiValueEncodingForm {
   readonly name: string;
   readonly wordCount: number;
   readonly tags: readonly number[];
+  readonly names: readonly string[];
   readonly values: readonly number[];
   readonly mask: number | undefined;
   readonly maxValue: number | undefined;
 }
 
 export const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [
-  { valueKind: "SizeMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "mode", wordCount: 1, tags: [], values: [0, 1], mask: undefined, maxValue: undefined }] },
-  { valueKind: "U16", encoding: "u16", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "u16", wordCount: 1, tags: [], values: [], mask: undefined, maxValue: 65535 }] },
-  { valueKind: "Insets", encoding: "u16x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "u16x4", wordCount: 4, tags: [], values: [], mask: undefined, maxValue: undefined }] },
-  { valueKind: "Alignment", encoding: "axis_x2", minWords: 2, maxWords: 2, metadataWords: 0, forms: [{ name: "axis_pair", wordCount: 2, tags: [], values: [0, 1, 2, 3, 4], mask: undefined, maxValue: undefined }] },
-  { valueKind: "Edges", encoding: "bool_x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "bool_x4", wordCount: 4, tags: [], values: [0, 1], mask: undefined, maxValue: undefined }] },
-  { valueKind: "Color", encoding: "ansi_or_rgb_v1", minWords: 1, maxWords: 4, metadataWords: 0, forms: [{ name: "ansi", wordCount: 1, tags: [], values: [], mask: undefined, maxValue: 255 }, { name: "rgb", wordCount: 4, tags: [2147483649], values: [], mask: undefined, maxValue: undefined }] },
-  { valueKind: "BorderStyle", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "border", wordCount: 1, tags: [], values: [0, 1, 2], mask: undefined, maxValue: undefined }] },
-  { valueKind: "Glyphs", encoding: "metadata_pairs_x8", minWords: 16, maxWords: 16, metadataWords: 16, forms: [{ name: "metadata_pairs_x8", wordCount: 16, tags: [], values: [], mask: undefined, maxValue: undefined }] },
-  { valueKind: "TextAttributes", encoding: "set_or_clear_bits_v1", minWords: 1, maxWords: 2, metadataWords: 0, forms: [{ name: "set_or_clear", wordCount: 2, tags: [], values: [], mask: 63, maxValue: undefined }] },
-  { valueKind: "Style", encoding: "direct_or_themed_style_v1", minWords: 9, maxWords: 12, metadataWords: 2, forms: [{ name: "direct", wordCount: 9, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }, { name: "themed", wordCount: 12, tags: [0, 1, 2], values: [], mask: 63, maxValue: undefined }] },
-  { valueKind: "LayoutMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "layout", wordCount: 1, tags: [], values: [0, 1, 2, 3], mask: undefined, maxValue: undefined }] },
+  { valueKind: "U16", encoding: "u16", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "u16", wordCount: 1, tags: [], names: [], values: [], mask: undefined, maxValue: 65535 }] },
+  { valueKind: "Insets", encoding: "u16x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "u16x4", wordCount: 4, tags: [], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Alignment", encoding: "axis_x2", minWords: 2, maxWords: 2, metadataWords: 0, forms: [{ name: "axis_pair", wordCount: 2, tags: [], names: [], values: [0, 1, 2, 3, 4], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Edges", encoding: "bool_x4", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "bool_x4", wordCount: 4, tags: [], names: [], values: [0, 1], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Color", encoding: "ansi_or_rgb_v1", minWords: 1, maxWords: 4, metadataWords: 0, forms: [{ name: "ansi", wordCount: 1, tags: [], names: [], values: [], mask: undefined, maxValue: 255 }, { name: "rgb", wordCount: 4, tags: [2147483649], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "BorderStyle", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "border", wordCount: 1, tags: [], names: ["plain", "rounded", "double"], values: [0, 1, 2], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Glyphs", encoding: "metadata_pairs_x8", minWords: 16, maxWords: 16, metadataWords: 16, forms: [{ name: "metadata_pairs_x8", wordCount: 16, tags: [], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "TextAttributes", encoding: "set_or_clear_bits_v1", minWords: 1, maxWords: 2, metadataWords: 0, forms: [{ name: "set_or_clear", wordCount: 2, tags: [], names: [], values: [], mask: 63, maxValue: undefined }] },
+  { valueKind: "Style", encoding: "direct_or_themed_style_v1", minWords: 9, maxWords: 12, metadataWords: 2, forms: [{ name: "direct", wordCount: 9, tags: [0, 1, 2], names: [], values: [], mask: 63, maxValue: undefined }, { name: "themed", wordCount: 12, tags: [0, 1, 2], names: [], values: [], mask: 63, maxValue: undefined }] },
+  { valueKind: "LayoutMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "layout", wordCount: 1, tags: [], names: ["box", "row", "column", "grid"], values: [0, 1, 2, 3], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Dimension", encoding: "dimension_v1", minWords: 1, maxWords: 2, metadataWords: 0, forms: [{ name: "fit", wordCount: 1, tags: [0], names: [], values: [0], mask: undefined, maxValue: undefined }, { name: "fill", wordCount: 1, tags: [1], names: [], values: [1], mask: undefined, maxValue: undefined }, { name: "auto", wordCount: 1, tags: [2], names: [], values: [2], mask: undefined, maxValue: undefined }, { name: "length", wordCount: 2, tags: [3], names: [], values: [], mask: undefined, maxValue: undefined }, { name: "percent", wordCount: 2, tags: [4], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "F32", encoding: "f32_bits_v1", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "scalar", wordCount: 1, tags: [], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Display", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "display", wordCount: 1, tags: [], names: ["flex", "grid", "none"], values: [0, 1, 2], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Direction", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "direction", wordCount: 1, tags: [], names: ["ltr", "rtl"], values: [0, 1], mask: undefined, maxValue: undefined }] },
+  { valueKind: "FlexDirection", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "flex_direction", wordCount: 1, tags: [], names: ["row", "column", "rowReverse", "columnReverse"], values: [0, 1, 2, 3], mask: undefined, maxValue: undefined }] },
+  { valueKind: "FlexWrap", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "flex_wrap", wordCount: 1, tags: [], names: ["nowrap", "wrap", "wrapReverse"], values: [0, 1, 2], mask: undefined, maxValue: undefined }] },
+  { valueKind: "Position", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "position", wordCount: 1, tags: [], names: ["relative", "absolute"], values: [0, 1], mask: undefined, maxValue: undefined }] },
+  { valueKind: "AlignmentMode", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "alignment_mode", wordCount: 1, tags: [], names: ["start", "end", "center", "stretch", "baseline", "spaceBetween", "spaceEvenly", "spaceAround"], values: [0, 1, 2, 3, 4, 5, 6, 7], mask: undefined, maxValue: undefined }] },
+  { valueKind: "GridAutoFlow", encoding: "u32_enum", minWords: 1, maxWords: 1, metadataWords: 0, forms: [{ name: "grid_auto_flow", wordCount: 1, tags: [], names: ["row", "column", "rowDense", "columnDense"], values: [0, 1, 2, 3], mask: undefined, maxValue: undefined }] },
+  { valueKind: "InsetsF32", encoding: "dimension_x4_v1", minWords: 8, maxWords: 8, metadataWords: 0, forms: [{ name: "dimension_x4", wordCount: 8, tags: [2, 3, 4], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "TrackList", encoding: "track_list_v1", minWords: 1, maxWords: 321, metadataWords: 0, forms: [{ name: "tracks", wordCount: 1, tags: [0, 1, 2, 3, 4, 5, 6], names: [], values: [], mask: undefined, maxValue: undefined }, { name: "minmax_min", wordCount: 1, tags: [0, 1, 2, 3, 4], names: [], values: [], mask: undefined, maxValue: undefined }, { name: "minmax_max", wordCount: 1, tags: [0, 1, 2, 3, 4, 5], names: [], values: [], mask: undefined, maxValue: undefined }] },
+  { valueKind: "GridPlacement", encoding: "grid_placement_v1", minWords: 4, maxWords: 4, metadataWords: 0, forms: [{ name: "placement", wordCount: 4, tags: [0, 1, 2], names: [], values: [], mask: undefined, maxValue: undefined }] },
 ];
 
 export function uiValueEncoding(valueKind: ValueKindName): UiValueEncodingDescriptor {
@@ -295,6 +318,31 @@ export const UI_PROPERTIES = {
   textAttributes: 0x0206,
   style: 0x0207,
   layout: 0x010b,
+  display: 0x010c,
+  direction: 0x010d,
+  flexDirection: 0x010e,
+  flexWrap: 0x010f,
+  flexGrow: 0x0110,
+  flexShrink: 0x0111,
+  flexBasis: 0x0112,
+  margin: 0x0113,
+  alignItems: 0x0114,
+  alignSelf: 0x0115,
+  alignContent: 0x0116,
+  justifyContent: 0x0117,
+  justifyItems: 0x0118,
+  justifySelf: 0x0119,
+  columnGap: 0x011a,
+  rowGap: 0x011b,
+  gridTemplateColumns: 0x011c,
+  gridTemplateRows: 0x011d,
+  gridAutoColumns: 0x011e,
+  gridAutoRows: 0x011f,
+  gridAutoFlow: 0x0120,
+  gridColumn: 0x0121,
+  gridRow: 0x0122,
+  position: 0x0123,
+  inset: 0x0124,
 } as const;
 export type UiPropertyName = keyof typeof UI_PROPERTIES;
 export type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];
@@ -314,27 +362,53 @@ export interface UiPropertyDescriptor {
   readonly realization: string;
   readonly nullable: boolean;
   readonly clearable: boolean;
+  readonly allowedValues: readonly string[];
 }
 
 export const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [
-  { id: 0x0101, name: "width", domain: "geometry", valueKind: "SizeMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "size_mode", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: false, clearable: true },
-  { id: 0x0102, name: "height", domain: "geometry", valueKind: "SizeMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "size_mode", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true },
-  { id: 0x0103, name: "padding", domain: "geometry", valueKind: "Insets", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "insets", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: false, clearable: true },
-  { id: 0x0104, name: "minWidth", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true },
-  { id: 0x0105, name: "maxWidth", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "unbounded", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true },
-  { id: 0x0106, name: "minHeight", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: true, clearable: true },
-  { id: 0x0107, name: "maxHeight", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "unbounded", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: true, clearable: true },
-  { id: 0x0108, name: "gap", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true },
-  { id: 0x0109, name: "alignment", domain: "geometry", valueKind: "Alignment", legalKinds: ["Box", "Scroll", "Animation"], normalizer: "alignment", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true },
-  { id: 0x010a, name: "borderEdges", domain: "geometry", valueKind: "Edges", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "border_edges", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true },
-  { id: 0x0201, name: "foreground", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x0202, name: "background", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x0203, name: "borderColor", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x0204, name: "borderStyle", domain: "presentation", valueKind: "BorderStyle", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "border_style", default: "plain", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["Presentation", "LayoutInput"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x0205, name: "borderGlyphs", domain: "presentation", valueKind: "Glyphs", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "glyphs", default: "style_default", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x0206, name: "textAttributes", domain: "presentation", valueKind: "TextAttributes", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "text_attributes", default: "inherit", reset: "unset", overrideBehavior: "sparse", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: false, clearable: true },
-  { id: 0x0207, name: "style", domain: "presentation", valueKind: "Style", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "style", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation", "HostEnvironmentDependent"], realization: "paint", nullable: true, clearable: true },
-  { id: 0x010b, name: "layout", domain: "geometry", valueKind: "LayoutMode", legalKinds: ["Box"], normalizer: "layout", default: "box", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true },
+  { id: 0x0101, name: "width", domain: "geometry", valueKind: "Dimension", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "dimension", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: false, clearable: true, allowedValues: ["fit", "fill", "length", "percent"] },
+  { id: 0x0102, name: "height", domain: "geometry", valueKind: "Dimension", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "dimension", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true, allowedValues: ["fit", "fill", "length", "percent"] },
+  { id: 0x0103, name: "padding", domain: "geometry", valueKind: "Insets", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "insets", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0104, name: "minWidth", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0105, name: "maxWidth", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "unbounded", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0106, name: "minHeight", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0107, name: "maxHeight", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "u16", default: "unbounded", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0108, name: "gap", domain: "geometry", valueKind: "U16", legalKinds: ["Box", "Scroll", "Animation"], normalizer: "u16", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0109, name: "alignment", domain: "geometry", valueKind: "Alignment", legalKinds: ["Box", "Scroll", "Animation"], normalizer: "alignment", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x010a, name: "borderEdges", domain: "geometry", valueKind: "Edges", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "border_edges", default: "unset", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput", "ContentProjection"], realization: "layout", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0201, name: "foreground", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0202, name: "background", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0203, name: "borderColor", domain: "presentation", valueKind: "Color", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "color", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0204, name: "borderStyle", domain: "presentation", valueKind: "BorderStyle", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "border_style", default: "plain", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["Presentation", "LayoutInput"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0205, name: "borderGlyphs", domain: "presentation", valueKind: "Glyphs", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "glyphs", default: "style_default", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["Presentation"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x0206, name: "textAttributes", domain: "presentation", valueKind: "TextAttributes", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "text_attributes", default: "inherit", reset: "unset", overrideBehavior: "sparse", inheritance: "theme", effects: ["Presentation"], realization: "paint", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0207, name: "style", domain: "presentation", valueKind: "Style", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "style", default: "inherit", reset: "unset", overrideBehavior: "explicit", inheritance: "theme", effects: ["Presentation", "HostEnvironmentDependent"], realization: "paint", nullable: true, clearable: true, allowedValues: [] },
+  { id: 0x010b, name: "layout", domain: "geometry", valueKind: "LayoutMode", legalKinds: ["Box"], normalizer: "layout", default: "box", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "layout", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x010c, name: "display", domain: "geometry", valueKind: "Display", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "display", default: "flex", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_display", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x010d, name: "direction", domain: "geometry", valueKind: "Direction", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "direction", default: "ltr", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_direction", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x010e, name: "flexDirection", domain: "geometry", valueKind: "FlexDirection", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "flex_direction", default: "row", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_flex_direction", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x010f, name: "flexWrap", domain: "geometry", valueKind: "FlexWrap", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "flex_wrap", default: "nowrap", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_flex_wrap", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0110, name: "flexGrow", domain: "geometry", valueKind: "F32", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "float", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_flex_grow", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0111, name: "flexShrink", domain: "geometry", valueKind: "F32", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "float", default: "one", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_flex_shrink", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0112, name: "flexBasis", domain: "geometry", valueKind: "Dimension", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "dimension", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_flex_basis", nullable: false, clearable: true, allowedValues: ["auto", "length", "percent"] },
+  { id: 0x0113, name: "margin", domain: "geometry", valueKind: "InsetsF32", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "dimensions", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_margin", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0114, name: "alignItems", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "stretch", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_align_items", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "baseline"] },
+  { id: 0x0115, name: "alignSelf", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_align_self", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "baseline"] },
+  { id: 0x0116, name: "alignContent", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "stretch", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_align_content", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "spaceBetween", "spaceEvenly", "spaceAround"] },
+  { id: 0x0117, name: "justifyContent", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "start", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_justify_content", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "spaceBetween", "spaceEvenly", "spaceAround"] },
+  { id: 0x0118, name: "justifyItems", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "stretch", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_justify_items", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "baseline"] },
+  { id: 0x0119, name: "justifySelf", domain: "geometry", valueKind: "AlignmentMode", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "alignment_mode", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_justify_self", nullable: false, clearable: true, allowedValues: ["start", "end", "center", "stretch", "baseline"] },
+  { id: 0x011a, name: "columnGap", domain: "geometry", valueKind: "Dimension", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "nonnegative_dimension", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_column_gap", nullable: false, clearable: true, allowedValues: ["length", "percent"] },
+  { id: 0x011b, name: "rowGap", domain: "geometry", valueKind: "Dimension", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "nonnegative_dimension", default: "zero", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_row_gap", nullable: false, clearable: true, allowedValues: ["length", "percent"] },
+  { id: 0x011c, name: "gridTemplateColumns", domain: "geometry", valueKind: "TrackList", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "track_list", default: "empty", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_template_columns", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x011d, name: "gridTemplateRows", domain: "geometry", valueKind: "TrackList", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "track_list", default: "empty", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_template_rows", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x011e, name: "gridAutoColumns", domain: "geometry", valueKind: "TrackList", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "track_list", default: "empty", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_auto_columns", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x011f, name: "gridAutoRows", domain: "geometry", valueKind: "TrackList", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "track_list", default: "empty", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_auto_rows", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0120, name: "gridAutoFlow", domain: "geometry", valueKind: "GridAutoFlow", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "grid_auto_flow", default: "row", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_auto_flow", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0121, name: "gridColumn", domain: "geometry", valueKind: "GridPlacement", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "grid_placement", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_column", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0122, name: "gridRow", domain: "geometry", valueKind: "GridPlacement", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "grid_placement", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_grid_row", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0123, name: "position", domain: "geometry", valueKind: "Position", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "position", default: "relative", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_position", nullable: false, clearable: true, allowedValues: [] },
+  { id: 0x0124, name: "inset", domain: "geometry", valueKind: "InsetsF32", legalKinds: ["Box", "ContentHost", "Editor", "Scroll", "Animation"], normalizer: "dimensions", default: "auto", reset: "unset", overrideBehavior: "explicit", inheritance: "none", effects: ["LayoutInput"], realization: "taffy_inset", nullable: false, clearable: true, allowedValues: [] },
 ];
 
 export function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {
@@ -368,9 +442,84 @@ function uiColorValueKey(value: unknown): string {
   }
 }
 
+function uiF32Key(value: unknown, name: string): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(name + " must be finite");
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded)) throw new RangeError(name + " is outside f32 range");
+  const canonical = rounded === 0 ? 0 : rounded;
+  return String(new Uint32Array(new Float32Array([canonical]).buffer)[0] ?? 0);
+}
+
+function uiDimensionKey(value: unknown): string {
+  if (value === "fit" || value === "fill" || value === "auto") return String(value);
+  if (typeof value !== "object" || value === null) throw new TypeError("finite dimension must be an object");
+  const item = value as { readonly unit?: string; readonly value?: number };
+  return uiCanonicalFields([String(item.unit), uiF32Key(item.value, "dimension.value")]);
+}
+
+function uiDimensionsKey(value: unknown): string {
+  if (typeof value !== "object" || value === null) throw new TypeError("finite dimensions must be an object");
+  const item = value as Record<string, unknown>;
+  return uiCanonicalFields(["top", "right", "bottom", "left"].map((side) => uiDimensionKey(item[side])));
+}
+
+function uiTrackBoundKey(value: unknown, allowFr: boolean): string {
+  if (value === "auto" || value === "minContent" || value === "maxContent") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("typed track must be an object");
+  const item = value as Record<string, unknown>;
+  if (item.type === "minmax" || (item.type !== "length" && item.type !== "percent" && item.type !== "fr")) throw new TypeError("invalid track bound type");
+  if (item.type === "fr" && !allowFr) throw new RangeError("fr minimum track is invalid");
+  if (Object.keys(item).some((key) => key !== "type" && key !== "value")) throw new RangeError("simple track has unknown fields");
+  return uiCanonicalFields([item.type, uiF32Key(item.value, "track.value")]);
+}
+
+function uiTrackKey(value: unknown): string {
+  if (value === "auto" || value === "minContent" || value === "maxContent") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("typed track must be an object");
+  const item = value as Record<string, unknown>;
+  if (item.type === "minmax") {
+    if (Object.keys(item).some((key) => key !== "type" && key !== "min" && key !== "max")) throw new RangeError("minmax track has unknown fields");
+    return uiCanonicalFields(["minmax", uiTrackBoundKey(item.min, false), uiTrackBoundKey(item.max, true)]);
+  }
+  return uiTrackBoundKey(value, true);
+}
+function uiTracksKey(value: unknown): string {
+  if (!Array.isArray(value)) throw new TypeError("track list must be an array");
+  return uiCanonicalFields(value.map(uiTrackKey));
+}
+
+function uiPlacementLineKey(value: unknown): string {
+  if (value === undefined || value === "auto") return "auto";
+  if (typeof value === "number") return "line:" + String(value);
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).some((key) => key !== "span")) throw new RangeError("grid placement span has unknown fields");
+    if (typeof item.span !== "number" || !Number.isSafeInteger(item.span) || item.span <= 0 || item.span > 65535) throw new RangeError("grid placement span is invalid");
+    return "span:" + String(item.span);
+  }
+  throw new TypeError("grid placement line is invalid");
+}
+function uiPlacementKey(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("grid placement must be an object");
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => key !== "start" && key !== "end")) throw new RangeError("grid placement has unknown fields");
+  return uiCanonicalFields([uiPlacementLineKey(item.start), uiPlacementLineKey(item.end)]);
+}
 function uiFiniteValueKey(normalizer: string, value: unknown): string {
   switch (normalizer) {
-    case "size_mode":
+    case "dimension":
+    case "nonnegative_dimension": return uiDimensionKey(value);
+    case "dimensions": return uiDimensionsKey(value);
+    case "float": return uiF32Key(value, "float");
+    case "display":
+    case "direction":
+    case "flex_direction":
+    case "flex_wrap":
+    case "position":
+    case "alignment_mode":
+    case "grid_auto_flow": return String(value);
+    case "grid_placement": return uiPlacementKey(value);
+    case "track_list": return uiTracksKey(value);
     case "layout":
     case "u16":
     case "border_style": return String(value);
@@ -391,8 +540,71 @@ export function uiPropertyValueKey(name: UiPropertyName, value: unknown): string
   return uiCanonicalFields([descriptor.normalizer, uiFiniteValueKey(descriptor.normalizer, value)]);
 }
 
+function uiF32Equal(left: unknown, right: unknown): boolean {
+  if (typeof left !== "number" || typeof right !== "number") return false;
+  const leftValue = Math.fround(left);
+  const rightValue = Math.fround(right);
+  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return false;
+  const leftBits = new Uint32Array(new Float32Array([leftValue === 0 ? 0 : leftValue]).buffer)[0];
+  const rightBits = new Uint32Array(new Float32Array([rightValue === 0 ? 0 : rightValue]).buffer)[0];
+  return leftBits === rightBits;
+}
+
+function uiDimensionEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left === "string" || typeof right === "string") return false;
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
+  const leftValue = left as { readonly unit?: unknown; readonly value?: unknown };
+  const rightValue = right as { readonly unit?: unknown; readonly value?: unknown };
+  return leftValue.unit === rightValue.unit && uiF32Equal(leftValue.value, rightValue.value);
+}
+
+function uiDimensionsEqual(left: unknown, right: unknown): boolean {
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
+  const leftValue = left as Record<string, unknown>;
+  const rightValue = right as Record<string, unknown>;
+  return ["top", "right", "bottom", "left"].every((side) => uiDimensionEqual(leftValue[side], rightValue[side]));
+}
+
+function uiTrackEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left === "string" || typeof right === "string") return false;
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) return false;
+  const leftValue = left as { readonly type?: unknown; readonly value?: unknown; readonly min?: unknown; readonly max?: unknown };
+  const rightValue = right as { readonly type?: unknown; readonly value?: unknown; readonly min?: unknown; readonly max?: unknown };
+  if (leftValue.type !== rightValue.type) return false;
+  if (leftValue.type === "minmax") return uiTrackEqual(leftValue.min, rightValue.min) && uiTrackEqual(leftValue.max, rightValue.max);
+  return uiF32Equal(leftValue.value, rightValue.value);
+}
+
+function uiTracksEqual(left: unknown, right: unknown): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((value, index) => uiTrackKey(value) === uiTrackKey(right[index]));
+}
+function uiPlacementLineEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) return (left as { readonly span?: unknown }).span === (right as { readonly span?: unknown }).span;
+  return false;
+}
+
+function uiPlacementEqual(left: unknown, right: unknown): boolean {
+  try {
+    return uiPlacementKey(left) === uiPlacementKey(right);
+  } catch {
+    return false;
+  }
+}
 export function uiPropertyValuesEqual(name: UiPropertyName, left: unknown, right: unknown): boolean {
-  return uiPropertyValueKey(name, left) === uiPropertyValueKey(name, right);
+  const descriptor = uiPropertyDescriptorByName(name);
+  switch (descriptor.normalizer) {
+    case "dimension":
+    case "nonnegative_dimension": return uiDimensionEqual(left, right);
+    case "dimensions": return uiDimensionsEqual(left, right);
+    case "float": return uiF32Equal(left, right);
+    case "track_list": return uiTracksEqual(left, right);
+    case "grid_placement": return uiPlacementEqual(left, right);
+    default: return uiPropertyValueKey(name, left) === uiPropertyValueKey(name, right);
+  }
 }
 
 export function uiPropertyEncoding(name: UiPropertyName): UiValueEncodingDescriptor {
@@ -414,6 +626,98 @@ function uiEncodingTag(valueKind: ValueKindName, formName: string, index: number
   if (tag === undefined) throw new Error(valueKind + " / " + formName + " is missing generated tag " + index);
   return tag;
 }
+function uiEnumValue(value: unknown, valueKind: ValueKindName, formName: string, name: string): number {
+  const form = uiValueEncodingForm(valueKind, formName);
+  const index = form.names.indexOf(String(value));
+  const encoded = index < 0 ? undefined : form.values[index];
+  if (encoded === undefined) throw new RangeError(name + " has an unknown generated enum value");
+  return encoded;
+}
+
+function uiFiniteScalar(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(name + " must be finite");
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded)) throw new RangeError(name + " is outside f32 range");
+  const canonical = rounded === 0 ? 0 : rounded;
+  return new Uint32Array(new Float32Array([canonical]).buffer)[0] ?? 0;
+}
+
+function uiDimensionWords(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, "auto", 0), 0];
+  if (typeof value !== "object" || value === null) throw new TypeError(name + " must be a finite dimension");
+  const item = value as { readonly unit?: string; readonly value?: number };
+  const bits = uiFiniteScalar(item.value, name + ".value");
+  if (item.unit === "length") return [uiEncodingTag(valueKind, "length", 0), bits];
+  if (item.unit === "percent") return [uiEncodingTag(valueKind, "percent", 0), bits];
+  throw new RangeError(name + " has an unknown dimension unit");
+}
+
+function uiPackDimensions(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null) throw new TypeError(name + " must be an object");
+  const item = value as Record<string, unknown>;
+  return ["top", "right", "bottom", "left"].flatMap((key) => uiDimensionWords(item[key], name + "." + key, valueKind));
+}
+
+function uiTrackObject(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(name + " must be a typed track");
+  const track = value as Record<string, unknown>;
+  if (Object.keys(track).some((key) => !["type", "value", "min", "max"].includes(key))) throw new RangeError(name + " has unknown fields");
+  return track;
+}
+
+function uiPackSimpleTrack(value: unknown, name: string, valueKind: ValueKindName, formName = "tracks", allowFr = true): number[] {
+  const track = uiTrackObject(value, name);
+  if (Object.keys(track).some((key) => key !== "type" && key !== "value")) throw new RangeError(name + " simple track has unknown fields");
+  const bits = uiFiniteScalar(track.value, name + ".value");
+  const offset = 1;
+  const tag = track.type === "length" ? uiEncodingTag(valueKind, formName, offset) : track.type === "percent" ? uiEncodingTag(valueKind, formName, offset + 1) : track.type === "fr" && allowFr ? uiEncodingTag(valueKind, formName, offset + 2) : -1;
+  if (tag < 0) throw new RangeError(name + " has an invalid track bound type");
+  return [tag, bits];
+}
+
+function uiPackTrackBound(value: unknown, name: string, valueKind: ValueKindName, formName: string, allowFr: boolean): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, formName, 0), 0];
+  if (value === "minContent") return [uiEncodingTag(valueKind, formName, allowFr ? 4 : 3), 0];
+  if (value === "maxContent") return [uiEncodingTag(valueKind, formName, allowFr ? 5 : 4), 0];
+  return uiPackSimpleTrack(value, name, valueKind, formName, allowFr);
+}
+
+function uiPackTrack(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, "tracks", 0), 0];
+  if (value === "minContent") return [uiEncodingTag(valueKind, "tracks", 4), 0];
+  if (value === "maxContent") return [uiEncodingTag(valueKind, "tracks", 5), 0];
+  const track = uiTrackObject(value, name);
+  if (track.type === "minmax") {
+    if (Object.keys(track).some((key) => key !== "type" && key !== "min" && key !== "max")) throw new RangeError(name + " minmax has unknown fields");
+    return [uiEncodingTag(valueKind, "tracks", 6), ...uiPackTrackBound(track.min, name + ".min", valueKind, "minmax_min", false), ...uiPackTrackBound(track.max, name + ".max", valueKind, "minmax_max", true)];
+  }
+  return uiPackSimpleTrack(value, name, valueKind);
+}
+
+function uiPackTracks(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (!Array.isArray(value) || value.length > 64) throw new RangeError(name + " must contain at most 64 tracks");
+  return [value.length, ...value.flatMap((track, index) => uiPackTrack(track, name + "[" + index + "]", valueKind))];
+}
+
+function uiGridLineWords(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === undefined || value === "auto") return [uiEncodingTag(valueKind, "placement", 0), 0];
+  if (typeof value === "number" && Number.isSafeInteger(value) && value !== 0) return [uiEncodingTag(valueKind, "placement", 1), value >>> 0];
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).some((key) => key !== "span")) throw new RangeError(name + " span has unknown fields");
+    const span = item.span;
+    if (typeof span === "number" && Number.isSafeInteger(span) && span > 0 && span <= 65535) return [uiEncodingTag(valueKind, "placement", 2), span];
+  }
+  throw new RangeError(name + " must be auto, a nonzero line, or a positive span");
+}
+
+function uiPackPlacement(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(name + " must be an object");
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => key !== "start" && key !== "end")) throw new RangeError(name + " has unknown fields");
+  return [...uiGridLineWords(item.start, name + ".start", valueKind), ...uiGridLineWords(item.end, name + ".end", valueKind)];
+}
+
 
 function uiPackColor(value: unknown, valueKind: ValueKindName): number[] {
   if (typeof value !== "object" || value === null) throw new TypeError("finite color value must be an object");
@@ -473,14 +777,36 @@ export function uiEncodePropertyValue(name: UiPropertyName, value: unknown, meta
   const descriptor = uiPropertyDescriptorByName(name);
   const valueKind = descriptor.valueKind;
   switch (descriptor.normalizer) {
-    case "size_mode": return [value === "fill" ? 1 : 0];
-    case "layout": { const values = uiValueEncodingForm(valueKind, "layout").values; const index = ["box", "row", "column", "grid"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown layout mode"); return [encoded]; }
+    case "dimension":
+    case "nonnegative_dimension": {
+      if (value === "auto") return [uiEncodingTag(valueKind, "auto", 0)];
+      if (value === "fit") return [uiEncodingTag(valueKind, "fit", 0)];
+      if (value === "fill") return [uiEncodingTag(valueKind, "fill", 0)];
+      if (typeof value !== "object" || value === null) throw new TypeError(name + " must be a finite dimension");
+      const dimension = value as { readonly unit?: string; readonly value?: number };
+      const scalar = uiFiniteScalar(dimension.value, name + ".value");
+      if (dimension.unit === "length") return [uiEncodingTag(valueKind, "length", 0), scalar];
+      if (dimension.unit === "percent") return [uiEncodingTag(valueKind, "percent", 0), scalar];
+      throw new RangeError(name + " has an unknown dimension unit");
+    }
+    case "float": return [uiFiniteScalar(value, name)];
+    case "display": return [uiEnumValue(value, valueKind, "display", name)];
+    case "direction": return [uiEnumValue(value, valueKind, "direction", name)];
+    case "flex_direction": return [uiEnumValue(value, valueKind, "flex_direction", name)];
+    case "flex_wrap": return [uiEnumValue(value, valueKind, "flex_wrap", name)];
+    case "position": return [uiEnumValue(value, valueKind, "position", name)];
+    case "alignment_mode": return [uiEnumValue(value, valueKind, "alignment_mode", name)];
+    case "grid_auto_flow": return [uiEnumValue(value, valueKind, "grid_auto_flow", name)];
+    case "dimensions": return uiPackDimensions(value, name, valueKind);
+    case "track_list": return uiPackTracks(value, name, valueKind);
+    case "grid_placement": return uiPackPlacement(value, name, valueKind);
+    case "layout": return [uiEnumValue(value, valueKind, "layout", name)];
     case "u16": return [uiRequiredNumber(value, name)];
     case "insets": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return [uiRequiredNumber(item.top, name + ".top"), uiRequiredNumber(item.right, name + ".right"), uiRequiredNumber(item.bottom, name + ".bottom"), uiRequiredNumber(item.left, name + ".left")]; }
     case "alignment": { const item = value as { readonly horizontal: number; readonly vertical: number }; return [uiRequiredNumber(item.horizontal, name + ".horizontal"), uiRequiredNumber(item.vertical, name + ".vertical")]; }
     case "border_edges": return (value as readonly boolean[]).map((part) => part ? 1 : 0);
     case "color": return uiPackColor(value, valueKind);
-    case "border_style": { const values = uiValueEncodingForm(valueKind, "border").values; const index = ["plain", "rounded", "double"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown border style"); return [encoded]; }
+    case "border_style": return [uiEnumValue(value, valueKind, "border", name)];
     case "glyphs": { const item = value as Record<string, string>; const words: number[] = []; for (const key of ["top", "right", "bottom", "left", "topLeft", "topRight", "bottomLeft", "bottomRight"]) words.push(...metadata(item[key])); return words; }
     case "text_attributes": return uiPackAttributes(value, valueKind, "set_or_clear");
     case "style": return uiPackStyle(value, metadata, valueKind);

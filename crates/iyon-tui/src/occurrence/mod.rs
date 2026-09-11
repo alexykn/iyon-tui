@@ -27,8 +27,11 @@ pub use config::{ConfigError, ControlConfig, RootConfig};
 pub use control::{AnimationState, ControlError, ControlState, EditorState, ScrollState};
 pub use generated::{ControlKind, HandleKind, HostKind, OwnershipMode, PropertyId, RootRole};
 pub use properties::{
-    Alignment, AlignmentAxis, ColorValue, Edges, GlyphsValue, LayerValue, LayoutMode,
+    Alignment, AlignmentAxis, AlignmentMode, ColorValue, DimensionInsets, DimensionValue,
+    DirectionMode, DisplayMode, Edges, FiniteScalar, FlexDirectionMode, FlexWrapMode, GlyphsValue,
+    GridAutoFlowMode, GridLineValue, GridPlacementValue, LayerValue, LayoutMode, PositionMode,
     PropertyError, PropertyLayer, PropertyValue, SizeMode, StyleValue, TextAttributes,
+    TrackListValue, TrackMaxBound, TrackMinBound, TrackValue,
 };
 pub(crate) use tree::{Attachments, Occurrence};
 

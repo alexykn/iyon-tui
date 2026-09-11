@@ -237,7 +237,7 @@
     "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
     "docs/architecture/generated/UI-ABI-REFERENCE.md"
   ],
-  "generator_blake3": "732ae63011ebca451790b255bd2dcd717711d161f047569545ea473c0cdac5c3",
+  "generator_blake3": "b24c4f5ded660a7363e3f0d9d7d248d155511bdaf4384d128827ac15e778f08d",
   "handle_kinds": [
     {
       "code": 1,
@@ -565,6 +565,12 @@
   ],
   "properties": [
     {
+      "allowed_values": [
+        "fit",
+        "fill",
+        "length",
+        "percent"
+      ],
       "clearable": true,
       "default": "unset",
       "domain": "geometry",
@@ -582,14 +588,20 @@
         "Animation"
       ],
       "name": "width",
-      "normalizer": "size_mode",
+      "normalizer": "dimension",
       "nullable": false,
       "override_behavior": "explicit",
       "realization": "layout",
       "reset": "unset",
-      "value": "SizeMode"
+      "value": "Dimension"
     },
     {
+      "allowed_values": [
+        "fit",
+        "fill",
+        "length",
+        "percent"
+      ],
       "clearable": true,
       "default": "unset",
       "domain": "geometry",
@@ -606,14 +618,15 @@
         "Animation"
       ],
       "name": "height",
-      "normalizer": "size_mode",
+      "normalizer": "dimension",
       "nullable": false,
       "override_behavior": "explicit",
       "realization": "layout",
       "reset": "unset",
-      "value": "SizeMode"
+      "value": "Dimension"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "zero",
       "domain": "geometry",
@@ -639,6 +652,7 @@
       "value": "Insets"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "zero",
       "domain": "geometry",
@@ -664,6 +678,7 @@
       "value": "U16"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "unbounded",
       "domain": "geometry",
@@ -689,6 +704,7 @@
       "value": "U16"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "zero",
       "domain": "geometry",
@@ -713,6 +729,7 @@
       "value": "U16"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "unbounded",
       "domain": "geometry",
@@ -737,6 +754,7 @@
       "value": "U16"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "zero",
       "domain": "geometry",
@@ -759,6 +777,7 @@
       "value": "U16"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "unset",
       "domain": "geometry",
@@ -781,6 +800,7 @@
       "value": "Alignment"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "unset",
       "domain": "geometry",
@@ -806,6 +826,7 @@
       "value": "Edges"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "inherit",
       "domain": "presentation",
@@ -830,6 +851,7 @@
       "value": "Color"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "inherit",
       "domain": "presentation",
@@ -854,6 +876,7 @@
       "value": "Color"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "inherit",
       "domain": "presentation",
@@ -878,6 +901,7 @@
       "value": "Color"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "plain",
       "domain": "presentation",
@@ -903,6 +927,7 @@
       "value": "BorderStyle"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "style_default",
       "domain": "presentation",
@@ -927,6 +952,7 @@
       "value": "Glyphs"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "inherit",
       "domain": "presentation",
@@ -951,6 +977,7 @@
       "value": "TextAttributes"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "inherit",
       "domain": "presentation",
@@ -976,6 +1003,7 @@
       "value": "Style"
     },
     {
+      "allowed_values": [],
       "clearable": true,
       "default": "box",
       "domain": "geometry",
@@ -994,6 +1022,681 @@
       "realization": "layout",
       "reset": "unset",
       "value": "LayoutMode"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "flex",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 268,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "display",
+      "normalizer": "display",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_display",
+      "reset": "unset",
+      "value": "Display"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "ltr",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 269,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "direction",
+      "normalizer": "direction",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_direction",
+      "reset": "unset",
+      "value": "Direction"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "row",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 270,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "flexDirection",
+      "normalizer": "flex_direction",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_flex_direction",
+      "reset": "unset",
+      "value": "FlexDirection"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "nowrap",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 271,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "flexWrap",
+      "normalizer": "flex_wrap",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_flex_wrap",
+      "reset": "unset",
+      "value": "FlexWrap"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 272,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "flexGrow",
+      "normalizer": "float",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_flex_grow",
+      "reset": "unset",
+      "value": "F32"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "one",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 273,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "flexShrink",
+      "normalizer": "float",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_flex_shrink",
+      "reset": "unset",
+      "value": "F32"
+    },
+    {
+      "allowed_values": [
+        "auto",
+        "length",
+        "percent"
+      ],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 274,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "flexBasis",
+      "normalizer": "dimension",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_flex_basis",
+      "reset": "unset",
+      "value": "Dimension"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 275,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "margin",
+      "normalizer": "dimensions",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_margin",
+      "reset": "unset",
+      "value": "InsetsF32"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "baseline"
+      ],
+      "clearable": true,
+      "default": "stretch",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 276,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "alignItems",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_align_items",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "baseline"
+      ],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 277,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "alignSelf",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_align_self",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "spaceBetween",
+        "spaceEvenly",
+        "spaceAround"
+      ],
+      "clearable": true,
+      "default": "stretch",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 278,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "alignContent",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_align_content",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "spaceBetween",
+        "spaceEvenly",
+        "spaceAround"
+      ],
+      "clearable": true,
+      "default": "start",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 279,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "justifyContent",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_justify_content",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "baseline"
+      ],
+      "clearable": true,
+      "default": "stretch",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 280,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "justifyItems",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_justify_items",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "start",
+        "end",
+        "center",
+        "stretch",
+        "baseline"
+      ],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 281,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "justifySelf",
+      "normalizer": "alignment_mode",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_justify_self",
+      "reset": "unset",
+      "value": "AlignmentMode"
+    },
+    {
+      "allowed_values": [
+        "length",
+        "percent"
+      ],
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 282,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "columnGap",
+      "normalizer": "nonnegative_dimension",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_column_gap",
+      "reset": "unset",
+      "value": "Dimension"
+    },
+    {
+      "allowed_values": [
+        "length",
+        "percent"
+      ],
+      "clearable": true,
+      "default": "zero",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 283,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "rowGap",
+      "normalizer": "nonnegative_dimension",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_row_gap",
+      "reset": "unset",
+      "value": "Dimension"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "empty",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 284,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridTemplateColumns",
+      "normalizer": "track_list",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_template_columns",
+      "reset": "unset",
+      "value": "TrackList"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "empty",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 285,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridTemplateRows",
+      "normalizer": "track_list",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_template_rows",
+      "reset": "unset",
+      "value": "TrackList"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "empty",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 286,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridAutoColumns",
+      "normalizer": "track_list",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_auto_columns",
+      "reset": "unset",
+      "value": "TrackList"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "empty",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 287,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridAutoRows",
+      "normalizer": "track_list",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_auto_rows",
+      "reset": "unset",
+      "value": "TrackList"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "row",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 288,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridAutoFlow",
+      "normalizer": "grid_auto_flow",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_auto_flow",
+      "reset": "unset",
+      "value": "GridAutoFlow"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 289,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridColumn",
+      "normalizer": "grid_placement",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_column",
+      "reset": "unset",
+      "value": "GridPlacement"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 290,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "gridRow",
+      "normalizer": "grid_placement",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_grid_row",
+      "reset": "unset",
+      "value": "GridPlacement"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "relative",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 291,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "position",
+      "normalizer": "position",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_position",
+      "reset": "unset",
+      "value": "Position"
+    },
+    {
+      "allowed_values": [],
+      "clearable": true,
+      "default": "auto",
+      "domain": "geometry",
+      "effects": [
+        "LayoutInput"
+      ],
+      "id": 292,
+      "inheritance": "none",
+      "legal_kinds": [
+        "Box",
+        "ContentHost",
+        "Editor",
+        "Scroll",
+        "Animation"
+      ],
+      "name": "inset",
+      "normalizer": "dimensions",
+      "nullable": false,
+      "override_behavior": "explicit",
+      "realization": "taffy_inset",
+      "reset": "unset",
+      "value": "InsetsF32"
     }
   ],
   "root_roles": [
@@ -1010,7 +1713,7 @@
       "name": "LegacyHistoryUnit"
     }
   ],
-  "schema_blake3": "b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0",
+  "schema_blake3": "aa92c1c46995f6daeab87f08ef493788c1b96ad6cb842a7322220675e9d1691e",
   "sections": [
     {
       "code": 1,
@@ -1035,32 +1738,13 @@
   ],
   "value_encodings": [
     {
-      "encoding": "u32_enum",
-      "forms": [
-        {
-          "mask": null,
-          "max_value": null,
-          "name": "mode",
-          "tags": [],
-          "values": [
-            0,
-            1
-          ],
-          "word_count": 1
-        }
-      ],
-      "max_words": 1,
-      "metadata_words": 0,
-      "min_words": 1,
-      "value_kind": "SizeMode"
-    },
-    {
       "encoding": "u16",
       "forms": [
         {
           "mask": null,
           "max_value": 65535,
           "name": "u16",
+          "names": [],
           "tags": [],
           "values": [],
           "word_count": 1
@@ -1078,6 +1762,7 @@
           "mask": null,
           "max_value": null,
           "name": "u16x4",
+          "names": [],
           "tags": [],
           "values": [],
           "word_count": 4
@@ -1095,6 +1780,7 @@
           "mask": null,
           "max_value": null,
           "name": "axis_pair",
+          "names": [],
           "tags": [],
           "values": [
             0,
@@ -1118,6 +1804,7 @@
           "mask": null,
           "max_value": null,
           "name": "bool_x4",
+          "names": [],
           "tags": [],
           "values": [
             0,
@@ -1138,6 +1825,7 @@
           "mask": null,
           "max_value": 255,
           "name": "ansi",
+          "names": [],
           "tags": [],
           "values": [],
           "word_count": 1
@@ -1146,6 +1834,7 @@
           "mask": null,
           "max_value": null,
           "name": "rgb",
+          "names": [],
           "tags": [
             2147483649
           ],
@@ -1165,6 +1854,11 @@
           "mask": null,
           "max_value": null,
           "name": "border",
+          "names": [
+            "plain",
+            "rounded",
+            "double"
+          ],
           "tags": [],
           "values": [
             0,
@@ -1186,6 +1880,7 @@
           "mask": null,
           "max_value": null,
           "name": "metadata_pairs_x8",
+          "names": [],
           "tags": [],
           "values": [],
           "word_count": 16
@@ -1203,6 +1898,7 @@
           "mask": 63,
           "max_value": null,
           "name": "set_or_clear",
+          "names": [],
           "tags": [],
           "values": [],
           "word_count": 2
@@ -1220,6 +1916,7 @@
           "mask": 63,
           "max_value": null,
           "name": "direct",
+          "names": [],
           "tags": [
             0,
             1,
@@ -1232,6 +1929,7 @@
           "mask": 63,
           "max_value": null,
           "name": "themed",
+          "names": [],
           "tags": [
             0,
             1,
@@ -1253,6 +1951,12 @@
           "mask": null,
           "max_value": null,
           "name": "layout",
+          "names": [
+            "box",
+            "row",
+            "column",
+            "grid"
+          ],
           "tags": [],
           "values": [
             0,
@@ -1267,13 +1971,390 @@
       "metadata_words": 0,
       "min_words": 1,
       "value_kind": "LayoutMode"
+    },
+    {
+      "encoding": "dimension_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "fit",
+          "names": [],
+          "tags": [
+            0
+          ],
+          "values": [
+            0
+          ],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "fill",
+          "names": [],
+          "tags": [
+            1
+          ],
+          "values": [
+            1
+          ],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "auto",
+          "names": [],
+          "tags": [
+            2
+          ],
+          "values": [
+            2
+          ],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "length",
+          "names": [],
+          "tags": [
+            3
+          ],
+          "values": [],
+          "word_count": 2
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "percent",
+          "names": [],
+          "tags": [
+            4
+          ],
+          "values": [],
+          "word_count": 2
+        }
+      ],
+      "max_words": 2,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "Dimension"
+    },
+    {
+      "encoding": "f32_bits_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "scalar",
+          "names": [],
+          "tags": [],
+          "values": [],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "F32"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "display",
+          "names": [
+            "flex",
+            "grid",
+            "none"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "Display"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "direction",
+          "names": [
+            "ltr",
+            "rtl"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "Direction"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "flex_direction",
+          "names": [
+            "row",
+            "column",
+            "rowReverse",
+            "columnReverse"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "FlexDirection"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "flex_wrap",
+          "names": [
+            "nowrap",
+            "wrap",
+            "wrapReverse"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "FlexWrap"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "position",
+          "names": [
+            "relative",
+            "absolute"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "Position"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "alignment_mode",
+          "names": [
+            "start",
+            "end",
+            "center",
+            "stretch",
+            "baseline",
+            "spaceBetween",
+            "spaceEvenly",
+            "spaceAround"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "AlignmentMode"
+    },
+    {
+      "encoding": "u32_enum",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "grid_auto_flow",
+          "names": [
+            "row",
+            "column",
+            "rowDense",
+            "columnDense"
+          ],
+          "tags": [],
+          "values": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "word_count": 1
+        }
+      ],
+      "max_words": 1,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "GridAutoFlow"
+    },
+    {
+      "encoding": "dimension_x4_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "dimension_x4",
+          "names": [],
+          "tags": [
+            2,
+            3,
+            4
+          ],
+          "values": [],
+          "word_count": 8
+        }
+      ],
+      "max_words": 8,
+      "metadata_words": 0,
+      "min_words": 8,
+      "value_kind": "InsetsF32"
+    },
+    {
+      "encoding": "track_list_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "tracks",
+          "names": [],
+          "tags": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "values": [],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "minmax_min",
+          "names": [],
+          "tags": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "values": [],
+          "word_count": 1
+        },
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "minmax_max",
+          "names": [],
+          "tags": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "values": [],
+          "word_count": 1
+        }
+      ],
+      "max_words": 321,
+      "metadata_words": 0,
+      "min_words": 1,
+      "value_kind": "TrackList"
+    },
+    {
+      "encoding": "grid_placement_v1",
+      "forms": [
+        {
+          "mask": null,
+          "max_value": null,
+          "name": "placement",
+          "names": [],
+          "tags": [
+            0,
+            1,
+            2
+          ],
+          "values": [],
+          "word_count": 4
+        }
+      ],
+      "max_words": 4,
+      "metadata_words": 0,
+      "min_words": 4,
+      "value_kind": "GridPlacement"
     }
   ],
   "value_kinds": [
-    {
-      "code": 1,
-      "name": "SizeMode"
-    },
     {
       "code": 2,
       "name": "U16"
@@ -1313,6 +2394,54 @@
     {
       "code": 11,
       "name": "LayoutMode"
+    },
+    {
+      "code": 12,
+      "name": "Dimension"
+    },
+    {
+      "code": 13,
+      "name": "F32"
+    },
+    {
+      "code": 14,
+      "name": "Display"
+    },
+    {
+      "code": 15,
+      "name": "Direction"
+    },
+    {
+      "code": 16,
+      "name": "FlexDirection"
+    },
+    {
+      "code": 17,
+      "name": "FlexWrap"
+    },
+    {
+      "code": 18,
+      "name": "Position"
+    },
+    {
+      "code": 19,
+      "name": "AlignmentMode"
+    },
+    {
+      "code": 20,
+      "name": "GridAutoFlow"
+    },
+    {
+      "code": 21,
+      "name": "InsetsF32"
+    },
+    {
+      "code": 22,
+      "name": "TrackList"
+    },
+    {
+      "code": 23,
+      "name": "GridPlacement"
     }
   ]
 }

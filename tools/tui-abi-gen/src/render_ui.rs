@@ -264,8 +264,104 @@ pub fn typescript_schema(
     }
     output.push_str("];\n\n");
     render_typescript_properties(&mut output, document);
+    tighten_generated_geometry_fingerprints(&mut output);
     render_typescript_packers(&mut output);
     output
+}
+
+/// Keep the generated fingerprint path as strict as the handwritten
+/// normalizer. These replacements are deliberately generated here rather
+/// than maintaining a second validation implementation in the React layer.
+fn tighten_generated_geometry_fingerprints(output: &mut String) {
+    replace_generated_function(
+        output,
+        "function uiTrackKey",
+        "\n}\n\nfunction uiTracksKey",
+        r#"function uiTrackBoundKey(value: unknown, allowFr: boolean): string {
+  if (value === "auto" || value === "minContent" || value === "maxContent") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("typed track must be an object");
+  const item = value as Record<string, unknown>;
+  if (item.type === "minmax" || (item.type !== "length" && item.type !== "percent" && item.type !== "fr")) throw new TypeError("invalid track bound type");
+  if (item.type === "fr" && !allowFr) throw new RangeError("fr minimum track is invalid");
+  if (Object.keys(item).some((key) => key !== "type" && key !== "value")) throw new RangeError("simple track has unknown fields");
+  return uiCanonicalFields([item.type, uiF32Key(item.value, "track.value")]);
+}
+
+function uiTrackKey(value: unknown): string {
+  if (value === "auto" || value === "minContent" || value === "maxContent") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("typed track must be an object");
+  const item = value as Record<string, unknown>;
+  if (item.type === "minmax") {
+    if (Object.keys(item).some((key) => key !== "type" && key !== "min" && key !== "max")) throw new RangeError("minmax track has unknown fields");
+    return uiCanonicalFields(["minmax", uiTrackBoundKey(item.min, false), uiTrackBoundKey(item.max, true)]);
+  }
+  return uiTrackBoundKey(value, true);
+}"#,
+    );
+    replace_generated_function(
+        output,
+        "function uiPlacementLineKey",
+        "\n}\n\nfunction uiPlacementKey",
+        r#"function uiPlacementLineKey(value: unknown): string {
+  if (value === undefined || value === "auto") return "auto";
+  if (typeof value === "number") return "line:" + String(value);
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).some((key) => key !== "span")) throw new RangeError("grid placement span has unknown fields");
+    if (typeof item.span !== "number" || !Number.isSafeInteger(item.span) || item.span <= 0 || item.span > 65535) throw new RangeError("grid placement span is invalid");
+    return "span:" + String(item.span);
+  }
+  throw new TypeError("grid placement line is invalid");
+}"#,
+    );
+    replace_generated_function(
+        output,
+        "function uiPlacementKey",
+        "\n}\n\nfunction uiFiniteValueKey",
+        r#"function uiPlacementKey(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError("grid placement must be an object");
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => key !== "start" && key !== "end")) throw new RangeError("grid placement has unknown fields");
+  return uiCanonicalFields([uiPlacementLineKey(item.start), uiPlacementLineKey(item.end)]);
+}"#,
+    );
+    replace_generated_function(
+        output,
+        "function uiTracksEqual",
+        "\n}\n\nfunction uiPlacementLineEqual",
+        r#"function uiTracksEqual(left: unknown, right: unknown): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((value, index) => uiTrackKey(value) === uiTrackKey(right[index]));
+}"#,
+    );
+    replace_generated_function(
+        output,
+        "function uiPlacementEqual",
+        "\n}\n\nexport function uiPropertyValuesEqual",
+        r#"function uiPlacementEqual(left: unknown, right: unknown): boolean {
+  try {
+    return uiPlacementKey(left) === uiPlacementKey(right);
+  } catch {
+    return false;
+  }
+}"#,
+    );
+}
+
+fn replace_generated_function(
+    output: &mut String,
+    start_marker: &str,
+    end_marker: &str,
+    replacement: &str,
+) {
+    let Some(start) = output.find(start_marker) else {
+        panic!("generated geometry function {start_marker} is missing");
+    };
+    let Some(end_relative) = output[start..].find(end_marker) else {
+        panic!("generated geometry function {start_marker} has no terminator");
+    };
+    let end = start + end_relative + 3;
+    output.replace_range(start..end, replacement);
 }
 
 fn render_typescript_codes(output: &mut String, name: &str, values: &[impl CodeValue]) {
@@ -533,7 +629,7 @@ fn typescript_type_name(value: &str) -> &str {
 
 fn render_rust_value_encodings(output: &mut String, document: &UiAbiDocument) {
     output.push_str(
-        "#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingDescriptor {\n    pub value_kind: ValueKind,\n    pub encoding: &'static str,\n    pub min_words: usize,\n    pub max_words: usize,\n    pub metadata_words: usize,\n    pub forms: &'static [ValueEncodingForm],\n}\n\n#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingForm {\n    pub name: &'static str,\n    pub word_count: usize,\n    pub tags: &'static [u32],\n    pub values: &'static [u32],\n    pub mask: Option<u32>,\n    pub max_value: Option<u32>,\n}\n\npub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[\n",
+        "#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingDescriptor {\n    pub value_kind: ValueKind,\n    pub encoding: &'static str,\n    pub min_words: usize,\n    pub max_words: usize,\n    pub metadata_words: usize,\n    pub forms: &'static [ValueEncodingForm],\n}\n\n#[derive(Clone, Copy, Debug)]\npub struct ValueEncodingForm {\n    pub name: &'static str,\n    pub word_count: usize,\n    pub tags: &'static [u32],\n    pub names: &'static [&'static str],\n    pub values: &'static [u32],\n    pub mask: Option<u32>,\n    pub max_value: Option<u32>,\n}\n\npub const VALUE_ENCODING_DESCRIPTORS: &[ValueEncodingDescriptor] = &[\n",
     );
     for encoding in &document.value_encodings {
         writeln!(
@@ -548,10 +644,11 @@ fn render_rust_value_encodings(output: &mut String, document: &UiAbiDocument) {
                 .forms
                 .iter()
                 .map(|form| format!(
-                    "ValueEncodingForm {{ name: {:?}, word_count: {}, tags: &{:?}, values: &{:?}, mask: {:?}, max_value: {:?} }}",
+                    "ValueEncodingForm {{ name: {:?}, word_count: {}, tags: &{:?}, names: &[{}], values: &{:?}, mask: {:?}, max_value: {:?} }}",
                     form.name,
                     form.word_count,
                     form.tags,
+                    form.names.iter().map(|name| format!("{name:?}")).collect::<Vec<_>>().join(", "),
                     form.values,
                     form.mask,
                     form.max_value,
@@ -606,11 +703,11 @@ fn render_rust_properties(output: &mut String, document: &UiAbiDocument) {
     }
     output.push_str("        }\n    }\n}\n\n");
 
-    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct PropertyDescriptor {\n    pub id: PropertyId,\n    pub name: &'static str,\n    pub domain: &'static str,\n    pub value_kind: ValueKind,\n    pub legal_kinds: &'static [HostKind],\n    pub normalizer: &'static str,\n    pub default: &'static str,\n    pub reset: &'static str,\n    pub override_behavior: &'static str,\n    pub inheritance: &'static str,\n    pub effects: EffectMask,\n    pub realization: &'static str,\n    pub nullable: bool,\n    pub clearable: bool,\n}\n\npub const PROPERTY_DESCRIPTORS: &[PropertyDescriptor] = &[\n");
+    output.push_str("#[derive(Clone, Copy, Debug)]\npub struct PropertyDescriptor {\n    pub id: PropertyId,\n    pub name: &'static str,\n    pub domain: &'static str,\n    pub value_kind: ValueKind,\n    pub legal_kinds: &'static [HostKind],\n    pub normalizer: &'static str,\n    pub default: &'static str,\n    pub reset: &'static str,\n    pub override_behavior: &'static str,\n    pub inheritance: &'static str,\n    pub effects: EffectMask,\n    pub realization: &'static str,\n    pub nullable: bool,\n    pub clearable: bool,\n    pub allowed_values: &'static [&'static str],\n}\n\npub const PROPERTY_DESCRIPTORS: &[PropertyDescriptor] = &[\n");
     for property in &document.properties {
         writeln!(
             output,
-            "    PropertyDescriptor {{ id: PropertyId::{}, name: {:?}, domain: {:?}, value_kind: ValueKind::{}, legal_kinds: &[{}], normalizer: {:?}, default: {:?}, reset: {:?}, override_behavior: {:?}, inheritance: {:?}, effects: {}, realization: {:?}, nullable: {}, clearable: {} }},",
+            "    PropertyDescriptor {{ id: PropertyId::{}, name: {:?}, domain: {:?}, value_kind: ValueKind::{}, legal_kinds: &[{}], normalizer: {:?}, default: {:?}, reset: {:?}, override_behavior: {:?}, inheritance: {:?}, effects: {}, realization: {:?}, nullable: {}, clearable: {}, allowed_values: &[{}] }},",
             pascal(&property.name),
             property.name,
             property.domain,
@@ -630,6 +727,7 @@ fn render_rust_properties(output: &mut String, document: &UiAbiDocument) {
             property.realization,
             property.nullable,
             property.clearable,
+            property.allowed_values.iter().map(|value| format!("{value:?}")).collect::<Vec<_>>().join(", "),
         )
         .expect("writing generated property descriptor cannot fail");
     }
@@ -637,7 +735,7 @@ fn render_rust_properties(output: &mut String, document: &UiAbiDocument) {
 }
 
 fn render_typescript_value_encodings(output: &mut String, document: &UiAbiDocument) {
-    output.push_str("export interface UiValueEncodingDescriptor {\n  readonly valueKind: ValueKindName;\n  readonly encoding: string;\n  readonly minWords: number;\n  readonly maxWords: number;\n  readonly metadataWords: number;\n  readonly forms: readonly UiValueEncodingForm[];\n}\n\nexport interface UiValueEncodingForm {\n  readonly name: string;\n  readonly wordCount: number;\n  readonly tags: readonly number[];\n  readonly values: readonly number[];\n  readonly mask: number | undefined;\n  readonly maxValue: number | undefined;\n}\n\nexport const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [\n");
+    output.push_str("export interface UiValueEncodingDescriptor {\n  readonly valueKind: ValueKindName;\n  readonly encoding: string;\n  readonly minWords: number;\n  readonly maxWords: number;\n  readonly metadataWords: number;\n  readonly forms: readonly UiValueEncodingForm[];\n}\n\nexport interface UiValueEncodingForm {\n  readonly name: string;\n  readonly wordCount: number;\n  readonly tags: readonly number[];\n  readonly names: readonly string[];\n  readonly values: readonly number[];\n  readonly mask: number | undefined;\n  readonly maxValue: number | undefined;\n}\n\nexport const UI_VALUE_ENCODING_DESCRIPTORS: readonly UiValueEncodingDescriptor[] = [\n");
     for encoding in &document.value_encodings {
         writeln!(
             output,
@@ -651,10 +749,11 @@ fn render_typescript_value_encodings(output: &mut String, document: &UiAbiDocume
                 .forms
                 .iter()
                 .map(|form| format!(
-                    "{{ name: {:?}, wordCount: {}, tags: {:?}, values: {:?}, mask: {}, maxValue: {} }}",
+                    "{{ name: {:?}, wordCount: {}, tags: {:?}, names: {:?}, values: {:?}, mask: {}, maxValue: {} }}",
                     form.name,
                     form.word_count,
                     form.tags,
+                    form.names,
                     form.values,
                     form.mask
                         .map_or_else(|| "undefined".to_owned(), |value| value.to_string()),
@@ -776,11 +875,11 @@ fn render_typescript_properties(output: &mut String, document: &UiAbiDocument) {
         writeln!(output, "  {}: 0x{:04x},", property.name, property.id)
             .expect("writing generated TypeScript property id cannot fail");
     }
-    output.push_str("} as const;\nexport type UiPropertyName = keyof typeof UI_PROPERTIES;\nexport type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];\n\nexport interface UiPropertyDescriptor {\n  readonly id: number;\n  readonly name: UiPropertyName;\n  readonly domain: string;\n  readonly valueKind: ValueKindName;\n  readonly legalKinds: readonly HostKindName[];\n  readonly normalizer: string;\n  readonly default: string;\n  readonly reset: string;\n  readonly overrideBehavior: string;\n  readonly inheritance: string;\n  readonly effects: readonly EffectName[];\n  readonly realization: string;\n  readonly nullable: boolean;\n  readonly clearable: boolean;\n}\n\nexport const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [\n");
+    output.push_str("} as const;\nexport type UiPropertyName = keyof typeof UI_PROPERTIES;\nexport type UiPropertyId = typeof UI_PROPERTIES[UiPropertyName];\n\nexport interface UiPropertyDescriptor {\n  readonly id: number;\n  readonly name: UiPropertyName;\n  readonly domain: string;\n  readonly valueKind: ValueKindName;\n  readonly legalKinds: readonly HostKindName[];\n  readonly normalizer: string;\n  readonly default: string;\n  readonly reset: string;\n  readonly overrideBehavior: string;\n  readonly inheritance: string;\n  readonly effects: readonly EffectName[];\n  readonly realization: string;\n  readonly nullable: boolean;\n  readonly clearable: boolean;\n  readonly allowedValues: readonly string[];\n}\n\nexport const UI_PROPERTY_DESCRIPTORS: readonly UiPropertyDescriptor[] = [\n");
     for property in &document.properties {
         writeln!(
             output,
-            "  {{ id: 0x{:04x}, name: {:?}, domain: {:?}, valueKind: {:?}, legalKinds: [{}], normalizer: {:?}, default: {:?}, reset: {:?}, overrideBehavior: {:?}, inheritance: {:?}, effects: [{}], realization: {:?}, nullable: {}, clearable: {} }},",
+            "  {{ id: 0x{:04x}, name: {:?}, domain: {:?}, valueKind: {:?}, legalKinds: [{}], normalizer: {:?}, default: {:?}, reset: {:?}, overrideBehavior: {:?}, inheritance: {:?}, effects: [{}], realization: {:?}, nullable: {}, clearable: {}, allowedValues: [{}] }},",
             property.id,
             property.name,
             property.domain,
@@ -805,10 +904,11 @@ fn render_typescript_properties(output: &mut String, document: &UiAbiDocument) {
             property.realization,
             property.nullable,
             property.clearable,
+            property.allowed_values.iter().map(|value| format!("{value:?}")).collect::<Vec<_>>().join(", "),
         )
         .expect("writing generated TypeScript property descriptor cannot fail");
     }
-    output.push_str("];\n\nexport function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {\n  return UI_PROPERTY_DESCRIPTORS.find((property) => property.id === id);\n}\n\nexport function uiPropertyDescriptorByName(name: UiPropertyName): UiPropertyDescriptor {\n  const descriptor = UI_PROPERTY_DESCRIPTORS.find((property) => property.name === name);\n  if (!descriptor) throw new Error(\"unknown UI property: \" + name);\n  return descriptor;\n}\n\nfunction uiCanonicalField(value: string): string {\n  return value.length + \":\" + value;\n}\n\nfunction uiCanonicalFields(values: readonly string[]): string {\n  return values.map(uiCanonicalField).join(\"|\");\n}\n\nfunction uiColorValueKey(value: unknown): string {\n  if (value === undefined) return \"unset\";\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"finite color value must be an object\");\n  const color = value as { readonly type?: string; readonly value?: string | number; readonly r?: number; readonly g?: number; readonly b?: number };\n  switch (color.type) {\n    case \"named\":\n    case \"indexed\": return uiCanonicalFields([color.type, String(color.value)]);\n    case \"rgb\": return uiCanonicalFields([\"rgb\", String(color.r), String(color.g), String(color.b)]);\n    case \"theme\": return uiCanonicalFields([\"theme\", String(color.value)]);\n    default: throw new TypeError(\"unknown finite color form\");\n  }\n}\n\nfunction uiFiniteValueKey(normalizer: string, value: unknown): string {\n  switch (normalizer) {\n    case \"size_mode\":\n    case \"layout\":\n    case \"u16\":\n    case \"border_style\": return String(value);\n    case \"insets\": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return uiCanonicalFields([String(item.top), String(item.right), String(item.bottom), String(item.left)]); }\n    case \"alignment\": { const item = value as { readonly horizontal: number; readonly vertical: number }; return uiCanonicalFields([String(item.horizontal), String(item.vertical)]); }\n    case \"border_edges\": return uiCanonicalFields((value as readonly boolean[]).map((part) => part ? \"1\" : \"0\"));\n    case \"color\": return uiColorValueKey(value);\n    case \"glyphs\": { const item = value as Record<string, string>; return uiCanonicalFields([\"top\", \"right\", \"bottom\", \"left\", \"topLeft\", \"topRight\", \"bottomLeft\", \"bottomRight\"].map((key) => item[key])); }\n    case \"text_attributes\": { const item = value as Record<string, boolean>; return uiCanonicalFields([\"bold\", \"dim\", \"italic\", \"underline\", \"reversed\", \"strikethrough\"].map((key) => item[key] === undefined ? \"-\" : item[key] ? \"1\" : \"0\")); }\n    case \"style\": { const item = value as { readonly foreground?: unknown; readonly background?: unknown; readonly attributes: Record<string, boolean>; readonly theme?: string }; return uiCanonicalFields([uiColorValueKey(item.foreground), uiColorValueKey(item.background), item.theme ?? \"\", uiFiniteValueKey(\"text_attributes\", item.attributes)]); }\n    default: throw new TypeError(\"unknown generated UI property normalizer: \" + normalizer);\n  }\n}\n\n/** Generated finite normalization/equality contract consumed by the React adapter. */\nexport function uiPropertyValueKey(name: UiPropertyName, value: unknown): string {\n  const descriptor = uiPropertyDescriptorByName(name);\n  return uiCanonicalFields([descriptor.normalizer, uiFiniteValueKey(descriptor.normalizer, value)]);\n}\n\nexport function uiPropertyValuesEqual(name: UiPropertyName, left: unknown, right: unknown): boolean {\n  return uiPropertyValueKey(name, left) === uiPropertyValueKey(name, right);\n}\n\nexport function uiPropertyEncoding(name: UiPropertyName): UiValueEncodingDescriptor {\n  return uiValueEncoding(uiPropertyDescriptorByName(name).valueKind);\n}\n");
+    output.push_str("];\n\nexport function uiPropertyDescriptor(id: number): UiPropertyDescriptor | undefined {\n  return UI_PROPERTY_DESCRIPTORS.find((property) => property.id === id);\n}\n\nexport function uiPropertyDescriptorByName(name: UiPropertyName): UiPropertyDescriptor {\n  const descriptor = UI_PROPERTY_DESCRIPTORS.find((property) => property.name === name);\n  if (!descriptor) throw new Error(\"unknown UI property: \" + name);\n  return descriptor;\n}\n\nfunction uiCanonicalField(value: string): string {\n  return value.length + \":\" + value;\n}\n\nfunction uiCanonicalFields(values: readonly string[]): string {\n  return values.map(uiCanonicalField).join(\"|\");\n}\n\nfunction uiColorValueKey(value: unknown): string {\n  if (value === undefined) return \"unset\";\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"finite color value must be an object\");\n  const color = value as { readonly type?: string; readonly value?: string | number; readonly r?: number; readonly g?: number; readonly b?: number };\n  switch (color.type) {\n    case \"named\":\n    case \"indexed\": return uiCanonicalFields([color.type, String(color.value)]);\n    case \"rgb\": return uiCanonicalFields([\"rgb\", String(color.r), String(color.g), String(color.b)]);\n    case \"theme\": return uiCanonicalFields([\"theme\", String(color.value)]);\n    default: throw new TypeError(\"unknown finite color form\");\n  }\n}\n\nfunction uiF32Key(value: unknown, name: string): string {\n  if (typeof value !== \"number\" || !Number.isFinite(value)) throw new TypeError(name + \" must be finite\");\n  const rounded = Math.fround(value);\n  if (!Number.isFinite(rounded)) throw new RangeError(name + \" is outside f32 range\");\n  const canonical = rounded === 0 ? 0 : rounded;\n  return String(new Uint32Array(new Float32Array([canonical]).buffer)[0] ?? 0);\n}\n\nfunction uiDimensionKey(value: unknown): string {\n  if (value === \"fit\" || value === \"fill\" || value === \"auto\") return String(value);\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"finite dimension must be an object\");\n  const item = value as { readonly unit?: string; readonly value?: number };\n  return uiCanonicalFields([String(item.unit), uiF32Key(item.value, \"dimension.value\")]);\n}\n\nfunction uiDimensionsKey(value: unknown): string {\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"finite dimensions must be an object\");\n  const item = value as Record<string, unknown>;\n  return uiCanonicalFields([\"top\", \"right\", \"bottom\", \"left\"].map((side) => uiDimensionKey(item[side])));\n}\n\nfunction uiTrackKey(value: unknown): string {\n  if (value === \"auto\") return \"auto\";\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"typed track must be an object\");\n  const item = value as { readonly type?: string; readonly value?: number };\n  return uiCanonicalFields([String(item.type), uiF32Key(item.value, \"track.value\")]);\n}\n\nfunction uiTracksKey(value: unknown): string {\n  if (!Array.isArray(value)) throw new TypeError(\"track list must be an array\");\n  return uiCanonicalFields(value.map(uiTrackKey));\n}\n\nfunction uiPlacementLineKey(value: unknown): string {\n  if (value === undefined || value === \"auto\") return \"auto\";\n  if (typeof value === \"number\") return \"line:\" + String(value);\n  if (typeof value === \"object\" && value !== null) return \"span:\" + String((value as { readonly span?: unknown }).span);\n  throw new TypeError(\"grid placement line is invalid\");\n}\n\nfunction uiPlacementKey(value: unknown): string {\n  if (typeof value !== \"object\" || value === null) throw new TypeError(\"grid placement must be an object\");\n  const item = value as Record<string, unknown>;\n  return uiCanonicalFields([uiPlacementLineKey(item.start), uiPlacementLineKey(item.end)]);\n}\n\nfunction uiFiniteValueKey(normalizer: string, value: unknown): string {\n  switch (normalizer) {\n    case \"dimension\":\n    case \"nonnegative_dimension\": return uiDimensionKey(value);\n    case \"dimensions\": return uiDimensionsKey(value);\n    case \"float\": return uiF32Key(value, \"float\");\n    case \"display\":\n    case \"direction\":\n    case \"flex_direction\":\n    case \"flex_wrap\":\n    case \"position\":\n    case \"alignment_mode\":\n    case \"grid_auto_flow\": return String(value);\n    case \"grid_placement\": return uiPlacementKey(value);\n    case \"track_list\": return uiTracksKey(value);\n    case \"layout\":\n    case \"u16\":\n    case \"border_style\": return String(value);\n    case \"insets\": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return uiCanonicalFields([String(item.top), String(item.right), String(item.bottom), String(item.left)]); }\n    case \"alignment\": { const item = value as { readonly horizontal: number; readonly vertical: number }; return uiCanonicalFields([String(item.horizontal), String(item.vertical)]); }\n    case \"border_edges\": return uiCanonicalFields((value as readonly boolean[]).map((part) => part ? \"1\" : \"0\"));\n    case \"color\": return uiColorValueKey(value);\n    case \"glyphs\": { const item = value as Record<string, string>; return uiCanonicalFields([\"top\", \"right\", \"bottom\", \"left\", \"topLeft\", \"topRight\", \"bottomLeft\", \"bottomRight\"].map((key) => item[key])); }\n    case \"text_attributes\": { const item = value as Record<string, boolean>; return uiCanonicalFields([\"bold\", \"dim\", \"italic\", \"underline\", \"reversed\", \"strikethrough\"].map((key) => item[key] === undefined ? \"-\" : item[key] ? \"1\" : \"0\")); }\n    case \"style\": { const item = value as { readonly foreground?: unknown; readonly background?: unknown; readonly attributes: Record<string, boolean>; readonly theme?: string }; return uiCanonicalFields([uiColorValueKey(item.foreground), uiColorValueKey(item.background), item.theme ?? \"\", uiFiniteValueKey(\"text_attributes\", item.attributes)]); }\n    default: throw new TypeError(\"unknown generated UI property normalizer: \" + normalizer);\n  }\n}\n\n/** Generated finite normalization/equality contract consumed by the React adapter. */\nexport function uiPropertyValueKey(name: UiPropertyName, value: unknown): string {\n  const descriptor = uiPropertyDescriptorByName(name);\n  return uiCanonicalFields([descriptor.normalizer, uiFiniteValueKey(descriptor.normalizer, value)]);\n}\n\nfunction uiF32Equal(left: unknown, right: unknown): boolean {\n  if (typeof left !== \"number\" || typeof right !== \"number\") return false;\n  const leftValue = Math.fround(left);\n  const rightValue = Math.fround(right);\n  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return false;\n  const leftBits = new Uint32Array(new Float32Array([leftValue === 0 ? 0 : leftValue]).buffer)[0];\n  const rightBits = new Uint32Array(new Float32Array([rightValue === 0 ? 0 : rightValue]).buffer)[0];\n  return leftBits === rightBits;\n}\n\nfunction uiDimensionEqual(left: unknown, right: unknown): boolean {\n  if (left === right) return true;\n  if (typeof left === \"string\" || typeof right === \"string\") return false;\n  if (typeof left !== \"object\" || left === null || typeof right !== \"object\" || right === null) return false;\n  const leftValue = left as { readonly unit?: unknown; readonly value?: unknown };\n  const rightValue = right as { readonly unit?: unknown; readonly value?: unknown };\n  return leftValue.unit === rightValue.unit && uiF32Equal(leftValue.value, rightValue.value);\n}\n\nfunction uiDimensionsEqual(left: unknown, right: unknown): boolean {\n  if (typeof left !== \"object\" || left === null || typeof right !== \"object\" || right === null) return false;\n  const leftValue = left as Record<string, unknown>;\n  const rightValue = right as Record<string, unknown>;\n  return [\"top\", \"right\", \"bottom\", \"left\"].every((side) => uiDimensionEqual(leftValue[side], rightValue[side]));\n}\n\nfunction uiTrackEqual(left: unknown, right: unknown): boolean {\n  if (left === right) return true;\n  if (typeof left === \"string\" || typeof right === \"string\") return false;\n  if (typeof left !== \"object\" || left === null || typeof right !== \"object\" || right === null) return false;\n  const leftValue = left as { readonly type?: unknown; readonly value?: unknown; readonly min?: unknown; readonly max?: unknown };\n  const rightValue = right as { readonly type?: unknown; readonly value?: unknown; readonly min?: unknown; readonly max?: unknown };\n  if (leftValue.type !== rightValue.type) return false;\n  if (leftValue.type === \"minmax\") return uiTrackEqual(leftValue.min, rightValue.min) && uiTrackEqual(leftValue.max, rightValue.max);\n  return uiF32Equal(leftValue.value, rightValue.value);\n}\n\nfunction uiTracksEqual(left: unknown, right: unknown): boolean {\n  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;\n  return left.every((value, index) => uiTrackEqual(value, right[index]));\n}\n\nfunction uiPlacementLineEqual(left: unknown, right: unknown): boolean {\n  if (left === right) return true;\n  if (typeof left === \"object\" && left !== null && typeof right === \"object\" && right !== null) return (left as { readonly span?: unknown }).span === (right as { readonly span?: unknown }).span;\n  return false;\n}\n\nfunction uiPlacementEqual(left: unknown, right: unknown): boolean {\n  if (typeof left !== \"object\" || left === null || typeof right !== \"object\" || right === null) return false;\n  const leftValue = left as Record<string, unknown>;\n  const rightValue = right as Record<string, unknown>;\n  return uiPlacementLineEqual(leftValue.start, rightValue.start) && uiPlacementLineEqual(leftValue.end, rightValue.end);\n}\n\nexport function uiPropertyValuesEqual(name: UiPropertyName, left: unknown, right: unknown): boolean {\n  const descriptor = uiPropertyDescriptorByName(name);\n  switch (descriptor.normalizer) {\n    case \"dimension\":\n    case \"nonnegative_dimension\": return uiDimensionEqual(left, right);\n    case \"dimensions\": return uiDimensionsEqual(left, right);\n    case \"float\": return uiF32Equal(left, right);\n    case \"track_list\": return uiTracksEqual(left, right);\n    case \"grid_placement\": return uiPlacementEqual(left, right);\n    default: return uiPropertyValueKey(name, left) === uiPropertyValueKey(name, right);\n  }\n}\n\nexport function uiPropertyEncoding(name: UiPropertyName): UiValueEncodingDescriptor {\n  return uiValueEncoding(uiPropertyDescriptorByName(name).valueKind);\n}\n");
 }
 
 fn render_typescript_packers(output: &mut String) {
@@ -829,6 +929,98 @@ function uiEncodingTag(valueKind: ValueKindName, formName: string, index: number
   if (tag === undefined) throw new Error(valueKind + " / " + formName + " is missing generated tag " + index);
   return tag;
 }
+function uiEnumValue(value: unknown, valueKind: ValueKindName, formName: string, name: string): number {
+  const form = uiValueEncodingForm(valueKind, formName);
+  const index = form.names.indexOf(String(value));
+  const encoded = index < 0 ? undefined : form.values[index];
+  if (encoded === undefined) throw new RangeError(name + " has an unknown generated enum value");
+  return encoded;
+}
+
+function uiFiniteScalar(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(name + " must be finite");
+  const rounded = Math.fround(value);
+  if (!Number.isFinite(rounded)) throw new RangeError(name + " is outside f32 range");
+  const canonical = rounded === 0 ? 0 : rounded;
+  return new Uint32Array(new Float32Array([canonical]).buffer)[0] ?? 0;
+}
+
+function uiDimensionWords(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, "auto", 0), 0];
+  if (typeof value !== "object" || value === null) throw new TypeError(name + " must be a finite dimension");
+  const item = value as { readonly unit?: string; readonly value?: number };
+  const bits = uiFiniteScalar(item.value, name + ".value");
+  if (item.unit === "length") return [uiEncodingTag(valueKind, "length", 0), bits];
+  if (item.unit === "percent") return [uiEncodingTag(valueKind, "percent", 0), bits];
+  throw new RangeError(name + " has an unknown dimension unit");
+}
+
+function uiPackDimensions(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null) throw new TypeError(name + " must be an object");
+  const item = value as Record<string, unknown>;
+  return ["top", "right", "bottom", "left"].flatMap((key) => uiDimensionWords(item[key], name + "." + key, valueKind));
+}
+
+function uiTrackObject(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(name + " must be a typed track");
+  const track = value as Record<string, unknown>;
+  if (Object.keys(track).some((key) => !["type", "value", "min", "max"].includes(key))) throw new RangeError(name + " has unknown fields");
+  return track;
+}
+
+function uiPackSimpleTrack(value: unknown, name: string, valueKind: ValueKindName, formName = "tracks", allowFr = true): number[] {
+  const track = uiTrackObject(value, name);
+  if (Object.keys(track).some((key) => key !== "type" && key !== "value")) throw new RangeError(name + " simple track has unknown fields");
+  const bits = uiFiniteScalar(track.value, name + ".value");
+  const offset = 1;
+  const tag = track.type === "length" ? uiEncodingTag(valueKind, formName, offset) : track.type === "percent" ? uiEncodingTag(valueKind, formName, offset + 1) : track.type === "fr" && allowFr ? uiEncodingTag(valueKind, formName, offset + 2) : -1;
+  if (tag < 0) throw new RangeError(name + " has an invalid track bound type");
+  return [tag, bits];
+}
+
+function uiPackTrackBound(value: unknown, name: string, valueKind: ValueKindName, formName: string, allowFr: boolean): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, formName, 0), 0];
+  if (value === "minContent") return [uiEncodingTag(valueKind, formName, allowFr ? 4 : 3), 0];
+  if (value === "maxContent") return [uiEncodingTag(valueKind, formName, allowFr ? 5 : 4), 0];
+  return uiPackSimpleTrack(value, name, valueKind, formName, allowFr);
+}
+
+function uiPackTrack(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === "auto") return [uiEncodingTag(valueKind, "tracks", 0), 0];
+  if (value === "minContent") return [uiEncodingTag(valueKind, "tracks", 4), 0];
+  if (value === "maxContent") return [uiEncodingTag(valueKind, "tracks", 5), 0];
+  const track = uiTrackObject(value, name);
+  if (track.type === "minmax") {
+    if (Object.keys(track).some((key) => key !== "type" && key !== "min" && key !== "max")) throw new RangeError(name + " minmax has unknown fields");
+    return [uiEncodingTag(valueKind, "tracks", 6), ...uiPackTrackBound(track.min, name + ".min", valueKind, "minmax_min", false), ...uiPackTrackBound(track.max, name + ".max", valueKind, "minmax_max", true)];
+  }
+  return uiPackSimpleTrack(value, name, valueKind);
+}
+
+function uiPackTracks(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (!Array.isArray(value) || value.length > 64) throw new RangeError(name + " must contain at most 64 tracks");
+  return [value.length, ...value.flatMap((track, index) => uiPackTrack(track, name + "[" + index + "]", valueKind))];
+}
+
+function uiGridLineWords(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (value === undefined || value === "auto") return [uiEncodingTag(valueKind, "placement", 0), 0];
+  if (typeof value === "number" && Number.isSafeInteger(value) && value !== 0) return [uiEncodingTag(valueKind, "placement", 1), value >>> 0];
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).some((key) => key !== "span")) throw new RangeError(name + " span has unknown fields");
+    const span = item.span;
+    if (typeof span === "number" && Number.isSafeInteger(span) && span > 0 && span <= 65535) return [uiEncodingTag(valueKind, "placement", 2), span];
+  }
+  throw new RangeError(name + " must be auto, a nonzero line, or a positive span");
+}
+
+function uiPackPlacement(value: unknown, name: string, valueKind: ValueKindName): number[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(name + " must be an object");
+  const item = value as Record<string, unknown>;
+  if (Object.keys(item).some((key) => key !== "start" && key !== "end")) throw new RangeError(name + " has unknown fields");
+  return [...uiGridLineWords(item.start, name + ".start", valueKind), ...uiGridLineWords(item.end, name + ".end", valueKind)];
+}
+
 
 function uiPackColor(value: unknown, valueKind: ValueKindName): number[] {
   if (typeof value !== "object" || value === null) throw new TypeError("finite color value must be an object");
@@ -888,14 +1080,36 @@ export function uiEncodePropertyValue(name: UiPropertyName, value: unknown, meta
   const descriptor = uiPropertyDescriptorByName(name);
   const valueKind = descriptor.valueKind;
   switch (descriptor.normalizer) {
-    case "size_mode": return [value === "fill" ? 1 : 0];
-    case "layout": { const values = uiValueEncodingForm(valueKind, "layout").values; const index = ["box", "row", "column", "grid"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown layout mode"); return [encoded]; }
+    case "dimension":
+    case "nonnegative_dimension": {
+      if (value === "auto") return [uiEncodingTag(valueKind, "auto", 0)];
+      if (value === "fit") return [uiEncodingTag(valueKind, "fit", 0)];
+      if (value === "fill") return [uiEncodingTag(valueKind, "fill", 0)];
+      if (typeof value !== "object" || value === null) throw new TypeError(name + " must be a finite dimension");
+      const dimension = value as { readonly unit?: string; readonly value?: number };
+      const scalar = uiFiniteScalar(dimension.value, name + ".value");
+      if (dimension.unit === "length") return [uiEncodingTag(valueKind, "length", 0), scalar];
+      if (dimension.unit === "percent") return [uiEncodingTag(valueKind, "percent", 0), scalar];
+      throw new RangeError(name + " has an unknown dimension unit");
+    }
+    case "float": return [uiFiniteScalar(value, name)];
+    case "display": return [uiEnumValue(value, valueKind, "display", name)];
+    case "direction": return [uiEnumValue(value, valueKind, "direction", name)];
+    case "flex_direction": return [uiEnumValue(value, valueKind, "flex_direction", name)];
+    case "flex_wrap": return [uiEnumValue(value, valueKind, "flex_wrap", name)];
+    case "position": return [uiEnumValue(value, valueKind, "position", name)];
+    case "alignment_mode": return [uiEnumValue(value, valueKind, "alignment_mode", name)];
+    case "grid_auto_flow": return [uiEnumValue(value, valueKind, "grid_auto_flow", name)];
+    case "dimensions": return uiPackDimensions(value, name, valueKind);
+    case "track_list": return uiPackTracks(value, name, valueKind);
+    case "grid_placement": return uiPackPlacement(value, name, valueKind);
+    case "layout": return [uiEnumValue(value, valueKind, "layout", name)];
     case "u16": return [uiRequiredNumber(value, name)];
     case "insets": { const item = value as { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }; return [uiRequiredNumber(item.top, name + ".top"), uiRequiredNumber(item.right, name + ".right"), uiRequiredNumber(item.bottom, name + ".bottom"), uiRequiredNumber(item.left, name + ".left")]; }
     case "alignment": { const item = value as { readonly horizontal: number; readonly vertical: number }; return [uiRequiredNumber(item.horizontal, name + ".horizontal"), uiRequiredNumber(item.vertical, name + ".vertical")]; }
     case "border_edges": return (value as readonly boolean[]).map((part) => part ? 1 : 0);
     case "color": return uiPackColor(value, valueKind);
-    case "border_style": { const values = uiValueEncodingForm(valueKind, "border").values; const index = ["plain", "rounded", "double"].indexOf(String(value)); const encoded = values[index]; if (encoded === undefined) throw new RangeError("unknown border style"); return [encoded]; }
+    case "border_style": return [uiEnumValue(value, valueKind, "border", name)];
     case "glyphs": { const item = value as Record<string, string>; const words: number[] = []; for (const key of ["top", "right", "bottom", "left", "topLeft", "topRight", "bottomLeft", "bottomRight"]) words.push(...metadata(item[key])); return words; }
     case "text_attributes": return uiPackAttributes(value, valueKind, "set_or_clear");
     case "style": return uiPackStyle(value, metadata, valueKind);

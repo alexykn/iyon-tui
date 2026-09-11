@@ -30,6 +30,7 @@ unicode-segmentation.workspace = true
 unicode-linebreak.workspace = true
 tokio.workspace = true
 pulldown-cmark.workspace = true
+taffy = { version = "=0.12.2", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "content_size"] }
 
 [dev-dependencies]
 vt100.workspace = true

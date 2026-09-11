@@ -249,7 +249,7 @@ impl LegacySceneAdapter {
             children.push(self.build_node(owner, content, child, dirty, force)?);
         }
         let mut view = self.lower_node(owner, content, &snapshot, children)?;
-        view = apply_properties(view, &snapshot);
+        view = apply_properties(view, &snapshot)?;
         if snapshot.hidden {
             view = vf::spacer(0);
         }
@@ -354,7 +354,8 @@ fn effective_u16(snapshot: &OccurrenceSnapshot, property: PropertyId) -> Option<
     })?
 }
 
-fn apply_properties(view: View, snapshot: &OccurrenceSnapshot) -> View {
+fn apply_properties(view: View, snapshot: &OccurrenceSnapshot) -> Result<View> {
+    reject_unrealized_taffy_geometry(snapshot)?;
     let mut view = view;
     let presentation = lower_presentation(snapshot);
     for (property, value) in &snapshot.properties {
@@ -377,7 +378,67 @@ fn apply_properties(view: View, snapshot: &OccurrenceSnapshot) -> View {
             _ => view,
         };
     }
-    apply_presentation(view, presentation, &snapshot.style_states)
+    Ok(apply_presentation(
+        view,
+        presentation,
+        &snapshot.style_states,
+    ))
+}
+
+/// The current M1 renderer cannot realize the T6 geometry vocabulary. Reject
+/// it explicitly rather than dropping accepted occurrence state on the floor.
+/// This guard is temporary and is deleted when T6 integration cuts the
+/// renderer over to the direct Taffy adapter. T7 then owns content lowering
+/// and removal of the remaining legacy adapter.
+fn reject_unrealized_taffy_geometry(snapshot: &OccurrenceSnapshot) -> Result<()> {
+    for (property, value) in &snapshot.properties {
+        // `effective_values()` includes every schema property as Unset so
+        // reset/clear semantics remain inspectable. Only an authored or
+        // overridden value can require an M1 realization guard.
+        let LayerValue::Value(value) = value else {
+            continue;
+        };
+        let unsupported = matches!(
+            property,
+            PropertyId::Display
+                | PropertyId::Direction
+                | PropertyId::FlexDirection
+                | PropertyId::FlexWrap
+                | PropertyId::FlexGrow
+                | PropertyId::FlexShrink
+                | PropertyId::FlexBasis
+                | PropertyId::Margin
+                | PropertyId::AlignItems
+                | PropertyId::AlignSelf
+                | PropertyId::AlignContent
+                | PropertyId::JustifyContent
+                | PropertyId::JustifyItems
+                | PropertyId::JustifySelf
+                | PropertyId::ColumnGap
+                | PropertyId::RowGap
+                | PropertyId::GridTemplateColumns
+                | PropertyId::GridTemplateRows
+                | PropertyId::GridAutoColumns
+                | PropertyId::GridAutoRows
+                | PropertyId::GridAutoFlow
+                | PropertyId::GridColumn
+                | PropertyId::GridRow
+                | PropertyId::Position
+                | PropertyId::Inset
+        ) || matches!(
+            (property, value),
+            (
+                PropertyId::Width | PropertyId::Height,
+                PropertyValue::Dimension(_)
+            )
+        );
+        if unsupported {
+            return Err(anyhow!(
+                "T6 geometry property {property:?} is not realized by the temporary M1 adapter"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]

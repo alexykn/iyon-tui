@@ -1,4 +1,8 @@
 import type { ReactNode, Ref } from "react";
+import type {
+	ContentConnector as ExplicitContentConnector,
+	ContentPort as ExplicitContentPort,
+} from "../api/content/explicit.ts";
 import {
 	type ContentSource,
 	type Funnel,
@@ -6,6 +10,11 @@ import {
 	TextFunnel,
 	TextStreamSource,
 } from "../api/content/retained.ts";
+import {
+	type Insets,
+	type InsetsValue,
+	insets,
+} from "../api/presentation/geometry.ts";
 import {
 	semanticColorFor,
 	semanticStyleFor,
@@ -22,23 +31,16 @@ import {
 } from "../api/presentation/style.ts";
 import type { ColorSpec } from "../api/presentation/theme.ts";
 import {
-	type Insets,
-	type InsetsValue,
-	insets,
-} from "../api/presentation/geometry.ts";
-import {
 	HOST_KINDS,
 	type HostKind,
 	UI_PROPERTIES,
 	UI_PROPERTY_DESCRIPTORS,
 	type UiPropertyId,
 	type UiPropertyName,
+	uiPropertyDescriptorByName,
+	uiValueEncoding,
 } from "../transport/ui/generated/ui_schema.ts";
 import type { RootContainer } from "./commit.ts";
-import type {
-	ContentConnector as ExplicitContentConnector,
-	ContentPort as ExplicitContentPort,
-} from "../api/content/explicit.ts";
 import {
 	isExplicitContentConnector,
 	isExplicitContentPort,
@@ -62,15 +64,82 @@ export type HistoryUnitAction = "live" | "freeze";
 
 export type LayoutKind = "box" | "row" | "column" | "grid";
 
+/** Finite logical geometry values. Percent values are fractions in [0, 1]. */
+export interface DimensionValue {
+	readonly unit: "length" | "percent";
+	readonly value: number;
+}
+export type DimensionInput = DimensionValue | "auto" | number;
+export type DimensionInsetsInput =
+	| DimensionInput
+	| {
+			readonly top?: DimensionInput;
+			readonly right?: DimensionInput;
+			readonly bottom?: DimensionInput;
+			readonly left?: DimensionInput;
+	  };
+export type GridTrack =
+	| "auto"
+	| "minContent"
+	| "maxContent"
+	| {
+			readonly type: "length" | "percent" | "fr";
+			readonly value: number;
+	  }
+	| {
+			readonly type: "minmax";
+			readonly min: GridTrackMinBound;
+			readonly max: GridTrackMaxBound;
+	  };
+export type GridTrackMinBound =
+	| "auto"
+	| "minContent"
+	| "maxContent"
+	| { readonly type: "length" | "percent"; readonly value: number };
+export type GridTrackMaxBound =
+	| "auto"
+	| "minContent"
+	| "maxContent"
+	| { readonly type: "length" | "percent" | "fr"; readonly value: number };
+export interface GridPlacement {
+	readonly start?: number | "auto" | { readonly span: number };
+	readonly end?: number | "auto" | { readonly span: number };
+}
+
 export interface LayoutProps {
-	readonly width?: "fit" | "fill";
-	readonly height?: "fit" | "fill";
+	readonly width?: "fit" | "fill" | DimensionValue | number;
+	readonly height?: "fit" | "fill" | DimensionValue | number;
 	readonly padding?: number | Insets | InsetsValue;
 	readonly minWidth?: number;
 	readonly maxWidth?: number;
 	readonly minHeight?: number;
 	readonly maxHeight?: number;
 	readonly gap?: number;
+	readonly display?: "flex" | "grid" | "none";
+	readonly direction?: "ltr" | "rtl";
+	readonly flexDirection?: "row" | "column" | "rowReverse" | "columnReverse";
+	readonly flexWrap?: "nowrap" | "wrap" | "wrapReverse";
+	readonly flexGrow?: number;
+	readonly flexShrink?: number;
+	readonly flexBasis?: DimensionInput;
+	readonly margin?: DimensionInsetsInput;
+	readonly alignItems?: AlignmentMode;
+	readonly alignSelf?: AlignmentMode;
+	readonly alignContent?: AlignmentMode;
+	readonly justifyContent?: AlignmentMode;
+	readonly justifyItems?: AlignmentMode;
+	readonly justifySelf?: AlignmentMode;
+	readonly columnGap?: DimensionInput;
+	readonly rowGap?: DimensionInput;
+	readonly gridTemplateColumns?: readonly GridTrack[];
+	readonly gridTemplateRows?: readonly GridTrack[];
+	readonly gridAutoColumns?: readonly GridTrack[];
+	readonly gridAutoRows?: readonly GridTrack[];
+	readonly gridAutoFlow?: "row" | "column" | "rowDense" | "columnDense";
+	readonly gridColumn?: GridPlacement;
+	readonly gridRow?: GridPlacement;
+	readonly position?: "relative" | "absolute";
+	readonly inset?: DimensionInsetsInput;
 	readonly alignment?: {
 		readonly horizontal?: "start" | "center" | "end" | "top" | "bottom";
 		readonly vertical?: "start" | "center" | "end" | "top" | "bottom";
@@ -84,6 +153,16 @@ export interface LayoutProps {
 				readonly left?: boolean;
 		  };
 }
+
+export type AlignmentMode =
+	| "start"
+	| "end"
+	| "center"
+	| "stretch"
+	| "baseline"
+	| "spaceBetween"
+	| "spaceEvenly"
+	| "spaceAround";
 
 export interface UiEventTarget {
 	readonly host_namespace: number;
@@ -571,6 +650,31 @@ function normalizeProperties(
 		"minHeight",
 		"maxHeight",
 		"gap",
+		"display",
+		"direction",
+		"flexDirection",
+		"flexWrap",
+		"flexGrow",
+		"flexShrink",
+		"flexBasis",
+		"margin",
+		"alignItems",
+		"alignSelf",
+		"alignContent",
+		"justifyContent",
+		"justifyItems",
+		"justifySelf",
+		"columnGap",
+		"rowGap",
+		"gridTemplateColumns",
+		"gridTemplateRows",
+		"gridAutoColumns",
+		"gridAutoRows",
+		"gridAutoFlow",
+		"gridColumn",
+		"gridRow",
+		"position",
+		"inset",
 		"alignment",
 		"borderEdges",
 		"foreground",
@@ -720,6 +824,31 @@ function assertKnownProps(
 		"minHeight",
 		"maxHeight",
 		"gap",
+		"display",
+		"direction",
+		"flexDirection",
+		"flexWrap",
+		"flexGrow",
+		"flexShrink",
+		"flexBasis",
+		"margin",
+		"alignItems",
+		"alignSelf",
+		"alignContent",
+		"justifyContent",
+		"justifyItems",
+		"justifySelf",
+		"columnGap",
+		"rowGap",
+		"gridTemplateColumns",
+		"gridTemplateRows",
+		"gridAutoColumns",
+		"gridAutoRows",
+		"gridAutoFlow",
+		"gridColumn",
+		"gridRow",
+		"position",
+		"inset",
 		"alignment",
 		"borderEdges",
 		"foreground",
@@ -889,13 +1018,272 @@ function textValue(value: unknown): string {
 	throw new TypeError("text content must be a string, number, or bigint");
 }
 
+function finiteScalar(
+	value: unknown,
+	name: string,
+	minimum: number,
+	maximum: number,
+): number {
+	if (typeof value !== "number" || !Number.isFinite(value))
+		throw new TypeError(`${name} must be a finite number`);
+	const rounded = Math.fround(value);
+	if (!Number.isFinite(rounded) || rounded < minimum || rounded > maximum)
+		throw new RangeError(
+			`${name} must fit finite f32 range ${minimum}..${maximum}`,
+		);
+	return rounded === 0 ? 0 : rounded;
+}
+
+function dimension(
+	value: unknown,
+	name: string,
+	allowAuto: boolean,
+	allowNegative = false,
+	allowLegacyModes = false,
+): DimensionValue | "auto" | "fit" | "fill" {
+	if (value === "fit" || value === "fill") {
+		if (!allowLegacyModes)
+			throw new RangeError(`${name} accepts only typed dimensions`);
+		return value;
+	}
+	if (value === "auto") {
+		if (!allowAuto) throw new RangeError(`${name} does not accept auto`);
+		return value;
+	}
+	if (typeof value === "number")
+		return {
+			unit: "length",
+			value: finiteScalar(value, name, allowNegative ? -65535 : 0, 65535),
+		};
+	if (typeof value !== "object" || value === null)
+		throw new TypeError(`${name} must be a length, percentage, or auto`);
+	return dimensionObject(value as Record<string, unknown>, name, allowNegative);
+}
+
+function dimensionObject(
+	candidate: Record<string, unknown>,
+	name: string,
+	allowNegative: boolean,
+): DimensionValue {
+	for (const key of Object.keys(candidate))
+		if (key !== "unit" && key !== "value")
+			throw new RangeError(
+				`${name} does not support field ${JSON.stringify(key)}`,
+			);
+	if (candidate.unit !== "length" && candidate.unit !== "percent")
+		throw new RangeError(`${name}.unit must be length or percent`);
+	return {
+		unit: candidate.unit,
+		value: finiteScalar(
+			candidate.value,
+			`${name}.value`,
+			candidate.unit === "percent" ? 0 : allowNegative ? -65535 : 0,
+			candidate.unit === "percent" ? 1 : 65535,
+		),
+	};
+}
+
+function dimensionInsets(
+	value: unknown,
+	name: string,
+	allowAuto: boolean,
+	defaultValue: DimensionInput = allowAuto ? "auto" : 0,
+): Record<"top" | "right" | "bottom" | "left", DimensionValue | "auto"> {
+	const source =
+		typeof value === "number" || value === "auto" || isDimensionObject(value)
+			? { top: value, right: value, bottom: value, left: value }
+			: value;
+	if (typeof source !== "object" || source === null || Array.isArray(source))
+		throw new TypeError(`${name} must be a scalar or side object`);
+	const item = source as Record<string, unknown>;
+	const sides = ["top", "right", "bottom", "left"] as const;
+	for (const key of Object.keys(item))
+		if (!(sides as readonly string[]).includes(key))
+			throw new RangeError(
+				`${name} does not support field ${JSON.stringify(key)}`,
+			);
+	const result = {} as Record<(typeof sides)[number], DimensionValue | "auto">;
+	for (const side of sides)
+		result[side] = dimension(
+			item[side] ?? defaultValue,
+			`${name}.${side}`,
+			allowAuto,
+			true,
+		) as DimensionValue | "auto";
+	return result;
+}
+
+function isDimensionObject(value: unknown): value is DimensionValue {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		((value as Record<string, unknown>).unit === "length" ||
+			(value as Record<string, unknown>).unit === "percent")
+	);
+}
+
+function generatedEnumValue(
+	name: UiPropertyName,
+	value: unknown,
+	formName: string,
+): string {
+	const descriptor = uiPropertyDescriptorByName(name);
+	const form = uiValueEncoding(descriptor.valueKind).forms.find(
+		(candidate) => candidate.name === formName,
+	);
+	if (
+		typeof value !== "string" ||
+		form === undefined ||
+		!form.names.includes(value) ||
+		(descriptor.allowedValues.length > 0 &&
+			!descriptor.allowedValues.includes(value))
+	)
+		throw new RangeError(`${name} has an unknown generated enum value`);
+	return value;
+}
+
+function trackList(value: unknown, name: string): readonly GridTrack[] {
+	if (!Array.isArray(value) || value.length > 64)
+		throw new RangeError(`${name} must contain at most 64 tracks`);
+	return value.map((raw, index) => normalizeTrack(raw, `${name}[${index}]`));
+}
+
+function normalizeTrack(raw: unknown, name: string): GridTrack {
+	if (raw === "auto" || raw === "minContent" || raw === "maxContent")
+		return raw;
+	if (typeof raw !== "object" || raw === null)
+		throw new TypeError(`${name} must be a typed track`);
+	const track = raw as Record<string, unknown>;
+	if (track.type === "minmax") return normalizeMinMaxTrack(track, name);
+	return normalizeSimpleTrack(track, name);
+}
+
+function normalizeMinMaxTrack(
+	track: Record<string, unknown>,
+	name: string,
+): GridTrack {
+	for (const key of Object.keys(track))
+		if (key !== "type" && key !== "min" && key !== "max")
+			throw new RangeError(
+				`${name} does not support field ${JSON.stringify(key)}`,
+			);
+	return {
+		type: "minmax",
+		min: normalizeTrackBound(
+			track.min,
+			`${name}.min`,
+			false,
+		) as GridTrackMinBound,
+		max: normalizeTrackBound(
+			track.max,
+			`${name}.max`,
+			true,
+		) as GridTrackMaxBound,
+	};
+}
+
+function hasOnlyKeys(
+	value: Record<string, unknown>,
+	keys: readonly string[],
+): boolean {
+	return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function isSimpleTrack(value: unknown): value is {
+	readonly type: "length" | "percent" | "fr";
+	readonly value: number;
+} {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		hasOnlyKeys(value as Record<string, unknown>, ["type", "value"]) &&
+		((value as Record<string, unknown>).type === "length" ||
+			(value as Record<string, unknown>).type === "percent" ||
+			(value as Record<string, unknown>).type === "fr") &&
+		typeof (value as Record<string, unknown>).value === "number"
+	);
+}
+
+function normalizeSimpleTrack(
+	value: unknown,
+	name: string,
+): { readonly type: "length" | "percent" | "fr"; readonly value: number } {
+	if (!isSimpleTrack(value))
+		throw new TypeError(`${name} must be a simple track`);
+	return {
+		type: value.type,
+		value: finiteScalar(
+			value.value,
+			`${name}.value`,
+			0,
+			value.type === "percent" ? 1 : 65535,
+		),
+	};
+}
+
+function normalizeTrackBound(
+	value: unknown,
+	name: string,
+	allowFr: boolean,
+): GridTrackMinBound | GridTrackMaxBound {
+	if (value === "auto" || value === "minContent" || value === "maxContent")
+		return value;
+	const track = normalizeSimpleTrack(value, name);
+	if (track.type === "fr" && !allowFr)
+		throw new RangeError(`${name} cannot use an fr minimum track`);
+	return track;
+}
+
+function placement(value: unknown, name: string): GridPlacement {
+	if (typeof value !== "object" || value === null || Array.isArray(value))
+		throw new TypeError(`${name} must be a placement object`);
+	const candidate = value as Record<string, unknown>;
+	for (const key of Object.keys(candidate))
+		if (key !== "start" && key !== "end")
+			throw new RangeError(
+				`${name} does not support field ${JSON.stringify(key)}`,
+			);
+	const normalizeLine = (
+		line: unknown,
+		side: string,
+	): GridPlacement["start"] => {
+		if (line === undefined || line === "auto") return "auto";
+		if (
+			typeof line === "number" &&
+			Number.isSafeInteger(line) &&
+			line !== 0 &&
+			line >= -32768 &&
+			line <= 32767
+		)
+			return line;
+		if (typeof line === "object" && line !== null) {
+			const candidate = line as Record<string, unknown>;
+			if (!hasOnlyKeys(candidate, ["span"]))
+				throw new RangeError(
+					`${name}.${side} span does not support extra fields`,
+				);
+			const span = u16(candidate.span, `${name}.${side}.span`);
+			if (span === 0)
+				throw new RangeError(`${name}.${side}.span must be positive`);
+			return { span };
+		}
+		throw new RangeError(
+			`${name}.${side} must be auto, a nonzero line, or a positive span`,
+		);
+	};
+	return {
+		start: normalizeLine(candidate.start, "start"),
+		end: normalizeLine(candidate.end, "end"),
+	};
+}
+
 function normalizeProperty(name: UiPropertyName, value: unknown): unknown {
 	switch (name) {
 		case "width":
 		case "height":
-			if (value !== "fit" && value !== "fill")
-				throw new RangeError(`${name} must be fit or fill`);
-			return value;
+			return dimension(value, name, false, false, true);
 		case "padding": {
 			const result = insetsValue(value);
 			return result;
@@ -906,6 +1294,46 @@ function normalizeProperty(name: UiPropertyName, value: unknown): unknown {
 		case "maxHeight":
 		case "gap":
 			return u16(value, name);
+		case "display":
+			return generatedEnumValue(name, value, "display");
+		case "direction":
+			return generatedEnumValue(name, value, "direction");
+		case "flexDirection":
+			return generatedEnumValue(name, value, "flex_direction");
+		case "flexWrap":
+			return generatedEnumValue(name, value, "flex_wrap");
+		case "flexGrow":
+		case "flexShrink":
+			return finiteScalar(value, name, 0, 1_000_000);
+		case "flexBasis":
+			return dimension(value, name, true);
+		case "margin":
+			return dimensionInsets(value, name, true, 0);
+		case "alignItems":
+		case "alignSelf":
+		case "justifyItems":
+		case "justifySelf":
+			return generatedEnumValue(name, value, "alignment_mode");
+		case "alignContent":
+		case "justifyContent":
+			return generatedEnumValue(name, value, "alignment_mode");
+		case "columnGap":
+		case "rowGap":
+			return dimension(value, name, false, false);
+		case "gridTemplateColumns":
+		case "gridTemplateRows":
+		case "gridAutoColumns":
+		case "gridAutoRows":
+			return trackList(value, name);
+		case "gridAutoFlow":
+			return generatedEnumValue(name, value, "grid_auto_flow");
+		case "gridColumn":
+		case "gridRow":
+			return placement(value, name);
+		case "position":
+			return generatedEnumValue(name, value, "position");
+		case "inset":
+			return dimensionInsets(value, name, true, "auto");
 		case "alignment":
 			return alignment(value);
 		case "borderEdges":
@@ -915,9 +1343,7 @@ function normalizeProperty(name: UiPropertyName, value: unknown): unknown {
 		case "borderColor":
 			return color(value);
 		case "borderStyle":
-			if (value !== "plain" && value !== "rounded" && value !== "double")
-				throw new RangeError("borderStyle is invalid");
-			return value;
+			return generatedEnumValue(name, value, "border");
 		case "borderGlyphs":
 			return glyphs(value);
 		case "textAttributes":

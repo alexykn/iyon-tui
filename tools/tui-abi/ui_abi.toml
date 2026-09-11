@@ -113,10 +113,6 @@ name = "Explicit"
 code = 2
 
 [[value_kind]]
-name = "SizeMode"
-code = 1
-
-[[value_kind]]
 name = "U16"
 code = 2
 
@@ -156,12 +152,53 @@ code = 10
 name = "LayoutMode"
 code = 11
 
-[[value_encoding]]
-value_kind = "SizeMode"
-encoding = "u32_enum"
-min_words = 1
-max_words = 1
-forms = [{ name = "mode", word_count = 1, values = [0, 1] }]
+[[value_kind]]
+name = "Dimension"
+code = 12
+
+[[value_kind]]
+name = "F32"
+code = 13
+
+[[value_kind]]
+name = "Display"
+code = 14
+
+[[value_kind]]
+name = "Direction"
+code = 15
+
+[[value_kind]]
+name = "FlexDirection"
+code = 16
+
+[[value_kind]]
+name = "FlexWrap"
+code = 17
+
+[[value_kind]]
+name = "Position"
+code = 18
+
+[[value_kind]]
+name = "AlignmentMode"
+code = 19
+
+[[value_kind]]
+name = "GridAutoFlow"
+code = 20
+
+[[value_kind]]
+name = "InsetsF32"
+code = 21
+
+[[value_kind]]
+name = "TrackList"
+code = 22
+
+[[value_kind]]
+name = "GridPlacement"
+code = 23
 
 [[value_encoding]]
 value_kind = "U16"
@@ -206,7 +243,7 @@ value_kind = "BorderStyle"
 encoding = "u32_enum"
 min_words = 1
 max_words = 1
-forms = [{ name = "border", word_count = 1, values = [0, 1, 2] }]
+forms = [{ name = "border", word_count = 1, values = [0, 1, 2], names = ["plain", "rounded", "double"] }]
 
 [[value_encoding]]
 value_kind = "Glyphs"
@@ -239,7 +276,101 @@ value_kind = "LayoutMode"
 encoding = "u32_enum"
 min_words = 1
 max_words = 1
-forms = [{ name = "layout", word_count = 1, values = [0, 1, 2, 3] }]
+forms = [{ name = "layout", word_count = 1, values = [0, 1, 2, 3], names = ["box", "row", "column", "grid"] }]
+
+[[value_encoding]]
+value_kind = "Dimension"
+encoding = "dimension_v1"
+min_words = 1
+max_words = 2
+forms = [
+  { name = "fit", word_count = 1, tags = [0], values = [0] },
+  { name = "fill", word_count = 1, tags = [1], values = [1] },
+  { name = "auto", word_count = 1, tags = [2], values = [2] },
+  { name = "length", word_count = 2, tags = [3] },
+  { name = "percent", word_count = 2, tags = [4] }
+]
+
+[[value_encoding]]
+value_kind = "F32"
+encoding = "f32_bits_v1"
+min_words = 1
+max_words = 1
+forms = [{ name = "scalar", word_count = 1 }]
+
+[[value_encoding]]
+value_kind = "Display"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "display", word_count = 1, values = [0, 1, 2], names = ["flex", "grid", "none"] }]
+
+[[value_encoding]]
+value_kind = "Direction"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "direction", word_count = 1, values = [0, 1], names = ["ltr", "rtl"] }]
+
+[[value_encoding]]
+value_kind = "FlexDirection"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "flex_direction", word_count = 1, values = [0, 1, 2, 3], names = ["row", "column", "rowReverse", "columnReverse"] }]
+
+[[value_encoding]]
+value_kind = "FlexWrap"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "flex_wrap", word_count = 1, values = [0, 1, 2], names = ["nowrap", "wrap", "wrapReverse"] }]
+
+[[value_encoding]]
+value_kind = "Position"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "position", word_count = 1, values = [0, 1], names = ["relative", "absolute"] }]
+
+[[value_encoding]]
+value_kind = "AlignmentMode"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "alignment_mode", word_count = 1, values = [0, 1, 2, 3, 4, 5, 6, 7], names = ["start", "end", "center", "stretch", "baseline", "spaceBetween", "spaceEvenly", "spaceAround"] }]
+
+[[value_encoding]]
+value_kind = "GridAutoFlow"
+encoding = "u32_enum"
+min_words = 1
+max_words = 1
+forms = [{ name = "grid_auto_flow", word_count = 1, values = [0, 1, 2, 3], names = ["row", "column", "rowDense", "columnDense"] }]
+
+[[value_encoding]]
+value_kind = "InsetsF32"
+encoding = "dimension_x4_v1"
+min_words = 8
+max_words = 8
+forms = [{ name = "dimension_x4", word_count = 8, tags = [2, 3, 4] }]
+
+[[value_encoding]]
+value_kind = "TrackList"
+encoding = "track_list_v1"
+min_words = 1
+max_words = 321
+forms = [
+  { name = "tracks", word_count = 1, tags = [0, 1, 2, 3, 4, 5, 6] },
+  { name = "minmax_min", word_count = 1, tags = [0, 1, 2, 3, 4] },
+  { name = "minmax_max", word_count = 1, tags = [0, 1, 2, 3, 4, 5] }
+]
+
+[[value_encoding]]
+value_kind = "GridPlacement"
+encoding = "grid_placement_v1"
+min_words = 4
+max_words = 4
+forms = [{ name = "placement", word_count = 4, tags = [0, 1, 2] }]
 
 [[effect]]
 name = "Presentation"
@@ -616,9 +747,10 @@ operands = ["control_handle", "content_bytes", "expected_edit_revision"]
 id = 0x0101
 domain = "geometry"
 name = "width"
-value = "SizeMode"
+allowed_values = ["fit", "fill", "length", "percent"]
+value = "Dimension"
 legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
-normalizer = "size_mode"
+normalizer = "dimension"
 default = "unset"
 reset = "unset"
 override_behavior = "explicit"
@@ -632,9 +764,10 @@ clearable = true
 id = 0x0102
 domain = "geometry"
 name = "height"
-value = "SizeMode"
+allowed_values = ["fit", "fill", "length", "percent"]
+value = "Dimension"
 legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
-normalizer = "size_mode"
+normalizer = "dimension"
 default = "unset"
 reset = "unset"
 override_behavior = "explicit"
@@ -897,5 +1030,414 @@ override_behavior = "explicit"
 inheritance = "none"
 effects = ["LayoutInput"]
 realization = "layout"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x010c
+domain = "geometry"
+name = "display"
+value = "Display"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "display"
+default = "flex"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_display"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x010d
+domain = "geometry"
+name = "direction"
+value = "Direction"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "direction"
+default = "ltr"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_direction"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x010e
+domain = "geometry"
+name = "flexDirection"
+value = "FlexDirection"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "flex_direction"
+default = "row"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_flex_direction"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x010f
+domain = "geometry"
+name = "flexWrap"
+value = "FlexWrap"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "flex_wrap"
+default = "nowrap"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_flex_wrap"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0110
+domain = "geometry"
+name = "flexGrow"
+value = "F32"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "float"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_flex_grow"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0111
+domain = "geometry"
+name = "flexShrink"
+value = "F32"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "float"
+default = "one"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_flex_shrink"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0112
+domain = "geometry"
+name = "flexBasis"
+allowed_values = ["auto", "length", "percent"]
+value = "Dimension"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "dimension"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_flex_basis"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0113
+domain = "geometry"
+name = "margin"
+value = "InsetsF32"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "dimensions"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_margin"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0114
+domain = "geometry"
+name = "alignItems"
+allowed_values = ["start", "end", "center", "stretch", "baseline"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "stretch"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_align_items"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0115
+domain = "geometry"
+name = "alignSelf"
+allowed_values = ["start", "end", "center", "stretch", "baseline"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_align_self"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0116
+domain = "geometry"
+name = "alignContent"
+allowed_values = ["start", "end", "center", "stretch", "spaceBetween", "spaceEvenly", "spaceAround"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "stretch"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_align_content"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0117
+domain = "geometry"
+name = "justifyContent"
+allowed_values = ["start", "end", "center", "stretch", "spaceBetween", "spaceEvenly", "spaceAround"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "start"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_justify_content"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0118
+domain = "geometry"
+name = "justifyItems"
+allowed_values = ["start", "end", "center", "stretch", "baseline"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "stretch"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_justify_items"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0119
+domain = "geometry"
+name = "justifySelf"
+allowed_values = ["start", "end", "center", "stretch", "baseline"]
+value = "AlignmentMode"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "alignment_mode"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_justify_self"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011a
+domain = "geometry"
+name = "columnGap"
+allowed_values = ["length", "percent"]
+value = "Dimension"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "nonnegative_dimension"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_column_gap"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011b
+domain = "geometry"
+name = "rowGap"
+allowed_values = ["length", "percent"]
+value = "Dimension"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "nonnegative_dimension"
+default = "zero"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_row_gap"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011c
+domain = "geometry"
+name = "gridTemplateColumns"
+value = "TrackList"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "track_list"
+default = "empty"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_template_columns"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011d
+domain = "geometry"
+name = "gridTemplateRows"
+value = "TrackList"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "track_list"
+default = "empty"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_template_rows"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011e
+domain = "geometry"
+name = "gridAutoColumns"
+value = "TrackList"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "track_list"
+default = "empty"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_auto_columns"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x011f
+domain = "geometry"
+name = "gridAutoRows"
+value = "TrackList"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "track_list"
+default = "empty"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_auto_rows"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0120
+domain = "geometry"
+name = "gridAutoFlow"
+value = "GridAutoFlow"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "grid_auto_flow"
+default = "row"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_auto_flow"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0121
+domain = "geometry"
+name = "gridColumn"
+value = "GridPlacement"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "grid_placement"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_column"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0122
+domain = "geometry"
+name = "gridRow"
+value = "GridPlacement"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "grid_placement"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_grid_row"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0123
+domain = "geometry"
+name = "position"
+value = "Position"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "position"
+default = "relative"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_position"
+nullable = false
+clearable = true
+
+[[property]]
+id = 0x0124
+domain = "geometry"
+name = "inset"
+value = "InsetsF32"
+legal_kinds = ["Box", "ContentHost", "Editor", "Scroll", "Animation"]
+normalizer = "dimensions"
+default = "auto"
+reset = "unset"
+override_behavior = "explicit"
+inheritance = "none"
+effects = ["LayoutInput"]
+realization = "taffy_inset"
 nullable = false
 clearable = true

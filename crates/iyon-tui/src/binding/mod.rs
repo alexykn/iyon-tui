@@ -44,12 +44,15 @@ pub use crate::occurrence::generated::{
     value_encoding, value_encoding_form,
 };
 pub use crate::occurrence::{
-    Alignment, AlignmentAxis, AnimationState, ColorValue, CommitDetail, ConfigError, ControlConfig,
-    ControlError, ControlKind, ControlState, Edges, EditorState, FunnelSpec, GlyphsValue, HostKind,
+    Alignment, AlignmentAxis, AlignmentMode, AnimationState, ColorValue, CommitDetail, ConfigError,
+    ControlConfig, ControlError, ControlKind, ControlState, DimensionInsets, DimensionValue,
+    DirectionMode, DisplayMode, Edges, EditorState, FiniteScalar, FlexDirectionMode, FlexWrapMode,
+    FunnelSpec, GlyphsValue, GridAutoFlowMode, GridLineValue, GridPlacementValue, HostKind,
     HostNamespace, LayerValue, LayoutMode, NodeKey, NodeRef, OccurrenceDocument, OwnershipMode,
-    PropertyId, PropertyLayer, PropertyValue, ResourceKey, ResourceRef, RootConfig, RootRole,
-    ScrollState, SizeMode, StyleValue, TextAttributes, UiAcknowledgement, UiCommit, UiHandle,
-    UiOperation, UiOperationResult, UiRejection,
+    PositionMode, PropertyId, PropertyLayer, PropertyValue, ResourceKey, ResourceRef, RootConfig,
+    RootRole, ScrollState, SizeMode, StyleValue, TextAttributes, TrackListValue, TrackMaxBound,
+    TrackMinBound, TrackValue, UiAcknowledgement, UiCommit, UiHandle, UiOperation,
+    UiOperationResult, UiRejection,
 };
 
 // HOST: desired publication, barriers, and native control integration.

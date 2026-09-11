@@ -1,4 +1,4 @@
-<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0; generator_blake3 = 732ae63011ebca451790b255bd2dcd717711d161f047569545ea473c0cdac5c3 -->
+<!-- DO NOT EDIT. Generated from tools/tui-abi/ui_abi.toml. schema_blake3 = aa92c1c46995f6daeab87f08ef493788c1b96ad6cb842a7322220675e9d1691e; generator_blake3 = b24c4f5ded660a7363e3f0d9d7d248d155511bdaf4384d128827ac15e778f08d -->
 
 # Direct UI ABI
 
@@ -40,7 +40,6 @@
 
 | Value kind | Encoding | Min words | Max words | Metadata words | Forms |
 |---|---|---:|---:|---:|---|
-| SizeMode | u32_enum | 1 | 1 | 0 | mode |
 | U16 | u16 | 1 | 1 | 0 | u16 |
 | Insets | u16x4 | 4 | 4 | 0 | u16x4 |
 | Alignment | axis_x2 | 2 | 2 | 0 | axis_pair |
@@ -51,6 +50,18 @@
 | TextAttributes | set_or_clear_bits_v1 | 1 | 2 | 0 | set_or_clear |
 | Style | direct_or_themed_style_v1 | 9 | 12 | 2 | direct, themed |
 | LayoutMode | u32_enum | 1 | 1 | 0 | layout |
+| Dimension | dimension_v1 | 1 | 2 | 0 | fit, fill, auto, length, percent |
+| F32 | f32_bits_v1 | 1 | 1 | 0 | scalar |
+| Display | u32_enum | 1 | 1 | 0 | display |
+| Direction | u32_enum | 1 | 1 | 0 | direction |
+| FlexDirection | u32_enum | 1 | 1 | 0 | flex_direction |
+| FlexWrap | u32_enum | 1 | 1 | 0 | flex_wrap |
+| Position | u32_enum | 1 | 1 | 0 | position |
+| AlignmentMode | u32_enum | 1 | 1 | 0 | alignment_mode |
+| GridAutoFlow | u32_enum | 1 | 1 | 0 | grid_auto_flow |
+| InsetsF32 | dimension_x4_v1 | 8 | 8 | 0 | dimension_x4 |
+| TrackList | track_list_v1 | 1 | 321 | 0 | tracks, minmax_min, minmax_max |
+| GridPlacement | grid_placement_v1 | 4 | 4 | 0 | placement |
 
 ## Control commands
 
@@ -127,8 +138,8 @@
 
 | ID | Domain | Name | Value | Legal kinds | Effects | Normalizer | Nullable | Clearable |
 |---:|---|---|---|---|---|---|---|---|
-| 0x00000101 | geometry | width | SizeMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput, ContentProjection | size_mode | false | true |
-| 0x00000102 | geometry | height | SizeMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | size_mode | false | true |
+| 0x00000101 | geometry | width | Dimension | Box, ContentHost, Editor, Scroll, Animation | LayoutInput, ContentProjection | dimension | false | true |
+| 0x00000102 | geometry | height | Dimension | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | dimension | false | true |
 | 0x00000103 | geometry | padding | Insets | Box, ContentHost, Editor, Scroll, Animation | LayoutInput, ContentProjection | insets | false | true |
 | 0x00000104 | geometry | minWidth | U16 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput, ContentProjection | u16 | true | true |
 | 0x00000105 | geometry | maxWidth | U16 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput, ContentProjection | u16 | true | true |
@@ -145,4 +156,29 @@
 | 0x00000206 | presentation | textAttributes | TextAttributes | Box, ContentHost, Editor, Scroll, Animation | Presentation | text_attributes | false | true |
 | 0x00000207 | presentation | style | Style | Box, ContentHost, Editor, Scroll, Animation | Presentation, HostEnvironmentDependent | style | true | true |
 | 0x0000010b | geometry | layout | LayoutMode | Box | LayoutInput | layout | false | true |
+| 0x0000010c | geometry | display | Display | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | display | false | true |
+| 0x0000010d | geometry | direction | Direction | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | direction | false | true |
+| 0x0000010e | geometry | flexDirection | FlexDirection | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | flex_direction | false | true |
+| 0x0000010f | geometry | flexWrap | FlexWrap | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | flex_wrap | false | true |
+| 0x00000110 | geometry | flexGrow | F32 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | float | false | true |
+| 0x00000111 | geometry | flexShrink | F32 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | float | false | true |
+| 0x00000112 | geometry | flexBasis | Dimension | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | dimension | false | true |
+| 0x00000113 | geometry | margin | InsetsF32 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | dimensions | false | true |
+| 0x00000114 | geometry | alignItems | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x00000115 | geometry | alignSelf | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x00000116 | geometry | alignContent | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x00000117 | geometry | justifyContent | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x00000118 | geometry | justifyItems | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x00000119 | geometry | justifySelf | AlignmentMode | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | alignment_mode | false | true |
+| 0x0000011a | geometry | columnGap | Dimension | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | nonnegative_dimension | false | true |
+| 0x0000011b | geometry | rowGap | Dimension | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | nonnegative_dimension | false | true |
+| 0x0000011c | geometry | gridTemplateColumns | TrackList | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | track_list | false | true |
+| 0x0000011d | geometry | gridTemplateRows | TrackList | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | track_list | false | true |
+| 0x0000011e | geometry | gridAutoColumns | TrackList | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | track_list | false | true |
+| 0x0000011f | geometry | gridAutoRows | TrackList | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | track_list | false | true |
+| 0x00000120 | geometry | gridAutoFlow | GridAutoFlow | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | grid_auto_flow | false | true |
+| 0x00000121 | geometry | gridColumn | GridPlacement | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | grid_placement | false | true |
+| 0x00000122 | geometry | gridRow | GridPlacement | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | grid_placement | false | true |
+| 0x00000123 | geometry | position | Position | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | position | false | true |
+| 0x00000124 | geometry | inset | InsetsF32 | Box, ContentHost, Editor, Scroll, Animation | LayoutInput | dimensions | false | true |
 

@@ -20,6 +20,156 @@ pub enum LayoutMode {
     Grid,
 }
 
+/// A validated finite f32 scalar. The stored bits are canonical: NaNs and
+/// infinities are rejected and negative zero is represented as positive zero.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FiniteScalar(u32);
+
+impl FiniteScalar {
+    pub fn new(value: f32) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        let value = if value == 0.0 { 0.0 } else { value };
+        Some(Self(value.to_bits()))
+    }
+
+    pub fn from_bits(bits: u32) -> Option<Self> {
+        Self::new(f32::from_bits(bits))
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DimensionValue {
+    Length(FiniteScalar),
+    Percent(FiniteScalar),
+    Auto,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DisplayMode {
+    Flex,
+    Grid,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum DirectionMode {
+    Ltr,
+    Rtl,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FlexDirectionMode {
+    Row,
+    Column,
+    RowReverse,
+    ColumnReverse,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FlexWrapMode {
+    NoWrap,
+    Wrap,
+    WrapReverse,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PositionMode {
+    Relative,
+    Absolute,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentMode {
+    Start,
+    End,
+    Center,
+    Stretch,
+    Baseline,
+    SpaceBetween,
+    SpaceEvenly,
+    SpaceAround,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum GridAutoFlowMode {
+    Row,
+    Column,
+    RowDense,
+    ColumnDense,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum TrackValue {
+    Length(FiniteScalar),
+    Percent(FiniteScalar),
+    Fr(FiniteScalar),
+    Auto,
+    MinContent,
+    MaxContent,
+    MinMax {
+        min: TrackMinBound,
+        max: TrackMaxBound,
+    },
+}
+
+/// Finite minimum side of a `minmax()` track. Flex fractions are not legal
+/// here; keeping that fact in the type prevents a renderer fallback for an
+/// impossible recursive value.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TrackMinBound {
+    Auto,
+    Length(FiniteScalar),
+    Percent(FiniteScalar),
+    MinContent,
+    MaxContent,
+}
+
+/// Finite maximum side of a `minmax()` track. Unlike the minimum side, the
+/// maximum may be a flex fraction.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TrackMaxBound {
+    Auto,
+    Length(FiniteScalar),
+    Percent(FiniteScalar),
+    Fr(FiniteScalar),
+    MinContent,
+    MaxContent,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct TrackListValue(pub Vec<TrackValue>);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum GridLineValue {
+    Auto,
+    Line(i32),
+    Span(u16),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct GridPlacementValue {
+    pub start: GridLineValue,
+    pub end: GridLineValue,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct DimensionInsets {
+    pub top: DimensionValue,
+    pub right: DimensionValue,
+    pub bottom: DimensionValue,
+    pub left: DimensionValue,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AlignmentAxis {
     Start,
@@ -57,12 +207,27 @@ pub enum PropertyValue {
     Glyphs(GlyphsValue),
     TextAttributes(TextAttributes),
     Style(StyleValue),
+    Dimension(DimensionValue),
+    Scalar(FiniteScalar),
+    Display(DisplayMode),
+    Direction(DirectionMode),
+    FlexDirection(FlexDirectionMode),
+    FlexWrap(FlexWrapMode),
+    Position(PositionMode),
+    AlignmentMode(AlignmentMode),
+    GridAutoFlow(GridAutoFlowMode),
+    Dimensions(DimensionInsets),
+    Tracks(TrackListValue),
+    GridPlacement(GridPlacementValue),
 }
 
 impl PropertyValue {
     pub(crate) const fn value_kind(&self) -> ValueKind {
         match self {
-            Self::SizeMode(_) => ValueKind::SizeMode,
+            // Width and height retain their historical `fit`/`fill` Rust
+            // values while the wire's Dimension kind also admits finite
+            // length and percentage forms.
+            Self::SizeMode(_) => ValueKind::Dimension,
             Self::LayoutMode(_) => ValueKind::LayoutMode,
             Self::U16(_) => ValueKind::U16,
             Self::Insets(_) => ValueKind::Insets,
@@ -73,6 +238,18 @@ impl PropertyValue {
             Self::Glyphs(_) => ValueKind::Glyphs,
             Self::TextAttributes(_) => ValueKind::TextAttributes,
             Self::Style(_) => ValueKind::Style,
+            Self::Dimension(_) => ValueKind::Dimension,
+            Self::Scalar(_) => ValueKind::F32,
+            Self::Display(_) => ValueKind::Display,
+            Self::Direction(_) => ValueKind::Direction,
+            Self::FlexDirection(_) => ValueKind::FlexDirection,
+            Self::FlexWrap(_) => ValueKind::FlexWrap,
+            Self::Position(_) => ValueKind::Position,
+            Self::AlignmentMode(_) => ValueKind::AlignmentMode,
+            Self::GridAutoFlow(_) => ValueKind::GridAutoFlow,
+            Self::Dimensions(_) => ValueKind::InsetsF32,
+            Self::Tracks(_) => ValueKind::TrackList,
+            Self::GridPlacement(_) => ValueKind::GridPlacement,
         }
     }
 }

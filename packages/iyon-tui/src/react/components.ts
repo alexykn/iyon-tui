@@ -1,9 +1,15 @@
 import { createElement, type ReactElement, type ReactNode } from "react";
 import type {
+	AlignmentMode,
 	AnimationProps,
 	BoxProps,
 	ContentProps,
+	DimensionInput,
+	DimensionInsetsInput,
+	DimensionValue,
 	EditorProps,
+	GridPlacement,
+	GridTrack,
 	HistoryProps,
 	HistoryUnitProps,
 	LayoutProps,
@@ -77,10 +83,16 @@ export function HistoryUnit(props: HistoryUnitProps): ReactElement {
 }
 
 export type {
+	AlignmentMode,
 	AnimationProps,
 	BoxProps,
 	ContentProps,
+	DimensionInput,
+	DimensionInsetsInput,
+	DimensionValue,
 	EditorProps,
+	GridPlacement,
+	GridTrack,
 	HistoryProps,
 	HistoryUnitProps,
 	LayoutProps,

@@ -150,6 +150,8 @@ pub struct UiPropertySpec {
     pub realization: String,
     pub nullable: bool,
     pub clearable: bool,
+    #[serde(default)]
+    pub allowed_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -171,6 +173,8 @@ pub struct UiValueFormSpec {
     pub word_count: u32,
     #[serde(default)]
     pub tags: Vec<u32>,
+    #[serde(default)]
+    pub names: Vec<String>,
     #[serde(default)]
     pub values: Vec<u32>,
     #[serde(default)]

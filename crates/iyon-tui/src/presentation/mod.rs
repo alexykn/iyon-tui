@@ -13,6 +13,7 @@ pub mod factory;
 pub(crate) mod ir;
 pub(crate) mod layout;
 pub(crate) mod paint;
+pub(crate) mod taffy;
 pub(crate) mod wrap;
 
 #[allow(unused_imports)]

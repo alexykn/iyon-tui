@@ -1,4 +1,5 @@
 export {
+	type AlignmentMode,
 	Animation,
 	type AnimationProps,
 	Box,
@@ -6,9 +7,14 @@ export {
 	Column,
 	Content,
 	type ContentProps,
+	type DimensionInput,
+	type DimensionInsetsInput,
+	type DimensionValue,
 	Editor,
 	type EditorProps,
 	Grid,
+	type GridPlacement,
+	type GridTrack,
 	History,
 	HistoryUnit,
 	type LayoutProps,
@@ -35,14 +41,14 @@ export type {
 	UiGeometry,
 } from "./instance.ts";
 export {
+	isExplicitContentConnector,
+	isExplicitContentPort,
+	ReactContentConnector,
+	ReactContentPort,
+} from "./resources.ts";
+export {
 	createReactRoot,
 	type IyonReactRoot,
 	type ReactCommit,
 	ReactFrameBarrierError,
 } from "./root.ts";
-export {
-	ReactContentConnector,
-	ReactContentPort,
-	isExplicitContentConnector,
-	isExplicitContentPort,
-} from "./resources.ts";

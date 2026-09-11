@@ -1,9 +1,11 @@
 # DOM-like runtime implementation checklist
 
-**Scope:** T0 through T5/M1 direct-occurrence cutover. React is the only
-production UI authoring route. The old native View ABI/generated outputs and
-ordinary Rust/native ViewState owners are deleted in this slice. The private
-current-renderer adapter remains until T7/M2.
+**Scope:** T0 through T7/M2, with T5/M1 locally accepted and the T6 finite
+geometry/layout foundation accepted as a separate checkpoint. React is the
+only production UI authoring route. The old native View ABI/generated outputs
+and ordinary Rust/native ViewState owners are deleted. Direct host rendering
+and content cutover remain T6/T7 work; the private current-renderer adapter is
+not a permanent architecture.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
 
@@ -25,7 +27,7 @@ the current-source authority.
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
-| T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
+| T6 — direct terminal Taffy integration | **foundation checkpoint parent accepted; tranche integration/cutover remaining** | Pinned Taffy, generated finite geometry, typed ingress and the derived adapter passed parent design review and local checks. Box/control/History production cutover, parity/performance evidence and Linux native CI remain pending; this is not T6 acceptance. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
 
 ### T5 canonical React resource seam (current source)
@@ -898,3 +900,87 @@ ownership remains required work in the T6/T7 migration.
   claimed from this macOS run. Taffy/T6, content-lowering/T7, Surface and GPUI
   remain deferred. Parent source/design acceptance covers M1, not those later
   migration boundaries or unexecuted Linux validation.
+
+### T6 foundation checkpoint — parent accepted
+
+The finite schema and derived layout adapter are accepted as a T6 foundation
+checkpoint after parent source/design review and local integration checks.
+**T6 itself is not accepted:** ordinary Box/control/History frames still use
+the M1 route. The next T6 slice must wire the direct occurrence renderer,
+preserve exact frame/content ownership, compare baseline output, and remove
+the temporary unsupported-geometry guard. T7 then replaces content View
+lowering and deletes the remaining old general rendering machinery.
+
+The accepted foundation contains:
+
+- Taffy `=0.12.2`, with default features disabled and only `std`,
+  `taffy_tree`, `flexbox`, `grid`, and `content_size`. Its high-level tree
+  remains private to `presentation/taffy.rs`.
+- Manifest-owned finite geometry descriptors, enum names/tags, property
+  domains and generated codecs/reference outputs. Existing property IDs and
+  fit/fill conveniences remain stable. Public normalization owns structured
+  inputs, canonicalizes f32 values/signed zero, and compares geometry fields
+  semantically. Native ingress independently validates wire data.
+- Finite `TrackMinBound`/`TrackMaxBound` types for intrinsic, fixed,
+  percentage and flex/minmax tracks. A flex minimum or recursive minmax
+  cannot survive native decoding as a renderer fallback.
+- One generation-qualified `NodeKey -> LayoutEntry` map. Taffy owns styles
+  and topology; the entry owns only backend identity, current visibility/
+  participation facts and the last installed child-list revision. Preparation
+  creates each new style once and avoids per-node searches over other new
+  nodes. Unchanged parent revisions and equal styles do not dirty layout.
+- Two-phase edge replacement, including retiring subtrees. Old child edges
+  are severed before final surviving child lists are installed; explicit
+  retired members are removed in postorder without repeatedly scanning a
+  shrinking sibling list. Canonical document validation is not duplicated.
+- Independent renderer-hidden, semantic display-none and control
+  participation facts. Hidden/inactive occurrences retain their identities.
+- Pure captured-leaf measurement requests with separate known dimensions
+  and definite/min-content/max-content available constraints. Measurement
+  invalidation marks Taffy dirty; product revisions remain upstream-owned.
+  Failed measurements cannot leave cached placeholder geometry that becomes
+  a successful retry.
+- Disabled Taffy rounding, checked accumulated absolute-edge quantization,
+  and inner-content-box widths for floor-width wrapping. Zero-width content
+  remains distinct from width one.
+- An explicit M1 guard for newly authored geometry that cannot yet be
+  rendered. Unset/reset values do not trigger that guard. Its deletion gate
+  is the next direct-rendering slice within T6, not T7.
+
+Parent validation:
+
+| Check | Result |
+|---|---|
+| Rust formatting and workspace all-features check | passed |
+| Workspace all-features tests | passed: 756 core tests, 19 native library tests, one native synchronization test, nine generator tests; existing ignored tests remain ignored |
+| Actual adapter regressions | passed: 13 tests covering sparse topology/revisions, retirement/rescue, hiding/participation, measurement invalidation/failure, inner content width and quantization |
+| Strict repository Clippy gate | passed; repository warn-mode audit findings remain; the initial new `let_and_return` error was corrected rather than suppressed |
+| Generated ABI consistency | passed |
+| TypeScript, changed-file Biome, binding, declaration and ownership gates | passed; two existing binding-check non-null-assertion warnings remain |
+| Fresh default native staging and packaged smoke | passed on macOS ARM64 |
+| All package/consumer Bun tests | passed: 84 tests, 372 expectations |
+
+Logs are `/tmp/t6-foundation-final-*.log` and
+`/tmp/t6-parent-final-adapter.log`. The workspace tests preceded a
+semantics-preserving removal of a redundant Rust return binding; that evidence
+is reused. Strict Clippy, native staging/smoke and the Bun suite ran afterward.
+The TS checks and Bun suite include the final normalization simplification.
+
+Current default addon:
+
+    packages/iyon-tui/native/iyon-tui-native.node
+    SHA-256 fbdc88acfe2ba556f53d656238663e8adaa750e8e571f54969d260c2d1850c24
+    6,806,496 bytes; darwin-arm64, default N-API
+
+The initial fanout failure was a regression in this slice, not a baseline
+failure: the first temporary guard rejected new property IDs even when their
+effective value was Unset. The archived M1 baseline passed the exact test.
+Parent review identified the cause, the guard was corrected, and the final
+19-test native suite passed. No failure is waived as unrelated.
+
+Separate matching M1 source/addon captures are preserved under
+`/tmp/t6-m1-baseline`: 18 integral UI/control fixtures and 27 content
+fixtures at multiple widths, including complete cell styles. These are
+comparison inputs, not evidence that the replacement production route or its
+performance is already accepted. Linux native execution, direct-host parity,
+fractional paint/clip behavior and the T6/T7 performance gates remain pending.

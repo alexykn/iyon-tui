@@ -19,13 +19,15 @@ use napi::{
 };
 
 use iyon_tui::binding::{
-    Alignment, AlignmentAxis, BorderStyle, ColorSpec, ControlConfig, ControlKind, Edges,
-    FunnelSpec, HostContentSource, HostKind, HostNamespace, Insets, LayerValue, LayoutMode,
-    NodeRef, OwnershipMode, PropertyId, PropertyValue, ResourceRef, RootConfig, RootRole, SizeMode,
-    StyleRef, StyleSpec, TextAttribute, TextAttributeSpec, UI_ACK_HEADER_WORDS,
-    UI_ACK_WORDS_PER_CREATED_HANDLE, UI_BATCH_HEADER_WORDS, UI_BATCH_MAGIC, UI_BATCH_VERSION,
-    UiCommit, UiHandle, UiOpcode, UiOperation, UiOperationResult, ValueKind, value_encoding,
-    value_encoding_form,
+    Alignment, AlignmentAxis, AlignmentMode, BorderStyle, ColorSpec, ControlConfig, ControlKind,
+    DimensionInsets, DimensionValue, DirectionMode, DisplayMode, Edges, FiniteScalar,
+    FlexDirectionMode, FlexWrapMode, FunnelSpec, GridAutoFlowMode, GridLineValue,
+    GridPlacementValue, HostContentSource, HostKind, HostNamespace, Insets, LayerValue, LayoutMode,
+    NodeRef, OwnershipMode, PositionMode, PropertyId, PropertyValue, ResourceRef, RootConfig,
+    RootRole, SizeMode, StyleRef, StyleSpec, TextAttribute, TextAttributeSpec, TrackListValue,
+    TrackMaxBound, TrackMinBound, TrackValue, UI_ACK_HEADER_WORDS, UI_ACK_WORDS_PER_CREATED_HANDLE,
+    UI_BATCH_HEADER_WORDS, UI_BATCH_MAGIC, UI_BATCH_VERSION, UiCommit, UiHandle, UiOpcode,
+    UiOperation, UiOperationResult, ValueKind, value_encoding, value_encoding_form,
 };
 
 use super::NativeTextSource;
@@ -1078,20 +1080,50 @@ fn decode_property_value(
         return Err(malformed_at("property encoding width", index));
     }
     let (value, consumed) = match kind {
-        ValueKind::SizeMode => {
-            let word = *words
+        ValueKind::Dimension => {
+            let tag = *words
                 .first()
-                .ok_or_else(|| malformed_at("size mode", index))?;
-            let form = value_encoding_form(kind, "mode");
-            if !form.values.contains(&word) {
-                return Err(malformed_at("size mode", index));
+                .ok_or_else(|| malformed_at("dimension", index))?;
+            let fit_tag = generated_tag(ValueKind::Dimension, "fit", 0);
+            let fill_tag = generated_tag(ValueKind::Dimension, "fill", 0);
+            let auto_tag = generated_tag(ValueKind::Dimension, "auto", 0);
+            let length_tag = generated_tag(ValueKind::Dimension, "length", 0);
+            let percent_tag = generated_tag(ValueKind::Dimension, "percent", 0);
+            if !property_form_allowed(property, ValueKind::Dimension, tag) {
+                return Err(malformed_at("dimension form for property", index));
             }
-            let mode = match word {
-                0 => SizeMode::Fit,
-                1 => SizeMode::Fill,
-                _ => return Err(malformed_at("size mode", index)),
-            };
-            (PropertyValue::SizeMode(mode), 1)
+            match (tag, words.len()) {
+                (tag, 1) if tag == fit_tag => (PropertyValue::SizeMode(SizeMode::Fit), 1),
+                (tag, 1) if tag == fill_tag => (PropertyValue::SizeMode(SizeMode::Fill), 1),
+                (tag, 1) if tag == auto_tag => (PropertyValue::Dimension(DimensionValue::Auto), 1),
+                (tag, 2) if tag == length_tag || tag == percent_tag => {
+                    let scalar = FiniteScalar::from_bits(words[1])
+                        .ok_or_else(|| malformed_at("dimension scalar", index))?;
+                    if tag == length_tag
+                        && matches!(
+                            property,
+                            PropertyId::Width
+                                | PropertyId::Height
+                                | PropertyId::FlexBasis
+                                | PropertyId::ColumnGap
+                                | PropertyId::RowGap
+                        )
+                        && !(0.0..=65_535.0).contains(&scalar.get())
+                    {
+                        return Err(malformed_at("dimension length range", index));
+                    }
+                    let value = if tag == length_tag {
+                        DimensionValue::Length(scalar)
+                    } else {
+                        if !(0.0..=1.0).contains(&scalar.get()) {
+                            return Err(malformed_at("dimension percentage", index));
+                        }
+                        DimensionValue::Percent(scalar)
+                    };
+                    (PropertyValue::Dimension(value), 2)
+                }
+                _ => return Err(malformed_at("dimension encoding", index)),
+            }
         }
         ValueKind::LayoutMode => {
             let word = *words
@@ -1109,6 +1141,214 @@ fn decode_property_value(
                 _ => return Err(malformed_at("layout mode", index)),
             };
             (PropertyValue::LayoutMode(mode), 1)
+        }
+        ValueKind::F32 => {
+            let bits = *words.first().ok_or_else(|| malformed_at("f32", index))?;
+            let scalar = FiniteScalar::from_bits(bits).ok_or_else(|| malformed_at("f32", index))?;
+            if matches!(property, PropertyId::FlexGrow | PropertyId::FlexShrink)
+                && !(0.0..=1_000_000.0).contains(&scalar.get())
+            {
+                return Err(malformed_at("flex scalar range", index));
+            }
+            (PropertyValue::Scalar(scalar), 1)
+        }
+        ValueKind::Display => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("display", index))?;
+            if !value_encoding_form(kind, "display").values.contains(&value) {
+                return Err(malformed_at("display", index));
+            }
+            (
+                PropertyValue::Display(match value {
+                    0 => DisplayMode::Flex,
+                    1 => DisplayMode::Grid,
+                    2 => DisplayMode::None,
+                    _ => return Err(malformed_at("display", index)),
+                }),
+                1,
+            )
+        }
+        ValueKind::Direction => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("direction", index))?;
+            if !value_encoding_form(kind, "direction")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("direction", index));
+            }
+            (
+                PropertyValue::Direction(if value == 0 {
+                    DirectionMode::Ltr
+                } else {
+                    DirectionMode::Rtl
+                }),
+                1,
+            )
+        }
+        ValueKind::FlexDirection => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("flex direction", index))?;
+            if !value_encoding_form(kind, "flex_direction")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("flex direction", index));
+            }
+            (
+                PropertyValue::FlexDirection(match value {
+                    0 => FlexDirectionMode::Row,
+                    1 => FlexDirectionMode::Column,
+                    2 => FlexDirectionMode::RowReverse,
+                    3 => FlexDirectionMode::ColumnReverse,
+                    _ => return Err(malformed_at("flex direction", index)),
+                }),
+                1,
+            )
+        }
+        ValueKind::FlexWrap => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("flex wrap", index))?;
+            if !value_encoding_form(kind, "flex_wrap")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("flex wrap", index));
+            }
+            (
+                PropertyValue::FlexWrap(match value {
+                    0 => FlexWrapMode::NoWrap,
+                    1 => FlexWrapMode::Wrap,
+                    2 => FlexWrapMode::WrapReverse,
+                    _ => return Err(malformed_at("flex wrap", index)),
+                }),
+                1,
+            )
+        }
+        ValueKind::Position => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("position", index))?;
+            if !value_encoding_form(kind, "position")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("position", index));
+            }
+            (
+                PropertyValue::Position(if value == 0 {
+                    PositionMode::Relative
+                } else {
+                    PositionMode::Absolute
+                }),
+                1,
+            )
+        }
+        ValueKind::AlignmentMode => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("alignment mode", index))?;
+            if !value_encoding_form(kind, "alignment_mode")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("alignment mode", index));
+            }
+            if !property_form_allowed(property, ValueKind::AlignmentMode, value) {
+                return Err(malformed_at("alignment mode for property", index));
+            }
+            (
+                PropertyValue::AlignmentMode(match value {
+                    0 => AlignmentMode::Start,
+                    1 => AlignmentMode::End,
+                    2 => AlignmentMode::Center,
+                    3 => AlignmentMode::Stretch,
+                    4 => AlignmentMode::Baseline,
+                    5 => AlignmentMode::SpaceBetween,
+                    6 => AlignmentMode::SpaceEvenly,
+                    7 => AlignmentMode::SpaceAround,
+                    _ => return Err(malformed_at("alignment mode", index)),
+                }),
+                1,
+            )
+        }
+        ValueKind::GridAutoFlow => {
+            let value = *words
+                .first()
+                .ok_or_else(|| malformed_at("grid auto flow", index))?;
+            if !value_encoding_form(kind, "grid_auto_flow")
+                .values
+                .contains(&value)
+            {
+                return Err(malformed_at("grid auto flow", index));
+            }
+            (
+                PropertyValue::GridAutoFlow(match value {
+                    0 => GridAutoFlowMode::Row,
+                    1 => GridAutoFlowMode::Column,
+                    2 => GridAutoFlowMode::RowDense,
+                    3 => GridAutoFlowMode::ColumnDense,
+                    _ => return Err(malformed_at("grid auto flow", index)),
+                }),
+                1,
+            )
+        }
+        ValueKind::InsetsF32 => {
+            if words.len() < 8 {
+                return Err(malformed_at("f32 dimensions", index));
+            }
+            let mut values = [DimensionValue::Auto; 4];
+            for (slot, chunk) in words[..8].chunks_exact(2).enumerate() {
+                values[slot] = decode_dimension_words(chunk, index)?;
+            }
+            (
+                PropertyValue::Dimensions(DimensionInsets {
+                    top: values[0],
+                    right: values[1],
+                    bottom: values[2],
+                    left: values[3],
+                }),
+                8,
+            )
+        }
+        ValueKind::TrackList => {
+            let count = usize::try_from(
+                *words
+                    .first()
+                    .ok_or_else(|| malformed_at("track list", index))?,
+            )
+            .map_err(|_| malformed_at("track list count", index))?;
+            if count > 64 {
+                return Err(malformed_at("track list count", index));
+            }
+            let mut tracks = Vec::with_capacity(count);
+            let mut cursor = 1;
+            for _ in 0..count {
+                let (track, consumed) = decode_track(&words[cursor..], index)?;
+                cursor = cursor
+                    .checked_add(consumed)
+                    .ok_or_else(|| malformed_at("track list width", index))?;
+                tracks.push(track);
+            }
+            if cursor != words.len() {
+                return Err(malformed_at("track list width", index));
+            }
+            (PropertyValue::Tracks(TrackListValue(tracks)), words.len())
+        }
+        ValueKind::GridPlacement => {
+            if words.len() != 4 {
+                return Err(malformed_at("grid placement", index));
+            }
+            let start = decode_grid_line(words[0], words[1], index)?;
+            let end = decode_grid_line(words[2], words[3], index)?;
+            (
+                PropertyValue::GridPlacement(GridPlacementValue { start, end }),
+                4,
+            )
         }
         ValueKind::U16 => {
             let word = *words.first().ok_or_else(|| malformed_at("u16", index))?;
@@ -1224,6 +1464,221 @@ fn decode_property_value(
         }
     };
     Ok((LayerValue::Value(value), consumed))
+}
+
+fn generated_tag(kind: ValueKind, form: &str, index: usize) -> u32 {
+    value_encoding_form(kind, form)
+        .tags
+        .get(index)
+        .copied()
+        .expect("validated generated tag")
+}
+
+fn property_form_allowed(property: PropertyId, kind: ValueKind, code: u32) -> bool {
+    let allowed = iyon_tui::binding::property_descriptor(property).allowed_values;
+    if allowed.is_empty() {
+        return true;
+    }
+    value_encoding(kind).forms.iter().any(|form| {
+        if form.tags.contains(&code) && allowed.contains(&form.name) {
+            return true;
+        }
+        form.values
+            .iter()
+            .position(|value| *value == code)
+            .and_then(|index| form.names.get(index))
+            .is_some_and(|name| allowed.contains(name))
+    })
+}
+
+fn decode_dimension_words(words: &[u32], index: usize) -> napi::Result<DimensionValue> {
+    let tag = *words
+        .first()
+        .ok_or_else(|| malformed_at("dimension", index))?;
+    let auto_tag = generated_tag(ValueKind::InsetsF32, "dimension_x4", 0);
+    let length_tag = generated_tag(ValueKind::InsetsF32, "dimension_x4", 1);
+    let percent_tag = generated_tag(ValueKind::InsetsF32, "dimension_x4", 2);
+    let value = match (tag, words.len()) {
+        (tag, 2) if tag == auto_tag && words[1] == 0 => DimensionValue::Auto,
+        (tag, 2) if tag == length_tag || tag == percent_tag => {
+            let scalar = FiniteScalar::from_bits(words[1])
+                .ok_or_else(|| malformed_at("dimension scalar", index))?;
+            if tag == percent_tag {
+                if !(0.0..=1.0).contains(&scalar.get()) {
+                    return Err(malformed_at("dimension percentage", index));
+                }
+            } else if !(-65_535.0..=65_535.0).contains(&scalar.get()) {
+                return Err(malformed_at("dimension length range", index));
+            }
+            if tag == 3 {
+                DimensionValue::Length(scalar)
+            } else {
+                DimensionValue::Percent(scalar)
+            }
+        }
+        _ => return Err(malformed_at("dimension encoding", index)),
+    };
+    Ok(value)
+}
+
+fn decode_grid_line(tag: u32, value: u32, index: usize) -> napi::Result<GridLineValue> {
+    let auto_tag = generated_tag(ValueKind::GridPlacement, "placement", 0);
+    let line_tag = generated_tag(ValueKind::GridPlacement, "placement", 1);
+    let span_tag = generated_tag(ValueKind::GridPlacement, "placement", 2);
+    match tag {
+        tag if tag == auto_tag && value == 0 => Ok(GridLineValue::Auto),
+        tag if tag == line_tag => {
+            let value = i32::from_ne_bytes(value.to_ne_bytes());
+            (value != 0 && (-32_768..=32_767).contains(&value))
+                .then_some(GridLineValue::Line(value))
+                .ok_or_else(|| malformed_at("grid line zero", index))
+        }
+        tag if tag == span_tag && (1..=u32::from(u16::MAX)).contains(&value) => {
+            Ok(GridLineValue::Span(value as u16))
+        }
+        _ => Err(malformed_at("grid line", index)),
+    }
+}
+
+fn decode_track(words: &[u32], index: usize) -> napi::Result<(TrackValue, usize)> {
+    let tag = *words.first().ok_or_else(|| malformed_at("track", index))?;
+    let auto_tag = generated_tag(ValueKind::TrackList, "tracks", 0);
+    let min_content_tag = generated_tag(ValueKind::TrackList, "tracks", 4);
+    let max_content_tag = generated_tag(ValueKind::TrackList, "tracks", 5);
+    let minmax_tag = generated_tag(ValueKind::TrackList, "tracks", 6);
+    if tag == auto_tag {
+        if words.get(1).copied() != Some(0) {
+            return Err(malformed_at("auto track", index));
+        }
+        return Ok((TrackValue::Auto, 2));
+    }
+    if tag == min_content_tag || tag == max_content_tag {
+        if words.get(1).copied() != Some(0) {
+            return Err(malformed_at("intrinsic track", index));
+        }
+        return Ok((
+            if tag == min_content_tag {
+                TrackValue::MinContent
+            } else {
+                TrackValue::MaxContent
+            },
+            2,
+        ));
+    }
+    if tag == minmax_tag {
+        if words.len() < 5 {
+            return Err(malformed_at("minmax track", index));
+        }
+        let (DecodedTrackBound::Min(min), min_words) =
+            decode_track_bound(&words[1..], index, "minmax_min", false)?
+        else {
+            return Err(malformed_at("minmax minimum track", index));
+        };
+        let (DecodedTrackBound::Max(max), max_words) =
+            decode_track_bound(&words[1 + min_words..], index, "minmax_max", true)?
+        else {
+            return Err(malformed_at("minmax maximum track", index));
+        };
+        if min_words != 2 || max_words != 2 {
+            return Err(malformed_at("minmax track", index));
+        }
+        return Ok((TrackValue::MinMax { min, max }, 5));
+    }
+    let (track, consumed) = decode_simple_track(words, index)?;
+    Ok((track, consumed))
+}
+
+enum DecodedTrackBound {
+    Min(TrackMinBound),
+    Max(TrackMaxBound),
+}
+
+fn decode_track_bound(
+    words: &[u32],
+    index: usize,
+    form: &str,
+    allow_fr: bool,
+) -> napi::Result<(DecodedTrackBound, usize)> {
+    let tag = *words
+        .first()
+        .ok_or_else(|| malformed_at("track bound", index))?;
+    let auto_tag = generated_tag(ValueKind::TrackList, form, 0);
+    let length_tag = generated_tag(ValueKind::TrackList, form, 1);
+    let percent_tag = generated_tag(ValueKind::TrackList, form, 2);
+    let fr_tag = generated_tag(ValueKind::TrackList, form, 3);
+    let min_content_tag = generated_tag(ValueKind::TrackList, form, if allow_fr { 4 } else { 3 });
+    let max_content_tag = generated_tag(ValueKind::TrackList, form, if allow_fr { 5 } else { 4 });
+    if words.get(1).copied() != Some(0)
+        && (tag == auto_tag || tag == min_content_tag || tag == max_content_tag)
+    {
+        return Err(malformed_at("intrinsic track bound", index));
+    }
+    if tag == auto_tag {
+        return if allow_fr {
+            Ok((DecodedTrackBound::Max(TrackMaxBound::Auto), 2))
+        } else {
+            Ok((DecodedTrackBound::Min(TrackMinBound::Auto), 2))
+        };
+    }
+    if tag == min_content_tag {
+        return if allow_fr {
+            Ok((DecodedTrackBound::Max(TrackMaxBound::MinContent), 2))
+        } else {
+            Ok((DecodedTrackBound::Min(TrackMinBound::MinContent), 2))
+        };
+    }
+    if tag == max_content_tag {
+        return if allow_fr {
+            Ok((DecodedTrackBound::Max(TrackMaxBound::MaxContent), 2))
+        } else {
+            Ok((DecodedTrackBound::Min(TrackMinBound::MaxContent), 2))
+        };
+    }
+    if words.len() < 2 {
+        return Err(malformed_at("track bound width", index));
+    }
+    let scalar = FiniteScalar::from_bits(words[1])
+        .ok_or_else(|| malformed_at("track bound scalar", index))?;
+    if tag == length_tag && (0.0..=65_535.0).contains(&scalar.get()) {
+        return if allow_fr {
+            Ok((DecodedTrackBound::Max(TrackMaxBound::Length(scalar)), 2))
+        } else {
+            Ok((DecodedTrackBound::Min(TrackMinBound::Length(scalar)), 2))
+        };
+    }
+    if tag == percent_tag && (0.0..=1.0).contains(&scalar.get()) {
+        return if allow_fr {
+            Ok((DecodedTrackBound::Max(TrackMaxBound::Percent(scalar)), 2))
+        } else {
+            Ok((DecodedTrackBound::Min(TrackMinBound::Percent(scalar)), 2))
+        };
+    }
+    if allow_fr && tag == fr_tag && (0.0..=65_535.0).contains(&scalar.get()) {
+        return Ok((DecodedTrackBound::Max(TrackMaxBound::Fr(scalar)), 2));
+    }
+    Err(malformed_at("track bound", index))
+}
+
+fn decode_simple_track(words: &[u32], index: usize) -> napi::Result<(TrackValue, usize)> {
+    if words.len() < 2 {
+        return Err(malformed_at("track width", index));
+    }
+    let scalar =
+        FiniteScalar::from_bits(words[1]).ok_or_else(|| malformed_at("track scalar", index))?;
+    let length_tag = generated_tag(ValueKind::TrackList, "tracks", 1);
+    let percent_tag = generated_tag(ValueKind::TrackList, "tracks", 2);
+    let fr_tag = generated_tag(ValueKind::TrackList, "tracks", 3);
+    let track = match words[0] {
+        tag if tag == length_tag && (0.0..=65_535.0).contains(&scalar.get()) => {
+            TrackValue::Length(scalar)
+        }
+        tag if tag == percent_tag && (0.0..=1.0).contains(&scalar.get()) => {
+            TrackValue::Percent(scalar)
+        }
+        tag if tag == fr_tag && (0.0..=65_535.0).contains(&scalar.get()) => TrackValue::Fr(scalar),
+        _ => return Err(malformed_at("track value", index)),
+    };
+    Ok((track, 2))
 }
 
 fn decode_color(words: &[u32], index: usize) -> napi::Result<(ColorSpec, usize)> {
@@ -1519,6 +1974,122 @@ mod tests {
         );
         assert!(
             decode_property_value(PropertyId::BorderGlyphs, &glyph_words, b"invalid", 0).is_err()
+        );
+    }
+
+    #[test]
+    fn property_decoder_validates_typed_geometry_and_f32_bits() {
+        let (LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(length))), consumed) =
+            decode_property_value(PropertyId::Width, &[3, 12.5_f32.to_bits()], &[], 0).unwrap()
+        else {
+            panic!("width length must decode as a typed dimension");
+        };
+        assert_eq!(consumed, 2);
+        assert_eq!(length.get(), 12.5);
+
+        let (LayerValue::Value(PropertyValue::Dimensions(insets)), consumed) =
+            decode_property_value(
+                PropertyId::Margin,
+                &[
+                    3,
+                    1.0_f32.to_bits(),
+                    4,
+                    0.25_f32.to_bits(),
+                    2,
+                    0,
+                    3,
+                    (-2.0_f32).to_bits(),
+                ],
+                &[],
+                0,
+            )
+            .unwrap()
+        else {
+            panic!("margin must decode as four typed dimensions");
+        };
+        assert_eq!(consumed, 8);
+        assert!(matches!(insets.top, DimensionValue::Length(value) if value.get() == 1.0));
+        assert!(matches!(insets.right, DimensionValue::Percent(value) if value.get() == 0.25));
+        assert!(matches!(insets.bottom, DimensionValue::Auto));
+
+        let (LayerValue::Value(PropertyValue::Tracks(TrackListValue(tracks))), consumed) =
+            decode_property_value(
+                PropertyId::GridTemplateColumns,
+                &[2, 1, 4.0_f32.to_bits(), 3, 1.0_f32.to_bits()],
+                &[],
+                0,
+            )
+            .unwrap()
+        else {
+            panic!("grid tracks must decode as a typed list");
+        };
+        assert_eq!(consumed, 5);
+        assert!(matches!(tracks[0], TrackValue::Length(value) if value.get() == 4.0));
+        assert!(matches!(tracks[1], TrackValue::Fr(value) if value.get() == 1.0));
+
+        let (LayerValue::Value(PropertyValue::Tracks(TrackListValue(tracks))), consumed) =
+            decode_property_value(
+                PropertyId::GridTemplateRows,
+                &[1, 6, 1, 2.0_f32.to_bits(), 3, 4.0_f32.to_bits()],
+                &[],
+                0,
+            )
+            .unwrap()
+        else {
+            panic!("minmax tracks must decode as a finite typed track");
+        };
+        assert_eq!(consumed, 6);
+        assert!(matches!(tracks[0], TrackValue::MinMax { .. }));
+
+        let (LayerValue::Value(PropertyValue::Tracks(TrackListValue(tracks))), consumed) =
+            decode_property_value(PropertyId::GridTemplateRows, &[1, 6, 3, 0, 5, 0], &[], 0)
+                .unwrap()
+        else {
+            panic!("intrinsic minmax bounds must decode as finite domains");
+        };
+        assert_eq!(consumed, 6);
+        assert!(matches!(
+            tracks[0],
+            TrackValue::MinMax {
+                min: TrackMinBound::MinContent,
+                max: TrackMaxBound::MaxContent,
+            }
+        ));
+
+        let (LayerValue::Value(PropertyValue::GridPlacement(placement)), consumed) =
+            decode_property_value(
+                PropertyId::GridColumn,
+                &[1, u32::from_ne_bytes((-2_i32).to_ne_bytes()), 2, 3],
+                &[],
+                0,
+            )
+            .unwrap()
+        else {
+            panic!("grid placement must decode as typed lines and spans");
+        };
+        assert_eq!(consumed, 4);
+        assert_eq!(placement.start, GridLineValue::Line(-2));
+        assert_eq!(placement.end, GridLineValue::Span(3));
+
+        assert!(
+            decode_property_value(PropertyId::FlexGrow, &[f32::NAN.to_bits()], &[], 0).is_err()
+        );
+        assert!(decode_property_value(PropertyId::GridTemplateRows, &[2, 1, 1], &[], 0).is_err());
+        assert!(decode_property_value(PropertyId::Width, &[4, 1.1_f32.to_bits()], &[], 0).is_err());
+        assert!(decode_property_value(PropertyId::RowGap, &[0], &[], 0).is_err());
+        assert!(decode_property_value(PropertyId::RowGap, &[2], &[], 0).is_err());
+        assert!(
+            decode_property_value(PropertyId::Margin, &[2, 1, 2, 0, 2, 0, 2, 0], &[], 0).is_err()
+        );
+        assert!(decode_property_value(PropertyId::AlignItems, &[5], &[], 0).is_err());
+        assert!(
+            decode_property_value(
+                PropertyId::GridTemplateRows,
+                &[1, 6, 3, 1.0_f32.to_bits(), 0, 0],
+                &[],
+                0
+            )
+            .is_err()
         );
     }
 

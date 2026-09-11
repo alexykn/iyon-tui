@@ -7,7 +7,9 @@
 //! transaction is prepared; only the already-owned acknowledgement is returned
 //! after the core apply.
 
-use std::{collections::HashMap, mem::size_of};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::mem::size_of;
 
 use napi::{
     Env, Error, Status,
@@ -27,17 +29,21 @@ use iyon_tui::binding::{
 };
 
 use super::NativeTextSource;
+#[cfg(test)]
 use iyon_tui::binding::UiResourceOwner;
 
+#[cfg(test)]
 pub(crate) struct NativeUiState {
     pub(crate) resources: UiResourceOwner,
 }
 
+#[cfg(test)]
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<NativeUiState>();
 };
 
+#[cfg(test)]
 impl NativeUiState {
     pub(crate) fn new(
         namespace: HostNamespace,
@@ -1374,13 +1380,6 @@ fn malformed_at(message: impl Into<String>, record: usize) -> Error {
         format!("MALFORMED_UI: record {record}: {}", message.into()),
     )
 }
-fn unsupported(record: usize, message: impl Into<String>) -> Error {
-    Error::new(
-        Status::GenericFailure,
-        format!("UNSUPPORTED_UI: record {record}: {}", message.into()),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

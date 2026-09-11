@@ -417,9 +417,7 @@ export class NativeResourceRegistry {
 		) {
 			throw tuiError(
 				"validation",
-				expectedKind === "state"
-					? "UNSUPPORTED_STATE_ATTACHMENT: framework state attachment is unsupported on this node kind"
-					: "UNSUPPORTED_CONTENT_PORT_ATTACHMENT: framework content attachment is unsupported on this node kind",
+				"UNSUPPORTED_CONTENT_PORT_ATTACHMENT: framework content attachment is unsupported on this node kind",
 				{
 					id: handleId,
 					nodeKind: targetNodeKind,
@@ -452,13 +450,9 @@ export class NativeResourceRegistry {
 					{ id: handleId },
 				);
 			}
-			throw tuiError(
-				"invalid-handle",
-				record.kind === "state"
-					? "STATE_MOUNTED: ViewState is still attached"
-					: "resource is still attached",
-				{ id: handleId },
-			);
+			throw tuiError("invalid-handle", "resource is still attached", {
+				id: handleId,
+			});
 		}
 		record.lifecycle = "disposing";
 	}

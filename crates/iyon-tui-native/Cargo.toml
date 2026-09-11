@@ -10,26 +10,20 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 perf-counters = ["iyon-tui/perf-counters"]
-fast-view-abi = []
-# Structural qualification symbols remain feature-gated. PERF-13-E content-data
-# ABI v1 symbols are part of the default artifact alongside the N-API surface.
-direct-ffi = []
 
 [dependencies]
-bytemuck.workspace = true
 iyon-tui = { workspace = true, features = ["native-host"] }
 napi.workspace = true
 napi-derive.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-static_assertions.workspace = true
 
 [build-dependencies]
 napi-build = "2.4.1"
 
 [dev-dependencies]
-# Cross-crate direct-FFI failure tests need the core's test-only host poison
-# hook; the feature is not enabled for the shipped native artifact.
+# Cross-crate Source FFI failure tests need the core's test-only host poison
+# hook; the hook is not enabled for the shipped native artifact.
 iyon-tui = { workspace = true, features = ["native-host", "test-util"] }
 
 # Strictness is inherited from the workspace root: clippy pedantic and

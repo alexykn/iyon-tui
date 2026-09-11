@@ -12,20 +12,19 @@ pub(crate) use layout::{
     LayoutSync, LayoutSynchronizer, ResolvedSceneLayout, layout_resolved_scene_with_cache,
     layout_resolved_scene_with_cache_and_content,
 };
+#[cfg(feature = "native-host")]
+pub(crate) use resolve::content_attachment_targets;
 #[cfg(test)]
 pub(crate) use resolve::resolve_scene;
 pub(crate) use resolve::{ResolveError, ResolveSession};
-#[cfg(feature = "native-host")]
-pub(crate) use resolve::{content_attachment_targets, state_attachment_targets};
 pub(crate) use resolved::{ResolutionOverlay, ResolvedScene};
 pub use root::Scene;
 #[cfg(test)]
 pub(crate) use root::resolve_root_scene;
 #[allow(unused_imports)]
 pub(crate) use root::{
-    ResolvedRootScene, resolve_component_subtree_with_states,
-    resolve_root_scene_with_anchor_and_cache_and_states,
-    resolve_root_scene_with_anchor_and_cache_and_states_and_content,
+    ResolvedRootScene, resolve_component_subtree,
+    resolve_root_scene_with_anchor_and_cache_and_content,
 };
 
 #[cfg(test)]

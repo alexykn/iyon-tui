@@ -25,11 +25,12 @@ Open a pull request when the implementation is ready for comprehensive validatio
   - TypeScript typecheck and lint.
   - declaration/binding/ownership checks.
   - full Bun test suites.
-  - default N-API T15 path.
-  - feature-gated direct-FFI T15 path.
+  - canonical React/native packaged smoke and Source content FFI tests.
+  - instrumented React Source-content benchmark with default-addon restore.
 - **Standalone TUI native viability**
   - Linux x64 and macOS arm64 matrix.
-  - workspace compile, generated ABI, N-API tests, direct-FFI smoke, and generated-file cleanliness.
+  - workspace compile, generated ABI, canonical N-API/Source FFI tests, React
+    content benchmark, and generated-file cleanliness.
 - **TUI API and ABI parity**
   - stable API/ABI checks and workspace compilation.
 - **TUI TypeScript surface**

@@ -1,4 +1,4 @@
-//! Native host runtime and its retained content/state integration.
+//! Native host runtime and its retained content integration.
 //!
 //! Rust does not expose a generic application-authoring loop here. The native
 //! host owns the concrete runtime, while TypeScript supplies application
@@ -24,5 +24,3 @@ mod run;
 mod source_store;
 #[cfg(feature = "native-host")]
 pub(crate) mod ui_resources;
-#[cfg(feature = "native-host")]
-pub(crate) mod view_state;

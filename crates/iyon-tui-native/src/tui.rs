@@ -7,38 +7,15 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use iyon_tui::binding::{
-    AnsiColor, ColorSpec, ContentDelivery, ContentFamily, History, HistoryLayout, HorizontalAlign,
-    HostCellStyle, HostContentConnector, HostContentFunnel, HostContentPort, HostContentSource,
-    HostHistory, HostScrollPane, HostTextInput, HostViewSlot, Insets, Key, KeyStroke, Modifiers,
-    Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind, TextWrapMode,
-    TuiEnvironment, TuiHost, View, WrapMode, view_native_text_final,
+    AnsiColor, ColorSpec, ContentDelivery, ContentFamily, HostCellStyle, HostContentConnector,
+    HostContentFunnel, HostContentPort, HostContentSource, HostTextInput, Key, KeyStroke,
+    Modifiers, Output, SmoothConfig, TextAttribute, TextFunnelKind, TextInput, TextSourceKind,
+    TextWrapMode, TuiEnvironment, TuiHost,
 };
-use serde_json::Map;
-use serde_json::Value;
-
-mod generated_view_abi_conformance {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/generated/view_abi_conformance.rs"
-    ));
-}
-
-#[allow(dead_code)]
-mod view_state_schema {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/generated/view_state_schema.rs"
-    ));
-}
+use serde_json::{Map, Value};
 
 mod theme_dto;
 mod ui_commit;
-mod view_abi;
-mod view_state;
-
-use view_state::NativeViewState;
-
-type ViewRuntimeHandle = view_abi::ViewRuntimeHandle;
 
 static HOST_ENVIRONMENTS: OnceLock<Mutex<HashMap<usize, TuiEnvironment>>> = OnceLock::new();
 static CONTENT_ENVIRONMENTS: OnceLock<Mutex<HashMap<u32, TuiEnvironment>>> = OnceLock::new();
@@ -151,100 +128,7 @@ fn host_environment_for_env(env: &Env) -> Result<TuiEnvironment> {
 /// it. The native boundary must not duplicate or serialize the TUI renderer.
 #[napi(js_name = "tuiSmoke")]
 pub fn tui_smoke() -> Result<String> {
-    let _view = view_native_text_final(
-        vec![iyon_tui::binding::text_span_plain("iyon-tui/t1")],
-        WrapMode::default(),
-        HorizontalAlign::Start,
-    );
     Ok("iyon-tui/t1".to_owned())
-}
-
-#[cfg(feature = "direct-ffi")]
-#[unsafe(no_mangle)]
-pub extern "C" fn iyon_abi_probe_noop(value: u32) -> u32 {
-    value.wrapping_add(1)
-}
-
-#[cfg(feature = "direct-ffi")]
-#[unsafe(no_mangle)]
-pub extern "C" fn iyon_abi_probe_u32_8(
-    a0: u32,
-    a1: u32,
-    a2: u32,
-    a3: u32,
-    a4: u32,
-    a5: u32,
-    a6: u32,
-    a7: u32,
-) -> u32 {
-    a0.wrapping_mul(3)
-        .wrapping_add(a1.wrapping_mul(5))
-        .wrapping_add(a2.wrapping_mul(7))
-        .wrapping_add(a3.wrapping_mul(11))
-        .wrapping_add(a4.wrapping_mul(13))
-        .wrapping_add(a5.wrapping_mul(17))
-        .wrapping_add(a6.wrapping_mul(19))
-        .wrapping_add(a7.wrapping_mul(23))
-}
-
-#[cfg(feature = "direct-ffi")]
-#[unsafe(no_mangle)]
-pub extern "C" fn iyon_abi_probe_i32_4(a0: i32, a1: i32, a2: i32, a3: i32) -> i32 {
-    a0.wrapping_mul(3)
-        .wrapping_add(a1.wrapping_mul(5))
-        .wrapping_add(a2.wrapping_mul(7))
-        .wrapping_add(a3.wrapping_mul(11))
-}
-
-#[cfg(feature = "direct-ffi")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_probe_buffer(bytes: *const u8, byte_length: usize) -> u32 {
-    if bytes.is_null() {
-        return u32::MAX;
-    }
-    let first = unsafe { *bytes } as u32;
-    (byte_length as u32).wrapping_mul(257).wrapping_add(first)
-}
-
-#[cfg(feature = "direct-ffi")]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn iyon_abi_probe_cstring(value: *const std::ffi::c_char) -> u32 {
-    if value.is_null() {
-        return 0;
-    }
-    let bytes = unsafe { std::ffi::CStr::from_ptr(value) }.to_bytes();
-    bytes.iter().fold(2_166_136_261_u32, |hash, byte| {
-        hash.wrapping_mul(16_777_619).wrapping_add(u32::from(*byte))
-    })
-}
-
-#[cfg(feature = "direct-ffi")]
-#[napi(js_name = "tuiPerfAbiProbe")]
-pub fn tui_perf_abi_probe() -> Value {
-    serde_json::json!({
-        "noop_ptr": iyon_abi_probe_noop as *const () as usize as u64,
-        "u32_8_ptr": iyon_abi_probe_u32_8 as *const () as usize as u64,
-        "i32_4_ptr": iyon_abi_probe_i32_4 as *const () as usize as u64,
-        "buffer_ptr": iyon_abi_probe_buffer as *const () as usize as u64,
-        "cstring_ptr": iyon_abi_probe_cstring as *const () as usize as u64,
-    })
-}
-
-#[cfg(feature = "direct-ffi")]
-#[napi(js_name = "tuiPerfAbiConformanceProbe")]
-pub fn tui_perf_abi_conformance_probe() -> Value {
-    serde_json::json!({
-        "u8_8": generated_view_abi_conformance::iyon_abi_conformance_u8_8_v1 as *const () as usize as u64,
-        "u16_8": generated_view_abi_conformance::iyon_abi_conformance_u16_8_v1 as *const () as usize as u64,
-        "u32_8": generated_view_abi_conformance::iyon_abi_conformance_u32_8_v1 as *const () as usize as u64,
-        "u32_16": generated_view_abi_conformance::iyon_abi_conformance_u32_16_v1 as *const () as usize as u64,
-        "i32_4": generated_view_abi_conformance::iyon_abi_conformance_i32_4_v1 as *const () as usize as u64,
-        "f32_4": generated_view_abi_conformance::iyon_abi_conformance_f32_4_v1 as *const () as usize as u64,
-        "f64_4": generated_view_abi_conformance::iyon_abi_conformance_f64_4_v1 as *const () as usize as u64,
-        "pointer": generated_view_abi_conformance::iyon_abi_conformance_pointer_v1 as *const () as usize as u64,
-        "buffer": generated_view_abi_conformance::iyon_abi_conformance_buffer_v1 as *const () as usize as u64,
-        "cstring": generated_view_abi_conformance::iyon_abi_conformance_cstring_v1 as *const () as usize as u64,
-    })
 }
 
 #[cfg(feature = "perf-counters")]
@@ -261,11 +145,6 @@ pub fn tui_perf_snapshot() -> Value {
         counters.insert(name.to_owned(), Value::from(value));
     }
     Value::Object(counters)
-}
-
-#[napi(js_name = "tuiViewEnvironmentCount")]
-pub fn tui_view_environment_count() -> i64 {
-    view_abi::runtime_environment_count()
 }
 
 #[napi]
@@ -326,169 +205,6 @@ fn decode_ui_resource_handle(
         .ok_or_else(|| crate::NativeError::invalid_input("invalid UI host namespace"))?;
     iyon_tui::binding::UiHandle::new(namespace, words[1], words[2], kind)
         .ok_or_else(|| crate::NativeError::invalid_input("invalid UI resource handle"))
-}
-
-fn resolve_native_view(runtime: usize, view_ref: i64) -> Result<View> {
-    let view_ref = u32::try_from(view_ref)
-        .map_err(|_| crate::NativeError::invalid_input("native View reference must fit in u32"))?;
-    if view_ref == 0 {
-        return Err(crate::NativeError::invalid_input(
-            "native View reference must be positive",
-        ));
-    }
-    view_abi::view_for_ref(runtime as *mut view_abi::NativeViewRuntime, view_ref)
-        .map_err(|_| crate::NativeError::invalid_input("native View reference is unavailable"))
-}
-
-#[napi]
-pub struct NativeHistory {
-    state: Mutex<History>,
-    host: Option<HostHistory>,
-    alive: AtomicBool,
-    view_runtime: usize,
-}
-
-#[napi]
-impl NativeHistory {
-    #[napi(constructor)]
-    pub fn new(env: Env) -> Result<Self> {
-        Ok(Self {
-            state: Mutex::new(History::new()),
-            host: None,
-            alive: AtomicBool::new(true),
-            view_runtime: view_abi::runtime_ptr_for_env(&env)? as usize,
-        })
-    }
-
-    #[napi]
-    pub fn dispose(&self) -> Result<()> {
-        if !self.alive.swap(false, Ordering::AcqRel) {
-            return Ok(());
-        }
-        Ok(())
-    }
-
-    #[napi(js_name = "isDetached")]
-    pub fn is_detached(&self) -> bool {
-        self.host.is_none()
-    }
-
-    fn take_for_host(&mut self) -> Result<History> {
-        if self.host.is_some() {
-            return Err(crate::NativeError::invalid_input(
-                "history is already attached to a native host",
-            ));
-        }
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?;
-        Ok(std::mem::replace(&mut *state, History::new()))
-    }
-
-    #[napi]
-    pub fn layout(&self) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        if let Some(host) = &self.host {
-            let layout = host
-                .layout()
-                .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-            return Ok(
-                serde_json::json!({"padding": layout.padding().bottom(), "gap": layout.gap()}),
-            );
-        }
-        let _layout = self
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?
-            .layout();
-        Ok(serde_json::json!({"padding": _layout.padding().bottom(), "gap": _layout.gap()}))
-    }
-
-    #[napi(js_name = "setLayout")]
-    pub fn set_layout(&self, value: Value) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| crate::NativeError::invalid_input("history layout must be an object"))?;
-        let padding = u16_value(object, "padding")?;
-        let gap = u16_value(object, "gap")?;
-        let layout = HistoryLayout::from_parts(Insets::new(0, 0, padding, 0), gap);
-        if let Some(host) = &self.host {
-            return host
-                .set_layout(layout)
-                .map_err(|error| crate::NativeError::internal(error.to_string()));
-        }
-        self.state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?
-            .set_layout(layout);
-        Ok(())
-    }
-
-    #[napi(js_name = "pushRef")]
-    pub fn push_ref(&self, view_ref: i64) -> Result<i64> {
-        ensure_alive(&self.alive)?;
-        self.push_view(resolve_native_view(self.view_runtime, view_ref)?)
-    }
-
-    fn push_view(&self, view: View) -> Result<i64> {
-        if let Some(host) = &self.host {
-            return host
-                .push(view.clone())
-                .map(|unit| unit.value() as i64)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
-        }
-        self.state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?
-            .push(view)
-            .map(|unit| unit.value() as i64)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))
-    }
-
-    #[napi(js_name = "freezeRef")]
-    pub fn freeze_ref(&self, unit: i64, view_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.freeze_view(unit, resolve_native_view(self.view_runtime, view_ref)?)
-    }
-
-    fn freeze_view(&self, unit: i64, view: View) -> Result<()> {
-        let unit = u64::try_from(unit)
-            .map_err(|_| crate::NativeError::invalid_input("history unit id must be positive"))?;
-        if let Some(host) = &self.host {
-            return host
-                .freeze(unit, view)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
-        }
-        Err(crate::NativeError::invalid_input(
-            "detached history cannot freeze a unit",
-        ))
-    }
-
-    #[napi(js_name = "discardLive")]
-    pub fn discard_live(&self, unit: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let unit = u64::try_from(unit)
-            .map_err(|_| crate::NativeError::invalid_input("history unit id must be positive"))?;
-        if let Some(host) = &self.host {
-            return host
-                .discard_live(unit)
-                .map_err(|error| crate::NativeError::invalid_input(error.to_string()));
-        }
-        Err(crate::NativeError::invalid_input(
-            "detached history cannot discard a unit",
-        ))
-    }
-
-    fn from_host(host: HostHistory, view_runtime: usize) -> Self {
-        Self {
-            state: Mutex::new(History::new()),
-            host: Some(host),
-            alive: AtomicBool::new(true),
-            view_runtime,
-        }
-    }
 }
 
 #[napi]
@@ -648,7 +364,6 @@ impl NativeTextInput {
 pub struct NativeTuiHost {
     host: Box<TuiHost>,
     alive: AtomicBool,
-    view_runtime: usize,
     ui_environment: iyon_tui::binding::TuiEnvironment,
 }
 
@@ -681,11 +396,9 @@ impl NativeTuiHost {
             )
             .map_err(|error| crate::NativeError::internal(error.to_string()))?,
         );
-        let view_runtime = view_abi::runtime_ptr_for_env(&env)? as usize;
         Ok(Self {
             host,
             alive: AtomicBool::new(true),
-            view_runtime,
             ui_environment,
         })
     }
@@ -953,26 +666,6 @@ impl NativeTuiHost {
             .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
-    /// Accepts a native retained root as desired structure without presenting
-    /// it. The next environment drain performs the frame transaction.
-    #[napi(js_name = "setDesiredViewRef")]
-    pub fn set_desired_view_ref(&self, view_ref: i64) -> Result<Value> {
-        ensure_alive(&self.alive)?;
-        let view = resolve_native_view(self.view_runtime, view_ref)?;
-        let disposition = self
-            .host
-            .set_desired_view(view)
-            .map_err(|error| crate::NativeError::content(error.to_string()))?;
-        let epochs = self
-            .host
-            .epochs()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(serde_json::json!({
-            "host_id": epochs.host_id.to_string(),
-            "schedule_environment_drain": disposition.schedule_environment_drain,
-        }))
-    }
-
     #[napi(js_name = "waitForUiFailure")]
     pub async fn wait_for_ui_failure(&self) -> Result<Value> {
         ensure_alive(&self.alive)?;
@@ -1005,14 +698,6 @@ impl NativeTuiHost {
     ) -> Result<napi::bindgen_prelude::Uint32Array> {
         ensure_alive(&self.alive)?;
         ui_commit::commit_ui_v1(self, &env, words, metadata, owned_content, sources)
-    }
-
-    #[napi(js_name = "clearViewStateBindings")]
-    pub fn clear_view_state_bindings(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.host
-            .clear_view_state_bindings()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
     /// Drains the native environment's fair pending-host queue. Automatic
@@ -1077,7 +762,6 @@ impl NativeTuiHost {
     #[napi]
     pub fn dispose(&self) -> Result<()> {
         if self.alive.load(Ordering::Acquire) {
-            view_abi::abort_all_edit_txns(self.view_runtime as *mut view_abi::NativeViewRuntime);
             let host_error = self.host.close().err();
             match host_error {
                 None => self.alive.store(false, Ordering::Release),
@@ -1123,30 +807,6 @@ impl NativeTuiHost {
             .map_err(|error| crate::NativeError::internal(error.to_string()))
     }
 
-    #[napi(js_name = "setHistory")]
-    pub fn set_history(&self, history: &mut NativeHistory) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        if history.host.is_some() {
-            return Err(crate::NativeError::invalid_input(
-                "history is already attached to a native host",
-            ));
-        }
-        let state = history
-            .state
-            .lock()
-            .map_err(|_| crate::NativeError::internal("history lock is poisoned"))?;
-        self.host
-            .validate_history(&state)
-            .map_err(|error| crate::NativeError::invalid_input(error.to_string()))?;
-        drop(state);
-        let detached = history.take_for_host()?;
-        self.host
-            .set_history(detached)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        history.host = Some(self.host.history());
-        Ok(())
-    }
-
     #[napi]
     pub fn exited(&self) -> Result<bool> {
         Ok(self.host.exited())
@@ -1159,7 +819,11 @@ impl NativeTuiHost {
             .map_err(|_| crate::NativeError::invalid_input("row must fit in u16"))?;
         let column = u16::try_from(column)
             .map_err(|_| crate::NativeError::invalid_input("column must fit in u16"))?;
-        Ok(self.host.style_at(row, column).map(cell_style_value))
+        Ok(self
+            .host
+            .style_at(row, column)
+            .as_ref()
+            .map(cell_style_value))
     }
 
     #[napi(js_name = "cellXOfText")]
@@ -1168,25 +832,6 @@ impl NativeTuiHost {
         let row = u16::try_from(row)
             .map_err(|_| crate::NativeError::invalid_input("row must fit in u16"))?;
         Ok(self.host.cell_x_of_text(row, &text).map(i64::from))
-    }
-
-    #[napi]
-    pub fn history(&self) -> Result<NativeHistory> {
-        ensure_alive(&self.alive)?;
-        Ok(NativeHistory::from_host(
-            self.host.history(),
-            self.view_runtime,
-        ))
-    }
-
-    #[napi(js_name = "viewState")]
-    pub fn view_state(&self) -> Result<NativeViewState> {
-        ensure_alive(&self.alive)?;
-        let state = self
-            .host
-            .create_view_state()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(NativeViewState::from_host(state))
     }
 
     #[napi(js_name = "contentPort")]
@@ -1226,26 +871,6 @@ impl NativeTuiHost {
             return Err(crate::NativeError::internal(error.to_string()));
         }
         Ok(NativeTextInput::from_host(input))
-    }
-
-    #[napi(js_name = "createViewSlotRef")]
-    pub fn create_view_slot_ref(&self, view_ref: i64) -> Result<NativeViewSlot> {
-        ensure_alive(&self.alive)?;
-        let slot = self
-            .host
-            .create_view_slot(resolve_native_view(self.view_runtime, view_ref)?)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(NativeViewSlot::from_host(slot, self.view_runtime))
-    }
-
-    #[napi(js_name = "scrollPaneRef")]
-    pub fn scroll_pane_ref(&self, view_ref: i64) -> Result<NativeScrollPane> {
-        ensure_alive(&self.alive)?;
-        let pane = self
-            .host
-            .create_scroll_pane(resolve_native_view(self.view_runtime, view_ref)?)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))?;
-        Ok(NativeScrollPane::from_host(pane, self.view_runtime))
     }
 
     #[napi(js_name = "bindKey")]
@@ -1363,19 +988,6 @@ impl NativeTuiHost {
         self.host
             .advance_time(std::time::Duration::from_millis(milliseconds))
             .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-}
-
-#[cfg(feature = "direct-ffi")]
-#[napi]
-impl NativeTuiHost {
-    /// Qualification-only raw host address for the feature-gated direct FFI backend.
-    #[napi(js_name = "tuiViewAbiHostPointer")]
-    pub fn view_abi_host_pointer(&self) -> i64 {
-        if !self.alive.load(Ordering::Acquire) {
-            return 0;
-        }
-        self as *const Self as usize as i64
     }
 }
 
@@ -1617,11 +1229,6 @@ impl NativeContentPort {
     pub fn port_id(&self) -> Result<i64> {
         ensure_alive(&self.alive)?;
         Ok(self.port.id() as i64)
-    }
-
-    #[napi(js_name = "attachmentId")]
-    pub fn attachment_id(&self) -> Result<i64> {
-        self.port_id()
     }
 
     #[napi(js_name = "portGeneration")]
@@ -1921,308 +1528,7 @@ fn parse_text_funnel_control(
     Ok(HostContentFunnel::new(kind, wrap, hyperlinks, delivery))
 }
 
-#[napi]
-pub struct NativeViewSlot {
-    slot: HostViewSlot,
-    alive: AtomicBool,
-    view_runtime: usize,
-}
-
-#[napi]
-pub struct NativeScrollPane {
-    pane: HostScrollPane,
-    alive: AtomicBool,
-    view_runtime: usize,
-}
-
-#[napi]
-impl NativeScrollPane {
-    #[napi]
-    pub fn dispose(&self) {
-        // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
-        // registered component (idempotent); physical reclamation happens in
-        // NativeRuntime::reap_retired_components after reconciliation proves the
-        // component unmounted. The N-API surface is the durable public path.
-        if self.alive.swap(false, Ordering::AcqRel) {
-            self.pane.retire();
-        }
-    }
-
-    #[napi(js_name = "componentId")]
-    pub fn component_id(&self) -> Result<Option<i64>> {
-        ensure_alive(&self.alive)?;
-        Ok(self.pane.component_id().map(|id| id as i64))
-    }
-
-    #[napi(js_name = "setContentRef")]
-    pub fn set_content_ref(&self, view_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_content_view(resolve_native_view(self.view_runtime, view_ref)?)
-    }
-
-    fn set_content_view(&self, view: View) -> Result<()> {
-        self.pane
-            .set_content(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "followEnd")]
-    pub fn follow_end(&self) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.pane
-            .follow_end()
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    fn from_host(pane: HostScrollPane, view_runtime: usize) -> Self {
-        Self {
-            pane,
-            alive: AtomicBool::new(true),
-            view_runtime,
-        }
-    }
-}
-
-#[napi]
-impl NativeViewSlot {
-    #[napi]
-    pub fn dispose(&self) {
-        // PERF-12 T13.1 R8: disposal REQUESTS deferred retirement of the
-        // registered component (idempotent). Physical reclamation happens in
-        // NativeRuntime::reap_retired_components after reconciliation proves the
-        // component unmounted — committed roots may still reference it.
-        if self.alive.swap(false, Ordering::AcqRel) {
-            self.slot.retire();
-        }
-    }
-
-    #[napi]
-    pub fn revision(&self) -> Result<i64> {
-        ensure_alive(&self.alive)?;
-        Ok(self.slot.revision() as i64)
-    }
-
-    #[napi(js_name = "componentId")]
-    pub fn component_id(&self) -> Result<Option<i64>> {
-        ensure_alive(&self.alive)?;
-        Ok(self.slot.component_id().map(|id| id as i64))
-    }
-
-    #[napi(js_name = "setViewRef")]
-    pub fn set_view_ref(&self, view_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_view_value(resolve_native_view(self.view_runtime, view_ref)?)
-    }
-
-    fn set_view_value(&self, view: View) -> Result<()> {
-        self.slot
-            .set_view(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "setAnimationRefs")]
-    pub fn set_animation_refs(
-        &self,
-        refs: napi::bindgen_prelude::Uint32Array,
-        used_count: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let used_count = usize::try_from(used_count).map_err(|_| {
-            crate::NativeError::invalid_input("animation used count must be non-negative")
-        })?;
-        let refs = refs.as_ref();
-        if used_count == 0 || used_count > refs.len() {
-            return Err(crate::NativeError::invalid_input(
-                "animation used count is out of range",
-            ));
-        }
-        let frames = refs[..used_count]
-            .iter()
-            .copied()
-            .map(|view_ref| resolve_native_view(self.view_runtime, i64::from(view_ref)))
-            .collect::<Result<Vec<_>>>()?;
-        self.set_animation_with_mode(frames, interval_ms, false)
-    }
-
-    #[napi(js_name = "setAnimationRefsAtCycleBoundary")]
-    pub fn set_animation_refs_at_cycle_boundary(
-        &self,
-        refs: napi::bindgen_prelude::Uint32Array,
-        used_count: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let used_count = usize::try_from(used_count).map_err(|_| {
-            crate::NativeError::invalid_input("animation used count must be non-negative")
-        })?;
-        let refs = refs.as_ref();
-        if used_count == 0 || used_count > refs.len() {
-            return Err(crate::NativeError::invalid_input(
-                "animation used count is out of range",
-            ));
-        }
-        let frames = refs[..used_count]
-            .iter()
-            .copied()
-            .map(|view_ref| resolve_native_view(self.view_runtime, i64::from(view_ref)))
-            .collect::<Result<Vec<_>>>()?;
-        self.set_animation_with_mode(frames, interval_ms, true)
-    }
-
-    fn set_animation_ref_values(
-        &self,
-        refs: &[i64],
-        interval_ms: i64,
-        at_cycle_boundary: bool,
-    ) -> Result<()> {
-        let frames = refs
-            .iter()
-            .copied()
-            .map(|view_ref| resolve_native_view(self.view_runtime, view_ref))
-            .collect::<Result<Vec<_>>>()?;
-        self.set_animation_with_mode(frames, interval_ms, at_cycle_boundary)
-    }
-
-    #[napi(js_name = "setAnimationRef1")]
-    pub fn set_animation_ref1(&self, ref0: i64, interval_ms: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0], interval_ms, false)
-    }
-
-    #[napi(js_name = "setAnimationRef2")]
-    pub fn set_animation_ref2(&self, ref0: i64, ref1: i64, interval_ms: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1], interval_ms, false)
-    }
-
-    #[napi(js_name = "setAnimationRef3")]
-    pub fn set_animation_ref3(
-        &self,
-        ref0: i64,
-        ref1: i64,
-        ref2: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1, ref2], interval_ms, false)
-    }
-
-    #[napi(js_name = "setAnimationRef4")]
-    pub fn set_animation_ref4(
-        &self,
-        ref0: i64,
-        ref1: i64,
-        ref2: i64,
-        ref3: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1, ref2, ref3], interval_ms, false)
-    }
-
-    #[napi(js_name = "setAnimationRef1AtCycleBoundary")]
-    pub fn set_animation_ref1_at_cycle_boundary(&self, ref0: i64, interval_ms: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0], interval_ms, true)
-    }
-
-    #[napi(js_name = "setAnimationRef2AtCycleBoundary")]
-    pub fn set_animation_ref2_at_cycle_boundary(
-        &self,
-        ref0: i64,
-        ref1: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1], interval_ms, true)
-    }
-
-    #[napi(js_name = "setAnimationRef3AtCycleBoundary")]
-    pub fn set_animation_ref3_at_cycle_boundary(
-        &self,
-        ref0: i64,
-        ref1: i64,
-        ref2: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1, ref2], interval_ms, true)
-    }
-
-    #[napi(js_name = "setAnimationRef4AtCycleBoundary")]
-    pub fn set_animation_ref4_at_cycle_boundary(
-        &self,
-        ref0: i64,
-        ref1: i64,
-        ref2: i64,
-        ref3: i64,
-        interval_ms: i64,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.set_animation_ref_values(&[ref0, ref1, ref2, ref3], interval_ms, true)
-    }
-
-    fn set_animation_with_mode(
-        &self,
-        frames: Vec<View>,
-        interval_ms: i64,
-        at_cycle_boundary: bool,
-    ) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        let interval_ms = u64::try_from(interval_ms).map_err(|_| {
-            crate::NativeError::invalid_input("animation interval must be positive")
-        })?;
-        if interval_ms == 0 {
-            return Err(crate::NativeError::invalid_input(
-                "animation interval must be positive",
-            ));
-        }
-        if frames.is_empty() {
-            return Err(crate::NativeError::invalid_input(
-                "animation requires at least one frame",
-            ));
-        }
-        let interval = std::time::Duration::from_millis(interval_ms);
-        let result = if at_cycle_boundary {
-            self.slot.set_animation_at_cycle_boundary(frames, interval)
-        } else {
-            self.slot.set_animation(frames, interval)
-        };
-        result.map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    #[napi(js_name = "stopAnimationRef")]
-    pub fn stop_animation_ref(&self, view_ref: i64) -> Result<()> {
-        ensure_alive(&self.alive)?;
-        self.stop_animation_view(resolve_native_view(self.view_runtime, view_ref)?)
-    }
-
-    fn stop_animation_view(&self, view: View) -> Result<()> {
-        self.slot
-            .stop_animation(view)
-            .map_err(|error| crate::NativeError::internal(error.to_string()))
-    }
-
-    fn from_host(slot: HostViewSlot, view_runtime: usize) -> Self {
-        Self {
-            slot,
-            alive: AtomicBool::new(true),
-            view_runtime,
-        }
-    }
-}
-
-fn u16_value(object: &Map<String, Value>, field: &str) -> Result<u16> {
-    let value = object
-        .get(field)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| crate::NativeError::invalid_input(format!("{field} must be an integer")))?;
-    u16::try_from(value)
-        .map_err(|_| crate::NativeError::invalid_input(format!("{field} must fit in u16")))
-}
-
-fn cell_style_value(style: HostCellStyle) -> Value {
+fn cell_style_value(style: &HostCellStyle) -> Value {
     serde_json::json!({
         "foreground": style.foreground,
         "background": style.background,
@@ -2235,10 +1541,10 @@ fn cell_style_value(style: HostCellStyle) -> Value {
     })
 }
 
-/// Canonical color-string decoder shared with the L1-05 state envelope
-/// string lane. The TS packer normalizes `{type: "ansi", value}` objects to
-/// `ansi:N` strings, so the envelope carries only strings; the theme DTO
-/// handles object shapes separately and both terminate in identical values.
+/// Canonical color-string decoder for the native theme DTO string lane. The
+/// TypeScript packer normalizes `{type: "ansi", value}` objects to `ansi:N`
+/// strings; the theme DTO handles object shapes separately and both terminate
+/// in identical values.
 pub(super) fn color_spec_str(value: &str) -> Result<ColorSpec> {
     if let Some(value) = value.strip_prefix("theme:") {
         // Intern repeated theme keys once; identical strings share one

@@ -107,8 +107,6 @@ function rustDependencyGate(): void {
 	const tuiNativePaths = [
 		"crates/iyon-tui-native/src/tui.rs",
 		"crates/iyon-tui-native/src/tui",
-		"crates/iyon-tui-native/src/generated",
-		"crates/iyon-tui-native/tests/generated_view_abi.rs",
 	];
 	const offenders: string[] = [];
 	for (const path of tuiNativePaths) {
@@ -775,31 +773,82 @@ function napiTransportGate(): void {
 		);
 	}
 
-	const generatedNapi = join(
-		ROOT,
-		"crates/iyon-tui-native/src/generated/view_abi_napi.rs",
-	);
+	const generatedUi = join(ROOT, "crates/iyon-tui/src/occurrence/generated.rs");
 	const manifest = join(
 		ROOT,
-		"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
-	);
-	const cargo = readFileSync(
-		join(ROOT, "crates/iyon-tui-native/Cargo.toml"),
-		"utf8",
+		"packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
 	);
 	if (
-		!existsSync(generatedNapi) ||
+		!existsSync(generatedUi) ||
 		!existsSync(manifest) ||
-		!/direct-ffi\s*=\s*\[\]/u.test(cargo)
+		!/UI_ABI_NAME|UI_BATCH_MAGIC/u.test(readFileSync(generatedUi, "utf8"))
 	) {
 		fail(
-			"generated-napi-lowering",
-			"generated N-API methods, manifest, or feature-gated direct qualification surface is missing",
+			"generated-ui-schema",
+			"generated direct-occurrence UI schema or manifest is missing",
 		);
 	} else {
 		pass(
-			"generated-napi-lowering",
-			"canonical ABI emits safe N-API methods and keeps direct qualification feature-gated",
+			"generated-ui-schema",
+			"canonical generator emits the direct-occurrence UI schema and manifest",
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Gate 10b: T5/M1 native/schema/state deletion
+// ---------------------------------------------------------------------------
+
+function m1NativeDeletionGate(): void {
+	const deletedPaths = [
+		"tools/tui-abi/view_abi.toml",
+		"crates/iyon-tui-native/src/tui/view_abi.rs",
+		"crates/iyon-tui-native/src/tui/view_state.rs",
+		"crates/iyon-tui-native/include/iyon_view_abi.h",
+		"crates/iyon-tui-native/src/generated/view_abi_types.rs",
+		"crates/iyon-tui-native/src/generated/view_abi_exports.rs",
+		"crates/iyon-tui-native/src/generated/view_abi_napi.rs",
+		"crates/iyon-tui-native/src/generated/view_abi_table.rs",
+		"crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
+		"crates/iyon-tui-native/src/generated/view_state_schema.rs",
+		"crates/iyon-tui-native/tests/generated_view_abi.rs",
+		"packages/iyon-tui/src/transport/state/generated/state_envelope.ts",
+		"packages/iyon-tui/src/transport/abi/structural/generated/view_abi.ts",
+		"packages/iyon-tui/src/transport/abi/structural/generated/view_calls.ts",
+		"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
+		"packages/iyon-tui/src/transport/abi/structural/generated/view_abi_conformance.ts",
+		"packages/iyon-tui/bench/generated/view_abi_cases.ts",
+		"crates/iyon-tui/src/application/view_state.rs",
+		"crates/iyon-tui/src/retained_state",
+	];
+	const present = deletedPaths.filter((path) => existsSync(join(ROOT, path)));
+	const activeRoots = [
+		join(ROOT, "crates/iyon-tui-native/src"),
+		join(ROOT, "packages/iyon-tui/src/transport/native"),
+		join(ROOT, "tools/tui-abi-gen/src"),
+	];
+	const staleSymbols =
+		/\b(?:NativeViewRuntime|NativeViewAbiSession|NativeViewState|HostViewState|ViewStateRegistry|ViewStateRecord|RetainedPathStep|WeakView|view_state_attach|setDesiredViewRef|tuiViewAbiSession)\b/u;
+	const hits: string[] = [];
+	for (const root of activeRoots) {
+		const files = root.includes("packages")
+			? walk(root)
+			: Array.from(new Bun.Glob("**/*.{rs,ts}").scanSync({ cwd: root })).map(
+					(file) => join(root, file),
+				);
+		for (const file of files)
+			if (staleSymbols.test(readFileSync(file, "utf8")))
+				hits.push(relative(ROOT, file));
+	}
+	if (present.length > 0 || hits.length > 0) {
+		fail(
+			"t5-m1-native-schema-state-deletion",
+			`deleted paths present [${present.join(", ")}] stale symbols [${hits.join(", ")}]`,
+		);
+	} else {
+		pass(
+			"t5-m1-native-schema-state-deletion",
+			"old native View ABI, generated outputs and ordinary ViewState owners are absent",
 		);
 	}
 }
@@ -1433,8 +1482,6 @@ function perf13CleanupGate(): void {
 		"crates/iyon-tui/src/stream/projected.rs",
 		"crates/iyon-tui/src/stream/snapshot.rs",
 		"crates/iyon-tui/src/stream/source.rs",
-		"packages/iyon-tui/src/transport/structural/cold-lowering.ts",
-		"packages/iyon-tui/src/transport/abi/structural/generated/view_materialize.ts",
 		"packages/iyon-tui/bench/direct_ffi",
 		"packages/iyon-tui/bench/perf12_t15_authoritative.ts",
 		"packages/iyon-tui/bench/perf12_t15_direct_case.ts",
@@ -2251,6 +2298,7 @@ cut5RootPublicationGate();
 cut5ModuleIdentityGate();
 cut5PackagePublicationGate();
 napiTransportGate();
+m1NativeDeletionGate();
 consumerFixtureGate();
 await themeStyleSemanticGate();
 opaqueHandleGate();

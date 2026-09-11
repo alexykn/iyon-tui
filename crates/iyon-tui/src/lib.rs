@@ -39,7 +39,6 @@ pub(crate) mod presentation;
 // even though their public item declarations are reused by the binding and
 // by in-crate unit tests. Rust callers author against the TypeScript facade.
 pub(crate) mod projection;
-pub(crate) mod retained_state;
 pub(crate) mod scene;
 pub(crate) mod scroll;
 mod scroll_command;
@@ -63,14 +62,13 @@ pub(crate) use content::text::{
     TextRenderPolicy,
 };
 pub(crate) use controls::TextInput;
-pub(crate) use history::{History, HistoryLayout, HistoryUnitId};
+#[cfg(test)]
+pub(crate) use history::HistoryLayout;
+pub(crate) use history::{History, HistoryUnitId};
 pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};
 #[cfg(test)]
 pub(crate) use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
-#[cfg(all(feature = "native-host", test))]
-#[doc(hidden)]
-pub(crate) use retained_state::{ViewStateGeometryPatch, ViewStatePresentationPatch};
 pub(crate) use scene::Scene;
 pub(crate) use scroll::ScrollPane;
 pub(crate) use theme::Theme;

@@ -2,35 +2,9 @@
 
 use std::sync::Arc;
 
-use super::style::{
-    BorderSpec, ColorSpec, Insets, StyleFacts, StyleRef, StyleStateKey, StyleStateValue,
-    StyleStates,
-};
+use super::style::{StyleFacts, StyleRef, StyleStates};
 use super::text::{HorizontalAlign, TextSpan, WrapMode};
 use crate::presentation::ir::{Decoration, HeightRule, View, ViewKind, ViewNodeParts, WidthRule};
-
-/// Validated common-property candidate assembled by native ingress and
-/// applied in one final retained root by the native binding. Every field is
-/// optional: `None` keeps the base value. `width_fill`/`height_fill` map
-/// `Some(true)` to `Fill` and `Some(false)` to `Fit`; size-rule vocabulary
-/// itself stays inside the core.
-#[cfg(feature = "native-host")]
-#[derive(Clone, Debug, Default)]
-#[doc(hidden)]
-pub struct NativeCommonPatch {
-    pub padding: Option<Insets>,
-    pub background: Option<ColorSpec>,
-    pub foreground: Option<ColorSpec>,
-    pub border: Option<BorderSpec>,
-    pub style: Option<StyleRef>,
-    pub style_states: Vec<(StyleStateKey, StyleStateValue)>,
-    pub width_fill: Option<bool>,
-    pub height_fill: Option<bool>,
-    pub min_width: Option<u16>,
-    pub max_width: Option<u16>,
-    pub min_height: Option<u16>,
-    pub max_height: Option<u16>,
-}
 
 impl View {
     pub(crate) fn new_kind(kind: ViewKind) -> Self {
@@ -40,7 +14,6 @@ impl View {
             decoration: Decoration::default(),
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
-            state_attachment: None,
             content_attachment: None,
             kind,
         })
@@ -63,7 +36,6 @@ impl View {
             decoration,
             style_states: StyleStates::default(),
             style_facts: StyleFacts::default(),
-            state_attachment: None,
             content_attachment: None,
             kind: ViewKind::Text(Arc::new(crate::presentation::ir::TextView {
                 spans: spans.into(),

@@ -15,7 +15,6 @@ use std::{
 };
 
 use super::content::PreparedContentCommit;
-use crate::retained_state::PreparedStateCommit;
 
 /// A receipt is the single owner of the native oneshot receiver. Polling it
 /// installs the queue-only waker; the sender's completion then re-admits the
@@ -114,7 +113,6 @@ pub(crate) enum PreparedFrameProduct {
 pub(crate) struct PreparedSceneProducts {
     pub(crate) scene: PreparedSceneFrame,
     pub(crate) content: PreparedContentCommit,
-    pub(crate) state: PreparedStateCommit,
     pub(crate) content_dirty_epoch: u64,
 }
 
@@ -199,28 +197,10 @@ impl PreparedFrame {
         }
     }
 
-    pub(crate) fn state_in_flight_ids(&self) -> &[u64] {
-        match &self.product {
-            PreparedFrameProduct::Scene { products, .. }
-            | PreparedFrameProduct::NoOutput { products, .. } => {
-                products.state.in_flight_ids.as_slice()
-            }
-            PreparedFrameProduct::Metadata { .. } => &[],
-        }
-    }
-
     pub(crate) fn content(&self) -> Option<&PreparedContentCommit> {
         match &self.product {
             PreparedFrameProduct::Scene { products, .. }
             | PreparedFrameProduct::NoOutput { products, .. } => Some(&products.content),
-            PreparedFrameProduct::Metadata { .. } => None,
-        }
-    }
-
-    pub(crate) fn state(&self) -> Option<&PreparedStateCommit> {
-        match &self.product {
-            PreparedFrameProduct::Scene { products, .. }
-            | PreparedFrameProduct::NoOutput { products, .. } => Some(&products.state),
             PreparedFrameProduct::Metadata { .. } => None,
         }
     }

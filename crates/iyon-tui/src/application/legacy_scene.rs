@@ -1154,8 +1154,7 @@ mod tests {
         let host =
             TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).expect("host");
         let existing = host
-            .history()
-            .push(crate::presentation::factory::text("existing"))
+            .push_history_unit_for_test(crate::presentation::factory::text("existing"))
             .expect("existing History unit");
         let mut create = UiCommit::new(0);
         create.push(UiOperation::CreateRoot {

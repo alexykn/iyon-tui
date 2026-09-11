@@ -66,13 +66,9 @@ jobs:
       - run: cargo test -p tui-abi-gen
       - run: |
           git diff --exit-code -- \
-            crates/iyon-tui-native/src/generated \
-            crates/iyon-tui-native/include \
-            crates/iyon-tui-native/tests/generated_view_abi.rs \
-            packages/iyon-tui/src/transport/abi/structural/generated \
-            packages/iyon-tui/tests/generated \
-            packages/iyon-tui/bench/generated \
-            docs/history/perf/PERF-11-generated-abi-reference.md
+            crates/iyon-tui/src/occurrence/generated.rs \
+            packages/iyon-tui/src/transport/ui/generated \
+            docs/architecture/generated/UI-ABI-REFERENCE.md
       - run: bun run typecheck
       - run: bun run lint:ts
       - run: bun run check:tui-declarations
@@ -80,33 +76,14 @@ jobs:
       - run: bun run check:tui-binding
       - run: bun run check:ownership
       - run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
-      - run: |
-          T15_TRANSPORT=generated_safe_napi \
-          T15_WORKLOAD=plain_text \
-          T15_MODE=shared_path \
-          T15_SIZE=20 \
-          T15_WARMUP=2 \
-          T15_MEASURED=20 \
-          bun run packages/iyon-tui/bench/perf12_t15_authoritative_case.ts
-
-  direct-ffi:
-    name: Feature-gated direct FFI
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: rustfmt
-      - run: bun install --frozen-lockfile
-      - run: ION_NATIVE_FEATURES=direct-ffi bun run packages/iyon-tui/scripts/stage-native.ts
-      - run: |
-          T15_TRANSPORT=feature_gated_direct_ffi \
-          T15_WORKLOAD=plain_text \
-          T15_MODE=shared_path \
-          T15_SIZE=20 \
-          T15_WARMUP=2 \
-          T15_MEASURED=20 \
-          bun run packages/iyon-tui/bench/perf12_t15_authoritative_case.ts
+      - name: Run packaged React/native smoke
+        run: bun run native:smoke
+      - name: Run canonical Source content FFI tests
+        run: cargo test -p iyon-tui-native content_ffi::tests --lib
+      - name: Run instrumented React content benchmark
+        run: |
+          ION_NATIVE_FEATURES=perf-counters bun run native:stage
+          ION_CONTENT_BENCH_COUNT=1000 bun run perf:content
+      - name: Restore default N-API addon
+        if: always()
+        run: bun run native:stage

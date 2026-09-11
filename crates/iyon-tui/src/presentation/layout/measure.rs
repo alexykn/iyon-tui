@@ -14,12 +14,12 @@ use crate::{
         },
         wrap::{TextFlowMetrics, text_flow_metrics},
     },
-    retained_state::{EffectiveGeometry, GeometryAlignment},
     scene::ResolutionOverlay,
 };
 
 use super::{
     cache::{LayoutCache, MeasureKey},
+    geometry::{EffectiveGeometry, GeometryAlignment},
     grid::{FlexMode, SpanRequirement, allocate_grid_tracks, span_extent},
     tracks::{TrackAllocation, allocate_tracks},
 };
@@ -213,10 +213,6 @@ pub(super) fn measure_node(
             !view.contains_component_identity(),
         ),
     };
-    if let Some(state) = view.state_attachment_id().and_then(|id| overlay.state(id)) {
-        key.geometry_revision = state.geometry_revision;
-        key.presentation_revision = state.presentation_revision;
-    }
     if matches!(view.kind(), ViewKind::ContentHost)
         && let Some(port_id) = view.content_attachment_id()
     {
@@ -261,7 +257,6 @@ fn measure_node_uncached(
     perf::inc(Counter::MeasureNodeCalls);
     #[cfg(test)]
     super::record_measure_node();
-    let state = view.state_attachment_id().and_then(|id| overlay.state(id));
     let base_gap = match view.kind() {
         ViewKind::Column(column) => Some(column.gap),
         ViewKind::Row(row) => Some(row.gap),
@@ -294,29 +289,15 @@ fn measure_node_uncached(
         | ViewKind::ContentHost
         | ViewKind::Column(_) => GeometryAlignment::default(),
     };
-    let geometry = state.map_or_else(
-        || EffectiveGeometry {
-            width: view.width(),
-            height: view.height(),
-            decoration: view.decoration().clone(),
-            gap: base_gap,
-            alignment: base_alignment,
-        },
-        |state| {
-            state.effective_geometry(
-                view.width(),
-                view.height(),
-                view.decoration(),
-                base_gap,
-                base_alignment,
-            )
-        },
-    );
+    let geometry = EffectiveGeometry {
+        width: view.width(),
+        height: view.height(),
+        decoration: view.decoration().clone(),
+        gap: base_gap,
+        alignment: base_alignment,
+    };
     let effective_decoration = geometry.decoration.clone();
-    let effective_style_states = state.map_or_else(
-        || view.view_style_states().clone(),
-        |state| state.effective_style_states(view.view_style_states()),
-    );
+    let effective_style_states = view.view_style_states().clone();
     let bounds = effective_decoration.bounds;
     let width_capacity = width.min(bounds.width.normalized_max());
     let decoration = decoration_metrics_for(&effective_decoration, width_capacity);

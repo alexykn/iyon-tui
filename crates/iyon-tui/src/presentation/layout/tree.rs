@@ -6,7 +6,6 @@ use crate::{
     presentation::api::style::{StyleFacts, StyleStates},
     presentation::ir::{Decoration, TextView, ViewId},
     presentation::{OverflowIndicator, WidthRule},
-    retained_state::{OccurrenceBox, ViewStateSnapshot},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -101,7 +100,6 @@ impl ChildDependency {
 pub(crate) struct LayoutNode {
     pub(crate) view_id: ViewId,
     pub(crate) paint_cacheable: bool,
-    pub(crate) occurrence: OccurrenceBox,
     pub(crate) rect: Rect,
     pub(crate) content_rect: Rect,
     pub(crate) clip_rect: Rect,
@@ -123,7 +121,6 @@ pub(crate) struct LayoutTree {
     pub(crate) physically_complete: bool,
     pub(crate) component_roots: HashMap<ComponentId, LayoutNodeId>,
     pub(crate) parents: Vec<Option<LayoutNodeId>>,
-    pub(crate) state_roots: HashMap<u64, LayoutNodeId>,
     /// ContentPort occurrence lookup built with the retained tree indexes.
     /// Content attachment validation normally makes each port unique in a
     /// scene, but the value is a vector so the index remains correct for
@@ -252,7 +249,6 @@ impl LayoutTree {
 
     pub(crate) fn index_component_roots(&mut self) {
         self.component_roots.clear();
-        self.state_roots.clear();
         self.content_roots.clear();
         self.parents = vec![None; self.nodes.len()];
         self.collect_component_roots(self.root, None);
@@ -275,9 +271,6 @@ impl LayoutTree {
         if let Some(component) = node.component {
             self.component_roots.insert(component, id);
         }
-        if let Some(state) = node.occurrence.state_attachment {
-            self.state_roots.insert(state, id);
-        }
         if let LayoutContent::ContentHost { port_id, .. } = &node.content {
             self.content_roots.entry(*port_id).or_default().push(id);
         }
@@ -285,35 +278,6 @@ impl LayoutTree {
         for child in children {
             self.collect_component_roots(child, Some(id));
         }
-    }
-
-    pub(crate) fn state_bindings(&self) -> Vec<(u64, crate::retained_state::StateNodeKind)> {
-        let mut bindings = self
-            .state_roots
-            .iter()
-            .filter_map(|(id, node)| {
-                self.nodes
-                    .get(node.0)
-                    .map(|node| (*id, node.occurrence.node_kind))
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_unstable_by_key(|(id, _)| *id);
-        bindings
-    }
-
-    pub(crate) fn apply_state_snapshot(
-        &mut self,
-        state_id: u64,
-        snapshot: &ViewStateSnapshot,
-    ) -> bool {
-        let Some(node_id) = self.state_roots.get(&state_id).copied() else {
-            return false;
-        };
-        let node = &mut self.nodes[node_id.0];
-        node.occurrence.apply_state(snapshot);
-        node.style.decoration = node.occurrence.effective_decoration.clone();
-        node.style.style_states = node.occurrence.effective_style_states.clone();
-        true
     }
 
     pub(crate) fn path_to_root(&self, id: LayoutNodeId) -> Vec<LayoutNodeId> {
@@ -474,7 +438,6 @@ impl LayoutTree {
                 || old_node.child_dependencies.len() != new_node.child_dependencies.len()
                 || old_node.view_id != new_node.view_id
                 || old_node.component != new_node.component
-                || old_node.occurrence.state_attachment != new_node.occurrence.state_attachment
                 || old_node.style.component_scope != new_node.style.component_scope
             {
                 return false;

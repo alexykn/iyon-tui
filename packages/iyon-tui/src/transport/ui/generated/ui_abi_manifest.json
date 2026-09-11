@@ -232,28 +232,12 @@
     }
   ],
   "generated_outputs": [
-    "crates/iyon-tui-native/src/generated/view_abi_types.rs",
-    "crates/iyon-tui-native/src/generated/view_abi_exports.rs",
-    "crates/iyon-tui-native/src/generated/view_abi_conformance.rs",
-    "crates/iyon-tui-native/src/generated/view_abi_table.rs",
-    "crates/iyon-tui-native/src/generated/view_abi_napi.rs",
-    "crates/iyon-tui-native/include/iyon_view_abi.h",
-    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi.ts",
-    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_conformance.ts",
-    "packages/iyon-tui/src/transport/abi/structural/generated/view_calls.ts",
-    "packages/iyon-tui/src/transport/abi/structural/generated/view_abi_manifest.json",
-    "packages/iyon-tui/tests/generated/view_abi_layout.test.ts",
-    "packages/iyon-tui/bench/generated/view_abi_cases.ts",
-    "crates/iyon-tui-native/tests/generated_view_abi.rs",
-    "docs/history/perf/PERF-11-generated-abi-reference.md",
-    "crates/iyon-tui-native/src/generated/view_state_schema.rs",
-    "packages/iyon-tui/src/transport/state/generated/state_envelope.ts",
     "crates/iyon-tui/src/occurrence/generated.rs",
     "packages/iyon-tui/src/transport/ui/generated/ui_schema.ts",
     "packages/iyon-tui/src/transport/ui/generated/ui_abi_manifest.json",
     "docs/architecture/generated/UI-ABI-REFERENCE.md"
   ],
-  "generator_blake3": "46129672d7e8216a8601be2bb6e665542a8cc397cb6eeffd96ba5f87bf06663a",
+  "generator_blake3": "732ae63011ebca451790b255bd2dcd717711d161f047569545ea473c0cdac5c3",
   "handle_kinds": [
     {
       "code": 1,

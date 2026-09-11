@@ -4,7 +4,7 @@
 //! not terminal events. Components remain mounted in the native `SceneHost`.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     sync::{Arc, Condvar, Mutex, Weak},
     task::Poll,
     time::{Duration, Instant},
@@ -17,12 +17,11 @@ use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
 };
-use super::view_state::HostViewState;
 use super::{
     frame::{
-        FrameFailure, HistoryReceipt as HostHistoryReceipt, PreparedFrame, PreparedFrameProduct,
-        PreparedSceneProducts, PresentReceipt, PresentationState, SceneDisposition,
-        UiFailureNotification, blocking_receive,
+        FrameFailure, HistoryReceipt, PreparedFrame, PreparedFrameProduct, PreparedSceneProducts,
+        PresentReceipt, PresentationState, SceneDisposition, UiFailureNotification,
+        blocking_receive,
     },
     legacy_scene::LegacySceneAdapter,
     ui_resources::UiResourceOwner,
@@ -30,16 +29,12 @@ use super::{
 use crate::controls::text_input::{TextInputPreview, command::TextInputCommand};
 use crate::presentation::factory as vf;
 use crate::{
-    BorderSpec, Component, ComponentCx, ComponentHandle, History, HistoryLayout, HistoryUnitId,
-    InteractionResult, KeyStroke, Output, ScrollPane, TextInput, Theme, View,
+    BorderSpec, Component, ComponentCx, ComponentHandle, HistoryUnitId, InteractionResult,
+    KeyStroke, Output, ScrollPane, TextInput, Theme, View,
     backend::NativeHistorySink,
     geometry::Size,
     physical::PhysicalRow,
     presentation::{ContentProvider, EmptyContentProvider},
-    retained_state::{
-        StateCandidateOverlay, StateFrameView, StateNodeKind, ViewStateLifecycle, ViewStateRecord,
-        ViewStateRegistry,
-    },
     scene::{PreparedSceneFrame, SceneHostError},
     terminal::{TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };
@@ -260,7 +255,7 @@ enum HistoryWork {
     InFlight {
         plan: crate::history::NativeTransferPlan,
         backend: HostBackend,
-        receipt: HostHistoryReceipt,
+        receipt: HistoryReceipt,
     },
 }
 
@@ -424,7 +419,6 @@ pub(crate) struct HostInner {
     pub(super) content_dirty_scratch: Vec<crate::presentation::ContentDirty>,
     #[cfg(test)]
     fail_next_frame: Option<String>,
-    view_states: ViewStateRegistry,
     pub(super) content: ContentHostRegistry,
     /// Canonical React occurrence owner. `legacy_scene` is a disposable
     /// renderer projection and never mutates this document.
@@ -1122,146 +1116,6 @@ fn mounted_layout_changed(component: &mut MountedTextInput, size: Size) {
     }
 }
 
-/// A handle to the History owned by a `TuiHost`.
-#[derive(Clone)]
-pub struct HostHistory {
-    host: Arc<Mutex<HostInner>>,
-}
-
-impl HostHistory {
-    pub fn layout(&self) -> Result<HistoryLayout> {
-        let inner = self.lock()?;
-        inner.ensure_open()?;
-        inner
-            .running
-            .scene_history()
-            .map(History::layout)
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))
-    }
-
-    pub fn set_layout(&self, layout: HistoryLayout) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let history = inner
-            .running
-            .scene_history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
-        if history.layout() == layout {
-            return Ok(());
-        }
-        history.set_layout(layout);
-        inner.running.invalidate_frame();
-        drop(inner);
-        render_host_after_mutation(&self.host)
-    }
-
-    pub fn push(&self, view: View) -> Result<HistoryUnitId> {
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let body = inner.running.scene_body().clone();
-        let state_targets = inner
-            .running
-            .host_state_attachment_targets_with_history_view(&body, &view)?;
-        inner.validate_state_targets(&state_targets)?;
-        let content_targets = inner
-            .running
-            .host_content_attachment_targets_with_history_view(&body, &view)?;
-        inner.content.validate_targets(&content_targets)?;
-        let unit = inner
-            .running
-            .scene_history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .push(view.clone())
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Some(transfer) = view.content_history_transfer() {
-            inner
-                .content
-                .set_history_unit(transfer.port_id, unit.value(), transfer.padding)?;
-        }
-        inner.set_desired_state_bindings(&state_targets)?;
-        inner.content.set_desired(&content_targets)?;
-        inner.running.invalidate_frame();
-        drop(inner);
-        render_host_after_mutation(&self.host)?;
-        Ok(unit)
-    }
-
-    pub fn freeze(&self, unit: u64, view: View) -> Result<()> {
-        let unit = HistoryUnitId::from_value(unit)
-            .ok_or_else(|| anyhow::anyhow!("history unit id must be non-zero"))?;
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let body = inner.running.scene_body().clone();
-        let history_views = inner
-            .running
-            .scene_history()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .state_views_with_replacement(unit, &view)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let state_targets = inner
-            .running
-            .host_state_attachment_targets_for_history_views(&body, history_views)?;
-        inner.validate_state_targets(&state_targets)?;
-        let content_views = inner
-            .running
-            .scene_history()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .content_views_with_replacement(unit, &view)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let content_targets = inner
-            .running
-            .host_content_attachment_targets_for_history_views(&body, content_views)?;
-        inner.content.validate_targets(&content_targets)?;
-        inner
-            .running
-            .scene_history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .freeze(unit, view.clone())
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        inner.content.clear_history_unit(unit.value());
-        if let Some(transfer) = view.content_history_transfer() {
-            inner
-                .content
-                .set_history_unit(transfer.port_id, unit.value(), transfer.padding)?;
-        }
-        inner.set_desired_state_bindings(&state_targets)?;
-        inner.content.set_desired(&content_targets)?;
-        inner.running.invalidate_frame();
-        drop(inner);
-        render_host_after_mutation(&self.host)?;
-        Ok(())
-    }
-
-    pub fn discard_live(&self, unit: u64) -> Result<()> {
-        let unit = HistoryUnitId::from_value(unit)
-            .ok_or_else(|| anyhow::anyhow!("history unit id must be non-zero"))?;
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        inner
-            .running
-            .scene_history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
-            .discard_live(unit)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        inner.content.clear_history_unit(unit.value());
-        inner.refresh_desired_state_bindings()?;
-        inner.running.invalidate_frame();
-        drop(inner);
-        render_host_after_mutation(&self.host)?;
-        Ok(())
-    }
-
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HostInner>> {
-        self.host
-            .lock()
-            .map_err(|_| anyhow::anyhow!("host lock is poisoned"))
-    }
-
-    fn lock_mut(&self) -> Result<std::sync::MutexGuard<'_, HostInner>> {
-        self.lock()
-    }
-}
-
 /// Native retained interaction host used by language bindings.
 #[derive(Clone)]
 pub struct TuiHost {
@@ -1314,7 +1168,7 @@ impl TuiHost {
         let now = Instant::now();
         let mut running = HostRunning::new();
         let mut backend = backend;
-        let frame = prepare_frame(&mut running, &mut backend, now, &StateFrameView::empty())?;
+        let frame = prepare_frame(&mut running, &mut backend, now)?;
         let inner =
             Arc::new(Mutex::new(HostInner {
                 running,
@@ -1343,7 +1197,6 @@ impl TuiHost {
                 content_dirty_scratch: Vec::new(),
                 #[cfg(test)]
                 fail_next_frame: None,
-                view_states: ViewStateRegistry::new(),
                 content: ContentHostRegistry::new(environment.content_source_registry().map_err(
                     |error| anyhow::anyhow!("content environment setup failed: {error}"),
                 )?),
@@ -1801,6 +1654,23 @@ impl TuiHost {
         result
     }
 
+    #[cfg(test)]
+    pub(crate) fn push_history_unit_for_test(&self, view: View) -> Result<HistoryUnitId> {
+        let unit = {
+            let mut inner = self.lock_mut()?;
+            let unit = inner
+                .running
+                .scene_history_mut()
+                .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?
+                .push(view)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            inner.running.invalidate_frame();
+            unit
+        };
+        render_host_after_mutation(&self.inner)?;
+        Ok(unit)
+    }
+
     pub fn commit_ui(
         &self,
         batch: crate::occurrence::UiCommit,
@@ -1892,23 +1762,6 @@ impl TuiHost {
         Ok(result)
     }
 
-    #[must_use]
-    pub fn history(&self) -> HostHistory {
-        HostHistory {
-            host: Arc::clone(&self.inner),
-        }
-    }
-
-    pub fn create_view_state(&self) -> Result<HostViewState> {
-        let mut inner = self.lock_mut()?;
-        if inner.is_closed() {
-            return Err(anyhow::anyhow!("host is closed"));
-        }
-        let host_id = inner.host_id;
-        let id = inner.view_states.create(host_id)?;
-        Ok(HostViewState::new(id, &self.inner))
-    }
-
     /// Creates a host-owned `ContentPort`. Source/Funnel identity remains
     /// separate from the structural attachment; plain content projection is
     /// prepared only when the port is mounted and selected.
@@ -1940,27 +1793,18 @@ impl TuiHost {
     /// Accepts a desired structural root without preparing or presenting a
     /// frame. The returned wake disposition is an edge-trigger hint only; the
     /// environment queue and host epochs remain authoritative.
-    pub fn set_desired_view(&self, body: View) -> Result<WakeDisposition> {
+    #[cfg(test)]
+    pub(crate) fn set_test_view(&self, body: View) -> Result<WakeDisposition> {
         let mut inner = self.lock_mut()?;
         if inner.is_closed() {
             return Err(anyhow::anyhow!("host is closed"));
         }
-        let state_targets = inner.running.host_state_attachment_targets(&body)?;
-        let state_ids = state_targets.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-        let mut unique_state_ids = HashSet::with_capacity(state_ids.len());
-        if state_ids.iter().any(|id| !unique_state_ids.insert(*id)) {
-            return Err(anyhow::anyhow!(
-                "DUPLICATE_VIEW_STATE_ATTACHMENT: duplicate state attachment"
-            ));
-        }
-        inner.validate_state_targets(&state_targets)?;
         let content_targets = inner.running.host_content_attachment_targets(&body)?;
         inner.content.validate_targets(&content_targets)?;
         let next_revision = inner
             .desired_structural_revision
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("desired structural revision exhausted"))?;
-        inner.set_desired_state_bindings(&state_targets)?;
         inner.content.set_desired(&content_targets)?;
         inner.running.host_set_body(body);
         inner.desired_structural_revision = next_revision;
@@ -1995,15 +1839,6 @@ impl TuiHost {
         if let Some(error) = report.errors.first() {
             return Err(anyhow::anyhow!("{}: {}", error.code, error.diagnostic));
         }
-        Ok(())
-    }
-
-    /// Clears desired/visible retained-state binding flags before wrapper
-    /// disposal during Tui owner teardown.
-    pub fn clear_view_state_bindings(&self) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        inner.clear_state_bindings();
         Ok(())
     }
 
@@ -2137,26 +1972,6 @@ impl TuiHost {
         let handle = inner.running.host_register(MountedTextInput(input.clone()));
         input.set_component_id(handle.raw_id())?;
         Ok(input)
-    }
-
-    pub fn create_view_slot(&self, view: View) -> Result<HostViewSlot> {
-        let slot = HostViewSlot::new(view);
-        slot.attach_host(&self.inner)?;
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let handle = inner.running.host_register(MountedViewSlot(slot.clone()));
-        slot.set_component_id(handle.raw_id())?;
-        Ok(slot)
-    }
-
-    pub fn create_scroll_pane(&self, view: View) -> Result<HostScrollPane> {
-        let pane = HostScrollPane::new(view);
-        pane.attach_host(&self.inner)?;
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let handle = inner.running.host_register(MountedScrollPane(pane.clone()));
-        pane.set_component_id(handle.raw_id())?;
-        Ok(pane)
     }
 
     pub fn bind_key(&self, key: KeyStroke, route_id: impl Into<String>) -> Result<()> {
@@ -2309,51 +2124,12 @@ impl TuiHost {
         Ok(())
     }
 
-    pub fn render(&self, body: View) -> Result<()> {
-        self.set_desired_view(body)?;
-        self.flush_pending()
-    }
-
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         let mut inner = self.lock_mut()?;
         inner.ensure_open()?;
         inner.running.host_set_theme(theme);
         drop(inner);
         render_host_after_mutation(&self.inner)
-    }
-
-    pub fn validate_history(&self, history: &History) -> Result<()> {
-        let inner = self.lock()?;
-        if inner.is_closed() {
-            return Err(anyhow::anyhow!("host is closed"));
-        }
-        let body = inner.running.scene_body().clone();
-        let state_targets = inner
-            .running
-            .host_state_attachment_targets_for_history(&body, history)?;
-        inner.validate_state_targets(&state_targets)?;
-        let content_targets = inner
-            .running
-            .host_content_attachment_targets_for_history(&body, history)?;
-        inner.content.validate_targets(&content_targets)
-    }
-
-    pub fn set_history(&self, history: History) -> Result<()> {
-        let mut inner = self.lock_mut()?;
-        inner.ensure_open()?;
-        let body = inner.running.scene_body().clone();
-        let state_targets = inner
-            .running
-            .host_state_attachment_targets_for_history(&body, &history)?;
-        inner.validate_state_targets(&state_targets)?;
-        let content_targets = inner
-            .running
-            .host_content_attachment_targets_for_history(&body, &history)?;
-        inner.content.validate_targets(&content_targets)?;
-        inner.running.host_set_history(history);
-        inner.set_desired_state_bindings(&state_targets)?;
-        inner.content.set_desired(&content_targets)?;
-        Ok(())
     }
 
     pub fn dispatch_key(&self, key: KeyStroke) -> Result<()> {
@@ -2867,9 +2643,6 @@ fn prepare_close(
                     })
                 }
                 PresentationState::Prepared(frame) => {
-                    inner
-                        .view_states
-                        .clear_in_flight_prepared(frame.state_in_flight_ids());
                     if frame.content().is_some() {
                         inner.content.abort_candidate();
                         inner.running.host_abort_content_candidate();
@@ -2886,9 +2659,6 @@ fn prepare_close(
                     None
                 }
                 PresentationState::Completing { frame } => {
-                    inner
-                        .view_states
-                        .clear_in_flight_prepared(frame.state_in_flight_ids());
                     if frame.content().is_some() {
                         inner.content.abort_candidate();
                         inner.running.host_abort_content_candidate();
@@ -3118,9 +2888,6 @@ fn settle_receipt(
                     .lock()
                     .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
                 inner.physical_sync_unknown = true;
-                inner
-                    .view_states
-                    .clear_in_flight_prepared(frame.state_in_flight_ids());
                 ReceiptSettlement {
                     result: Err(error),
                     continue_to_final: false,
@@ -3206,15 +2973,11 @@ fn finalize_close(
         if let PresentationState::Prepared(frame) | PresentationState::Completing { frame } =
             presentation
         {
-            inner
-                .view_states
-                .clear_in_flight_prepared(frame.state_in_flight_ids());
             if frame.content().is_some() {
                 inner.content.abort_candidate();
                 inner.running.host_abort_content_candidate();
             }
         }
-        inner.dispose_view_states();
         inner.content.dispose_all();
         inner.headless_history = headless_history;
         let ui_cleanup = inner.ui_resources.close().map_err(anyhow::Error::msg);
@@ -3298,9 +3061,6 @@ fn discard_final_candidate(host: &Arc<Mutex<HostInner>>, frame: &PreparedFrame) 
         .lock()
         .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
     inner.physical_sync_unknown = true;
-    inner
-        .view_states
-        .clear_in_flight_prepared(frame.state_in_flight_ids());
     if frame.content().is_some() {
         inner.content.abort_candidate();
         inner.running.host_abort_content_candidate();
@@ -3498,49 +3258,6 @@ impl HostInner {
         self.running.scene_history().map_or(0, crate::History::len)
     }
 
-    /// Captures the frame candidate overlay. Only demanded attachments
-    /// (desired ∪ visible ∪ in-flight) contribute versions; unrelated
-    /// unmounted records are never visited or cloned.
-    fn capture_state_candidate(&mut self) -> StateCandidateOverlay {
-        self.view_states.capture_candidate()
-    }
-
-    pub(super) fn mutate_view_state<F>(
-        &mut self,
-        id: u64,
-        mutation: F,
-    ) -> Result<crate::retained_state::StateEffects>
-    where
-        F: FnOnce(&mut ViewStateRecord) -> Result<crate::retained_state::StateEffects>,
-    {
-        self.view_states.mutate_record(id, mutation)
-    }
-
-    pub(super) fn validate_view_state_kind(&self, id: u64, kind: StateNodeKind) -> Result<()> {
-        let Some(record) = self.view_states.record(id) else {
-            return Err(anyhow::anyhow!("STATE_DISPOSED: ViewState is disposed"));
-        };
-        if record.lifecycle == ViewStateLifecycle::Disposed {
-            return Err(anyhow::anyhow!("STATE_DISPOSED: ViewState is disposed"));
-        }
-        crate::retained_state::validate_geometry_for_kind(kind, &record.geometry)
-    }
-
-    fn validate_state_targets(&self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
-        self.view_states.validate_targets(targets)
-    }
-
-    fn set_desired_state_bindings(&mut self, targets: &[(u64, StateNodeKind)]) -> Result<()> {
-        self.view_states.set_desired(targets)
-    }
-
-    fn refresh_desired_state_bindings(&mut self) -> Result<()> {
-        let targets = self.running.host_current_state_attachment_targets()?;
-        self.set_desired_state_bindings(&targets)?;
-        let content_targets = self.running.host_current_content_attachment_targets()?;
-        self.content.set_desired(&content_targets)
-    }
-
     fn candidate_content_commit(&mut self) -> Result<PreparedContentCommit> {
         // H3 already validated the complete attachment list before desired
         // acceptance. The content commit plan needs only the changed-record
@@ -3549,29 +3266,17 @@ impl HostInner {
         self.content.prepare_content_commit()
     }
 
-    /// Prepares the visible/in-flight state tables before backend submission.
-    /// The returned candidate owns every allocation needed by receipt-time
-    /// state promotion.
-    fn candidate_state_commit(
-        &mut self,
-        targets: &[(u64, StateNodeKind)],
-    ) -> Result<crate::retained_state::PreparedStateCommit> {
-        self.view_states.prepare_candidate(targets)
-    }
-
     #[cfg(test)]
     pub(crate) fn install_test_in_flight(
         &mut self,
         scene: PreparedSceneFrame,
         receipt: tokio::sync::oneshot::Receiver<anyhow::Result<()>>,
     ) -> Result<()> {
-        let state = self.candidate_state_commit(&scene.state_bindings)?;
         let content = self.candidate_content_commit()?;
         let frame = PreparedFrame::with_scene(
             PreparedSceneProducts {
                 scene,
                 content,
-                state,
                 content_dirty_epoch: self.running.host_content_candidate_epoch(),
             },
             SceneDisposition::Submit,
@@ -3607,7 +3312,6 @@ impl HostInner {
                 .as_mut()
                 .expect("open host must own its terminal backend"),
             self.now,
-            &StateFrameView::empty(),
             &mut self.content,
         )
     }
@@ -3622,47 +3326,6 @@ impl HostInner {
             receipt,
             self.environment.receipt_wake(self.host_id),
         ));
-    }
-
-    fn clear_in_flight_state_bindings(&mut self) {
-        let Some(frame) = self.presentation_state.frame() else {
-            return;
-        };
-        self.view_states
-            .clear_in_flight_prepared(frame.state_in_flight_ids());
-    }
-
-    pub(super) fn invalidate_state(
-        &mut self,
-        id: u64,
-        effects: crate::retained_state::StateEffects,
-    ) -> Result<WakeDisposition> {
-        if !self.view_states.is_bound(id)? {
-            return Ok(WakeDisposition::default());
-        }
-        self.running.host_invalidate_state(id, effects);
-        self.mark_pending()
-    }
-
-    fn clear_state_bindings(&mut self) {
-        self.view_states.clear_bindings();
-    }
-
-    pub(super) fn dispose_view_state(&mut self, id: u64) -> Result<()> {
-        // Unknown identities stay a no-op so repeated disposal is idempotent.
-        if self.view_states.record(id).is_none() {
-            return Ok(());
-        }
-        // The host namespace rides in the high bits of every state identity,
-        // so a record from another host cannot alias this host's slot.
-        if id >> 32 != self.host_id {
-            return Err(anyhow::anyhow!("ViewState belongs to a different host"));
-        }
-        self.view_states.dispose(id)
-    }
-
-    fn dispose_view_states(&mut self) {
-        self.view_states.dispose_all();
     }
 
     fn epochs(&self) -> HostEpochs {
@@ -3874,13 +3537,11 @@ impl HostInner {
                 format!("host update failed: {error:?}"),
             )
         })?;
-        if status.dirty && self.running.host_has_invalidated_components() {
-            self.refresh_desired_state_bindings()?;
-        }
-        if admit_wakes && status.dirty {
+        let dirty = status.dirty;
+        if admit_wakes && dirty {
             self.ensure_pending()?;
         }
-        Ok(status.dirty)
+        Ok(dirty)
     }
 
     fn prepare_final_candidate(
@@ -3961,7 +3622,7 @@ impl HostInner {
                 inner.history_work = Some(HistoryWork::InFlight {
                     plan,
                     backend,
-                    receipt: HostHistoryReceipt::from_receiver(
+                    receipt: HistoryReceipt::from_receiver(
                         receipt,
                         environment.receipt_wake(host_id),
                     ),
@@ -4137,12 +3798,6 @@ impl HostInner {
         }
         let target_structural_revision = self.desired_structural_revision;
         self.content.begin_projection_candidate();
-        // One candidate overlay over the committed version table replaces the
-        // old whole-registry snapshot. Failed preparation keeps the committed
-        // versions untouched: the overlay owns its Arc pins, and the scene
-        // candidate is discarded without merging anything back.
-        let overlay = self.capture_state_candidate();
-        let states = StateFrameView::new(self.view_states.committed_table(), &overlay);
         let size = match backend {
             HostBackend::Headless(sink) => Size::new(sink.width, sink.height),
             HostBackend::Real(backend) => backend.viewport()?,
@@ -4150,7 +3805,7 @@ impl HostInner {
         let (mut candidate, history_plan) =
             match self
                 .running
-                .prepare_frame_for_history(self.now, size, &states, &mut self.content)
+                .prepare_frame_for_history(self.now, size, &mut self.content)
             {
                 Ok(candidate) => candidate,
                 Err(error) => {
@@ -4204,20 +3859,6 @@ impl HostInner {
             self.running.host_discard_candidate();
             return Err(error);
         }
-        let state_commit = match self.candidate_state_commit(&candidate.state_bindings) {
-            Ok(commit) => commit,
-            Err(error) => {
-                let ui_revision = self.ui_resources.document.as_ref().map_or(
-                    0,
-                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
-                );
-                self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
-                self.content.abort_candidate();
-                self.running.host_discard_candidate();
-                self.running.host_abort_content_candidate();
-                return Err(error);
-            }
-        };
         let content_commit = match self.candidate_content_commit() {
             Ok(commit) => commit,
             Err(error) => {
@@ -4226,8 +3867,6 @@ impl HostInner {
                     crate::occurrence::OccurrenceDocument::accepted_ui_revision,
                 );
                 self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
-                self.view_states
-                    .clear_in_flight_prepared(&state_commit.in_flight_ids);
                 self.content.abort_candidate();
                 self.running.host_discard_candidate();
                 self.running.host_abort_content_candidate();
@@ -4247,7 +3886,6 @@ impl HostInner {
                 PreparedSceneProducts {
                     scene: candidate,
                     content: content_commit,
-                    state: state_commit,
                     content_dirty_epoch: self.running.host_content_candidate_epoch(),
                 },
                 if no_output {
@@ -4397,19 +4035,23 @@ impl HostInner {
                 .copied()
                 .collect::<Vec<_>>();
             for key in keys {
-                self.sync_ui_control(key)?;
+                self.sync_ui_control(key, false)?;
             }
             return Ok(());
         };
         for key in changes.changed_resources.iter().copied() {
             if key.kind == crate::occurrence::HandleKind::Control {
-                self.sync_ui_control(key)?;
+                self.sync_ui_control(key, true)?;
             }
         }
         Ok(())
     }
 
-    fn sync_ui_control(&mut self, key: crate::occurrence::ResourceKey) -> Result<()> {
+    fn sync_ui_control(
+        &mut self,
+        key: crate::occurrence::ResourceKey,
+        sync_editor_value: bool,
+    ) -> Result<()> {
         crate::perf::inc(crate::perf::Counter::UiControlKeysVisited);
         #[cfg(test)]
         {
@@ -4420,7 +4062,9 @@ impl HostInner {
             return Ok(());
         };
         match state.kind() {
-            crate::occurrence::ControlKind::Editor => self.sync_ui_editor(key, &state),
+            crate::occurrence::ControlKind::Editor => {
+                self.sync_ui_editor(key, &state, sync_editor_value)
+            }
             crate::occurrence::ControlKind::Scroll => self.sync_ui_scroll(key),
             crate::occurrence::ControlKind::Animation => self.sync_ui_animation(key),
         }
@@ -4454,6 +4098,7 @@ impl HostInner {
         &mut self,
         key: crate::occurrence::ResourceKey,
         state: &crate::occurrence::ControlState,
+        sync_value: bool,
     ) -> Result<()> {
         let multiline = state
             .editor_multiline()
@@ -4466,7 +4111,8 @@ impl HostInner {
             self.legacy_scene
                 .set_control_component(key, component.raw_id());
         }
-        if let Some(input) = self.ui_editors.get(&key)
+        if sync_value
+            && let Some(input) = self.ui_editors.get(&key)
             && let Some(text) = state.editor_text()
         {
             let changed = {
@@ -4946,8 +4592,6 @@ impl HostInner {
                         Err(error) if crate::terminal::is_terminal_worker_stopped(&error) => {
                             self.mark_faulted();
                             self.physical_sync_unknown = true;
-                            self.view_states
-                                .clear_in_flight_prepared(frame.state_in_flight_ids());
                             let failure = host_attempt_error(
                                 "backend",
                                 "BACKEND_NOT_READY",
@@ -4964,8 +4608,6 @@ impl HostInner {
                         }
                         Err(error) => {
                             self.physical_sync_unknown = true;
-                            self.view_states
-                                .clear_in_flight_prepared(frame.state_in_flight_ids());
                             let failure = host_attempt_error(
                                 "backend",
                                 "BACKEND_IO_FAILED",
@@ -5017,8 +4659,6 @@ impl HostInner {
             Poll::Ready(Err(error)) => {
                 self.physical_sync_unknown = true;
                 let diagnostic = error.to_string();
-                self.view_states
-                    .clear_in_flight_prepared(frame.state_in_flight_ids());
                 let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
@@ -5138,9 +4778,6 @@ impl HostInner {
             } else {
                 false
             };
-            if let Some(state) = candidate.state() {
-                self.view_states.commit_prepared(state);
-            }
             if candidate.content().is_some() {
                 let content_dirty_epoch = candidate
                     .content_dirty_epoch()
@@ -5282,7 +4919,6 @@ impl HostInner {
     }
 
     fn discard_candidate_frame(&mut self) {
-        self.clear_in_flight_state_bindings();
         let has_content_candidate = self
             .presentation_state
             .frame()
@@ -5303,8 +4939,6 @@ impl HostInner {
     }
 
     fn discard_prepared_candidate(&mut self, frame: &PreparedFrame, retain_content: bool) {
-        self.view_states
-            .clear_in_flight_prepared(frame.state_in_flight_ids());
         if frame.content().is_some() && !retain_content {
             self.content.abort_candidate();
             self.running.host_abort_content_candidate();
@@ -5365,8 +4999,6 @@ impl HostInner {
         if let PresentationState::InFlight { frame, receipt } = presentation {
             if let Err(error) = receipt.blocking_recv() {
                 self.physical_sync_unknown = true;
-                self.view_states
-                    .clear_in_flight_prepared(frame.state_in_flight_ids());
                 let failure = host_attempt_error(
                     "backend",
                     "BACKEND_IO_FAILED",
@@ -5532,27 +5164,24 @@ fn prepare_frame(
     running: &mut HostRunning,
     backend: &mut HostBackend,
     now: Instant,
-    states: &StateFrameView<'_>,
 ) -> Result<PreparedSceneFrame> {
     let mut content = EmptyContentProvider;
-    prepare_frame_with_content(running, backend, now, states, &mut content)
+    prepare_frame_with_content(running, backend, now, &mut content)
 }
 
 fn prepare_frame_with_content(
     running: &mut HostRunning,
     backend: &mut HostBackend,
     now: Instant,
-    states: &StateFrameView<'_>,
     content: &mut dyn ContentProvider,
 ) -> Result<PreparedSceneFrame> {
     content.set_theme(running.theme_shared());
     match backend {
         HostBackend::Headless(sink) => running
-            .prepare_frame_with_states(
+            .prepare_frame(
                 now,
                 sink,
                 |sink| Ok(Size::new(sink.width, sink.height)),
-                states,
                 content,
             )
             .map_err(|error| {
@@ -5569,11 +5198,10 @@ fn prepare_frame_with_content(
                 )
             }),
         HostBackend::Real(backend) => running
-            .prepare_frame_with_states(
+            .prepare_frame(
                 now,
                 backend,
                 super::super::terminal::backend::TerminalBackend::viewport,
-                states,
                 content,
             )
             .map_err(|error| {
@@ -5611,10 +5239,7 @@ mod tests {
         RoutedOutput, TuiHost,
     };
     use crate::occurrence::{HostKind, NodeRef, OwnershipMode, ResourceRef, UiCommit, UiOperation};
-    use crate::{
-        ColorSpec, Insets, Key, KeyStroke, ViewStateGeometryPatch, ViewStatePresentationPatch,
-        retained_state::StateFrameView,
-    };
+    use crate::{Key, KeyStroke, View};
 
     fn install_delayed_candidate(host: &TuiHost) -> oneshot::Sender<anyhow::Result<()>> {
         let (sender, receiver) = oneshot::channel();
@@ -5632,7 +5257,6 @@ mod tests {
                     .as_mut()
                     .expect("test host must own its terminal backend"),
                 *now,
-                &StateFrameView::empty(),
             )
             .unwrap()
         };
@@ -5690,13 +5314,25 @@ mod tests {
         (body, result.acknowledgement.accepted_ui_revision)
     }
 
+    fn set_test_history(host: &TuiHost, views: &[View]) -> anyhow::Result<()> {
+        let mut history = crate::History::new();
+        for view in views {
+            history.push(view.clone())?;
+        }
+        let mut inner = host.inner.lock().unwrap();
+        inner.running.host_set_history(history);
+        inner.running.invalidate_frame();
+        inner.ensure_pending()
+    }
+
     #[test]
     fn native_text_input_routes_local_paste_and_submit() {
         let host = TuiHost::open(20, 4, true).unwrap();
         let input = host.create_text_input(false).unwrap();
         host.route_text_input(&input, "submit").unwrap();
         let input_view = vf::native_component(input.component_id().unwrap());
-        host.render(input_view).unwrap();
+        host.set_test_view(input_view).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
 
         host.dispatch_paste("typed").unwrap();
         assert_eq!(input.text().unwrap(), "typed");
@@ -5711,6 +5347,1463 @@ mod tests {
             })
         );
         host.close().unwrap();
+    }
+
+    #[test]
+    fn native_paste_interceptor_precedes_local_component_paste() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let input = host.create_text_input(false).unwrap();
+        host.intercept_paste(&input, "intercepted").unwrap();
+        host.set_test_view(vf::native_component(input.component_id().unwrap()))
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        host.dispatch_paste("raw").unwrap();
+        assert_eq!(input.text().unwrap(), "");
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "intercepted".to_owned(),
+                payload: Some("raw".to_owned()),
+            })
+        );
+        host.forward_paste("forwarded").unwrap();
+        assert_eq!(input.text().unwrap(), "forwarded");
+        assert_eq!(host.next_output(), None);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_routed_outputs_preserve_fifo_order() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let first = KeyStroke::new(Key::Char('a'));
+        let second = KeyStroke::new(Key::Char('b'));
+        host.bind_key(first, "first").unwrap();
+        host.bind_key(second, "second").unwrap();
+        host.set_test_view(vf::text("unfocused")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        host.dispatch_key(first).unwrap();
+        host.dispatch_key(second).unwrap();
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "first".to_owned(),
+                payload: None,
+            })
+        );
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "second".to_owned(),
+                payload: None,
+            })
+        );
+        assert_eq!(host.next_output(), None);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_global_key_binding_precedes_local_component_input() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let input = host.create_text_input(false).unwrap();
+        let key = KeyStroke::new(Key::Char('q'));
+        host.bind_key(key, "global").unwrap();
+        host.set_test_view(vf::native_component(input.component_id().unwrap()))
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        host.dispatch_key(key).unwrap();
+        assert_eq!(input.text().unwrap(), "");
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "global".to_owned(),
+                payload: None,
+            })
+        );
+        host.dispatch_key(KeyStroke::new(Key::Char('u'))).unwrap();
+        assert_eq!(input.text().unwrap(), "u");
+        assert_eq!(host.next_output(), None);
+
+        host.set_test_view(vf::text("unfocused")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.dispatch_key(key).unwrap();
+        assert_eq!(
+            host.next_output(),
+            Some(RoutedOutput {
+                route_id: "global".to_owned(),
+                payload: None,
+            })
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn desired_revision_waits_for_a_successful_frame_barrier() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        let initial = host.epochs().unwrap();
+        assert_eq!(initial.desired_structural_revision, 0);
+        assert_eq!(initial.visible_frame_revision, 0);
+        assert_eq!(initial.pending_epoch, initial.committed_epoch);
+
+        host.set_test_view(vf::text("desired")).unwrap();
+        let pending = host.epochs().unwrap();
+        assert_eq!(pending.desired_structural_revision, 1);
+        assert_eq!(pending.visible_frame_revision, 0);
+        assert_ne!(pending.pending_epoch, pending.committed_epoch);
+
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors, []);
+        let visible = host.epochs().unwrap();
+        assert_eq!(visible.visible_frame_revision, 1);
+        assert_eq!(visible.pending_epoch, visible.committed_epoch);
+        assert!(host.screen_rows().iter().any(|row| row.contains("desired")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn metadata_only_candidate_completes_without_a_second_terminal_write() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_test_view(vf::text("same")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let first = host.epochs().unwrap();
+
+        // The desired revision advances even though the captured physical
+        // surface is unchanged. The NoOutput path must publish metadata and
+        // the structural barrier without manufacturing terminal bytes.
+        host.set_test_view(vf::text("same")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let second = host.epochs().unwrap();
+        assert!(second.visible_structural_revision > first.visible_structural_revision);
+        assert_eq!(second.visible_frame_revision, first.visible_frame_revision);
+        assert_eq!(second.pending_epoch, second.committed_epoch);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn failed_frame_keeps_old_visible_state_and_explicit_retry_recovers() {
+        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
+        host.set_test_view(vf::text("old")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let old_rows = host.screen_rows();
+
+        host.fail_next_frame_for_test("injected frame preparation failure")
+            .unwrap();
+        host.set_test_view(vf::text("new")).unwrap();
+        let failed = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(failed.errors.len(), 1);
+        assert_eq!(host.screen_rows(), old_rows);
+        let pending = host.epochs().unwrap();
+        assert_eq!(pending.desired_structural_revision, 2);
+        assert_eq!(pending.visible_frame_revision, 1);
+        assert_ne!(pending.pending_epoch, pending.committed_epoch);
+
+        let retried = host.flush_pending_hosts(8, true).unwrap();
+        assert!(retried.errors.is_empty());
+        let visible = host.epochs().unwrap();
+        assert_eq!(visible.visible_frame_revision, 2);
+        assert_eq!(visible.pending_epoch, visible.committed_epoch);
+        assert!(host.screen_rows().iter().any(|row| row.contains("new")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn identical_themes_resolve_identically_across_hosts() {
+        use crate::{StyleRef, StyleSelector, StyleSpec, Theme, ThemeColor};
+        // Duplicate variants exercise declaration-order determinism: the
+        // last write wins on both hosts independently.
+        let theme = Theme::new()
+            .with_color("accent", ThemeColor::Indexed(1))
+            .with_color_variant(
+                "accent",
+                StyleSelector::state("mode", "error"),
+                ThemeColor::Indexed(2),
+            )
+            .with_color_variant(
+                "accent",
+                StyleSelector::state("mode", "error"),
+                ThemeColor::Indexed(3),
+            )
+            .with_style(
+                "emphasis",
+                StyleSpec::new()
+                    .foreground(crate::ColorSpec::theme("accent"))
+                    .bold(),
+            );
+        let first = TuiHost::open(20, 4, true).unwrap();
+        let second = TuiHost::open(20, 4, true).unwrap();
+        first.set_theme(theme.clone()).unwrap();
+        second.set_theme(theme).unwrap();
+        for host in [&first, &second] {
+            host.set_test_view(crate::presentation::factory::style(
+                vf::text("parity"),
+                StyleRef::theme("emphasis"),
+            ))
+            .unwrap();
+            host.flush_pending_hosts(8, true).unwrap();
+        }
+        assert_eq!(first.screen_rows(), second.screen_rows());
+        for row in 0..4 {
+            for column in 0..6 {
+                let left = first.style_at(row, column).map(|style| style.foreground);
+                let right = second.style_at(row, column).map(|style| style.foreground);
+                assert_eq!(left, right, "style diverged at {row}:{column}");
+            }
+        }
+        assert!(
+            first
+                .style_at(3, 0)
+                .and_then(|style| style.foreground)
+                .as_deref()
+                == Some("ansi:1"),
+            "themed foreground must resolve through the shared table"
+        );
+        first.close().unwrap();
+        second.close().unwrap();
+    }
+
+    #[test]
+    fn environment_requeues_in_flight_presentation_receipts() {
+        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
+        host.set_test_view(vf::text("receipt")).unwrap();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame(
+                    running,
+                    backend
+                        .as_mut()
+                        .expect("test host must own its terminal backend"),
+                    *now,
+                )
+                .unwrap()
+            };
+            inner.install_test_in_flight(candidate, receiver).unwrap();
+        }
+
+        let waiting = host.flush_pending_hosts(8, false).unwrap();
+        assert!(waiting.waiting_for_presentation);
+        assert!(!waiting.rearm);
+        sender.send(Ok(())).unwrap();
+        let committed = host.flush_pending_hosts(8, false).unwrap();
+        assert!(
+            committed
+                .commits
+                .iter()
+                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
+        );
+        assert!(host.epochs().unwrap().pending_epoch == host.epochs().unwrap().committed_epoch);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn blocking_completion_preserves_older_confirmed_candidate() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        host.set_test_view(vf::text("older")).unwrap();
+        let captured_revision = host.epochs().unwrap().desired_structural_revision;
+        let sender = install_delayed_candidate(&host);
+        sender.send(Ok(())).unwrap();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.present_frame().unwrap();
+            assert!(matches!(
+                inner.presentation_state,
+                PresentationState::Completing { .. }
+            ));
+        }
+
+        host.set_test_view(vf::text("newer")).unwrap();
+        let completed = host
+            .inner
+            .lock()
+            .unwrap()
+            .finish_presentation_blocking()
+            .unwrap();
+        assert!(completed.committed);
+        let visible = host.epochs().unwrap();
+        assert_eq!(visible.visible_structural_revision, captured_revision);
+        assert!(visible.pending_epoch > visible.committed_epoch);
+        assert!(host.screen_rows().iter().any(|row| row.contains("older")));
+
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(host.screen_rows().iter().any(|row| row.contains("newer")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn production_environment_settles_two_visibility_waiters_without_a_caller_drain() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        let sender = install_delayed_candidate(&host);
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
+        host.set_test_view(vf::text("delayed")).unwrap();
+        waiting_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("production driver must observe the delayed receipt");
+        release_tx.send(()).unwrap();
+        let target = host.epochs().unwrap().desired_structural_revision;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let first_host = host.clone();
+        let second_host = host.clone();
+        runtime.block_on(async move {
+            let mut first = Box::pin(first_host.wait_for_ui_presentation(target, false));
+            let mut second = Box::pin(second_host.wait_for_ui_presentation(target, false));
+            poll_fn(|context| match first.as_mut().poll(context) {
+                Poll::Pending => Poll::Ready(()),
+                Poll::Ready(result) => panic!("first waiter settled before receipt: {result:?}"),
+            })
+            .await;
+            poll_fn(|context| match second.as_mut().poll(context) {
+                Poll::Pending => Poll::Ready(()),
+                Poll::Ready(result) => panic!("second waiter settled before receipt: {result:?}"),
+            })
+            .await;
+            sender.send(Ok(())).unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                assert!(first.await.is_ok());
+                assert!(second.await.is_ok());
+            })
+            .await
+            .expect("both visibility waiters must settle after the receipt");
+        });
+        assert_eq!(
+            host.epochs().unwrap().pending_epoch,
+            host.epochs().unwrap().committed_epoch
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn production_receipt_sender_drop_settles_visibility_barrier() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        let sender = install_delayed_candidate(&host);
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
+        host.set_test_view(vf::text("sender-drop")).unwrap();
+        waiting_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("production driver must observe the delayed receipt");
+        release_tx.send(()).unwrap();
+        let target = host.epochs().unwrap().desired_structural_revision;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let waiter_host = host.clone();
+        let waiter =
+            runtime.spawn(async move { waiter_host.wait_for_ui_presentation(target, false).await });
+        runtime.block_on(tokio::task::yield_now());
+        drop(sender);
+        let result = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), waiter)
+                .await
+                .expect("sender drop must wake the native barrier")
+                .expect("barrier task must not panic")
+        });
+        assert!(result.is_ok(), "sender drop must settle through recovery");
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn deferred_terminal_paste_resumes_once_after_event_drain() {
+        let host = TuiHost::open_in_environment(32, 8, true, TuiEnvironment::new_manual()).unwrap();
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Editor,
+        });
+        mount.push(UiOperation::CreateControl {
+            local_ordinal: 2,
+            kind: crate::occurrence::ControlKind::Editor,
+            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(host.ui_body_handle().unwrap()),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::SetSubscriptions {
+            node: NodeRef::Local(1),
+            mask_low: 8,
+            mask_high: 0,
+        });
+        mount.push(UiOperation::ReplaceEditorContent {
+            control: crate::occurrence::ResourceRef::Local(2),
+            content: b"a".to_vec(),
+            expected_edit_revision: u64::MAX,
+        });
+        let mounted = host.commit_ui(mount, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.focus_ui(mounted.acknowledgement.created[0]).unwrap();
+        host.set_ui_event_limits(2, 4).unwrap();
+        host.dispatch_paste("b").unwrap();
+        let control = mounted.acknowledgement.created[1].resource_key().unwrap();
+        let input = host.inner.lock().unwrap().ui_editors[&control].clone();
+        // Seed the owning slot at the already-dequeued backend boundary, then
+        // exercise the real poll/admission/requeue path without a terminal.
+        host.inner.lock().unwrap().deferred_terminal_input =
+            Some(crate::terminal::TerminalEvent::Paste("c".to_owned()));
+        assert!(super::is_event_backpressure(
+            &host.poll_terminal().unwrap_err()
+        ));
+        assert_eq!(input.text().unwrap(), "ab");
+        assert!(host.inner.lock().unwrap().deferred_terminal_input.is_some());
+        let first = host.drain_ui_events().unwrap();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].text.as_deref(), Some("ab"));
+        host.poll_terminal().unwrap();
+        assert_eq!(input.text().unwrap(), "abc");
+        assert!(host.inner.lock().unwrap().deferred_terminal_input.is_none());
+        let second = host.drain_ui_events().unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].text.as_deref(), Some("abc"));
+        host.poll_terminal().unwrap();
+        assert!(host.drain_ui_events().unwrap().is_empty());
+        assert_eq!(input.text().unwrap(), "abc");
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn confirmed_occurrence_geometry_survives_newer_delayed_receipt() {
+        let host = TuiHost::open_in_environment(32, 8, true, TuiEnvironment::new_manual()).unwrap();
+        let body = host.ui_body_handle().unwrap();
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::Editor,
+        });
+        mount.push(UiOperation::CreateControl {
+            local_ordinal: 3,
+            kind: crate::occurrence::ControlKind::Editor,
+            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Local(1),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(UiOperation::ReplaceEditorContent {
+            control: crate::occurrence::ResourceRef::Local(3),
+            content: b"A".to_vec(),
+            expected_edit_revision: u64::MAX,
+        });
+        let mounted = host.commit_ui(mount, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let box_handle = mounted.acknowledgement.created[0];
+        let first_geometry = host.ui_visible_geometry(box_handle).unwrap().unwrap();
+
+        let mut replacement = UiCommit::new(1);
+        replacement.push(UiOperation::SetDeclared {
+            node: NodeRef::Existing(box_handle),
+            property: crate::occurrence::PropertyId::Padding,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Insets(
+                crate::Insets::all(1),
+            )),
+        });
+        host.commit_ui(replacement, &[]).unwrap();
+
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.sync_ui_scene().unwrap();
+            let mut candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame(
+                    running,
+                    backend
+                        .as_mut()
+                        .expect("test host must own its terminal backend"),
+                    *now,
+                )
+                .unwrap()
+            };
+            candidate.occurrence_geometry = inner
+                .legacy_scene
+                .occurrence_geometry(&candidate.view_geometry);
+            inner.install_test_in_flight(candidate, receiver).unwrap();
+        }
+
+        // The confirmed frame still owns A while B is prepared and in flight.
+        assert_eq!(
+            host.ui_visible_geometry(box_handle).unwrap().unwrap(),
+            first_geometry
+        );
+
+        let mut superseding = UiCommit::new(2);
+        superseding.push(UiOperation::SetDeclared {
+            node: NodeRef::Existing(box_handle),
+            property: crate::occurrence::PropertyId::Padding,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Insets(
+                crate::Insets::ZERO,
+            )),
+        });
+        host.commit_ui(superseding, &[]).unwrap();
+        assert_eq!(
+            host.ui_visible_geometry(box_handle).unwrap().unwrap(),
+            first_geometry
+        );
+
+        sender.send(Ok(())).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let second_geometry = host.ui_visible_geometry(box_handle).unwrap().unwrap();
+        assert_ne!(second_geometry, first_geometry);
+
+        let mut retire = UiCommit::new(3);
+        retire.push(UiOperation::RetireSubtree {
+            root: NodeRef::Existing(box_handle),
+        });
+        host.commit_ui(retire, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(host.ui_visible_geometry(box_handle).is_err());
+
+        let mut reuse = UiCommit::new(4);
+        reuse.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        reuse.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::Box,
+        });
+        reuse.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        reuse.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        let reused = host.commit_ui(reuse, &[]).unwrap();
+        let reused_handle = reused
+            .acknowledgement
+            .created
+            .iter()
+            .find(|handle| handle.slot == box_handle.slot)
+            .copied()
+            .expect("replacement allocation must reuse the retired slot");
+        assert_ne!(reused_handle.generation, box_handle.generation);
+        assert!(host.ui_visible_geometry(box_handle).is_err());
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn ui_event_waiter_wakes_for_owned_batch_and_ui_close() {
+        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let waiter_host = host.clone();
+        let waiter = runtime.spawn(async move { waiter_host.wait_for_ui_events().await });
+        runtime.block_on(tokio::task::yield_now());
+        {
+            let mut inner = host.inner.lock().unwrap();
+            let namespace = inner.ui_resources.namespace.get();
+            let event = NativeUiEvent {
+                handle: crate::occurrence::UiHandle {
+                    host_namespace: namespace,
+                    slot: 1,
+                    generation: 1,
+                    kind: crate::occurrence::HandleKind::Node,
+                },
+                mask: 2,
+                text: Some("owned text".to_owned()),
+                cursor_bytes: Some(3),
+                key: Some("x".to_owned()),
+                revision: Some(7),
+            };
+            let bytes = event.payload_bytes().unwrap();
+            inner.ui_event_bytes = bytes;
+            inner.ui_events.push_back(event);
+            inner.ui_event_notify.notify_waiters();
+        }
+        let batch = runtime.block_on(waiter).unwrap().unwrap().unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0].text.as_deref(), Some("owned text"));
+        assert_eq!(batch[0].key.as_deref(), Some("x"));
+        assert_eq!(batch[0].revision, Some(7));
+
+        let close_waiter_host = host.clone();
+        let close_waiter =
+            runtime.spawn(async move { close_waiter_host.wait_for_ui_events().await });
+        runtime.block_on(tokio::task::yield_now());
+        host.close_ui_state().unwrap();
+        assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_failure_waiter_reports_distinct_attempts_and_wakes_on_close() {
+        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        host.fail_next_frame_for_test("first native failure")
+            .unwrap();
+        host.set_test_view(vf::text("failure observer")).unwrap();
+        let first_waiter_host = host.clone();
+        let first_waiter =
+            runtime.spawn(async move { first_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let first_report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(first_report.errors.len(), 1);
+        let first = runtime.block_on(first_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(first.phase, "frame");
+        assert_eq!(first.code, "FRAME_PREPARATION_FAILED");
+        assert_eq!(first.diagnostic, "first native failure");
+        assert!(first.retryable);
+
+        // A second recoverable failure in the same pending work epoch is a
+        // distinct notification. The observer must not deduplicate by epoch
+        // and silently lose the later diagnostic.
+        host.fail_next_frame_for_test("second native failure")
+            .unwrap();
+        let second_waiter_host = host.clone();
+        let second_waiter =
+            runtime.spawn(async move { second_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let second_report = host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(second_report.errors.len(), 1);
+        let second = runtime.block_on(second_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(second.phase, "frame");
+        assert_eq!(second.code, "FRAME_PREPARATION_FAILED");
+        assert_eq!(second.diagnostic, "second native failure");
+        assert_eq!(second.attempted_work_epoch, first.attempted_work_epoch);
+        assert_ne!(second.diagnostic, first.diagnostic);
+
+        {
+            let mut inner = host.lock_mut().unwrap();
+            for _ in 0..MAX_FAILURE_NOTIFICATIONS + 2 {
+                inner.publish_attempt_failure(
+                    "frame",
+                    "FRAME_PREPARATION_FAILED",
+                    true,
+                    second.attempted_ui_revision,
+                    second.attempted_work_epoch,
+                    "bounded observer failure".to_owned(),
+                );
+            }
+            assert_eq!(inner.failure_notifications.len(), MAX_FAILURE_NOTIFICATIONS);
+        }
+        let overflow = runtime
+            .block_on(host.wait_for_ui_failure())
+            .unwrap()
+            .unwrap();
+        assert_eq!(overflow.code, "LIMIT_EXCEEDED");
+        assert!(overflow.diagnostic.contains("2 failure notifications"));
+        for _ in 0..MAX_FAILURE_NOTIFICATIONS {
+            let retained = runtime
+                .block_on(host.wait_for_ui_failure())
+                .unwrap()
+                .unwrap();
+            assert_eq!(retained.diagnostic, "bounded observer failure");
+        }
+
+        let close_waiter_host = host.clone();
+        let close_waiter =
+            runtime.spawn(async move { close_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        host.close_ui_state().unwrap();
+        assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_ui_adapter_switches_keep_qualified_identity_and_bounded_owners() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
+        let source_a = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        let source_b = environment
+            .create_content_source(super::super::content::TextSourceKind::Stream)
+            .unwrap();
+        source_a.append_utf8(b"A", &[], &[]).unwrap();
+        source_b.append_utf8(b"B", &[], &[]).unwrap();
+
+        let mut create = UiCommit::new(0);
+        create.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        create.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 3,
+            source_index: 0,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::OccurrenceOwned,
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 4,
+            source_index: 1,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::OccurrenceOwned,
+        });
+        create.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(host.ui_body_handle().unwrap()),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        create.push(UiOperation::AttachPort {
+            node: NodeRef::Local(1),
+            port: Some(ResourceRef::Local(2)),
+        });
+        create.push(UiOperation::SelectConnector {
+            port: ResourceRef::Local(2),
+            connector: Some(ResourceRef::Local(3)),
+        });
+        let created = host
+            .commit_ui(create, &[source_a.clone(), source_b.clone()])
+            .unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let node = created
+            .acknowledgement
+            .created
+            .iter()
+            .find(|handle| handle.kind == crate::occurrence::HandleKind::Node)
+            .copied()
+            .expect("content occurrence acknowledgement");
+        let port = created
+            .acknowledgement
+            .created
+            .iter()
+            .find(|handle| handle.kind == crate::occurrence::HandleKind::Port)
+            .copied()
+            .expect("content Port acknowledgement");
+        let connectors = created
+            .acknowledgement
+            .created
+            .iter()
+            .filter(|handle| handle.kind == crate::occurrence::HandleKind::Connector)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(connectors.len(), 2);
+        let connector_a = connectors[0];
+        let connector_b = connectors[1];
+        let port_key = port.resource_key().unwrap();
+        let connector_a_key = connector_a.resource_key().unwrap();
+        let connector_b_key = connector_b.resource_key().unwrap();
+
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            assert_eq!(
+                inner
+                    .content
+                    .ui_connector_status(&inner.ui_resources, connector_a_key)
+                    .unwrap()
+                    .visible,
+                true
+            );
+            assert_eq!(source_a.subscriber_count(), 1);
+            assert_eq!(source_b.subscriber_count(), 0);
+        }
+
+        let mut select_b = UiCommit::new(1);
+        select_b.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_b)),
+        });
+        host.commit_ui(select_b, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            let status = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_b_key)
+                .unwrap();
+            assert!(status.requested);
+            assert!(status.visible);
+            assert_eq!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .unwrap()
+                    .0,
+                connector_b_key
+            );
+        }
+
+        // A failed switch preserves B's confirmed product while retaining at
+        // most one current failed adapter. The identity comparison is
+        // qualified by HandleKind, so a Port key can never be promoted as a
+        // Connector key.
+        host.fail_next_ui_connector_for_test("failed A".to_owned())
+            .unwrap();
+        let mut select_a = UiCommit::new(2);
+        select_a.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_a)),
+        });
+        host.commit_ui(select_a, &[]).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let failure_waiter_host = host.clone();
+        let failure_waiter =
+            runtime.spawn(async move { failure_waiter_host.wait_for_ui_failure().await });
+        runtime.block_on(tokio::task::yield_now());
+        let failed_report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(failed_report.errors.len(), 1);
+        assert_eq!(failed_report.errors[0].code, "PROJECTION_FAILED");
+        let failure = runtime.block_on(failure_waiter).unwrap().unwrap().unwrap();
+        assert_eq!(failure.phase, "content");
+        assert_eq!(failure.code, "PROJECTION_FAILED");
+        assert_eq!(
+            failure.attempted_ui_revision,
+            failed_report.errors[0].desired_revision
+        );
+        {
+            let inner = host.inner.lock().unwrap();
+            let failed = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_a_key)
+                .unwrap();
+            assert!(failed.requested);
+            assert!(!failed.visible);
+            assert_eq!(
+                failed.error.as_ref().map(|error| error.code.as_str()),
+                Some("PROJECTION_FAILED")
+            );
+            let confirmed = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_b_key)
+                .unwrap();
+            assert!(confirmed.visible);
+            assert_eq!(inner.content.test_ui_adapter_count(), 2);
+        }
+        source_a.append_utf8(b" recovered", &[], &[]).unwrap();
+        let recovery_report = host.flush_pending_hosts(8, true).unwrap();
+        assert!(recovery_report.errors.is_empty());
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 1);
+            let recovered = inner
+                .content
+                .ui_connector_status(&inner.ui_resources, connector_a_key)
+                .unwrap();
+            assert!(recovered.visible);
+            assert_eq!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .unwrap()
+                    .0,
+                connector_a_key
+            );
+        }
+
+        // Successful A/B/A churn must retire each superseded execution
+        // adapter at its receipt instead of growing the host registry.
+        let mut switch_b_again = UiCommit::new(3);
+        switch_b_again.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_b)),
+        });
+        host.commit_ui(switch_b_again, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let mut switch_a_again = UiCommit::new(4);
+        switch_a_again.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Existing(connector_a)),
+        });
+        host.commit_ui(switch_a_again, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(
+            host.inner.lock().unwrap().content.test_ui_adapter_count(),
+            1
+        );
+        assert!(source_a.dispose().is_err());
+        assert!(source_b.dispose().is_err());
+
+        // Retiring the occurrence unmounts the Port, releases both accepted
+        // Source memberships and removes the final derived adapter/Port.
+        let mut retire = UiCommit::new(5);
+        retire.push(UiOperation::RetireSubtree {
+            root: NodeRef::Existing(node),
+        });
+        host.commit_ui(retire, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert_eq!(inner.content.test_ui_adapter_count(), 0);
+            assert!(
+                inner
+                    .content
+                    .test_ui_confirmed_connector(port_key)
+                    .is_none()
+            );
+            assert_eq!(inner.content.test_port_count(), 0);
+            assert_eq!(inner.content.test_connector_count(), 0);
+        }
+        assert_eq!(source_a.subscriber_count(), 0);
+        assert_eq!(source_b.subscriber_count(), 0);
+        host.close().unwrap();
+        source_a.dispose().unwrap();
+        source_b.dispose().unwrap();
+    }
+
+    #[test]
+    fn failed_auto_preparation_explicit_barrier_waits_for_a_new_attempt() {
+        let environment = TuiEnvironment::new();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        host.fail_next_frame_for_test("first preparation fails")
+            .unwrap();
+        host.set_test_view(vf::text("retry-success")).unwrap();
+        let target = host.epochs().unwrap().desired_structural_revision;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(host.wait_for_ui_presentation(target, false))
+            .unwrap();
+        assert!(host.inner.lock().unwrap().attempt_revision >= 2);
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("retry-success"))
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn failed_presentation_marks_physical_sync_unknown_until_recovery_frame() {
+        let host = TuiHost::open(20, 4, true).unwrap();
+        host.set_test_view(vf::text("receipt-failure")).unwrap();
+        let (sender, receiver) = oneshot::channel();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            let candidate = {
+                let super::HostInner {
+                    running,
+                    backend,
+                    now,
+                    ..
+                } = &mut *inner;
+                super::prepare_frame(
+                    running,
+                    backend
+                        .as_mut()
+                        .expect("test host must own its terminal backend"),
+                    *now,
+                )
+                .unwrap()
+            };
+            inner.install_test_in_flight(candidate, receiver).unwrap();
+        }
+        sender
+            .send(Err(anyhow::anyhow!("simulated partial presentation")))
+            .unwrap();
+        let report = host.flush_pending_hosts(8, false).unwrap();
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code, "BACKEND_IO_FAILED");
+        {
+            let inner = host.inner.lock().unwrap();
+            assert!(inner.physical_sync_unknown);
+        }
+        host.flush_pending_hosts(8, true).unwrap();
+        assert!(!host.inner.lock().unwrap().physical_sync_unknown);
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("receipt-failure"))
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn receipt_completion_between_poll_and_sleep_is_not_lost() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let sender = install_delayed_candidate(&host);
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
+        host.set_test_view(vf::text("race")).unwrap();
+
+        let drain_environment = environment.clone();
+        let drain = std::thread::spawn(move || drain_environment.drain_pending(8, false));
+        waiting_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("drain must poll the receipt before sleeping bookkeeping");
+        sender.send(Ok(())).unwrap();
+        release_tx.send(()).unwrap();
+        let waiting = drain.join().unwrap().unwrap();
+        assert!(waiting.waiting_for_presentation);
+
+        let committed = environment.drain_pending(8, false).unwrap();
+        assert_eq!(committed.errors, []);
+        assert_eq!(committed.commits.len(), 1);
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn close_gates_ingress_joins_callers_and_waits_for_physical_receipt() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        let sender = install_delayed_candidate(&host);
+        host.set_test_view(vf::text("pending-close")).unwrap();
+        let target = host.epochs().unwrap().desired_structural_revision;
+        let body_handle = host.ui_body_handle().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let waiter_host = host.clone();
+        let mut waiter = Box::pin(waiter_host.wait_for_ui_presentation(target, false));
+        runtime.block_on(poll_fn(|context| match waiter.as_mut().poll(context) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(result) => panic!("visibility waiter settled before close: {result:?}"),
+        }));
+
+        let (close_started_tx, close_started_rx) = mpsc::channel();
+        host.inner.lock().unwrap().close_started_hook = Some(close_started_tx);
+        let first_host = host.clone();
+        let (first_done_tx, first_done_rx) = mpsc::channel();
+        let first = std::thread::spawn(move || {
+            first_done_tx.send(first_host.close()).unwrap();
+        });
+        close_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map(|phase| assert!(matches!(phase, ClosePhase::Started)))
+            .expect("close must publish its ingress gate before waiting");
+
+        // The sibling is created and serviced while the first close still
+        // waits for its receipt. The shared environment remains usable.
+        let peer = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
+        peer.set_test_view(vf::text("unrelated-peer")).unwrap();
+        let peer_report = environment.drain_pending(8, false).unwrap();
+        assert!(peer_report.errors.is_empty());
+        assert!(
+            peer.screen_rows()
+                .iter()
+                .any(|row| row.contains("unrelated-peer"))
+        );
+
+        let second_host = host.clone();
+        let (second_done_tx, second_done_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            second_done_tx.send(second_host.close()).unwrap();
+        });
+        close_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map(|phase| assert!(matches!(phase, ClosePhase::Joined)))
+            .expect("second close caller must join while first close is pending");
+        assert!(
+            host.set_test_view(vf::text("rejected-after-close"))
+                .is_err(),
+            "new host commands must be rejected during close"
+        );
+        let mut ui_batch = UiCommit::new(0);
+        ui_batch.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        ui_batch.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body_handle),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        assert!(
+            host.commit_ui(ui_batch, &[]).is_err(),
+            "UI occurrence commits must be rejected after close admission"
+        );
+        let waiter_result = runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(2), &mut waiter)
+                .await
+                .expect("close must wake the pending visibility waiter")
+        });
+        assert!(
+            waiter_result.is_err(),
+            "pending visibility waiters must reject on close"
+        );
+        assert!(
+            first_done_rx
+                .recv_timeout(Duration::from_millis(20))
+                .is_err(),
+            "close must retain the receipt-owned frame until the sender resolves"
+        );
+        assert!(
+            second_done_rx
+                .recv_timeout(Duration::from_millis(20))
+                .is_err(),
+            "a joining close must retain the shared outcome until the sender resolves"
+        );
+
+        sender.send(Ok(())).unwrap();
+        assert!(
+            first_done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        assert!(
+            second_done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        second.join().unwrap();
+        first.join().unwrap();
+        peer.close().unwrap();
+    }
+
+    #[test]
+    fn history_transfer_submits_captured_rows_outside_host_acceptance_guard() {
+        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
+        host.push_history_unit_for_test(vf::text("one")).unwrap();
+        host.push_history_unit_for_test(vf::text("two")).unwrap();
+        host.push_history_unit_for_test(vf::text("three")).unwrap();
+
+        let rows = host.native_history_rows();
+        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
+        assert!(!rows.iter().any(|row| row == "two"));
+        assert!(host.screen_rows().iter().any(|row| row.contains("three")));
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn blocked_history_receipt_does_not_hold_host_acceptance_guard() {
+        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
+        set_test_history(
+            &host,
+            &[vf::text("one"), vf::text("two"), vf::text("three")],
+        )
+        .unwrap();
+
+        host.set_test_view(vf::text("initial")).unwrap();
+
+        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.install_test_history_receipt(receiver);
+            let outcome = inner.flush_for_environment(false, true).unwrap();
+            assert!(outcome.0.waiting_for_physical_work);
+        }
+        super::HostInner::start_history_work(&host.inner).unwrap();
+
+        // A desired mutation and a confirmed-frame query can proceed while
+        // the captured physical receipt remains unresolved.
+        let before = host.epochs().unwrap().desired_structural_revision;
+        host.set_test_view(vf::text("newer")).unwrap();
+        assert!(host.epochs().unwrap().desired_structural_revision > before);
+        assert_eq!(host.screen_rows().len(), 2);
+
+        let close_host = host.clone();
+        let close = std::thread::spawn(move || close_host.close());
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(!close.is_finished());
+        sender.send(Ok(1)).unwrap();
+        assert!(close.join().unwrap().is_ok());
+    }
+
+    #[test]
+    fn failed_history_receipt_keeps_confirmed_prefix_and_blocks_suffix_replay() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 2, true, environment.clone()).unwrap();
+        set_test_history(
+            &host,
+            &[vf::text("one"), vf::text("two"), vf::text("three")],
+        )
+        .unwrap();
+
+        host.set_test_view(vf::text("screen")).unwrap();
+
+        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
+        {
+            let mut inner = host.inner.lock().unwrap();
+            inner.install_test_history_receipt(receiver);
+            let outcome = inner.flush_for_environment(false, true).unwrap();
+            assert!(outcome.0.waiting_for_physical_work);
+        }
+        super::HostInner::start_history_work(&host.inner).unwrap();
+        sender
+            .send(Err(anyhow::anyhow!("simulated History receipt failure")))
+            .unwrap();
+
+        let host_id = host.inner.lock().unwrap().host_id;
+        let report = environment
+            .drain_pending_for(8, false, Some(host_id))
+            .unwrap();
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.errors[0].code, "HISTORY_TRANSFER_FAILED");
+        let before_retry = host.native_history_rows();
+        {
+            let inner = host.inner.lock().unwrap();
+            assert!(inner.physical_sync_unknown);
+            assert!(
+                inner
+                    .running
+                    .scene_history()
+                    .is_some_and(crate::History::native_synchronization_unknown)
+            );
+        }
+
+        // A recovery frame may restore the screen, but it cannot prove which
+        // suffix the failed native receipt accepted. It must therefore not
+        // submit that suffix a second time.
+        host.flush_pending_hosts(8, true).unwrap();
+        assert_eq!(host.native_history_rows(), before_retry);
+        assert!(
+            host.inner
+                .lock()
+                .unwrap()
+                .running
+                .scene_history()
+                .is_some_and(crate::History::native_synchronization_unknown)
+        );
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn history_work_signal_handles_completion_before_condvar_wait() {
+        let signal = Arc::new(super::HistoryWorkSignal::new());
+        let (registered_tx, registered_rx) = mpsc::channel();
+        let (before_wait_tx, before_wait_rx) = mpsc::channel();
+        signal.install_before_wait_hook(before_wait_tx);
+
+        let waiter_signal = Arc::clone(&signal);
+        let waiter = std::thread::spawn(move || {
+            let (guard, generation) = waiter_signal.register().unwrap();
+            registered_tx.send(()).unwrap();
+            waiter_signal.wait_for_change(guard, generation)
+        });
+
+        registered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter must register before inspecting the predicate");
+        before_wait_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter must hold the registered guard before Condvar::wait");
+
+        // The notifier runs on a second thread and must acquire the same
+        // generation mutex. It therefore cannot publish completion until the
+        // waiter atomically releases that mutex while entering Condvar::wait.
+        let notifier_signal = Arc::clone(&signal);
+        let notifier = std::thread::spawn(move || notifier_signal.notify());
+        notifier.join().unwrap().unwrap();
+        waiter.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn inline_exit_settles_final_history_plan_before_positioning() {
+        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
+        set_test_history(
+            &host,
+            &[vf::text("one"), vf::text("two"), vf::text("three")],
+        )
+        .unwrap();
+
+        host.set_test_view(vf::text("final")).unwrap();
+        host.exit().unwrap();
+
+        let rows = host.native_history_rows();
+        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
+        assert!(rows.iter().any(|row| row == "final"));
+    }
+
+    #[test]
+    fn inline_exit_zero_progress_history_receipt_does_not_resubmit() {
+        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
+        set_test_history(
+            &host,
+            &[vf::text("one"), vf::text("two"), vf::text("three")],
+        )
+        .unwrap();
+
+        host.set_test_view(vf::text("final")).unwrap();
+
+        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
+        host.inner
+            .lock()
+            .unwrap()
+            .install_test_history_receipt(receiver);
+        let exit_host = host.clone();
+        let exit = std::thread::spawn(move || exit_host.exit());
+        sender.send(Ok(0)).unwrap();
+        assert!(exit.join().unwrap().is_ok());
+
+        let rows = host.native_history_rows();
+        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
+        assert!(!rows.iter().any(|row| row == "two"));
+        assert!(rows.iter().any(|row| row == "final"));
+    }
+
+    #[test]
+    fn backend_fault_close_reuses_teardown_and_closes_accepted_ui_resources() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        let body = accept_ui_box(&host);
+        let retained_inner = Arc::clone(&host.inner);
+
+        // This seam enters the same Faulted lifecycle used when the terminal
+        // worker reports BACKEND_NOT_READY. Faulted is not a completed close:
+        // the real close owner must still run the shared teardown plan.
+        host.mark_backend_stopped_for_test().unwrap();
+        assert!(host.close().is_ok());
+        assert!(host.ui_body_handle().is_err());
+        assert!(
+            retained_inner
+                .lock()
+                .unwrap()
+                .ui_resources
+                .document
+                .is_none()
+        );
+        assert!(
+            host.close().is_ok(),
+            "subsequent close observes the stored outcome"
+        );
+        let _ = body;
+        drop(retained_inner);
+    }
+
+    #[test]
+    fn inline_exit_uses_close_plan_and_releases_ui_resources_with_extra_owner() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        let sender = install_delayed_candidate(&host);
+        let (body, desired_revision) = accept_ui_literal(&host, b"final-output");
+        let retained_inner = Arc::clone(&host.inner);
+
+        let exit_host = host.clone();
+        let (exit_done_tx, exit_done_rx) = mpsc::channel();
+        let exit = std::thread::spawn(move || {
+            exit_done_tx.send(exit_host.exit()).unwrap();
+        });
+        assert!(
+            exit_done_rx
+                .recv_timeout(Duration::from_millis(20))
+                .is_err(),
+            "inline exit must settle the older delayed receipt first"
+        );
+        sender.send(Ok(())).unwrap();
+        assert!(
+            exit_done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
+        exit.join().unwrap();
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("final-output"))
+        );
+        assert_eq!(
+            host.epochs().unwrap().visible_structural_revision,
+            desired_revision
+        );
+        assert!(
+            host.native_history_rows()
+                .iter()
+                .any(|row| row.contains("final-output")),
+            "headless final rows must remain readable after backend detachment"
+        );
+        assert!(host.ui_body_handle().is_err());
+        assert!(
+            retained_inner
+                .lock()
+                .unwrap()
+                .ui_resources
+                .document
+                .is_none()
+        );
+        assert!(
+            host.close().is_ok(),
+            "close must observe the completed exit"
+        );
+        let _ = body;
+        drop(retained_inner);
+    }
+
+    #[test]
+    fn inline_exit_backend_result_error_does_not_promote_final_candidate() {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
+        host.set_test_view(vf::text("confirmed")).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        let before = host.epochs().unwrap();
+        let before_rows = host.screen_rows();
+        host.set_test_view(vf::text("final-failure")).unwrap();
+        let (sender, receiver) = oneshot::channel();
+        host.inner
+            .lock()
+            .unwrap()
+            .install_test_final_receipt(receiver);
+
+        let exit_host = host.clone();
+        let exit = std::thread::spawn(move || exit_host.exit());
+        sender
+            .send(Err(anyhow::anyhow!("simulated final frame failure")))
+            .unwrap();
+        let result = exit.join().unwrap();
+        assert!(
+            result.is_err(),
+            "backend result errors must fail inline exit"
+        );
+        let after = host.epochs().unwrap();
+        assert_eq!(after.visible_frame_revision, before.visible_frame_revision);
+        assert_eq!(host.screen_rows(), before_rows);
+        assert!(host.ui_body_handle().is_err());
+        let repeated_close = host.close();
+        assert!(repeated_close.is_err());
+        assert!(
+            repeated_close
+                .unwrap_err()
+                .to_string()
+                .contains("simulated final frame failure")
+        );
     }
 
     #[test]
@@ -6082,1709 +7175,6 @@ mod tests {
     }
 
     #[test]
-    fn native_paste_interceptor_precedes_local_component_paste() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let input = host.create_text_input(false).unwrap();
-        host.intercept_paste(&input, "intercepted").unwrap();
-        host.render(vf::native_component(input.component_id().unwrap()))
-            .unwrap();
-
-        host.dispatch_paste("raw").unwrap();
-        assert_eq!(input.text().unwrap(), "");
-        assert_eq!(
-            host.next_output(),
-            Some(RoutedOutput {
-                route_id: "intercepted".to_owned(),
-                payload: Some("raw".to_owned()),
-            })
-        );
-        host.forward_paste("forwarded").unwrap();
-        assert_eq!(input.text().unwrap(), "forwarded");
-        assert_eq!(host.next_output(), None);
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn native_routed_outputs_preserve_fifo_order() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let first = KeyStroke::new(Key::Char('a'));
-        let second = KeyStroke::new(Key::Char('b'));
-        host.bind_key(first, "first").unwrap();
-        host.bind_key(second, "second").unwrap();
-        host.render(vf::text("unfocused")).unwrap();
-
-        host.dispatch_key(first).unwrap();
-        host.dispatch_key(second).unwrap();
-        assert_eq!(
-            host.next_output(),
-            Some(RoutedOutput {
-                route_id: "first".to_owned(),
-                payload: None,
-            })
-        );
-        assert_eq!(
-            host.next_output(),
-            Some(RoutedOutput {
-                route_id: "second".to_owned(),
-                payload: None,
-            })
-        );
-        assert_eq!(host.next_output(), None);
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn native_global_key_binding_precedes_local_component_input() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let input = host.create_text_input(false).unwrap();
-        let key = KeyStroke::new(Key::Char('q'));
-        host.bind_key(key, "global").unwrap();
-        host.render(vf::native_component(input.component_id().unwrap()))
-            .unwrap();
-
-        host.dispatch_key(key).unwrap();
-        assert_eq!(input.text().unwrap(), "");
-        assert_eq!(
-            host.next_output(),
-            Some(RoutedOutput {
-                route_id: "global".to_owned(),
-                payload: None,
-            })
-        );
-        host.dispatch_key(KeyStroke::new(Key::Char('u'))).unwrap();
-        assert_eq!(input.text().unwrap(), "u");
-        assert_eq!(host.next_output(), None);
-
-        host.render(vf::text("unfocused")).unwrap();
-        host.dispatch_key(key).unwrap();
-        assert_eq!(
-            host.next_output(),
-            Some(RoutedOutput {
-                route_id: "global".to_owned(),
-                payload: None,
-            })
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn native_view_slot_ticks_from_the_host_deadline() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let slot = host.create_view_slot(vf::text("first")).unwrap();
-        host.render(vf::native_component(slot.component_id().unwrap()))
-            .unwrap();
-        slot.set_animation(
-            vec![vf::text("first"), vf::text("second")],
-            std::time::Duration::from_millis(16),
-        )
-        .unwrap();
-        let before = slot.revision();
-
-        host.advance_time(std::time::Duration::from_millis(32))
-            .unwrap();
-        assert!(slot.revision() > before);
-        assert!(host.screen_rows().iter().any(|row| row.contains("second")));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn desired_revision_waits_for_a_successful_frame_barrier() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let initial = host.epochs().unwrap();
-        assert_eq!(initial.desired_structural_revision, 0);
-        assert_eq!(initial.visible_frame_revision, 0);
-        assert_eq!(initial.pending_epoch, initial.committed_epoch);
-
-        host.set_desired_view(vf::text("desired")).unwrap();
-        let pending = host.epochs().unwrap();
-        assert_eq!(pending.desired_structural_revision, 1);
-        assert_eq!(pending.visible_frame_revision, 0);
-        assert_ne!(pending.pending_epoch, pending.committed_epoch);
-
-        let report = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(report.errors, []);
-        let visible = host.epochs().unwrap();
-        assert_eq!(visible.visible_frame_revision, 1);
-        assert_eq!(visible.pending_epoch, visible.committed_epoch);
-        assert!(host.screen_rows().iter().any(|row| row.contains("desired")));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn metadata_only_candidate_completes_without_a_second_terminal_write() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(vf::text("same")).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let first = host.epochs().unwrap();
-
-        // The desired revision advances even though the captured physical
-        // surface is unchanged. The NoOutput path must publish metadata and
-        // the structural barrier without manufacturing terminal bytes.
-        host.set_desired_view(vf::text("same")).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let second = host.epochs().unwrap();
-        assert!(second.visible_structural_revision > first.visible_structural_revision);
-        assert_eq!(second.visible_frame_revision, first.visible_frame_revision);
-        assert_eq!(second.pending_epoch, second.committed_epoch);
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn failed_frame_keeps_old_visible_state_and_explicit_retry_recovers() {
-        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
-        host.set_desired_view(vf::text("old")).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let old_rows = host.screen_rows();
-
-        host.fail_next_frame_for_test("injected frame preparation failure")
-            .unwrap();
-        host.set_desired_view(vf::text("new")).unwrap();
-        let failed = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(failed.errors.len(), 1);
-        assert_eq!(host.screen_rows(), old_rows);
-        let pending = host.epochs().unwrap();
-        assert_eq!(pending.desired_structural_revision, 2);
-        assert_eq!(pending.visible_frame_revision, 1);
-        assert_ne!(pending.pending_epoch, pending.committed_epoch);
-
-        let retried = host.flush_pending_hosts(8, true).unwrap();
-        assert!(retried.errors.is_empty());
-        let visible = host.epochs().unwrap();
-        assert_eq!(visible.visible_frame_revision, 2);
-        assert_eq!(visible.pending_epoch, visible.committed_epoch);
-        assert!(host.screen_rows().iter().any(|row| row.contains("new")));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn presentation_state_repaints_without_measurement_or_semantic_republication() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let state = host.create_view_state().unwrap();
-        let view = vf::text("state")
-            .native_with_state_attachment(state.state_id())
-            .unwrap();
-        host.set_desired_view(view).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let before = host.epochs().unwrap();
-        crate::presentation::layout::reset_layout_counters();
-
-        let mut patch = ViewStatePresentationPatch::default();
-        patch.foreground = Some(Some(ColorSpec::ansi(6)));
-        state.set_presentation(&patch).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let counters = crate::presentation::layout::layout_counters();
-        let after = host.epochs().unwrap();
-        assert_eq!(counters.0, 0, "presentation state must not measure");
-        assert_eq!(
-            after.desired_structural_revision,
-            before.desired_structural_revision
-        );
-        assert!((0..4).any(|row| {
-            host.style_at(row, 0)
-                .and_then(|style| style.foreground)
-                .as_deref()
-                == Some("ansi:6")
-        }));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn structural_publication_invalidates_retained_state_dependency_paths() {
-        let host = TuiHost::open(20, 8, true).unwrap();
-        let state = host.create_view_state().unwrap();
-        let child = vf::text("child")
-            .native_with_state_attachment(state.state_id())
-            .unwrap();
-        let stable = vf::column(vec![child], 0);
-        host.set_desired_view(vf::column(vec![stable.clone(), vf::text("before")], 0))
-            .unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let mut patch = ViewStateGeometryPatch::default();
-        patch.padding = Some(Insets::all(1));
-        state.set_geometry(&patch).unwrap();
-
-        // Publishing a new root in the same pending epoch used to clear the
-        // state dirty worklist while retaining the stable ancestor's cached
-        // measurement. The fresh suffix makes this the exact structural
-        // publication path rather than a state-only repaint.
-        host.set_desired_view(vf::column(vec![stable, vf::text("after")], 0))
-            .unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let child_row = host
-            .screen_rows()
-            .into_iter()
-            .find(|row| row.contains("child"))
-            .expect("state-attached child remains visible");
-        assert_eq!(
-            child_row.find("child"),
-            Some(1),
-            "the retained state geometry must survive the root publication"
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn component_slot_replacement_carries_captured_state_versions() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let state = host.create_view_state().unwrap();
-        let slot = host.create_view_slot(vf::text("old")).unwrap();
-        let slot_view = vf::native_component(slot.component_id().unwrap());
-        let mut patch = ViewStatePresentationPatch::default();
-        patch.foreground = Some(Some(ColorSpec::ansi(2)));
-        state.set_presentation(&patch).unwrap();
-
-        host.set_desired_view(slot_view).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        slot.set_view(
-            vf::text("new")
-                .native_with_state_attachment(state.state_id())
-                .unwrap(),
-        )
-        .unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let new_row = host
-            .screen_rows()
-            .iter()
-            .position(|row| row.contains("new"))
-            .expect("replacement view is visible");
-        assert_eq!(
-            host.style_at(new_row as u16, 0)
-                .and_then(|style| style.foreground),
-            Some("ansi:2".to_owned()),
-            "incremental component replacement must preserve the captured state"
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn failed_frame_retains_old_state_versions_until_retry() {
-        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
-        let state = host.create_view_state().unwrap();
-        let view = vf::text("state")
-            .native_with_state_attachment(state.state_id())
-            .unwrap();
-        host.set_desired_view(view).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let mut first = ViewStatePresentationPatch::default();
-        first.foreground = Some(Some(ColorSpec::ansi(6)));
-        state.set_presentation(&first).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let foreground_at = |host: &TuiHost| {
-            (0..4).any(|row| {
-                host.style_at(row, 0)
-                    .and_then(|style| style.foreground)
-                    .as_deref()
-                    == Some("ansi:6")
-            })
-        };
-        assert!(foreground_at(&host));
-
-        // The injected failure fires before capture, so the failed attempt
-        // must leave the old version visible with the newer desired revision
-        // still pending; the retry then captures and commits the new version.
-        let mut second = ViewStatePresentationPatch::default();
-        second.foreground = Some(Some(ColorSpec::ansi(1)));
-        state.set_presentation(&second).unwrap();
-        host.fail_next_frame_for_test("injected state frame failure")
-            .unwrap();
-        let failed = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(failed.errors.len(), 1);
-        assert!(
-            foreground_at(&host),
-            "failed frame must keep the old state version visible"
-        );
-
-        let retried = host.flush_pending_hosts(8, true).unwrap();
-        assert!(retried.errors.is_empty());
-        assert!(
-            (0..4).any(|row| {
-                host.style_at(row, 0)
-                    .and_then(|style| style.foreground)
-                    .as_deref()
-                    == Some("ansi:1")
-            }),
-            "retry must commit the newer state version"
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn identical_themes_resolve_identically_across_hosts() {
-        use crate::{StyleRef, StyleSelector, StyleSpec, Theme, ThemeColor};
-        // Duplicate variants exercise declaration-order determinism: the
-        // last write wins on both hosts independently.
-        let theme = Theme::new()
-            .with_color("accent", ThemeColor::Indexed(1))
-            .with_color_variant(
-                "accent",
-                StyleSelector::state("mode", "error"),
-                ThemeColor::Indexed(2),
-            )
-            .with_color_variant(
-                "accent",
-                StyleSelector::state("mode", "error"),
-                ThemeColor::Indexed(3),
-            )
-            .with_style(
-                "emphasis",
-                StyleSpec::new()
-                    .foreground(crate::ColorSpec::theme("accent"))
-                    .bold(),
-            );
-        let first = TuiHost::open(20, 4, true).unwrap();
-        let second = TuiHost::open(20, 4, true).unwrap();
-        first.set_theme(theme.clone()).unwrap();
-        second.set_theme(theme).unwrap();
-        for host in [&first, &second] {
-            host.set_desired_view(crate::presentation::factory::style(
-                vf::text("parity"),
-                StyleRef::theme("emphasis"),
-            ))
-            .unwrap();
-            host.flush_pending_hosts(8, true).unwrap();
-        }
-        assert_eq!(first.screen_rows(), second.screen_rows());
-        for row in 0..4 {
-            for column in 0..6 {
-                let left = first.style_at(row, column).map(|style| style.foreground);
-                let right = second.style_at(row, column).map(|style| style.foreground);
-                assert_eq!(left, right, "style diverged at {row}:{column}");
-            }
-        }
-        assert!(
-            first
-                .style_at(3, 0)
-                .and_then(|style| style.foreground)
-                .as_deref()
-                == Some("ansi:1"),
-            "themed foreground must resolve through the shared table"
-        );
-        first.close().unwrap();
-        second.close().unwrap();
-    }
-
-    #[test]
-    fn environment_requeues_in_flight_presentation_receipts() {
-        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
-        host.set_desired_view(vf::text("receipt")).unwrap();
-        let (sender, receiver) = oneshot::channel();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            let candidate = {
-                let super::HostInner {
-                    running,
-                    backend,
-                    now,
-                    ..
-                } = &mut *inner;
-                super::prepare_frame(
-                    running,
-                    backend
-                        .as_mut()
-                        .expect("test host must own its terminal backend"),
-                    *now,
-                    &StateFrameView::empty(),
-                )
-                .unwrap()
-            };
-            inner.install_test_in_flight(candidate, receiver).unwrap();
-        }
-
-        let waiting = host.flush_pending_hosts(8, false).unwrap();
-        assert!(waiting.waiting_for_presentation);
-        assert!(!waiting.rearm);
-        sender.send(Ok(())).unwrap();
-        let committed = host.flush_pending_hosts(8, false).unwrap();
-        assert!(
-            committed
-                .commits
-                .iter()
-                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
-        );
-        assert!(host.epochs().unwrap().pending_epoch == host.epochs().unwrap().committed_epoch);
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn blocking_completion_preserves_older_confirmed_candidate() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        host.set_desired_view(vf::text("older")).unwrap();
-        let captured_revision = host.epochs().unwrap().desired_structural_revision;
-        let sender = install_delayed_candidate(&host);
-        sender.send(Ok(())).unwrap();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            inner.present_frame().unwrap();
-            assert!(matches!(
-                inner.presentation_state,
-                PresentationState::Completing { .. }
-            ));
-        }
-
-        host.set_desired_view(vf::text("newer")).unwrap();
-        let completed = host
-            .inner
-            .lock()
-            .unwrap()
-            .finish_presentation_blocking()
-            .unwrap();
-        assert!(completed.committed);
-        let visible = host.epochs().unwrap();
-        assert_eq!(visible.visible_structural_revision, captured_revision);
-        assert!(visible.pending_epoch > visible.committed_epoch);
-        assert!(host.screen_rows().iter().any(|row| row.contains("older")));
-
-        host.flush_pending_hosts(8, true).unwrap();
-        assert!(host.screen_rows().iter().any(|row| row.contains("newer")));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn production_environment_settles_two_visibility_waiters_without_a_caller_drain() {
-        let environment = TuiEnvironment::new();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        let sender = install_delayed_candidate(&host);
-        let (waiting_tx, waiting_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
-        host.set_desired_view(vf::text("delayed")).unwrap();
-        waiting_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("production driver must observe the delayed receipt");
-        release_tx.send(()).unwrap();
-        let target = host.epochs().unwrap().desired_structural_revision;
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let first_host = host.clone();
-        let second_host = host.clone();
-        runtime.block_on(async move {
-            let mut first = Box::pin(first_host.wait_for_ui_presentation(target, false));
-            let mut second = Box::pin(second_host.wait_for_ui_presentation(target, false));
-            poll_fn(|context| match first.as_mut().poll(context) {
-                Poll::Pending => Poll::Ready(()),
-                Poll::Ready(result) => panic!("first waiter settled before receipt: {result:?}"),
-            })
-            .await;
-            poll_fn(|context| match second.as_mut().poll(context) {
-                Poll::Pending => Poll::Ready(()),
-                Poll::Ready(result) => panic!("second waiter settled before receipt: {result:?}"),
-            })
-            .await;
-            sender.send(Ok(())).unwrap();
-            tokio::time::timeout(Duration::from_secs(2), async {
-                assert!(first.await.is_ok());
-                assert!(second.await.is_ok());
-            })
-            .await
-            .expect("both visibility waiters must settle after the receipt");
-        });
-        assert_eq!(
-            host.epochs().unwrap().pending_epoch,
-            host.epochs().unwrap().committed_epoch
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn production_receipt_sender_drop_settles_visibility_barrier() {
-        let environment = TuiEnvironment::new();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        let sender = install_delayed_candidate(&host);
-        let (waiting_tx, waiting_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
-        host.set_desired_view(vf::text("sender-drop")).unwrap();
-        waiting_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("production driver must observe the delayed receipt");
-        release_tx.send(()).unwrap();
-        let target = host.epochs().unwrap().desired_structural_revision;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let waiter_host = host.clone();
-        let waiter =
-            runtime.spawn(async move { waiter_host.wait_for_ui_presentation(target, false).await });
-        runtime.block_on(tokio::task::yield_now());
-        drop(sender);
-        let result = runtime.block_on(async {
-            tokio::time::timeout(Duration::from_secs(2), waiter)
-                .await
-                .expect("sender drop must wake the native barrier")
-                .expect("barrier task must not panic")
-        });
-        assert!(result.is_ok(), "sender drop must settle through recovery");
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn backend_fault_close_reuses_teardown_and_closes_accepted_ui_resources() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        let body = accept_ui_box(&host);
-        let history = host.history();
-        let retained_inner = Arc::clone(&host.inner);
-
-        // This seam enters the same Faulted lifecycle used when the terminal
-        // worker reports BACKEND_NOT_READY. Faulted is not a completed close:
-        // the real close owner must still run the shared teardown plan.
-        host.mark_backend_stopped_for_test().unwrap();
-        assert!(host.close().is_ok());
-        assert!(host.ui_body_handle().is_err());
-        assert!(
-            retained_inner
-                .lock()
-                .unwrap()
-                .ui_resources
-                .document
-                .is_none()
-        );
-        assert!(history.layout().is_err());
-        assert!(
-            host.close().is_ok(),
-            "subsequent close observes the stored outcome"
-        );
-        let _ = body;
-        drop(history);
-        drop(retained_inner);
-    }
-
-    #[test]
-    fn inline_exit_uses_close_plan_and_releases_ui_resources_with_extra_owner() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        let sender = install_delayed_candidate(&host);
-        let (body, desired_revision) = accept_ui_literal(&host, b"final-output");
-        let history = host.history();
-        let retained_inner = Arc::clone(&host.inner);
-
-        let exit_host = host.clone();
-        let (exit_done_tx, exit_done_rx) = mpsc::channel();
-        let exit = std::thread::spawn(move || {
-            exit_done_tx.send(exit_host.exit()).unwrap();
-        });
-        assert!(
-            exit_done_rx
-                .recv_timeout(Duration::from_millis(20))
-                .is_err(),
-            "inline exit must settle the older delayed receipt first"
-        );
-        sender.send(Ok(())).unwrap();
-        assert!(
-            exit_done_rx
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_ok()
-        );
-        exit.join().unwrap();
-        assert!(
-            host.screen_rows()
-                .iter()
-                .any(|row| row.contains("final-output"))
-        );
-        assert_eq!(
-            host.epochs().unwrap().visible_structural_revision,
-            desired_revision
-        );
-        assert!(
-            host.native_history_rows()
-                .iter()
-                .any(|row| row.contains("final-output")),
-            "headless final rows must remain readable after backend detachment"
-        );
-        assert!(host.ui_body_handle().is_err());
-        assert!(
-            retained_inner
-                .lock()
-                .unwrap()
-                .ui_resources
-                .document
-                .is_none()
-        );
-        assert!(history.layout().is_err());
-        assert!(
-            host.close().is_ok(),
-            "close must observe the completed exit"
-        );
-        let _ = body;
-        drop(history);
-        drop(retained_inner);
-    }
-
-    #[test]
-    fn history_transfer_submits_captured_rows_outside_host_acceptance_guard() {
-        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
-        let history = host.history();
-        history.push(vf::text("one")).unwrap();
-        history.push(vf::text("two")).unwrap();
-        history.push(vf::text("three")).unwrap();
-
-        let rows = host.native_history_rows();
-        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
-        assert!(!rows.iter().any(|row| row == "two"));
-        assert!(host.screen_rows().iter().any(|row| row.contains("three")));
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn blocked_history_receipt_does_not_hold_host_acceptance_guard() {
-        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
-        let mut history = crate::History::new();
-        history.push(vf::text("one")).unwrap();
-        history.push(vf::text("two")).unwrap();
-        history.push(vf::text("three")).unwrap();
-        host.set_history(history).unwrap();
-        host.set_desired_view(vf::text("initial")).unwrap();
-
-        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            inner.install_test_history_receipt(receiver);
-            let outcome = inner.flush_for_environment(false, true).unwrap();
-            assert!(outcome.0.waiting_for_physical_work);
-        }
-        super::HostInner::start_history_work(&host.inner).unwrap();
-
-        // A desired mutation and a confirmed-frame query can proceed while
-        // the captured physical receipt remains unresolved.
-        let before = host.epochs().unwrap().desired_structural_revision;
-        host.set_desired_view(vf::text("newer")).unwrap();
-        assert!(host.epochs().unwrap().desired_structural_revision > before);
-        assert_eq!(host.screen_rows().len(), 2);
-
-        let close_host = host.clone();
-        let close = std::thread::spawn(move || close_host.close());
-        std::thread::sleep(Duration::from_millis(10));
-        assert!(!close.is_finished());
-        sender.send(Ok(1)).unwrap();
-        assert!(close.join().unwrap().is_ok());
-    }
-
-    #[test]
-    fn failed_history_receipt_keeps_confirmed_prefix_and_blocks_suffix_replay() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 2, true, environment.clone()).unwrap();
-        let mut history = crate::History::new();
-        history.push(vf::text("one")).unwrap();
-        history.push(vf::text("two")).unwrap();
-        history.push(vf::text("three")).unwrap();
-        host.set_history(history).unwrap();
-        host.set_desired_view(vf::text("screen")).unwrap();
-
-        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            inner.install_test_history_receipt(receiver);
-            let outcome = inner.flush_for_environment(false, true).unwrap();
-            assert!(outcome.0.waiting_for_physical_work);
-        }
-        super::HostInner::start_history_work(&host.inner).unwrap();
-        sender
-            .send(Err(anyhow::anyhow!("simulated History receipt failure")))
-            .unwrap();
-
-        let host_id = host.inner.lock().unwrap().host_id;
-        let report = environment
-            .drain_pending_for(8, false, Some(host_id))
-            .unwrap();
-        assert_eq!(report.errors.len(), 1);
-        assert_eq!(report.errors[0].code, "HISTORY_TRANSFER_FAILED");
-        let before_retry = host.native_history_rows();
-        {
-            let inner = host.inner.lock().unwrap();
-            assert!(inner.physical_sync_unknown);
-            assert!(
-                inner
-                    .running
-                    .scene_history()
-                    .is_some_and(crate::History::native_synchronization_unknown)
-            );
-        }
-
-        // A recovery frame may restore the screen, but it cannot prove which
-        // suffix the failed native receipt accepted. It must therefore not
-        // submit that suffix a second time.
-        host.flush_pending_hosts(8, true).unwrap();
-        assert_eq!(host.native_history_rows(), before_retry);
-        assert!(
-            host.inner
-                .lock()
-                .unwrap()
-                .running
-                .scene_history()
-                .is_some_and(crate::History::native_synchronization_unknown)
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn history_work_signal_handles_completion_before_condvar_wait() {
-        let signal = Arc::new(super::HistoryWorkSignal::new());
-        let (registered_tx, registered_rx) = mpsc::channel();
-        let (before_wait_tx, before_wait_rx) = mpsc::channel();
-        signal.install_before_wait_hook(before_wait_tx);
-
-        let waiter_signal = Arc::clone(&signal);
-        let waiter = std::thread::spawn(move || {
-            let (guard, generation) = waiter_signal.register().unwrap();
-            registered_tx.send(()).unwrap();
-            waiter_signal.wait_for_change(guard, generation)
-        });
-
-        registered_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("waiter must register before inspecting the predicate");
-        before_wait_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("waiter must hold the registered guard before Condvar::wait");
-
-        // The notifier runs on a second thread and must acquire the same
-        // generation mutex. It therefore cannot publish completion until the
-        // waiter atomically releases that mutex while entering Condvar::wait.
-        let notifier_signal = Arc::clone(&signal);
-        let notifier = std::thread::spawn(move || notifier_signal.notify());
-        notifier.join().unwrap().unwrap();
-        waiter.join().unwrap().unwrap();
-    }
-
-    #[test]
-    fn inline_exit_settles_final_history_plan_before_positioning() {
-        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
-        let mut history = crate::History::new();
-        history.push(vf::text("one")).unwrap();
-        history.push(vf::text("two")).unwrap();
-        history.push(vf::text("three")).unwrap();
-        host.set_history(history).unwrap();
-        host.set_desired_view(vf::text("final")).unwrap();
-        host.exit().unwrap();
-
-        let rows = host.native_history_rows();
-        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
-        assert!(rows.iter().any(|row| row == "final"));
-    }
-
-    #[test]
-    fn inline_exit_zero_progress_history_receipt_does_not_resubmit() {
-        let host = TuiHost::open_in_environment(20, 2, true, TuiEnvironment::new_manual()).unwrap();
-        let mut history = crate::History::new();
-        history.push(vf::text("one")).unwrap();
-        history.push(vf::text("two")).unwrap();
-        history.push(vf::text("three")).unwrap();
-        host.set_history(history).unwrap();
-        host.set_desired_view(vf::text("final")).unwrap();
-
-        let (sender, receiver) = oneshot::channel::<anyhow::Result<usize>>();
-        host.inner
-            .lock()
-            .unwrap()
-            .install_test_history_receipt(receiver);
-        let exit_host = host.clone();
-        let exit = std::thread::spawn(move || exit_host.exit());
-        sender.send(Ok(0)).unwrap();
-        assert!(exit.join().unwrap().is_ok());
-
-        let rows = host.native_history_rows();
-        assert_eq!(rows.iter().filter(|row| *row == "one").count(), 1);
-        assert!(!rows.iter().any(|row| row == "two"));
-        assert!(rows.iter().any(|row| row == "final"));
-    }
-
-    #[test]
-    fn occurrence_history_exports_only_a_whole_content_unit() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 2, true, environment.clone()).unwrap();
-        let source = environment
-            .create_content_source(super::super::content::TextSourceKind::Stream)
-            .unwrap();
-        source.append_utf8(b"one\ntwo\nthree", &[], &[]).unwrap();
-        source.seal().unwrap();
-        let port = host
-            .create_content_port(super::super::content::ContentFamily::Text)
-            .unwrap();
-        let connector = port
-            .connect(
-                &source,
-                super::super::content::HostContentFunnel::new(
-                    super::super::content::TextFunnelKind::Markdown,
-                    super::super::content::TextWrapMode::Word,
-                    true,
-                    super::super::content::ContentDelivery::Immediate,
-                ),
-            )
-            .unwrap();
-        connector.activate().unwrap();
-
-        host.history()
-            .push(vf::content_host(port.id()).unwrap())
-            .unwrap();
-        assert_eq!(
-            host.native_history_rows()
-                .iter()
-                .filter(|row| *row == "one")
-                .count(),
-            1,
-            "a directly represented ContentHost remains exportable"
-        );
-
-        let composite_port = host
-            .create_content_port(super::super::content::ContentFamily::Text)
-            .unwrap();
-        let composite_connector = composite_port
-            .connect(
-                &source,
-                super::super::content::HostContentFunnel::new(
-                    super::super::content::TextFunnelKind::Markdown,
-                    super::super::content::TextWrapMode::Word,
-                    true,
-                    super::super::content::ContentDelivery::Immediate,
-                ),
-            )
-            .unwrap();
-        composite_connector.activate().unwrap();
-
-        let composite = vf::column(
-            vec![
-                vf::text("heading"),
-                vf::content_host(composite_port.id()).unwrap(),
-                vf::text("footer"),
-            ],
-            0,
-        );
-        host.history().push(composite).unwrap();
-        assert!(
-            !host
-                .native_history_rows()
-                .iter()
-                .any(|row| row == "heading"),
-            "a composite History unit must not export only its nested ContentHost"
-        );
-        host.close().unwrap();
-        source.dispose().unwrap();
-    }
-
-    #[test]
-    fn inline_exit_backend_result_error_does_not_promote_final_candidate() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        host.set_desired_view(vf::text("confirmed")).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let before = host.epochs().unwrap();
-        let before_rows = host.screen_rows();
-        host.set_desired_view(vf::text("final-failure")).unwrap();
-        let (sender, receiver) = oneshot::channel();
-        host.inner
-            .lock()
-            .unwrap()
-            .install_test_final_receipt(receiver);
-
-        let exit_host = host.clone();
-        let exit = std::thread::spawn(move || exit_host.exit());
-        sender
-            .send(Err(anyhow::anyhow!("simulated final frame failure")))
-            .unwrap();
-        let result = exit.join().unwrap();
-        assert!(
-            result.is_err(),
-            "backend result errors must fail inline exit"
-        );
-        let after = host.epochs().unwrap();
-        assert_eq!(after.visible_frame_revision, before.visible_frame_revision);
-        assert_eq!(host.screen_rows(), before_rows);
-        assert!(host.ui_body_handle().is_err());
-        let repeated_close = host.close();
-        assert!(repeated_close.is_err());
-        assert!(
-            repeated_close
-                .unwrap_err()
-                .to_string()
-                .contains("simulated final frame failure")
-        );
-    }
-
-    #[test]
-    fn receipt_completion_between_poll_and_sleep_is_not_lost() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        let sender = install_delayed_candidate(&host);
-        let (waiting_tx, waiting_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
-        host.set_desired_view(vf::text("race")).unwrap();
-
-        let drain_environment = environment.clone();
-        let drain = std::thread::spawn(move || drain_environment.drain_pending(8, false));
-        waiting_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("drain must poll the receipt before sleeping bookkeeping");
-        sender.send(Ok(())).unwrap();
-        release_tx.send(()).unwrap();
-        let waiting = drain.join().unwrap().unwrap();
-        assert!(waiting.waiting_for_presentation);
-
-        let committed = environment.drain_pending(8, false).unwrap();
-        assert_eq!(committed.errors, []);
-        assert_eq!(committed.commits.len(), 1);
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn close_gates_ingress_joins_callers_and_waits_for_physical_receipt() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        let sender = install_delayed_candidate(&host);
-        host.set_desired_view(vf::text("pending-close")).unwrap();
-        let target = host.epochs().unwrap().desired_structural_revision;
-        let body_handle = host.ui_body_handle().unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let waiter_host = host.clone();
-        let mut waiter = Box::pin(waiter_host.wait_for_ui_presentation(target, false));
-        runtime.block_on(poll_fn(|context| match waiter.as_mut().poll(context) {
-            Poll::Pending => Poll::Ready(()),
-            Poll::Ready(result) => panic!("visibility waiter settled before close: {result:?}"),
-        }));
-
-        let (close_started_tx, close_started_rx) = mpsc::channel();
-        host.inner.lock().unwrap().close_started_hook = Some(close_started_tx);
-        let first_host = host.clone();
-        let (first_done_tx, first_done_rx) = mpsc::channel();
-        let first = std::thread::spawn(move || {
-            first_done_tx.send(first_host.close()).unwrap();
-        });
-        close_started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .map(|phase| assert!(matches!(phase, ClosePhase::Started)))
-            .expect("close must publish its ingress gate before waiting");
-
-        // The sibling is created and serviced while the first close still
-        // waits for its receipt. The shared environment remains usable.
-        let peer = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        peer.set_desired_view(vf::text("unrelated-peer")).unwrap();
-        let peer_report = environment.drain_pending(8, false).unwrap();
-        assert!(peer_report.errors.is_empty());
-        assert!(
-            peer.screen_rows()
-                .iter()
-                .any(|row| row.contains("unrelated-peer"))
-        );
-
-        let second_host = host.clone();
-        let (second_done_tx, second_done_rx) = mpsc::channel();
-        let second = std::thread::spawn(move || {
-            second_done_tx.send(second_host.close()).unwrap();
-        });
-        close_started_rx
-            .recv_timeout(Duration::from_secs(2))
-            .map(|phase| assert!(matches!(phase, ClosePhase::Joined)))
-            .expect("second close caller must join while first close is pending");
-        assert!(
-            host.set_desired_view(vf::text("rejected-after-close"))
-                .is_err(),
-            "new host commands must be rejected during close"
-        );
-        let mut ui_batch = UiCommit::new(0);
-        ui_batch.push(UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Box,
-        });
-        ui_batch.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body_handle),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        assert!(
-            host.commit_ui(ui_batch, &[]).is_err(),
-            "UI occurrence commits must be rejected after close admission"
-        );
-        let waiter_result = runtime.block_on(async {
-            tokio::time::timeout(Duration::from_secs(2), &mut waiter)
-                .await
-                .expect("close must wake the pending visibility waiter")
-        });
-        assert!(
-            waiter_result.is_err(),
-            "pending visibility waiters must reject on close"
-        );
-        assert!(
-            first_done_rx
-                .recv_timeout(Duration::from_millis(20))
-                .is_err(),
-            "close must retain the receipt-owned frame until the sender resolves"
-        );
-        assert!(
-            second_done_rx
-                .recv_timeout(Duration::from_millis(20))
-                .is_err(),
-            "a joining close must retain the shared outcome until the sender resolves"
-        );
-
-        sender.send(Ok(())).unwrap();
-        assert!(
-            first_done_rx
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_ok()
-        );
-        assert!(
-            second_done_rx
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_ok()
-        );
-        second.join().unwrap();
-        first.join().unwrap();
-        peer.close().unwrap();
-    }
-
-    #[test]
-    fn closing_root_ui_state_rejects_pending_visibility_waiter_without_closing_host() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        let sender = install_delayed_candidate(&host);
-        let (waiting_tx, waiting_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        host.inner.lock().unwrap().waiting_for_presentation_hook = Some((waiting_tx, release_rx));
-        host.set_desired_view(vf::text("root-close")).unwrap();
-        let drain_host = host.clone();
-        let drain = std::thread::spawn(move || drain_host.flush_pending_hosts(8, false));
-        waiting_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receipt must be pending before the root closes");
-        release_tx.send(()).unwrap();
-        drain.join().unwrap().unwrap();
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let waiter_host = host.clone();
-        let waiter =
-            runtime.spawn(async move { waiter_host.wait_for_ui_presentation(1, false).await });
-        runtime.block_on(tokio::task::yield_now());
-        host.close_ui_state().unwrap();
-        let result = runtime.block_on(waiter).unwrap();
-        assert!(
-            result.is_err(),
-            "root close must terminate UI visibility waiters"
-        );
-        assert!(
-            !host.exited(),
-            "root UI close must not close the native host"
-        );
-        sender.send(Ok(())).unwrap();
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn deferred_terminal_paste_resumes_once_after_event_drain() {
-        let host = TuiHost::open_in_environment(32, 8, true, TuiEnvironment::new_manual()).unwrap();
-        let mut mount = UiCommit::new(0);
-        mount.push(UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Editor,
-        });
-        mount.push(UiOperation::CreateControl {
-            local_ordinal: 2,
-            kind: crate::occurrence::ControlKind::Editor,
-            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
-            owner: Some(NodeRef::Local(1)),
-        });
-        mount.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(host.ui_body_handle().unwrap()),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        mount.push(UiOperation::SetSubscriptions {
-            node: NodeRef::Local(1),
-            mask_low: 8,
-            mask_high: 0,
-        });
-        mount.push(UiOperation::ReplaceEditorContent {
-            control: crate::occurrence::ResourceRef::Local(2),
-            content: b"a".to_vec(),
-            expected_edit_revision: u64::MAX,
-        });
-        let mounted = host.commit_ui(mount, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        host.focus_ui(mounted.acknowledgement.created[0]).unwrap();
-        host.set_ui_event_limits(2, 4).unwrap();
-        host.dispatch_paste("b").unwrap();
-        let control = mounted.acknowledgement.created[1].resource_key().unwrap();
-        let input = host.inner.lock().unwrap().ui_editors[&control].clone();
-        // Seed the owning slot at the already-dequeued backend boundary, then
-        // exercise the real poll/admission/requeue path without a terminal.
-        host.inner.lock().unwrap().deferred_terminal_input =
-            Some(crate::terminal::TerminalEvent::Paste("c".to_owned()));
-        assert!(super::is_event_backpressure(
-            &host.poll_terminal().unwrap_err()
-        ));
-        assert_eq!(input.text().unwrap(), "ab");
-        assert!(host.inner.lock().unwrap().deferred_terminal_input.is_some());
-        let first = host.drain_ui_events().unwrap();
-        assert_eq!(first.len(), 1);
-        assert_eq!(first[0].text.as_deref(), Some("ab"));
-        host.poll_terminal().unwrap();
-        assert_eq!(input.text().unwrap(), "abc");
-        assert!(host.inner.lock().unwrap().deferred_terminal_input.is_none());
-        let second = host.drain_ui_events().unwrap();
-        assert_eq!(second.len(), 1);
-        assert_eq!(second[0].text.as_deref(), Some("abc"));
-        host.poll_terminal().unwrap();
-        assert!(host.drain_ui_events().unwrap().is_empty());
-        assert_eq!(input.text().unwrap(), "abc");
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn confirmed_occurrence_geometry_survives_newer_delayed_receipt() {
-        let host = TuiHost::open_in_environment(32, 8, true, TuiEnvironment::new_manual()).unwrap();
-        let body = host.ui_body_handle().unwrap();
-        let mut mount = UiCommit::new(0);
-        mount.push(UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Box,
-        });
-        mount.push(UiOperation::CreateNode {
-            local_ordinal: 2,
-            kind: HostKind::Editor,
-        });
-        mount.push(UiOperation::CreateControl {
-            local_ordinal: 3,
-            kind: crate::occurrence::ControlKind::Editor,
-            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
-            owner: Some(NodeRef::Local(2)),
-        });
-        mount.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        mount.push(UiOperation::InsertBefore {
-            parent: NodeRef::Local(1),
-            child: NodeRef::Local(2),
-            before: None,
-        });
-        mount.push(UiOperation::ReplaceEditorContent {
-            control: crate::occurrence::ResourceRef::Local(3),
-            content: b"A".to_vec(),
-            expected_edit_revision: u64::MAX,
-        });
-        let mounted = host.commit_ui(mount, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let box_handle = mounted.acknowledgement.created[0];
-        let first_geometry = host.ui_visible_geometry(box_handle).unwrap().unwrap();
-
-        let mut replacement = UiCommit::new(1);
-        replacement.push(UiOperation::SetDeclared {
-            node: NodeRef::Existing(box_handle),
-            property: crate::occurrence::PropertyId::Padding,
-            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Insets(
-                crate::Insets::all(1),
-            )),
-        });
-        host.commit_ui(replacement, &[]).unwrap();
-
-        let (sender, receiver) = oneshot::channel();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            inner.sync_ui_scene().unwrap();
-            let mut candidate = {
-                let super::HostInner {
-                    running,
-                    backend,
-                    now,
-                    ..
-                } = &mut *inner;
-                super::prepare_frame(
-                    running,
-                    backend
-                        .as_mut()
-                        .expect("test host must own its terminal backend"),
-                    *now,
-                    &StateFrameView::empty(),
-                )
-                .unwrap()
-            };
-            candidate.occurrence_geometry = inner
-                .legacy_scene
-                .occurrence_geometry(&candidate.view_geometry);
-            inner.install_test_in_flight(candidate, receiver).unwrap();
-        }
-
-        // The confirmed frame still owns A while B is prepared and in flight.
-        assert_eq!(
-            host.ui_visible_geometry(box_handle).unwrap().unwrap(),
-            first_geometry
-        );
-
-        let mut superseding = UiCommit::new(2);
-        superseding.push(UiOperation::SetDeclared {
-            node: NodeRef::Existing(box_handle),
-            property: crate::occurrence::PropertyId::Padding,
-            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Insets(
-                crate::Insets::ZERO,
-            )),
-        });
-        host.commit_ui(superseding, &[]).unwrap();
-        assert_eq!(
-            host.ui_visible_geometry(box_handle).unwrap().unwrap(),
-            first_geometry
-        );
-
-        sender.send(Ok(())).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let second_geometry = host.ui_visible_geometry(box_handle).unwrap().unwrap();
-        assert_ne!(second_geometry, first_geometry);
-
-        let mut retire = UiCommit::new(3);
-        retire.push(UiOperation::RetireSubtree {
-            root: NodeRef::Existing(box_handle),
-        });
-        host.commit_ui(retire, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        assert!(host.ui_visible_geometry(box_handle).is_err());
-
-        let mut reuse = UiCommit::new(4);
-        reuse.push(UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Box,
-        });
-        reuse.push(UiOperation::CreateNode {
-            local_ordinal: 2,
-            kind: HostKind::Box,
-        });
-        reuse.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        reuse.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body),
-            child: NodeRef::Local(2),
-            before: None,
-        });
-        let reused = host.commit_ui(reuse, &[]).unwrap();
-        let reused_handle = reused
-            .acknowledgement
-            .created
-            .iter()
-            .find(|handle| handle.slot == box_handle.slot)
-            .copied()
-            .expect("replacement allocation must reuse the retired slot");
-        assert_ne!(reused_handle.generation, box_handle.generation);
-        assert!(host.ui_visible_geometry(box_handle).is_err());
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn ui_event_waiter_wakes_for_owned_batch_and_ui_close() {
-        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let waiter_host = host.clone();
-        let waiter = runtime.spawn(async move { waiter_host.wait_for_ui_events().await });
-        runtime.block_on(tokio::task::yield_now());
-        {
-            let mut inner = host.inner.lock().unwrap();
-            let namespace = inner.ui_resources.namespace.get();
-            let event = NativeUiEvent {
-                handle: crate::occurrence::UiHandle {
-                    host_namespace: namespace,
-                    slot: 1,
-                    generation: 1,
-                    kind: crate::occurrence::HandleKind::Node,
-                },
-                mask: 2,
-                text: Some("owned text".to_owned()),
-                cursor_bytes: Some(3),
-                key: Some("x".to_owned()),
-                revision: Some(7),
-            };
-            let bytes = event.payload_bytes().unwrap();
-            inner.ui_event_bytes = bytes;
-            inner.ui_events.push_back(event);
-            inner.ui_event_notify.notify_waiters();
-        }
-        let batch = runtime.block_on(waiter).unwrap().unwrap().unwrap();
-        assert_eq!(batch.len(), 1);
-        assert_eq!(batch[0].text.as_deref(), Some("owned text"));
-        assert_eq!(batch[0].key.as_deref(), Some("x"));
-        assert_eq!(batch[0].revision, Some(7));
-
-        let close_waiter_host = host.clone();
-        let close_waiter =
-            runtime.spawn(async move { close_waiter_host.wait_for_ui_events().await });
-        runtime.block_on(tokio::task::yield_now());
-        host.close_ui_state().unwrap();
-        assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn native_failure_waiter_reports_distinct_attempts_and_wakes_on_close() {
-        let host = TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-
-        host.fail_next_frame_for_test("first native failure")
-            .unwrap();
-        host.set_desired_view(vf::text("failure observer")).unwrap();
-        let first_waiter_host = host.clone();
-        let first_waiter =
-            runtime.spawn(async move { first_waiter_host.wait_for_ui_failure().await });
-        runtime.block_on(tokio::task::yield_now());
-        let first_report = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(first_report.errors.len(), 1);
-        let first = runtime.block_on(first_waiter).unwrap().unwrap().unwrap();
-        assert_eq!(first.phase, "frame");
-        assert_eq!(first.code, "FRAME_PREPARATION_FAILED");
-        assert_eq!(first.diagnostic, "first native failure");
-        assert!(first.retryable);
-
-        // A second recoverable failure in the same pending work epoch is a
-        // distinct notification. The observer must not deduplicate by epoch
-        // and silently lose the later diagnostic.
-        host.fail_next_frame_for_test("second native failure")
-            .unwrap();
-        let second_waiter_host = host.clone();
-        let second_waiter =
-            runtime.spawn(async move { second_waiter_host.wait_for_ui_failure().await });
-        runtime.block_on(tokio::task::yield_now());
-        let second_report = host.flush_pending_hosts(8, true).unwrap();
-        assert_eq!(second_report.errors.len(), 1);
-        let second = runtime.block_on(second_waiter).unwrap().unwrap().unwrap();
-        assert_eq!(second.phase, "frame");
-        assert_eq!(second.code, "FRAME_PREPARATION_FAILED");
-        assert_eq!(second.diagnostic, "second native failure");
-        assert_eq!(second.attempted_work_epoch, first.attempted_work_epoch);
-        assert_ne!(second.diagnostic, first.diagnostic);
-
-        {
-            let mut inner = host.lock_mut().unwrap();
-            for _ in 0..MAX_FAILURE_NOTIFICATIONS + 2 {
-                inner.publish_attempt_failure(
-                    "frame",
-                    "FRAME_PREPARATION_FAILED",
-                    true,
-                    second.attempted_ui_revision,
-                    second.attempted_work_epoch,
-                    "bounded observer failure".to_owned(),
-                );
-            }
-            assert_eq!(inner.failure_notifications.len(), MAX_FAILURE_NOTIFICATIONS);
-        }
-        let overflow = runtime
-            .block_on(host.wait_for_ui_failure())
-            .unwrap()
-            .unwrap();
-        assert_eq!(overflow.code, "LIMIT_EXCEEDED");
-        assert!(overflow.diagnostic.contains("2 failure notifications"));
-        for _ in 0..MAX_FAILURE_NOTIFICATIONS {
-            let retained = runtime
-                .block_on(host.wait_for_ui_failure())
-                .unwrap()
-                .unwrap();
-            assert_eq!(retained.diagnostic, "bounded observer failure");
-        }
-
-        let close_waiter_host = host.clone();
-        let close_waiter =
-            runtime.spawn(async move { close_waiter_host.wait_for_ui_failure().await });
-        runtime.block_on(tokio::task::yield_now());
-        host.close_ui_state().unwrap();
-        assert!(runtime.block_on(close_waiter).unwrap().unwrap().is_none());
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn native_ui_adapter_switches_keep_qualified_identity_and_bounded_owners() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
-        let source_a = environment
-            .create_content_source(super::super::content::TextSourceKind::Stream)
-            .unwrap();
-        let source_b = environment
-            .create_content_source(super::super::content::TextSourceKind::Stream)
-            .unwrap();
-        source_a.append_utf8(b"A", &[], &[]).unwrap();
-        source_b.append_utf8(b"B", &[], &[]).unwrap();
-
-        let mut create = UiCommit::new(0);
-        create.push(UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::ContentHost,
-        });
-        create.push(UiOperation::CreatePort {
-            local_ordinal: 2,
-            content_family: 1,
-            ownership: OwnershipMode::OccurrenceOwned,
-            owner: Some(NodeRef::Local(1)),
-        });
-        create.push(UiOperation::CreateConnector {
-            local_ordinal: 3,
-            source_index: 0,
-            port: ResourceRef::Local(2),
-            ownership: OwnershipMode::OccurrenceOwned,
-        });
-        create.push(UiOperation::CreateConnector {
-            local_ordinal: 4,
-            source_index: 1,
-            port: ResourceRef::Local(2),
-            ownership: OwnershipMode::OccurrenceOwned,
-        });
-        create.push(UiOperation::InsertBefore {
-            parent: NodeRef::Existing(host.ui_body_handle().unwrap()),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        create.push(UiOperation::AttachPort {
-            node: NodeRef::Local(1),
-            port: Some(ResourceRef::Local(2)),
-        });
-        create.push(UiOperation::SelectConnector {
-            port: ResourceRef::Local(2),
-            connector: Some(ResourceRef::Local(3)),
-        });
-        let created = host
-            .commit_ui(create, &[source_a.clone(), source_b.clone()])
-            .unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-
-        let node = created
-            .acknowledgement
-            .created
-            .iter()
-            .find(|handle| handle.kind == crate::occurrence::HandleKind::Node)
-            .copied()
-            .expect("content occurrence acknowledgement");
-        let port = created
-            .acknowledgement
-            .created
-            .iter()
-            .find(|handle| handle.kind == crate::occurrence::HandleKind::Port)
-            .copied()
-            .expect("content Port acknowledgement");
-        let connectors = created
-            .acknowledgement
-            .created
-            .iter()
-            .filter(|handle| handle.kind == crate::occurrence::HandleKind::Connector)
-            .copied()
-            .collect::<Vec<_>>();
-        assert_eq!(connectors.len(), 2);
-        let connector_a = connectors[0];
-        let connector_b = connectors[1];
-        let port_key = port.resource_key().unwrap();
-        let connector_a_key = connector_a.resource_key().unwrap();
-        let connector_b_key = connector_b.resource_key().unwrap();
-
-        {
-            let inner = host.inner.lock().unwrap();
-            assert_eq!(inner.content.test_ui_adapter_count(), 1);
-            assert_eq!(
-                inner
-                    .content
-                    .ui_connector_status(&inner.ui_resources, connector_a_key)
-                    .unwrap()
-                    .visible,
-                true
-            );
-            assert_eq!(source_a.subscriber_count(), 1);
-            assert_eq!(source_b.subscriber_count(), 0);
-        }
-
-        let mut select_b = UiCommit::new(1);
-        select_b.push(UiOperation::SelectConnector {
-            port: ResourceRef::Existing(port),
-            connector: Some(ResourceRef::Existing(connector_b)),
-        });
-        host.commit_ui(select_b, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        {
-            let inner = host.inner.lock().unwrap();
-            assert_eq!(inner.content.test_ui_adapter_count(), 1);
-            let status = inner
-                .content
-                .ui_connector_status(&inner.ui_resources, connector_b_key)
-                .unwrap();
-            assert!(status.requested);
-            assert!(status.visible);
-            assert_eq!(
-                inner
-                    .content
-                    .test_ui_confirmed_connector(port_key)
-                    .unwrap()
-                    .0,
-                connector_b_key
-            );
-        }
-
-        // A failed switch preserves B's confirmed product while retaining at
-        // most one current failed adapter. The identity comparison is
-        // qualified by HandleKind, so a Port key can never be promoted as a
-        // Connector key.
-        host.fail_next_ui_connector_for_test("failed A".to_owned())
-            .unwrap();
-        let mut select_a = UiCommit::new(2);
-        select_a.push(UiOperation::SelectConnector {
-            port: ResourceRef::Existing(port),
-            connector: Some(ResourceRef::Existing(connector_a)),
-        });
-        host.commit_ui(select_a, &[]).unwrap();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let failure_waiter_host = host.clone();
-        let failure_waiter =
-            runtime.spawn(async move { failure_waiter_host.wait_for_ui_failure().await });
-        runtime.block_on(tokio::task::yield_now());
-        let failed_report = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(failed_report.errors.len(), 1);
-        assert_eq!(failed_report.errors[0].code, "PROJECTION_FAILED");
-        let failure = runtime.block_on(failure_waiter).unwrap().unwrap().unwrap();
-        assert_eq!(failure.phase, "content");
-        assert_eq!(failure.code, "PROJECTION_FAILED");
-        assert_eq!(
-            failure.attempted_ui_revision,
-            failed_report.errors[0].desired_revision
-        );
-        {
-            let inner = host.inner.lock().unwrap();
-            let failed = inner
-                .content
-                .ui_connector_status(&inner.ui_resources, connector_a_key)
-                .unwrap();
-            assert!(failed.requested);
-            assert!(!failed.visible);
-            assert_eq!(
-                failed.error.as_ref().map(|error| error.code.as_str()),
-                Some("PROJECTION_FAILED")
-            );
-            let confirmed = inner
-                .content
-                .ui_connector_status(&inner.ui_resources, connector_b_key)
-                .unwrap();
-            assert!(confirmed.visible);
-            assert_eq!(inner.content.test_ui_adapter_count(), 2);
-        }
-        source_a.append_utf8(b" recovered", &[], &[]).unwrap();
-        let recovery_report = host.flush_pending_hosts(8, true).unwrap();
-        assert!(recovery_report.errors.is_empty());
-        host.flush_pending_hosts(8, true).unwrap();
-        {
-            let inner = host.inner.lock().unwrap();
-            assert_eq!(inner.content.test_ui_adapter_count(), 1);
-            let recovered = inner
-                .content
-                .ui_connector_status(&inner.ui_resources, connector_a_key)
-                .unwrap();
-            assert!(recovered.visible);
-            assert_eq!(
-                inner
-                    .content
-                    .test_ui_confirmed_connector(port_key)
-                    .unwrap()
-                    .0,
-                connector_a_key
-            );
-        }
-
-        // Successful A/B/A churn must retire each superseded execution
-        // adapter at its receipt instead of growing the host registry.
-        let mut switch_b_again = UiCommit::new(3);
-        switch_b_again.push(UiOperation::SelectConnector {
-            port: ResourceRef::Existing(port),
-            connector: Some(ResourceRef::Existing(connector_b)),
-        });
-        host.commit_ui(switch_b_again, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let mut switch_a_again = UiCommit::new(4);
-        switch_a_again.push(UiOperation::SelectConnector {
-            port: ResourceRef::Existing(port),
-            connector: Some(ResourceRef::Existing(connector_a)),
-        });
-        host.commit_ui(switch_a_again, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        assert_eq!(
-            host.inner.lock().unwrap().content.test_ui_adapter_count(),
-            1
-        );
-        assert!(source_a.dispose().is_err());
-        assert!(source_b.dispose().is_err());
-
-        // Retiring the occurrence unmounts the Port, releases both accepted
-        // Source memberships and removes the final derived adapter/Port.
-        let mut retire = UiCommit::new(5);
-        retire.push(UiOperation::RetireSubtree {
-            root: NodeRef::Existing(node),
-        });
-        host.commit_ui(retire, &[]).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        {
-            let inner = host.inner.lock().unwrap();
-            assert_eq!(inner.content.test_ui_adapter_count(), 0);
-            assert!(
-                inner
-                    .content
-                    .test_ui_confirmed_connector(port_key)
-                    .is_none()
-            );
-            assert_eq!(inner.content.test_port_count(), 0);
-            assert_eq!(inner.content.test_connector_count(), 0);
-        }
-        assert_eq!(source_a.subscriber_count(), 0);
-        assert_eq!(source_b.subscriber_count(), 0);
-        host.close().unwrap();
-        source_a.dispose().unwrap();
-        source_b.dispose().unwrap();
-    }
-
-    #[test]
-    fn failed_auto_preparation_explicit_barrier_waits_for_a_new_attempt() {
-        let environment = TuiEnvironment::new();
-        let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        host.fail_next_frame_for_test("first preparation fails")
-            .unwrap();
-        host.set_desired_view(vf::text("retry-success")).unwrap();
-        let target = host.epochs().unwrap().desired_structural_revision;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        runtime
-            .block_on(host.wait_for_ui_presentation(target, false))
-            .unwrap();
-        assert!(host.inner.lock().unwrap().attempt_revision >= 2);
-        assert!(
-            host.screen_rows()
-                .iter()
-                .any(|row| row.contains("retry-success"))
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
     fn final_public_host_owners_close_once_while_inner_has_a_transient_owner() {
         let environment = TuiEnvironment::new();
         let host = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
@@ -7808,52 +7198,6 @@ mod tests {
         second.join().unwrap();
         assert!(retained_inner.lock().unwrap().is_closed());
         drop(retained_inner);
-    }
-
-    #[test]
-    fn failed_presentation_marks_physical_sync_unknown_until_recovery_frame() {
-        let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(vf::text("receipt-failure")).unwrap();
-        let (sender, receiver) = oneshot::channel();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            let candidate = {
-                let super::HostInner {
-                    running,
-                    backend,
-                    now,
-                    ..
-                } = &mut *inner;
-                super::prepare_frame(
-                    running,
-                    backend
-                        .as_mut()
-                        .expect("test host must own its terminal backend"),
-                    *now,
-                    &StateFrameView::empty(),
-                )
-                .unwrap()
-            };
-            inner.install_test_in_flight(candidate, receiver).unwrap();
-        }
-        sender
-            .send(Err(anyhow::anyhow!("simulated partial presentation")))
-            .unwrap();
-        let report = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(report.errors.len(), 1);
-        assert_eq!(report.errors[0].code, "BACKEND_IO_FAILED");
-        {
-            let inner = host.inner.lock().unwrap();
-            assert!(inner.physical_sync_unknown);
-        }
-        host.flush_pending_hosts(8, true).unwrap();
-        assert!(!host.inner.lock().unwrap().physical_sync_unknown);
-        assert!(
-            host.screen_rows()
-                .iter()
-                .any(|row| row.contains("receipt-failure"))
-        );
-        host.close().unwrap();
     }
 
     #[test]
@@ -7941,7 +7285,6 @@ mod tests {
                         .as_mut()
                         .expect("test host must own its terminal backend"),
                     *now,
-                    &StateFrameView::empty(),
                     content,
                 )
                 .unwrap()
@@ -8024,154 +7367,6 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_content_commit_keeps_state_content_and_frame_authority_unchanged() {
-        let environment = TuiEnvironment::new_manual();
-        let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
-        let source = environment
-            .create_content_source(super::super::content::TextSourceKind::Stream)
-            .unwrap();
-        source.append_utf8(b"before", &[], &[]).unwrap();
-        let port = host
-            .create_content_port(super::super::content::ContentFamily::Text)
-            .unwrap();
-        let connector = port
-            .connect(
-                &source,
-                super::super::content::HostContentFunnel::new(
-                    super::super::content::TextFunnelKind::Markdown,
-                    super::super::content::TextWrapMode::Word,
-                    true,
-                    super::super::content::ContentDelivery::Immediate,
-                ),
-            )
-            .unwrap();
-        let connector_id = connector.id();
-        connector.activate().unwrap();
-        let state = host.create_view_state().unwrap();
-        let body = vf::content_host(port.id())
-            .unwrap()
-            .native_with_state_attachment(state.state_id())
-            .unwrap();
-        host.set_desired_view(body).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let before_rows = host.screen_rows();
-        let before_epochs = host.epochs().unwrap();
-
-        source.append_utf8(b"-new", &[], &[]).unwrap();
-        let (sender, receiver) = oneshot::channel::<Result<(), anyhow::Error>>();
-        {
-            let mut inner = host.inner.lock().unwrap();
-            inner.content.begin_projection_candidate();
-            let candidate = {
-                let super::HostInner {
-                    running,
-                    backend,
-                    now,
-                    content,
-                    ..
-                } = &mut *inner;
-                super::prepare_frame_with_content(
-                    running,
-                    backend
-                        .as_mut()
-                        .expect("test host must own its terminal backend"),
-                    *now,
-                    &StateFrameView::empty(),
-                    content,
-                )
-                .unwrap()
-            };
-            inner.install_test_in_flight(candidate, receiver).unwrap();
-            inner
-                .content
-                .poison_connector_for_test(connector_id)
-                .unwrap();
-        }
-        sender.send(Ok(())).unwrap();
-        let report = host.flush_pending_hosts(8, false).unwrap();
-        assert_eq!(report.errors.len(), 1);
-        assert_eq!(report.errors[0].code, "INTERNAL_INVARIANT");
-        let after_error = host.epochs().unwrap();
-        assert_eq!(
-            after_error.visible_frame_revision,
-            before_epochs.visible_frame_revision
-        );
-        assert_eq!(
-            after_error.visible_structural_revision,
-            before_epochs.visible_structural_revision
-        );
-        assert_eq!(host.screen_rows(), before_rows);
-        assert!(port.is_mounted().unwrap());
-        assert!(
-            state.dispose().is_err(),
-            "visible state must remain bound after poison"
-        );
-
-        // A Source wake also encounters the poisoned Connector while the old
-        // candidate is retained. Repair it, then accept newer structural,
-        // state, and Source work. The next flush must reconcile the old
-        // candidate first rather than beginning a new preparation pass over
-        // it.
-        let poisoned_wake = source.append_utf8(b"-poisoned-wake", &[], &[]).unwrap();
-        assert!(poisoned_wake.schedule_environment_drain);
-        {
-            let inner = host.inner.lock().unwrap();
-            inner
-                .content
-                .clear_connector_poison_for_test(connector_id)
-                .unwrap();
-        }
-        let newer_state = host.create_view_state().unwrap();
-        let newer_content = vf::content_host(port.id())
-            .unwrap()
-            .native_with_state_attachment(newer_state.state_id())
-            .unwrap();
-        let newer_body = vf::column(vec![vf::text("new-root"), newer_content], 0);
-        host.set_desired_view(newer_body).unwrap();
-        let mut newer_patch = ViewStatePresentationPatch::default();
-        newer_patch.foreground = Some(Some(ColorSpec::ansi(6)));
-        newer_state.set_presentation(&newer_patch).unwrap();
-        source.append_utf8(b"-newer", &[], &[]).unwrap();
-
-        let old_retry = host.flush_pending_hosts(8, true).unwrap();
-        assert!(
-            old_retry
-                .commits
-                .iter()
-                .any(|commit| commit.host_id == host.epochs().unwrap().host_id)
-        );
-        assert!(
-            host.screen_rows()
-                .iter()
-                .any(|row| row.contains("before-new"))
-        );
-
-        let pending_after_old = host.epochs().unwrap();
-        assert!(
-            pending_after_old.pending_epoch > pending_after_old.committed_epoch,
-            "newer desired/state/Source work must remain pending after old retry"
-        );
-
-        let newer = host.flush_pending_hosts(8, true).unwrap();
-        assert!(newer.errors.is_empty());
-        assert!(
-            host.screen_rows()
-                .iter()
-                .any(|row| row.contains("new-root")),
-            "newer desired root must be prepared after the old candidate commits"
-        );
-        let settled = host.epochs().unwrap();
-        assert_eq!(settled.pending_epoch, settled.committed_epoch);
-        assert_eq!(
-            connector.status().unwrap().projected_source_revision,
-            Some(4),
-            "newer Source work must be projected after the retained candidate retry"
-        );
-        host.close().unwrap();
-        source.dispose().unwrap();
-    }
-
-    #[test]
     fn delayed_content_receipt_preserves_newer_source_work_for_next_candidate() {
         let environment = TuiEnvironment::new_manual();
         let host = TuiHost::open_in_environment(24, 4, true, environment.clone()).unwrap();
@@ -8194,7 +7389,7 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
 
@@ -8217,7 +7412,6 @@ mod tests {
                         .as_mut()
                         .expect("test host must own its terminal backend"),
                     *now,
-                    &StateFrameView::empty(),
                     content,
                 )
                 .unwrap()
@@ -8300,7 +7494,7 @@ mod tests {
             .unwrap();
         first.activate().unwrap();
         second.activate().unwrap();
-        host.set_desired_view(crate::presentation::factory::row_specs(
+        host.set_test_view(crate::presentation::factory::row_specs(
             vec![
                 (
                     crate::presentation::ir::TrackSize::Content { max: None },
@@ -8360,7 +7554,7 @@ mod tests {
         );
         assert_eq!(first_source.subscriber_count(), 0);
         let peer = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        peer.set_desired_view(vf::text("peer")).unwrap();
+        peer.set_test_view(vf::text("peer")).unwrap();
         let fair = host.flush_pending_hosts(8, false).unwrap();
         assert!(
             fair.commits
@@ -8409,8 +7603,8 @@ mod tests {
         let environment = TuiEnvironment::new_manual();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment).unwrap();
-        first.set_desired_view(vf::text("first")).unwrap();
-        second.set_desired_view(vf::text("second")).unwrap();
+        first.set_test_view(vf::text("first")).unwrap();
+        second.set_test_view(vf::text("second")).unwrap();
 
         let first_batch = first.flush_pending_hosts(1, false).unwrap();
         assert_eq!(first_batch.attempted, 1);
@@ -8434,8 +7628,8 @@ mod tests {
         let environment = TuiEnvironment::new_manual();
         let first = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let second = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
-        first.set_desired_view(vf::text("poisoned")).unwrap();
-        second.set_desired_view(vf::text("healthy")).unwrap();
+        first.set_test_view(vf::text("poisoned")).unwrap();
+        second.set_test_view(vf::text("healthy")).unwrap();
         let first_host_id = first.epochs().unwrap().host_id;
         let second_host_id = second.epochs().unwrap().host_id;
         {
@@ -8491,7 +7685,7 @@ mod tests {
             let connector = port
                 .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
                 .unwrap();
-            host.set_desired_view(vf::content_host(port.id()).unwrap())
+            host.set_test_view(vf::content_host(port.id()).unwrap())
                 .unwrap();
             host.flush_pending_hosts(8, true).unwrap();
             connector.activate().unwrap();
@@ -8624,7 +7818,7 @@ mod tests {
         // binding or body install, so rejection leaves the visible frame
         // and the pending pipeline exactly as they were.
         let host = TuiHost::open(20, 4, true).unwrap();
-        host.set_desired_view(vf::text("settled")).unwrap();
+        host.set_test_view(vf::text("settled")).unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         let settled_rows = host.screen_rows();
         {
@@ -8632,7 +7826,7 @@ mod tests {
             inner.desired_structural_revision = u64::MAX;
         }
 
-        let result = host.set_desired_view(vf::text("never"));
+        let result = host.set_test_view(vf::text("never"));
         let message = format!("{:?}", result.unwrap_err());
         assert!(
             message.contains("desired structural revision exhausted"),
@@ -8649,41 +7843,6 @@ mod tests {
             host.epochs().unwrap().desired_structural_revision,
             u64::MAX,
             "rejected publication must not consume the revision"
-        );
-        host.close().unwrap();
-    }
-
-    #[test]
-    fn state_patch_leaves_desired_structural_revision_untouched() {
-        // L1-00 step 8: state/structural patch distinction. A retained-state
-        // patch travels the state lane only: no desired-revision bump and no
-        // structural republication. A structural publication consumes exactly
-        // one desired revision.
-        let host = TuiHost::open(20, 4, true).unwrap();
-        let state = host.create_view_state().unwrap();
-        let view = vf::text("lane")
-            .native_with_state_attachment(state.state_id())
-            .unwrap();
-        host.set_desired_view(view).unwrap();
-        host.flush_pending_hosts(8, true).unwrap();
-        let baseline = host.epochs().unwrap();
-        assert_eq!(baseline.desired_structural_revision, 1);
-
-        let mut patch = ViewStatePresentationPatch::default();
-        patch.foreground = Some(Some(ColorSpec::ansi(6)));
-        state.set_presentation(&patch).unwrap();
-        let after_state_patch = host.epochs().unwrap();
-        assert_eq!(
-            after_state_patch.desired_structural_revision, baseline.desired_structural_revision,
-            "state patch must not consume a structural revision"
-        );
-
-        host.set_desired_view(vf::text("lane")).unwrap();
-        let after_structural = host.epochs().unwrap();
-        assert_eq!(
-            after_structural.desired_structural_revision,
-            baseline.desired_structural_revision + 1,
-            "structural publication must consume exactly one revision"
         );
         host.close().unwrap();
     }
@@ -8709,7 +7868,7 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
         #[cfg(feature = "perf-counters")]
@@ -8763,7 +7922,7 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(crate::presentation::factory::fill_width(
+        host.set_test_view(crate::presentation::factory::fill_width(
             crate::presentation::factory::column_specs(
                 vec![
                     (
@@ -8853,7 +8012,7 @@ mod tests {
             .unwrap();
         first_connector.activate().unwrap();
         second_connector.activate().unwrap();
-        host.set_desired_view(crate::presentation::factory::fill_width(
+        host.set_test_view(crate::presentation::factory::fill_width(
             crate::presentation::factory::column_specs(
                 vec![
                     (
@@ -8941,7 +8100,7 @@ mod tests {
             ports.push(port);
             connectors.push(connector);
         }
-        host.set_desired_view(crate::presentation::factory::fill_width(
+        host.set_test_view(crate::presentation::factory::fill_width(
             crate::presentation::factory::column(
                 ports
                     .iter()
@@ -9054,7 +8213,7 @@ mod tests {
                 ports.push(port);
                 connectors.push(connector);
             }
-            host.set_desired_view(crate::presentation::factory::fill_width(
+            host.set_test_view(crate::presentation::factory::fill_width(
                 crate::presentation::factory::column(
                     ports
                         .iter()
@@ -9141,7 +8300,7 @@ mod tests {
             )
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(8, true).unwrap();
 
@@ -9196,7 +8355,7 @@ mod tests {
             crate::TextSelector::heading().level(crate::HeadingLevel::H1),
             crate::StyleSpec::new().foreground(crate::ColorSpec::ansi(1)),
         );
-        host.set_desired_view(content.clone()).unwrap();
+        host.set_test_view(content.clone()).unwrap();
         host.set_theme(red_theme).unwrap();
         assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
         let heading_row = host
@@ -9242,12 +8401,12 @@ mod tests {
             ],
             0,
         );
-        host.set_desired_view(first).unwrap();
+        host.set_test_view(first).unwrap();
         assert!(host.flush_pending_hosts(8, true).unwrap().errors.is_empty());
 
         // Structural publication followed by a theme change must not reuse a
         // detached retained tree's old ContentHost measurement/paint ticket.
-        host.set_desired_view(vf::column_specs(
+        host.set_test_view(vf::column_specs(
             vec![
                 (
                     crate::presentation::ir::TrackSize::Content { max: None },
@@ -9291,7 +8450,7 @@ mod tests {
         // Reverse order: source preparation first, then a structural root
         // replacement and theme update, must likewise use fresh products.
         source.append_utf8(b"-three", &[], &[]).unwrap();
-        host.set_desired_view(vf::column_specs(
+        host.set_test_view(vf::column_specs(
             vec![
                 (
                     crate::presentation::ir::TrackSize::Content { max: None },

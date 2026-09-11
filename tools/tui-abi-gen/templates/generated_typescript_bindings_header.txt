@@ -1,2 +1,0 @@
-{{ banner }}import type { NativeTuiHostContract } from "../../../native/addon.ts";
-

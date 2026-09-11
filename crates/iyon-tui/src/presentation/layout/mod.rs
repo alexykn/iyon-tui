@@ -15,7 +15,9 @@
 //! View subtrees.
 
 mod cache;
+mod damage;
 mod engine;
+mod geometry;
 mod grid;
 mod measure;
 mod place;
@@ -23,6 +25,7 @@ mod prepare;
 mod tracks;
 mod tree;
 
+pub(crate) use damage::DamageRegion;
 #[cfg(test)]
 mod tests;
 

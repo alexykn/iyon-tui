@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::Arc,
 };
 
 use crate::{
@@ -12,7 +11,6 @@ use crate::{
         View,
         ir::{ViewId, ViewKind},
     },
-    retained_state::{StateFrameView, StateNodeKind, state_node_kind},
 };
 
 use super::{ResolutionOverlay, ResolvedScene};
@@ -90,19 +88,6 @@ impl<'a> ResolveSession<'a> {
 
     pub(crate) fn overlay(&self) -> &ResolutionOverlay {
         &self.resolver.overlay
-    }
-
-    /// Populates the branch overlay with exactly the demanded frame
-    /// versions, shared by reference count. Unmounted records are never
-    /// visited; clean ids resolve through the frame view's committed table.
-    pub(crate) fn set_state_snapshots(&mut self, states: &StateFrameView<'_>) {
-        let mut next = HashMap::with_capacity(states.demanded().len());
-        for id in states.demanded() {
-            if let Some(version) = states.get(id) {
-                next.insert(*id, Arc::clone(version));
-            }
-        }
-        self.resolver.overlay.states = next;
     }
 
     #[cfg(test)]
@@ -223,154 +208,6 @@ fn reverse_content_path_components(
         ports.dedup();
     }
     reverse
-}
-
-/// Collects retained-state attachments from a resolved semantic graph. The
-/// ordinary View helper cannot enter `ComponentSlot` indirections because it has
-/// no component overlay; H3 must nevertheless validate state records in the
-/// complete candidate before publishing it as desired.
-pub(crate) fn state_attachment_targets(
-    view: &View,
-    overlay: &ResolutionOverlay,
-) -> Result<Vec<(u64, StateNodeKind)>, String> {
-    let mut targets = Vec::new();
-    let mut seen = HashMap::<u64, String>::new();
-    let mut active = HashSet::<ViewId>::new();
-    visit_state_attachments(view, overlay, "root", &mut targets, &mut seen, &mut active)?;
-    Ok(targets)
-}
-
-fn visit_state_attachments(
-    view: &View,
-    overlay: &ResolutionOverlay,
-    path: &str,
-    targets: &mut Vec<(u64, StateNodeKind)>,
-    seen: &mut HashMap<u64, String>,
-    active: &mut HashSet<ViewId>,
-) -> Result<(), String> {
-    if !view.flags().contains_state_attachment() && !view.contains_component_identity() {
-        return Ok(());
-    }
-    if !active.insert(view.id()) {
-        return Err(format!("cyclic semantic View graph at {path}"));
-    }
-    let result = (|| {
-        if let Some(state_id) = view.state_attachment_id() {
-            if let Some(first_path) = seen.insert(state_id, path.to_owned()) {
-                return Err(format!(
-                    "DUPLICATE_VIEW_STATE_ATTACHMENT: state {state_id} occurs at {first_path} and {path}"
-                ));
-            }
-            targets.push((state_id, state_node_kind(view.kind())));
-        }
-        match view.kind() {
-            ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ContentHost => Ok(()),
-            ViewKind::ComponentSlot(slot) => {
-                let snapshot = overlay
-                    .component(slot.id)
-                    .ok_or_else(|| format!("component overlay missing for {path}"))?;
-                visit_state_attachments(
-                    &snapshot.view,
-                    overlay,
-                    &format!("{path}/component[{id:?}]", id = slot.id),
-                    targets,
-                    seen,
-                    active,
-                )
-            }
-            ViewKind::Column(column) => {
-                for (index, child) in column.children.iter().enumerate() {
-                    visit_state_attachments(
-                        &child.view,
-                        overlay,
-                        &format!("{path}/child[{index}]"),
-                        targets,
-                        seen,
-                        active,
-                    )?;
-                }
-                Ok(())
-            }
-            ViewKind::Row(row) => {
-                for (index, child) in row.children.iter().enumerate() {
-                    visit_state_attachments(
-                        &child.view,
-                        overlay,
-                        &format!("{path}/child[{index}]"),
-                        targets,
-                        seen,
-                        active,
-                    )?;
-                }
-                Ok(())
-            }
-            ViewKind::Grid(grid) => {
-                for (index, cell) in grid.cells.iter().enumerate() {
-                    visit_state_attachments(
-                        &cell.view,
-                        overlay,
-                        &format!("{path}/cell[{index}]"),
-                        targets,
-                        seen,
-                        active,
-                    )?;
-                }
-                Ok(())
-            }
-            ViewKind::Hanging(hanging) => {
-                visit_state_attachments(
-                    &hanging.prefix,
-                    overlay,
-                    &format!("{path}/prefix"),
-                    targets,
-                    seen,
-                    active,
-                )?;
-                visit_state_attachments(
-                    &hanging.continuation_prefix,
-                    overlay,
-                    &format!("{path}/continuation"),
-                    targets,
-                    seen,
-                    active,
-                )?;
-                visit_state_attachments(
-                    &hanging.body,
-                    overlay,
-                    &format!("{path}/body"),
-                    targets,
-                    seen,
-                    active,
-                )
-            }
-            ViewKind::Container(container) => visit_state_attachments(
-                &container.child,
-                overlay,
-                &format!("{path}/child"),
-                targets,
-                seen,
-                active,
-            ),
-            ViewKind::ClampRows(clamp) => visit_state_attachments(
-                &clamp.child,
-                overlay,
-                &format!("{path}/child"),
-                targets,
-                seen,
-                active,
-            ),
-            ViewKind::RowViewport(viewport) => visit_state_attachments(
-                &viewport.child,
-                overlay,
-                &format!("{path}/child"),
-                targets,
-                seen,
-                active,
-            ),
-        }
-    })();
-    active.remove(&view.id());
-    result
 }
 
 /// Collects `ContentPort` attachment identities from a resolved semantic graph.

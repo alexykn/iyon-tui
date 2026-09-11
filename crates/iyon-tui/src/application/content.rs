@@ -3711,6 +3711,7 @@ impl ContentHostRegistry {
         self.remove_stale_ui_ports(stale_keys)?;
 
         let demanded_keys = self.demanded_ui_ports(owner, &port_keys, initial)?;
+
         for key in port_keys {
             if !owner.ports.contains(&key) {
                 continue;
@@ -4131,7 +4132,7 @@ impl ContentHostRegistry {
     }
 
     pub(crate) fn ui_content_failure(&self) -> Result<Option<String>> {
-        for connector_id in self.ui_connectors.values().copied() {
+        for connector_id in self.ui_connectors.values() {
             let connector = self.connectors.get(&connector_id).ok_or_else(|| {
                 anyhow!(
                     "INTERNAL_INVARIANT: UI Connector {connector_id} disappeared during failure read"
@@ -8356,7 +8357,7 @@ mod tests {
         first_connector.activate().unwrap();
         assert_eq!(source.subscriber_count(), 0);
         first
-            .set_desired_view(vf::content_host(first_port.id()).unwrap())
+            .set_test_view(vf::content_host(first_port.id()).unwrap())
             .unwrap();
         first.flush_pending_hosts(32, true).unwrap();
         assert_eq!(source.subscriber_count(), 1);
@@ -8366,7 +8367,7 @@ mod tests {
         second_connector.activate().unwrap();
         assert_eq!(source.subscriber_count(), 1);
         second
-            .set_desired_view(vf::content_host(second_port.id()).unwrap())
+            .set_test_view(vf::content_host(second_port.id()).unwrap())
             .unwrap();
         second.flush_pending_hosts(32, true).unwrap();
         assert_eq!(source.subscriber_count(), 2);
@@ -8395,7 +8396,7 @@ mod tests {
             .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
             .unwrap();
         connector.activate().unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(source.subscriber_count(), 1);
@@ -8443,7 +8444,7 @@ mod tests {
         let first_conn = first_port.connect(&source, funnel).unwrap();
         first_conn.activate().unwrap();
         first
-            .set_desired_view(vf::content_host(first_port.id()).unwrap())
+            .set_test_view(vf::content_host(first_port.id()).unwrap())
             .unwrap();
         first.flush_pending_hosts(32, true).unwrap();
 
@@ -8451,7 +8452,7 @@ mod tests {
         let second_conn = second_port.connect(&source, funnel).unwrap();
         second_conn.activate().unwrap();
         second
-            .set_desired_view(vf::content_host(second_port.id()).unwrap())
+            .set_test_view(vf::content_host(second_port.id()).unwrap())
             .unwrap();
         second.flush_pending_hosts(32, true).unwrap();
 
@@ -8521,7 +8522,7 @@ mod tests {
             let port = host.create_content_port(ContentFamily::Text).unwrap();
             let connector = port.connect(&source, funnel).unwrap();
             connector.activate().unwrap();
-            host.set_desired_view(vf::content_host(port.id()).unwrap())
+            host.set_test_view(vf::content_host(port.id()).unwrap())
                 .unwrap();
             host.flush_pending_hosts(32, true).unwrap();
         }
@@ -8680,7 +8681,7 @@ mod tests {
         assert_ne!(first_port.id(), second_port.id());
 
         let foreign_view = vf::content_host(first_port.id()).unwrap();
-        let error = second.set_desired_view(foreign_view).unwrap_err();
+        let error = second.set_test_view(foreign_view).unwrap_err();
         assert!(error.to_string().contains("STALE_HANDLE"));
 
         first.close().unwrap();
@@ -8701,7 +8702,7 @@ mod tests {
         let second = port
             .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
             .unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         first.activate().unwrap();
         host.flush_pending_hosts(32, true).unwrap();
@@ -8763,7 +8764,7 @@ mod tests {
         let second = port
             .connect(&source, HostContentFunnel::plain(TextWrapMode::Word))
             .unwrap();
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         first.activate().unwrap();
         host.flush_pending_hosts(32, true).unwrap();
@@ -8774,10 +8775,10 @@ mod tests {
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "failed");
 
-        host.set_desired_view(vf::spacer(0)).unwrap();
+        host.set_test_view(vf::spacer(0)).unwrap();
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "waiting-for-mount");
-        host.set_desired_view(vf::content_host(port.id()).unwrap())
+        host.set_test_view(vf::content_host(port.id()).unwrap())
             .unwrap();
         host.flush_pending_hosts(32, true).unwrap();
         assert_eq!(second.status().unwrap().phase, "active");

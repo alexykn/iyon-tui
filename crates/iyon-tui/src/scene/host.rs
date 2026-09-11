@@ -25,20 +25,19 @@ use crate::{
     },
     output::{OutputQueue, OutputRouter},
     physical::Surface,
+    presentation::layout::DamageRegion,
     presentation::{
         ir::{View, ViewId, ViewKind},
         layout::{LayoutCache, ViewCompiler, layout_view_with_overlay_and_cache_and_content},
         paint::{PaintCache, ViewPainter},
     },
-    retained_state::{DamageRegion, StateEffects, StateFrameView, StateNodeKind},
 };
 
 use super::root::merge_root_scene;
 use super::{
     LayoutSynchronizer, ResolveError, ResolveSession, ResolvedRootScene, ResolvedScene,
     ResolvedSceneLayout, Scene, layout_resolved_scene_with_cache_and_content,
-    resolve_component_subtree_with_states,
-    resolve_root_scene_with_anchor_and_cache_and_states_and_content,
+    resolve_component_subtree, resolve_root_scene_with_anchor_and_cache_and_content,
 };
 use crate::history::{HistoryViewportAnchor, project_into_session_for_host_with_content};
 
@@ -144,10 +143,6 @@ pub(crate) struct PreparedSceneFrame {
     /// queries never resolve an occurrence through mutable desired recipes.
     pub(crate) occurrence_geometry:
         HashMap<crate::occurrence::NodeKey, crate::presentation::layout::ComponentGeometry>,
-    /// State identities encountered in this fully prepared candidate tree.
-    /// The host holds an in-flight lifecycle pin for these IDs until backend
-    /// presentation succeeds; visible binding promotion happens at commit.
-    pub(crate) state_bindings: Vec<(u64, StateNodeKind)>,
 }
 
 impl PreparedSceneFrame {
@@ -204,14 +199,10 @@ pub(crate) struct SceneHost {
     retained: Option<StableScene>,
     last_surface: Option<Surface>,
     invalidated_components: HashSet<ComponentId>,
-    invalidated_states: HashSet<u64>,
-    invalidated_state_effects: HashMap<u64, StateEffects>,
     incremental_sync_components: Vec<ComponentId>,
     incremental_topology_changed: bool,
     incremental_requires_full_sync: bool,
     incremental_paint_components: Vec<ComponentId>,
-    incremental_paint_states: Vec<u64>,
-    state_only_refresh: bool,
     /// True when the retained History branch can be painted without walking
     /// the clean body branch.
     incremental_paint_history: bool,
@@ -283,14 +274,10 @@ impl Default for SceneHost {
             retained: None,
             last_surface: None,
             invalidated_components: HashSet::new(),
-            invalidated_states: HashSet::new(),
-            invalidated_state_effects: HashMap::new(),
             incremental_sync_components: Vec::new(),
             incremental_topology_changed: false,
             incremental_requires_full_sync: false,
             incremental_paint_components: Vec::new(),
-            incremental_paint_states: Vec::new(),
-            state_only_refresh: false,
             incremental_paint_history: false,
             history_only_refresh: false,
             content_dirty: HashMap::new(),
@@ -319,17 +306,13 @@ impl SceneHost {
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();
-        self.invalidated_states.clear();
-        self.invalidated_state_effects.clear();
         self.incremental_sync_components.clear();
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
-        self.incremental_paint_states.clear();
         self.incremental_paint_content.clear();
         self.theme_invalidated = false;
         self.retained_content_dependencies.clear();
-        self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
         self.content_dirty.clear();
@@ -348,17 +331,6 @@ impl SceneHost {
 
     pub(crate) fn has_invalidated_components(&self) -> bool {
         !self.invalidated_components.is_empty()
-    }
-
-    /// Marks one retained state attachment dirty without rebuilding the
-    /// semantic scene. Rust effect metadata selects a local repaint or a
-    /// retained-root geometry relayout for the next candidate.
-    pub(crate) fn invalidate_state(&mut self, id: u64, effects: StateEffects) {
-        self.invalidated_states.insert(id);
-        self.invalidated_state_effects
-            .entry(id)
-            .and_modify(|current| *current = current.union(effects))
-            .or_insert(effects);
     }
 
     /// Records one affected ContentPort and invalidates only its retained
@@ -650,158 +622,6 @@ impl SceneHost {
         self.incremental_paint_content.clear();
     }
 
-    /// Re-lays out only fixed-allocation state subtrees. If a geometry change
-    /// can escape the target's allocation, the caller falls back to a retained
-    /// resolved-root layout so parent dependencies remain correct.
-    fn try_local_geometry_refresh(
-        &mut self,
-        retained: &mut StableScene,
-        state_ids: &[u64],
-        state_effects: &HashMap<u64, StateEffects>,
-        content: &mut dyn ContentProvider,
-    ) -> Option<Vec<ComponentId>> {
-        let mut propagation_nodes = 0usize;
-        let mut geometry_roots = Vec::with_capacity(state_ids.len());
-        let mut changed_components = HashSet::new();
-        for state_id in state_ids {
-            crate::perf::inc(crate::perf::Counter::ViewStateGeometryRelayouts);
-            let Some(target_id) = retained.layout.tree.state_roots.get(state_id).copied() else {
-                return None;
-            };
-            let layout_path = retained.layout.tree.path_to_root(target_id);
-            let Some(semantic_path) = state_view_path(&retained.root.scene, *state_id) else {
-                return None;
-            };
-            if layout_path.len() != semantic_path.len() {
-                return None;
-            }
-
-            let mut dirty_view_ids = HashSet::new();
-            for node_id in &layout_path {
-                dirty_view_ids.insert(retained.layout.tree.node(*node_id).view_id);
-            }
-            propagation_nodes = propagation_nodes.saturating_add(dirty_view_ids.len());
-            self.layout_cache.invalidate_view_ids(&dirty_view_ids);
-
-            let target_index = layout_path.len().saturating_sub(1);
-            let mut patched = false;
-            for index in (0..layout_path.len()).rev() {
-                let node_id = layout_path[index];
-                let node = retained.layout.tree.node(node_id);
-                let rect = node.rect;
-                let view = &semantic_path[index];
-                // A non-root candidate is safe to patch only when its
-                // unconstrained result still fits the committed allocation.
-                // Otherwise climb to the parent dependency frontier. The root
-                // is always bounded by the host and is the conservative stop.
-                if index != 0 {
-                    let parent = layout_path[index - 1];
-                    let may_escape = retained
-                        .layout
-                        .tree
-                        .child_dependency(parent, node_id)
-                        .is_none_or(|dependency| {
-                            let effects =
-                                state_effects.get(state_id).copied().unwrap_or_else(|| {
-                                    StateEffects::INTRINSIC_WIDTH
-                                        .union(StateEffects::INTRINSIC_HEIGHT)
-                                });
-                            (effects.intrinsic_width() && dependency.parent_uses_child_width())
-                                || (effects.intrinsic_height()
-                                    && dependency.parent_uses_child_height())
-                        });
-                    if may_escape {
-                        let natural = layout_view_with_overlay_and_cache_and_content(
-                            view,
-                            // Measure against an unconstrained width. Using
-                            // the old allocation here would hide an increased
-                            // max-width/cleared bound behind that same cap and
-                            // incorrectly keep the target locally clipped.
-                            LayoutConstraints::width_only(u16::MAX),
-                            &retained.root.scene.overlay,
-                            None,
-                            &mut self.layout_cache,
-                            content,
-                        );
-                        if natural.size != rect.size() {
-                            continue;
-                        }
-                    }
-                }
-                let replacement = layout_view_with_overlay_and_cache_and_content(
-                    view,
-                    LayoutConstraints::bounded(rect.size()),
-                    &retained.root.scene.overlay,
-                    None,
-                    &mut self.layout_cache,
-                    content,
-                );
-                if replacement.size != rect.size()
-                    || !retained.layout.tree.patch_subtree(node_id, &replacement)
-                {
-                    continue;
-                }
-                if index != target_index {
-                    // A parent-frontier patch may move siblings outside the
-                    // state subtree. Keep the candidate layout, but request a
-                    // complete candidate paint instead of leaving old sibling
-                    // cells in the retained surface.
-                    self.full_paint_pending = true;
-                }
-                geometry_roots.push(node_id);
-                patched = true;
-                break;
-            }
-            if !patched {
-                return None;
-            }
-        }
-        for root in geometry_roots {
-            let component_ids = retained.layout.tree.component_ids_in_subtree(root);
-            let old_geometry = component_ids
-                .iter()
-                .filter_map(|id| {
-                    retained
-                        .layout
-                        .components
-                        .entries
-                        .get(id)
-                        .copied()
-                        .map(|geometry| (*id, geometry))
-                })
-                .collect::<Vec<_>>();
-            let refreshed = retained
-                .layout
-                .tree
-                .patch_component_geometry_subtree(root, &mut retained.layout.components);
-            debug_assert!(
-                refreshed,
-                "patched geometry root must remain in the retained layout tree"
-            );
-            if !refreshed {
-                return None;
-            }
-            for (id, old) in old_geometry {
-                if retained
-                    .layout
-                    .components
-                    .entries
-                    .get(&id)
-                    .is_some_and(|new| new != &old)
-                {
-                    changed_components.insert(id);
-                }
-            }
-        }
-        crate::perf::add(
-            crate::perf::Counter::ViewStateDirtyPropagationNodes,
-            propagation_nodes as u64,
-        );
-        let mut changed_components = changed_components.into_iter().collect::<Vec<_>>();
-        changed_components.sort_unstable();
-        Some(changed_components)
-    }
-
     /// Invalidates the retained scene root for body/history/topology changes.
     pub(crate) fn invalidate_root(&mut self) {
         // Keep dependency-local layout/paint products for unchanged retained
@@ -811,30 +631,6 @@ impl SceneHost {
         // index in invalidate_theme; clearing both caches here would
         // relayout/repaint every stable sibling on a narrow publication.
         if let Some(retained) = self.retained.as_ref() {
-            // A structural publication can arrive in the same pending epoch
-            // as a retained-state mutation. Parent cache entries do not carry
-            // every descendant state revision, so preserve clean siblings but
-            // evict each changed state's dependency path before the retained
-            // layout/state indexes below are discarded. Otherwise a stable
-            // ancestor reused by the replacement root can reintroduce the old
-            // descendant geometry or presentation.
-            let mut state_view_ids = HashSet::new();
-            for state_id in &self.invalidated_states {
-                if let Some(node_id) = retained.layout.tree.state_roots.get(state_id) {
-                    state_view_ids.extend(
-                        retained
-                            .layout
-                            .tree
-                            .path_to_root(*node_id)
-                            .into_iter()
-                            .map(|node| retained.layout.tree.node(node).view_id),
-                    );
-                }
-            }
-            if !state_view_ids.is_empty() {
-                self.layout_cache.invalidate_view_ids(&state_view_ids);
-                self.paint_cache.invalidate_view_ids(&state_view_ids);
-            }
             self.retained_content_dependencies.clear();
             for nodes in retained.layout.tree.content_roots.values() {
                 for node in nodes {
@@ -857,14 +653,10 @@ impl SceneHost {
         self.retained = None;
         self.last_surface = None;
         self.invalidated_components.clear();
-        self.invalidated_states.clear();
-        self.invalidated_state_effects.clear();
         self.incremental_sync_components.clear();
         self.incremental_topology_changed = false;
         self.incremental_requires_full_sync = false;
         self.incremental_paint_components.clear();
-        self.incremental_paint_states.clear();
-        self.state_only_refresh = false;
         self.incremental_paint_history = false;
         self.history_only_refresh = false;
         self.content_prepared_epoch = None;
@@ -1021,14 +813,13 @@ impl SceneHost {
         F: FnMut(&mut S) -> Result<Size>,
     {
         let mut content = EmptyContentProvider;
-        self.render_at_with_states(
+        self.render_at_with_content(
             Instant::now(),
             scene,
             registry,
             theme,
             sink,
             viewport,
-            &StateFrameView::empty(),
             &mut content,
         )
     }
@@ -1047,19 +838,10 @@ impl SceneHost {
         F: FnMut(&mut S) -> Result<Size>,
     {
         let mut content = EmptyContentProvider;
-        self.render_at_with_states(
-            now,
-            scene,
-            registry,
-            theme,
-            sink,
-            viewport,
-            &StateFrameView::empty(),
-            &mut content,
-        )
+        self.render_at_with_content(now, scene, registry, theme, sink, viewport, &mut content)
     }
 
-    pub(crate) fn render_at_with_states<S, F>(
+    pub(crate) fn render_at_with_content<S, F>(
         &mut self,
         now: Instant,
         scene: &mut Scene,
@@ -1067,7 +849,6 @@ impl SceneHost {
         theme: &Theme,
         sink: &mut S,
         mut viewport: F,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
@@ -1086,7 +867,6 @@ impl SceneHost {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                states,
                 content,
             )?;
 
@@ -1150,7 +930,6 @@ impl SceneHost {
                         size,
                         now,
                         HistoryViewportAnchor::NativeFrontier,
-                        states,
                         content,
                     )?;
                     crate::history::trace::trace_resolve_pressure(resolves, 0, transfer_calls);
@@ -1165,16 +944,15 @@ impl SceneHost {
     /// semantic frontier used by the candidate; callers submit its rows only
     /// after releasing their acceptance guard and acknowledge that plan once.
     /// This is the asynchronous host path. Synchronous compatibility callers
-    /// continue to use `render_at_with_states` above, whose sink performs the
+    /// continue to use `render_at_with_content` above, whose sink performs the
     /// same prepare/ack operation inline.
-    pub(crate) fn prepare_at_with_states(
+    pub(crate) fn prepare_at_with_content(
         &mut self,
         now: Instant,
         scene: &mut Scene,
         registry: &mut ComponentRegistry,
         size: Size,
         theme: &Theme,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<
         (
@@ -1189,7 +967,6 @@ impl SceneHost {
             size,
             now,
             HistoryViewportAnchor::FollowEnd,
-            states,
             content,
         )?;
 
@@ -1230,7 +1007,6 @@ impl SceneHost {
             size,
             now,
             HistoryViewportAnchor::NativeFrontier,
-            states,
             content,
         )?;
         Ok((self.paint_with_content(pinned, theme, content), plan))
@@ -1261,7 +1037,6 @@ impl SceneHost {
             size,
             now,
             HistoryViewportAnchor::FollowEnd,
-            &StateFrameView::empty(),
             &mut content,
         )
     }
@@ -1273,7 +1048,6 @@ impl SceneHost {
         size: Size,
         now: Instant,
         anchor: HistoryViewportAnchor,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<StableScene, SceneHostError<E>> {
         let mut force_full = false;
@@ -1281,14 +1055,14 @@ impl SceneHost {
         for _ in 0..MAX_LAYOUT_PASSES {
             let content_epoch = self.content_dirty_epoch;
             let resolved = if !force_full {
-                match self.try_incremental_stable(scene, registry, size, anchor, states, content) {
+                match self.try_incremental_stable(scene, registry, size, anchor, content) {
                     Ok(Some(resolved)) => resolved,
                     Ok(None) => {
                         if !layout_epoch_started {
                             self.layout_cache.begin_epoch();
                             layout_epoch_started = true;
                         }
-                        self.resolve_full_stable(scene, registry, size, anchor, states, content)?
+                        self.resolve_full_stable(scene, registry, size, anchor, content)?
                     }
                     Err(error) => return Err(SceneHostError::Resolve(error)),
                 }
@@ -1297,10 +1071,9 @@ impl SceneHost {
                     self.layout_cache.begin_epoch();
                     layout_epoch_started = true;
                 }
-                self.resolve_full_stable(scene, registry, size, anchor, states, content)?
+                self.resolve_full_stable(scene, registry, size, anchor, content)?
             };
-            let incremental_host = (self.state_only_refresh
-                || self.history_only_refresh
+            let incremental_host = (self.history_only_refresh
                 || !self.incremental_sync_components.is_empty())
                 && !self.incremental_topology_changed
                 && !self.incremental_requires_full_sync;
@@ -1410,12 +1183,9 @@ impl SceneHost {
                 continue;
             }
             self.invalidated_components.clear();
-            self.invalidated_states.clear();
-            self.invalidated_state_effects.clear();
             self.incremental_sync_components.clear();
             self.incremental_topology_changed = false;
             self.incremental_requires_full_sync = false;
-            self.state_only_refresh = false;
             self.history_only_refresh = false;
             self.content_prepared_epoch = Some(content_epoch);
             self.theme_invalidated = false;
@@ -1428,100 +1198,36 @@ impl SceneHost {
         Err(SceneHostError::DidNotConverge)
     }
 
-    fn resolve_full_stable<E>(
-        &mut self,
-        scene: &Scene,
-        registry: &mut ComponentRegistry,
-        size: Size,
-        anchor: HistoryViewportAnchor,
-        states: &StateFrameView<'_>,
-        content: &mut dyn ContentProvider,
-    ) -> Result<StableScene, SceneHostError<E>> {
-        if self.has_unprepared_content() && self.content_requires_measurement() {
-            crate::perf::add(
-                crate::perf::Counter::ContentMetricEvaluations,
-                self.content_dirty.len() as u64,
-            );
-        }
-        if !self.invalidated_states.is_empty() {
-            // Parent cache entries do not encode every descendant state
-            // revision. A state mutation combined with a structural/component
-            // change must therefore discard both derived caches before the
-            // full candidate is measured and painted.
-            self.layout_cache.clear();
-            self.paint_cache.clear();
-        }
-        self.pending_damage = None;
-        let resolved = resolve_root_scene_with_anchor_and_cache_and_states_and_content(
-            scene,
-            registry,
-            size,
-            anchor,
-            &mut self.layout_cache,
-            states,
-            content,
-        )
-        .map_err(SceneHostError::Resolve)?;
-        let layout = layout_resolved_scene_with_cache_and_content(
-            &resolved.scene,
-            size,
-            &mut self.layout_cache,
-            content,
-        );
-        self.incremental_sync_components.clear();
-        self.incremental_topology_changed = false;
-        self.incremental_requires_full_sync = false;
-        self.incremental_paint_components.clear();
-        self.incremental_paint_states.clear();
-        self.incremental_paint_content.clear();
-        self.state_only_refresh = false;
-        self.incremental_paint_history = false;
-        self.history_only_refresh = false;
-        #[cfg(test)]
-        {
-            self.full_resolves += 1;
-        }
-        Ok(StableScene {
-            root: resolved,
-            layout,
-            history_identity: scene.history().map_or(0, crate::History::identity),
-            history_revision: scene.history().map_or(0, crate::History::revision),
-            native_history_revision: scene.history().map_or(0, crate::History::native_revision),
-        })
-    }
-
     fn try_incremental_stable(
         &mut self,
         scene: &Scene,
         registry: &mut ComponentRegistry,
         size: Size,
         anchor: HistoryViewportAnchor,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let history_revision = scene.history().map_or(0, crate::History::revision);
         let native_history_revision = scene.history().map_or(0, crate::History::native_revision);
         let history_identity = scene.history().map_or(0, crate::History::identity);
-        let Some(retained_state) = self.retained.as_ref() else {
+        let Some(retained_scene) = self.retained.as_ref() else {
             return Ok(None);
         };
-        if retained_state.layout.tree.size != size {
+        if retained_scene.layout.tree.size != size {
             return Ok(None);
         }
 
         let body_changed =
-            !crate::presentation::View::ptr_eq(&retained_state.root.body_view, scene.layout_body());
-        let history_changed = retained_state.history_identity != history_identity
-            || retained_state.history_revision != history_revision;
+            !crate::presentation::View::ptr_eq(&retained_scene.root.body_view, scene.layout_body());
+        let history_changed = retained_scene.history_identity != history_identity
+            || retained_scene.history_revision != history_revision;
         let native_history_changed =
-            retained_state.native_history_revision != native_history_revision;
+            retained_scene.native_history_revision != native_history_revision;
         let body_invalidated = self.invalidated_components.iter().any(|component| {
-            retained_state.root.scene.mounts.contains(*component)
-                && !retained_state.root.history_components.contains(component)
+            retained_scene.root.scene.mounts.contains(*component)
+                && !retained_scene.root.history_components.contains(component)
         });
         if self.theme_invalidated
             && self.invalidated_components.is_empty()
-            && self.invalidated_states.is_empty()
             && !self.has_unprepared_content()
             && !body_changed
             && !body_invalidated
@@ -1531,14 +1237,12 @@ impl SceneHost {
             let retained = self
                 .retained
                 .take()
-                .expect("retained state was checked above");
+                .expect("retained scene was checked above");
             self.incremental_sync_components.clear();
             self.incremental_topology_changed = false;
             self.incremental_requires_full_sync = false;
             self.incremental_paint_components.clear();
-            self.incremental_paint_states.clear();
             self.incremental_paint_content.clear();
-            self.state_only_refresh = false;
             self.incremental_paint_history = false;
             self.history_only_refresh = false;
             self.pending_damage = None;
@@ -1551,7 +1255,7 @@ impl SceneHost {
             // separate projection/receipt owner, so it conservatively takes
             // the normal root path while still reusing the targeted caches.
             let content_in_history =
-                retained_state
+                retained_scene
                     .root
                     .history_scene
                     .as_ref()
@@ -1562,7 +1266,6 @@ impl SceneHost {
                     });
             if !content_in_history
                 && self.invalidated_components.is_empty()
-                && self.invalidated_states.is_empty()
                 && !body_changed
                 && !body_invalidated
                 && !history_changed
@@ -1571,7 +1274,7 @@ impl SceneHost {
                 let mut retained = self
                     .retained
                     .take()
-                    .expect("retained state was checked above");
+                    .expect("retained scene was checked above");
                 let pending_ports = self.pending_content_ports();
                 if self.content_requires_measurement() {
                     crate::perf::add(
@@ -1619,8 +1322,6 @@ impl SceneHost {
                 self.incremental_topology_changed = false;
                 self.incremental_requires_full_sync = false;
                 self.incremental_paint_components.clear();
-                self.incremental_paint_states.clear();
-                self.state_only_refresh = false;
                 self.incremental_paint_history = false;
                 self.history_only_refresh = false;
                 self.pending_damage = None;
@@ -1632,172 +1333,6 @@ impl SceneHost {
             }
             return Ok(None);
         }
-        if !self.invalidated_states.is_empty()
-            && (!self.invalidated_components.is_empty()
-                || body_changed
-                || body_invalidated
-                || history_changed
-                || native_history_changed)
-        {
-            return Ok(None);
-        }
-        if !self.invalidated_states.is_empty()
-            && self.invalidated_components.is_empty()
-            && !body_changed
-            && !body_invalidated
-            && !history_changed
-            && !native_history_changed
-        {
-            let mut retained = self
-                .retained
-                .take()
-                .expect("retained state was checked above");
-            let mut state_ids = self.invalidated_states.iter().copied().collect::<Vec<_>>();
-            state_ids.sort_unstable();
-            let geometry_refresh = state_ids.iter().any(|state_id| {
-                self.invalidated_state_effects
-                    .get(state_id)
-                    .is_some_and(|effects| effects.geometry())
-            });
-            let geometry_state_ids = state_ids.clone();
-            let state_effects = self.invalidated_state_effects.clone();
-            // Cache entries are node-local; an ancestor entry does not encode
-            // every descendant state revision. Invalidate the affected paths
-            // in both derived caches before local or root refresh so a later
-            // full frame cannot reuse stale state presentation/geometry. If a
-            // state is no longer present in the retained tree, full clears are
-            // safer than guessing at a new path.
-            if let Some(view_ids) = state_paint_view_ids(&retained.layout.tree, &state_ids) {
-                self.layout_cache.invalidate_view_ids(&view_ids);
-                self.paint_cache.invalidate_view_ids(&view_ids);
-            } else {
-                self.layout_cache.clear();
-                self.paint_cache.clear();
-            }
-            let mut paint_states = Vec::with_capacity(state_ids.len());
-            for state_id in state_ids {
-                let Some(snapshot) = states.get(&state_id) else {
-                    self.retained = Some(retained);
-                    return Ok(None);
-                };
-                retained
-                    .root
-                    .scene
-                    .overlay
-                    .states
-                    .insert(state_id, snapshot.clone());
-                retained
-                    .root
-                    .body_scene
-                    .overlay
-                    .states
-                    .insert(state_id, snapshot.clone());
-                if let Some(history) = retained.root.history_scene.as_mut() {
-                    history.overlay.states.insert(state_id, snapshot.clone());
-                }
-                if geometry_refresh {
-                    continue;
-                }
-                if !retained
-                    .layout
-                    .tree
-                    .apply_state_snapshot(state_id, snapshot)
-                {
-                    self.retained = Some(retained);
-                    return Ok(None);
-                }
-                paint_states.push(state_id);
-            }
-            self.invalidated_states.clear();
-            self.invalidated_state_effects.clear();
-            self.incremental_sync_components.clear();
-            self.incremental_topology_changed = false;
-            self.incremental_requires_full_sync = false;
-            self.incremental_paint_components.clear();
-            self.incremental_paint_history = false;
-            self.history_only_refresh = false;
-            if geometry_refresh {
-                // A fill/fill occurrence has a fixed parent allocation, so its
-                // own measured subtree can be replaced without touching clean
-                // siblings or rebuilding the semantic scene.
-                if let Some(changed_components) = self.try_local_geometry_refresh(
-                    &mut retained,
-                    &geometry_state_ids,
-                    &state_effects,
-                    content,
-                ) {
-                    self.incremental_sync_components = changed_components;
-                    self.state_only_refresh = true;
-                    self.pending_damage = None;
-                    let mut paint_states = geometry_state_ids;
-                    sort_state_paint_ids(&retained.layout.tree, &mut paint_states);
-                    self.incremental_paint_states = paint_states;
-                    crate::perf::inc(crate::perf::Counter::ViewStateGeometryLocalPatches);
-                    return Ok(Some(retained));
-                }
-
-                // Geometry changes that can escape the target allocation use
-                // the retained resolved semantic root but rebuild only the
-                // derived candidate layout. Invalidate the target-to-root
-                // dependency frontier so clean sibling measurements remain
-                // reusable. No composition or structural publication occurs,
-                // and the old surface remains authoritative until the
-                // candidate is painted/committed.
-                let mut dirty_view_ids = HashSet::new();
-                for state_id in &geometry_state_ids {
-                    let Some(node_id) = retained.layout.tree.state_roots.get(state_id).copied()
-                    else {
-                        continue;
-                    };
-                    for ancestor in retained.layout.tree.path_to_root(node_id) {
-                        dirty_view_ids.insert(retained.layout.tree.node(ancestor).view_id);
-                    }
-                }
-                crate::perf::add(
-                    crate::perf::Counter::ViewStateDirtyPropagationNodes,
-                    dirty_view_ids.len() as u64,
-                );
-                if dirty_view_ids.is_empty() {
-                    self.layout_cache.clear();
-                } else {
-                    self.layout_cache.invalidate_view_ids(&dirty_view_ids);
-                }
-                let next_layout = layout_resolved_scene_with_cache_and_content(
-                    &retained.root.scene,
-                    size,
-                    &mut self.layout_cache,
-                    content,
-                );
-                let geometry_unchanged =
-                    layout_geometry_unchanged(&retained.layout.tree, &next_layout.tree);
-                self.pending_damage = Some(layout_geometry_damage(
-                    &retained.layout.tree,
-                    &next_layout.tree,
-                    size,
-                ));
-                retained.layout = next_layout;
-                crate::perf::inc(crate::perf::Counter::ViewStateGeometryRelayouts);
-                if geometry_unchanged {
-                    // The candidate box/effective content changed without
-                    // changing any physical rect or clip. Reuse the retained
-                    // surface and repaint only the affected state subtrees.
-                    self.state_only_refresh = true;
-                    let mut paint_states = geometry_state_ids;
-                    sort_state_paint_ids(&retained.layout.tree, &mut paint_states);
-                    self.incremental_paint_states = paint_states;
-                    crate::perf::inc(crate::perf::Counter::ViewStateGeometryLocalPatches);
-                } else {
-                    self.state_only_refresh = false;
-                    self.incremental_paint_states.clear();
-                    crate::perf::inc(crate::perf::Counter::ViewStateGeometryFullRepaints);
-                }
-                return Ok(Some(retained));
-            }
-            self.state_only_refresh = true;
-            sort_state_paint_ids(&retained.layout.tree, &mut paint_states);
-            self.incremental_paint_states = paint_states;
-            return Ok(Some(retained));
-        }
         if !body_changed
             && !body_invalidated
             && scene.history().is_some()
@@ -1808,7 +1343,7 @@ impl SceneHost {
             let retained = self
                 .retained
                 .take()
-                .expect("retained state was checked above");
+                .expect("retained scene was checked above");
             let affected = self
                 .invalidated_components
                 .iter()
@@ -1816,7 +1351,7 @@ impl SceneHost {
                 .filter(|component| retained.root.history_components.contains(component))
                 .collect();
             return self.refresh_history_projection(
-                scene, registry, size, anchor, retained, affected, false, states, content,
+                scene, registry, size, anchor, retained, affected, false, content,
             );
         }
 
@@ -1858,7 +1393,7 @@ impl SceneHost {
 
         let mut updates = Vec::with_capacity(roots.len());
         for id in &roots {
-            match prepare_component_subtree_update(&retained, registry, *id, states, content) {
+            match prepare_component_subtree_update(&retained, registry, *id, content) {
                 Ok(update) => updates.push(update),
                 Err(error) => {
                     self.retained = Some(retained);
@@ -1946,7 +1481,6 @@ impl SceneHost {
                 retained,
                 roots.clone(),
                 topology_changed || body_geometry_changed || body_patch_failed,
-                states,
                 content,
             );
         }
@@ -1990,7 +1524,6 @@ impl SceneHost {
         retained: StableScene,
         affected: Vec<ComponentId>,
         body_layout_changed: bool,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<Option<StableScene>, ResolveError> {
         let Some(history) = scene.history() else {
@@ -2024,7 +1557,6 @@ impl SceneHost {
         let body_geometry_changed =
             body_layout_changed || retained.root.history_height != history_height;
         let mut session = ResolveSession::new(registry);
-        session.set_state_snapshots(states);
         let projection = match project_into_session_for_host_with_content(
             history,
             Size::new(size.width, history_height),
@@ -2152,6 +1684,56 @@ impl SceneHost {
         }))
     }
 
+    fn resolve_full_stable<E>(
+        &mut self,
+        scene: &Scene,
+        registry: &mut ComponentRegistry,
+        size: Size,
+        anchor: HistoryViewportAnchor,
+        content: &mut dyn ContentProvider,
+    ) -> Result<StableScene, SceneHostError<E>> {
+        if self.has_unprepared_content() && self.content_requires_measurement() {
+            crate::perf::add(
+                crate::perf::Counter::ContentMetricEvaluations,
+                self.content_dirty.len() as u64,
+            );
+        }
+        self.pending_damage = None;
+        let resolved = resolve_root_scene_with_anchor_and_cache_and_content(
+            scene,
+            registry,
+            size,
+            anchor,
+            &mut self.layout_cache,
+            content,
+        )
+        .map_err(SceneHostError::Resolve)?;
+        let layout = layout_resolved_scene_with_cache_and_content(
+            &resolved.scene,
+            size,
+            &mut self.layout_cache,
+            content,
+        );
+        self.incremental_sync_components.clear();
+        self.incremental_topology_changed = false;
+        self.incremental_requires_full_sync = false;
+        self.incremental_paint_components.clear();
+        self.incremental_paint_content.clear();
+        self.incremental_paint_history = false;
+        self.history_only_refresh = false;
+        #[cfg(test)]
+        {
+            self.full_resolves += 1;
+        }
+        Ok(StableScene {
+            root: resolved,
+            layout,
+            history_identity: scene.history().map_or(0, crate::History::identity),
+            history_revision: scene.history().map_or(0, crate::History::revision),
+            native_history_revision: scene.history().map_or(0, crate::History::native_revision),
+        })
+    }
+
     fn paint(&mut self, resolved: StableScene, theme: &Theme) -> PreparedSceneFrame {
         let content = EmptyContentProvider;
         self.paint_with_content(resolved, theme, &content)
@@ -2166,14 +1748,6 @@ impl SceneHost {
         self.retained = Some(resolved);
         self.retained_content_dependencies.clear();
         let retained = self.retained.as_ref().expect("retained frame installed");
-        let state_bindings = retained.layout.tree.state_bindings();
-        let state_damage = DamageRegion::from_rects(
-            self.incremental_paint_states
-                .iter()
-                .filter_map(|id| retained.layout.tree.state_roots.get(id).copied())
-                .filter_map(|id| retained.layout.tree.incremental_paint_rect(id)),
-            retained.layout.tree.size,
-        );
         let content_damage = DamageRegion::from_rects(
             self.incremental_paint_content.iter().flat_map(|port_id| {
                 retained
@@ -2190,7 +1764,6 @@ impl SceneHost {
         if !self.full_paint_pending
             && (self.incremental_paint_history
                 || !self.incremental_paint_components.is_empty()
-                || !self.incremental_paint_states.is_empty()
                 || !self.incremental_paint_content.is_empty())
         {
             if let Some(mut surface) = self.last_surface.take() {
@@ -2216,27 +1789,6 @@ impl SceneHost {
                             content,
                         )
                     });
-                }
-                if incremental {
-                    for state_id in &self.incremental_paint_states {
-                        let Some(state_root) =
-                            retained.layout.tree.state_roots.get(state_id).copied()
-                        else {
-                            incremental = false;
-                            break;
-                        };
-                        if !ViewPainter.paint_subtree_into_with_content(
-                            &compiler,
-                            &retained.layout.tree,
-                            state_root,
-                            &mut surface,
-                            &mut incremental_cache,
-                            content,
-                        ) {
-                            incremental = false;
-                            break;
-                        }
-                    }
                 }
                 if incremental {
                     for component in self.incremental_paint_components.iter().copied() {
@@ -2281,11 +1833,8 @@ impl SceneHost {
                 }
                 self.incremental_paint_history = false;
                 self.incremental_paint_components.clear();
-                self.incremental_paint_states.clear();
                 self.incremental_paint_content.clear();
-                self.state_only_refresh = false;
                 if incremental {
-                    crate::perf::inc(crate::perf::Counter::ViewStateIncrementalPaints);
                     surface.physically_complete = retained.layout.tree.physically_complete;
                     let output = surface.clone();
                     self.last_surface = Some(surface);
@@ -2293,8 +1842,7 @@ impl SceneHost {
                         surface: output,
                         history_overlay: retained.root.history_overlay.clone(),
                         damage: self.pending_damage.take().unwrap_or_else(|| {
-                            let mut rects = state_damage.rects.clone();
-                            rects.extend(content_damage.rects.iter().copied());
+                            let rects = content_damage.rects.clone();
                             if rects.is_empty() {
                                 DamageRegion::full(retained.layout.tree.size)
                             } else {
@@ -2304,21 +1852,16 @@ impl SceneHost {
                         component_geometry: retained.layout.components.clone(),
                         view_geometry: retained.layout.tree.view_geometry(),
                         occurrence_geometry: HashMap::new(),
-                        state_bindings,
                     };
                 }
             }
             self.incremental_paint_history = false;
             self.incremental_paint_components.clear();
-            self.incremental_paint_states.clear();
             self.incremental_paint_content.clear();
-            self.state_only_refresh = false;
         }
         self.incremental_paint_history = false;
         self.incremental_paint_components.clear();
-        self.incremental_paint_states.clear();
         self.incremental_paint_content.clear();
-        self.state_only_refresh = false;
         #[cfg(test)]
         {
             self.full_paints += 1;
@@ -2343,113 +1886,8 @@ impl SceneHost {
             component_geometry: retained.layout.components.clone(),
             view_geometry: retained.layout.tree.view_geometry(),
             occurrence_geometry: HashMap::new(),
-            state_bindings,
         }
     }
-}
-
-fn sort_state_paint_ids(tree: &crate::presentation::layout::LayoutTree, state_ids: &mut [u64]) {
-    state_ids.sort_unstable_by_key(|state_id| {
-        tree.state_roots
-            .get(state_id)
-            .map_or(usize::MAX, |node| node.0)
-    });
-}
-
-fn state_paint_view_ids(
-    tree: &crate::presentation::layout::LayoutTree,
-    state_ids: &[u64],
-) -> Option<HashSet<crate::presentation::ir::ViewId>> {
-    let mut view_ids = HashSet::new();
-    for state_id in state_ids {
-        let node = tree.state_roots.get(state_id).copied()?;
-        for ancestor in tree.path_to_root(node) {
-            view_ids.insert(tree.node(ancestor).view_id);
-        }
-    }
-    Some(view_ids)
-}
-
-fn state_view_path(scene: &ResolvedScene, state_id: u64) -> Option<Vec<View>> {
-    fn visit(
-        view: &View,
-        overlay: &crate::scene::ResolutionOverlay,
-        state_id: u64,
-    ) -> Option<Vec<View>> {
-        if !view.flags().contains_state_attachment() && !view.contains_component_identity() {
-            return None;
-        }
-        if view.state_attachment_id() == Some(state_id) {
-            return Some(vec![view.clone()]);
-        }
-        let child_path = match view.kind() {
-            ViewKind::Text(_) | ViewKind::Spacer { .. } | ViewKind::ContentHost => None,
-            ViewKind::ComponentSlot(slot) => overlay
-                .component(slot.id)
-                .and_then(|snapshot| visit(&snapshot.view, overlay, state_id)),
-            ViewKind::Column(column) => column
-                .children
-                .iter()
-                .find_map(|child| visit(&child.view, overlay, state_id)),
-            ViewKind::Row(row) => row
-                .children
-                .iter()
-                .find_map(|child| visit(&child.view, overlay, state_id)),
-            ViewKind::Grid(grid) => grid
-                .cells
-                .iter()
-                .find_map(|cell| visit(&cell.view, overlay, state_id)),
-            ViewKind::Hanging(hanging) => visit(&hanging.prefix, overlay, state_id)
-                .or_else(|| visit(&hanging.continuation_prefix, overlay, state_id))
-                .or_else(|| visit(&hanging.body, overlay, state_id)),
-            ViewKind::Container(container) => visit(&container.child, overlay, state_id),
-            ViewKind::ClampRows(clamp) => visit(&clamp.child, overlay, state_id),
-            ViewKind::RowViewport(viewport) => visit(&viewport.child, overlay, state_id),
-        }?;
-        let mut path = Vec::with_capacity(child_path.len() + 1);
-        path.push(view.clone());
-        path.extend(child_path);
-        Some(path)
-    }
-
-    visit(&scene.view, &scene.overlay, state_id)
-}
-
-fn layout_geometry_unchanged(
-    previous: &crate::presentation::layout::LayoutTree,
-    next: &crate::presentation::layout::LayoutTree,
-) -> bool {
-    previous.size == next.size
-        && previous.nodes.len() == next.nodes.len()
-        && previous.nodes.iter().zip(&next.nodes).all(|(old, new)| {
-            old.rect == new.rect
-                && old.content_rect == new.content_rect
-                && old.clip_rect == new.clip_rect
-                && old.children == new.children
-        })
-}
-
-fn layout_geometry_damage(
-    previous: &crate::presentation::layout::LayoutTree,
-    next: &crate::presentation::layout::LayoutTree,
-    size: Size,
-) -> DamageRegion {
-    if previous.size != next.size || previous.nodes.len() != next.nodes.len() {
-        return DamageRegion::full(size);
-    }
-    let mut rects = Vec::new();
-    for (old, new) in previous.nodes.iter().zip(&next.nodes) {
-        if old.rect != new.rect
-            || old.content_rect != new.content_rect
-            || old.clip_rect != new.clip_rect
-            || old.occurrence != new.occurrence
-        {
-            crate::perf::inc(crate::perf::Counter::ViewStateDirtyPropagationNodes);
-            rects.push(old.rect);
-            rects.push(new.rect);
-        }
-    }
-    DamageRegion::from_rects(rects, size)
 }
 
 struct PreparedComponentSubtree {
@@ -2464,13 +1902,12 @@ fn prepare_component_subtree_update(
     retained: &StableScene,
     registry: &ComponentRegistry,
     id: ComponentId,
-    states: &StateFrameView<'_>,
     _content: &mut dyn ContentProvider,
 ) -> Result<PreparedComponentSubtree, ResolveError> {
     let snapshot = registry
         .resolution(id)
         .ok_or(ResolveError::MissingComponent { id })?;
-    let subtree = resolve_component_subtree_with_states(&snapshot.view, registry, id, states)?;
+    let subtree = resolve_component_subtree(&snapshot.view, registry, id)?;
     let graph = &retained.root.scene.mounts;
     let old_ids = graph.subtree_ids(id);
     if old_ids.is_empty() {
@@ -2549,20 +1986,6 @@ fn apply_component_subtree_update(retained: &mut StableScene, update: PreparedCo
             topology_changed,
         );
     }
-    // Every resolved branch uses the same frame-demanded state coordinate
-    // space. Keep the branch not traversed above in sync as well; otherwise a
-    // later History projection could merge an older overlay and hide a state
-    // captured by this body replacement (or vice versa).
-    if history_component {
-        retained
-            .root
-            .body_scene
-            .overlay
-            .states
-            .clone_from(&subtree.overlay.states);
-    } else if let Some(history) = retained.root.history_scene.as_mut() {
-        history.overlay.states.clone_from(&subtree.overlay.states);
-    }
 }
 
 fn apply_component_subtree_update_to_scene(
@@ -2595,16 +2018,6 @@ fn apply_component_subtree_update_to_scene(
         .overlay
         .components
         .extend(subtree.overlay.components.clone());
-    // The subtree resolver captures the complete frame-demanded state map,
-    // not only attachments physically nested below this component. Replace
-    // the branch map with that exact candidate map: additive extension would
-    // retain state Arcs for attachments removed by earlier slot replacements.
-    // The caller synchronizes the untouched body/History branch as well.
-    scene.overlay.states.clone_from(&subtree.overlay.states);
-    scene
-        .capabilities
-        .entries
-        .extend(subtree.capabilities.entries.clone());
     update_component_content_path_index(scene, id, subtree, old_ids);
 }
 
@@ -2709,15 +2122,11 @@ impl<E: std::fmt::Debug + 'static> std::error::Error for SceneHostError<E> {}
 mod tests {
     use super::*;
     use crate::presentation::factory as vf;
-    #[cfg(feature = "native-host")]
-    use crate::retained_state::{StateCandidateOverlay, ViewStateSnapshot};
     use crate::{
         BorderSpec, ColorSpec, Component, ComponentCx, ComponentHandle, InteractionResult, Key,
         KeyStroke, Scene, ScrollPane, StyleSelector, ThemeColor, View, backend::NativeHistorySink,
         component::ComponentRegistry, geometry::Size, physical::PhysicalRow,
     };
-    #[cfg(feature = "native-host")]
-    use std::sync::{Arc, Weak};
 
     #[derive(Debug)]
     struct LayoutAware {
@@ -3163,110 +2572,6 @@ mod tests {
 
     #[cfg(feature = "native-host")]
     #[test]
-    fn component_state_overlay_replaces_obsolete_demanded_entries_and_pins_old_candidates() {
-        fn stateful_view(id: u64, label: usize) -> View {
-            vf::text(format!("history-{label}"))
-                .native_with_state_attachment(id)
-                .expect("test state attachment must be valid")
-        }
-
-        let first_state = 70_001;
-        let mut registry = ComponentRegistry::new();
-        let handle = registry.register(IndexedContentComponent {
-            view: stateful_view(first_state, 0),
-        });
-        let mut history = crate::History::new();
-        history
-            .push(View::component(handle))
-            .expect("history component must be accepted");
-        let scene = Scene::with_history(history, vf::text("body"));
-        let size = Size::new(24, 6);
-        let now = Instant::now();
-        let mut host = SceneHost::default();
-        let committed = HashMap::new();
-        let mut content = EmptyContentProvider;
-        let mut previous_owner: Option<StableScene> = None;
-        let mut previous_weak: Option<Weak<ViewStateSnapshot>> = None;
-
-        for iteration in 0..32_u64 {
-            let state_id = first_state + iteration;
-            if iteration > 0 {
-                registry
-                    .with_mut(handle, |component| {
-                        component.view = stateful_view(state_id, iteration as usize);
-                    })
-                    .unwrap();
-                host.invalidate_component(handle.id());
-            }
-
-            let snapshot = Arc::new(ViewStateSnapshot {
-                id: state_id,
-                revision: iteration + 1,
-                ..ViewStateSnapshot::default()
-            });
-            let snapshot_weak = Arc::downgrade(&snapshot);
-            let candidate = StateCandidateOverlay::new(
-                iteration,
-                vec![state_id],
-                HashMap::from([(state_id, Arc::clone(&snapshot))]),
-            );
-            let states = StateFrameView::new(&committed, &candidate);
-            let resolved = host
-                .resolve_stable_at_with_anchor::<()>(
-                    &scene,
-                    &mut registry,
-                    size,
-                    now,
-                    HistoryViewportAnchor::FollowEnd,
-                    &states,
-                    &mut content,
-                )
-                .unwrap();
-            let _frame = host.paint_with_content(resolved, &Theme::default(), &content);
-
-            let retained = host.retained.as_ref().expect("painted scene is retained");
-            assert_eq!(retained.root.scene.overlay.states.len(), 1);
-            assert_eq!(retained.root.body_scene.overlay.states.len(), 1);
-            let history_scene = retained
-                .root
-                .history_scene
-                .as_ref()
-                .expect("history scene remains retained");
-            assert_eq!(history_scene.overlay.states.len(), 1);
-            assert_eq!(
-                history_scene
-                    .overlay
-                    .state(state_id)
-                    .expect("current History state snapshot")
-                    .revision,
-                iteration + 1
-            );
-
-            if let (Some(old_owner), Some(old_weak)) = (previous_owner.take(), previous_weak.take())
-            {
-                assert!(
-                    old_weak.upgrade().is_some(),
-                    "the old captured version must survive while its old frame owner lives"
-                );
-                drop(old_owner);
-                assert!(
-                    old_weak.upgrade().is_none(),
-                    "obsolete state snapshots must not remain in the current retained maps"
-                );
-            }
-            previous_owner = host.retained.clone();
-            previous_weak = Some(snapshot_weak);
-        }
-
-        if let (Some(final_owner), Some(final_weak)) = (previous_owner.take(), previous_weak.take())
-        {
-            drop(final_owner);
-            host.clear_retained_views();
-            assert!(final_weak.upgrade().is_none());
-        }
-    }
-
-    #[test]
     fn component_content_path_index_updates_same_and_switched_ports() {
         let mut registry = ComponentRegistry::new();
         let handle = registry.register(IndexedContentComponent {
@@ -3286,7 +2591,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3312,7 +2616,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3353,7 +2656,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3376,7 +2678,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3407,7 +2708,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3428,7 +2728,6 @@ mod tests {
                     size,
                     now,
                     HistoryViewportAnchor::FollowEnd,
-                    &StateFrameView::empty(),
                     &mut content,
                 )
                 .unwrap();
@@ -3531,7 +2830,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3566,7 +2864,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3631,7 +2928,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3652,7 +2948,6 @@ mod tests {
                 size,
                 now,
                 HistoryViewportAnchor::FollowEnd,
-                &StateFrameView::empty(),
                 &mut content,
             )
             .unwrap();
@@ -3908,61 +3203,6 @@ mod tests {
             cx.focusable();
             cx.on_focus_changed(Self::focus_changed);
         }
-    }
-
-    #[test]
-    fn semantic_state_crosses_component_boundary_and_nearest_override_wins() {
-        let mut registry = ComponentRegistry::new();
-        let field = registry.register(StatefulField);
-        let scene = Scene::new(crate::presentation::factory::style_state(
-            View::component(field),
-            "severity",
-            "warning",
-        ));
-        let theme = Theme::new()
-            .with_color("accent", ThemeColor::Indexed(2))
-            .with_color_variant(
-                "accent",
-                StyleSelector::state("severity", "warning"),
-                ThemeColor::Indexed(1),
-            )
-            .with_color_variant(
-                "accent",
-                StyleSelector::state("severity", "error"),
-                ThemeColor::Indexed(3),
-            );
-        let mut host = SceneHost::default();
-        let stable = host
-            .resolve_stable::<()>(&scene, &mut registry, Size::new(20, 4))
-            .unwrap();
-        let frame = host.paint(stable, &theme);
-        assert_eq!(
-            frame.surface.get(0, 0).style.foreground,
-            Some(crate::physical::PhysicalColor::Indexed(1))
-        );
-
-        let nested_view = crate::presentation::factory::column_specs(
-            vec![(
-                crate::presentation::ir::TrackSize::Content { max: None },
-                crate::presentation::factory::style_state(
-                    View::component(field),
-                    "severity",
-                    "error",
-                ),
-            )],
-            0,
-        );
-        let nested_view =
-            crate::presentation::factory::style_state(nested_view, "severity", "warning");
-        let nested = Scene::new(nested_view);
-        let stable = host
-            .resolve_stable::<()>(&nested, &mut registry, Size::new(20, 4))
-            .unwrap();
-        let frame = host.paint(stable, &theme);
-        assert_eq!(
-            frame.surface.get(0, 0).style.foreground,
-            Some(crate::physical::PhysicalColor::Indexed(3))
-        );
     }
 
     #[test]

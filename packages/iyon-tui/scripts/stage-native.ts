@@ -62,21 +62,36 @@ const addon = require(stagedAddon.pathname) as Record<string, unknown> & {
 const removedNativeClasses = [
 	"NativeMarkdownProjector",
 	"NativePlainProjector",
+	"NativeHistory",
+	"NativeViewSlot",
+	"NativeScrollPane",
 ];
 const removedNativeMethods: Readonly<Record<string, readonly string[]>> = {
-	NativeHistory: ["push", "freeze", "pushStream", "sealStream"],
-	NativeTuiHost: ["render", "createViewSlot", "scrollPane"],
-	NativeViewSlot: [
-		"setView",
-		"setAnimation",
-		"setAnimationAtCycleBoundary",
-		"stopAnimation",
+	NativeTuiHost: [
+		"render",
+		"createViewSlotRef",
+		"scrollPaneRef",
+		"setDesiredViewRef",
+		"viewState",
+		"tuiViewAbiHostPointer",
 	],
-	NativeScrollPane: ["setContent"],
 };
+const removedNativeExports = [
+	"bootstrap",
+	"tuiViewAbiBootstrap",
+	"runtimeNoop",
+	"viewStatusDetail",
+	"viewRenderRef",
+	"hostRenderRef",
+	"tuiPerfAbiProbe",
+	"tuiPerfAbiConformanceProbe",
+	"tuiViewEnvironmentCount",
+] as const;
 const nativeSurfaceOffenders: string[] = removedNativeClasses.filter(
 	(name) => addon[name] !== undefined,
 );
+for (const name of removedNativeExports)
+	if (addon[name] !== undefined) nativeSurfaceOffenders.push(name);
 for (const [className, methods] of Object.entries(removedNativeMethods)) {
 	const candidate = addon[className] as { prototype?: object } | undefined;
 	if (candidate?.prototype === undefined) continue;
@@ -107,11 +122,9 @@ if (contentMetadata.artifactPath !== realpathSync(stagedAddon.pathname)) {
 		`content ABI resolved a different artifact: ${contentMetadata.artifactPath}`,
 	);
 }
-const directQualificationExports = [
-	"tuiViewAbiBootstrap",
-	"tuiPerfAbiProbe",
-	"tuiPerfAbiConformanceProbe",
-];
+// Source direct FFI is part of the canonical addon. The deleted native View
+// ABI had a separate pointer/bootstrap qualification surface; no second UI
+// transport or feature-gated View qualification mode is allowed.
 const contentAbiSymbols = [
 	"iyon_tui_perf13_abi_metadata_v1",
 	"iyon_tui_source_append_utf8_v1",
@@ -120,7 +133,27 @@ const contentAbiSymbols = [
 	"iyon_tui_source_seal_v1",
 	"iyon_tui_source_head_truncate_v1",
 ];
-const directFeature = nativeFeatures.includes("direct-ffi");
+const removedViewAbiSymbols = [
+	"iyon_abi_probe_noop",
+	"iyon_abi_probe_u32_8",
+	"iyon_abi_probe_i32_4",
+	"iyon_abi_probe_buffer",
+	"iyon_abi_probe_cstring",
+	"iyon_abi_conformance_u8_8_v1",
+	"iyon_abi_conformance_u16_8_v1",
+	"iyon_abi_conformance_u32_8_v1",
+	"iyon_abi_conformance_u32_16_v1",
+	"iyon_abi_conformance_i32_4_v1",
+	"iyon_abi_conformance_f32_4_v1",
+	"iyon_abi_conformance_f64_4_v1",
+	"iyon_abi_conformance_pointer_v1",
+	"iyon_abi_conformance_buffer_v1",
+	"iyon_abi_conformance_cstring_v1",
+	"iyon_runtime_noop_v1",
+	"iyon_view_status_detail_v1",
+	"iyon_view_render_ref_v1",
+	"iyon_host_render_ref_v1",
+] as const;
 if (process.platform !== "win32") {
 	const nm = Bun.spawnSync({
 		cmd: [
@@ -145,44 +178,17 @@ if (process.platform !== "win32") {
 			`staged addon is missing content ABI symbols: ${missingContentSymbols.join(", ")}`,
 		);
 	}
-	const directSymbols =
-		symbols.match(
-			/(?:^|[\s_])_?iyon_(?:abi_(?:probe|conformance)_|(?:runtime|view|host|axis|path|edit|style)_.*_v1)\b/g,
-		) ?? [];
-	if (
-		directFeature &&
-		(!symbols.includes("iyon_abi_probe_noop") ||
-			!symbols.includes("iyon_runtime_noop_v1"))
-	) {
-		throw new Error(
-			"direct-ffi staged addon is missing its qualification symbol surface",
-		);
-	}
-	if (!directFeature && directSymbols.length > 0) {
-		throw new Error(
-			`default staged addon exposes direct-ffi symbols: ${directSymbols.slice(0, 8).join(", ")}`,
-		);
-	}
-}
-if (directFeature) {
-	const missing = directQualificationExports.filter(
-		(name) => typeof addon[name] !== "function",
+	const leakedViewAbiSymbols = removedViewAbiSymbols.filter((symbol) =>
+		symbols.includes(symbol),
 	);
-	if (missing.length > 0)
+	if (leakedViewAbiSymbols.length > 0) {
 		throw new Error(
-			`direct-ffi staged addon is missing qualification exports: ${missing.join(", ")}`,
-		);
-} else {
-	const leaked = directQualificationExports.filter(
-		(name) => typeof addon[name] === "function",
-	);
-	if (leaked.length > 0 || typeof addon.tuiViewAbiSession !== "function") {
-		throw new Error(
-			`default staged addon has an invalid transport surface: leaked=[${leaked.join(", ")}]`,
+			`staged addon exposes removed View ABI probe symbols: ${leakedViewAbiSymbols.join(", ")}`,
 		);
 	}
 }
 
-console.log(
-	`staged ${stagedAddon.pathname} for ${targetKey}${directFeature ? " (direct-ffi feature)" : " (default N-API)"}`,
-);
+const buildKind = nativeFeatures.includes("perf-counters")
+	? "perf-counters instrumentation"
+	: "default N-API";
+console.log(`staged ${stagedAddon.pathname} for ${targetKey} (${buildKind})`);

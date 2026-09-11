@@ -3,69 +3,18 @@
  *
  * Application/session bindings deliberately do not belong here. The addon is
  * the S6 `iyon-tui-native` artifact and this contract exposes only framework
- * handles, View ABI calls, and generic terminal operations.
+ * handles, direct-occurrence UI commits, and generic terminal operations.
  */
 
 import { tuiError } from "../../api/errors.ts";
-import type { NativeViewAbiHandle } from "../abi/structural/generated/view_abi.ts";
 import { resolveNativeArtifact } from "./artifact.ts";
-export type { NativeViewAbiHandle };
 
 export interface NativeTuiOutputContract {
 	readonly output?: unknown;
 }
 
-export interface NativeHistoryContract {
-	dispose(): void;
-	layout(): object;
-	setLayout(layout: object): void;
-	isDetached(): boolean;
-	pushRef(viewRef: number): number;
-	freezeRef(unit: number, viewRef: number): void;
-	discardLive(unit: number): void;
-}
-
-export interface NativeStateWake {
+export interface NativeWake {
 	readonly schedule_environment_drain: boolean;
-}
-
-export interface NativeStructuralAttachmentContract {
-	attachmentId(): number;
-}
-
-export interface NativeViewStateContract
-	extends NativeStructuralAttachmentContract {
-	dispose(): void;
-	stateId(): number;
-	validateNodeKind(targetNodeKind: number): void;
-	setGeometry(
-		setMask: number,
-		nullMask: number,
-		clearMask: number,
-		words: readonly number[],
-		strings: readonly string[],
-	): number;
-	clearGeometry(
-		setMask: number,
-		nullMask: number,
-		clearMask: number,
-		clearAll: boolean,
-	): number;
-	setPresentation(
-		setMask: number,
-		nullMask: number,
-		clearMask: number,
-		words: readonly number[],
-		strings: readonly string[],
-	): number;
-	clearPresentation(
-		setMask: number,
-		nullMask: number,
-		clearMask: number,
-		clearAll: boolean,
-	): number;
-	setStyleState(key: string, value: string): number;
-	clearStyleState(key: string): number;
 }
 
 export interface NativeTextInputContract {
@@ -93,19 +42,18 @@ export interface NativeTextSourceContract {
 }
 
 export interface NativeContentConnectorContract {
-	activate(): NativeStateWake;
-	deactivate(): NativeStateWake;
-	dispose(): NativeStateWake;
+	activate(): NativeWake;
+	deactivate(): NativeWake;
+	dispose(): NativeWake;
 	status(): object;
 }
 
-export interface NativeContentPortContract
-	extends NativeStructuralAttachmentContract {
+export interface NativeContentPortContract {
 	dispose(): void;
 	portId(): number;
 	portGeneration(): number;
 	family(): string;
-	deactivate(): NativeStateWake;
+	deactivate(): NativeWake;
 	connect(
 		source: NativeTextSourceContract,
 		kind: "plain" | "markdown" | "diff" | "ansi",
@@ -120,66 +68,6 @@ export interface NativeContentPortContract
 	mounted(): boolean;
 }
 
-export interface NativeViewSlotContract {
-	dispose(): void;
-	revision(): number;
-	componentId(): number | null;
-	setViewRef(viewRef: number): void;
-	setAnimationRef1(ref0: number, intervalMs: number): void;
-	setAnimationRef2(ref0: number, ref1: number, intervalMs: number): void;
-	setAnimationRef3(
-		ref0: number,
-		ref1: number,
-		ref2: number,
-		intervalMs: number,
-	): void;
-	setAnimationRef4(
-		ref0: number,
-		ref1: number,
-		ref2: number,
-		ref3: number,
-		intervalMs: number,
-	): void;
-	setAnimationRef1AtCycleBoundary(ref0: number, intervalMs: number): void;
-	setAnimationRef2AtCycleBoundary(
-		ref0: number,
-		ref1: number,
-		intervalMs: number,
-	): void;
-	setAnimationRef3AtCycleBoundary(
-		ref0: number,
-		ref1: number,
-		ref2: number,
-		intervalMs: number,
-	): void;
-	setAnimationRef4AtCycleBoundary(
-		ref0: number,
-		ref1: number,
-		ref2: number,
-		ref3: number,
-		intervalMs: number,
-	): void;
-	setAnimationRefs(
-		refs: Uint32Array,
-		usedCount: number,
-		intervalMs: number,
-	): void;
-	setAnimationRefsAtCycleBoundary(
-		refs: Uint32Array,
-		usedCount: number,
-		intervalMs: number,
-	): void;
-	stopAnimation(view: object): void;
-	stopAnimationRef(viewRef: number): void;
-}
-
-export interface NativeScrollPaneContract {
-	dispose(): void;
-	componentId(): number | null;
-	setContentRef(viewRef: number): void;
-	followEnd(): void;
-}
-
 export interface NativeHostEpochs {
 	readonly host_id: string | number;
 	readonly desired_structural_revision: string | number;
@@ -192,13 +80,10 @@ export interface NativeHostEpochs {
 export interface NativeTuiHostContract {
 	dispose(): void;
 	exit(): void;
-	history(): object;
-	viewState(): NativeViewStateContract;
 	contentPort(family?: string): NativeContentPortContract;
 	disposeContentResources(): void;
 	textInput(multiline?: boolean, border?: object): NativeTextInputContract;
 	setTheme(theme: object): void;
-	setHistory(history: object): void;
 	exited(): boolean;
 	bindKey(
 		key: string,
@@ -288,11 +173,6 @@ export interface NativeTuiHostContract {
 		ownedContent: Uint8Array,
 		sources: readonly NativeTextSourceContract[],
 	): Uint32Array;
-	setDesiredViewRef(viewRef: number): {
-		readonly host_id: string | number;
-		readonly schedule_environment_drain: boolean;
-	};
-	clearViewStateBindings(): void;
 	flushPendingHosts(
 		budget?: number,
 		forceRetry?: boolean,
@@ -318,8 +198,6 @@ export interface NativeTuiHostContract {
 	};
 	resize(width: number, height: number): void;
 	advanceTime(milliseconds: number): void;
-	createViewSlotRef(viewRef: number): object;
-	scrollPaneRef(viewRef: number): object;
 	styleAt(row: number, column: number): object | null;
 	cellXOfText(row: number, text: string): number | null;
 }
@@ -327,42 +205,6 @@ export interface NativeTuiHostContract {
 export interface NativeTuiAddon {
 	nativeVersion(): string;
 	tuiSmoke(): string;
-	tuiViewAbiMaintain?: (full?: boolean) => {
-		full: boolean;
-		semantic_cache_entries: number;
-		native_ref_slots: number;
-		scavenge_queue_len: number;
-		scavenge_processed: number;
-		semantic_cache_full_sweeps: number;
-	};
-	tuiViewRuntimeMemorySnapshot?: (countLive?: boolean) => {
-		semantic_cache_entries: number;
-		semantic_cache_live: number;
-		native_ref_slots: number;
-		native_ref_pages: number;
-		native_ref_pages_freed: number;
-		leased_slots: number;
-		unleased_live_slots: number;
-		node_ref_entries: number;
-		path_nodes: number;
-		path_keys: number;
-		builders: number;
-		edit_txns: number;
-		style_refs: number;
-		string_bytes: number | null;
-		scavenge_queue: number;
-		scavenge_processed: number;
-		semantic_cache_expired_seen: number;
-		semantic_cache_full_sweeps: number;
-		semantic_cache_entries_removed: number;
-		native_ref_expired_slots_removed: number;
-		nodes_inserted_since_full_sweep: number;
-		generation: number;
-		alive: boolean;
-	};
-	tuiViewAbiSession: () => NativeViewAbiHandle;
-	tuiViewEnvironmentCount(): number;
-	NativeHistory?: new () => NativeHistoryContract;
 	NativeTextInput?: new (multiline?: boolean) => NativeTextInputContract;
 	NativeTuiHost?: new (
 		width?: number,

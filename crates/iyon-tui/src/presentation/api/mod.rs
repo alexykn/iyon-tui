@@ -19,5 +19,3 @@ pub use style::{
 };
 pub(crate) use style::{StyleFacts, StyleStates};
 pub(crate) use text::{HorizontalAlign, TextSpan, WrapMode};
-#[cfg(feature = "native-host")]
-pub use view::NativeCommonPatch;

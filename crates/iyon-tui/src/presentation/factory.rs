@@ -86,7 +86,6 @@ fn text_with_rules_cursor(
         decoration,
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Text(Arc::new(super::ir::TextView {
             spans: spans.into(),
@@ -168,7 +167,6 @@ pub(crate) fn row(children: Vec<View>, gap: u16) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Row(Arc::new(RowView {
             children: PersistentSeq::from_vec(
@@ -198,7 +196,6 @@ pub(crate) fn row_specs<V: Into<View>>(
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Row(Arc::new(RowView {
             children: PersistentSeq::from_vec(children),
@@ -219,7 +216,6 @@ fn column_with_rules(children: Vec<View>, gap: u16, width: WidthRule, height: He
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Column(Arc::new(ColumnView {
             children: PersistentSeq::from_vec(
@@ -247,7 +243,6 @@ pub(crate) fn column_specs<V: Into<View>>(
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Column(Arc::new(ColumnView {
             children: PersistentSeq::from_vec(children),
@@ -263,7 +258,6 @@ pub(crate) fn column_persistent(children: PersistentSeq<ColumnChild>, gap: u16) 
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Column(Arc::new(ColumnView { children, gap })),
     })
@@ -311,7 +305,6 @@ pub(crate) fn hanging(prefix: View, continuation_prefix: View, body: View) -> Vi
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Hanging(Arc::new(HangingView {
             prefix,
@@ -328,7 +321,6 @@ pub(crate) fn spacer(rows: u16) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Spacer { rows },
     })
@@ -344,7 +336,6 @@ pub(crate) fn content_host(port_id: u64) -> Result<View, String> {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: Some(port_id),
         kind: ViewKind::ContentHost,
     }))
@@ -358,7 +349,6 @@ pub(crate) fn native_component(raw_id: u64) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::ComponentSlot(super::ir::ComponentSlotNode {
             id: ComponentId::from_raw(raw_id),
@@ -373,7 +363,6 @@ pub(crate) fn component<C>(handle: ComponentHandle<C>) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::ComponentSlot(super::ir::ComponentSlotNode { id: handle.id() }),
     })
@@ -387,67 +376,9 @@ pub(crate) fn container(view: View) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Container(Arc::new(ContainerNode { child: view })),
     })
-}
-
-#[cfg(feature = "native-host")]
-pub(crate) fn native_patched(base: View, patch: &super::api::NativeCommonPatch) -> View {
-    let mut parts = ViewNodeParts::from_view(&base);
-    if let Some(padding) = patch.padding {
-        parts.decoration.padding = padding;
-    }
-    if let Some(background) = &patch.background {
-        parts.decoration.surface_background = Some(background.clone());
-    }
-    if let Some(foreground) = &patch.foreground {
-        parts
-            .decoration
-            .text_style
-            .overlay(&StyleSpec::new().foreground(foreground.clone()));
-    }
-    if let Some(border) = &patch.border {
-        parts.decoration.border = Some(border.clone());
-    }
-    if let Some(style) = &patch.style {
-        if style.theme.is_some() {
-            parts.decoration.text_style = style.clone();
-        } else {
-            parts.decoration.text_style.overlay(&style.local);
-        }
-    }
-    for (key, value) in &patch.style_states {
-        parts.style_states.set(key.clone(), value.clone());
-    }
-    if let Some(fill) = patch.width_fill {
-        parts.width = if fill {
-            WidthRule::Fill
-        } else {
-            WidthRule::Fit
-        };
-    }
-    if let Some(fill) = patch.height_fill {
-        parts.height = if fill {
-            HeightRule::Fill
-        } else {
-            HeightRule::Fit
-        };
-    }
-    if let Some(min) = patch.min_width {
-        parts.decoration.bounds.width.min = min;
-    }
-    if let Some(max) = patch.max_width {
-        parts.decoration.bounds.width.max = max;
-    }
-    if let Some(min) = patch.min_height {
-        parts.decoration.bounds.height.min = min;
-    }
-    if let Some(max) = patch.max_height {
-        parts.decoration.bounds.height.max = max;
-    }
-    View::from_node(parts)
 }
 
 pub(crate) fn clamp_rows(view: View, max_rows: u16, overflow: OverflowIndicator) -> View {
@@ -458,7 +389,6 @@ pub(crate) fn clamp_rows(view: View, max_rows: u16, overflow: OverflowIndicator)
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::ClampRows(Arc::new(ClampRowsView {
             child: view,
@@ -475,7 +405,6 @@ pub(crate) fn row_viewport(child: View, skip_rows: u16, visible_height: Option<u
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::RowViewport(Arc::new(super::ir::RowViewportView {
             child,
@@ -498,7 +427,6 @@ pub(crate) fn bounded_row_viewport(child: View, height: u16) -> View {
         decoration: Decoration::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::RowViewport(Arc::new(super::ir::RowViewportView {
             child,

@@ -48,13 +48,9 @@ jobs:
           bun run check:tui-abi
           cargo test -p tui-abi-gen
           git diff --exit-code -- \
-            crates/iyon-tui-native/src/generated \
-            crates/iyon-tui-native/include \
-            crates/iyon-tui-native/tests/generated_view_abi.rs \
-            packages/iyon-tui/src/transport/abi/structural/generated \
-            packages/iyon-tui/tests/generated \
-            packages/iyon-tui/bench/generated \
-            docs/history/perf/PERF-11-generated-abi-reference.md
+            crates/iyon-tui/src/occurrence/generated.rs \
+            packages/iyon-tui/src/transport/ui/generated \
+            docs/architecture/generated/UI-ABI-REFERENCE.md
 
       - name: Stage and load default N-API addon
         run: bun run native:stage
@@ -68,19 +64,20 @@ jobs:
 
       - name: Run default N-API tests
         run: bun test packages/iyon-tui/tests packages/tui-consumer-fixture/tests
+      - name: Run packaged React/native smoke
+        run: bun run native:smoke
 
-      - name: Stage and load direct FFI addon
-        run: ION_NATIVE_FEATURES=direct-ffi bun run packages/iyon-tui/scripts/stage-native.ts
+      - name: Run canonical Source content FFI tests
+        run: cargo test -p iyon-tui-native content_ffi::tests --lib
 
-      - name: Run direct FFI parity smoke
+      - name: Run instrumented React content benchmark
         run: |
-          T15_TRANSPORT=feature_gated_direct_ffi \
-          T15_WORKLOAD=plain_text \
-          T15_MODE=shared_path \
-          T15_SIZE=20 \
-          T15_WARMUP=2 \
-          T15_MEASURED=20 \
-          bun run packages/iyon-tui/bench/perf12_t15_authoritative_case.ts
+          ION_NATIVE_FEATURES=perf-counters bun run native:stage
+          ION_CONTENT_BENCH_COUNT=1000 bun run perf:content
+
+      - name: Restore default N-API addon
+        if: always()
+        run: bun run native:stage
 
       - name: Check generated files are clean
         run: |

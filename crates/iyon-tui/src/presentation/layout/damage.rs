@@ -1,5 +1,3 @@
-//! Rectangle damage produced by retained-state presentation changes.
-
 use crate::geometry::{Rect, Size};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -38,10 +36,6 @@ impl DamageRegion {
             }
             merged.push(current);
         }
-        crate::perf::add(
-            crate::perf::Counter::ViewStateDamageRects,
-            merged.len() as u64,
-        );
         let total_area = merged
             .iter()
             .map(|rect| u32::from(rect.width) * u32::from(rect.height))
@@ -50,7 +44,6 @@ impl DamageRegion {
         let full = merged.len() > 64
             || (viewport_area > 0 && total_area.saturating_mul(2) >= viewport_area);
         if full {
-            crate::perf::inc(crate::perf::Counter::ViewStateFullDamageRepaints);
             return Self::full(viewport.size());
         }
         Self {

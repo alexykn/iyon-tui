@@ -130,7 +130,6 @@ pub(crate) fn layout_view_with_overlay_and_cache_in_scope_and_content(
         physically_complete: prepared.complete,
         component_roots: Default::default(),
         parents: Vec::new(),
-        state_roots: Default::default(),
         content_roots: Default::default(),
         child_y_sorted: Vec::new(),
     };

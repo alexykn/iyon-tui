@@ -62,3 +62,23 @@ bun run native:stage # restore the ordinary addon for development and checks
 `nativeCounters` measures actual native projection, layout, paint and content
 work; it is not inferred from those submitted records. The result also records
 delivered native output and the confirmed visible receipt revision.
+
+## T5/M1 validation status
+
+The old native View publication ABI, generated View outputs, and ordinary
+Rust/native ViewState registry are absent from the current source. React is the
+only production UI route. This is a deletion checkpoint, not M1 acceptance.
+Animation ticking, persistent stop behavior, and pending-command/retirement
+ordering corrections are deferred to a separate follow-up commit. The private
+`LegacySceneAdapter`, current renderer/layout internals, native control
+mechanics, and independent History/content helpers remain as M2 residue until
+the direct Taffy and semantic-content deletion gates pass.
+
+The deletion-only source passed `cargo fmt --all -- --check`,
+`cargo check --workspace --all-features`, and `bun run check:ownership` on
+macOS arm64. Earlier full-suite and packaged-addon results cover intermediate
+working trees, not this exact checkpoint. The staged addon has not been rebuilt
+for the deletion-only tree; final runtime validation follows the animation
+corrections. Source content FFI remains part of the canonical addon, with
+staging symbol checks and native `content_ffi::tests`; there is no separate
+direct-FFI UI artifact or route. Linux x64 remains a CI-only matrix gate.

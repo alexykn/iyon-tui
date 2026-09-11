@@ -93,6 +93,7 @@ impl Scene {
         self.body = body;
     }
 
+    #[cfg(test)]
     pub(crate) fn set_history(&mut self, history: History) {
         self.history = Some(history);
     }
@@ -163,46 +164,25 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache(
     anchor: HistoryViewportAnchor,
     cache: &mut LayoutCache,
 ) -> Result<ResolvedRootScene, ResolveError> {
-    resolve_root_scene_with_anchor_and_cache_and_states(
+    resolve_root_scene_with_anchor_and_cache_and_content(
         root,
         registry,
         size,
         anchor,
         cache,
-        &crate::retained_state::StateFrameView::empty(),
+        &mut EmptyContentProvider,
     )
 }
 
-pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states(
+pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_content(
     root: &Scene,
     registry: &ComponentRegistry,
     size: Size,
     anchor: HistoryViewportAnchor,
     cache: &mut LayoutCache,
-    states: &crate::retained_state::StateFrameView<'_>,
-) -> Result<ResolvedRootScene, ResolveError> {
-    let mut content = EmptyContentProvider;
-    resolve_root_scene_with_anchor_and_cache_and_states_and_content(
-        root,
-        registry,
-        size,
-        anchor,
-        cache,
-        states,
-        &mut content,
-    )
-}
-
-pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
-    root: &Scene,
-    registry: &ComponentRegistry,
-    size: Size,
-    anchor: HistoryViewportAnchor,
-    cache: &mut LayoutCache,
-    states: &crate::retained_state::StateFrameView<'_>,
     content: &mut dyn ContentProvider,
 ) -> Result<ResolvedRootScene, ResolveError> {
-    let body_scene = resolve_branch(root.layout_body(), registry, states)?;
+    let body_scene = resolve_branch(root.layout_body(), registry)?;
     let body_height = measure_view_with_overlay_and_cache_and_content(
         &body_scene.view,
         size.width,
@@ -222,7 +202,6 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
         match root.history.as_ref() {
             Some(history) => {
                 let mut session = ResolveSession::new(registry);
-                session.set_state_snapshots(states);
                 let projection = project_into_session_for_host_with_content(
                     history,
                     Size::new(size.width, history_height),
@@ -263,10 +242,8 @@ pub(crate) fn resolve_root_scene_with_anchor_and_cache_and_states_and_content(
 fn resolve_branch(
     view: &View,
     registry: &ComponentRegistry,
-    states: &crate::retained_state::StateFrameView<'_>,
 ) -> Result<ResolvedScene, ResolveError> {
     let mut session = ResolveSession::new(registry);
-    session.set_state_snapshots(states);
     let view = session.resolve_root(view)?;
     Ok(session.finish(view))
 }
@@ -279,21 +256,7 @@ pub(crate) fn resolve_component_subtree(
     registry: &ComponentRegistry,
     parent: ComponentId,
 ) -> Result<ResolvedScene, ResolveError> {
-    resolve_component_subtree_with_states(
-        view,
-        registry,
-        parent,
-        &crate::retained_state::StateFrameView::empty(),
-    )
-}
-
-pub(crate) fn resolve_component_subtree_with_states(
-    view: &View,
-    registry: &ComponentRegistry,
-    parent: ComponentId,
-    states: &crate::retained_state::StateFrameView<'_>,
-) -> Result<ResolvedScene, ResolveError> {
-    let mut resolved = resolve_branch(view, registry, states)?;
+    let mut resolved = resolve_branch(view, registry)?;
     resolved.mounts.reparent_roots(parent);
     Ok(resolved)
 }
@@ -431,7 +394,6 @@ fn root_view(history: Option<View>, body: View) -> View {
         decoration: Default::default(),
         style_states: StyleStates::default(),
         style_facts: StyleFacts::default(),
-        state_attachment: None,
         content_attachment: None,
         kind: ViewKind::Column(Arc::new(ColumnView {
             children: PersistentSeq::from_vec(children),

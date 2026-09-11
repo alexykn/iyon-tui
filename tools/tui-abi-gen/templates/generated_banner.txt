@@ -1,3 +1,0 @@
-// DO NOT EDIT. Generated from tools/tui-abi/view_abi.toml.
-// schema_blake3 = {{ schema_hash }}
-// generator_blake3 = {{ generator_hash }}

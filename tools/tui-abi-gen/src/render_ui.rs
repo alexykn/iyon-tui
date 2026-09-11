@@ -56,7 +56,43 @@ pub fn rust_schema(document: &UiAbiDocument, schema_hash: &str, generator_hash: 
     render_rust_effect_schema(&mut output, document);
     render_rust_wire_schema(&mut output, document);
     render_rust_properties(&mut output, document);
-    crate::render_rust::format_rust(output)
+    format_rust(output)
+}
+
+fn format_rust(source: String) -> String {
+    let body_start = ["\n//!", "\n#[", "\npub ", "\npub(super)"]
+        .iter()
+        .filter_map(|marker| source.find(marker).map(|index| index + 1))
+        .min();
+    let Some(body_start) = body_start else {
+        return source;
+    };
+    let (prefix, body) = source.split_at(body_start);
+    let formatted = rustfmt_body(body).unwrap_or_else(|| {
+        syn::parse_file(body)
+            .map(|file| prettyplease::unparse(&file))
+            .unwrap_or_else(|_| body.to_owned())
+    });
+    format!("{prefix}{}\n", formatted.trim_end())
+}
+
+fn rustfmt_body(body: &str) -> Option<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut process = Command::new("rustfmt")
+        .args(["--edition", "2024", "--emit", "stdout"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    process.stdin.take()?.write_all(body.as_bytes()).ok()?;
+    let output = process.wait_with_output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8(output.stdout).ok())
+        .flatten()
 }
 
 fn render_rust_code_enum(output: &mut String, enum_name: &str, values: &[impl CodeValue]) {

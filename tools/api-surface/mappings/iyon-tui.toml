@@ -171,54 +171,6 @@ note = "L1-01 internal binding seam projection (unsupported)"
 
 [[records]]
 
-item_id = "iyon-tui::presentation::api::grid::GridCellSpec"
-path = "iyon-tui::binding::GridCellSpec"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::GridCellSpec"
-typescript_module = "iyon:tui"
-typescript_export = "binding__GridCellSpec"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
-item_id = "iyon-tui::presentation::api::grid::GridTrack"
-path = "iyon-tui::binding::GridTrack"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::GridTrack"
-typescript_module = "iyon:tui"
-typescript_export = "binding__GridTrack"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
-item_id = "iyon-tui::history::model::History"
-path = "iyon-tui::binding::History"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::History"
-typescript_module = "iyon:tui"
-typescript_export = "binding__History"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
-item_id = "iyon-tui::history::layout::HistoryLayout"
-path = "iyon-tui::binding::HistoryLayout"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::HistoryLayout"
-typescript_module = "iyon:tui"
-typescript_export = "binding__HistoryLayout"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
 item_id = "iyon-tui::presentation::api::text::HorizontalAlign"
 path = "iyon-tui::binding::HorizontalAlign"
 strategy = "MirrorValue"
@@ -471,18 +423,6 @@ note = "L1-01 internal binding seam projection (unsupported)"
 
 [[records]]
 
-item_id = "iyon-tui::presentation::ir::View"
-path = "iyon-tui::binding::View"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::View"
-typescript_module = "iyon:tui"
-typescript_export = "binding__View"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
 item_id = "iyon-tui::presentation::api::text::WrapMode"
 path = "iyon-tui::binding::WrapMode"
 strategy = "MirrorValue"
@@ -550,17 +490,6 @@ status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
 [[records]]
 
-item_id = "iyon-tui::retained_state::geometry::GeometryAlignment"
-path = "iyon-tui::binding::GeometryAlignment"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::GeometryAlignment"
-typescript_module = "iyon:tui"
-typescript_export = "binding__GeometryAlignment"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
 item_id = "iyon-tui::application::host::HostCellStyle"
 path = "iyon-tui::binding::HostCellStyle"
 strategy = "InternalBinding"
@@ -616,67 +545,12 @@ status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
 [[records]]
 
-item_id = "iyon-tui::application::host::HostHistory"
-path = "iyon-tui::binding::HostHistory"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::HostHistory"
-typescript_module = "iyon:tui"
-typescript_export = "binding__HostHistory"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::application::host::HostScrollPane"
-path = "iyon-tui::binding::HostScrollPane"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::HostScrollPane"
-typescript_module = "iyon:tui"
-typescript_export = "binding__HostScrollPane"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
 item_id = "iyon-tui::application::host::HostTextInput"
 path = "iyon-tui::binding::HostTextInput"
 strategy = "InternalBinding"
 rust_path = "iyon-tui::binding::HostTextInput"
 typescript_module = "iyon:tui"
 typescript_export = "binding__HostTextInput"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::application::host::HostViewSlot"
-path = "iyon-tui::binding::HostViewSlot"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::HostViewSlot"
-typescript_module = "iyon:tui"
-typescript_export = "binding__HostViewSlot"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::application::view_state::HostViewState"
-path = "iyon-tui::binding::HostViewState"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::HostViewState"
-typescript_module = "iyon:tui"
-typescript_export = "binding__HostViewState"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::presentation::ir::RetainedPathStep"
-path = "iyon-tui::binding::RetainedPathStep"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::RetainedPathStep"
-typescript_module = "iyon:tui"
-typescript_export = "binding__RetainedPathStep"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
@@ -737,89 +611,12 @@ status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
 [[records]]
 
-item_id = "iyon-tui::retained_state::geometry::ViewStateGeometryPatch"
-path = "iyon-tui::binding::ViewStateGeometryPatch"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStateGeometryPatch"
-typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStateGeometryPatch"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::retained_state::geometry::ViewStateGeometryProperty"
-path = "iyon-tui::binding::ViewStateGeometryProperty"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStateGeometryProperty"
-typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStateGeometryProperty"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::retained_state::presentation::ViewStatePresentationPatch"
-path = "iyon-tui::binding::ViewStatePresentationPatch"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStatePresentationPatch"
-typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStatePresentationPatch"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::retained_state::presentation::ViewStatePresentationProperty"
-path = "iyon-tui::binding::ViewStatePresentationProperty"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStatePresentationProperty"
-typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStatePresentationProperty"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::retained_state::geometry::ViewStateSizeMode"
-path = "iyon-tui::binding::ViewStateSizeMode"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::ViewStateSizeMode"
-typescript_module = "iyon:tui"
-typescript_export = "binding__ViewStateSizeMode"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::presentation::api::style::TextAttributeSpec"
-path = "iyon-tui::binding::TextAttributeSpec"
-strategy = "MirrorValue"
-rust_path = "iyon-tui::binding::TextAttributeSpec"
-typescript_module = "iyon:tui"
-typescript_export = "binding__TextAttributeSpec"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-07 single sparse-attribute vocabulary; replaces ViewStateTextAttributes"
-[[records]]
-
 item_id = "iyon-tui::application::environment::WakeDisposition"
 path = "iyon-tui::binding::WakeDisposition"
 strategy = "InternalBinding"
 rust_path = "iyon-tui::binding::WakeDisposition"
 typescript_module = "iyon:tui"
 typescript_export = "binding__WakeDisposition"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-01 internal binding seam; unsupported, no TS projection"
-[[records]]
-
-item_id = "iyon-tui::presentation::ir::WeakView"
-path = "iyon-tui::binding::WeakView"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::WeakView"
-typescript_module = "iyon:tui"
-typescript_export = "binding__WeakView"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-01 internal binding seam; unsupported, no TS projection"
@@ -889,18 +686,6 @@ typescript_export = "binding__SemanticTag"
 implementation_owner = "T5"
 status = "stub"
 note = "L1-01 internal binding seam projection (unsupported)"
-
-[[records]]
-
-item_id = "iyon-tui::presentation::api::view::NativeCommonPatch"
-path = "iyon-tui::binding::NativeCommonPatch"
-strategy = "InternalBinding"
-rust_path = "iyon-tui::binding::NativeCommonPatch"
-typescript_module = "iyon:tui"
-typescript_export = "binding__NativeCommonPatch"
-implementation_owner = "T5"
-status = "stub"
-note = "L1-02 final common-property assembly candidate; unsupported, no TS projection"
 
 [[records]]
 

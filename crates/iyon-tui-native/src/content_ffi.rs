@@ -488,8 +488,8 @@ mod tests {
     use std::ptr;
 
     use iyon_tui::binding::{
-        ContentFamily, HostContentFunnel, TextSourceKind, TextWrapMode, TuiEnvironment, TuiHost,
-        view_native_content_host,
+        HostKind, NodeRef, OwnershipMode, ResourceRef, TextSourceKind, TuiEnvironment, TuiHost,
+        UiCommit, UiOperation,
     };
 
     use super::{
@@ -510,13 +510,49 @@ mod tests {
         let source = environment
             .create_content_source(TextSourceKind::Stream)
             .unwrap();
-        let funnel = HostContentFunnel::plain(TextWrapMode::Word);
 
         for host in [&failed, &healthy] {
-            let port = host.create_content_port(ContentFamily::Text).unwrap();
-            let connector = port.connect(&source, funnel).unwrap();
-            connector.activate().unwrap();
-            host.set_desired_view(view_native_content_host(port.id()).unwrap())
+            let body = host.ui_body_handle().unwrap();
+            let mut batch = UiCommit::new(0);
+            batch.push(UiOperation::CreateNode {
+                local_ordinal: 1,
+                kind: HostKind::ContentHost,
+            });
+            batch.push(UiOperation::CreatePort {
+                local_ordinal: 2,
+                content_family: 1,
+                ownership: OwnershipMode::OccurrenceOwned,
+                owner: Some(NodeRef::Local(1)),
+            });
+            batch.push(UiOperation::CreateConnector {
+                local_ordinal: 3,
+                source_index: 0,
+                port: ResourceRef::Local(2),
+                ownership: OwnershipMode::OccurrenceOwned,
+            });
+            batch.set_funnel_for_connector(
+                3,
+                iyon_tui::binding::FunnelSpec {
+                    kind: 1,
+                    wrap: 1,
+                    hyperlinks: true,
+                    smooth: false,
+                },
+            );
+            batch.push(UiOperation::SelectConnector {
+                port: ResourceRef::Local(2),
+                connector: Some(ResourceRef::Local(3)),
+            });
+            batch.push(UiOperation::InsertBefore {
+                parent: NodeRef::Existing(body),
+                child: NodeRef::Local(1),
+                before: None,
+            });
+            batch.push(UiOperation::AttachPort {
+                node: NodeRef::Local(1),
+                port: Some(ResourceRef::Local(2)),
+            });
+            host.commit_ui(batch, std::slice::from_ref(&source))
                 .unwrap();
             host.flush_pending_hosts(32, true).unwrap();
         }

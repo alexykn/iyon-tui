@@ -15,7 +15,6 @@ use crate::{
     geometry::Size,
     output::OutputDispatchError,
     presentation::ContentProvider,
-    retained_state::StateFrameView,
     scene::{PreparedSceneFrame, SceneHost, SceneHostError},
 };
 
@@ -27,7 +26,7 @@ use super::{
 
 const OUTPUT_BATCH_BUDGET: usize = 128;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReadyStatus {
     pub(crate) dirty: bool,
     pub(crate) exiting: bool,
@@ -175,16 +174,6 @@ impl NativeRuntime {
     }
 
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_invalidate_state(
-        &mut self,
-        id: u64,
-        effects: crate::retained_state::StateEffects,
-    ) {
-        self.scene_host.invalidate_state(id, effects);
-        self.invalidate_frame();
-    }
-
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_invalidate_content(&mut self, dirty: crate::presentation::ContentDirty) {
         self.scene_host.invalidate_content(dirty);
         self.invalidate_frame();
@@ -245,63 +234,6 @@ impl NativeRuntime {
 
     pub(crate) fn input_disabled(&self) -> bool {
         self.exit_requested
-    }
-
-    /// Materializes component snapshots without running layout so H3 can
-    /// validate retained-state attachments in the complete desired scene, not
-    /// only on the root View's direct semantic nodes.
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_state_attachment_targets(
-        &self,
-        body: &View,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        let history_views = self
-            .scene
-            .history()
-            .map_or_else(Vec::new, crate::History::state_views);
-        self.host_state_attachment_targets_from_history_views(body, history_views)
-    }
-
-    /// Collects state attachments from a prospective History view in addition
-    /// to the currently retained body/History. This is used before History
-    /// mutation so unsupported state geometry fails before the unit changes.
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_state_attachment_targets_with_history_view(
-        &self,
-        body: &View,
-        history_view: &View,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        let mut history_views = self
-            .scene
-            .history()
-            .map_or_else(Vec::new, crate::History::state_views);
-        history_views.push(history_view.clone());
-        self.host_state_attachment_targets_from_history_views(body, history_views)
-    }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_state_attachment_targets_for_history(
-        &self,
-        body: &View,
-        history: &crate::History,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        self.host_state_attachment_targets_from_history_views(body, history.state_views())
-    }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_state_attachment_targets_for_history_views(
-        &self,
-        body: &View,
-        history_views: Vec<View>,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        self.host_state_attachment_targets_from_history_views(body, history_views)
-    }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_current_state_attachment_targets(
-        &self,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        self.host_state_attachment_targets(self.scene.body())
     }
 
     /// Collects `ContentPort` attachments from the prospective body and current
@@ -386,41 +318,6 @@ impl NativeRuntime {
         Ok(targets)
     }
 
-    #[cfg(feature = "native-host")]
-    fn host_state_attachment_targets_from_history_views(
-        &self,
-        body: &View,
-        history_views: Vec<View>,
-    ) -> anyhow::Result<Vec<(u64, crate::retained_state::StateNodeKind)>> {
-        let mut session = crate::scene::ResolveSession::new(&self.components);
-        let mut targets = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-
-        let mut append_view = |view: &View| -> anyhow::Result<()> {
-            let resolved = session
-                .resolve_root(view)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let overlay = session.overlay().clone();
-            for (id, kind) in crate::scene::state_attachment_targets(&resolved, &overlay)
-                .map_err(anyhow::Error::msg)?
-            {
-                if !seen.insert(id) {
-                    return Err(anyhow::anyhow!(
-                        "DUPLICATE_VIEW_STATE_ATTACHMENT: state {id} occurs more than once in the candidate"
-                    ));
-                }
-                targets.push((id, kind));
-            }
-            Ok(())
-        };
-
-        append_view(body)?;
-        for view in history_views {
-            append_view(&view)?;
-        }
-        Ok(targets)
-    }
-
     /// Discards an unpresented Scene candidate after a backend failure. The
     /// logical `HostInner` frame remains authoritative, so the next retry must
     /// rebuild the derived scene instead of treating the rejected candidate as
@@ -464,6 +361,7 @@ impl NativeRuntime {
         self.invalidate_frame();
     }
 
+    #[cfg(test)]
     pub(crate) fn host_set_history(&mut self, history: crate::History) {
         self.scene.set_history(history);
         self.ui_history_units.clear();
@@ -770,26 +668,24 @@ impl NativeRuntime {
         &self.theme
     }
 
-    pub(crate) fn prepare_frame_with_states<S, F>(
+    pub(crate) fn prepare_frame<S, F>(
         &mut self,
         now: Instant,
         sink: &mut S,
         mut viewport: F,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
     where
         S: NativeHistorySink,
         F: FnMut(&mut S) -> Result<Size>,
     {
-        let frame = self.scene_host.render_at_with_states(
+        let frame = self.scene_host.render_at_with_content(
             now,
             &mut self.scene,
             &mut self.components,
             &self.theme,
             sink,
             &mut viewport,
-            states,
             content,
         )?;
         // Retirement is deferred until this successful reconciliation has
@@ -807,7 +703,6 @@ impl NativeRuntime {
         &mut self,
         now: Instant,
         size: Size,
-        states: &StateFrameView<'_>,
         content: &mut dyn ContentProvider,
     ) -> anyhow::Result<(
         PreparedSceneFrame,
@@ -816,13 +711,12 @@ impl NativeRuntime {
         content.set_theme(&self.theme);
         let frame = self
             .scene_host
-            .prepare_at_with_states(
+            .prepare_at_with_content(
                 now,
                 &mut self.scene,
                 &mut self.components,
                 size,
                 &self.theme,
-                states,
                 content,
             )
             .map_err(|error| anyhow::anyhow!("logical render failed: {error:?}"))?;

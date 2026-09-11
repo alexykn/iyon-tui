@@ -67,18 +67,24 @@ delivered native output and the confirmed visible receipt revision.
 
 The old native View publication ABI, generated View outputs, and ordinary
 Rust/native ViewState registry are absent from the current source. React is the
-only production UI route. This is a deletion checkpoint, not M1 acceptance.
-Animation ticking, persistent stop behavior, and pending-command/retirement
-ordering corrections are deferred to a separate follow-up commit. The private
+only production UI route. Deletion checkpoint `e96d0b3` and the separate
+animation correction have passed parent source/design review and local M1
+validation. Animation state is installed before ticking; Stop persists across
+later ticks, and older receipts are reconciled before pending control changes
+or retirement. The private
 `LegacySceneAdapter`, current renderer/layout internals, native control
 mechanics, and independent History/content helpers remain as M2 residue until
 the direct Taffy and semantic-content deletion gates pass.
 
-The deletion-only source passed `cargo fmt --all -- --check`,
-`cargo check --workspace --all-features`, and `bun run check:ownership` on
-macOS arm64. Earlier full-suite and packaged-addon results cover intermediate
-working trees, not this exact checkpoint. The staged addon has not been rebuilt
-for the deletion-only tree; final runtime validation follows the animation
-corrections. Source content FFI remains part of the canonical addon, with
-staging symbol checks and native `content_ffi::tests`; there is no separate
-direct-FFI UI artifact or route. Linux x64 remains a CI-only matrix gate.
+The deletion-only source passed formatting, workspace/all-feature checking and
+ownership checks on macOS arm64. The integrated animation correction then
+passed workspace/all-feature tests and the strict project Clippy gate, with
+existing warnings retained. The unchanged production addon retains its passing
+native smoke and 80-test Bun package/consumer results; subsequent edits changed
+only the receipt regression test. The final instrumented content benchmark
+completed 1,000 appends, and the default addon was restored with SHA-256
+`64c2ac3c1541d15023413202591efdbb87810886ef3a590bdab7bd2229a30a05`
+(6,799,168 bytes). Source content FFI remains part of this canonical addon,
+with staging symbol checks and native `content_ffi::tests`; there is no separate
+direct-FFI UI artifact or route. Linux x64 remains an unexecuted local gate
+covered by CI configuration, not a claimed passing result.

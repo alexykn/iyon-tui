@@ -24,7 +24,7 @@ the current-source authority.
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
-| T5 — M1 TypeScript cutover/publication deletion | **implementation and validation ready for parent review; M1 not self-accepted** | React is the sole production UI route. Old native View ABI/schema/generated outputs, old N-API View calls/classes and ordinary Rust/native ViewState owners are deleted in this working-tree slice. The parent still owns source/design acceptance. |
+| T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
 | T6 — direct terminal Taffy integration | remaining | Add the approved pinned Taffy adapter and finite Flex/Grid semantics. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
 
@@ -56,7 +56,7 @@ direct Taffy and semantic-content realization plus parity/receipt/History/input
 witnesses must pass before deleting `application/legacy_scene.rs` and its
 superseded renderer internals.
 
-### T5 TypeScript slice — parent acceptance evidence
+### T5 canonical cutover — parent acceptance evidence
 
 Parent review corrected duplicate root construction, lost/duplicated output
 after cancellation, missing automatic diagnostics, stale Connector selection,
@@ -77,10 +77,10 @@ candidate-interruption witness remains intact.
 Final normal addon after this validation pass (darwin-arm64, default N-API):
 
     packages/iyon-tui/native/iyon-tui-native.node
-    SHA-256 52e0c1c2412a0bb12f640dfb15606bc3fcd348361c95e50544b151126c5cbf33
-    6,799,184 bytes
+    SHA-256 64c2ac3c1541d15023413202591efdbb87810886ef3a590bdab7bd2229a30a05
+    6,799,168 bytes
 
-Validation pass checks: cargo fmt; workspace check and all-features tests (742
+Validation pass checks: cargo fmt; workspace check and all-features tests (743
 `iyon-tui` tests, 18 native library tests, one native sync test, 9 generator
 tests, and the existing ignored History trace doctest); strict project Clippy;
 generator check and regeneration; TypeScript, pinned Biome format/lint/
@@ -90,13 +90,26 @@ tests with 341 expectations. The
 Biome and Clippy commands exit successfully while retaining their existing
 warn-mode audit backlog. The instrumented React content benchmark also ran
 against actual Rust counters (`ION_CONTENT_BENCH_COUNT=1000`) and the default
-addon was restored afterward. This is validation evidence for parent review,
-not a claim of M1 acceptance.
+addon was restored afterward. Parent source/design review accepts the M1
+boundary; Linux x64 execution remains an explicit CI gate, not a local result.
+
+The final integrated workspace tests and strict Clippy gate were rerun after
+the animation correction. A final test-only extension checks two subsequent
+ticks after Stop and passed its focused regression. Generator, TypeScript,
+Biome, declaration and binding evidence is reused from unchanged source.
+The default addon, smoke and 80-test Bun evidence remains applicable because
+the later receipt-test corrections did not change production source. The
+final instrumented benchmark completed 1,000 appends with 10 submitted UI
+records, one delivered output event, zero content registry port scans and a
+confirmed visible receipt. Restoring the default addon reproduced the hash
+above.
 
 The benchmark now reads actual opt-in Rust projection/layout/paint counters,
 counts submitted UI records separately, and observes native output and a visible
 receipt. Parent ran it with `perf-counters`, then restored the normal addon above.
-Logs are `/tmp/t5-parent-*.log` and `/tmp/t5-parent-benchmark.jsonl`.
+Final parent logs are `/tmp/t5-m1-final-*.log` and
+`/tmp/t5-m1-parent-final-animation.log`; reused addon/Bun evidence is in
+`/tmp/t5-animation-*.log`.
 External migration and benchmark instructions are in
 `docs/migration/REACT-RUNTIME.md`. The T4/prerequisite sections below retain their
 historical validation results; they do not override this current slice status.
@@ -883,4 +896,5 @@ ownership remains required work in the T6/T7 migration.
 - Only the macOS arm64 toolchain/target is installed locally. The CI matrix
   includes Linux x64 and macOS arm64; Linux x64 remains a CI gate and is not
   claimed from this macOS run. Taffy/T6, content-lowering/T7, Surface and GPUI
-  remain deferred, as does parent source/design acceptance of this M1 slice.
+  remain deferred. Parent source/design acceptance covers M1, not those later
+  migration boundaries or unexecuted Linux validation.

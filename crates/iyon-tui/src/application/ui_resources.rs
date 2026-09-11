@@ -477,6 +477,24 @@ impl UiResourceOwner {
         self.controls.get(&key)
     }
 
+    pub(crate) fn set_native_animation_frame(
+        &mut self,
+        key: ResourceKey,
+        frame: usize,
+    ) -> anyhow::Result<()> {
+        let Some(state) = self.controls.get_mut(&key) else {
+            return Err(anyhow!("native animation control is retired"));
+        };
+        let crate::occurrence::ControlState::Animation(animation) = state else {
+            return Err(anyhow!(
+                "native animation frame targeted a non-animation control"
+            ));
+        };
+        animation
+            .set_active_frame(frame)
+            .map_err(|_| anyhow!("native animation frame exceeds the UI wire range"))
+    }
+
     pub fn close(&mut self) -> std::result::Result<(), String> {
         if self.lifecycle == UiResourceLifecycle::Closed {
             return Ok(());

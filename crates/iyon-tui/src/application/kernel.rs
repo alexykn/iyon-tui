@@ -31,6 +31,7 @@ pub(crate) struct ReadyStatus {
     pub(crate) dirty: bool,
     pub(crate) exiting: bool,
     pub(crate) more_ready: bool,
+    pub(crate) changed_components: Vec<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -633,7 +634,7 @@ impl NativeRuntime {
         if self.exit_requested {
             self.pending_outputs.clear();
             self.deferred_pastes.clear();
-            return Ok(self.status(false));
+            return Ok(self.status(false, Vec::new()));
         }
 
         let tick = self.scene_host.tick_due(now, &mut self.components);
@@ -651,7 +652,13 @@ impl NativeRuntime {
             self.dirty = true;
         }
 
-        Ok(self.status(!self.pending_outputs.is_empty()))
+        Ok(self.status(
+            !self.pending_outputs.is_empty(),
+            tick.changed_components
+                .into_iter()
+                .map(|id| id.value())
+                .collect(),
+        ))
     }
 
     pub(crate) fn has_pending_outputs(&self) -> bool {
@@ -751,11 +758,12 @@ impl NativeRuntime {
         Ok(())
     }
 
-    fn status(&self, more_ready: bool) -> ReadyStatus {
+    fn status(&self, more_ready: bool, changed_components: Vec<u64>) -> ReadyStatus {
         ReadyStatus {
             dirty: self.dirty,
             exiting: self.exit_requested,
             more_ready: more_ready && !self.exit_requested,
+            changed_components,
         }
     }
 

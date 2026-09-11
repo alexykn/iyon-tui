@@ -77,7 +77,9 @@ impl ControlState {
                 active_frame: 0,
                 frame_count: 0,
                 interval_ms: config.animation_interval_ms,
-                running: false,
+                // AnimationStop is a persistent command; a newly mounted
+                // animation is active until that command is accepted.
+                running: true,
             }),
         }
     }
@@ -290,12 +292,21 @@ impl ScrollState {
 }
 
 impl AnimationState {
+    pub(crate) fn running(&self) -> bool {
+        self.running
+    }
+
     pub fn active_frame(&self) -> u32 {
         self.active_frame
     }
 
     pub fn interval_ms(&self) -> Option<u32> {
         self.interval_ms
+    }
+
+    pub(crate) fn set_active_frame(&mut self, frame: usize) -> Result<(), ControlError> {
+        self.active_frame = u32::try_from(frame).map_err(|_| ControlError::InvalidValue)?;
+        Ok(())
     }
 
     fn apply_command(&mut self, command_id: u32, operands: &[u32]) -> Result<(), ControlError> {
@@ -374,8 +385,9 @@ mod tests {
     #[test]
     fn animation_stop_is_explicit_and_non_generic() {
         let mut state = ControlState::new(ControlKind::Animation);
-        assert!(!state.animation_running().unwrap());
+        assert!(state.animation_running().unwrap());
         state.apply_command(command("AnimationStop"), &[]).unwrap();
+        assert!(!state.animation_running().unwrap());
         assert_eq!(
             state.apply_command(command("AnimationStop"), &[1]),
             Err(ControlError::InvalidOperands)

@@ -517,6 +517,7 @@ struct ViewSlotState {
     frame_index: usize,
     interval: Duration,
     last_tick: Option<Instant>,
+    running: bool,
 }
 
 impl HostViewSlot {
@@ -531,6 +532,7 @@ impl HostViewSlot {
                 frame_index: 0,
                 interval: Duration::from_millis(480),
                 last_tick: None,
+                running: true,
             })),
             component_id: Arc::new(Mutex::new(None)),
             host: Arc::new(Mutex::new(None)),
@@ -579,6 +581,13 @@ impl HostViewSlot {
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.state.lock().map_or(0, |state| state.revision)
+    }
+
+    pub(crate) fn frame_index(&self) -> Result<usize> {
+        self.state
+            .lock()
+            .map(|state| state.frame_index)
+            .map_err(|_| anyhow::anyhow!("UI animation lock is poisoned"))
     }
 
     pub fn set_animation(&self, frames: Vec<View>, interval: Duration) -> Result<()> {
@@ -676,6 +685,23 @@ impl HostViewSlot {
         self.set_view(view)
     }
 
+    fn set_animation_running(&self, running: bool) -> Result<()> {
+        // Keep this separate from `interval`: a zero-duration public slot is
+        // a valid animation that advances on every scheduler tick, not a
+        // stopped sentinel.
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("view slot lock is poisoned"))?;
+        if state.running != running {
+            state.running = running;
+            if running {
+                state.last_tick = None;
+            }
+        }
+        Ok(())
+    }
+
     fn host_time(&self) -> Option<Instant> {
         self.host
             .lock()
@@ -688,7 +714,7 @@ impl HostViewSlot {
         let Ok(mut state) = self.state.lock() else {
             return false;
         };
-        if state.frames.len() < 2 {
+        if !state.running || state.frames.len() < 2 {
             // Reset the clock so a future set_animation starts fresh
             // rather than inheriting a stale last_tick.
             state.last_tick = None;
@@ -3513,6 +3539,7 @@ impl HostInner {
     }
 
     fn advance_runtime_for_candidate(&mut self, admit_wakes: bool) -> Result<bool> {
+        self.sync_pending_ui_scene_before_tick()?;
         let content_dirty = self.content.advance(self.now).map_err(|error| {
             host_attempt_error(
                 "content",
@@ -3538,10 +3565,86 @@ impl HostInner {
             )
         })?;
         let dirty = status.dirty;
+        for component_id in status.changed_components {
+            let Some(key) = self.legacy_scene.control_for_component(component_id) else {
+                continue;
+            };
+            let Some(slot) = self.ui_animations.get(&key) else {
+                continue;
+            };
+            let frame = slot.frame_index()?;
+            self.ui_resources.set_native_animation_frame(key, frame)?;
+            self.sync_native_animation_frame(key)?;
+        }
         if admit_wakes && dirty {
             self.ensure_pending()?;
         }
         Ok(dirty)
+    }
+
+    fn sync_pending_ui_scene_before_tick(&mut self) -> Result<()> {
+        let revision = self.ui_resources.document.as_ref().map_or(
+            0,
+            crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+        );
+        if revision == 0 || revision == self.ui_scene_revision {
+            return Ok(());
+        }
+        let should_sync = self
+            .pending_ui_changes
+            .as_ref()
+            .is_none_or(|changes| changes.physical_work);
+        if !should_sync {
+            return Ok(());
+        }
+        if let Err(error) = self.sync_ui_scene() {
+            let ui_revision = self.ui_resources.document.as_ref().map_or(
+                0,
+                crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+            );
+            self.record_failed_frame(&error, "frame", ui_revision, self.pending_epoch);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn sync_native_animation_frame(&mut self, key: crate::occurrence::ResourceKey) -> Result<()> {
+        let document = self
+            .ui_resources
+            .document
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("UI resource owner has no occurrence document"))?;
+        let node = document
+            .control_owner(key)
+            .ok_or_else(|| anyhow::anyhow!("native animation control has no owner node"))?;
+        let changes = crate::occurrence::UiChangeSet {
+            changed_nodes: vec![node],
+            membership_nodes: vec![node],
+            physical_work: true,
+            ..crate::occurrence::UiChangeSet::default()
+        };
+        let changed_content_ports = self
+            .legacy_scene
+            .synchronize(&self.ui_resources, &mut self.content, Some(&changes))
+            .map_err(|error| {
+                host_attempt_error(
+                    "frame",
+                    "FRAME_PREPARATION_FAILED",
+                    true,
+                    format!("occurrence animation synchronization failed: {error}"),
+                )
+            })?;
+        for port_id in changed_content_ports {
+            self.running
+                .host_invalidate_content(crate::presentation::ContentDirty::new(
+                    port_id,
+                    None,
+                    crate::presentation::ContentDirtyReason::SelectionLifecycle,
+                ));
+        }
+        let body = self.legacy_scene.body(&self.ui_resources)?;
+        self.running.host_set_body(body);
+        Ok(())
     }
 
     fn prepare_final_candidate(
@@ -4222,6 +4325,7 @@ impl HostInner {
                 }
                 crate::occurrence::ControlState::Animation(animation) => {
                     if let Some(slot) = self.ui_animations.get(&key) {
+                        slot.set_animation_running(animation.running())?;
                         let mut state = slot
                             .state
                             .lock()
@@ -6924,6 +7028,171 @@ mod tests {
             .text()
             .unwrap();
         assert_eq!(first_text, "aq");
+        host.close().unwrap();
+    }
+
+    #[test]
+    fn native_animation_progress_survives_unrelated_input_frames() {
+        let host = TuiHost::open_in_environment(32, 8, true, TuiEnvironment::new_manual()).unwrap();
+        let body = host.ui_body_handle().unwrap();
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Animation,
+        });
+        mount.push(UiOperation::CreateControl {
+            local_ordinal: 2,
+            kind: crate::occurrence::ControlKind::Animation,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        for local_ordinal in [3, 4] {
+            mount.push(UiOperation::CreateNode {
+                local_ordinal,
+                kind: HostKind::Box,
+            });
+            mount.push(UiOperation::InsertBefore {
+                parent: NodeRef::Local(1),
+                child: NodeRef::Local(local_ordinal),
+                before: None,
+            });
+        }
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 5,
+            kind: HostKind::Editor,
+        });
+        mount.push(UiOperation::CreateControl {
+            local_ordinal: 6,
+            kind: crate::occurrence::ControlKind::Editor,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(5)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(5),
+            before: None,
+        });
+        mount.push(UiOperation::ReplaceEditorContent {
+            control: ResourceRef::Local(6),
+            content: b"seed".to_vec(),
+            expected_edit_revision: u64::MAX,
+        });
+        let mounted = host.commit_ui(mount, &[]).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+
+        let animation_control = mounted.acknowledgement.created[1].resource_key().unwrap();
+        let editor_node = mounted.acknowledgement.created[4];
+        let (before_control_visits, before_active_frame) = {
+            let inner = host.inner.lock().unwrap();
+            (
+                inner.test_ui_control_keys_visited(),
+                inner
+                    .ui_resources
+                    .control_state(animation_control)
+                    .and_then(crate::occurrence::ControlState::animation_active_frame),
+            )
+        };
+        assert_eq!(before_active_frame, Some(0));
+
+        host.focus_ui(editor_node).unwrap();
+        for _ in 0..40 {
+            host.dispatch_key(KeyStroke::new(Key::Char('x'))).unwrap();
+            host.advance_time(Duration::from_millis(1)).unwrap();
+        }
+
+        let inner = host.inner.lock().unwrap();
+        assert_eq!(
+            inner
+                .ui_resources
+                .control_state(animation_control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame),
+            Some(1),
+            "the native animation must advance while unrelated input keeps producing frames"
+        );
+        assert_eq!(
+            inner
+                .ui_animations
+                .get(&animation_control)
+                .unwrap()
+                .frame_index()
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            inner.test_ui_control_keys_visited(),
+            before_control_visits,
+            "unchanged UI revisions must not rescan native controls"
+        );
+        let editor = inner.ui_editors.values().next().expect("mounted editor");
+        assert_eq!(editor.text().unwrap(), format!("seed{}", "x".repeat(40)));
+        drop(inner);
+
+        // Capture an older native frame before accepting the stop command.
+        // Its unresolved receipt must be reconciled before newer UI work is
+        // allowed to mutate the scene or run another animation tick.
+        let receipt = install_delayed_candidate(&host);
+
+        let mut stop = UiCommit::new(mounted.acknowledgement.accepted_ui_revision);
+        stop.push(UiOperation::ControlCommand {
+            control: ResourceRef::Existing(mounted.acknowledgement.created[1]),
+            command_id: 512,
+            operands: Vec::new(),
+        });
+        let stopped = host.commit_ui(stop, &[]).unwrap();
+
+        let waiting = host.flush_pending_hosts(8, false).unwrap();
+        assert!(waiting.waiting_for_presentation);
+        assert_eq!(
+            host.inner
+                .lock()
+                .unwrap()
+                .ui_resources
+                .control_state(animation_control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame),
+            Some(1),
+            "an unresolved older receipt must not advance the animation"
+        );
+
+        receipt.send(Ok(())).unwrap();
+        let committed = host.flush_pending_hosts(8, false).unwrap();
+        assert!(
+            committed
+                .commits
+                .iter()
+                .any(|commit| { commit.host_id == host.epochs().unwrap().host_id })
+        );
+        host.advance_time(Duration::from_millis(20)).unwrap();
+        host.advance_time(Duration::from_millis(20)).unwrap();
+        assert_eq!(
+            host.inner
+                .lock()
+                .unwrap()
+                .ui_resources
+                .control_state(animation_control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame),
+            Some(1),
+            "a stopped animation must remain stopped on later ticks"
+        );
+
+        let mut retire = UiCommit::new(stopped.acknowledgement.accepted_ui_revision);
+        retire.push(UiOperation::RetireSubtree {
+            root: NodeRef::Existing(mounted.acknowledgement.created[0]),
+        });
+        host.commit_ui(retire, &[]).unwrap();
+        host.advance_time(Duration::from_millis(20)).unwrap();
+        assert!(
+            !host
+                .inner
+                .lock()
+                .unwrap()
+                .ui_animations
+                .contains_key(&animation_control)
+        );
         host.close().unwrap();
     }
 

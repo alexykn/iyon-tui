@@ -112,13 +112,19 @@ impl DirectTree {
     /// viewport/layout owner.
     fn content_extent_in_subtree(&self, id: DirectNodeId) -> Option<Size> {
         let node = self.node(id);
-        match &node.content {
-            DirectContent::ContentHost { .. } => Some(node.content_rect.size()),
-            DirectContent::Control(ControlSnapshot::Scroll(_)) => node
+        if node
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.kind == crate::occurrence::HostKind::Scroll)
+        {
+            return node
                 .children
                 .first()
                 .map(|child| self.node(*child).rect.size())
-                .or(Some(node.content_rect.size())),
+                .or(Some(node.content_rect.size()));
+        }
+        match &node.content {
+            DirectContent::ContentHost { .. } => Some(node.content_rect.size()),
             _ => node
                 .children
                 .iter()

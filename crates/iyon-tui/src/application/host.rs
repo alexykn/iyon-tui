@@ -610,14 +610,38 @@ impl MountedAnimation {
     }
 }
 
-struct MountedScroll;
+#[derive(Default)]
+struct MountedScroll {
+    viewport: Size,
+    extent: Size,
+}
+
 impl Component for MountedScroll {
     fn control_snapshot(&self) -> Option<crate::component::ControlSnapshot> {
-        Some(crate::component::ControlSnapshot::Scroll(Default::default()))
+        Some(crate::component::ControlSnapshot::Scroll(
+            crate::component::ScrollSnapshot {
+                viewport_rows: u32::from(self.viewport.height),
+                extent_rows: u32::from(self.extent.height),
+                top_row: 0,
+                following_end: true,
+            },
+        ))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
         cx.focusable();
+        cx.on_layout_changed(Self::layout_changed);
+        cx.on_content_extent_changed(Self::extent_changed);
+    }
+}
+
+impl MountedScroll {
+    fn layout_changed(scroll: &mut Self, size: Size) {
+        scroll.viewport = size;
+    }
+
+    fn extent_changed(scroll: &mut Self, size: Size) {
+        scroll.extent = size;
     }
 }
 
@@ -4106,7 +4130,7 @@ impl HostInner {
         if self.ui_scrolls.contains_key(&key) {
             return Ok(());
         }
-        let component = self.running.host_register(MountedScroll);
+        let component = self.running.host_register(MountedScroll::default());
         self.running
             .host_set_direct_control_component(key, component.raw_id());
         self.ui_scrolls.insert(key, component.raw_id());

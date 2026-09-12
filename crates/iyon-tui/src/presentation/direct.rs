@@ -979,11 +979,8 @@ fn measured_for_request(
             // capture, which is rejected at tree emission.
             return MeasuredSize::default();
         };
-        let width = control_request_width(request);
-        let tree = crate::presentation::layout::layout_view(
-            view,
-            crate::geometry::LayoutConstraints::width_only(width),
-        );
+        let tree =
+            crate::presentation::layout::layout_view(view, control_layout_constraints(request));
         let size = tree.node(tree.root).rect.size();
         let mut measured = MeasuredSize {
             width: f32::from(size.width),
@@ -1051,14 +1048,23 @@ fn measured_for_request(
     measured
 }
 
-fn control_request_width(request: crate::presentation::taffy::MeasureRequest) -> u16 {
-    let value = request
-        .known_width
-        .or(match request.available_width {
-            AvailableConstraint::Definite(value) => Some(value),
-            AvailableConstraint::MinContent | AvailableConstraint::MaxContent => None,
-        })
-        .unwrap_or(0.0);
+fn control_layout_constraints(
+    request: crate::presentation::taffy::MeasureRequest,
+) -> crate::geometry::LayoutConstraints {
+    match (request.known_width, request.available_width) {
+        (Some(width), _) | (None, AvailableConstraint::Definite(width)) => {
+            crate::geometry::LayoutConstraints::width_only(control_request_width(width))
+        }
+        (None, AvailableConstraint::MinContent | AvailableConstraint::MaxContent) => {
+            crate::geometry::LayoutConstraints {
+                width: crate::geometry::AxisConstraint::Unbounded,
+                height: crate::geometry::AxisConstraint::Unbounded,
+            }
+        }
+    }
+}
+
+fn control_request_width(value: f32) -> u16 {
     value.floor().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 

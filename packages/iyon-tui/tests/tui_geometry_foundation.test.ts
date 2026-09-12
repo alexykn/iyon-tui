@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
-import { Box, createReactRoot } from "../src/react/index.ts";
+import { Box, Content, createReactRoot } from "../src/react/index.ts";
 import { normalizeProps } from "../src/react/instance.ts";
 import { AppHarness } from "../src/testing/index.ts";
 import {
@@ -194,6 +194,78 @@ describe("finite geometry boundary", () => {
 			).toBe(true);
 			await root.whenVisible();
 			expect(tui.screenRows().some((row) => row.includes("new"))).toBe(true);
+		} finally {
+			await root.unmount();
+			tui.close();
+		}
+	});
+
+	test("direct ContentHost uses its final allocated width for projection and paint", async () => {
+		const tui = await AppHarness.open({ width: 80, height: 6 });
+		const root = createReactRoot(tui);
+		let explicitRef: { visibleGeometry(): Promise<unknown> } | undefined;
+		let fillRef: { visibleGeometry(): Promise<unknown> } | undefined;
+		try {
+			await root.render(
+				createElement(
+					Box,
+					{},
+					createElement(
+						Content,
+						{
+							width: { unit: "length", value: 4 },
+							ref: (value) => {
+								if (value !== null) explicitRef = value;
+							},
+						},
+						"abcdefgh",
+					),
+				),
+			);
+			await root.whenVisible();
+			expect(
+				tui.screenRows().filter((row) => row.includes("abcd")),
+			).toHaveLength(1);
+			expect(
+				tui.screenRows().filter((row) => row.includes("efgh")),
+			).toHaveLength(1);
+			expect(explicitRef).toBeDefined();
+			expect(await explicitRef?.visibleGeometry()).toMatchObject({
+				width: 4,
+				height: 2,
+			});
+
+			await root.render(
+				createElement(
+					Box,
+					{
+						width: { unit: "length", value: 8 },
+						padding: { top: 0, right: 2, bottom: 0, left: 2 },
+					},
+					createElement(
+						Content,
+						{
+							width: "fill",
+							ref: (value) => {
+								if (value !== null) fillRef = value;
+							},
+						},
+						"abcdefgh",
+					),
+				),
+			);
+			await root.whenVisible();
+			expect(
+				tui.screenRows().filter((row) => row.includes("abcd")),
+			).toHaveLength(1);
+			expect(
+				tui.screenRows().filter((row) => row.includes("efgh")),
+			).toHaveLength(1);
+			expect(fillRef).toBeDefined();
+			expect(await fillRef?.visibleGeometry()).toMatchObject({
+				width: 4,
+				height: 2,
+			});
 		} finally {
 			await root.unmount();
 			tui.close();

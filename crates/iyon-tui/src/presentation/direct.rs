@@ -1175,6 +1175,9 @@ fn content_width_for_layout(
     let width_is_fit = matches!(
         property(snapshot, PropertyId::Width),
         None | Some(LayerValue::Unset | LayerValue::Null)
+            | Some(LayerValue::Value(PropertyValue::SizeMode(
+                crate::occurrence::SizeMode::Fit,
+            )))
             | Some(LayerValue::Value(PropertyValue::Dimension(
                 crate::occurrence::DimensionValue::Auto,
             )))
@@ -1183,7 +1186,7 @@ fn content_width_for_layout(
         f32::from(capture.measurement.intrinsic_size.width)
             .min(geometry.logical_content_width.max(0.0))
     } else {
-        f32::from(capture.offered_width)
+        geometry.logical_content_width.max(0.0)
     }
 }
 
@@ -1424,6 +1427,7 @@ fn signed_intersection(
 mod tests {
     use super::*;
     use crate::occurrence::{DimensionValue, FiniteScalar, LayoutMode, NodeRef};
+    use std::sync::{Arc, Mutex};
 
     fn direct_history_layout(heights: &[f32], viewport_height: u16) -> Result<DirectLayout> {
         let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
@@ -2102,6 +2106,202 @@ mod tests {
         assert_eq!(first_rect.height, 2);
         assert_eq!(second_rect.height, 2);
         assert_eq!(first_rect.x + first_rect.width, second_rect.x);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_content_paint_ticket_uses_resolved_width_for_explicit_and_fill() -> Result<()> {
+        struct TicketProvider {
+            tickets: Arc<Mutex<Vec<crate::presentation::PreparedProjectionTicket>>>,
+        }
+        impl crate::presentation::ContentProvider for TicketProvider {
+            fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
+                1
+            }
+
+            fn measure(
+                &mut self,
+                _port_id: u64,
+                _offered_width: u16,
+                _width_rule: crate::presentation::WidthRule,
+            ) -> ContentMeasurement {
+                ContentMeasurement::default()
+            }
+
+            fn paint_window(
+                &self,
+                ticket: crate::presentation::PreparedProjectionTicket,
+                _window: crate::presentation::ContentWindow,
+                _target: &mut crate::physical::Surface,
+                _target_origin: (u16, u16),
+                _clip: crate::geometry::Rect,
+                _style: crate::physical::PhysicalStyle,
+            ) {
+                self.tickets.lock().unwrap().push(ticket);
+            }
+        }
+
+        let scalar = |value| crate::occurrence::FiniteScalar::new(value).expect("finite value");
+        let length = |value| {
+            LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(scalar(
+                value,
+            ))))
+        };
+        let snapshot = |key, children, root_role, properties| OccurrenceSnapshot {
+            key,
+            kind: HostKind::Box,
+            root_role,
+            children,
+            port: None,
+            control: None,
+            hidden: false,
+            subscriptions: 0,
+            history_action: None,
+            properties,
+            style_states: Vec::new(),
+            structure_revision: 1,
+            geometry_revision: 1,
+            presentation_revision: 0,
+            interaction_revision: 0,
+        };
+        let render_case = |parent_properties, content_properties| -> Result<DirectLayout> {
+            let body = NodeKey {
+                slot: 80,
+                generation: 1,
+            };
+            let parent = NodeKey {
+                slot: 81,
+                generation: 1,
+            };
+            let content = NodeKey {
+                slot: 82,
+                generation: 1,
+            };
+            let snapshots = vec![
+                snapshot(
+                    body,
+                    vec![parent],
+                    Some(crate::occurrence::RootRole::Body),
+                    Vec::new(),
+                ),
+                snapshot(parent, vec![content], None, parent_properties),
+                {
+                    let mut value = snapshot(content, Vec::new(), None, content_properties);
+                    value.kind = HostKind::ContentHost;
+                    value
+                },
+            ];
+            let participation = snapshots
+                .iter()
+                .map(|snapshot| NodeParticipation {
+                    key: snapshot.key,
+                    participates: true,
+                })
+                .collect::<Vec<_>>();
+            let mut renderer = DirectOccurrenceRenderer::new(80);
+            renderer.synchronize(
+                snapshots,
+                None,
+                &participation,
+                HashMap::new(),
+                vec![body],
+                HashMap::new(),
+                HashMap::new(),
+            )?;
+            let capture = CapturedContentMeasurement {
+                capture_id: 1,
+                port_id: 9,
+                offered_width: 80,
+                measurement: ContentMeasurement {
+                    intrinsic_size: crate::geometry::Size::new(8, 1),
+                    physically_complete: true,
+                    projection_revision: 1,
+                    metric_revision: 1,
+                    paint_revision: 1,
+                    connector_id: Some(5),
+                    projection_identity: 9,
+                },
+                min_content: crate::geometry::Size::new(8, 1),
+                max_content: crate::geometry::Size::new(8, 1),
+                history_adjustment: None,
+                semantic_view: Some(crate::presentation::factory::text("abcdefgh")),
+            };
+            renderer.prepare(
+                body,
+                crate::geometry::Size::new(80, 6),
+                DirectHistoryAnchor::FollowEnd,
+                &HashMap::from([(content, capture)]),
+                &[],
+                &HashMap::new(),
+            )
+        };
+
+        let explicit = render_case(
+            vec![
+                (PropertyId::Width, length(8.0)),
+                (PropertyId::Height, length(2.0)),
+            ],
+            vec![(PropertyId::Width, length(4.0))],
+        )?;
+        let padded_fill = render_case(
+            vec![
+                (PropertyId::Width, length(8.0)),
+                (
+                    PropertyId::Padding,
+                    LayerValue::Value(PropertyValue::Insets(crate::presentation::Insets::new(
+                        0, 2, 0, 2,
+                    ))),
+                ),
+            ],
+            vec![(
+                PropertyId::Width,
+                LayerValue::Value(PropertyValue::SizeMode(crate::occurrence::SizeMode::Fill)),
+            )],
+        )?;
+        let cases = [explicit, padded_fill];
+        for layout in cases {
+            let content = layout
+                .tree
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.view_id
+                        == View::direct_id(NodeKey {
+                            slot: 82,
+                            generation: 1,
+                        })
+                })
+                .expect("ContentHost layout node");
+            let logical_width = layout.occurrence_geometry[&NodeKey {
+                slot: 82,
+                generation: 1,
+            }]
+                .content
+                .width;
+            assert_eq!(content.content_width, logical_width);
+            let tickets = Arc::new(Mutex::new(Vec::new()));
+            let provider = TicketProvider {
+                tickets: Arc::clone(&tickets),
+            };
+            let theme = crate::Theme::new();
+            let compiler = crate::presentation::layout::ViewCompiler::new(&theme);
+            let mut cache = crate::presentation::paint::PaintCache::default();
+            cache.begin_epoch(&theme);
+            let _ = crate::presentation::paint::ViewPainter.paint_tree_with_content(
+                &compiler,
+                &layout.tree,
+                &mut cache,
+                &provider,
+            );
+            assert!(!tickets.lock().unwrap().is_empty());
+            assert!(
+                tickets
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|ticket| ticket.offered_width == logical_width)
+            );
+        }
         Ok(())
     }
 

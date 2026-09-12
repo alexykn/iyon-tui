@@ -573,6 +573,24 @@ mod tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn semantic_history_frontier_blocks_live_and_composite_units() {
+        let mut live = History::new();
+        live.push(crate::presentation::factory::native_component(1))
+            .expect("live unit");
+        assert!(live.native_transfer_semantically_blocked_front());
+
+        let mut composite = History::new();
+        let content = crate::presentation::factory::content_host(1).expect("content host");
+        composite
+            .push(crate::presentation::factory::column(
+                vec![crate::presentation::factory::text("heading"), content],
+                0,
+            ))
+            .expect("composite unit");
+        assert!(composite.native_transfer_semantically_blocked_front());
+    }
 }
 
 fn outcome(

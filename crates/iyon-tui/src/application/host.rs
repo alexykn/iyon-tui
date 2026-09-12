@@ -1485,7 +1485,9 @@ impl TuiHost {
         // This admits automatic failure diagnostics and starts asynchronous
         // layout/content work without waiting under HostInner.
         for _ in 0..256 {
-            let report = environment.drain_pending_for(32, true, Some(host_id))?;
+            let Ok(report) = environment.drain_pending_for(32, true, Some(host_id)) else {
+                break;
+            };
             if !report.rearm && !report.waiting_for_presentation {
                 break;
             }

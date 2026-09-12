@@ -8398,3 +8398,7 @@ impl Drop for HostContentConnector {
         // hidden lifecycle operation; host teardown calls dispose_all instead.
     }
 }
+
+#[cfg(test)]
+#[path = "content_tests.rs"]
+mod tests;

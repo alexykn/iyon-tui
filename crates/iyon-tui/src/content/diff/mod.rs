@@ -3,6 +3,5 @@
 mod model;
 
 pub use model::{
-    DiffHunk, DiffLine, DiffLineKind, DiffLineNumber, DiffLineOffset, DiffLineTermination,
-    DiffRange,
+    DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange,
 };

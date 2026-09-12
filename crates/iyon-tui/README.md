@@ -19,7 +19,7 @@ operations, passive style and
 geometry values, and the measurement functions required by the native addon.
 Native code must import core items through `iyon_tui::binding`.
 
-The binding does not expose the fluent View DSL, `IntoView`, generic renderer or
+The binding does not expose a fluent semantic UI DSL, generic renderer or
 projector extension APIs, arbitrary callbacks into the hot path, or an
 application-specific policy. Its export set is pinned by
 `bun run check:tui-binding`; native imports and root visibility are checked
@@ -27,12 +27,11 @@ before integration.
 
 ## Internal organization
 
-Semantic text IR, projectors, source coordinates, retained state, scenes,
-History, controls, themes, and presentation APIs are crate-visible runtime
+Semantic text IR, projectors, source coordinates, occurrence state, History,
+controls, themes, and direct presentation APIs are crate-visible runtime
 modules. Their public item declarations support the binding and the in-crate
 unit tests but are not reachable through the external crate root. Built-in
-runtime code lowers directly through the private retained factory and layout
-pipeline.
+runtime code lowers occurrences directly through Taffy and physical products.
 
 The former Rust integration-test authoring facade and `trybuild` root export
 contract are intentionally removed. Behavioral tests that need private owners

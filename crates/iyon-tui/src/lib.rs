@@ -53,8 +53,6 @@ pub(crate) use content::text::{
     TextRenderPolicy,
 };
 pub(crate) use controls::TextInput;
-#[cfg(test)]
-pub(crate) use history::HistoryLayout;
 pub(crate) use history::{History, HistoryUnitId};
 pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};

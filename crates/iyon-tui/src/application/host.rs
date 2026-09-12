@@ -32,7 +32,7 @@ use crate::{
     backend::NativeHistorySink,
     geometry::Size,
     physical::{PhysicalRow, Surface},
-    presentation::{ContentProvider, EmptyContentProvider},
+    presentation::ContentProvider,
     scene::PreparedSceneFrame,
     terminal::{TerminalBackend, TerminalEvent, termwiz::TermwizBackend},
 };

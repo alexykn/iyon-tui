@@ -841,6 +841,11 @@ impl DirectOccurrenceRenderer {
             geometry.logical_content_height,
         )?;
         let content_rect = content_info.rect;
+        let content_width = measurements
+            .get(&key)
+            .map(|capture| content_width_for_layout(snapshot, geometry, capture))
+            .unwrap_or(geometry.logical_content_width);
+        let content_width_cells = content_width.floor().clamp(0.0, f32::from(u16::MAX)) as u16;
         let participates = self.participation.get(&key).copied().unwrap_or(true);
         let visible = participates && !geometry.renderer_hidden && !geometry.display_none;
         let clip_rect = if visible {
@@ -859,7 +864,7 @@ impl DirectOccurrenceRenderer {
             },
         );
         if snapshot.kind == HostKind::ContentHost {
-            content_widths.insert(key, geometry.logical_content_width);
+            content_widths.insert(key, content_width);
         }
         let component = snapshot
             .control
@@ -876,7 +881,7 @@ impl DirectOccurrenceRenderer {
             content_rect,
             content_width: measurements
                 .get(&key)
-                .map(|capture| capture.offered_width)
+                .map(|_| content_width_cells)
                 .unwrap_or(content_rect.width),
             clip_rect,
             paint_origin: rect_info.origin,
@@ -1160,6 +1165,33 @@ fn request_width(
         },
     };
     value.floor().clamp(0.0, f32::from(u16::MAX)) as u16
+}
+
+fn content_width_for_layout(
+    snapshot: &OccurrenceSnapshot,
+    geometry: &crate::presentation::taffy::ComputedGeometry,
+    capture: &CapturedContentMeasurement,
+) -> f32 {
+    let width_is_fit = matches!(
+        property(snapshot, PropertyId::Width),
+        None | Some(LayerValue::Unset | LayerValue::Null)
+            | Some(LayerValue::Value(PropertyValue::Dimension(
+                crate::occurrence::DimensionValue::Auto,
+            )))
+    );
+    if width_is_fit {
+        f32::from(capture.measurement.intrinsic_size.width)
+            .min(geometry.logical_content_width.max(0.0))
+    } else {
+        f32::from(capture.offered_width)
+    }
+}
+
+fn property<'a>(snapshot: &'a OccurrenceSnapshot, id: PropertyId) -> Option<&'a LayerValue> {
+    snapshot
+        .properties
+        .iter()
+        .find_map(|(property, value)| (*property == id).then_some(value))
 }
 
 fn content(

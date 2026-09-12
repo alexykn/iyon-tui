@@ -7984,10 +7984,23 @@ impl ContentProvider for ContentHostRegistry {
                 connector_id,
                 source_snapshot,
             } if capture.confirmed.is_none() => {
-                return Err(anyhow!(
-                    "CONTENT_CAPTURE_FAILED: Connector {connector_id} projection failed at Source revision {} without a confirmed product",
-                    source_snapshot.revision,
-                ));
+                let connector = self.connectors.get(&connector_id).ok_or_else(|| {
+                    anyhow!(
+                        "INTERNAL_INVARIANT: failed candidate Connector {connector_id} disappeared"
+                    )
+                })?;
+                let has_error = connector
+                    .lock()
+                    .map_err(|_| anyhow!("CONTENT_CAPTURE_FAILED: Connector lock is poisoned"))?
+                    .error
+                    .is_some();
+                if !has_error {
+                    return Err(anyhow!(
+                        "CONTENT_CAPTURE_FAILED: Connector {connector_id} projection failed at Source revision {} without a confirmed product",
+                        source_snapshot.revision,
+                    ));
+                }
+                None
             }
             CapturedCandidate::Failed { .. } => None,
             CapturedCandidate::Prepared(binding) => {

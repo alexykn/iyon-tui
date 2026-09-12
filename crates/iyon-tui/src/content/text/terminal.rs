@@ -651,69 +651,9 @@ impl TerminalTextProduct {
                 &run.style,
                 &StyleContext::default().with_local_facts(&run.identity.facts),
             );
-            let mut column = span.x;
-            let mut painted_width = 0usize;
-            let mut clipped = false;
-            for (_, grapheme) in text.grapheme_indices(true) {
-                let width = grapheme_cell_width(grapheme);
-                if width == 0 {
-                    continue;
-                }
-                let end = usize::from(column).checked_add(width).ok_or(
-                    TerminalProjectionError::ExtentOverflow {
-                        axis: "paint row",
-                        value: usize::from(column).saturating_add(width),
-                    },
-                )?;
-                if end > usize::from(surface.width()) {
-                    surface.physically_complete = false;
-                    clipped = true;
-                    break;
-                }
-                surface.clear_glyph_at(column, 0);
-                *surface.get_mut(column, 0) = PhysicalCell {
-                    grapheme: Some(grapheme.to_owned()),
-                    style,
-                    painted: true,
-                    continuation: false,
-                };
-                for continuation in 1..width {
-                    let continuation_column = column
-                        .checked_add(u16::try_from(continuation).map_err(|_| {
-                            TerminalPaintError::Projection(
-                                TerminalProjectionError::ExtentOverflow {
-                                    axis: "paint continuation",
-                                    value: continuation,
-                                },
-                            )
-                        })?)
-                        .ok_or(TerminalPaintError::Projection(
-                            TerminalProjectionError::ExtentOverflow {
-                                axis: "paint continuation",
-                                value: usize::from(column).saturating_add(continuation),
-                            },
-                        ))?;
-                    *surface.get_mut(continuation_column, 0) = PhysicalCell {
-                        grapheme: None,
-                        style,
-                        painted: true,
-                        continuation: true,
-                    };
-                }
-                column = column
-                    .checked_add(u16::try_from(width).map_err(|_| {
-                        TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
-                            axis: "paint span",
-                            value: width,
-                        })
-                    })?)
-                    .ok_or(TerminalPaintError::Projection(
-                        TerminalProjectionError::ExtentOverflow {
-                            axis: "paint span",
-                            value: usize::from(column).saturating_add(width),
-                        },
-                    ))?;
-                painted_width = painted_width.saturating_add(width);
+            let (painted_width, clipped) = paint_span_graphemes(span, text, style, surface)?;
+            if clipped {
+                surface.physically_complete = false;
             }
             if !clipped && painted_width != usize::from(span.cell_width) {
                 return Err(TerminalProjectionError::ExtentOverflow {
@@ -741,6 +681,80 @@ impl TerminalTextProduct {
         self.paint_row(row, &resolver, inherited, &mut surface)?;
         Ok(Some(PhysicalRow::from_cells(surface.cells)))
     }
+}
+
+fn paint_span_graphemes(
+    span: &TerminalPaintSpan,
+    text: &str,
+    style: PhysicalStyle,
+    surface: &mut Surface,
+) -> Result<(usize, bool), TerminalPaintError> {
+    let mut column = span.x;
+    let mut painted_width = 0usize;
+    for grapheme in text.graphemes(true) {
+        let width = grapheme_cell_width(grapheme);
+        if width == 0 {
+            continue;
+        }
+        let end = usize::from(column).checked_add(width).ok_or(
+            TerminalProjectionError::ExtentOverflow {
+                axis: "paint row",
+                value: usize::MAX,
+            },
+        )?;
+        if end > usize::from(surface.width()) {
+            return Ok((painted_width, true));
+        }
+        surface.clear_glyph_at(column, 0);
+        *surface.get_mut(column, 0) = PhysicalCell {
+            grapheme: Some(grapheme.to_owned()),
+            style,
+            painted: true,
+            continuation: false,
+        };
+        for continuation in 1..width {
+            let continuation_column = column
+                .checked_add(u16::try_from(continuation).map_err(|_| {
+                    TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
+                        axis: "paint continuation",
+                        value: continuation,
+                    })
+                })?)
+                .ok_or(TerminalPaintError::Projection(
+                    TerminalProjectionError::ExtentOverflow {
+                        axis: "paint continuation",
+                        value: usize::MAX,
+                    },
+                ))?;
+            *surface.get_mut(continuation_column, 0) = PhysicalCell {
+                grapheme: None,
+                style,
+                painted: true,
+                continuation: true,
+            };
+        }
+        column = column
+            .checked_add(u16::try_from(width).map_err(|_| {
+                TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
+                    axis: "paint span",
+                    value: width,
+                })
+            })?)
+            .ok_or(TerminalPaintError::Projection(
+                TerminalProjectionError::ExtentOverflow {
+                    axis: "paint span",
+                    value: usize::MAX,
+                },
+            ))?;
+        painted_width =
+            painted_width
+                .checked_add(width)
+                .ok_or(TerminalProjectionError::ExtentOverflow {
+                    axis: "paint span width",
+                    value: usize::MAX,
+                })?;
+    }
+    Ok((painted_width, false))
 }
 
 /// Pure direct projector from semantic text IR to terminal rows and boxes.
@@ -2871,6 +2885,19 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["abcd", "ef"]
         );
+        let wide_graphemes =
+            TerminalTextProjector::new(TextRenderPolicy::new().with_text_wrap(WrapMode::Grapheme))
+                .project(
+                    &TextContent::raw("abcdef界ghi 👩‍💻 é\nsecond line"),
+                    TerminalConstraints::definite(5),
+                )
+                .expect("wide grapheme projection");
+        assert_eq!(
+            (0..wide_graphemes.rows().len())
+                .map(|row| row_text(&wide_graphemes, row))
+                .collect::<Vec<_>>(),
+            ["abcde", "f界gh", "i 👩‍💻", "é", "secon", "d lin", "e"]
+        );
         let no_wrap =
             TerminalTextProjector::new(TextRenderPolicy::new().with_text_wrap(WrapMode::NoWrap))
                 .project(
@@ -2880,6 +2907,19 @@ mod tests {
                 .expect("no-wrap projection");
         assert_eq!(no_wrap.rows().len(), 1);
         assert!(!no_wrap.rows()[0].fits());
+        let clipped_wide =
+            TerminalTextProjector::new(TextRenderPolicy::new().with_text_wrap(WrapMode::NoWrap))
+                .project(
+                    &TextContent::raw("abcd界"),
+                    TerminalConstraints::definite(5),
+                )
+                .expect("no-wrap wide projection");
+        let clipped_row = clipped_wide
+            .paint_row_to_physical(&Theme::new(), PhysicalStyle::default(), 0)
+            .expect("no-wrap wide paint")
+            .expect("no-wrap wide row");
+        assert_eq!(clipped_row.cells()[4].grapheme, None);
+        assert!(!clipped_row.cells()[4].continuation);
     }
 
     #[test]

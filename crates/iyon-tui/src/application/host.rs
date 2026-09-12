@@ -3406,7 +3406,11 @@ impl HostInner {
                 ))?;
             self.content_dirty = true;
         }
-        self.sync_direct_occurrences(Some(&changes))?;
+        // Animation frame changes are scheduler-only, but their sparse change
+        // set contains no unrelated ContentHost roots. Rebuild the complete
+        // direct occurrence snapshot so an animation tick cannot discard an
+        // existing content measurement owner from the renderer driver.
+        self.sync_direct_occurrences(None)?;
         Ok(())
     }
 

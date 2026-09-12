@@ -3395,8 +3395,7 @@ mod tests {
         let inner_cell = composed
             .blocks()
             .iter()
-            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
-            .next_back()
+            .rfind(|block| block.kind() == TerminalBlockKind::TableCell)
             .expect("inner table cell");
         assert_eq!(inner_cell.rect().x(), 2);
     }

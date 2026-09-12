@@ -6,15 +6,13 @@
 
 pub(super) mod frontier;
 
-use crate::{
-    backend::NativeHistorySink,
-    physical::PhysicalRow,
-    presentation::{ContentProvider, EmptyContentProvider},
-};
+use crate::{physical::PhysicalRow, presentation::ContentProvider};
 
 #[cfg(test)]
 use super::model::HistoryUnit;
 use super::{History, HistoryUnitContent, HistoryUnitId};
+#[cfg(test)]
+use crate::{backend::NativeHistorySink, presentation::EmptyContentProvider};
 pub(super) use frontier::NativeFrontier;
 use frontier::{
     FrozenContentRemainder, FrozenPhysicalRows, FrozenStaticRemainder, SpacingTransferState,

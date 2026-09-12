@@ -3879,7 +3879,10 @@ impl HostInner {
                 .is_none_or(|document| document.accepted_ui_revision() == 0)
         {
             self.running.clear_dirty();
-            return Ok(HostFlushOutcome::default());
+            return Ok(HostFlushOutcome {
+                waiting_for_presentation: true,
+                ..HostFlushOutcome::default()
+            });
         }
         let (prepared, history_plan) = if self.can_prepare_metadata_candidate() {
             (self.prepare_metadata_candidate(), None)

@@ -1384,7 +1384,7 @@ impl TuiHost {
         sources: &[crate::application::content::HostContentSource],
     ) -> std::result::Result<crate::occurrence::UiOperationResult, crate::occurrence::UiRejection>
     {
-        let (result, wakes) = {
+        let (result, wakes, environment, host_id) = {
             let mut inner = self.lock_mut().map_err(|error| {
                 crate::occurrence::UiRejection::internal(
                     0,
@@ -1468,9 +1468,14 @@ impl TuiHost {
                 debug_assert!(inner.scheduler_failure.is_some());
                 let _ = error;
             }
-            (result, wakes)
+            (result, wakes, inner.environment.clone(), inner.host_id)
         };
         crate::application::content::HostContentSource::finish_prepared_wakes(wakes);
+        // Accepted structural work must receive one native service turn even
+        // when the caller does not immediately request a presentation barrier.
+        // This admits automatic failure diagnostics and starts asynchronous
+        // layout/content work without waiting under HostInner.
+        let _ = environment.drain_pending_for(32, true, Some(host_id));
         Ok(result)
     }
 

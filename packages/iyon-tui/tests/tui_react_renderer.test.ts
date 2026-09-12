@@ -2766,6 +2766,7 @@ describe("T3 React mutation renderer", () => {
 			await root.render(createElement(Text, {}, "healthy"));
 			expect(nativeCalls).toBe(5);
 			expect(root.faulted).toBe(false);
+			await root.whenContentVisible();
 			expect(tui.screenRows().some((row) => row.includes("healthy"))).toBe(
 				true,
 			);

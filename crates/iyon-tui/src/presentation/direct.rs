@@ -404,6 +404,36 @@ impl DirectOccurrenceRenderer {
             )
         };
         sync.map_err(|error| anyhow!("direct Taffy synchronization failed: {error:?}"))?;
+        let body_children = self
+            .snapshots
+            .values()
+            .find(|snapshot| snapshot.root_role == Some(crate::occurrence::RootRole::Body))
+            .map(|snapshot| snapshot.children.clone())
+            .unwrap_or_default();
+        let body_content_children = body_children.iter().copied().filter(|key| {
+            self.snapshots
+                .get(key)
+                .is_some_and(|snapshot| snapshot.kind == HostKind::ContentHost)
+        });
+        let body_fit_children = body_children.iter().copied().filter(|key| {
+            self.snapshots
+                .get(key)
+                .is_some_and(crate::presentation::taffy::is_intrinsic_body_child)
+        });
+        let history_root_children = self
+            .snapshots
+            .values()
+            .filter(|snapshot| {
+                snapshot.root_role == Some(crate::occurrence::RootRole::LegacyHistoryUnit)
+            })
+            .flat_map(|snapshot| snapshot.children.iter().copied());
+        self.layout
+            .synchronize_root_child_alignment(
+                body_content_children,
+                body_fit_children,
+                history_root_children,
+            )
+            .map_err(|error| anyhow!("direct root alignment synchronization failed: {error:?}"))?;
         if let Some(changes) = changes {
             for key in &changes.retired_nodes {
                 self.participation.remove(key);
@@ -556,6 +586,27 @@ impl DirectOccurrenceRenderer {
             .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
     }
 
+    fn layout_root_allocation(
+        &mut self,
+        root: NodeKey,
+        width: f32,
+        height: f32,
+        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
+        control_views: &HashMap<NodeKey, View>,
+        intrinsic_control_views: &HashMap<NodeKey, View>,
+    ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
+        self.layout
+            .layout_with_root_allocation(root, width, height, &mut |key, request| {
+                measured_for_request_with_intrinsic(
+                    measurements.get(&key),
+                    control_views.get(&key),
+                    intrinsic_control_views.get(&key),
+                    request,
+                )
+            })
+            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
+    }
+
     fn layout_roots(
         &mut self,
         body_root: NodeKey,
@@ -607,10 +658,8 @@ impl DirectOccurrenceRenderer {
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
 
-        // First obtain intrinsic body height. The second pass introduces an
-        // ephemeral viewport boundary, without mutating root style, so a
-        // content-heavy column receives the same finite height allocation as
-        // the terminal root.
+        // Obtain the body's intrinsic height before placing it against the
+        // terminal viewport, matching the retained root resolver's anchor.
         let body_intrinsic = self.layout_root(
             body,
             AvailableConstraint::Definite(f32::from(size.width)),
@@ -626,22 +675,22 @@ impl DirectOccurrenceRenderer {
             .transpose()?
             .ok_or_else(|| anyhow!("direct Body root geometry is missing"))?
             .clamp(0, i32::from(size.height)) as u16;
-        let body_measurement = self
-            .layout
-            .layout_in_viewport(
+        let body_overflows_viewport = body_intrinsic.iter().any(|geometry| {
+            geometry.key != body
+                && geometry.logical.y + geometry.logical.height > f32::from(body_height)
+        });
+        let body_measurement = if body_overflows_viewport {
+            self.layout_root_allocation(
                 body,
                 f32::from(size.width),
                 f32::from(body_height),
-                &mut |key, request| {
-                    measured_for_request_with_intrinsic(
-                        measurements.get(&key),
-                        control_views.get(&key),
-                        intrinsic_control_views.get(&key),
-                        request,
-                    )
-                },
-            )
-            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
+                measurements,
+                control_views,
+                intrinsic_control_views,
+            )?
+        } else {
+            body_intrinsic
+        };
         let history_height = size.height.saturating_sub(body_height);
 
         let mut history_layouts = Vec::with_capacity(history_roots.len());

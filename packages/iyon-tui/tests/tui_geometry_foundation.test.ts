@@ -171,7 +171,7 @@ describe("finite geometry boundary", () => {
 		expect(UI_PROPERTIES.height).toBe(0x0102);
 	});
 
-	test("real native boundary preserves fit/fill and rejects unrealized T6 geometry", async () => {
+	test("real native boundary preserves fit/fill and realizes T6 geometry", async () => {
 		const tui = await AppHarness.open({ width: 12, height: 4 });
 		const root = createReactRoot(tui);
 		try {
@@ -192,7 +192,8 @@ describe("finite geometry boundary", () => {
 					)
 				).accepted,
 			).toBe(true);
-			await expect(root.whenVisible()).rejects.toThrow(/T6 geometry property/);
+			await root.whenVisible();
+			expect(tui.screenRows().some((row) => row.includes("new"))).toBe(true);
 		} finally {
 			await root.unmount();
 			tui.close();

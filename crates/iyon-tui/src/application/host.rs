@@ -1541,7 +1541,21 @@ impl TuiHost {
             let inner = self.lock()?;
             (inner.environment.clone(), inner.host_id)
         };
-        environment.drain_pending_for(budget, force_retry, Some(host_id))
+        let mut combined = HostDrainReport::default();
+        for _ in 0..32 {
+            let report = environment.drain_pending_for(budget, force_retry, Some(host_id))?;
+            combined.rearm = report.rearm;
+            combined.waiting_for_presentation |= report.waiting_for_presentation;
+            combined.attempted = combined.attempted.saturating_add(report.attempted);
+            combined.commits.extend(report.commits);
+            combined.errors.extend(report.errors);
+            combined.wake_epoch = report.wake_epoch;
+            if !report.rearm {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        Ok(combined)
     }
 
     /// Waits for a native presentation barrier without requiring a JS frame

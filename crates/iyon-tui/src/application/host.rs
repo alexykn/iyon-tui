@@ -1008,6 +1008,10 @@ impl HostTextInput {
         Ok(self.lock()?.view())
     }
 
+    pub(crate) fn intrinsic_view(&self) -> Result<View> {
+        Ok(self.lock()?.intrinsic_view())
+    }
+
     #[must_use]
     pub fn component_id(&self) -> Option<u64> {
         self.component_id.lock().ok().and_then(|id| *id)
@@ -1087,6 +1091,10 @@ impl Component for MountedTextInput {
         self.0
             .lock()
             .map_or_else(|_| vf::spacer(0), |input| input.view())
+    }
+
+    fn intrinsic_view(&self) -> Option<View> {
+        self.0.intrinsic_view().ok()
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {

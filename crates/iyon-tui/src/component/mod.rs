@@ -29,6 +29,13 @@ pub(crate) use tick::{TickOutcome, TickScheduler};
 pub trait Component: Send + 'static {
     fn view(&self) -> View;
 
+    /// Supplies a layout-independent semantic view for native control
+    /// intrinsic measurement. Most components have no separate control
+    /// measurement contract and retain the default.
+    fn intrinsic_view(&self) -> Option<View> {
+        None
+    }
+
     fn capabilities(&self, _cx: &mut ComponentCx<'_, Self>)
     where
         Self: Sized,

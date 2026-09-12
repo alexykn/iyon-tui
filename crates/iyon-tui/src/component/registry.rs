@@ -7,6 +7,7 @@ use crate::presentation::View;
 
 trait ErasedComponent: Send {
     fn view(&self) -> View;
+    fn intrinsic_view(&self) -> Option<View>;
     fn capabilities(&self) -> ComponentCapabilities;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -20,6 +21,10 @@ where
     fn view(&self) -> View {
         perf::inc(Counter::ComponentViewCalls);
         Component::view(self)
+    }
+
+    fn intrinsic_view(&self) -> Option<View> {
+        Component::intrinsic_view(self)
     }
 
     fn capabilities(&self) -> ComponentCapabilities {
@@ -46,6 +51,7 @@ where
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentSnapshot {
     pub(crate) view: View,
+    pub(crate) intrinsic_view: Option<View>,
     pub(crate) revision: ComponentRevision,
     pub(crate) capabilities: ComponentCapabilities,
 }
@@ -168,6 +174,7 @@ impl ComponentRegistry {
 
         let snapshot = ComponentSnapshot {
             view: entry.component.view(),
+            intrinsic_view: entry.component.intrinsic_view(),
             revision: entry.revision,
             capabilities: entry.component.capabilities(),
         };

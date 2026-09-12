@@ -474,7 +474,8 @@ impl SceneHost {
         _port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
     ) -> Result<PreparedSceneFrame> {
         let mut captures = self.capture_direct_measurements(size.width, content)?;
-        let mut control_views = self.capture_direct_control_views(registry)?;
+        let (mut control_views, mut intrinsic_control_views) =
+            self.capture_direct_control_views(registry)?;
         let mut invalidate_controls = Vec::new();
         for _ in 0..MAX_LAYOUT_PASSES {
             let direct = self.prepare_direct_layout(
@@ -483,6 +484,7 @@ impl SceneHost {
                 history_anchor,
                 &mut captures,
                 &control_views,
+                &intrinsic_control_views,
                 &invalidate_controls,
                 content,
             )?;
@@ -520,7 +522,8 @@ impl SceneHost {
                     .synchronize(&graph, &capabilities, &geometry, registry),
                 super::LayoutSync::Dirty
             ) {
-                control_views = self.capture_direct_control_views(registry)?;
+                (control_views, intrinsic_control_views) =
+                    self.capture_direct_control_views(registry)?;
                 invalidate_controls = self.direct_control_nodes.keys().copied().collect();
                 continue;
             }
@@ -528,7 +531,8 @@ impl SceneHost {
                 .focus
                 .reconcile_with_geometry(&graph, &capabilities, Some(&geometry), registry)
             {
-                control_views = self.capture_direct_control_views(registry)?;
+                (control_views, intrinsic_control_views) =
+                    self.capture_direct_control_views(registry)?;
                 invalidate_controls = self.direct_control_nodes.keys().copied().collect();
                 continue;
             }
@@ -561,6 +565,7 @@ impl SceneHost {
         history_anchor: DirectHistoryAnchor,
         captures: &mut HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
         control_views: &HashMap<ComponentId, crate::presentation::View>,
+        intrinsic_control_views: &HashMap<ComponentId, crate::presentation::View>,
         invalidate_controls: &[crate::occurrence::NodeKey],
         content: &mut dyn ContentProvider,
     ) -> Result<DirectLayout> {
@@ -568,13 +573,14 @@ impl SceneHost {
             .direct_driver
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("direct renderer driver is not started"))?;
-        let mut direct = driver.layout(
+        let mut direct = driver.layout_with_intrinsic(
             root,
             size,
             history_anchor,
             captures.clone(),
             invalidate_controls.to_vec(),
             control_views.clone(),
+            intrinsic_control_views.clone(),
         )?;
         let mut invalidate = Vec::new();
         for (key, capture) in captures.iter_mut() {
@@ -600,13 +606,14 @@ impl SceneHost {
             invalidate.push(*key);
         }
         if !invalidate.is_empty() {
-            direct = driver.layout(
+            direct = driver.layout_with_intrinsic(
                 root,
                 size,
                 history_anchor,
                 captures.clone(),
                 invalidate,
                 control_views.clone(),
+                intrinsic_control_views.clone(),
             )?;
         }
         validate_direct_measurement_widths(&direct, captures)?;
@@ -648,17 +655,22 @@ impl SceneHost {
     fn capture_direct_control_views(
         &self,
         registry: &ComponentRegistry,
-    ) -> Result<HashMap<ComponentId, crate::presentation::View>> {
-        self.direct_controls
-            .values()
-            .copied()
-            .map(|component| {
-                registry
-                    .resolution(component)
-                    .map(|snapshot| (component, snapshot.view))
-                    .ok_or_else(|| anyhow::anyhow!("direct control component disappeared"))
-            })
-            .collect()
+    ) -> Result<(
+        HashMap<ComponentId, crate::presentation::View>,
+        HashMap<ComponentId, crate::presentation::View>,
+    )> {
+        let mut control_views = HashMap::new();
+        let mut intrinsic_control_views = HashMap::new();
+        for component in self.direct_controls.values().copied() {
+            let snapshot = registry
+                .resolution(component)
+                .ok_or_else(|| anyhow::anyhow!("direct control component disappeared"))?;
+            control_views.insert(component, snapshot.view);
+            if let Some(view) = snapshot.intrinsic_view {
+                intrinsic_control_views.insert(component, view);
+            }
+        }
+        Ok((control_views, intrinsic_control_views))
     }
 }
 

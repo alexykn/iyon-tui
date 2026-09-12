@@ -86,6 +86,7 @@ enum DirectDriverCommand {
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
         control_views: HashMap<ComponentId, View>,
+        intrinsic_control_views: HashMap<ComponentId, View>,
         response: SyncSender<Result<DirectLayout>>,
     },
     InvalidateContent {
@@ -166,6 +167,27 @@ impl DirectDriverHandle {
         invalidate: Vec<NodeKey>,
         control_views: HashMap<ComponentId, View>,
     ) -> Result<DirectLayout> {
+        self.layout_with_intrinsic(
+            root,
+            size,
+            history_anchor,
+            measurements,
+            invalidate,
+            control_views,
+            HashMap::new(),
+        )
+    }
+
+    pub(crate) fn layout_with_intrinsic(
+        &self,
+        root: NodeKey,
+        size: crate::geometry::Size,
+        history_anchor: DirectHistoryAnchor,
+        measurements: HashMap<NodeKey, CapturedContentMeasurement>,
+        invalidate: Vec<NodeKey>,
+        control_views: HashMap<ComponentId, View>,
+        intrinsic_control_views: HashMap<ComponentId, View>,
+    ) -> Result<DirectLayout> {
         let (response, receive) = sync_channel(1);
         self.command
             .send(DirectDriverCommand::Layout {
@@ -175,6 +197,7 @@ impl DirectDriverHandle {
                 measurements,
                 invalidate,
                 control_views,
+                intrinsic_control_views,
                 response,
             })
             .map_err(|_| anyhow!("direct renderer driver is closed"))?;
@@ -265,15 +288,17 @@ fn direct_driver_loop(
                 measurements,
                 invalidate,
                 control_views,
+                intrinsic_control_views,
                 response,
             } => {
-                let _ = response.send(renderer.prepare(
+                let _ = response.send(renderer.prepare_with_intrinsic(
                     root,
                     size,
                     history_anchor,
                     &measurements,
                     &invalidate,
                     &control_views,
+                    &intrinsic_control_views,
                 ));
             }
             DirectDriverCommand::InvalidateContent { port_id, response } => {
@@ -404,6 +429,27 @@ impl DirectOccurrenceRenderer {
         invalidate: &[NodeKey],
         control_views: &HashMap<ComponentId, View>,
     ) -> Result<DirectLayout> {
+        self.prepare_with_intrinsic(
+            root,
+            size,
+            history_anchor,
+            measurements,
+            invalidate,
+            control_views,
+            &HashMap::new(),
+        )
+    }
+
+    fn prepare_with_intrinsic(
+        &mut self,
+        root: NodeKey,
+        size: crate::geometry::Size,
+        history_anchor: DirectHistoryAnchor,
+        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
+        invalidate: &[NodeKey],
+        control_views: &HashMap<ComponentId, View>,
+        intrinsic_control_views: &HashMap<ComponentId, View>,
+    ) -> Result<DirectLayout> {
         if !self.synchronized {
             return Err(anyhow!("direct occurrence renderer is not synchronized"));
         }
@@ -417,6 +463,7 @@ impl DirectOccurrenceRenderer {
             )
             .map_err(|error| anyhow!("direct Taffy measurement invalidation failed: {error:?}"))?;
         let mut control_views_by_node = HashMap::new();
+        let mut intrinsic_control_views_by_node = HashMap::new();
         for snapshot in self.snapshots.values() {
             let Some(component) = snapshot
                 .control
@@ -429,13 +476,17 @@ impl DirectOccurrenceRenderer {
                 .cloned()
                 .ok_or_else(|| anyhow!("direct control view capture is missing"))?;
             control_views_by_node.insert(snapshot.key, view);
+            if let Some(view) = intrinsic_control_views.get(&component) {
+                intrinsic_control_views_by_node.insert(snapshot.key, view.clone());
+            }
         }
-        let (geometries, history_overflow_rows) = self.layout_roots(
+        let (geometries, history_overflow_rows) = self.layout_roots_with_intrinsic(
             root,
             size,
             history_anchor,
             measurements,
             &control_views_by_node,
+            &intrinsic_control_views_by_node,
         )?;
         self.build_layout_tree(
             root,
@@ -492,6 +543,25 @@ impl DirectOccurrenceRenderer {
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
         control_views: &HashMap<NodeKey, View>,
     ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
+        self.layout_roots_with_intrinsic(
+            body_root,
+            size,
+            history_anchor,
+            measurements,
+            control_views,
+            &HashMap::new(),
+        )
+    }
+
+    fn layout_roots_with_intrinsic(
+        &mut self,
+        body_root: NodeKey,
+        size: crate::geometry::Size,
+        history_anchor: DirectHistoryAnchor,
+        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
+        control_views: &HashMap<NodeKey, View>,
+        intrinsic_control_views: &HashMap<NodeKey, View>,
+    ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
         let mut history_roots = Vec::new();
         let mut portal_roots = Vec::new();
         let mut body = None;
@@ -525,9 +595,10 @@ impl DirectOccurrenceRenderer {
                     width,
                     height,
                     &mut |key, request| {
-                        measured_for_request(
+                        measured_for_request_with_intrinsic(
                             measurements.get(&key),
                             control_views.get(&key),
+                            intrinsic_control_views.get(&key),
                             request,
                         )
                     },
@@ -538,9 +609,10 @@ impl DirectOccurrenceRenderer {
                     width,
                     height,
                     &mut |key, request| {
-                        measured_for_request(
+                        measured_for_request_with_intrinsic(
                             measurements.get(&key),
                             control_views.get(&key),
+                            intrinsic_control_views.get(&key),
                             request,
                         )
                     },
@@ -972,8 +1044,29 @@ fn measured_for_request(
     control_view: Option<&View>,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> MeasuredSize {
+    measured_for_request_with_intrinsic(capture, control_view, None, request)
+}
+
+fn measured_for_request_with_intrinsic(
+    capture: Option<&CapturedContentMeasurement>,
+    control_view: Option<&View>,
+    intrinsic_control_view: Option<&View>,
+    request: crate::presentation::taffy::MeasureRequest,
+) -> MeasuredSize {
     if capture.is_none() {
-        let Some(view) = control_view else {
+        let intrinsic_request = matches!(
+            (request.known_width, request.available_width),
+            (
+                None,
+                AvailableConstraint::MinContent | AvailableConstraint::MaxContent
+            )
+        );
+        let view = if intrinsic_request {
+            intrinsic_control_view.or(control_view)
+        } else {
+            control_view
+        };
+        let Some(view) = view else {
             // A childless ordinary Box has no intrinsic content. This is a
             // valid zero-sized leaf, unlike a missing ContentHost/control
             // capture, which is rejected at tree emission.
@@ -1608,9 +1701,20 @@ mod tests {
             crate::geometry::Size::new(20, 4),
         );
         let allocated_view = crate::Component::view(&editor);
-        let allocated_intrinsic = measured_for_request(
+        let intrinsic_view = editor.intrinsic_view();
+        let allocated_block = crate::presentation::layout::compile_view(&allocated_view, 5);
+        assert_eq!(
+            allocated_block
+                .rows
+                .iter()
+                .map(|row| row.plain_text())
+                .collect::<Vec<_>>(),
+            ["abc", "defgh"]
+        );
+        let allocated_intrinsic = measured_for_request_with_intrinsic(
             None,
             Some(&allocated_view),
+            Some(&intrinsic_view),
             crate::presentation::taffy::MeasureRequest {
                 known_width: None,
                 known_height: None,
@@ -1620,6 +1724,90 @@ mod tests {
             },
         );
         assert_eq!(allocated_intrinsic.width, 5.0);
+
+        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
+        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
+        let body = document.body_root();
+        let mut mount = crate::occurrence::UiCommit::new(0);
+        mount.push(crate::occurrence::UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(crate::occurrence::UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::Editor,
+        });
+        mount.push(crate::occurrence::UiOperation::CreateControl {
+            local_ordinal: 3,
+            kind: crate::occurrence::ControlKind::Editor,
+            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(crate::occurrence::UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body.handle(namespace)),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(crate::occurrence::UiOperation::InsertBefore {
+            parent: NodeRef::Local(1),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(crate::occurrence::UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: PropertyId::Layout,
+            value: LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
+        });
+        mount.push(crate::occurrence::UiOperation::SetDeclared {
+            node: NodeRef::Local(2),
+            property: PropertyId::Width,
+            value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Auto)),
+        });
+        let created = document
+            .commit_ui(&mount)
+            .expect("direct Editor occurrence")
+            .acknowledgement
+            .created;
+        let wrapper_node = created[0].node_key().expect("wrapper node");
+        let editor_node = created[1].node_key().expect("Editor node");
+        let control = created[2].resource_key().expect("Editor control");
+        let snapshots = vec![
+            document.snapshot(body).expect("body snapshot"),
+            document.snapshot(wrapper_node).expect("wrapper snapshot"),
+            document.snapshot(editor_node).expect("Editor snapshot"),
+        ];
+        let participation = snapshots
+            .iter()
+            .map(|snapshot| NodeParticipation {
+                key: snapshot.key,
+                participates: true,
+            })
+            .collect::<Vec<_>>();
+        let component = ComponentId::from_raw(1);
+        let mut renderer = DirectOccurrenceRenderer::new(8);
+        renderer
+            .synchronize(
+                snapshots,
+                None,
+                &participation,
+                HashMap::new(),
+                vec![body],
+                HashMap::new(),
+                HashMap::from([(control, component)]),
+            )
+            .expect("direct Editor synchronization");
+        let direct = renderer
+            .prepare_with_intrinsic(
+                body,
+                crate::geometry::Size::new(20, 4),
+                DirectHistoryAnchor::FollowEnd,
+                &HashMap::new(),
+                &[],
+                &HashMap::from([(component, allocated_view)]),
+                &HashMap::from([(component, intrinsic_view)]),
+            )
+            .expect("direct Editor intrinsic layout");
+        assert_eq!(direct.occurrence_geometry[&editor_node].outer.width, 5);
     }
 
     #[test]

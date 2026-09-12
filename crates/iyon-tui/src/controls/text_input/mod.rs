@@ -318,6 +318,10 @@ impl Component for TextInput {
         self.semantic_view()
     }
 
+    fn intrinsic_view(&self) -> Option<View> {
+        Some(TextInput::intrinsic_view(self))
+    }
+
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
         cx.focusable();
         cx.on_focus_changed(Self::focus_changed_callback);

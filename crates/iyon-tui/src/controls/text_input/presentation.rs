@@ -17,24 +17,32 @@ impl TextInput {
         vf::border(view, border)
     }
 
+    /// Returns the editor's immutable intrinsic content, independent of the
+    /// last allocated viewport width. The direct control adapter uses this
+    /// for Taffy's MinContent/MaxContent requests after layout callbacks have
+    /// converted the regular view into a Fill RowViewport.
+    pub(crate) fn intrinsic_view(&self) -> View {
+        let text = if self.focused {
+            vf::text_with_cursor(
+                self.buffer.text().to_owned(),
+                crate::WrapMode::WordThenGrapheme,
+                crate::HorizontalAlign::Start,
+                self.buffer.cursor_bytes(),
+            )
+        } else {
+            vf::text_with_style(
+                self.buffer.text().to_owned(),
+                crate::WrapMode::WordThenGrapheme,
+                crate::HorizontalAlign::Start,
+                crate::StyleRef::default(),
+            )
+        };
+        self.decorated(text)
+    }
+
     pub(super) fn semantic_view(&self) -> View {
         let Some(layout_size) = self.layout_size else {
-            let text = if self.focused {
-                vf::text_with_cursor(
-                    self.buffer.text().to_owned(),
-                    crate::WrapMode::WordThenGrapheme,
-                    crate::HorizontalAlign::Start,
-                    self.buffer.cursor_bytes(),
-                )
-            } else {
-                vf::text_with_style(
-                    self.buffer.text().to_owned(),
-                    crate::WrapMode::WordThenGrapheme,
-                    crate::HorizontalAlign::Start,
-                    crate::StyleRef::default(),
-                )
-            };
-            return self.decorated(text);
+            return self.intrinsic_view();
         };
 
         let size = self.inner_size(layout_size);

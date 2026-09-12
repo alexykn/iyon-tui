@@ -8,10 +8,8 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
-use taffy::prelude::{
-    AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style, TrackSizingFunction,
-};
-use taffy::style_helpers::{FromLength, auto, fr, length, line, span};
+use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
+use taffy::style_helpers::{auto, flex, length, line, max_content, minmax, span, zero};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -34,6 +32,11 @@ use super::{
 };
 
 type SemanticContext = TerminalSemanticContext;
+
+// Roman numerals repeat `M` for every thousand. Keep the representable
+// projection bounded before formatting an externally supplied list start.
+const MAX_ROMAN_REMAINDER_WIDTH: u64 = 15;
+const MAX_ROMAN_VALUE: u64 = ((u16::MAX as u64) - MAX_ROMAN_REMAINDER_WIDTH - 4) * 1000 + 999;
 
 /// Width request used by direct semantic content measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +95,7 @@ pub(crate) enum TerminalProjectionError {
     RunIndexOverflow { value: usize },
     InvalidRunRange { run: usize, range: Range<usize> },
     PaintWindowOverflow { first_row: usize, row_count: usize },
+    MarkerExtentOverflow { value: u64 },
     TableLayoutFailure,
 }
 
@@ -120,6 +124,10 @@ impl fmt::Display for TerminalProjectionError {
                 formatter,
                 "terminal paint window {first_row}..{} exceeds product rows",
                 first_row.saturating_add(*row_count)
+            ),
+            Self::MarkerExtentOverflow { value } => write!(
+                formatter,
+                "terminal ordered marker {value} exceeds the bounded roman extent"
             ),
             Self::TableLayoutFailure => write!(formatter, "terminal table Taffy layout failed"),
         }
@@ -702,16 +710,16 @@ impl TerminalTextProduct {
                 &run.style,
                 &StyleContext::default().with_local_facts(&run.identity.facts),
             );
-            let (painted_width, clipped) = paint_span_graphemes(span, text, style, surface)?;
+            let (painted_width, clipped) = paint_span_graphemes(span, text, style, surface);
             if clipped {
                 surface.physically_complete = false;
             }
-            if !clipped && painted_width != usize::from(span.cell_width) {
-                return Err(TerminalProjectionError::ExtentOverflow {
-                    axis: "paint span width",
-                    value: painted_width,
-                }
-                .into());
+            if !clipped {
+                assert_eq!(
+                    painted_width,
+                    usize::from(span.cell_width),
+                    "terminal paint span width invariant violated"
+                );
             }
         }
         Ok(())
@@ -739,44 +747,34 @@ fn paint_span_graphemes(
     text: &str,
     style: PhysicalStyle,
     surface: &mut Surface,
-) -> Result<(usize, bool), TerminalPaintError> {
-    let mut column = span.x;
-    let mut painted_width = 0usize;
+) -> (usize, bool) {
+    let start_column = usize::from(span.x);
+    let mut column = start_column;
+    let surface_width = usize::from(surface.width());
     for grapheme in text.graphemes(true) {
         let width = grapheme_cell_width(grapheme);
         if width == 0 {
             continue;
         }
-        let end = usize::from(column).checked_add(width).ok_or(
-            TerminalProjectionError::ExtentOverflow {
-                axis: "paint row",
-                value: usize::MAX,
-            },
-        )?;
-        if end > usize::from(surface.width()) {
-            return Ok((painted_width, true));
+        assert!(
+            width <= usize::from(u16::MAX),
+            "grapheme width exceeds the terminal-cell extent"
+        );
+        let end = column + width;
+        if end > surface_width {
+            return (column - start_column, true);
         }
-        surface.clear_glyph_at(column, 0);
-        *surface.get_mut(column, 0) = PhysicalCell {
+        let column_u16 = u16::try_from(column).expect("bounded paint column");
+        surface.clear_glyph_at(column_u16, 0);
+        *surface.get_mut(column_u16, 0) = PhysicalCell {
             grapheme: Some(grapheme.to_owned()),
             style,
             painted: true,
             continuation: false,
         };
         for continuation in 1..width {
-            let continuation_column = column
-                .checked_add(u16::try_from(continuation).map_err(|_| {
-                    TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
-                        axis: "paint continuation",
-                        value: continuation,
-                    })
-                })?)
-                .ok_or(TerminalPaintError::Projection(
-                    TerminalProjectionError::ExtentOverflow {
-                        axis: "paint continuation",
-                        value: usize::MAX,
-                    },
-                ))?;
+            let continuation_column =
+                u16::try_from(column + continuation).expect("bounded paint continuation");
             *surface.get_mut(continuation_column, 0) = PhysicalCell {
                 grapheme: None,
                 style,
@@ -784,28 +782,9 @@ fn paint_span_graphemes(
                 continuation: true,
             };
         }
-        column = column
-            .checked_add(u16::try_from(width).map_err(|_| {
-                TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
-                    axis: "paint span",
-                    value: width,
-                })
-            })?)
-            .ok_or(TerminalPaintError::Projection(
-                TerminalProjectionError::ExtentOverflow {
-                    axis: "paint span",
-                    value: usize::MAX,
-                },
-            ))?;
-        painted_width =
-            painted_width
-                .checked_add(width)
-                .ok_or(TerminalProjectionError::ExtentOverflow {
-                    axis: "paint span width",
-                    value: usize::MAX,
-                })?;
+        column = end;
     }
-    Ok((painted_width, false))
+    (column - start_column, false)
 }
 
 /// Pure direct projector from semantic text IR to terminal rows and boxes.
@@ -838,6 +817,7 @@ impl TerminalTextProjector {
         contents: &[TextContent],
         constraints: TerminalConstraints,
     ) -> Result<TerminalTextProduct, TerminalProjectionError> {
+        validate_marker_bounds(contents)?;
         let intrinsic = measure_contents(contents, &self.policy);
         let selected = match constraints.width() {
             TerminalWidthConstraint::Definite(width) => usize::from(width),
@@ -946,10 +926,14 @@ fn layout_table_grid(
             cells: Vec::new(),
         });
     }
-    let mut grid = taffy::TaffyTree::<()>::with_capacity(cells.len() + row_count + 1);
+    let mut grid = taffy::TaffyTree::<usize>::with_capacity(cells.len() + row_count + 1);
     grid.disable_rounding();
+    let intrinsic_metrics = cells
+        .iter()
+        .map(|input| measure_block_slice(input.cell.blocks(), policy))
+        .collect::<Vec<_>>();
     let mut cell_nodes = Vec::with_capacity(cells.len());
-    for input in cells {
+    for (cell_index, input) in cells.iter().enumerate() {
         let row_end = input
             .row_index
             .checked_add(usize::from(input.cell.row_span().get()))
@@ -976,7 +960,7 @@ fn layout_table_grid(
             end: span(input.cell.col_span().get()),
         };
         let node = grid
-            .new_leaf(style)
+            .new_leaf_with_context(style, cell_index)
             .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
         cell_nodes.push(node);
     }
@@ -1000,18 +984,15 @@ fn layout_table_grid(
     let mut table_style = Style::default();
     table_style.display = Display::Grid;
     table_style.size.width = Dimension::length(f32::from(width));
-    let content_widths = matches!(
-        policy.table_column_sizing(),
-        super::TableColumnSizing::Content
-    )
-    .then(|| table_column_widths(table, policy, width))
-    .transpose()?;
     table_style.grid_template_columns = (0..table.columns().len())
-        .map(|column| {
-            let track = if let Some(widths) = content_widths.as_ref() {
-                TrackSizingFunction::from_length(f32::from(widths[column]))
-            } else {
-                fr(1.0_f32)
+        .map(|_| {
+            let track = match policy.table_column_sizing() {
+                super::TableColumnSizing::Content => minmax(zero(), max_content()),
+                // The zero minimum is intentional: a plain `1fr` track has
+                // an automatic min-content minimum and can overflow a narrow
+                // definite table. Flex tracks own both allocation and that
+                // minimum through Taffy's grid algorithm.
+                super::TableColumnSizing::Flex => flex(1.0_f32),
             };
             GridTemplateComponent::Single(track)
         })
@@ -1035,13 +1016,13 @@ fn layout_table_grid(
             width: AvailableSpace::Definite(f32::from(width)),
             height: AvailableSpace::MaxContent,
         },
-        |known, available, node, _, _| {
-            let Some(cell_index) = cell_nodes.iter().position(|candidate| *candidate == node)
-            else {
+        |known, available, _node, context, _| {
+            let Some(context) = context else {
                 return Size::ZERO;
             };
+            let cell_index = *context;
             let input = &cells[cell_index];
-            let metrics = measure_block_slice(input.cell.blocks(), policy);
+            let metrics = intrinsic_metrics[cell_index];
             let min_width = match u16::try_from(metrics.min_width) {
                 Ok(width) => f32::from(width),
                 Err(_) => {
@@ -1063,7 +1044,12 @@ fn layout_table_grid(
                 }
             };
             let requested_width = known.width.or(match available.width {
-                AvailableSpace::Definite(value) => Some(value),
+                // A definite available size during intrinsic grid track
+                // sizing is the table's size, not this cell's allocation.
+                // Let Taffy derive auto-track contributions from the
+                // precomputed intrinsic metrics; PerformLayout supplies the
+                // allocated width through `known`.
+                AvailableSpace::Definite(_) => Some(max_width),
                 AvailableSpace::MinContent => Some(min_width),
                 AvailableSpace::MaxContent => Some(max_width),
             });
@@ -1844,6 +1830,7 @@ impl<'a> ProductBuilder<'a> {
                 table_start,
                 geometry,
                 row_blocks[cell.row_index],
+                x,
             )?;
             row_children[cell.row_index].push(cell_index);
         }
@@ -1862,6 +1849,7 @@ impl<'a> ProductBuilder<'a> {
         table_start: usize,
         geometry: TableCellGeometry,
         row_block: usize,
+        table_x: u16,
     ) -> Result<usize, TerminalProjectionError> {
         let run_map = local
             .runs
@@ -1876,17 +1864,40 @@ impl<'a> ProductBuilder<'a> {
             })
             .collect::<Vec<_>>();
         let block_offset = self.blocks.len();
+        let cell_x = checked_extent(
+            "table cell x",
+            usize::from(table_x)
+                .checked_add(usize::from(geometry.x))
+                .ok_or(TerminalProjectionError::ExtentOverflow {
+                    axis: "table cell x",
+                    value: usize::from(table_x).saturating_add(usize::from(geometry.x)),
+                })?,
+        )?;
+        let base_y = table_start.checked_add(usize::from(geometry.y)).ok_or(
+            TerminalProjectionError::ExtentOverflow {
+                axis: "table cell y",
+                value: table_start.saturating_add(usize::from(geometry.y)),
+            },
+        )?;
         for mut child in local.blocks {
             child.rect = TerminalRect::new(
                 checked_extent(
                     "table cell x",
-                    usize::from(geometry.x).saturating_add(usize::from(child.rect.x)),
+                    usize::from(cell_x)
+                        .checked_add(usize::from(child.rect.x))
+                        .ok_or(TerminalProjectionError::ExtentOverflow {
+                            axis: "table cell x",
+                            value: usize::from(cell_x).saturating_add(usize::from(child.rect.x)),
+                        })?,
                 )?,
                 checked_extent(
                     "table cell y",
-                    table_start
-                        .saturating_add(usize::from(geometry.y))
-                        .saturating_add(usize::from(child.rect.y)),
+                    base_y.checked_add(usize::from(child.rect.y)).ok_or(
+                        TerminalProjectionError::ExtentOverflow {
+                            axis: "table cell y",
+                            value: base_y.saturating_add(usize::from(child.rect.y)),
+                        },
+                    )?,
                 )?,
                 child.rect.width,
                 child.rect.height,
@@ -1913,15 +1924,12 @@ impl<'a> ProductBuilder<'a> {
         }
         let root = block_offset;
         self.blocks[root].rect = TerminalRect::new(
-            geometry.x,
-            checked_extent(
-                "table cell y",
-                table_start.saturating_add(usize::from(geometry.y)),
-            )?,
+            cell_x,
+            checked_extent("table cell y", base_y)?,
             geometry.width,
             geometry.height,
         );
-        let base_row = table_start.saturating_add(usize::from(geometry.y));
+        let base_row = base_y;
         for (local_row_index, local_row) in local.rows.iter().enumerate() {
             let row_index = base_row.checked_add(local_row_index).ok_or(
                 TerminalProjectionError::ExtentOverflow {
@@ -1940,12 +1948,12 @@ impl<'a> ProductBuilder<'a> {
                         value: span.run_index,
                     },
                 )?;
-                let span_x = usize::from(geometry.x)
-                    .checked_add(usize::from(span.x))
-                    .ok_or(TerminalProjectionError::ExtentOverflow {
+                let span_x = usize::from(cell_x).checked_add(usize::from(span.x)).ok_or(
+                    TerminalProjectionError::ExtentOverflow {
                         axis: "table span x",
-                        value: usize::from(geometry.x).saturating_add(usize::from(span.x)),
-                    })?;
+                        value: usize::from(cell_x).saturating_add(usize::from(span.x)),
+                    },
+                )?;
                 spans.push(TerminalPaintSpan {
                     run_index,
                     byte_range: span.byte_range.clone(),
@@ -1963,7 +1971,12 @@ impl<'a> ProductBuilder<'a> {
                 .into();
             row.width = row.width.max(checked_extent(
                 "table row width",
-                usize::from(geometry.x).saturating_add(usize::from(local_row.width)),
+                usize::from(cell_x)
+                    .checked_add(usize::from(local_row.width))
+                    .ok_or(TerminalProjectionError::ExtentOverflow {
+                        axis: "table row width",
+                        value: usize::from(cell_x).saturating_add(usize::from(local_row.width)),
+                    })?,
             )?);
             row.fits &= local_row.fits;
             if row.block_index == usize::MAX {
@@ -2522,6 +2535,10 @@ fn alpha_number(mut value: u64, first: u8) -> String {
 }
 
 fn roman_number(mut value: u64) -> String {
+    assert!(
+        value <= MAX_ROMAN_VALUE,
+        "ordered marker exceeds the validated roman extent"
+    );
     const VALUES: &[(u64, &str)] = &[
         (1000, "M"),
         (900, "CM"),
@@ -2537,7 +2554,10 @@ fn roman_number(mut value: u64) -> String {
         (4, "IV"),
         (1, "I"),
     ];
-    let mut result = String::new();
+    let capacity = usize::try_from(value / 1000)
+        .expect("validated roman number fits usize")
+        .saturating_add(usize::try_from(MAX_ROMAN_REMAINDER_WIDTH).expect("small constant"));
+    let mut result = String::with_capacity(capacity);
     for &(unit, text) in VALUES {
         while value >= unit {
             value -= unit;
@@ -2545,6 +2565,66 @@ fn roman_number(mut value: u64) -> String {
         }
     }
     result
+}
+
+fn validate_marker_bounds(contents: &[TextContent]) -> Result<(), TerminalProjectionError> {
+    for content in contents {
+        if let TextContent::Block(block) = content {
+            validate_block_marker_bounds(block)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_block_marker_bounds(block: &Block) -> Result<(), TerminalProjectionError> {
+    match block.kind() {
+        BlockKind::BlockQuote { blocks } | BlockKind::Container { blocks } => {
+            validate_block_slice_marker_bounds(blocks)
+        }
+        BlockKind::List(list) => {
+            if let ListMarker::Ordered { start, style, .. } = list.marker()
+                && let Some(last_index) = list.items().len().checked_sub(1)
+            {
+                validate_marker_value(start.saturating_add(last_index as u64), style)?;
+            }
+            for item in list.items() {
+                validate_block_slice_marker_bounds(item.blocks())?;
+            }
+            Ok(())
+        }
+        BlockKind::Table(table) => {
+            if let Some(caption) = table.caption() {
+                validate_block_slice_marker_bounds(caption)?;
+            }
+            for row in table.rows() {
+                for cell in row.cells() {
+                    validate_block_slice_marker_bounds(cell.blocks())?;
+                }
+            }
+            Ok(())
+        }
+        BlockKind::Paragraph(_)
+        | BlockKind::Heading { .. }
+        | BlockKind::CodeBlock(_)
+        | BlockKind::ThematicBreak
+        | BlockKind::RawBlock { .. } => Ok(()),
+    }
+}
+
+fn validate_block_slice_marker_bounds(blocks: &[Block]) -> Result<(), TerminalProjectionError> {
+    for block in blocks {
+        validate_block_marker_bounds(block)?;
+    }
+    Ok(())
+}
+
+fn validate_marker_value(value: u64, style: NumberStyle) -> Result<(), TerminalProjectionError> {
+    if matches!(style, NumberStyle::LowerRoman | NumberStyle::UpperRoman) {
+        if value > MAX_ROMAN_VALUE {
+            return Err(TerminalProjectionError::MarkerExtentOverflow { value });
+        }
+    }
+    Ok(())
 }
 
 fn code_label_text(code: &CodeBlock, policy: super::CodeBlockLabelPolicy) -> Option<String> {
@@ -2829,51 +2909,39 @@ fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<Intrins
             let metrics = measure_block_slice(cell.blocks(), policy);
             let start = starts[row_index][cell_index];
             let span = usize::from(cell.col_span().get());
-            if span == 1 {
-                columns[start].min_width = columns[start].min_width.max(metrics.min_width);
-                columns[start].max_width = columns[start].max_width.max(metrics.max_width);
-            } else {
-                let min_each = metrics.min_width.div_ceil(span);
-                let max_each = metrics.max_width.div_ceil(span);
-                for column in &mut columns[start..start + span] {
-                    column.min_width = column.min_width.max(min_each);
-                    column.max_width = column.max_width.max(max_each);
-                }
-            }
+            merge_table_cell_metrics(
+                &mut columns,
+                start,
+                span,
+                metrics,
+                policy.table_column_gap(),
+            );
         }
     }
     columns
 }
 
-fn table_column_widths(
-    table: &Table,
-    policy: &TextRenderPolicy,
-    width: u16,
-) -> Result<Vec<u16>, TerminalProjectionError> {
-    let preferred = table_column_metrics(table, policy)
-        .into_iter()
-        .map(|column| {
-            u16::try_from(column.max_width).map_err(|_| TerminalProjectionError::ExtentOverflow {
-                axis: "table column",
-                value: column.max_width,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let gaps = usize::from(policy.table_column_gap())
-        .checked_mul(preferred.len().saturating_sub(1))
-        .ok_or(TerminalProjectionError::ExtentOverflow {
-            axis: "table column gaps",
-            value: usize::MAX,
-        })?;
-    let mut remaining = usize::from(width).saturating_sub(gaps);
-    preferred
-        .into_iter()
-        .map(|preferred| {
-            let allocated = usize::from(preferred).min(remaining);
-            remaining = remaining.saturating_sub(allocated);
-            checked_extent("table column", allocated)
-        })
-        .collect()
+fn merge_table_cell_metrics(
+    columns: &mut [IntrinsicMetrics],
+    start: usize,
+    span: usize,
+    metrics: IntrinsicMetrics,
+    gap: u16,
+) {
+    if span == 1 {
+        columns[start].min_width = columns[start].min_width.max(metrics.min_width);
+        columns[start].max_width = columns[start].max_width.max(metrics.max_width);
+        return;
+    }
+    let span_gap = usize::from(gap).saturating_mul(span.saturating_sub(1));
+    let min_content = metrics.min_width.saturating_sub(span_gap);
+    let max_content = metrics.max_width.saturating_sub(span_gap);
+    for (offset, column) in columns[start..start + span].iter_mut().enumerate() {
+        let min_each = min_content / span + usize::from(offset < min_content % span);
+        let max_each = max_content / span + usize::from(offset < max_content % span);
+        column.min_width = column.min_width.max(min_each);
+        column.max_width = column.max_width.max(max_each);
+    }
 }
 
 #[cfg(test)]
@@ -3253,5 +3321,195 @@ mod tests {
         assert_eq!(product.rows().len(), 1);
         assert_eq!(product.blocks().len(), 4);
         assert_eq!(product.blocks()[3].rect().height(), 1);
+    }
+
+    #[test]
+    fn nested_table_paint_keeps_quote_and_list_indentation() {
+        let table = || {
+            Block::table(
+                Table::new(
+                    None::<Vec<Block>>,
+                    [TableColumn::start()],
+                    0,
+                    [TableRow::new([TableCell::text("cell")])],
+                )
+                .expect("table"),
+            )
+        };
+        let contents = [
+            TextContent::block(Block::block_quote([table()])),
+            TextContent::block(Block::list(List::bulleted([ListItem::new([table()])]))),
+        ];
+        let product = TerminalTextProjector::new(
+            TextRenderPolicy::new()
+                .with_table_column_sizing(super::super::TableColumnSizing::Content),
+        )
+        .project_contents(&contents, TerminalConstraints::definite(12))
+        .expect("nested table projection");
+
+        assert_eq!(row_text(&product, 0), "> cell");
+        assert_eq!(row_text(&product, 2), "- cell");
+        let table_cells = product
+            .blocks()
+            .iter()
+            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
+            .collect::<Vec<_>>();
+        assert_eq!(table_cells[0].rect().x(), 2);
+        assert_eq!(table_cells[1].rect().x(), 2);
+
+        let inner = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start()],
+            0,
+            [TableRow::new([TableCell::text("inner")])],
+        )
+        .expect("inner table");
+        let composed = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start()],
+            0,
+            [TableRow::new([TableCell::new(
+                [Block::block_quote([Block::table(inner)])],
+                None,
+                std::num::NonZeroU16::new(1).expect("span"),
+                std::num::NonZeroU16::new(1).expect("span"),
+            )])],
+        )
+        .expect("composed table");
+        let composed = TerminalTextProjector::new(TextRenderPolicy::new())
+            .project(
+                &TextContent::block(Block::table(composed)),
+                TerminalConstraints::definite(12),
+            )
+            .expect("composed table projection");
+        assert_eq!(row_text(&composed, 0), "> inner");
+        let inner_cell = composed
+            .blocks()
+            .iter()
+            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
+            .last()
+            .expect("inner table cell");
+        assert_eq!(inner_cell.rect().x(), 2);
+    }
+
+    #[test]
+    fn flex_table_tracks_shrink_to_zero_for_narrow_spans() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [
+                TableColumn::start(),
+                TableColumn::start(),
+                TableColumn::start(),
+            ],
+            0,
+            [TableRow::new([
+                TableCell::new(
+                    [Block::paragraph("abcdef")],
+                    None,
+                    std::num::NonZeroU16::new(1).expect("span"),
+                    std::num::NonZeroU16::new(2).expect("span"),
+                ),
+                TableCell::text("xy"),
+            ])],
+        )
+        .expect("table");
+        let product = TerminalTextProjector::new(
+            TextRenderPolicy::new().with_table_column_sizing(super::super::TableColumnSizing::Flex),
+        )
+        .project(
+            &TextContent::block(Block::table(table)),
+            TerminalConstraints::definite(1),
+        )
+        .expect("narrow flex table projection");
+        let cells = product
+            .blocks()
+            .iter()
+            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
+            .map(|block| block.rect())
+            .collect::<Vec<_>>();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].width(), 1);
+        assert_eq!(cells[1].width(), 0);
+    }
+
+    #[test]
+    fn content_table_tracks_retain_intrinsic_width_when_space_remains() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start()],
+            0,
+            [TableRow::new([TableCell::text("cell")])],
+        )
+        .expect("table");
+        let product = TerminalTextProjector::new(
+            TextRenderPolicy::new()
+                .with_table_column_sizing(super::super::TableColumnSizing::Content),
+        )
+        .project(
+            &TextContent::block(Block::table(table)),
+            TerminalConstraints::definite(12),
+        )
+        .expect("content table projection");
+        let cell = product
+            .blocks()
+            .iter()
+            .find(|block| block.kind() == TerminalBlockKind::TableCell)
+            .expect("cell");
+        assert_eq!(cell.rect().width(), 4);
+    }
+
+    #[test]
+    fn colspan_intrinsic_width_accounts_for_internal_column_gap() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start(), TableColumn::start()],
+            0,
+            [TableRow::new([TableCell::new(
+                [Block::paragraph("wide")],
+                None,
+                std::num::NonZeroU16::new(1).expect("span"),
+                std::num::NonZeroU16::new(2).expect("span"),
+            )])],
+        )
+        .expect("table");
+        let product = TerminalTextProjector::new(
+            TextRenderPolicy::new()
+                .with_table_column_sizing(super::super::TableColumnSizing::Content),
+        )
+        .project(
+            &TextContent::block(Block::table(table)),
+            TerminalConstraints::max_content(),
+        )
+        .expect("max-content table projection");
+        assert_eq!(product.wrap_width(), 4);
+        let cell = product
+            .blocks()
+            .iter()
+            .find(|block| block.kind() == TerminalBlockKind::TableCell)
+            .expect("cell");
+        assert_eq!(cell.rect().width(), 4);
+    }
+
+    #[test]
+    fn huge_roman_ordered_start_is_rejected_before_formatting() {
+        let list = List::new(
+            ListMarker::Ordered {
+                start: u64::MAX,
+                style: NumberStyle::UpperRoman,
+                delimiter: NumberDelimiter::Period,
+            },
+            true,
+            [ListItem::paragraph("body")],
+        );
+        let error = TerminalTextProjector::new(TextRenderPolicy::new())
+            .project(
+                &TextContent::block(Block::list(list)),
+                TerminalConstraints::definite(10),
+            )
+            .expect_err("huge roman marker must be bounded");
+        assert!(matches!(
+            error,
+            TerminalProjectionError::MarkerExtentOverflow { value: u64::MAX }
+        ));
     }
 }

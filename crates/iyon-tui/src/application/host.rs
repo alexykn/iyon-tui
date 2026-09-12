@@ -4171,7 +4171,6 @@ impl HostInner {
         roots.extend(document.portal_roots());
         let body_root = document.body_root();
         let sync_revision = document.accepted_ui_revision();
-        let wake = self.async_wake_callback();
         self.running
             .host_sync_direct_occurrences(
                 sync_revision,
@@ -4182,7 +4181,6 @@ impl HostInner {
                 roots,
                 body_root,
                 portal_owners,
-                wake,
             )
             .map_err(|error| {
                 if error

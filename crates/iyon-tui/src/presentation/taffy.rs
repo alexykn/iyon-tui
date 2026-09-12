@@ -823,12 +823,15 @@ fn available_space(constraint: AvailableConstraint) -> Result<AvailableSpace, Ta
 fn root_boundary_style() -> Style {
     let mut style = Style::default();
     style.display = Display::Grid;
+    // The terminal supplies the root constraint. An automatic track minimum
+    // would let min-content overflow widen intrinsic layout before wrapping.
     style.grid_template_columns = vec![taffy::style::GridTemplateComponent::Single(
-        TrackSizingFunction::from_fr(1.0_f32),
+        TrackSizingFunction {
+            min: taffy::style::MinTrackSizingFunction::from_length(0.0),
+            max: taffy::style::MaxTrackSizingFunction::from_fr(1.0),
+        },
     )];
-    style.grid_template_rows = vec![taffy::style::GridTemplateComponent::Single(
-        TrackSizingFunction::from_fr(1.0_f32),
-    )];
+    style.grid_template_rows = style.grid_template_columns.clone();
     style.align_items = Some(AlignItems::STRETCH);
     style.justify_items = Some(AlignItems::STRETCH);
     style

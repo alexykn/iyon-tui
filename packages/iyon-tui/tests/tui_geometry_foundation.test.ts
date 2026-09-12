@@ -200,6 +200,30 @@ describe("finite geometry boundary", () => {
 		}
 	});
 
+	test("intrinsic root measurement keeps wrapped content within the terminal width", async () => {
+		const tui = await AppHarness.open({ width: 5, height: 6 });
+		const root = createReactRoot(tui);
+		try {
+			await root.render(
+				createElement(
+					Box,
+					{ width: "fill" },
+					createElement(Content, {}, "abcdefghij\nend"),
+				),
+			);
+			await root.whenVisible();
+			expect(
+				tui
+					.screenRows()
+					.map((row) => row.trimEnd())
+					.filter(Boolean),
+			).toEqual(["abcde", "fghij", "end"]);
+		} finally {
+			await root.unmount();
+			tui.close();
+		}
+	});
+
 	test("direct ContentHost uses its final allocated width for projection and paint", async () => {
 		const tui = await AppHarness.open({ width: 80, height: 6 });
 		const root = createReactRoot(tui);

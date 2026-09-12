@@ -1,6 +1,6 @@
 //! Direct semantic text projection for terminal content.
 //!
-//! This module is deliberately separate from the retained [`View`] renderer.
+//! This module is the direct terminal content renderer.
 //! It consumes already validated text IR and produces an immutable, owned
 //! product whose rows can be painted repeatedly at one measured width.  The
 //! product contains no source handle, connector, terminal state, or layout
@@ -859,7 +859,7 @@ impl TerminalTextProjector {
 /// Alias used by content owners that call the type simply `TerminalProjector`.
 pub(crate) type TerminalProjector = TerminalTextProjector;
 
-/// Alias emphasizing that this is a measured content product, not a View.
+/// Alias emphasizing that this is a measured content product.
 pub(crate) type TerminalContentProduct = TerminalTextProduct;
 
 #[derive(Clone, Copy, Debug, Default)]

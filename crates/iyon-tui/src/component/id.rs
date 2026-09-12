@@ -92,7 +92,7 @@ impl<C> ComponentHandle<C> {
     }
 
     /// Returns the opaque identity used by a native host to refer to this
-    /// mounted component from a semantic View.
+    /// mounted native component from an occurrence control.
     #[must_use]
     pub fn raw_id(self) -> u64 {
         self.id.value()

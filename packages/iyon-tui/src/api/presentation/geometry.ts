@@ -1,4 +1,4 @@
-/** Public geometry value used by semantic View construction. */
+/** Public geometry value used by occurrence construction. */
 export interface InsetsValue {
 	readonly top: number;
 	readonly right: number;

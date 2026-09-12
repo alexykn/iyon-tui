@@ -70,4 +70,4 @@ export abstract class FrameworkHandle<K extends string = string> {
 	}
 }
 
-/** Public mounted component handle projected into the semantic View tree. */
+/** Public mounted control handle associated with an accepted occurrence. */

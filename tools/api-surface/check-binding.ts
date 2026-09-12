@@ -10,7 +10,7 @@ const NATIVE_SRC = join(ROOT, "crates/iyon-tui-native/src");
 const CORE_LIB = join(ROOT, "crates/iyon-tui/src/lib.rs");
 const CORE_MANIFEST = join(ROOT, "crates/iyon-tui/Cargo.toml");
 const BINDING = join(ROOT, "crates/iyon-tui/src/binding/mod.rs");
-const ROOT_ALLOWED_PUBLIC_MODULES = new Set(["binding", "perf_bench"]);
+const ROOT_ALLOWED_PUBLIC_MODULES = new Set(["binding"]);
 
 // blend of §5.3 lanes; the check compares sets, order is documentary.
 const BLESSED_BINDING = new Set([
@@ -98,7 +98,6 @@ const BLESSED_BINDING = new Set([
 	"DiffLineOffset",
 	"DiffLineTermination",
 	"DiffRange",
-	"lower_diff_hunks",
 	"FormatId",
 	"HorizontalAlign",
 	"HostCellStyle",

@@ -1,4 +1,4 @@
-//! Invariant-preserving errors for the public History model.
+//! Invariant-preserving errors for physical History ownership.
 
 use super::HistoryUnitId;
 
@@ -8,8 +8,6 @@ pub enum HistoryError {
     DuplicateUnit { unit: HistoryUnitId },
     UnitNotFound { unit: HistoryUnitId },
     UnitNotLive { unit: HistoryUnitId },
-    LiveMustRemainTail { unit: HistoryUnitId },
-    FinalViewContainsComponent { unit: HistoryUnitId },
 }
 
 impl std::fmt::Display for HistoryError {
@@ -20,14 +18,6 @@ impl std::fmt::Display for HistoryError {
             }
             Self::UnitNotFound { unit } => write!(formatter, "History unit {unit:?} was not found"),
             Self::UnitNotLive { unit } => write!(formatter, "History unit {unit:?} is not live"),
-            Self::LiveMustRemainTail { unit } => write!(
-                formatter,
-                "live History unit {unit:?} must remain the History tail"
-            ),
-            Self::FinalViewContainsComponent { unit } => write!(
-                formatter,
-                "final view for History unit {unit:?} contains a component"
-            ),
         }
     }
 }

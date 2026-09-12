@@ -18,8 +18,8 @@ pub(crate) struct StyleContext {
 }
 
 impl StyleContext {
-    /// Enters a View node, installing its inheritable state and self-only
-    /// semantic facts while updating the node's focus scope.
+    /// Enters an occurrence node, installing its inheritable state and
+    /// self-only semantic facts while updating the node's focus scope.
     pub(crate) fn enter_node(&self, states: &StyleStates, facts: &StyleFacts, scope: Self) -> Self {
         let mut next = self.clone();
         next.inherited_states.overlay(states);

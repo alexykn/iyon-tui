@@ -43,7 +43,7 @@ pub enum CodeBlockLabelPolicy {
     Info,
 }
 
-/// Structural-only policy for generic text-to-View lowering.
+/// Structural-only policy for direct terminal text lowering.
 ///
 /// Semantic paint belongs to Theme. This type only controls document
 /// structure such as gaps, wrapping, and generated chrome.

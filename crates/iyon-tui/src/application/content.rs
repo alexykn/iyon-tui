@@ -1080,7 +1080,7 @@ fn project_text_snapshot(
     let terminal_size = product.size();
     let size = Size::new(terminal_size.width(), terminal_size.height());
     let terminal_intrinsic_size = product.intrinsic_size();
-    // Keep the natural width from the producer for WidthRule::Fit while the
+    // Keep the natural width from the producer for content-fit requests while the
     // measured height remains tied to this exact offered-width product.
     let intrinsic_size = Size::new(terminal_intrinsic_size.width(), size.height);
     let retain_rows = key.needs_physical_rows;

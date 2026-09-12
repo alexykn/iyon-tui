@@ -131,7 +131,7 @@ export class StyleRef {
 	}
 }
 
-/** Semantic state dimension name used by StyleSelector and View.styleState. */
+/** Semantic state dimension name used by StyleSelector and occurrence state. */
 export class StyleStateKey {
 	readonly kind = "style-state-key" as const;
 
@@ -145,7 +145,7 @@ export class StyleStateKey {
 	}
 }
 
-/** Semantic state dimension value used by StyleSelector and View.styleState. */
+/** Semantic state dimension value used by StyleSelector and occurrence state. */
 export class StyleStateValue {
 	readonly kind = "style-state-value" as const;
 

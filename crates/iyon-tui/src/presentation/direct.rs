@@ -1181,7 +1181,7 @@ fn measured_for_request_with_intrinsic(
 /// Resolve a pure width-specific product from the immutable semantic values
 /// captured by the host. This callback never reaches Source/Connector state;
 /// a failed or absent refinement uses the already selected product instead of
-/// silently routing through the removed View renderer.
+/// silently routing through an unrelated content owner.
 fn content_product_for_request(
     capture: &CapturedContentMeasurement,
     request: crate::presentation::taffy::MeasureRequest,

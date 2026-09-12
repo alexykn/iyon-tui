@@ -16,3 +16,22 @@ impl TextInput {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_capture_contains_only_concrete_frame_facts() {
+        let mut input = TextInput::new().multiline(true);
+        input.set_text("hello\nworld");
+        let capture = input.frame_snapshot();
+
+        assert_eq!(capture.text, "hello\nworld");
+        assert_eq!(capture.cursor_bytes, "hello\nworld".len());
+        assert!(capture.multiline);
+        assert!(!capture.focused);
+        assert_eq!(capture.scroll_row, 0);
+        assert!(capture.border.is_none());
+    }
+}

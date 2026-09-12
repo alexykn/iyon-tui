@@ -7,15 +7,15 @@ History mechanics, content execution, and native control interaction.
 
 Rust code in this crate is not a supported UI-authoring package. Application
 authors use the TypeScript package `@iyon/tui` (and its `@iyon/tui/testing`
-entry point), which preserves the public semantic View, control, content,
+entry point), which preserves the public semantic control, content,
 projection, theme, and testing contracts.
 
 ## Native binding boundary
 
 The only cross-crate Rust seam is the deliberately unsupported
 `iyon_tui::binding` module. It exists for `crates/iyon-tui-native`, not for
-application code. The seam exposes only operation-specific retained-view
-constructors, typed state/content ingress, host operations, passive style and
+application code. The seam exposes only typed state/content ingress, host
+operations, passive style and
 geometry values, and the measurement functions required by the native addon.
 Native code must import core items through `iyon_tui::binding`.
 

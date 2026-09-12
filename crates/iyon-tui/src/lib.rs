@@ -2,7 +2,7 @@
 //!
 //! The Rust crate is an unpublished implementation crate for the TypeScript
 //! framework and its in-tree native addon. Rust applications do not author
-//! Views, controls, or renderers through this crate. The only public bridge is
+//! semantic UI, controls, or renderers through this crate. The only public bridge is
 //! [`binding`], a deliberately unsupported, operation-specific seam consumed by
 //! `iyon-tui-native`; semantic construction and retained storage stay private.
 //!

@@ -3,8 +3,8 @@
 //! This module contains no implementation graph: every item is a re-export of
 //! exactly one runtime operation or passive type the native crate links
 //! against. The set is pinned by `bun run check:tui-binding` and must not
-//! grow without a handoff amendment. In particular it never carries the
-//! fluent View DSL or public renderer
+//! grow without a handoff amendment. In particular it never carries a
+//! fluent semantic UI DSL or public renderer
 //! projector extension ecosystem, or user callbacks into the hot pipeline.
 //!
 //! Lane layout follows the direct-occurrence UI schema and the existing
@@ -33,7 +33,7 @@ pub use crate::projection::SmoothConfig;
 
 // OCCURRENCE UI acceptance seam. The native addon owns byte decoding and
 // source qualification; the core owns typed operations and transactional
-// desired-state installation. This does not expose renderer/View transport.
+// desired-state installation. This does not expose renderer transport.
 #[cfg(feature = "native-host")]
 pub use crate::application::ui_resources::{SourceIdentity, UiCommitOutput, UiResourceOwner};
 pub use crate::occurrence::generated::{

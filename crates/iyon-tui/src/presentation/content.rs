@@ -53,7 +53,7 @@ impl ContentDirtyReason {
 }
 
 /// Typed affected-ID content work item shared by the native content owner and
-/// the retained Scene host.  `connector_id` is optional because a destination
+/// the direct occurrence host. `connector_id` is optional because a destination
 /// may be invalidated by a viewport/theme change before a connector is
 /// selected.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

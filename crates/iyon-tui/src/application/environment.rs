@@ -1,7 +1,7 @@
 //! Native environment scheduler for PERF-13's shared host wake seam.
 //!
 //! The environment owns pending-host fairness and the edge-trigger latch. It
-//! does not own semantic View structure, retained state, or terminal paint.
+//! does not own semantic UI structure, retained layout, or terminal paint.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{

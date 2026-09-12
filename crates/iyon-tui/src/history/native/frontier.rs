@@ -72,7 +72,7 @@ pub(crate) struct NativeFrontier {
     /// Native export eligibility owned by the History frontier.  A direct
     /// occurrence may remain mounted while its shape is intentionally not a
     /// content-only physical export; that frontier must block transfer rather
-    /// than manufacture a replacement View or rows.
+    /// than manufacture a replacement semantic tree or rows.
     pub(crate) blocked_units: HashSet<HistoryUnitId>,
 }
 

@@ -77,7 +77,14 @@ describe("public React consumer fixture", () => {
 			).toBe(true);
 
 			session.tui.advance(20);
-			await session.root.whenVisible();
+			// Native deadlines do not advance the React UI revision.
+			const animationDeadline = performance.now() + 1_000;
+			while (
+				!session.tui.screenRows().some((row) => row.includes("animation-b")) &&
+				performance.now() < animationDeadline
+			) {
+				await Bun.sleep(1);
+			}
 			expect(
 				session.tui.screenRows().some((row) => row.includes("animation-b")),
 			).toBe(true);

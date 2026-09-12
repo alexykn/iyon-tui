@@ -176,7 +176,7 @@ export async function openReactConsumerSession(): Promise<ReactConsumerSession> 
 					}),
 				)
 				.then(async (commit) => {
-					await root.whenVisible(commit.revision);
+					await root.whenContentVisible(commit.revision);
 					return commit;
 				}),
 		focusEditor(): void {

@@ -632,7 +632,7 @@ describe("T3 React mutation renderer", () => {
 					createElement(Editor, { defaultValue: "edit" }),
 				),
 			);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(tui.screenRows().some((row) => row.includes("literal"))).toBe(
 				true,
 			);
@@ -640,7 +640,14 @@ describe("T3 React mutation renderer", () => {
 				true,
 			);
 			tui.pressKey("x");
-			await root.whenVisible();
+			// Native input advances work, not the already-visible UI revision.
+			const editDeadline = performance.now() + 1_000;
+			while (
+				!tui.screenRows().some((row) => row.includes("editx")) &&
+				performance.now() < editDeadline
+			) {
+				await Bun.sleep(1);
+			}
 			expect(tui.screenRows().some((row) => row.includes("editx"))).toBe(true);
 			source.replace("source two");
 			await root.whenContentVisible();

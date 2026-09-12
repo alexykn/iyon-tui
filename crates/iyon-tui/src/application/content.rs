@@ -8678,11 +8678,9 @@ impl ContentProvider for ContentHostRegistry {
                             // actual old-width metrics while the requested
                             // realization is pending. The layout callback
                             // must not manufacture a new height.
-                            Some((
-                                binding.connector_id,
-                                binding.product.measurement(binding.connector_id),
-                                binding.product,
-                            ))
+                            let mut measurement = binding.product.measurement(binding.connector_id);
+                            measurement.physically_complete = false;
+                            Some((binding.connector_id, measurement, binding.product))
                         } else {
                             return Err(anyhow!(
                                 "INTERNAL_INVARIANT: prepared candidate product disappeared"

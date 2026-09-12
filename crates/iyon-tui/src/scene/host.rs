@@ -125,8 +125,8 @@ fn captures_match_sources(
                 && capture.measurement.source_end == previous.measurement.source_end
                 && capture.measurement.sealed == previous.measurement.sealed
                 && capture.measurement.head_partial == previous.measurement.head_partial
-                && capture.measurement.physically_complete
-                    == previous.measurement.physically_complete
+                && (!previous.measurement.physically_complete
+                    || capture.measurement.physically_complete)
                 && capture.measurement.connector_id == previous.measurement.connector_id
                 && (!capture.measurement.physically_complete
                     || !previous.measurement.physically_complete

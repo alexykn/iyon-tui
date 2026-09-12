@@ -1454,8 +1454,12 @@ impl TuiHost {
                 }
             }
             let changes_have_work = changes.has_work();
+            let accepted_revision_is_newer =
+                result.acknowledgement.accepted_ui_revision > inner.desired_structural_revision;
             inner.queue_ui_changes(changes);
-            if (changes_have_work || result.acknowledgement.wake_flags != 0)
+            if (changes_have_work
+                || accepted_revision_is_newer
+                || result.acknowledgement.wake_flags != 0)
                 && let Err(error) = inner.mark_pending()
             {
                 // The UI and Source transaction is already authoritative.

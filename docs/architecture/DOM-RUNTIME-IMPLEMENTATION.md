@@ -149,7 +149,7 @@ completion nanoseconds. The timer type, `Instant` reads, and timer guards are
 compiled only under `perf-counters`; the default addon contains no timer labels
 or `tuiPerf*` symbols.
 
-The exact traffic witness passed on current source at `3f7096f`:
+The exact traffic witness passed on current source at `c6acc54`:
 
 | Scenario | UI calls | UI records | semantic bytes | records |
 |---|---:|---:|---:|---|
@@ -181,10 +181,10 @@ raw samples remain authoritative.
 
 Raw JSONL-style JSON reports from the latest run are:
 
-    /tmp/t7-m2-current-default-final-3f7096f.json
+    /tmp/t7-m2-current-default-final-c6acc54.json
     /tmp/t7-m2-perf-baseline-latest-a.json
     /tmp/t7-m2-perf-baseline-latest-b.json
-    /tmp/t7-m2-current-instrumented-final-3f7096f.json
+    /tmp/t7-m2-current-instrumented-final-c6acc54.json
 
 The current default staged addon is darwin-arm64, SHA-256
 `28beac6f5ce212cf82563d522f1d0bfe9bee5de8669300b50e7736574548239d`.

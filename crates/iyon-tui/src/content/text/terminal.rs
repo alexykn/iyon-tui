@@ -1663,6 +1663,7 @@ impl<'a> ProductBuilder<'a> {
                     cell,
                     context: row_context
                         .for_node(cell.annotations())
+                        .with_role(TextRole::TableRow)
                         .with_role(TextRole::TableCell),
                 });
             }
@@ -2976,7 +2977,7 @@ mod tests {
         let table = Table::new(
             None::<Vec<Block>>,
             [TableColumn::start(), TableColumn::start()],
-            0,
+            1,
             [
                 TableRow::new([TableCell::text("a\nb"), TableCell::text("x\ny")]),
                 TableRow::new([TableCell::new(
@@ -3005,6 +3006,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(table_cell_blocks.len(), 3);
         assert_eq!(table_cell_blocks[2].rect().width(), 10);
+        assert!(
+            product
+                .paint_row_to_physical(&Theme::new(), PhysicalStyle::default(), 0)
+                .expect("header row paint")
+                .expect("header row")
+                .style_at(0)
+                .expect("header style")
+                .bold
+        );
     }
 
     #[test]

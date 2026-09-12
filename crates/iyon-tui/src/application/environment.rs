@@ -638,6 +638,7 @@ impl EnvironmentQueue {
         host_id: u64,
         pending_epoch: u64,
         committed_epoch: u64,
+        newer_epoch: bool,
         requeue_if_pending: bool,
         waiting_for_presentation: bool,
     ) -> anyhow::Result<()> {
@@ -653,6 +654,7 @@ impl EnvironmentQueue {
             host_id,
             pending_epoch,
             committed_epoch,
+            newer_epoch,
             requeue_if_pending,
             waiting_for_presentation,
             false,
@@ -717,6 +719,7 @@ impl EnvironmentQueue {
                     host_id,
                     completion_pending_epoch,
                     committed_epoch,
+                    false,
                     requeue_if_pending,
                     waiting_for_presentation,
                     block_for_retry,
@@ -753,6 +756,7 @@ impl EnvironmentQueue {
         host_id: u64,
         pending_epoch: u64,
         committed_epoch: u64,
+        newer_epoch: bool,
         requeue_if_pending: bool,
         waiting_for_presentation: bool,
         block_for_retry: bool,
@@ -773,7 +777,8 @@ impl EnvironmentQueue {
             environment.waiting_for_presentation.remove(&host_id);
             environment.queued.remove(&host_id);
             environment.pending.retain(|id| *id != host_id);
-        } else if waiting_for_presentation && !environment.queued.contains(&host_id) {
+        } else if waiting_for_presentation && !newer_epoch && !environment.queued.contains(&host_id)
+        {
             environment.pending_set.insert(host_id);
             environment.waiting_for_presentation.insert(host_id);
             environment.pending.retain(|id| *id != host_id);
@@ -986,7 +991,14 @@ impl EnvironmentQueue {
                 match HostInner::start_history_work(&host_arc) {
                     Ok((pending_epoch, committed_epoch)) => {
                         report.waiting_for_presentation = true;
-                        self.complete_host(host_id, pending_epoch, committed_epoch, true, false)?;
+                        self.complete_host(
+                            host_id,
+                            pending_epoch,
+                            committed_epoch,
+                            pending_epoch != queued_epoch,
+                            true,
+                            false,
+                        )?;
                     }
                     Err(error) => {
                         let failure = error.downcast_ref::<HostAttemptError>();
@@ -1039,6 +1051,7 @@ impl EnvironmentQueue {
                             host_id,
                             pending_epoch,
                             committed_epoch,
+                            pending_epoch != queued_epoch,
                             !outcome.waiting_for_presentation,
                             outcome.waiting_for_presentation,
                         )?;

@@ -8,8 +8,11 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
-use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
-use taffy::style_helpers::{auto, fr, length, line, span};
+use taffy::prelude::{
+    AlignContent, AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style,
+    TrackSizingFunction,
+};
+use taffy::style_helpers::{FromLength, auto, fr, length, line, span};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -906,12 +909,18 @@ fn layout_table_grid(
     let mut table_style = Style::default();
     table_style.display = Display::Grid;
     table_style.size.width = Dimension::length(f32::from(width));
+    let content_widths = matches!(
+        policy.table_column_sizing(),
+        super::TableColumnSizing::Content
+    )
+    .then(|| table_column_widths(table, policy))
+    .transpose()?;
     table_style.grid_template_columns = (0..table.columns().len())
-        .map(|_| {
-            let track = if matches!(policy.table_column_sizing(), super::TableColumnSizing::Flex) {
-                fr(1.0_f32)
+        .map(|column| {
+            let track = if let Some(width) = content_widths.as_ref() {
+                TrackSizingFunction::from_length(f32::from(width[column]))
             } else {
-                auto()
+                fr(1.0_f32)
             };
             GridTemplateComponent::Single(track)
         })
@@ -923,6 +932,16 @@ fn layout_table_grid(
         width: length(f32::from(policy.table_column_gap())),
         height: length(f32::from(policy.table_row_gap())),
     };
+    if matches!(
+        policy.table_column_sizing(),
+        super::TableColumnSizing::Content
+    ) {
+        // Content tracks retain their intrinsic width. Taffy's default grid
+        // alignment stretches auto tracks to a definite container, turning
+        // the established content-column policy into a fill policy.
+        table_style.align_content = Some(AlignContent::START);
+        table_style.justify_content = Some(AlignContent::START);
+    }
     let mut children = cell_nodes.clone();
     children.extend(row_markers.iter().copied());
     let root = grid
@@ -2671,6 +2690,24 @@ fn measure_block_slice(blocks: &[Block], policy: &TextRenderPolicy) -> Intrinsic
 }
 
 fn measure_table(table: &Table, policy: &TextRenderPolicy) -> IntrinsicMetrics {
+    let columns = table_column_metrics(table, policy);
+    let gap = usize::from(policy.table_column_gap());
+    let total_gap = gap.saturating_mul(columns.len().saturating_sub(1));
+    IntrinsicMetrics {
+        min_width: columns
+            .iter()
+            .map(|column| column.min_width)
+            .sum::<usize>()
+            .saturating_add(total_gap),
+        max_width: columns
+            .iter()
+            .map(|column| column.max_width)
+            .sum::<usize>()
+            .saturating_add(total_gap),
+    }
+}
+
+fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<IntrinsicMetrics> {
     let mut columns = vec![IntrinsicMetrics::default(); table.columns().len()];
     let starts = table.cell_start_columns();
     for (row_index, row) in table.rows().iter().enumerate() {
@@ -2691,20 +2728,22 @@ fn measure_table(table: &Table, policy: &TextRenderPolicy) -> IntrinsicMetrics {
             }
         }
     }
-    let gap = usize::from(policy.table_column_gap());
-    let total_gap = gap.saturating_mul(columns.len().saturating_sub(1));
-    IntrinsicMetrics {
-        min_width: columns
-            .iter()
-            .map(|column| column.min_width)
-            .sum::<usize>()
-            .saturating_add(total_gap),
-        max_width: columns
-            .iter()
-            .map(|column| column.max_width)
-            .sum::<usize>()
-            .saturating_add(total_gap),
-    }
+    columns
+}
+
+fn table_column_widths(
+    table: &Table,
+    policy: &TextRenderPolicy,
+) -> Result<Vec<u16>, TerminalProjectionError> {
+    table_column_metrics(table, policy)
+        .into_iter()
+        .map(|column| {
+            u16::try_from(column.max_width).map_err(|_| TerminalProjectionError::ExtentOverflow {
+                axis: "table column",
+                value: column.max_width,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

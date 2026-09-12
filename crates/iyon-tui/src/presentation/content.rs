@@ -134,9 +134,14 @@ pub(crate) struct ContentMeasurementCapture {
     /// semantic product and offered width. Consumers must match both fields;
     /// this is not a global intrinsic-height cap.
     pub(crate) history_adjustment: Option<HistoryMeasurementAdjustment>,
-    /// Theme-independent semantic content used by the renderer driver for
-    /// pure width-dependent height measurement.
-    pub(crate) semantic_view: Option<crate::presentation::View>,
+    /// Immutable semantic values captured from the selected Connector. The
+    /// direct driver may use these values for a pure width-specific product;
+    /// it never reselects a Source/Connector or advances delivery.
+    pub(crate) semantic_contents: Option<std::sync::Arc<[crate::text::TextContent]>>,
+    pub(crate) terminal_policy: crate::text::TextRenderPolicy,
+    /// Exact product selected with this capture. It remains available while
+    /// the candidate is laid out and painted, including A/B rollback.
+    pub(crate) terminal_product: Option<std::sync::Arc<crate::text::TerminalTextProduct>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -209,7 +214,9 @@ pub(crate) trait ContentProvider {
             min_content: measurement.intrinsic_size,
             max_content: measurement.intrinsic_size,
             history_adjustment: None,
-            semantic_view: None,
+            semantic_contents: None,
+            terminal_policy: crate::text::TextRenderPolicy::default(),
+            terminal_product: None,
             measurement,
         })
     }

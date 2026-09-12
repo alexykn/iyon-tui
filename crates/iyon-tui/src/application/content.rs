@@ -14,12 +14,9 @@ use std::sync::{
 };
 use std::time::Instant;
 
-use anyhow::{Result, anyhow};
-use unicode_segmentation::UnicodeSegmentation;
-
 use crate::{
     geometry::Size,
-    physical::{PhysicalCell, PhysicalRow, Surface, grapheme_cell_width},
+    physical::{PhysicalCell, PhysicalRow, PhysicalStyle, Surface},
     presentation::{
         ContentDirty, ContentDirtyReason, ContentMeasurement, ContentMeasurementCapture,
         ContentProvider, ContentWindow, HistoryContentRows, HistoryMeasurementAdjustment,
@@ -29,12 +26,13 @@ use crate::{
     stream::{StreamOffset, StreamRange},
     text::{
         AnsiProjector, Block, DiffProjector, Inline, InlineContent, InlineKind, LiteralText,
-        MarkdownOptions, MarkdownProjector, PlainTextProjector, RawText, TextContent,
-        TextProjectionError, TextProvenance, TextRenderer, TextRewriter, TextRun,
+        MarkdownOptions, MarkdownProjector, PlainTextProjector, RawText, TerminalRowWindow,
+        TextContent, TextProjectionError, TextProvenance, TextRewriter, TextRun,
         walk_rewrite_block, walk_rewrite_inline,
     },
     {AnsiColor, ColorSpec, StyleRef, StyleSpec, TextAttribute, Theme},
 };
+use anyhow::{Result, anyhow};
 
 use super::environment::{EnvironmentIdentity, WakeDisposition};
 use super::host::HostInner;
@@ -335,15 +333,23 @@ struct HostContentProjection {
     identity: u64,
     key: TextProjectionKey,
     source_snapshot: HostContentSourceSnapshot,
+    /// Width-specific terminal realization. The producer owns semantic
+    /// layout, row boundaries, styles, and provenance; this registry only
+    /// selects and retains the immutable product for its Connector.
+    product: Arc<crate::text::TerminalTextProduct>,
+    /// The selected semantic values and policy are retained with the product
+    /// so the renderer driver can request another pure definite-width
+    /// realization without consulting Source/Connector state.
+    semantic_contents: Arc<[TextContent]>,
+    terminal_policy: crate::text::TextRenderPolicy,
     intrinsic_size: Size,
     physically_complete: bool,
+    min_content: Size,
+    max_content: Size,
     /// Immediate non-History projections may defer physical row lowering to
     /// the prepared-ticket window. Smooth/History products retain rows for
     /// reveal and scrollback semantics.
     rows: Option<Arc<Vec<PhysicalRow>>>,
-    layout: Option<Arc<crate::presentation::layout::LayoutTree>>,
-    semantic_view: Option<Arc<crate::presentation::View>>,
-    text_geometry: Option<Arc<Mutex<crate::presentation::paint::TextGeometryCache>>>,
     /// Immutable palette captured with this projection. Deferred row-window
     /// painting must not consult the Connector's newer host theme.
     theme: Arc<Theme>,
@@ -435,10 +441,6 @@ struct ConnectorExecution {
     ansi: Option<AnsiProjector>,
     parser_lineage: Option<ContentLineage>,
     delivery: Option<ConnectorDelivery>,
-    /// Text lowering is connector-local just like parser and delivery state.
-    /// Keeping this renderer alive makes its immutable block/edge products
-    /// reusable across source appends, theme changes, and delivery ticks.
-    renderer: TextRenderer,
 }
 
 impl ConnectorExecution {
@@ -455,7 +457,6 @@ impl ConnectorExecution {
             }),
             parser_lineage: None,
             delivery: funnel.smooth_config().map(ConnectorDelivery::new),
-            renderer: content_text_renderer(),
         }
     }
 
@@ -769,7 +770,7 @@ fn project_semantic_snapshot(
         .map_err(|error| anyhow!(error.to_string()))
 }
 
-fn content_text_renderer() -> TextRenderer {
+fn content_text_policy() -> crate::text::TextRenderPolicy {
     let policy = crate::TextRenderPolicy::new()
         .with_block_gap(1)
         .with_soft_break(crate::SoftBreakPolicy::LineBreak)
@@ -780,60 +781,50 @@ fn content_text_renderer() -> TextRenderer {
         .with_code_block_label(crate::CodeBlockLabelPolicy::Language)
         .with_code_block_gap(0)
         .with_code_wrap(crate::WrapMode::NoWrap);
-    TextRenderer::with_policy(policy)
+    policy
 }
 
-fn compile_semantic_content(
-    renderer: &TextRenderer,
-    semantic: &Projection<TextContent>,
-    theme: &Theme,
-    offered_width: u16,
-    text_geometry: &mut crate::presentation::paint::TextGeometryCache,
-) -> Result<(
-    crate::presentation::layout::LayoutBlock,
-    Arc<crate::presentation::layout::LayoutTree>,
-)> {
-    if semantic.spans().is_empty() {
-        let view = renderer.lower_semantic_iter(std::iter::empty());
-        let compiler = crate::presentation::layout::ViewCompiler::new(theme);
-        let tree = Arc::new(compiler.layout_tree(
-            &view,
-            crate::geometry::LayoutConstraints::width_only(offered_width),
-        ));
-        return Ok((
-            crate::presentation::layout::LayoutBlock {
-                width: 0,
-                rows: Vec::new(),
-                physically_complete: true,
-            },
-            tree,
-        ));
-    }
-    let view = renderer.lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values()));
-    let compiler = crate::presentation::layout::ViewCompiler::new(theme);
-    let tree = Arc::new(compiler.layout_tree(
-        &view,
-        crate::geometry::LayoutConstraints::width_only(offered_width),
-    ));
-    Ok((
-        compiler.compile_tree_with_text_cache(&tree, text_geometry),
-        tree,
-    ))
+fn semantic_values(semantic: &Projection<TextContent>) -> Arc<[TextContent]> {
+    semantic
+        .spans()
+        .iter()
+        .flat_map(|span| span.values().iter().cloned())
+        .collect::<Vec<_>>()
+        .into()
 }
 
-fn layout_semantic_content(
-    renderer: &TextRenderer,
-    semantic: &Projection<TextContent>,
+fn project_terminal_contents(
+    contents: &[TextContent],
+    policy: &crate::text::TextRenderPolicy,
+    constraints: crate::text::TerminalConstraints,
+) -> Result<Arc<crate::text::TerminalTextProduct>> {
+    let projector = crate::text::TerminalTextProjector::new(policy.clone());
+    projector
+        .project_contents(contents, constraints)
+        .map(Arc::new)
+        .map_err(|error| anyhow!(error.to_string()))
+}
+
+fn paint_terminal_rows(
+    product: &crate::text::TerminalTextProduct,
     theme: &Theme,
-    offered_width: u16,
-) -> (u16, bool, Arc<crate::presentation::layout::LayoutTree>) {
-    let view = renderer.lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values()));
-    let compiler = crate::presentation::layout::ViewCompiler::new(theme);
-    let tree = Arc::new(compiler.layout_tree(
-        &view,
-        crate::geometry::LayoutConstraints::width_only(offered_width),
-    ));
-    (tree.size.width, tree.physically_complete, tree)
+    width: u16,
+) -> Result<Vec<PhysicalRow>> {
+    let size = product.size();
+    let mut surface = Surface::new(width, size.height());
+    product
+        .paint_window(
+            theme,
+            PhysicalStyle::default(),
+            &mut surface,
+            (0, 0),
+            crate::geometry::Rect::new(0, 0, width, size.height()),
+            TerminalRowWindow::new(0, usize::from(size.height())),
+        )
+        .map_err(|error| anyhow!(error.to_string()))?;
+    Ok((0..size.height())
+        .map(|row| PhysicalRow::from_cells(surface.row_cells(row).to_vec()))
+        .collect())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -937,34 +928,6 @@ impl VisibilityIndex {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct PreparedPaintKey {
-    semantic_key: SemanticProjectionKey,
-    theme_revision: u64,
-    width: u16,
-    needs_finalized_prefix: bool,
-    needs_physical_rows: bool,
-}
-
-#[derive(Clone, Debug)]
-struct PreparedPaintProduct {
-    /// Width-dependent layout geometry is palette-independent and survives a
-    /// theme-only repaint.  The physical rows below are the theme-resolved
-    /// paint product layered on top of this retained tree.
-    layout: Arc<crate::presentation::layout::LayoutTree>,
-    semantic_view: Arc<crate::presentation::View>,
-    text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
-    rows: Option<Arc<Vec<PhysicalRow>>>,
-    width: u16,
-    height: u16,
-    physically_complete: bool,
-    visibility: Option<VisibilityIndex>,
-    /// The current finalized-prefix policy is retained as an immutable row
-    /// product. It is intentionally allowed to differ from the open document
-    /// until the existing parser/History policy says the prefix is finalized.
-    finalized_prefix: Option<Arc<FinalizedPrefixProduct>>,
-}
-
 #[derive(Clone, Debug)]
 struct FinalizedPrefixProduct {
     rows: Arc<Vec<PhysicalRow>>,
@@ -980,13 +943,10 @@ struct PrefixProofKey {
 #[derive(Clone, Debug)]
 struct PrefixProof {
     source_end: u64,
-    layout: Arc<crate::presentation::layout::LayoutTree>,
-    text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
+    product: Arc<crate::text::TerminalTextProduct>,
 }
 
 type PrefixProofCache = VecDeque<(PrefixProofKey, Arc<PrefixProof>)>;
-
-type PreparedPaintCache = VecDeque<(PreparedPaintKey, Arc<PreparedPaintProduct>)>;
 
 fn prove_finalized_prefix(
     snapshot: &HostContentSourceSnapshot,
@@ -1007,12 +967,12 @@ fn prove_finalized_prefix(
         source_end: stable_end,
         width: offered_width,
     };
-    let (proof, initial_rows) = if let Some(proof) = prefix_proof_cache
+    let proof = if let Some(proof) = prefix_proof_cache
         .iter()
         .find(|(candidate, _)| candidate == &key)
         .map(|(_, proof)| Arc::clone(proof))
     {
-        (proof, None)
+        proof
     } else {
         let mut prefix_execution = ConnectorExecution::new(&funnel);
         let prefix_key = SemanticProjectionKey::for_snapshot(&prefix, funnel);
@@ -1020,40 +980,26 @@ fn prove_finalized_prefix(
             project_semantic_snapshot(&prefix, funnel, &mut prefix_execution)
         })
         .ok()?;
-        let text_geometry = Arc::new(Mutex::new(
-            crate::presentation::paint::TextGeometryCache::new(),
-        ));
-        let (compiled, layout) = {
-            let mut text_geometry_guard = text_geometry.lock().ok()?;
-            compile_semantic_content(
-                &prefix_execution.renderer,
-                &prefix_semantic,
-                theme,
-                offered_width,
-                &mut text_geometry_guard,
-            )
-            .ok()?
-        };
+        let contents = semantic_values(&prefix_semantic);
+        let policy = content_text_policy();
+        let product = project_terminal_contents(
+            &contents,
+            &policy,
+            crate::text::TerminalConstraints::definite(offered_width),
+        )
+        .ok()?;
         let proof = Arc::new(PrefixProof {
             source_end: stable_end,
-            layout,
-            text_geometry,
+            product,
         });
         if prefix_proof_cache.len() >= CONTENT_PREFIX_CACHE_CAPACITY {
             prefix_proof_cache.pop_back();
         }
         prefix_proof_cache.push_front((key, Arc::clone(&proof)));
-        (proof, Some(compiled.rows))
+        proof
     };
     debug_assert_eq!(proof.source_end, stable_end);
-    let rows = if let Some(rows) = initial_rows {
-        rows
-    } else {
-        let mut text_geometry = proof.text_geometry.lock().ok()?;
-        crate::presentation::layout::ViewCompiler::new(theme)
-            .compile_tree_with_text_cache(&proof.layout, &mut text_geometry)
-            .rows
-    };
+    let rows = paint_terminal_rows(&proof.product, theme, offered_width).ok()?;
     Some(Arc::new(FinalizedPrefixProduct {
         rows: Arc::new(rows),
     }))
@@ -1070,7 +1016,6 @@ fn project_text_snapshot(
     delivery_revision: u64,
     semantic_cache: &mut SemanticProjectionCache,
     prefix_proof_cache: &mut PrefixProofCache,
-    prepared_paint_cache: &mut PreparedPaintCache,
 ) -> Result<HostContentProjection> {
     let key = TextProjectionKey {
         source_id: snapshot.source_id,
@@ -1085,25 +1030,7 @@ fn project_text_snapshot(
         needs_finalized_prefix,
         needs_physical_rows: needs_finalized_prefix || execution.delivery.is_some(),
     };
-    if snapshot.source_base == snapshot.source_end {
-        return Ok(HostContentProjection {
-            identity: next_content_projection_id(),
-            key,
-            source_snapshot: snapshot.clone(),
-            intrinsic_size: Size::new(0, 0),
-            physically_complete: true,
-            rows: Some(Arc::new(Vec::new())),
-            layout: None,
-            semantic_view: None,
-            text_geometry: None,
-            theme: Arc::clone(theme),
-            finalized_prefix: None,
-            stable_rows: 0,
-            visible_row_count: 0,
-            cut: None,
-        });
-    }
-
+    let semantic_key = SemanticProjectionKey::for_snapshot(snapshot, funnel);
     let (row_bound, max_line_bytes) = projected_bounds(snapshot, funnel.wrap, offered_width);
     if row_bound > MAX_CONTENT_PROJECTION_ROWS {
         return Err(anyhow::Error::new(ContentProjectionFailure {
@@ -1121,162 +1048,79 @@ fn project_text_snapshot(
             ),
         }));
     }
-
-    // Semantic IR is theme-independent and layout-independent: recolors,
-    // window resizes, and smooth timer delivery ticks hit the cache, while
-    // source revisions or funnel kind changes rebuild.
-    let semantic_key = SemanticProjectionKey::for_snapshot(snapshot, funnel);
-    let paint_key = PreparedPaintKey {
-        semantic_key: semantic_key.clone(),
-        theme_revision,
-        width: offered_width,
-        needs_finalized_prefix,
-        needs_physical_rows: key.needs_physical_rows,
-    };
+    let semantic = resolve_cached_semantic(semantic_cache, semantic_key.clone(), || {
+        project_semantic_snapshot(snapshot, funnel, execution)
+    })?;
+    let semantic_contents = semantic_values(&semantic);
+    let terminal_policy = content_text_policy();
+    let product = project_terminal_contents(
+        &semantic_contents,
+        &terminal_policy,
+        crate::text::TerminalConstraints::definite(offered_width),
+    )?;
+    let min_product = project_terminal_contents(
+        &semantic_contents,
+        &terminal_policy,
+        crate::text::TerminalConstraints::min_content(),
+    )?;
+    let max_product = project_terminal_contents(
+        &semantic_contents,
+        &terminal_policy,
+        crate::text::TerminalConstraints::max_content(),
+    )?;
+    let terminal_size = product.size();
+    let size = Size::new(terminal_size.width(), terminal_size.height());
     let retain_rows = key.needs_physical_rows;
-
-    let paint_product = if let Some(product) = prepared_paint_cache
-        .iter()
-        .find(|(k, _)| k == &paint_key)
-        .map(|(_, p)| Arc::clone(p))
-    {
-        product
+    let rows = retain_rows
+        .then(|| paint_terminal_rows(&product, theme, offered_width))
+        .transpose()?
+        .map(Arc::new);
+    let visibility = rows.as_ref().map(|rows| VisibilityIndex::from_rows(rows));
+    let finalized_prefix = if !needs_finalized_prefix {
+        None
+    } else if snapshot.sealed {
+        Some(Arc::new(FinalizedPrefixProduct {
+            rows: Arc::clone(
+                rows.as_ref()
+                    .expect("History products retain physical rows"),
+            ),
+        }))
     } else {
-        let semantic = resolve_cached_semantic(semantic_cache, semantic_key.clone(), || {
-            project_semantic_snapshot(snapshot, funnel, execution)
-        })?;
-        let semantic_view = Arc::new(
-            execution
-                .renderer
-                .lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values())),
-        );
-        let reusable_product = prepared_paint_cache
-            .iter()
-            .find(|(candidate, _)| {
-                candidate.semantic_key == semantic_key
-                    && candidate.width == offered_width
-                    && candidate.needs_finalized_prefix == needs_finalized_prefix
-                    && candidate.needs_physical_rows == key.needs_physical_rows
-            })
-            .map(|(_, product)| Arc::clone(product));
-        let (compiled, layout, text_geometry) = if let Some(product) = reusable_product {
-            let layout = Arc::clone(&product.layout);
-            let text_geometry = Arc::clone(&product.text_geometry);
-            let compiled = if retain_rows {
-                let compiler = crate::presentation::layout::ViewCompiler::new(theme);
-                let mut text_geometry_guard = text_geometry
-                    .lock()
-                    .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
-                compiler.compile_tree_with_text_cache(&layout, &mut text_geometry_guard)
-            } else {
-                crate::presentation::layout::LayoutBlock {
-                    width: layout.size.width,
-                    rows: Vec::new(),
-                    physically_complete: layout.physically_complete,
-                }
-            };
-            (compiled, layout, text_geometry)
-        } else {
-            let text_geometry = Arc::new(Mutex::new(
-                crate::presentation::paint::TextGeometryCache::new(),
-            ));
-            let (compiled, layout) = if retain_rows {
-                let (compiled, layout) = {
-                    let mut text_geometry_guard = text_geometry
-                        .lock()
-                        .map_err(|_| anyhow!("text geometry cache lock is poisoned"))?;
-                    compile_semantic_content(
-                        &execution.renderer,
-                        &semantic,
-                        theme,
-                        offered_width,
-                        &mut text_geometry_guard,
-                    )?
-                };
-                (compiled, layout)
-            } else {
-                let (width, physically_complete, layout) =
-                    layout_semantic_content(&execution.renderer, &semantic, theme, offered_width);
-                (
-                    crate::presentation::layout::LayoutBlock {
-                        width,
-                        rows: Vec::new(),
-                        physically_complete,
-                    },
-                    layout,
-                )
-            };
-            (compiled, layout, text_geometry)
-        };
-        let width = compiled.width;
-        let physically_complete = compiled.physically_complete;
-        let rows = retain_rows.then(|| Arc::new(compiled.rows));
-        let height = layout.size.height;
-        let visibility = rows.as_ref().map(|rows| VisibilityIndex::from_rows(rows));
-        let finalized_prefix = if !needs_finalized_prefix {
-            None
-        } else if snapshot.sealed {
-            Some(Arc::new(FinalizedPrefixProduct {
-                rows: Arc::clone(
-                    rows.as_ref()
-                        .expect("History products retain physical rows"),
-                ),
-            }))
-        } else {
-            prove_finalized_prefix(
-                snapshot,
-                &semantic_key,
-                funnel,
-                theme,
-                offered_width,
-                semantic_cache,
-                prefix_proof_cache,
-            )
-        };
-        let product = Arc::new(PreparedPaintProduct {
-            layout,
-            semantic_view,
-            text_geometry,
-            rows,
-            width,
-            height,
-            physically_complete,
-            visibility,
-            finalized_prefix,
-        });
-        prepared_paint_cache.retain(|(k, _)| k != &paint_key);
-        prepared_paint_cache.push_front((paint_key, Arc::clone(&product)));
-        while prepared_paint_cache.len() > CONTENT_CACHE_CAPACITY {
-            prepared_paint_cache.pop_back();
-        }
-        product
+        prove_finalized_prefix(
+            snapshot,
+            &semantic_key,
+            funnel,
+            theme,
+            offered_width,
+            semantic_cache,
+            prefix_proof_cache,
+        )
     };
 
     let (intrinsic_size, visible_row_count, cut, _fully_revealed_rows) =
         if let Some(delivery) = execution.delivery.as_mut() {
             delivery.accept_input(snapshot)?;
             let reveal_units = delivery.reveal_units();
-            let bounds = paint_product
-                .visibility
+            let bounds = visibility
                 .as_ref()
                 .expect("delivery products retain visibility rows")
-                .reveal_bounds(reveal_units, paint_product.width, paint_product.height);
+                .reveal_bounds(reveal_units, size.width, size.height);
             (
-                Size::new(paint_product.width, bounds.revealed_height),
+                Size::new(size.width, bounds.revealed_height),
                 usize::from(bounds.revealed_height),
                 bounds.cut,
                 bounds.fully_revealed_rows,
             )
         } else {
             (
-                Size::new(paint_product.width, paint_product.height),
-                usize::from(paint_product.height),
+                size,
+                usize::from(size.height),
                 None,
-                usize::from(paint_product.height),
+                usize::from(size.height),
             )
         };
 
-    let stable_rows = paint_product.finalized_prefix.as_ref().map_or(0, |prefix| {
+    let stable_rows = finalized_prefix.as_ref().map_or(0, |prefix| {
         if execution.delivery.is_some() {
             // Preserve the established row-granular Smooth policy: History
             // may transfer the finalized product incrementally as the same
@@ -1287,19 +1131,28 @@ fn project_text_snapshot(
             prefix.rows.len()
         }
     });
+    let physically_complete = product.physically_complete();
 
     Ok(HostContentProjection {
         identity: next_content_projection_id(),
         key,
         source_snapshot: snapshot.clone(),
+        product,
+        semantic_contents,
+        terminal_policy,
         intrinsic_size,
-        physically_complete: paint_product.physically_complete,
-        rows: paint_product.rows.clone(),
-        layout: Some(Arc::clone(&paint_product.layout)),
-        semantic_view: Some(Arc::clone(&paint_product.semantic_view)),
-        text_geometry: Some(Arc::clone(&paint_product.text_geometry)),
+        physically_complete,
+        min_content: {
+            let size = min_product.size();
+            Size::new(size.width(), size.height())
+        },
+        max_content: {
+            let size = max_product.size();
+            Size::new(size.width(), size.height())
+        },
+        rows,
         theme: Arc::clone(theme),
-        finalized_prefix: paint_product.finalized_prefix.clone(),
+        finalized_prefix,
         stable_rows,
         visible_row_count,
         cut,
@@ -3381,12 +3234,9 @@ struct ConnectorRecord {
     /// Connector-local width-dependent derived projections. Inactive connectors
     /// clear this cache; the Source remains the authoritative store.
     projection_cache: VecDeque<(TextProjectionKey, Arc<HostContentProjection>)>,
-    /// Connector-local width-dependent unmasked paint cache and visibility index.
-    /// Reused across delivery ticks without reparsing or fresh View lowering.
-    prepared_paint_cache: PreparedPaintCache,
     /// Connector-local theme-independent semantic IR. A palette/presentation
     /// recolor reuses these products and repaints only; inactive connectors
-    /// clear this cache alongside the surface products.
+    /// clear this cache alongside the terminal products.
     semantic_cache: SemanticProjectionCache,
     prefix_proof_cache: PrefixProofCache,
     committed_projection: Option<Arc<HostContentProjection>>,
@@ -3526,7 +3376,6 @@ fn set_connector_visible_committed(
         state.committed_projection = None;
         state.candidate_projection = None;
         state.projection_cache.clear();
-        state.prepared_paint_cache.clear();
         state.semantic_cache.clear();
         state.prefix_proof_cache.clear();
         state.projected_source_revision = None;
@@ -4409,7 +4258,6 @@ impl ContentHostRegistry {
             failed_source_revision: None,
             activation_failure: None,
             projection_cache: VecDeque::new(),
-            prepared_paint_cache: VecDeque::new(),
             semantic_cache: VecDeque::new(),
             prefix_proof_cache: VecDeque::new(),
             committed_projection: None,
@@ -4660,7 +4508,7 @@ impl ContentHostRegistry {
                 .checked_add(1)
                 .expect("Connector delivery revision exhausted");
             state.candidate_projection = None;
-            // Delivery ticks do not clear projection_cache or prepared_paint_cache.
+            // Delivery ticks do not clear projection_cache or semantic_cache.
             let port_id = state
                 .port
                 .upgrade()
@@ -5059,9 +4907,9 @@ impl ContentHostRegistry {
         // The snapshot owns immutable chunks; the Source lock is not held
         // while width-dependent projection allocates/compiles derived rows.
         // Execution state is Connector-local. Take it, semantic cache, and
-        // prepared paint cache out while projecting so a parser/smoother can
-        // mutate without holding the Connector mutex.
-        let (mut execution, mut semantic_cache, mut prefix_proof_cache, mut prepared_paint_cache) = {
+        // semantic cache out while projecting so a parser/smoother can mutate
+        // without holding the Connector mutex.
+        let (mut execution, mut semantic_cache, mut prefix_proof_cache) = {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -5072,7 +4920,6 @@ impl ContentHostRegistry {
                     .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
                 std::mem::take(&mut state.semantic_cache),
                 std::mem::take(&mut state.prefix_proof_cache),
-                std::mem::take(&mut state.prepared_paint_cache),
             )
         };
         let projection = match project_text_snapshot(
@@ -5086,7 +4933,6 @@ impl ContentHostRegistry {
             delivery_revision,
             &mut semantic_cache,
             &mut prefix_proof_cache,
-            &mut prepared_paint_cache,
         ) {
             Ok(projection) => Arc::new(projection),
             Err(error) => {
@@ -5098,7 +4944,6 @@ impl ContentHostRegistry {
                 if let Ok(mut state) = connector.lock() {
                     state.semantic_cache = semantic_cache;
                     state.prefix_proof_cache = prefix_proof_cache;
-                    state.prepared_paint_cache = prepared_paint_cache;
                 }
                 return Err(error);
             }
@@ -5113,7 +4958,6 @@ impl ContentHostRegistry {
         state.execution = Some(execution);
         state.semantic_cache = semantic_cache;
         state.prefix_proof_cache = prefix_proof_cache;
-        state.prepared_paint_cache = prepared_paint_cache;
         state
             .projection_cache
             .retain(|(candidate, _)| candidate != &key);
@@ -5449,7 +5293,6 @@ impl ContentHostRegistry {
         }
         let row_count = usize::try_from(window.row_count).unwrap_or(usize::MAX);
         let end_offset = (start_offset.saturating_add(row_count)).min(retained_visible_len);
-        let generated_rows;
         let window_slice: &[PhysicalRow] = if let Some(rows) = projection.rows.as_ref() {
             let available_rows = if committed_rows >= rows.len() {
                 &[][..]
@@ -5460,32 +5303,18 @@ impl ContentHostRegistry {
         } else {
             let first_row = committed_rows.saturating_add(start_offset);
             let source_row_count = end_offset.saturating_sub(start_offset);
-            let compiler = crate::presentation::layout::ViewCompiler::new(&projection.theme);
-            let layout = projection
-                .layout
-                .as_ref()
-                .expect("deferred projection must retain its prepared layout");
-            let text_geometry = projection
-                .text_geometry
-                .as_ref()
-                .expect("deferred projection must retain text geometry");
-            let Ok(mut text_geometry) = text_geometry.lock() else {
-                target.physically_complete = false;
-                return;
-            };
-            let (rows, physically_complete) = crate::presentation::paint::ViewPainter
-                .paint_tree_row_range_with_text_cache(
-                    &compiler,
-                    layout,
-                    u16::try_from(first_row).unwrap_or(u16::MAX),
-                    u16::try_from(source_row_count).unwrap_or(u16::MAX),
-                    &mut text_geometry,
-                );
-            if !physically_complete {
+            let result = projection.product.paint_window(
+                &projection.theme,
+                style,
+                target,
+                target_origin,
+                clip,
+                TerminalRowWindow::new(first_row, source_row_count),
+            );
+            if result.is_err() || !projection.product.physically_complete() {
                 target.physically_complete = false;
             }
-            generated_rows = rows;
-            generated_rows.as_slice()
+            return;
         };
 
         let clip_left = i32::from(clip.x);
@@ -6214,7 +6043,6 @@ impl ContentHostRegistry {
             if !state.visible {
                 state.committed_projection = None;
                 state.projection_cache.clear();
-                state.prepared_paint_cache.clear();
                 state.semantic_cache.clear();
                 state.prefix_proof_cache.clear();
                 state.projected_source_revision = None;
@@ -6588,7 +6416,6 @@ impl ContentHostRegistry {
                 if !state.visible {
                     state.committed_projection = None;
                     state.projection_cache.clear();
-                    state.prepared_paint_cache.clear();
                     state.semantic_cache.clear();
                     state.prefix_proof_cache.clear();
                     state.projected_source_revision = None;
@@ -7188,7 +7015,6 @@ impl ContentHostRegistry {
             state.committed_projection = None;
             state.candidate_projection = None;
             state.projection_cache.clear();
-            state.prepared_paint_cache.clear();
             state.semantic_cache.clear();
             state.prefix_proof_cache.clear();
             state.projected_source_revision = None;
@@ -7943,20 +7769,28 @@ impl ContentProvider for ContentHostRegistry {
                 }
             },
         );
-        let semantic_view = match &candidate {
+        let (semantic_contents, terminal_policy, terminal_product) = match &candidate {
             CapturedCandidate::Prepared(capture) => Some(&capture.product),
             CapturedCandidate::None | CapturedCandidate::Failed { .. } => {
                 confirmed.as_ref().map(|capture| &capture.product)
             }
         }
-        .and_then(|product| product.semantic_view.as_ref())
-        .map(|view| (**view).clone());
+        .map(|product| {
+            (
+                Some(Arc::clone(&product.semantic_contents)),
+                product.terminal_policy.clone(),
+                Some(Arc::clone(&product.product)),
+            )
+        })
+        .unwrap_or_else(|| (None, content_text_policy(), None));
         Ok(ContentMeasurementCapture {
             capture_id,
             min_content,
             max_content,
             history_adjustment,
-            semantic_view,
+            semantic_contents,
+            terminal_policy,
+            terminal_product,
             measurement,
         })
     }
@@ -8076,10 +7910,16 @@ impl ContentProvider for ContentHostRegistry {
             .insert(port_id, selected_connector);
         let (min_content, max_content) =
             self.content_measurement_bounds(offered_width, measurement, product.as_ref());
-        let semantic_view = product
+        let (semantic_contents, terminal_policy, terminal_product) = product
             .as_ref()
-            .and_then(|product| product.semantic_view.as_ref())
-            .map(|view| (**view).clone());
+            .map(|product| {
+                (
+                    Some(Arc::clone(&product.semantic_contents)),
+                    product.terminal_policy.clone(),
+                    Some(Arc::clone(&product.product)),
+                )
+            })
+            .unwrap_or_else(|| (None, content_text_policy(), None));
         let history_adjustment = self.history_measurement_adjustment(
             port_id,
             offered_width,
@@ -8091,7 +7931,9 @@ impl ContentProvider for ContentHostRegistry {
             min_content,
             max_content,
             history_adjustment,
-            semantic_view,
+            semantic_contents,
+            terminal_policy,
+            terminal_product,
             measurement,
         })
     }
@@ -8242,55 +8084,13 @@ impl ContentHostRegistry {
 
     fn content_measurement_bounds(
         &self,
-        offered_width: u16,
+        _offered_width: u16,
         measurement: ContentMeasurement,
         product: Option<&Arc<HostContentProjection>>,
     ) -> (Size, Size) {
-        let Some(projection) = product else {
-            return (measurement.intrinsic_size, measurement.intrinsic_size);
-        };
-        let Some(layout) = projection.layout.as_ref() else {
-            return (measurement.intrinsic_size, measurement.intrinsic_size);
-        };
-        let mut min_width = 0usize;
-        let mut max_width = 0usize;
-        for node in &layout.nodes {
-            let crate::presentation::layout::LayoutContent::Text { text, .. } = &node.content
-            else {
-                continue;
-            };
-            let source = text
-                .spans
-                .iter()
-                .map(crate::presentation::TextSpan::text)
-                .collect::<String>();
-            for line in source.split('\n') {
-                let mut unbreakable = 0usize;
-                let mut line_width = 0usize;
-                for grapheme in line.graphemes(true) {
-                    let width = grapheme_cell_width(grapheme);
-                    line_width = line_width.saturating_add(width);
-                    if grapheme.chars().all(char::is_whitespace) {
-                        min_width = min_width.max(unbreakable);
-                        unbreakable = 0;
-                    } else {
-                        unbreakable = unbreakable.saturating_add(width);
-                    }
-                }
-                min_width = min_width.max(unbreakable);
-                max_width = max_width.max(line_width);
-            }
-        }
-        let fallback = usize::from(measurement.intrinsic_size.width);
-        if min_width == 0 {
-            min_width = fallback.min(usize::from(offered_width));
-        }
-        max_width = max_width.max(fallback);
-        let min_width = u16::try_from(min_width.min(usize::from(u16::MAX))).unwrap_or(u16::MAX);
-        let max_width = u16::try_from(max_width.min(usize::from(u16::MAX))).unwrap_or(u16::MAX);
-        (
-            Size::new(min_width, measurement.intrinsic_size.height),
-            Size::new(max_width, measurement.intrinsic_size.height),
+        product.map_or(
+            (measurement.intrinsic_size, measurement.intrinsic_size),
+            |projection| (projection.min_content, projection.max_content),
         )
     }
 }
@@ -10550,41 +10350,11 @@ mod tests {
         let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
         registry.set_theme(&Arc::new(t1));
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        let first_layout = registry
-            .connectors
-            .get(&connector.id())
-            .and_then(|record| record.lock().ok())
-            .and_then(|state| {
-                state
-                    .prepared_paint_cache
-                    .iter()
-                    .find(|(key, _)| key.width == 20)
-                    .map(|(_, product)| Arc::clone(&product.layout))
-            })
-            .expect("first measurement must retain a layout product");
         let key1 = registry
             .connector_projection_key(connector.id(), 20)
             .unwrap();
         registry.set_theme(&Arc::new(t2));
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        let second_layout = registry
-            .connectors
-            .get(&connector.id())
-            .and_then(|record| record.lock().ok())
-            .and_then(|state| {
-                state
-                    .prepared_paint_cache
-                    .iter()
-                    .find(|(key, _)| {
-                        key.width == 20 && key.theme_revision == registry.theme_revision
-                    })
-                    .map(|(_, product)| Arc::clone(&product.layout))
-            })
-            .expect("recolor must retain a replacement paint product");
-        assert!(
-            Arc::ptr_eq(&first_layout, &second_layout),
-            "theme-only repaint must reuse width-dependent layout geometry"
-        );
         let key2 = registry
             .connector_projection_key(connector.id(), 20)
             .unwrap();
@@ -10604,7 +10374,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_paint_cache_separates_immediate_and_smooth_row_demands() {
+    fn terminal_product_retains_rows_only_for_smooth_row_demands() {
         let source_registry = ContentSourceRegistry::new();
         let source = source_registry.create(TextSourceKind::Stream).unwrap();
         source
@@ -10622,7 +10392,6 @@ mod tests {
 
         let mut semantic_cache = SemanticProjectionCache::new();
         let mut prefix_cache = PrefixProofCache::new();
-        let mut prepared_cache = PreparedPaintCache::new();
         let mut immediate_execution = ConnectorExecution::new(&immediate);
         let immediate_projection = project_text_snapshot(
             &snapshot,
@@ -10635,7 +10404,6 @@ mod tests {
             0,
             &mut semantic_cache,
             &mut prefix_cache,
-            &mut prepared_cache,
         )
         .unwrap();
         assert!(
@@ -10655,7 +10423,6 @@ mod tests {
             0,
             &mut semantic_cache,
             &mut prefix_cache,
-            &mut prepared_cache,
         )
         .unwrap();
         assert!(
@@ -10665,7 +10432,6 @@ mod tests {
 
         let mut reverse_semantic_cache = SemanticProjectionCache::new();
         let mut reverse_prefix_cache = PrefixProofCache::new();
-        let mut reverse_prepared_cache = PreparedPaintCache::new();
         let mut smooth_first = ConnectorExecution::new(&smooth);
         let smooth_first_projection = project_text_snapshot(
             &snapshot,
@@ -10678,7 +10444,6 @@ mod tests {
             0,
             &mut reverse_semantic_cache,
             &mut reverse_prefix_cache,
-            &mut reverse_prepared_cache,
         )
         .unwrap();
         assert!(smooth_first_projection.rows.is_some());
@@ -10694,7 +10459,6 @@ mod tests {
             0,
             &mut reverse_semantic_cache,
             &mut reverse_prefix_cache,
-            &mut reverse_prepared_cache,
         )
         .unwrap();
         assert!(immediate_after_smooth_projection.rows.is_none());
@@ -10829,14 +10593,8 @@ mod tests {
         let t1 = Theme::new().with_color("accent", ThemeColor::Indexed(1));
         let t2 = Theme::new().with_color("accent", ThemeColor::Indexed(2));
         registry.set_theme(&Arc::new(t1));
-        crate::presentation::paint::reset_text_geometry_builds();
         let before = rebuilds();
         let m1 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        let geometry_after_first = crate::presentation::paint::text_geometry_builds();
-        assert!(
-            geometry_after_first > 0,
-            "first content preparation must build text row geometry"
-        );
         if cfg!(feature = "perf-counters") {
             assert!(
                 rebuilds() > before,
@@ -10848,11 +10606,6 @@ mod tests {
         registry.set_theme(&Arc::new(t2));
         let after_recolor = rebuilds();
         let m2 = registry.measure_content(port.id(), 20, crate::presentation::WidthRule::Fill);
-        assert_eq!(
-            crate::presentation::paint::text_geometry_builds(),
-            geometry_after_first,
-            "theme-only repaint must reuse cached text wrapping geometry"
-        );
         if cfg!(feature = "perf-counters") {
             assert_eq!(
                 rebuilds(),
@@ -11482,18 +11235,17 @@ mod tests {
             captured.min_content.width < captured.max_content.width,
             "word wrapping must expose a smaller min-content width"
         );
-        let narrow = captured
-            .semantic_view
-            .as_ref()
-            .map(|view| {
-                crate::presentation::layout::layout_view(
-                    view,
-                    crate::geometry::LayoutConstraints::width_only(5),
-                )
-                .size
-                .height
-            })
-            .expect("captured semantic content product");
+        let narrow = crate::text::TerminalTextProjector::new(captured.terminal_policy.clone())
+            .project_contents(
+                captured
+                    .semantic_contents
+                    .as_deref()
+                    .expect("captured semantic content product"),
+                crate::text::TerminalConstraints::definite(5),
+            )
+            .expect("narrow terminal product")
+            .size()
+            .height();
         assert!(
             narrow >= 2,
             "known narrow width must recompute wrapped height"

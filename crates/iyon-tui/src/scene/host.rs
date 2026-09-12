@@ -601,7 +601,9 @@ impl SceneHost {
             capture.min_content = next.min_content;
             capture.max_content = next.max_content;
             capture.history_adjustment = next.history_adjustment;
-            capture.semantic_view = next.semantic_view;
+            capture.semantic_contents = next.semantic_contents;
+            capture.terminal_policy = next.terminal_policy;
+            capture.terminal_product = next.terminal_product;
             capture.offered_width = width;
             invalidate.push(*key);
         }
@@ -645,7 +647,9 @@ impl SceneHost {
                     min_content: capture.min_content,
                     max_content: capture.max_content,
                     history_adjustment: capture.history_adjustment,
-                    semantic_view: capture.semantic_view.clone(),
+                    semantic_contents: capture.semantic_contents.clone(),
+                    terminal_policy: capture.terminal_policy.clone(),
+                    terminal_product: capture.terminal_product.clone(),
                 },
             );
         }

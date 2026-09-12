@@ -24,6 +24,10 @@ use crate::{
         BorderSpec, BorderStyle, ContentMeasurement, StyleSpec, StyleStateKey, StyleStateValue,
         TextAttribute, View, layout::LayoutTree,
     },
+    text::{
+        TerminalConstraints, TerminalRowWindow, TerminalTextProduct, TerminalTextProjector,
+        TextContent, TextRenderPolicy,
+    },
 };
 
 use super::content::HistoryMeasurementAdjustment;
@@ -35,7 +39,7 @@ use super::taffy::{AvailableConstraint, MeasuredSize, NodeParticipation, TaffyLa
 /// A measurement captured by the host before a request crosses the driver
 /// boundary. The driver owns no Source/Connector state and only reads this
 /// immutable product.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct CapturedContentMeasurement {
     pub(crate) capture_id: u64,
     pub(crate) port_id: u64,
@@ -44,7 +48,32 @@ pub(crate) struct CapturedContentMeasurement {
     pub(crate) min_content: crate::geometry::Size,
     pub(crate) max_content: crate::geometry::Size,
     pub(crate) history_adjustment: Option<HistoryMeasurementAdjustment>,
-    pub(crate) semantic_view: Option<View>,
+    pub(crate) semantic_contents: Option<std::sync::Arc<[TextContent]>>,
+    pub(crate) terminal_policy: TextRenderPolicy,
+    pub(crate) terminal_product: Option<std::sync::Arc<TerminalTextProduct>>,
+}
+
+impl PartialEq for CapturedContentMeasurement {
+    fn eq(&self, other: &Self) -> bool {
+        self.capture_id == other.capture_id
+            && self.port_id == other.port_id
+            && self.offered_width == other.offered_width
+            && self.measurement == other.measurement
+            && self.min_content == other.min_content
+            && self.max_content == other.max_content
+            && self.history_adjustment == other.history_adjustment
+            && match (&self.semantic_contents, &other.semantic_contents) {
+                (None, None) => true,
+                (Some(left), Some(right)) => std::sync::Arc::ptr_eq(left, right),
+                _ => false,
+            }
+            && self.terminal_policy == other.terminal_policy
+            && match (&self.terminal_product, &other.terminal_product) {
+                (None, None) => true,
+                (Some(left), Some(right)) => std::sync::Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
 }
 
 /// Direct candidate output. The scene host adds physical receipt metadata.
@@ -606,6 +635,33 @@ impl DirectOccurrenceRenderer {
         }
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
+        let mut layout_root = |root, width, height| {
+            let mut measurement_error = None;
+            let geometries = self
+                .layout
+                .layout(root, width, height, &mut |key, request| {
+                    if measurement_error.is_some() {
+                        return MeasuredSize::default();
+                    }
+                    match measured_for_request_with_intrinsic(
+                        measurements.get(&key),
+                        control_views.get(&key),
+                        intrinsic_control_views.get(&key),
+                        request,
+                    ) {
+                        Ok(measured) => measured,
+                        Err(error) => {
+                            measurement_error = Some(error);
+                            MeasuredSize::default()
+                        }
+                    }
+                })
+                .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
+            if let Some(error) = measurement_error {
+                return Err(error.context("direct terminal content measurement failed"));
+            }
+            Ok(geometries)
+        };
 
         // Obtain the body's intrinsic height before placing it against the
         // terminal viewport, matching the retained root resolver's anchor.
@@ -1035,6 +1091,7 @@ fn measured_for_request(
     control_view: Option<&View>,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> MeasuredSize {
+) -> Result<MeasuredSize> {
     measured_for_request_with_intrinsic(capture, control_view, None, request)
 }
 
@@ -1043,7 +1100,7 @@ fn measured_for_request_with_intrinsic(
     control_view: Option<&View>,
     intrinsic_control_view: Option<&View>,
     request: crate::presentation::taffy::MeasureRequest,
-) -> MeasuredSize {
+) -> Result<MeasuredSize> {
     if capture.is_none() {
         let intrinsic_request = matches!(
             (request.known_width, request.available_width),
@@ -1061,7 +1118,7 @@ fn measured_for_request_with_intrinsic(
             // A childless ordinary Box has no intrinsic content. This is a
             // valid zero-sized leaf, unlike a missing ContentHost/control
             // capture, which is rejected at tree emission.
-            return MeasuredSize::default();
+            return Ok(MeasuredSize::default());
         };
         let tree =
             crate::presentation::layout::layout_view(view, control_layout_constraints(request));
@@ -1076,36 +1133,33 @@ fn measured_for_request_with_intrinsic(
         if let Some(height) = request.known_height {
             measured.height = height;
         }
-        return measured;
+        return Ok(measured);
     }
     let capture = capture.expect("content capture checked above");
     let request_width = request_width(capture, request);
-    let mut measured = if let Some(view) = capture.semantic_view.as_ref() {
-        let tree = crate::presentation::layout::layout_view(
-            view,
-            crate::geometry::LayoutConstraints::width_only(request_width),
-        );
-        let size = tree.node(tree.root).rect.size();
-        MeasuredSize {
-            width: f32::from(size.width),
-            height: f32::from(size.height),
-        }
-    } else {
-        MeasuredSize {
+    let requested_product = content_product_for_request(capture, request)?;
+    let measured = requested_product
+        .as_ref()
+        .map(|product| {
+            let size = product.size();
+            MeasuredSize {
+                width: f32::from(size.width()),
+                height: f32::from(size.height()),
+            }
+        })
+        .unwrap_or(MeasuredSize {
             width: capture.measurement.intrinsic_size.width.into(),
             height: capture.measurement.intrinsic_size.height.into(),
-        }
-    };
+        });
     // History's owning content adapter may have irreversibly exported a
-    // prefix while retaining the semantic View for the direct paint route.
-    // Apply that exact adjustment only to the captured immutable product and
-    // width; ordinary semantic products must retain their intrinsic wrapping.
+    // prefix. Apply that exact adjustment only to the captured immutable
+    // product and width; ordinary semantic products retain their wrapping.
     if let Some(adjustment) = capture.history_adjustment
         && adjustment.projection_identity == capture.measurement.projection_identity
     {
         measured.height = (measured.height - adjustment.removed_rows as f32).max(0.0);
     }
-    if capture.semantic_view.is_none() {
+    if requested_product.is_none() {
         measured.width = match request.known_width {
             Some(width) => width,
             None => match request.available_width {
@@ -1129,7 +1183,43 @@ fn measured_for_request_with_intrinsic(
     if let Some(height) = request.known_height {
         measured.height = height;
     }
-    measured
+    Ok(measured)
+}
+
+/// Resolve a pure width-specific product from the immutable semantic values
+/// captured by the host. This callback never reaches Source/Connector state;
+/// a failed or absent refinement uses the already selected product instead of
+/// silently routing through the removed View renderer.
+fn content_product_for_request(
+    capture: &CapturedContentMeasurement,
+    request: crate::presentation::taffy::MeasureRequest,
+) -> Result<Option<std::sync::Arc<TerminalTextProduct>>> {
+    let Some(contents) = capture.semantic_contents.as_deref() else {
+        return Ok(None);
+    };
+    let constraints = match request.known_width {
+        Some(width) => TerminalConstraints::definite(floor_constraint_width(width)?),
+        None => match request.available_width {
+            AvailableConstraint::Definite(width) => {
+                TerminalConstraints::definite(floor_constraint_width(width)?)
+            }
+            AvailableConstraint::MinContent => TerminalConstraints::min_content(),
+            AvailableConstraint::MaxContent => TerminalConstraints::max_content(),
+        },
+    };
+    let projector = TerminalTextProjector::new(capture.terminal_policy.clone());
+    projector
+        .project_contents(contents, constraints)
+        .map(std::sync::Arc::new)
+        .map(Some)
+        .map_err(|error| anyhow!(error.to_string()))
+}
+
+fn floor_constraint_width(value: f32) -> Result<u16> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(anyhow!("terminal content width is not finite"));
+    }
+    Ok(value.floor().min(f32::from(u16::MAX)) as u16)
 }
 
 fn control_layout_constraints(
@@ -1590,7 +1680,9 @@ mod tests {
             min_content: crate::geometry::Size::new(2, 1),
             max_content: crate::geometry::Size::new(8, 4),
             history_adjustment: None,
-            semantic_view: None,
+            semantic_contents: None,
+            terminal_policy: TextRenderPolicy::default(),
+            terminal_product: None,
         };
         let min = measured_for_request(
             Some(&capture),
@@ -1602,7 +1694,8 @@ mod tests {
                 available_height: AvailableConstraint::MinContent,
                 wrap_width: None,
             },
-        );
+        )
+        .expect("min-content measurement");
         assert_eq!(
             min,
             MeasuredSize {
@@ -1620,7 +1713,8 @@ mod tests {
                 available_height: AvailableConstraint::MaxContent,
                 wrap_width: None,
             },
-        );
+        )
+        .expect("definite measurement");
         assert_eq!(
             max,
             MeasuredSize {
@@ -1808,7 +1902,9 @@ mod tests {
             min_content: crate::geometry::Size::new(1, 8),
             max_content: crate::geometry::Size::new(8, 1),
             history_adjustment: None,
-            semantic_view: Some(crate::presentation::factory::text("abcdefgh")),
+            semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
+            terminal_policy: TextRenderPolicy::default(),
+            terminal_product: None,
         };
         let measured = measured_for_request(
             Some(&capture),
@@ -1820,7 +1916,8 @@ mod tests {
                 available_height: AvailableConstraint::MaxContent,
                 wrap_width: Some(4),
             },
-        );
+        )
+        .expect("narrow terminal measurement");
         assert_eq!(measured.height, 2.0);
     }
 
@@ -1943,7 +2040,9 @@ mod tests {
                 min_content: crate::geometry::Size::new(0, 1),
                 max_content: crate::geometry::Size::new(0, 1),
                 history_adjustment: None,
-                semantic_view: None,
+                semantic_contents: None,
+                terminal_policy: TextRenderPolicy::default(),
+                terminal_product: None,
             },
         );
         let layout = renderer

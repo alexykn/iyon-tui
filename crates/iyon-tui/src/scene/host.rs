@@ -143,6 +143,8 @@ pub(crate) struct SceneHost {
     pending_layout_signature: Option<u64>,
     pending_paint: Option<PendingPaint>,
     direct_revision: u64,
+    pending_content_invalidations: HashSet<u64>,
+    pending_control_invalidations: HashSet<ComponentId>,
 }
 
 impl Default for SceneHost {
@@ -170,6 +172,8 @@ impl Default for SceneHost {
             pending_layout_signature: None,
             pending_paint: None,
             direct_revision: 0,
+            pending_content_invalidations: HashSet::new(),
+            pending_control_invalidations: HashSet::new(),
         }
     }
 }
@@ -220,17 +224,24 @@ impl SceneHost {
     }
 
     pub(crate) fn clear_direct_driver(&mut self) -> Result<()> {
-        if let Some(mut driver) = self.direct_driver.take() {
+        if let Some(mut driver) = self.take_direct_driver() {
             driver.shutdown()?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn take_direct_driver(&mut self) -> Option<DirectDriverHandle> {
+        let driver = self.direct_driver.take();
         self.direct_synchronized = false;
         self.direct_revision = self.direct_revision.saturating_add(1);
         self.pending_layout_signature = None;
         self.pending_paint = None;
+        self.pending_content_invalidations.clear();
+        self.pending_control_invalidations.clear();
         self.direct_history_overflow_rows = 0;
         self.direct_delivered_layout.clear();
         self.direct_delivered_content_extents.clear();
-        Ok(())
+        driver
     }
 
     pub(crate) fn direct_control_for_component(
@@ -334,18 +345,16 @@ impl SceneHost {
     }
 
     pub(crate) fn invalidate_direct_content_measurement(&mut self, port_id: u64) -> Result<()> {
-        self.direct_driver
-            .as_ref()
-            .map_or(Ok(()), |driver| driver.invalidate_content(port_id))
+        self.pending_content_invalidations.insert(port_id);
+        Ok(())
     }
 
     pub(crate) fn invalidate_direct_control_measurement(
         &mut self,
         component: ComponentId,
     ) -> Result<()> {
-        self.direct_driver
-            .as_ref()
-            .map_or(Ok(()), |driver| driver.invalidate_control(component))
+        self.pending_control_invalidations.insert(component);
+        Ok(())
     }
 
     pub(crate) fn prepare_direct_at_with_content(
@@ -541,6 +550,31 @@ impl SceneHost {
         invalidate: Vec<crate::occurrence::NodeKey>,
         controls: HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<crate::presentation::direct::DirectLayout> {
+        let mut invalidate = invalidate;
+        let content_ports = self.pending_content_invalidations.clone();
+        invalidate.extend(
+            self.direct_content_ports
+                .iter()
+                .filter_map(|(node, resource)| {
+                    self.direct_port_ids
+                        .get(resource)
+                        .filter(|port_id| content_ports.contains(port_id))
+                        .map(|_| *node)
+                }),
+        );
+        let control_components = self.pending_control_invalidations.clone();
+        invalidate.extend(
+            self.direct_control_nodes
+                .iter()
+                .filter_map(|(node, resource)| {
+                    self.direct_controls
+                        .get(resource)
+                        .filter(|component| control_components.contains(component))
+                        .map(|_| *node)
+                }),
+        );
+        invalidate.sort_unstable_by_key(|key| (key.slot, key.generation));
+        invalidate.dedup();
         let signature = layout_request_signature(
             self.direct_revision,
             root,
@@ -577,6 +611,8 @@ impl SceneHost {
             controls,
             Arc::clone(&self.async_wake),
         )?;
+        self.pending_content_invalidations.clear();
+        self.pending_control_invalidations.clear();
         self.pending_layout_signature = Some(signature);
         Err(anyhow::Error::new(SceneLayoutPending))
     }

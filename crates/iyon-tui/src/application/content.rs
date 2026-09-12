@@ -11,7 +11,7 @@ use std::str;
 use std::sync::{
     Arc, Mutex, Weak,
     atomic::{AtomicU64, Ordering},
-    mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel},
+    mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -63,6 +63,7 @@ struct ContentExecutor {
     accounting: Arc<Mutex<ContentExecutorAccounting>>,
     semantic_cache: Arc<Mutex<SemanticProjectionCache>>,
     parser_states: Arc<Mutex<VecDeque<(ParserExecutionKey, ParserExecution)>>>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
     join: Mutex<Option<JoinHandle<()>>>,
     #[cfg(test)]
     projection_latch: Arc<Mutex<Option<TestContentLatch>>>,
@@ -83,7 +84,6 @@ struct TestContentLatch {
 
 enum ContentExecutorCommand {
     Run(ContentExecutorJob),
-    Shutdown,
 }
 
 const CONTENT_EXECUTOR_MAX_JOBS: usize = 32;
@@ -120,15 +120,20 @@ impl ContentExecutor {
         let (commands, receive) = sync_channel(usize::MAX.min(CONTENT_EXECUTOR_MAX_JOBS));
         let accounting = Arc::new(Mutex::new(ContentExecutorAccounting::default()));
         let accounting_for_worker = Arc::clone(&accounting);
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shutdown_for_worker = Arc::clone(&shutdown);
         let join = thread::Builder::new()
             .name("iyon-tui-content".to_owned())
-            .spawn(move || content_executor_loop(receive, accounting_for_worker))
+            .spawn(move || {
+                content_executor_loop(receive, accounting_for_worker, shutdown_for_worker)
+            })
             .expect("content executor startup must succeed");
         Arc::new(Self {
             commands,
             accounting,
             semantic_cache: Arc::new(Mutex::new(VecDeque::new())),
             parser_states: Arc::new(Mutex::new(VecDeque::new())),
+            shutdown,
             join: Mutex::new(Some(join)),
             #[cfg(test)]
             projection_latch: Arc::new(Mutex::new(None)),
@@ -165,6 +170,10 @@ impl ContentExecutor {
                         .lock()
                         .expect("content test latch release lock must remain usable")
                         .recv();
+                }
+                if job.cancelled.load(Ordering::Acquire) {
+                    wake();
+                    return;
                 }
                 let projection = {
                     let mut semantic_cache = semantic_cache
@@ -205,6 +214,18 @@ impl ContentExecutor {
         };
         self.submit(task)?;
         Ok(receive)
+    }
+
+    fn check_capacity(&self, bytes: usize) -> Result<(), ContentExecutorRejected> {
+        let accounting = self
+            .accounting
+            .lock()
+            .expect("content executor accounting lock must remain usable");
+        let next_jobs = accounting.queued_jobs.saturating_add(1);
+        let next_bytes = accounting.queued_bytes.saturating_add(bytes);
+        (next_jobs <= CONTENT_EXECUTOR_MAX_JOBS && next_bytes <= CONTENT_EXECUTOR_MAX_BYTES)
+            .then_some(())
+            .ok_or(ContentExecutorRejected)
     }
 
     #[cfg(test)]
@@ -253,11 +274,11 @@ impl ContentExecutor {
             // The only command that can fail here is a dropped worker. The
             // submitted job is still owned by TrySendError and its byte size
             // therefore remains available for exact accounting rollback.
-            if let TrySendError::Full(ContentExecutorCommand::Run(job))
-            | TrySendError::Disconnected(ContentExecutorCommand::Run(job)) = error
-            {
-                accounting.queued_bytes = accounting.queued_bytes.saturating_sub(job.bytes);
-            }
+            let job = match error {
+                TrySendError::Full(job) | TrySendError::Disconnected(job) => job,
+            };
+            let ContentExecutorCommand::Run(job) = job;
+            accounting.queued_bytes = accounting.queued_bytes.saturating_sub(job.bytes);
             return Err(ContentExecutorRejected);
         }
         Ok(())
@@ -281,6 +302,7 @@ struct ContentProjectionTask {
     execution: ConnectorExecution,
     prefix_proof_cache: PrefixProofCache,
     wake: Arc<dyn Fn() + Send + Sync>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -288,6 +310,7 @@ struct ParserExecutionKey {
     source_id: u64,
     source_generation: u32,
     content_generation: u64,
+    source_base: u64,
     funnel_kind: TextFunnelKind,
     hyperlinks: bool,
 }
@@ -298,6 +321,7 @@ impl ParserExecutionKey {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
             content_generation: snapshot.content_generation,
+            source_base: snapshot.source_base,
             funnel_kind: funnel.kind,
             hyperlinks: funnel.hyperlinks,
         }
@@ -357,13 +381,20 @@ struct ContentProjectionResult {
 struct PendingContentProjection {
     key: TextProjectionKey,
     result: Receiver<ContentProjectionResult>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn content_executor_loop(
     receive: Receiver<ContentExecutorCommand>,
     accounting: Arc<Mutex<ContentExecutorAccounting>>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    while let Ok(command) = receive.recv() {
+    while !shutdown.load(Ordering::Acquire) {
+        let command = match receive.recv_timeout(std::time::Duration::from_millis(10)) {
+            Ok(command) => command,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         match command {
             ContentExecutorCommand::Run(job) => {
                 let mut accounting = accounting
@@ -374,14 +405,13 @@ fn content_executor_loop(
                 drop(accounting);
                 (job.run)();
             }
-            ContentExecutorCommand::Shutdown => break,
         }
     }
 }
 
 impl Drop for ContentExecutor {
     fn drop(&mut self) {
-        let _ = self.commands.send(ContentExecutorCommand::Shutdown);
+        self.shutdown.store(true, Ordering::Release);
         if let Some(join) = self
             .join
             .lock()
@@ -542,6 +572,7 @@ struct ContentLineage {
     source_id: u64,
     source_generation: u32,
     content_generation: u64,
+    source_base: u64,
 }
 
 impl ContentLineage {
@@ -550,6 +581,7 @@ impl ContentLineage {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
             content_generation: snapshot.content_generation,
+            source_base: snapshot.source_base,
         }
     }
 }
@@ -4328,6 +4360,12 @@ impl ContentHostRegistry {
         })
     }
 
+    fn cancel_projection(&mut self, connector_id: u64) {
+        if let Some(pending) = self.pending_content_projections.remove(&connector_id) {
+            pending.cancelled.store(true, Ordering::Release);
+        }
+    }
+
     /// Installs completed immutable products into the Connector cache. This
     /// is a short registry transition performed on the environment queue;
     /// projection itself has already finished on the shared executor.
@@ -4425,14 +4463,14 @@ impl ContentHostRegistry {
     }
 
     #[cfg(test)]
-    fn install_projection_latch_for_test(
+    pub(crate) fn install_projection_latch_for_test(
         &self,
     ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
         self.executor.install_projection_latch()
     }
 
     #[cfg(test)]
-    fn clear_projection_latch_for_test(&self) {
+    pub(crate) fn clear_projection_latch_for_test(&self) {
         self.executor.clear_projection_latch();
     }
 
@@ -5646,6 +5684,13 @@ impl ContentHostRegistry {
                         projection.measurement(connector_id)
                     }));
             }
+            let task_bytes = usize::try_from(snapshot.retained_bytes()).unwrap_or(usize::MAX);
+            self.executor.check_capacity(task_bytes).map_err(|error| {
+                anyhow::Error::new(ContentProjectionFailure {
+                    kind: ContentProjectionFailureKind::Backpressure,
+                    diagnostic: error.to_string(),
+                })
+            })?;
             let (execution, prefix_proof_cache) = {
                 let mut state = connector
                     .lock()
@@ -5658,8 +5703,9 @@ impl ContentHostRegistry {
                     std::mem::take(&mut state.prefix_proof_cache),
                 )
             };
+            let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let task = ContentProjectionTask {
-                bytes: usize::try_from(snapshot.retained_bytes()).unwrap_or(usize::MAX),
+                bytes: task_bytes,
                 connector_id,
                 key,
                 snapshot: snapshot.clone(),
@@ -5672,6 +5718,7 @@ impl ContentHostRegistry {
                 execution,
                 prefix_proof_cache,
                 wake: self.completion_wake(),
+                cancelled: Arc::clone(&cancelled),
             };
             let result = self.executor.submit_projection(task).map_err(|error| {
                 anyhow::Error::new(ContentProjectionFailure {
@@ -5679,8 +5726,14 @@ impl ContentHostRegistry {
                     diagnostic: error.to_string(),
                 })
             })?;
-            self.pending_content_projections
-                .insert(connector_id, PendingContentProjection { key, result });
+            self.pending_content_projections.insert(
+                connector_id,
+                PendingContentProjection {
+                    key,
+                    result,
+                    cancelled,
+                },
+            );
         }
         let state = connector
             .lock()
@@ -7518,6 +7571,13 @@ impl ContentHostRegistry {
     }
 
     pub(crate) fn dispose_all(&mut self) {
+        for pending in self
+            .pending_content_projections
+            .drain()
+            .map(|(_, pending)| pending)
+        {
+            pending.cancelled.store(true, Ordering::Release);
+        }
         self.in_flight_connectors.clear();
         let connector_ids = self.connectors.keys().copied().collect::<Vec<_>>();
         for connector_id in connector_ids {
@@ -7782,6 +7842,7 @@ impl ContentHostRegistry {
     }
 
     fn remove_connector(&mut self, connector_id: u64) {
+        self.cancel_projection(connector_id);
         self.finish_source_cleanup(connector_id);
         self.active_deadlines.remove(&connector_id);
         self.active_connectors.remove(&connector_id);

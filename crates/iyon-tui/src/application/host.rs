@@ -2634,7 +2634,7 @@ fn finalize_close(
     receipt_failed: bool,
     headless_history: Vec<PhysicalRow>,
 ) -> Result<()> {
-    {
+    let (driver, cleanup_result) = {
         let mut inner = host
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
@@ -2653,20 +2653,22 @@ fn finalize_close(
         }
         inner.content.dispose_all();
         inner.headless_history = headless_history;
-        let driver_cleanup = inner.running.host_clear_direct_driver();
+        let driver = inner.running.host_take_direct_driver();
         let ui_cleanup = inner.ui_resources.close().map_err(anyhow::Error::msg);
         inner.presentation_state = PresentationState::Closed;
         inner.lifecycle = HostLifecycle::Closed(Arc::clone(operation));
         inner.presentation_notify.notify_waiters();
         inner.ui_event_notify.notify_waiters();
-        match (driver_cleanup, ui_cleanup) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Err(driver), Ok(())) => Err(driver),
-            (Ok(()), Err(ui)) => Err(ui),
-            (Err(driver), Err(ui)) => Err(anyhow::anyhow!(
-                "direct renderer shutdown failed: {driver}; UI cleanup failed: {ui}"
-            )),
-        }
+        (driver, ui_cleanup)
+    };
+    let driver_cleanup = driver.map_or(Ok(()), |mut driver| driver.shutdown());
+    match (driver_cleanup, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(driver), Ok(())) => Err(driver),
+        (Ok(()), Err(ui)) => Err(ui),
+        (Err(driver), Err(ui)) => Err(anyhow::anyhow!(
+            "direct renderer shutdown failed: {driver}; UI cleanup failed: {ui}"
+        )),
     }
 }
 
@@ -2994,6 +2996,20 @@ impl HostInner {
         };
         self.bootstrap_pending = false;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_test_content_latch(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.content.install_projection_latch_for_test()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_test_layout_latch(
+        &self,
+    ) -> Result<(std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>)> {
+        self.running.scene_host().install_layout_latch_for_test()
     }
 
     #[cfg(test)]

@@ -163,6 +163,12 @@ impl NativeRuntime {
     pub(crate) fn host_clear_direct_driver(&mut self) -> anyhow::Result<()> {
         self.scene_host.clear_direct_driver()
     }
+
+    pub(crate) fn host_take_direct_driver(
+        &mut self,
+    ) -> Option<crate::presentation::direct::DirectDriverHandle> {
+        self.scene_host.take_direct_driver()
+    }
     pub(crate) fn host_remove_direct_control_component(
         &mut self,
         key: crate::occurrence::ResourceKey,
@@ -481,6 +487,11 @@ impl NativeRuntime {
     }
     pub(crate) fn theme_shared(&self) -> &Arc<crate::Theme> {
         &self.theme
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scene_host(&self) -> &crate::scene::SceneHost {
+        &self.scene_host
     }
 
     pub(crate) fn prepare_frame_for_history(

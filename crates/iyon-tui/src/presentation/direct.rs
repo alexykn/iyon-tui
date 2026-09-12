@@ -8,6 +8,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::atomic::Ordering,
     sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
@@ -142,7 +143,6 @@ enum DirectDriverCommand {
         component: ComponentId,
         response: SyncSender<Result<()>>,
     },
-    Shutdown,
 }
 
 /// Send-only handle for the one concrete renderer driver. Taffy is created,
@@ -151,6 +151,7 @@ enum DirectDriverCommand {
 pub(crate) struct DirectDriverHandle {
     command: SyncSender<DirectDriverCommand>,
     join: Option<JoinHandle<()>>,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
     pending_layout: Mutex<Option<Receiver<Result<DirectLayout>>>>,
     pending_paint: Mutex<Option<Receiver<Result<crate::physical::Surface>>>>,
     #[cfg(test)]
@@ -161,9 +162,11 @@ impl DirectDriverHandle {
     pub(crate) fn start(host_id: u64) -> Result<Self> {
         let (command, receive) = sync_channel(8);
         let (ready_send, ready_receive) = sync_channel(1);
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shutdown_for_worker = Arc::clone(&shutdown);
         let join = thread::Builder::new()
             .name(format!("iyon-tui-layout-{host_id}"))
-            .spawn(move || direct_driver_loop(receive, ready_send, host_id))
+            .spawn(move || direct_driver_loop(receive, ready_send, host_id, shutdown_for_worker))
             .map_err(|error| anyhow!("direct renderer driver startup failed: {error}"))?;
         if ready_receive
             .recv()
@@ -176,6 +179,7 @@ impl DirectDriverHandle {
         Ok(Self {
             command,
             join: Some(join),
+            shutdown,
             pending_layout: Mutex::new(None),
             pending_paint: Mutex::new(None),
             #[cfg(test)]
@@ -195,7 +199,7 @@ impl DirectDriverHandle {
     ) -> Result<()> {
         let (response, receive) = sync_channel(1);
         self.command
-            .send(DirectDriverCommand::Synchronize {
+            .try_send(DirectDriverCommand::Synchronize {
                 snapshots,
                 changes: changes.map(|changes| Box::new(changes.clone())),
                 participation,
@@ -221,6 +225,9 @@ impl DirectDriverHandle {
         controls: HashMap<ComponentId, ControlSnapshot>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<()> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(anyhow!("direct renderer driver is closed"));
+        }
         let mut pending = self
             .pending_layout
             .lock()
@@ -301,6 +308,9 @@ impl DirectDriverHandle {
         graph: crate::component::MountGraph,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<()> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(anyhow!("direct renderer driver is closed"));
+        }
         let mut pending = self
             .pending_paint
             .lock()
@@ -368,14 +378,11 @@ impl DirectDriverHandle {
         let Some(join) = self.join.take() else {
             return Ok(());
         };
-        let send_result = self
-            .command
-            .send(DirectDriverCommand::Shutdown)
-            .map_err(|_| anyhow!("direct renderer driver already stopped"));
+        self.shutdown.store(true, Ordering::Release);
         let join_result = join
             .join()
             .map_err(|_| anyhow!("direct renderer driver panicked"));
-        send_result.and(join_result)
+        join_result
     }
 }
 
@@ -391,10 +398,16 @@ fn direct_driver_loop(
     receive: Receiver<DirectDriverCommand>,
     ready: SyncSender<Result<()>>,
     host_id: u64,
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let mut renderer = DirectOccurrenceRenderer::new(host_id);
     let _ = ready.send(Ok(()));
-    while let Ok(command) = receive.recv() {
+    while !shutdown.load(Ordering::Acquire) {
+        let command = match receive.recv_timeout(std::time::Duration::from_millis(10)) {
+            Ok(command) => command,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match command {
             DirectDriverCommand::Synchronize {
                 snapshots,
@@ -473,7 +486,6 @@ fn direct_driver_loop(
             } => {
                 let _ = response.send(renderer.invalidate_control_measurement(component));
             }
-            DirectDriverCommand::Shutdown => break,
         }
     }
 }
@@ -1665,7 +1677,13 @@ impl crate::presentation::ContentProvider for CapturedContentProvider<'_> {
                 target_origin,
                 clip,
                 crate::text::TerminalRowWindow::new(
-                    usize::try_from(window.first_row).unwrap_or(usize::MAX),
+                    usize::try_from(window.first_row)
+                        .unwrap_or(usize::MAX)
+                        .saturating_add(
+                            capture
+                                .and_then(|capture| capture.history_adjustment)
+                                .map_or(0, |adjustment| adjustment.removed_rows),
+                        ),
                     usize::try_from(window.row_count).unwrap_or(usize::MAX),
                 ),
             )

@@ -384,6 +384,12 @@ impl OccurrenceDocument {
             if occurrence.renderer_hidden {
                 return Ok((false, visited));
             }
+            if matches!(
+                occurrence.properties.effective(PropertyId::Display),
+                LayerValue::Value(PropertyValue::Display(DisplayMode::None))
+            ) {
+                return Ok((false, visited));
+            }
             if let Some(parent) = occurrence.links.parent {
                 let parent_record = self.nodes.get(parent.slot, parent.generation).map_err(
                     |error| match error {

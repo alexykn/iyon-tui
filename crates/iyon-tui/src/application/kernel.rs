@@ -179,6 +179,9 @@ impl NativeRuntime {
     ) {
         self.scene_host.remove_direct_control_component(key);
     }
+    pub(crate) fn host_finish_direct_synchronization(&mut self) -> anyhow::Result<()> {
+        self.scene_host.finish_direct_synchronization()
+    }
     pub(crate) fn host_sync_direct_occurrences(
         &mut self,
         sync_revision: u64,

@@ -3334,6 +3334,7 @@ impl HostInner {
         #[cfg(feature = "perf-counters")]
         let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::RuntimeAdvanceNanos);
         self.sync_pending_ui_scene_before_tick()?;
+        self.running.host_finish_direct_synchronization()?;
         let content_dirty = self.content.advance(self.now).map_err(|error| {
             host_attempt_error(
                 "content",

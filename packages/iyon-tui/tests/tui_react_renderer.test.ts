@@ -146,6 +146,18 @@ function required<T>(value: T | undefined, message: string): T {
 	return value;
 }
 
+async function waitForHostIdle(tui: AppHarness): Promise<void> {
+	const deadline = performance.now() + 1_000;
+	for (;;) {
+		tui.flush();
+		const epochs = tui.epochs();
+		if (epochs.pending_epoch === epochs.committed_epoch) return;
+		if (performance.now() >= deadline)
+			throw new Error(`native host stalled: ${JSON.stringify(epochs)}`);
+		await Bun.sleep(1);
+	}
+}
+
 async function waitForNativeCommits(
 	getCount: () => number,
 	minimum: number,
@@ -1044,6 +1056,11 @@ describe("T3 React mutation renderer", () => {
 					true,
 				);
 			}
+			// A burst may coalesce native ticks, but all accepted host work must
+			// still settle even while the previous synchronization is in flight.
+			for (let tick = 0; tick < 8; tick += 1) tui.advance(20);
+			await waitForHostIdle(tui);
+			expect(nativeCommits).toBe(acceptedCommits);
 		} finally {
 			await root.unmount();
 			tui.close();

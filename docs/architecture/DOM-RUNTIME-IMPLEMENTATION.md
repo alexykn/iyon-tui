@@ -185,6 +185,7 @@ Raw JSONL-style JSON reports from the latest runs are:
 
     /tmp/t7-m2-stage-profile-665c0a8.json
     /tmp/t7-m2-current-default-665c0a8.json
+    /tmp/t7-m2-current-default-665c0a8-b.json
     /tmp/t7-m2-perf-baseline-latest-a.json (historical, cross-version comparison withdrawn)
     /tmp/t7-m2-perf-baseline-latest-b.json (historical, cross-version comparison withdrawn)
     /tmp/t7-m2-current-instrumented-final-c6acc54.json (historical)

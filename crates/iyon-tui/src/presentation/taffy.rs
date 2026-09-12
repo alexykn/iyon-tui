@@ -624,6 +624,8 @@ impl TaffyLayoutAdapter {
         height: AvailableConstraint,
         measure: &mut impl FnMut(NodeKey, MeasureRequest) -> MeasuredSize,
     ) -> Result<Vec<ComputedGeometry>, TaffyAdapterError> {
+        #[cfg(feature = "perf-counters")]
+        crate::perf::inc(crate::perf::Counter::TaffyLayoutPasses);
         let root_node = self.entry(root)?.node;
         let available = Size {
             width: available_space(width)?,

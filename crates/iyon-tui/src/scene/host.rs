@@ -272,7 +272,12 @@ impl SceneHost {
         if self.direct_driver.is_none() {
             return Err(anyhow!("direct renderer driver is not started"));
         }
-        let mut captures = self.capture_direct_measurements(size.width, content)?;
+        let mut captures = {
+            #[cfg(feature = "perf-counters")]
+            let _perf_timer =
+                crate::perf::ScopedTimer::new(crate::perf::Counter::DirectCaptureNanos);
+            self.capture_direct_measurements(size.width, content)?
+        };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
         let mut invalidate_controls = Vec::new();
         for _ in 0..MAX_LAYOUT_PASSES {
@@ -290,6 +295,9 @@ impl SceneHost {
                 )?;
             invalidate_controls.clear();
             let mut refined_content = Vec::new();
+            #[cfg(feature = "perf-counters")]
+            let _refinement_timer =
+                crate::perf::ScopedTimer::new(crate::perf::Counter::DirectRefinementNanos);
             for (key, capture) in &mut captures {
                 let Some(width) = direct.content_widths.get(key).copied() else {
                     continue;
@@ -317,6 +325,8 @@ impl SceneHost {
                 capture.offered_width = width;
                 refined_content.push(*key);
             }
+            #[cfg(feature = "perf-counters")]
+            drop(_refinement_timer);
             if !refined_content.is_empty() {
                 direct = self
                     .direct_driver

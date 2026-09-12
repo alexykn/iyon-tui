@@ -31,10 +31,15 @@ import {
 
 /**
  * This benchmark intentionally measures the production React/occurrence/
- * content path. The default addon provides comparable JavaScript traffic and
- * barrier timings; the opt-in perf-counters addon adds native-owned stage
- * timings and counters. Instrumented runs never replace default comparisons.
+ * content path. The default addon provides current-source JavaScript traffic
+ * and barrier timings; the opt-in perf-counters addon adds native-owned stage
+ * timings and counters. Archived comparisons must run the archived source
+ * benchmark with its matching addon, never this current-source entrypoint.
  */
+if (process.env.ION_TUI_NATIVE_ARTIFACT !== undefined)
+	throw new Error(
+		"react_content.ts refuses an external native artifact override; run an archived source benchmark with its matching source/addon pair instead",
+	);
 const instrumentedNative = native as typeof native & {
 	tuiPerfReset?: () => void;
 	tuiPerfSnapshot?: () => Record<string, number>;
@@ -369,6 +374,12 @@ function selectedNativeCounters(): Readonly<Record<string, number>> {
 		"runtime_advance_nanos",
 		"frame_present_nanos",
 		"frame_commit_nanos",
+		"direct_capture_nanos",
+		"direct_refinement_nanos",
+		"direct_driver_layout_nanos",
+		"taffy_layout_nanos",
+		"taffy_layout_passes",
+		"direct_paint_nanos",
 	] as const;
 	return Object.fromEntries(
 		owned.flatMap((name) =>
@@ -1000,7 +1011,7 @@ async function provenance() {
 		nativeArtifactSha256: await sha256(nativeArtifact.absolutePath),
 		uiSchemaBlake3: schemaHash,
 		baseline: {
-			status: "comparable-default",
+			status: "rejected-schema-mismatch",
 			artifact: "/tmp/t6-m1-baseline/iyon-tui-native.node",
 			artifactSha256: await sha256("/tmp/t6-m1-baseline/iyon-tui-native.node"),
 			sourceArchiveSha256:
@@ -1009,7 +1020,7 @@ async function provenance() {
 			uiSchemaBlake3:
 				baselineSchema.match(/schema_blake3 = ([0-9a-f]+)/u)?.[1] ?? null,
 			reason:
-				"immutable M1 default addon loaded successfully with the bounded current benchmark entrypoint; current and baseline timing runs use default artifacts without native counters, while the instrumented current run is reported separately",
+				"archived addon/source schema differs from current generated UI schema; loader success is not structural or semantic compatibility, and this current-source benchmark rejects external artifact overrides",
 		},
 	};
 }
@@ -1066,6 +1077,17 @@ const report = {
 				"HostInner::present_frame (physical frame submission/poll)",
 			frame_commit_nanos:
 				"HostInner::commit_frame (visible frame/content promotion)",
+			direct_capture_nanos:
+				"SceneHost::capture_direct_measurements (content capture/projection entry)",
+			direct_refinement_nanos:
+				"SceneHost::prepare_direct_at_with_content (final-width refinement)",
+			direct_driver_layout_nanos:
+				"DirectDriverHandle::layout (layout-thread handoff and response)",
+			taffy_layout_nanos:
+				"TaffyLayoutAdapter::layout (one intrinsic/definite layout pass)",
+			taffy_layout_passes: "TaffyLayoutAdapter::layout invocation count",
+			direct_paint_nanos:
+				"paint_direct_layout (physical Surface construction and paint)",
 		},
 	},
 	trafficWitnesses,

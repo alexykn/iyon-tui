@@ -197,6 +197,9 @@ impl DirectDriverHandle {
         invalidate: Vec<NodeKey>,
         controls: HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer =
+            crate::perf::ScopedTimer::new(crate::perf::Counter::DirectDriverLayoutNanos);
         let (response, receive) = sync_channel(1);
         self.command
             .send(DirectDriverCommand::Layout {
@@ -525,6 +528,8 @@ impl DirectOccurrenceRenderer {
             .values()
             .map(|snapshot| (snapshot.key, control_fills_available_width(snapshot)))
             .collect::<HashMap<_, _>>();
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::TaffyLayoutNanos);
         let geometries = self
             .layout
             .layout(
@@ -1390,6 +1395,8 @@ pub(crate) fn paint_direct_layout(
     focused: Option<ComponentId>,
     graph: &crate::component::MountGraph,
 ) -> Result<crate::physical::Surface> {
+    #[cfg(feature = "perf-counters")]
+    let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::DirectPaintNanos);
     let mut surface =
         crate::physical::Surface::new(layout.tree.size.width, layout.tree.size.height);
     let resolver = crate::presentation::paint::ThemeResolver::new(theme);

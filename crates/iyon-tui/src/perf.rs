@@ -58,10 +58,16 @@ pub enum Counter {
     RuntimeAdvanceNanos,
     FramePresentNanos,
     FrameCommitNanos,
+    DirectCaptureNanos,
+    DirectRefinementNanos,
+    DirectDriverLayoutNanos,
+    TaffyLayoutNanos,
+    TaffyLayoutPasses,
+    DirectPaintNanos,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::FrameCommitNanos as usize + 1;
+    pub const COUNT: usize = Self::DirectPaintNanos as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -108,6 +114,12 @@ const NAMES: [&str; Counter::COUNT] = [
     "runtime_advance_nanos",
     "frame_present_nanos",
     "frame_commit_nanos",
+    "direct_capture_nanos",
+    "direct_refinement_nanos",
+    "direct_driver_layout_nanos",
+    "taffy_layout_nanos",
+    "taffy_layout_passes",
+    "direct_paint_nanos",
 ];
 
 #[cfg(feature = "perf-counters")]

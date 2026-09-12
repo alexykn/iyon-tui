@@ -145,9 +145,11 @@ and reports p50/p95/p99 in milliseconds plus absolute transport bytes. The
 default addon reports JavaScript acceptance/barrier timings and exact UI
 traffic. An opt-in `perf-counters` stage additionally reports native-owned
 `HostInner` preparation, scheduler advancement, physical submission, and frame
-completion nanoseconds. The timer type, `Instant` reads, and timer guards are
-compiled only under `perf-counters`; the default addon contains no timer labels
-or `tuiPerf*` symbols.
+completion nanoseconds. The instrumented stage lane also records content
+capture/refinement, the DirectDriver request/response interval, aggregate Taffy
+layout time and pass count, and physical paint. The timer type, `Instant` reads,
+and timer guards are compiled only under `perf-counters`; the default addon
+contains no timer labels or `tuiPerf*` symbols.
 
 The exact traffic witness passed on current source at `c6acc54`:
 
@@ -197,20 +199,221 @@ artifact. The immutable M1 baseline remains unchanged at
 archive SHA-256
 `9a42664709cd367af0b97e9807925f5f7896f9f063a4cd9ae93800f178386d7b`, and
 schema hash `b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0`.
-Both default artifacts loaded successfully with the current bounded benchmark;
-the baseline/current timing comparison therefore uses matching default
-artifacts, while native counters are current-instrumented-only evidence.
+The baseline addon and its source archive both load as files, but loader
+compatibility is not schema or semantic compatibility. The current generated
+schema is `aa92c1c46995f6daeab87f08ef493788c1b96ad6cb842a7322220675e9d1691e1`,
+and its normalized descriptors differ materially from the archived schema:
+current adds `SizeMode` as value kind 1 and removes the archived Dimension,
+F32, Display, Direction, FlexDirection, FlexWrap, Position, AlignmentMode,
+GridAutoFlow, InsetsF32, TrackList, and GridPlacement kinds. The current
+occurrence property table and field encodings likewise differ. Both schemas
+retain batch magic/version 1, so the old addon can load and may accept some
+overlapping records; that successful process/operation result does not prove
+the same structural meaning, rows, or layout contract.
 
-Alternating baseline/current runs are repeatably slower on current source in
-several preparation/barrier workloads (notably keyed reorder and steady
-Markdown). The instrumented counters place the hot phase in
-`prepare_candidate_frame_with_backend` rather than physical submission; for
-example, the latest current keyed-reorder samples report roughly 6.0 ms of
-native frame preparation and roughly 6.7 ms post-acceptance barrier time. This
-is a documented performance investigation result, not a waiver: no small
-owning runtime fix was identified within the benchmark/traffic scope, and the
-15% plus 0.10 ms p95 threshold remains an open review gate. No Linux x64
-execution is claimed.
+The prior current-source-versus-archived-addon p95 comparison is therefore
+withdrawn as invalid and is not a performance gate or waiver. The current
+benchmark now rejects `ION_TUI_NATIVE_ARTIFACT` overrides so this unsafe
+cross-version comparison cannot be repeated accidentally. A valid archived
+comparison requires running the archived benchmark/source imports from
+`/tmp/t6-m1-baseline/source` with the hash-verified archived addon, and then
+comparing only workloads whose operation, content, rows, and receipt contracts
+are shown equivalent. That separate archived-source rerun was not performed in
+this lane. Current-source stage timings above remain valid profiling evidence;
+no cross-version p95 claim is made and no Linux x64 execution is claimed.
+
+The additional stage profile `/tmp/t7-m2-stage-profile.json` used the same
+production route, one warmup, seven measured samples, and append count 16. The
+median stage timings (milliseconds; `TaffyLayoutPasses` is the median count)
+were:
+
+| Workload | frame preparation | content capture | DirectDriver request | Taffy layout | Taffy passes | physical paint |
+|---|---:|---:|---:|---:|---:|---:|
+| stable-tree-leaf-style | 2.381 | 0.057 | 1.866 | 1.532 | 4 | 0.311 |
+| wide-keyed-reorder | 5.872 | 0.505 | 4.610 | 4.472 | 4 | 0.249 |
+| source-width-80 | 1.520 | 0.250 | 1.167 | 1.149 | 4 | 0.094 |
+| markdown-steady-smooth-native | 16.549 | 4.180 | 12.110 | 11.831 | 72 | 0.132 |
+| native-editor | 0.027 | 0.000 | 0.016 | 0.004 | 2 | 0.006 |
+| resize-theme-scroll | 3.626 | 0.281 | 2.832 | 2.617 | 14 | 0.403 |
+
+The profile confirms that the current interactive path waits on the existing
+Taffy worker response and that content capture can also be material on a
+content lane. Taffy and the DirectDriver interval are the dominant measured
+costs; physical paint is not the source of the multi-millisecond keyed or
+steady-Markdown preparation cost. Steady smooth Markdown reaches 72 Taffy
+passes because the bounded workload submits 16 Source appends and native
+smoothing wakes; this is an architectural latency-isolation signal, not a
+reason to weaken content semantics or chase a local Markdown micro-optimization.
+
+### T7/M2 latency-isolation design — implementation-ready, not implemented
+
+The current route has a clear latency boundary that is not yet asynchronous.
+The following observations are from the current source, not proposed
+ownership:
+
+- `NativeTuiHost::commit_ui` accepts a desired occurrence transaction while
+  holding `Arc<Mutex<HostInner>>`. It releases that guard before calling
+  `render_host_after_mutation`, but that helper reacquires the same guard and
+  calls `HostInner::advance_and_render` through the complete preparation path.
+  Public input, resize, theme, and native-control mutation methods use the same
+  release-then-render shape (`application/host.rs`).
+- The `iyon-native-environment` thread scans the registered hosts and invokes
+  `service_native_deadline_inner` and `drain_pending`. Each path locks
+  `HostInner` while `advance_runtime_for_candidate`, content scheduling,
+  `running.prepare_frame_for_history`, direct scene preparation, and candidate
+  bookkeeping execute. `ContentHostRegistry::advance` and
+  `prepare_connector_projection` therefore currently run under the host guard.
+- `SceneHost::prepare_direct_at_with_content` calls
+  `DirectDriverHandle::layout`. The `iyon-tui-layout-{host_id}` worker owns
+  Taffy, but the handle sends a command and waits on a synchronous response;
+  the caller is still holding `HostInner` for that wait. The same preparation
+  function performs direct physical paint on the caller after the response.
+- The `iyon-terminal` worker owns termwiz I/O and `TermwizPresenter`. Normal
+  `begin_frame` only sends an ordered command and returns a oneshot receipt;
+  `presenter.present` uses `presented.diff_screens` when its shadow is known.
+  Normal host polling does not wait for that receipt, while explicit
+  presentation barriers and close intentionally wait outside the host guard.
+  The existing ordered presenter/diff shadow is the physical-output authority;
+  this design does not add a second backend or a second damage model.
+
+The latency-isolation implementation must be a bounded shared executor, not one
+OS thread per Source or Connector. It should be introduced as one replacement
+ownership path, with the following state and transitions.
+
+#### Content executor and exact product identity
+
+1. Move parser/execution state and width-independent semantic-cache ownership
+   out of the synchronous `HostInner` preparation path into a bounded shared
+   content executor. The executor keeps an ordered state record per Source
+   identity and generation, and uses a fair queue or fixed worker set. A Source
+   snapshot is captured quickly at the Source lock, then its immutable storage
+   `Arc` pins the bytes needed by the job; no HostInner guard is held while the
+   parser or projector runs.
+2. Split the job keys. A semantic job is keyed by
+   `(source_id, source_generation, content_generation, source_base,
+   source_end/revision, sealed/head_partial, funnel kind/options and
+   hyperlinks)`. It produces one immutable semantic product that can be shared
+   by every requested width. A width/backend realization is separately keyed
+   by `(semantic product identity, width, wrap/funnel policy, delivery
+   frontier, theme/style paint facts, finalized-prefix requirement, and
+   physical-row requirement)`. Multiple widths for one Source must reuse the
+   semantic product and must not parse the Source again.
+3. Preserve the current exact provenance fields rather than introducing a
+   pointer-only cache key: source identity/generation, content generation,
+   source frontier, immutable product identity, Connector selection, confirmed
+   A versus candidate B, delivery revision, theme/style facts, and History
+   finalized-prefix/physical-row requirements. A failed realization is recorded
+   against its exact key and invalidated for retry; it is never returned as a
+   successful zero-height or old-width product.
+4. Coalesce only pending computation. Source append bytes, output events, and
+   presentation receipts are accepted and counted in order and are never
+   coalesced. If a newer append arrives while an older compatible prefix job is
+   finishing, the older monotonic product may become the latest *ready*
+   product and can be displayed while the newer job runs. Replacement,
+   truncation, retired generation, Connector switch, policy/theme mismatch,
+   or wrong width makes the older product incompatible; that completion is
+   retained only for diagnostics or dropped after releasing its pins.
+5. Bound executor work and retained data. Use a fixed maximum number of queued
+   jobs/bytes, per-Source latest-desired slots, round-robin/fair worker
+   scheduling, and parser checkpoints for best-effort cancellation. A full
+   queue must produce an explicit pending/backpressure state, not unbounded
+   allocation and not silent Source mutation loss. Cancellation must not
+   interrupt unsafe parser state; completed work is filtered by its exact key.
+
+#### Nonblocking frame request and publication
+
+1. Keep `HostInner.frame` (confirmed A) as the sole visible scene authority.
+   Accepted desired UI/Source state may request work, but a ready content
+   product is not a candidate and a candidate is not confirmed visible. A
+   content-completion record carries host identity, request/attempt ID, desired
+   UI revision, source/product key set, viewport width/height, theme revision,
+   and any History frontier identity.
+2. Replace the blocking DirectDriver request/response use with a bounded,
+   nonblocking handoff to the existing Taffy-owning layout thread. A layout
+   request consumes immutable occurrence snapshots, control snapshots,
+   matching immutable content products, and theme/style facts. The worker runs
+   Taffy and returns an owned geometry/paint-input result. The host performs
+   only the existing short mount-graph and geometry-feedback transition; if a
+   feedback callback changes a control, it submits another bounded layout
+   request. Once geometry is stable, a paint request carrying that immutable
+   layout, graph/focus facts, and content products runs `paint_direct_layout` on
+   the same layout thread and returns an owned `Surface`. This remains one
+   general renderer, not a second occurrence tree or allocator, and React/Taffy
+   semantics remain authoritative. The host must poll or receive completion
+   wakes after releasing `HostInner`; it must never call `recv` while admitting
+   input or servicing an interactive frame.
+3. Width misses are explicit. A Taffy measurement callback may consume only a
+   matching captured width product. It may not parse/project, wait, or call a
+   completion callback. If the requested width has no ready realization, the
+   layout request reports `NeedsProduct(width, key)` and the executor schedules
+   it. The confirmed old scene and its old geometry/clip remain in force until
+   a matching replacement is ready. When no confirmed scene exists or the
+   backend dimensions changed, use one backend-independent bounded loading
+   policy; never claim the old height valid for a new width.
+4. Control-only work remains interactive. An editor, focus, animation, or
+   other native control update may be accepted and rendered against the
+   confirmed content product without waiting for unrelated Source projection.
+   A required Taffy reflow is requested asynchronously and is published on its
+   completion wake; it is not deferred until a frame-vsync tick and it does not
+   block input admission. If control geometry feedback changes state, the
+   existing bounded feedback/reflow loop schedules another immutable request.
+5. A matching layout result enters a `Prepared` candidate state only after the
+   host verifies that its desired epoch, viewport, selection, content product,
+   theme, and History frontier still match. The physical worker receives that
+   candidate in order. The receipt pins the candidate's immutable content
+   products and Source snapshots until the actual receipt succeeds or fails.
+   Successful receipt runs the existing environment-owned commit promotion;
+   failure aborts B, retains A, marks physical synchronization unknown when
+   required, and releases candidate pins. A stale completion can never promote
+   visible state, even if its process/worker operation succeeded.
+6. Completion wakes are event-driven. The content executor and layout worker
+   notify the environment, which queues the host fairly. The host performs a
+   short nonblocking state transition and either submits an available matching
+   candidate or keeps A visible. It does not repeatedly prepare idle frames,
+   and no content result is made visible merely because it is ready. Ordered
+   terminal commands and receipt wakes remain the only physical publication
+   barrier.
+
+#### State and cleanup ownership to change
+
+The implementation should remove, rather than parallelize, the current
+synchronous owners in the touched path:
+
+- `ContentHostRegistry` retains authoritative Source/Port/Connector selection,
+  confirmed/candidate records, failure state, and receipt-safe cleanup, but its
+  mutable parser execution and width projection work move to the one shared
+  executor. `measure_content`/`prepare_connector_projection` must no longer
+  perform parser/projection work from a Taffy measurement callback.
+- `DirectDriverHandle::layout`'s blocking response contract and host-side
+  `paint_direct_layout` call are replaced by one nonblocking request/completion
+  contract on the existing layout thread. Do not add a second occurrence tree
+  or manual allocator.
+- `PresentationState`, the confirmed frame, environment queue fairness,
+  terminal presenter shadow/diff, and typed physical receipts remain. Their
+  ownership is not duplicated in the executor. The old candidate is discarded
+  only through the existing abort path after a matching receipt outcome.
+- Source cleanup and product pins are released only after the corresponding
+  candidate abort or successful receipt promotion. Close first cancels new
+  scheduling, then joins in-flight content/layout/physical work outside
+  `HostInner`, and finally performs the existing authoritative cleanup. A
+  completion arriving after close is rejected by host identity/generation and
+  drops its owned pins.
+
+Focused deterministic tests must hold a projection or layout job at a
+test-owned barrier, then prove that an unrelated control/input desired update
+can be accepted and that the confirmed scene remains observable without a
+blocking `DirectDriver` receive. Releasing the job must prove that only the
+latest compatible product can become B and then visible after its physical
+receipt. Additional tests must cover resize/width-miss stale completions,
+replacement versus append ordering, failed-measure invalidation, close-time
+pin release, bounded burst queues/fairness, control updates during a content
+stall, receipt loss, and the no-idle-frame rule. Existing exact UI traffic,
+Source accepted/copied-byte, Unicode, History, and presenter diff contracts
+remain required regressions; none may be weakened to make asynchronous work
+appear complete.
+
+This is a design boundary for the next implementation tranche. It is not an
+implementation or an acceptance waiver for the current synchronous route.
 
 ### T4 handoff boundary
 

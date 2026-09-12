@@ -435,21 +435,6 @@ impl SceneHost {
             .as_ref()
             .filter(|pending| pending.signature != current_signature)
             .map_or_else(Vec::new, |_| captures.keys().copied().collect());
-        eprintln!(
-            "T7SCENE rev={} pending_sig={:?} current_sig={:?} cap={:?} inval={:?}",
-            self.direct_revision,
-            self.pending_layout_signature,
-            current_signature,
-            captures
-                .values()
-                .map(|capture| (
-                    capture.measurement.projection_identity,
-                    capture.measurement.intrinsic_size,
-                    capture.offered_width
-                ))
-                .collect::<Vec<_>>(),
-            invalidate_content
-        );
         if let Some(pending) = self.pending_layout_input.as_ref()
             && pending.signature == current_signature
         {

@@ -22,6 +22,7 @@ serde_json.workspace = true
 napi-build = "2.4.1"
 
 [dev-dependencies]
+tokio.workspace = true
 # Cross-crate Source FFI failure tests need the core's test-only host poison
 # hook; the hook is not enabled for the shipped native artifact.
 iyon-tui = { workspace = true, features = ["native-host", "test-util"] }

@@ -1686,8 +1686,12 @@ impl TuiHost {
                 diagnostic: failure.diagnostic.clone(),
             });
         }
-        let in_flight =
-            inner.bootstrap_receipt.is_some() || inner.presentation_state.is_in_flight();
+        // A receipt can confirm the retained product while a newer Source
+        // projection is still running. Equal host epochs do not make that
+        // content barrier stalled; the projection owner will wake it.
+        let in_flight = inner.bootstrap_receipt.is_some()
+            || inner.presentation_state.is_in_flight()
+            || inner.content.has_pending_projections();
         if !frame_is_physical {
             return Ok(UiPresentationObservation::Pending { in_flight });
         }

@@ -4522,6 +4522,10 @@ impl ContentHostRegistry {
         std::mem::take(&mut self.projection_results_ready)
     }
 
+    pub(crate) fn has_pending_projections(&self) -> bool {
+        !self.pending_content_projections.is_empty()
+    }
+
     #[cfg(test)]
     fn wait_for_projection_jobs_for_test(&mut self) {
         while !self.pending_content_projections.is_empty() {

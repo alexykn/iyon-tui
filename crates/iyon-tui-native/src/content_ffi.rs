@@ -499,6 +499,10 @@ mod tests {
 
     #[test]
     fn accepted_wake_failure_keeps_direct_ffi_result_and_healthy_fanout() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
         let environment = TuiEnvironment::new_manual();
         let environment_slot = environment.environment_slot();
         crate::tui::register_content_environment_for_test(&environment);
@@ -506,7 +510,6 @@ mod tests {
         let failed = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let healthy = TuiHost::open_in_environment(20, 4, true, environment.clone()).unwrap();
         let failed_host_id = failed.epochs().unwrap().host_id;
-        let healthy_host_id = healthy.epochs().unwrap().host_id;
         let source = environment
             .create_content_source(TextSourceKind::Stream)
             .unwrap();
@@ -552,9 +555,21 @@ mod tests {
                 node: NodeRef::Local(1),
                 port: Some(ResourceRef::Local(2)),
             });
-            host.commit_ui(batch, std::slice::from_ref(&source))
+            let accepted = host
+                .commit_ui(batch, std::slice::from_ref(&source))
                 .unwrap();
-            host.flush_pending_hosts(32, true).unwrap();
+            runtime.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    host.wait_for_ui_presentation(
+                        accepted.acknowledgement.accepted_ui_revision,
+                        true,
+                    ),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            });
         }
         failed.poison_lock_for_test();
         let bytes = b"ffi wake\n";
@@ -594,12 +609,19 @@ mod tests {
                 && error.code == "SOURCE_WAKE_FAILED"
                 && error.diagnostic.contains("Source revision 1 was accepted")
         }));
-        assert!(
-            report
-                .commits
-                .iter()
-                .any(|commit| commit.host_id == healthy_host_id)
-        );
+        // A fair drain admits work; it does not synchronously finish content
+        // projection and terminal presentation. Observe the healthy host's
+        // exact content barrier before checking its physical output.
+        let accepted_revision = healthy.epochs().unwrap().desired_structural_revision;
+        runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                healthy.wait_for_ui_presentation(accepted_revision, true),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        });
         assert!(
             healthy
                 .screen_rows()

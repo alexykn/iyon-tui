@@ -13,6 +13,7 @@ mod provenance;
 mod render;
 mod source;
 mod style;
+mod terminal;
 mod validate;
 mod visit;
 
@@ -45,6 +46,13 @@ pub use render::{
 #[allow(unused_imports)]
 pub(crate) use style::{TEXT_THEME_KEY, TextFacts, text_style_ref};
 pub use style::{TextListKind, TextPart, TextRole, TextSelector, TextTableSection, TextTaskState};
+pub(crate) use terminal::{
+    TerminalBlock, TerminalBlockKind, TerminalConstraints, TerminalContentProduct,
+    TerminalPaintError, TerminalPaintSpan, TerminalProjectionError, TerminalProjector,
+    TerminalRect, TerminalRow, TerminalRowWindow, TerminalRun, TerminalSemanticContext,
+    TerminalSemanticIdentity, TerminalSize, TerminalTextProduct, TerminalTextProjector,
+    TerminalWidthConstraint,
+};
 pub use validate::{validate_text_content, validate_text_projection};
 pub use visit::{
     TextRewriter, TextVisitor, walk_block, walk_content, walk_inline, walk_inline_content,

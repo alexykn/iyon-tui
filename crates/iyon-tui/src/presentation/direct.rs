@@ -77,6 +77,35 @@ impl PartialEq for CapturedContentMeasurement {
     }
 }
 
+/// Inputs retained by the Taffy cache owner, independent of whether the
+/// corresponding asynchronous layout or paint request is still pending.
+/// No content product or Source pin is retained here.
+#[derive(PartialEq)]
+struct ContentLayoutMetrics {
+    measurement: ContentMeasurement,
+    offered_width: u16,
+    min_content: crate::geometry::Size,
+    max_content: crate::geometry::Size,
+    history_adjustment: Option<HistoryMeasurementAdjustment>,
+    product_size: Option<(u16, u16)>,
+}
+
+impl From<&CapturedContentMeasurement> for ContentLayoutMetrics {
+    fn from(capture: &CapturedContentMeasurement) -> Self {
+        Self {
+            measurement: capture.measurement,
+            offered_width: capture.offered_width,
+            min_content: capture.min_content,
+            max_content: capture.max_content,
+            history_adjustment: capture.history_adjustment,
+            product_size: capture.terminal_product.as_ref().map(|product| {
+                let size = product.size();
+                (size.width(), size.height())
+            }),
+        }
+    }
+}
+
 /// Direct candidate output. The scene host adds physical receipt metadata.
 #[derive(Clone, Debug)]
 pub(crate) struct DirectLayout {
@@ -533,6 +562,7 @@ struct DirectOccurrenceRenderer {
     portal_owners: HashMap<NodeKey, NodeKey>,
     controls: HashMap<crate::occurrence::ResourceKey, ComponentId>,
     synchronized: bool,
+    content_metrics: HashMap<NodeKey, ContentLayoutMetrics>,
 }
 
 impl DirectOccurrenceRenderer {
@@ -547,6 +577,7 @@ impl DirectOccurrenceRenderer {
             portal_owners: HashMap::new(),
             controls: HashMap::new(),
             synchronized: false,
+            content_metrics: HashMap::new(),
         }
     }
 
@@ -640,15 +671,30 @@ impl DirectOccurrenceRenderer {
         if !self.synchronized {
             return Err(anyhow!("direct occurrence renderer is not synchronized"));
         }
+        let content_metrics = measurements
+            .iter()
+            .map(|(key, capture)| (*key, ContentLayoutMetrics::from(capture)))
+            .collect::<HashMap<_, _>>();
+        let mut invalidated = invalidate.to_vec();
+        invalidated.extend(content_metrics.iter().filter_map(|(key, metrics)| {
+            (self.content_metrics.get(key) != Some(metrics)).then_some(*key)
+        }));
+        invalidated.extend(
+            self.content_metrics
+                .keys()
+                .filter(|key| !content_metrics.contains_key(key))
+                .copied(),
+        );
         self.layout
             .invalidate_measurement(
-                &invalidate
+                &invalidated
                     .iter()
                     .copied()
                     .filter(|key| self.layout.contains(*key))
                     .collect::<Vec<_>>(),
             )
             .map_err(|error| anyhow!("direct Taffy measurement invalidation failed: {error:?}"))?;
+        self.content_metrics = content_metrics;
         let mut controls_by_node = HashMap::new();
         for snapshot in self.snapshots.values() {
             let Some(component) = snapshot
@@ -2092,6 +2138,96 @@ fn signed_intersection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_layout_invalidates_changed_content_metrics_without_host_hints() {
+        let root = NodeKey {
+            slot: 1,
+            generation: 1,
+        };
+        let leaf = NodeKey {
+            slot: 2,
+            generation: 1,
+        };
+        let port = crate::occurrence::ResourceKey {
+            slot: 1,
+            generation: 1,
+            kind: crate::occurrence::HandleKind::Port,
+        };
+        let body = OccurrenceSnapshot {
+            key: root,
+            kind: HostKind::Box,
+            root_role: Some(crate::occurrence::RootRole::Body),
+            children: vec![leaf],
+            port: None,
+            control: None,
+            hidden: false,
+            subscriptions: 0,
+            history_action: None,
+            properties: Vec::new(),
+            style_states: Vec::new(),
+            structure_revision: 1,
+            geometry_revision: 1,
+            presentation_revision: 0,
+            interaction_revision: 0,
+        };
+        let content = OccurrenceSnapshot {
+            key: leaf,
+            kind: HostKind::ContentHost,
+            root_role: None,
+            children: Vec::new(),
+            port: Some(port),
+            ..body.clone()
+        };
+        let mut renderer = DirectOccurrenceRenderer::new(1);
+        renderer
+            .synchronize(
+                vec![body, content],
+                None,
+                &[],
+                HashMap::from([(port, 1)]),
+                vec![root],
+                HashMap::new(),
+                HashMap::new(),
+            )
+            .expect("occurrence synchronization");
+        let mut captures = HashMap::from([(
+            leaf,
+            CapturedContentMeasurement {
+                capture_id: 1,
+                port_id: 1,
+                offered_width: 5,
+                measurement: ContentMeasurement {
+                    intrinsic_size: crate::geometry::Size::new(5, 1),
+                    ..ContentMeasurement::default()
+                },
+                min_content: crate::geometry::Size::new(5, 1),
+                max_content: crate::geometry::Size::new(5, 1),
+                history_adjustment: None,
+                semantic_contents: None,
+                terminal_policy: TextRenderPolicy::default(),
+                terminal_product: None,
+            },
+        )]);
+        for height in [1, 3] {
+            let capture = captures.get_mut(&leaf).expect("content capture");
+            capture.measurement.intrinsic_size.height = height;
+            capture.min_content.height = height;
+            capture.max_content.height = height;
+            let layout = renderer
+                .prepare(
+                    root,
+                    crate::geometry::Size::new(5, 6),
+                    DirectHistoryAnchor::FollowEnd,
+                    &captures,
+                    &[],
+                    &HashMap::new(),
+                )
+                .expect("layout with no host invalidation hints");
+            assert_eq!(layout.occurrence_geometry[&root].outer.height, height);
+            assert_eq!(layout.occurrence_geometry[&leaf].outer.height, height);
+        }
+    }
 
     struct LatchRelease(Option<std::sync::mpsc::Sender<()>>);
 

@@ -484,11 +484,6 @@ impl SceneHost {
             &captures,
             &control_snapshots,
         );
-        let mut invalidate_content = self
-            .pending_layout_input
-            .as_ref()
-            .filter(|pending| pending.signature != current_signature)
-            .map_or_else(Vec::new, |_| captures.keys().copied().collect());
         let reuse_pending_captures = self.pending_content_widths.is_empty()
             && self.pending_layout_input.as_ref().is_some_and(|pending| {
                 pending.signature == current_signature
@@ -544,17 +539,14 @@ impl SceneHost {
         }
         let mut invalidate_controls = Vec::new();
         for _ in 0..MAX_LAYOUT_PASSES {
-            let mut invalidate = invalidate_content.clone();
-            invalidate.extend(invalidate_controls.iter().copied());
             let mut direct = self.layout_or_pending(
                 root,
                 size,
                 history_anchor,
                 captures.clone(),
-                invalidate,
+                invalidate_controls.clone(),
                 control_snapshots.clone(),
             )?;
-            invalidate_content.clear();
             invalidate_controls.clear();
             let mut refined_content = Vec::new();
             #[cfg(feature = "perf-counters")]

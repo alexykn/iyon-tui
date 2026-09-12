@@ -108,6 +108,29 @@ fn layout_request_signature(
     hasher.finish()
 }
 
+fn captures_match_sources(
+    current: &HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+    pending: &HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+) -> bool {
+    current.len() == pending.len()
+        && current.iter().all(|(key, capture)| {
+            let Some(previous) = pending.get(key) else {
+                return false;
+            };
+            capture.port_id == previous.port_id
+                && capture.measurement.source_id == previous.measurement.source_id
+                && capture.measurement.source_generation == previous.measurement.source_generation
+                && capture.measurement.content_generation == previous.measurement.content_generation
+                && capture.measurement.source_base == previous.measurement.source_base
+                && capture.measurement.source_end == previous.measurement.source_end
+                && capture.measurement.sealed == previous.measurement.sealed
+                && capture.measurement.head_partial == previous.measurement.head_partial
+                && capture.measurement.physically_complete
+                    == previous.measurement.physically_complete
+                && capture.measurement.connector_id == previous.measurement.connector_id
+        })
+}
+
 /// A fully synchronized occurrence/Taffy frame ready for the terminal
 /// adapter. All fields are derived from the same candidate.
 #[derive(Debug)]
@@ -153,6 +176,7 @@ pub(crate) struct SceneHost {
     pending_layout_signature: Option<u64>,
     pending_paint: Option<PendingPaint>,
     pending_layout_input: Option<PendingLayoutInput>,
+    pending_layout_refined: bool,
     direct_revision: u64,
     pending_content_invalidations: HashSet<u64>,
     pending_control_invalidations: HashSet<ComponentId>,
@@ -184,6 +208,7 @@ impl Default for SceneHost {
             pending_layout_signature: None,
             pending_paint: None,
             pending_layout_input: None,
+            pending_layout_refined: false,
             direct_revision: 0,
             pending_content_invalidations: HashSet::new(),
             pending_control_invalidations: HashSet::new(),
@@ -251,6 +276,7 @@ impl SceneHost {
         self.pending_layout_signature = None;
         self.pending_paint = None;
         self.pending_layout_input = None;
+        self.pending_layout_refined = false;
         self.pending_content_invalidations.clear();
         self.pending_control_invalidations.clear();
         self.pending_sync_revision = None;
@@ -431,9 +457,16 @@ impl SceneHost {
             .as_ref()
             .filter(|pending| pending.signature != current_signature)
             .map_or_else(Vec::new, |_| captures.keys().copied().collect());
-        if let Some(pending) = self.pending_layout_input.as_ref()
-            && pending.signature == current_signature
-        {
+        let reuse_pending_captures = self.pending_layout_input.as_ref().is_some_and(|pending| {
+            pending.signature == current_signature
+                || (self.pending_layout_refined
+                    && captures_match_sources(&captures, &pending.captures))
+        });
+        if reuse_pending_captures {
+            let pending = self
+                .pending_layout_input
+                .as_ref()
+                .expect("pending layout input exists when reuse is selected");
             // A Fit probe may be refined to the actual allocated width before
             // the worker request. Reuse that immutable request capture on the
             // next queue turn instead of reconstructing a new attempt with a
@@ -529,6 +562,11 @@ impl SceneHost {
             #[cfg(feature = "perf-counters")]
             drop(_refinement_timer);
             if !refined_content.is_empty() {
+                if let Some(pending) = self.pending_layout_input.as_mut() {
+                    pending.captures = captures.clone();
+                    self.pending_layout_refined = true;
+                }
+                let pending_signature = self.pending_layout_signature;
                 direct = self.layout_or_pending(
                     root,
                     size,
@@ -537,6 +575,9 @@ impl SceneHost {
                     refined_content,
                     control_snapshots.clone(),
                 )?;
+                if self.pending_layout_signature != pending_signature {
+                    self.pending_layout_refined = false;
+                }
             }
             self.direct_history_overflow_rows = direct.history_overflow_rows;
             let mounts = direct.component_mounts.clone();
@@ -665,12 +706,14 @@ impl SceneHost {
                 Ok(Some(layout)) => {
                     self.pending_layout_signature = None;
                     self.pending_layout_input = None;
+                    self.pending_layout_refined = false;
                     Ok(layout)
                 }
                 Ok(None) => Err(anyhow::Error::new(SceneLayoutPending)),
                 Err(error) => {
                     self.pending_layout_signature = None;
                     self.pending_layout_input = None;
+                    self.pending_layout_refined = false;
                     Err(error)
                 }
             };
@@ -682,11 +725,13 @@ impl SceneHost {
                 Err(error) => {
                     self.pending_layout_signature = None;
                     self.pending_layout_input = None;
+                    self.pending_layout_refined = false;
                     return Err(error);
                 }
             }
             self.pending_layout_signature = None;
             self.pending_layout_input = None;
+            self.pending_layout_refined = false;
         }
         let pending_input = PendingLayoutInput {
             signature,
@@ -706,6 +751,7 @@ impl SceneHost {
         self.pending_control_invalidations.clear();
         self.pending_layout_signature = Some(signature);
         self.pending_layout_input = Some(pending_input);
+        self.pending_layout_refined = false;
         Err(anyhow::Error::new(SceneLayoutPending))
     }
 

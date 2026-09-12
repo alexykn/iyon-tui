@@ -42,11 +42,9 @@ pub(crate) mod theme;
 
 pub(crate) use component::{Component, ComponentCx, ComponentHandle};
 #[cfg(test)]
-pub(crate) use content::diff::{DiffLineNumber, DiffLineOffset, DiffRange};
-#[cfg(test)]
 pub(crate) use content::text::{
     Block, HeadingLevel, Inline, InlineContent, MarkdownOptions, MarkdownProjector,
-    PlainTextProjector, RawText, TextOrigin, TextSelector,
+    PlainTextProjector, RawText, TextOrigin,
 };
 pub(crate) use content::text::{
     CodeBlockLabelPolicy, SoftBreakPolicy, TableColumnSizing, TaskListMarkerPolicy, TextContent,
@@ -55,7 +53,7 @@ pub(crate) use content::text::{
 pub(crate) use controls::TextInput;
 #[cfg(test)]
 pub(crate) use history::HistoryLayout;
-pub(crate) use history::{History, HistoryUnitId};
+pub(crate) use history::HistoryUnitId;
 pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};
 #[cfg(test)]

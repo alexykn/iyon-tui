@@ -774,7 +774,7 @@ impl Component for MountedTextInput {
         self.0
             .frame_snapshot()
             .ok()
-            .map(crate::component::ControlSnapshot::Editor)
+            .map(|snapshot| crate::component::ControlSnapshot::Editor(Box::new(snapshot)))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
@@ -885,8 +885,7 @@ impl TuiHost {
             HostBackend::Real(TermwizBackend::enter()?)
         };
         let now = Instant::now();
-        let mut running = HostRunning::new();
-        let mut backend = backend;
+        let running = HostRunning::new();
         let frame = PreparedSceneFrame {
             surface: Surface::new(width, height),
             component_geometry: Default::default(),
@@ -2937,7 +2936,9 @@ impl HostInner {
 
     #[cfg(test)]
     pub(crate) fn ui_history_len(&self) -> usize {
-        self.running.scene_history().map_or(0, crate::History::len)
+        self.running
+            .scene_history()
+            .map_or(0, crate::history::History::len)
     }
 
     fn candidate_content_commit(&mut self) -> Result<PreparedContentCommit> {

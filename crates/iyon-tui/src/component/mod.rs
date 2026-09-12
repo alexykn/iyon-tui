@@ -21,7 +21,7 @@ pub(crate) use tick::{TickOutcome, TickScheduler};
 /// semantic content and layout recipes do not cross this boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ControlSnapshot {
-    Editor(EditorSnapshot),
+    Editor(Box<EditorSnapshot>),
     Scroll(ScrollSnapshot),
     Animation(AnimationSnapshot),
 }

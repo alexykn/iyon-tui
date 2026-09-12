@@ -46,10 +46,7 @@ pub use provenance::{LiteralText, TextProvenance, TextRun};
 pub(crate) use style::{TEXT_THEME_KEY, TextFacts, text_style_ref};
 pub use style::{TextListKind, TextPart, TextRole, TextSelector, TextTableSection, TextTaskState};
 pub(crate) use terminal::{
-    TerminalBlock, TerminalBlockKind, TerminalConstraints, TerminalContentProduct,
-    TerminalPaintError, TerminalPaintSpan, TerminalProjectionError, TerminalProjector,
-    TerminalRect, TerminalRow, TerminalRowWindow, TerminalRun, TerminalSemanticContext,
-    TerminalSemanticIdentity, TerminalSize, TerminalTextProduct, TerminalTextProjector,
+    TerminalConstraints, TerminalRowWindow, TerminalTextProduct, TerminalTextProjector,
     TerminalWidthConstraint,
 };
 pub use validate::{validate_text_content, validate_text_projection};

@@ -102,7 +102,7 @@ pub(crate) enum DirectHistoryAnchor {
 enum DirectDriverCommand {
     Synchronize {
         snapshots: Vec<OccurrenceSnapshot>,
-        changes: Option<UiChangeSet>,
+        changes: Option<Box<UiChangeSet>>,
         participation: Vec<NodeParticipation>,
         port_ids: HashMap<crate::occurrence::ResourceKey, u64>,
         roots: Vec<NodeKey>,
@@ -174,7 +174,7 @@ impl DirectDriverHandle {
         self.command
             .send(DirectDriverCommand::Synchronize {
                 snapshots,
-                changes: changes.cloned(),
+                changes: changes.map(|changes| Box::new(changes.clone())),
                 participation,
                 port_ids,
                 roots,
@@ -281,7 +281,7 @@ fn direct_driver_loop(
             } => {
                 let _ = response.send(renderer.synchronize(
                     snapshots,
-                    changes.as_ref(),
+                    changes.as_deref(),
                     &participation,
                     port_ids,
                     roots,
@@ -809,9 +809,10 @@ impl DirectOccurrenceRenderer {
         let content_rect = content_info.rect;
         let content_width = measurements
             .get(&key)
-            .map(|capture| content_width_for_layout(snapshot, geometry, capture))
-            .unwrap_or(geometry.logical_content_width);
-        let content_width_cells = content_width.floor().clamp(0.0, f32::from(u16::MAX)) as u16;
+            .map_or(geometry.logical_content_width, |capture| {
+                content_width_for_layout(snapshot, geometry, capture)
+            });
+        let content_width_cells = floor_constraint_width(content_width)?;
         let participates = self.participation.get(&key).copied().unwrap_or(true);
         let visible = participates && !geometry.renderer_hidden && !geometry.display_none;
         let clip_rect = if visible {
@@ -836,7 +837,7 @@ impl DirectOccurrenceRenderer {
             .control
             .and_then(|control| self.controls.get(&control).copied());
         let control_snapshot = (snapshot.kind == HostKind::Editor)
-            .then(|| component)
+            .then_some(component)
             .flatten()
             .and_then(|component| controls.get(&component).cloned());
         let id = DirectNodeId(nodes.len());
@@ -1127,7 +1128,11 @@ fn floor_constraint_width(value: f32) -> Result<u16> {
     if !value.is_finite() || value < 0.0 {
         return Err(anyhow!("terminal content width is not finite"));
     }
-    Ok(value.floor().min(f32::from(u16::MAX)) as u16)
+    let value = value.floor();
+    if value > f32::from(u16::MAX) {
+        return Err(anyhow!("terminal content width exceeds terminal range"));
+    }
+    Ok(value as u16)
 }
 
 fn measure_control(
@@ -1391,7 +1396,6 @@ pub(crate) fn paint_direct_layout(
     paint_direct_node(
         &layout.tree,
         layout.tree.root,
-        layout,
         &resolver,
         content,
         focused,
@@ -1408,7 +1412,6 @@ pub(crate) fn paint_direct_layout(
 fn paint_direct_node(
     tree: &DirectTree,
     id: DirectNodeId,
-    layout: &DirectLayout,
     resolver: &crate::presentation::paint::ThemeResolver,
     content: &dyn crate::presentation::ContentProvider,
     focused: Option<ComponentId>,
@@ -1456,7 +1459,6 @@ fn paint_direct_node(
                 paint_direct_node(
                     tree,
                     child,
-                    layout,
                     resolver,
                     content,
                     focused,
@@ -1511,7 +1513,6 @@ fn paint_direct_node(
                 paint_direct_node(
                     tree,
                     child,
-                    layout,
                     resolver,
                     content,
                     focused,
@@ -1730,6 +1731,14 @@ fn physical_box(x: f32, y: f32, width: f32, height: f32) -> Result<DirectRect> {
     let allocated_height = bottom
         .checked_sub(origin_y)
         .ok_or_else(|| anyhow!("direct geometry height underflow"))?;
+    let terminal_max = i32::from(u16::MAX);
+    if origin_x > terminal_max
+        || origin_y > terminal_max
+        || right > terminal_max
+        || bottom > terminal_max
+    {
+        return Err(anyhow!("direct geometry exceeds terminal range"));
+    }
     if allocated_width > i32::from(u16::MAX) || allocated_height > i32::from(u16::MAX) {
         return Err(anyhow!("direct geometry exceeds terminal range"));
     }
@@ -1741,6 +1750,31 @@ fn physical_box(x: f32, y: f32, width: f32, height: f32) -> Result<DirectRect> {
             allocated_height as u16,
         ),
         origin: (origin_x, origin_y),
+    })
+}
+
+fn signed_intersection(
+    origin: (i32, i32),
+    size: crate::geometry::Size,
+    clip: Rect,
+) -> Option<Rect> {
+    let left = origin.0.max(i32::from(clip.x)).max(0);
+    let top = origin.1.max(i32::from(clip.y)).max(0);
+    let right = origin
+        .0
+        .saturating_add(i32::from(size.width))
+        .min(i32::from(clip.right()));
+    let bottom = origin
+        .1
+        .saturating_add(i32::from(size.height))
+        .min(i32::from(clip.bottom()));
+    (left < right && top < bottom).then(|| {
+        Rect::new(
+            left as u16,
+            top as u16,
+            (right - left) as u16,
+            (bottom - top) as u16,
+        )
     })
 }
 
@@ -1832,14 +1866,14 @@ mod tests {
 
     #[test]
     fn editor_measurement_distinguishes_min_and_max_content() {
-        let control = ControlSnapshot::Editor(EditorSnapshot {
+        let control = ControlSnapshot::Editor(Box::new(EditorSnapshot {
             text: "long word".to_owned(),
             cursor_bytes: 0,
             focused: false,
             multiline: true,
             scroll_row: 0,
             border: None,
-        });
+        }));
         let request = |available_width| crate::presentation::taffy::MeasureRequest {
             known_width: None,
             known_height: None,
@@ -1909,7 +1943,7 @@ mod tests {
         let mut root = editor_node(6, 3);
         let mut snapshot = editor("a", 0, false);
         snapshot.border = Some(crate::BorderSpec::plain().top_label("in"));
-        root.content = DirectContent::Control(ControlSnapshot::Editor(snapshot));
+        root.content = DirectContent::Control(ControlSnapshot::Editor(Box::new(snapshot)));
         let mut tree = DirectTree {
             root: DirectNodeId(0),
             nodes: vec![
@@ -1961,29 +1995,9 @@ mod tests {
         assert_eq!(surface.get(0, 0).grapheme.as_deref(), Some("i"));
         assert_eq!(surface.get(1, 0).grapheme.as_deref(), Some("n"));
     }
-}
 
-fn signed_intersection(
-    origin: (i32, i32),
-    size: crate::geometry::Size,
-    clip: Rect,
-) -> Option<Rect> {
-    let left = origin.0.max(i32::from(clip.x)).max(0);
-    let top = origin.1.max(i32::from(clip.y)).max(0);
-    let right = origin
-        .0
-        .saturating_add(i32::from(size.width))
-        .min(i32::from(clip.right()));
-    let bottom = origin
-        .1
-        .saturating_add(i32::from(size.height))
-        .min(i32::from(clip.bottom()));
-    (left < right && top < bottom).then(|| {
-        Rect::new(
-            left as u16,
-            top as u16,
-            (right - left) as u16,
-            (bottom - top) as u16,
-        )
-    })
+    #[test]
+    fn physical_box_rejects_positive_origin_outside_terminal_range() {
+        assert!(physical_box(f32::from(u16::MAX) + 1.0, 0.0, 1.0, 1.0).is_err());
+    }
 }

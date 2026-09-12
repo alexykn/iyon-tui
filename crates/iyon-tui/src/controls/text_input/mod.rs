@@ -315,9 +315,9 @@ impl TextInput {
 
 impl Component for TextInput {
     fn control_snapshot(&self) -> Option<crate::component::ControlSnapshot> {
-        Some(crate::component::ControlSnapshot::Editor(
+        Some(crate::component::ControlSnapshot::Editor(Box::new(
             self.frame_snapshot(),
-        ))
+        )))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {

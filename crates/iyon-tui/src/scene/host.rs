@@ -18,23 +18,26 @@ use crate::{
         ComponentId, ComponentRegistry, ControlSnapshot, MountGraph, MountedComponents,
         TickOutcome, TickScheduler,
     },
-    geometry::{Rect, Size},
+    geometry::Size,
     interaction::{
         FocusState, InteractionResult, KeyStroke, MountedCapabilities, route_key_local,
         route_paste, route_paste_interceptor,
     },
     output::{OutputQueue, OutputRouter},
-    physical::{PhysicalCell, PhysicalStyle, Surface, grapheme_cell_width},
+    physical::Surface,
     presentation::{
-        ContentProvider, StyleFacts, StyleStates,
+        ContentProvider,
         direct::{
-            CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor, DirectLayout,
+            CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor,
             paint_direct_layout,
         },
         direct_tree::ComponentGeometryMap,
         taffy::NodeParticipation,
     },
 };
+
+#[cfg(test)]
+use crate::geometry::Rect;
 
 const MAX_LAYOUT_PASSES: usize = 8;
 

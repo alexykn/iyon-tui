@@ -26,26 +26,6 @@ pub(crate) fn border_work() -> usize {
     BORDER_CELLS_VISITED.with(Cell::get)
 }
 
-pub(crate) fn paint_border(
-    surface: &mut Surface,
-    border: &BorderSpec,
-    theme: &ThemeResolver,
-    inherited: PhysicalStyle,
-    context: &StyleContext,
-) {
-    let size = (surface.width(), surface.height());
-    paint_border_at(
-        surface,
-        border,
-        theme,
-        inherited,
-        context,
-        (0, 0),
-        size,
-        crate::geometry::Rect::new(0, 0, size.0, size.1),
-    );
-}
-
 /// Paints a decoration at a signed origin without allocating a temporary
 /// content-sized surface. A viewport uses this for a decorated ContentHost
 /// whose full allocation is larger than the visible window.

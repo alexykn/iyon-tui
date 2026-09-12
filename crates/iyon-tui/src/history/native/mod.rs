@@ -12,6 +12,7 @@ use crate::{
     presentation::{ContentProvider, EmptyContentProvider},
 };
 
+#[cfg(test)]
 use super::model::HistoryUnit;
 use super::{History, HistoryUnitContent, HistoryUnitId};
 pub(super) use frontier::NativeFrontier;
@@ -386,6 +387,7 @@ pub(crate) fn transfer_native_prefix<S: NativeHistorySink>(
     transfer_native_prefix_with_theme(history, sink, width, max_rows, &crate::Theme::default())
 }
 
+#[cfg(test)]
 pub(crate) fn transfer_native_prefix_with_theme<S: NativeHistorySink>(
     history: &mut History,
     sink: &mut S,
@@ -404,6 +406,7 @@ pub(crate) fn transfer_native_prefix_with_theme<S: NativeHistorySink>(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink>(
     history: &mut History,
     sink: &mut S,
@@ -431,6 +434,7 @@ pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink
     }
 }
 
+#[cfg(test)]
 fn transfer_native_prefix_inner<S: NativeHistorySink>(
     history: &mut History,
     sink: &mut S,
@@ -485,6 +489,7 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
     ))
 }
 
+#[cfg(test)]
 fn map_plan_result<E>(
     result: Result<NativeTransferOutcome, NativeTransferError<anyhow::Error>>,
 ) -> Result<NativeTransferOutcome, NativeTransferError<E>> {

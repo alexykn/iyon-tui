@@ -6,11 +6,13 @@ use termwiz::{
 
 use crate::{
     physical::{
-        AnsiColor as IyonAnsiColor, PhysicalCell, PhysicalColor, PhysicalRow, PhysicalStyle,
-        text_cell_width,
+        AnsiColor as IyonAnsiColor, PhysicalColor, PhysicalRow, PhysicalStyle, text_cell_width,
     },
     scene::PreparedSceneFrame,
 };
+
+#[cfg(test)]
+use crate::physical::PhysicalCell;
 
 #[cfg(test)]
 fn row_from_string(text: &str, style: PhysicalStyle) -> PhysicalRow {

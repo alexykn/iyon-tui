@@ -779,7 +779,7 @@ fn content_text_policy(wrap: TextWrapMode) -> crate::text::TextRenderPolicy {
         TextWrapMode::Grapheme => crate::WrapMode::Grapheme,
         TextWrapMode::NoWrap => crate::WrapMode::NoWrap,
     };
-    let policy = crate::TextRenderPolicy::new()
+    crate::TextRenderPolicy::new()
         .with_block_gap(1)
         .with_soft_break(crate::SoftBreakPolicy::LineBreak)
         .with_table_column_sizing(crate::TableColumnSizing::Content)
@@ -789,8 +789,7 @@ fn content_text_policy(wrap: TextWrapMode) -> crate::text::TextRenderPolicy {
         .with_code_block_label(crate::CodeBlockLabelPolicy::Language)
         .with_code_block_gap(0)
         .with_code_wrap(crate::WrapMode::NoWrap)
-        .with_text_wrap(text_wrap);
-    policy
+        .with_text_wrap(text_wrap)
 }
 
 fn semantic_values(semantic: &Projection<TextContent>) -> Arc<[TextContent]> {

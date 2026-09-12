@@ -838,12 +838,6 @@ impl TerminalTextProjector {
     }
 }
 
-/// Alias used by content owners that call the type simply `TerminalProjector`.
-pub(crate) type TerminalProjector = TerminalTextProjector;
-
-/// Alias emphasizing that this is a measured content product.
-pub(crate) type TerminalContentProduct = TerminalTextProduct;
-
 #[derive(Clone, Copy, Debug, Default)]
 struct IntrinsicMetrics {
     min_width: usize,
@@ -3402,7 +3396,7 @@ mod tests {
             .blocks()
             .iter()
             .filter(|block| block.kind() == TerminalBlockKind::TableCell)
-            .last()
+            .next_back()
             .expect("inner table cell");
         assert_eq!(inner_cell.rect().x(), 2);
     }

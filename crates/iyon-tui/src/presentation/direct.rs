@@ -1547,6 +1547,58 @@ mod tests {
     }
 
     #[test]
+    fn direct_editor_intrinsic_measurement_preserves_multiline_text() {
+        let mut editor = crate::TextInput::new().multiline(true);
+        editor.set_text("abc\ndefgh");
+        let view = crate::Component::view(&editor);
+        let block = crate::presentation::layout::compile_view(&view, 5);
+        assert_eq!(
+            block
+                .rows
+                .iter()
+                .map(|row| row.plain_text())
+                .collect::<Vec<_>>(),
+            ["abc", "defgh"]
+        );
+        for available_width in [
+            AvailableConstraint::MinContent,
+            AvailableConstraint::MaxContent,
+        ] {
+            let measured = measured_for_request(
+                None,
+                Some(&view),
+                crate::presentation::taffy::MeasureRequest {
+                    known_width: None,
+                    known_height: None,
+                    available_width,
+                    available_height: AvailableConstraint::MaxContent,
+                    wrap_width: None,
+                },
+            );
+            assert_eq!(
+                measured,
+                MeasuredSize {
+                    width: 5.0,
+                    height: 2.0,
+                }
+            );
+        }
+        let zero_width = measured_for_request(
+            None,
+            Some(&view),
+            crate::presentation::taffy::MeasureRequest {
+                known_width: Some(0.0),
+                known_height: None,
+                available_width: AvailableConstraint::Definite(0.0),
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: Some(0),
+            },
+        );
+        assert_eq!(zero_width.width, 0.0);
+        assert_eq!(zero_width.height, 2.0);
+    }
+
+    #[test]
     fn direct_semantic_measurement_can_grow_at_a_narrower_width() {
         let capture = CapturedContentMeasurement {
             capture_id: 1,

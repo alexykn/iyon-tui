@@ -2588,6 +2588,63 @@ mod tests {
         revisions: HashMap<u64, u64>,
     }
 
+    #[derive(Default)]
+    struct CaptureCountingProvider {
+        captures: usize,
+    }
+
+    impl ContentProvider for CaptureCountingProvider {
+        fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
+            1
+        }
+
+        fn measure(
+            &mut self,
+            _port_id: u64,
+            _offered_width: u16,
+            _width_rule: crate::presentation::WidthRule,
+        ) -> crate::presentation::ContentMeasurement {
+            crate::presentation::ContentMeasurement {
+                intrinsic_size: Size::new(3, 1),
+                physically_complete: true,
+                projection_revision: 1,
+                metric_revision: 1,
+                paint_revision: 1,
+                connector_id: Some(1),
+                projection_identity: 1,
+            }
+        }
+
+        fn capture_measurement(
+            &mut self,
+            port_id: u64,
+            offered_width: u16,
+            width_rule: crate::presentation::WidthRule,
+        ) -> anyhow::Result<crate::presentation::ContentMeasurementCapture> {
+            self.captures += 1;
+            let measurement = self.measure(port_id, offered_width, width_rule);
+            Ok(crate::presentation::ContentMeasurementCapture {
+                capture_id: self.captures as u64,
+                min_content: measurement.intrinsic_size,
+                max_content: measurement.intrinsic_size,
+                history_adjustment: None,
+                semantic_view: None,
+                measurement,
+            })
+        }
+
+        fn paint_window(
+            &self,
+            _ticket: crate::presentation::PreparedProjectionTicket,
+            _window: crate::presentation::ContentWindow,
+            _target: &mut Surface,
+            _target_origin: (u16, u16),
+            _clip: crate::geometry::Rect,
+            _style: crate::physical::PhysicalStyle,
+        ) {
+        }
+    }
+
     impl ContentProvider for IndexedContentProvider {
         fn projection_revision(&self, port_id: u64, _offered_width: u16) -> u64 {
             self.revisions.get(&port_id).copied().unwrap_or(0)
@@ -2699,6 +2756,135 @@ mod tests {
             self.rows.extend(rows.iter().cloned());
             Ok(rows.len())
         }
+    }
+
+    fn occurrence_snapshots(
+        document: &crate::occurrence::OccurrenceDocument,
+    ) -> Vec<crate::occurrence::OccurrenceSnapshot> {
+        let mut snapshots = Vec::new();
+        let mut stack = vec![document.body_root()];
+        while let Some(key) = stack.pop() {
+            let snapshot = document.snapshot(key).expect("snapshot");
+            stack.extend(snapshot.children.iter().rev().copied());
+            snapshots.push(snapshot);
+        }
+        snapshots
+    }
+
+    fn occurrence_participation(
+        document: &crate::occurrence::OccurrenceDocument,
+        snapshots: &[crate::occurrence::OccurrenceSnapshot],
+    ) -> Vec<crate::presentation::taffy::NodeParticipation> {
+        snapshots
+            .iter()
+            .map(|snapshot| {
+                let (participates, _) = document
+                    .demanded_node(snapshot.key, |_| None)
+                    .expect("demand");
+                crate::presentation::taffy::NodeParticipation {
+                    key: snapshot.key,
+                    participates,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn direct_content_capture_follows_effective_ancestor_demand() -> Result<()> {
+        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
+        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
+        let body = document.body_root();
+        let mut mount = crate::occurrence::UiCommit::new(0);
+        mount.push(crate::occurrence::UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: crate::occurrence::HostKind::Box,
+        });
+        mount.push(crate::occurrence::UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: crate::occurrence::HostKind::ContentHost,
+        });
+        mount.push(crate::occurrence::UiOperation::CreatePort {
+            local_ordinal: 3,
+            content_family: 1,
+            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
+            owner: Some(crate::occurrence::NodeRef::Local(2)),
+        });
+        mount.push(crate::occurrence::UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Existing(body.handle(namespace)),
+            child: crate::occurrence::NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(crate::occurrence::UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Local(1),
+            child: crate::occurrence::NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(crate::occurrence::UiOperation::SetDeclared {
+            node: crate::occurrence::NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::Display,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Display(
+                crate::occurrence::DisplayMode::None,
+            )),
+        });
+        let created = document
+            .commit_ui(&mount)
+            .expect("initial occurrence mount")
+            .acknowledgement
+            .created;
+        let ancestor = created[0].node_key().expect("ancestor key");
+        let content_node = created[1].node_key().expect("content key");
+        let port = created[2].resource_key().expect("port key");
+
+        let mut host = SceneHost::default();
+        host.set_direct_driver_id(0xdecaf)?;
+        let initial = occurrence_snapshots(&document);
+        let initial_participation = occurrence_participation(&document, &initial);
+        host.sync_direct_occurrences(
+            initial,
+            None,
+            &initial_participation,
+            HashMap::from([(port, 17)]),
+            vec![body],
+            body,
+            HashMap::new(),
+        )?;
+        let mut provider = CaptureCountingProvider::default();
+        let captures = host.capture_direct_measurements(20, &mut provider)?;
+        assert!(
+            captures.is_empty(),
+            "hidden descendant must not be captured"
+        );
+        assert_eq!(provider.captures, 0);
+
+        let mut clear = crate::occurrence::UiCommit::new(document.accepted_ui_revision());
+        clear.push(crate::occurrence::UiOperation::ResetDeclared {
+            node: crate::occurrence::NodeRef::Existing(ancestor.handle(namespace)),
+            property: crate::occurrence::PropertyId::Display,
+        });
+        let prepared = document
+            .prepare_ui_commit(&clear)
+            .expect("clear display-none");
+        let changes = prepared.change_set();
+        document.apply_prepared_ui_commit(prepared);
+        let visible = occurrence_snapshots(&document);
+        let visible_participation = occurrence_participation(&document, &visible);
+        host.sync_direct_occurrences(
+            visible,
+            Some(&changes),
+            &visible_participation,
+            HashMap::from([(port, 17)]),
+            vec![body],
+            body,
+            HashMap::new(),
+        )?;
+        let captures = host.capture_direct_measurements(20, &mut provider)?;
+        assert_eq!(captures.len(), 1);
+        assert_eq!(
+            captures.get(&content_node).map(|capture| capture.port_id),
+            Some(17)
+        );
+        assert_eq!(provider.captures, 1);
+        Ok(())
     }
 
     #[test]

@@ -8,8 +8,10 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
-use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
-use taffy::style_helpers::{auto, flex, length, line, max_content, minmax, span, zero};
+use taffy::prelude::{
+    AvailableSpace, Dimension, Display, GridTemplateComponent, JustifyContent, Size, Style,
+};
+use taffy::style_helpers::{auto, flex, length, line, span};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -984,10 +986,16 @@ fn layout_table_grid(
     let mut table_style = Style::default();
     table_style.display = Display::Grid;
     table_style.size.width = Dimension::length(f32::from(width));
+    if matches!(
+        policy.table_column_sizing(),
+        super::TableColumnSizing::Content
+    ) {
+        table_style.justify_content = Some(JustifyContent::START);
+    }
     table_style.grid_template_columns = (0..table.columns().len())
         .map(|_| {
             let track = match policy.table_column_sizing() {
-                super::TableColumnSizing::Content => minmax(zero(), max_content()),
+                super::TableColumnSizing::Content => auto(),
                 // The zero minimum is intentional: a plain `1fr` track has
                 // an automatic min-content minimum and can overflow a narrow
                 // definite table. Flex tracks own both allocation and that

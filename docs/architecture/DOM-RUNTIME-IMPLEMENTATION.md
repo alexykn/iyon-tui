@@ -22,6 +22,19 @@ slice for parent review, not self-acceptance of M1.
 The atlas at docs/architecture/atlas-4355c02 is historical navigation, not
 the current-source authority.
 
+## Superseding layout-validation authority
+
+The parent architectural decision for T6/T7 is that legacy M1/T6 pixel
+parity has no acceptance authority. The canonical React plus Content plane,
+Taffy's Flex/Grid/intrinsic sizing semantics, and the typed provenance,
+candidate, receipt, Unicode, and clipping contracts are the correctness
+oracle. Terminal quantization and clipping are backend realization details.
+The archived M1 captures under `/tmp/t6-m1-baseline` and any later capture
+comparisons remain useful diagnostics for locating regressions, but they are
+not gates, waivers, or reasons to reintroduce the deleted View allocator.
+This keeps the shared React/content plane suitable for a future GPUI host;
+GPUI implementation remains out of scope for this tranche.
+
 ## Progress
 
 | Tranche | Status | Evidence |
@@ -32,7 +45,7 @@ the current-source authority.
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
-| T6 — direct terminal Taffy integration | **direct host implementation checkpoint; final parity/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Baseline comparison, package/native-addon evidence, parity/performance review and Linux native CI remain pending; this is not final T6 acceptance. |
+| T6 — direct terminal Taffy integration | **direct host implementation checkpoint; broader contract/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Archived captures may diagnose behavior, but legacy pixel parity is not an acceptance gate. Package/native-addon evidence, contract review, performance review and Linux native CI remain pending; this is not final T6 acceptance. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
 
 ### T5 canonical React resource seam (current source)
@@ -59,9 +72,10 @@ The approved M2 residue is limited to private current-renderer recipe/layout
 internals, native control mechanics still used by the private adapter, and
 History/content helpers that independently own behavior. None is a public
 View authoring route or ordinary UI state authority. The deletion gate is T7:
-direct Taffy and semantic-content realization plus parity/receipt/History/input
+direct Taffy and semantic-content realization plus receipt/History/input
 witnesses must pass before deleting `application/legacy_scene.rs` and its
-superseded renderer internals.
+superseded renderer internals. Legacy pixel captures may diagnose the
+replacement, but they do not authorize retaining that allocator.
 
 ### T5 canonical cutover — parent acceptance evidence
 
@@ -152,7 +166,8 @@ ownership boundaries:
 - `application/legacy_scene.rs` is the single private, one-way
   occurrence-to-current-renderer adapter allowed by the M1 migration boundary.
   It is not a public View authoring surface. Its deletion gate is T7, after
-  the direct Taffy/content route and its parity evidence are accepted.
+  the direct Taffy/content route and its receipt/History/input evidence are
+  accepted. Archived pixel comparisons are diagnostic only.
 - `application/frame.rs` owns the exact presentation products and one native
   receipt per physical submission. `PresentationState` keeps the candidate
   and receipt correlated until completion; metadata-only `NoOutput` products
@@ -875,8 +890,9 @@ occurrence route. The private adapter remains only as M2 renderer residue; the
 ordinary ViewState plane and old publication route are deleted. Physical
 History export still requires a public React consumer witness before the
 separate Surface gate.
-T4's accepted source is `ca1216335d57569a4171d10b86bcf3aad0872671`; prior
-acceptance does not exempt these M1 parity requirements.
+T4's accepted source is `ca1216335d57569a4171d10b86bcf3aad0872671`; this
+historical alignment record does not impose an M1 pixel-parity requirement on
+the replacement React/Taffy route.
 The earlier React prerequisite is committed at
 `a6d70b22373eefb11e28670eff8e4576008a774c`. This alignment scope does not claim
 horizontal text alignment or general Flex/Grid parity; their content/layout
@@ -887,7 +903,9 @@ ownership remains required work in the T6/T7 migration.
 - The occurrence document is connected to the React mutation renderer and the
   existing terminal renderer through one private one-way adapter. The adapter,
   current View IR and general Scene/layout helpers remain explicit M2 residue;
-  T7 deletes them after direct Taffy/content realization and parity evidence.
+  T7 deletes them after direct Taffy/content realization and
+  receipt/History/input evidence. Archived pixel comparisons are diagnostic
+  only and do not authorize retaining the adapter.
 - The old native View ABI, generated C/Rust/TypeScript outputs, old N-API
   ViewRef classes, state envelope and ordinary Rust/native ViewState registry
   are absent from the current source. The current generator emits only the
@@ -1019,14 +1037,15 @@ semantic-content gate.
 Focused current-source evidence for this checkpoint includes the direct
 occurrence row/grid geometry test, the native host Grid/content/geometry test,
 the all-features host receipt/control/History tests, and the all-features
-content tests. The full package/native-addon and baseline capture comparison
-remain parent-owned final gates; Linux execution is not claimed locally.
+content tests. The full package/native-addon and contract checks remain
+parent-owned final gates; archived baseline captures are diagnostics only and
+are not acceptance gates. Linux execution is not claimed locally.
 
 Separate matching M1 source/addon captures are preserved under
 `/tmp/t6-m1-baseline`: 18 integral UI/control fixtures and 27 content
 fixtures at multiple widths, including complete cell styles. These are
-comparison inputs, not evidence that the replacement production route or its
-performance is already accepted. Linux native execution, direct-host parity,
+comparison inputs for diagnosis, not acceptance criteria or evidence that the
+replacement must reproduce the old allocator. Linux native execution,
 fractional paint/clip behavior and the T6/T7 performance gates remain pending.
 
 #### Selected terminal layout semantics
@@ -1046,14 +1065,15 @@ subtree clone, sibling-position allocation override, or fractional compatibility
 shrink constant. Content paint uses the exact width-specific captured product;
 explicit/Fill widths are refined to the resolved logical content-box width.
 
-The parent comparison after correcting root constraints reproduces all 27 M1
-content fixture-width cases, including cell styles. Two of the 18 integral
-cases intentionally differ at width 5: the Row proportionally shrinks both
-children and wraps both without losing text, and the padded Column paints its
-sixth available inner row instead of the old allocator's five. These differences
-are approved layout semantics, not content-parity exemptions. The native root
-regression requires the final hard line to remain visible after wrapping an
-unbreakable line in a narrow terminal.
+The canonical React plus Content plane and Taffy's declared Flex/Grid and
+intrinsic-sizing behavior are the layout oracle. Terminal quantization and
+clipping are backend realization details; source Unicode segmentation,
+provenance, candidate/receipt ownership, and physical safety remain explicit
+contracts. The archived M1 comparison captures can locate changes but cannot
+require old rows/styles or authorize a legacy allocator. This decision keeps
+the shared React/content plane suitable for a future GPUI host; GPUI remains
+out of scope. The native root regression requires the final hard line to
+remain visible after wrapping an unbreakable line in a narrow terminal.
 
 These decisions do not claim completion of the T7 content-lowering/deletion,
 performance, Linux, or final workspace acceptance gates.

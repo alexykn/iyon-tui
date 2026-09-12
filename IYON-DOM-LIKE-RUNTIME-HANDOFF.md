@@ -1297,6 +1297,16 @@ At M2, add `content/text/terminal.rs` as a direct consumer of the **existing** s
 
 Use the same Taffy algorithms for content's spatial containers where needed. A Connector may own a projection-local Taffy subtree for its semantic blocks; this is a width-specific derived content product, not UI topology or another general-layout algorithm. Main occurrence layout treats ContentHost as a measured content leaf. This hierarchical measurement is distinct from running two full competing layout engines over the same UI tree.
 
+The canonical React plus Content plane and Taffy's declared Flex/Grid and
+intrinsic-sizing semantics are the correctness oracle for this route. Legacy
+M1/T6 pixel captures have no acceptance authority: they may diagnose a change,
+but they do not gate acceptance, authorize a waiver, or justify restoring a
+deleted View allocator. Terminal quantization and clipping are backend
+realization details, while Unicode segmentation, provenance, candidate and
+receipt ownership, and physical clipping safety remain explicit contracts.
+This decision keeps the shared React/content plane suitable for a future GPUI
+host; GPUI implementation is out of scope here.
+
 | Semantic content | Direct M2 realization |
 |---|---|
 | Paragraph/heading | Inline semantic run leaf; existing Unicode/line-break/wrap machinery; heading roles resolved at paint |
@@ -1560,7 +1570,7 @@ Each tranche is a coherent branch/commit slice with a usable checkpoint. Use `ag
 2. Generate/implement the selected Iyon Flex/Grid property semantics; validate unsupported properties explicitly. No raw Taffy Style crosses the bridge.
 3. Implement changed-node/style and two-phase parent-child synchronization, content leaf context and exact rectangle/hit output.
 4. Implement deterministic cell-edge rounding and content wrapping constraint rules from §17.
-5. Compare separate development builds against baseline integral-layout fixtures, then approve intentional new Flex/Grid semantics explicitly.
+5. Use the archived integral-layout fixtures as diagnostic captures only; validate the declared React plus Taffy Flex/Grid semantics and approve the resulting contract, not legacy pixel parity.
 6. Keep general layout in one engine after cutover. Do not retain the old allocator for ordinary Boxes because one case differs.
 
 **Exit:** Box/control layout runs directly from the occurrence document, preserving content/frame ownership and delta traffic.
@@ -1622,7 +1632,7 @@ Full checkpoint checks include `cargo test --workspace --all-features`, the stri
 | Native execution | TextInput/paste/key behavior; animation/smoothing proceeds without JS frame pump; no static timer |
 | Presentation | Frame N in flight while N+1 accepted; receipt promotes only N; new dirtiness survives; metadata-only revision completes |
 | Teardown/output | Remove/close with pending receipt; no stale callback/UAF; partial unknown scrollback is not replayed |
-| Layout/content | Golden integral layout; fractional rounding; wide glyph clips; list/quote/hanging/table/code/diff parity |
+| Layout/content | Declared Flex/Grid/intrinsic layout contracts; fractional quantization; wide-glyph clipping; list/quote/hanging/table/code/diff semantics |
 
 Each test belongs at the narrowest boundary that owns its guarantee. Repeat across Rust/Bun only when verifying a genuinely different language boundary, not to increase counts.
 
@@ -1696,9 +1706,9 @@ This table is a **design disposition**, not a claim that a historical risk was r
 | B15/B16 harness/session lifecycle | Clear acceptance and initialization boundaries specified | Qualify before publishing cached session; harness does not claim rollback after acceptance |
 | C01 nested History dependencies | New document identifies changed owner/root frontier | Nested content/state-height test; later Surface has no special live-batch exclusion |
 | C02 Source retention/restart | Independent content contract | Preserve full Markdown segment or valid checkpoint rules; do not assume DOM fixes truncation |
-| C03/C04 glyph clipping and row parity | Independent physical correctness | Existing full/row-window/wide-glyph regression fixtures through new layout |
+| C03/C04 glyph clipping and row-window consistency | Independent physical correctness | Existing full/row-window/wide-glyph regression fixtures through the new layout; historical pixel captures are diagnostic only |
 | C05 exact ticket failure | Explicit preparation error, never empty successful paint | Missing/poisoned product injection at owning content boundary |
-| C06/C07 legacy layout metadata/cache scope | Old general layout removed at M2; M1 remains subject to its limits | M1 parity and M2 dependency/cache tests; no blanket historical defect claim |
+| C06/C07 legacy layout metadata/cache scope | Old general layout removed at M2; replacement semantics remain authoritative | M2 dependency/cache and direct contract tests; archived M1 pixels are diagnostic only and cannot gate acceptance |
 | C08 full-Surface terminal lowering | May remain intentionally | Measure physical diff/lowering separately; no unsupported damage-bounded claim |
 | C09 partial external output | Not removable by a retained node design | Confirmed-prefix ledger, unknown-suffix state, no automatic scrollback replay |
 | C10 editor change-event discrepancy | Explicit new React onEdit/text-only/selection contracts | Preserve native commands; verify and document public event migration |

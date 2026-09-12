@@ -18,14 +18,15 @@ neither claimed nor a remaining acceptance gate here. GPUI implementation is
 also outside this assignment. Historical tranche results are provenance, not
 current-source test counts or evidence that deleted owners remain active.
 
-Production checkpoint `0d7a5c8` includes these parent-reviewed corrections:
+Production checkpoint `a8ffcd9` includes these parent-reviewed corrections:
 
 - Render acceptance does not pump projection, layout, paint, or receipts.
   Structural visibility may expose loading or retained content; assertions
   about the desired text use the content barrier instead.
 - Synchronization publishes its result before waking the host. Native animation
-  synchronization is consumed before frame capture, even when consecutive
-  ticks share one React revision. The repeated-frame regression and corrected
+  synchronization is consumed before the next native deadline and frame
+  capture, even when consecutive ticks share one React revision. The
+  repeated-frame and eight-deadline burst regression and corrected
   benchmark exposed the previously unconsumed completion; the benchmark failed
   before this correction and completed afterward.
 - Taffy's renderer owns invalidation of changed content measurement metrics,
@@ -50,18 +51,25 @@ Current verification on macOS arm64:
 
 | Check | Result and evidence |
 |---|---|
-| `cargo test --workspace --all-features` | 357 passed; one ignored doctest. `/tmp/t7-animation-workspace.log` |
-| Project `bun run rust:clippy` | Passed the configured gate; existing warn-mode diagnostics remain. `/tmp/t7-animation-clippy.log` |
+| `cargo test --workspace --all-features` | 357 passed; one ignored doctest. `/tmp/t7-burst-final-workspace.log` |
+| Project `bun run rust:clippy` | Passed the configured gate; existing warn-mode diagnostics remain. `/tmp/t7-burst-final-clippy.log` |
 | `cargo fmt --all -- --check`, TypeScript, focused Biome | Passed for the changed production/test/benchmark source. |
-| Default addon staging and smoke | Passed. An initial staging process received SIGKILL; no process remained, and the same staging command succeeded on retry. `/tmp/t7-animation-final-stage-retry.log` |
-| Full root `bun test` | 87 passed, 398 expectations. `/tmp/t7-animation-final-bun-corrected.log`. The final geometry text assertion was corrected to use the content barrier; production was unchanged. |
-| Current default benchmark | All 15 workloads and eight traffic witnesses completed; one warmup, seven samples, 16 appends. `/tmp/t7-parent-epoch-perf-final.json` |
+| Default addon staging and smoke | Passed; default restored after instrumentation. `/tmp/t7-burst-default-stage.log`. An earlier staging process received SIGKILL; the same command succeeded on retry, with no source change. |
+| Full root `bun test` | 87 passed, 399 expectations. `/tmp/t7-burst-final-bun.log`. |
+| Generator, ownership, binding, declarations | Passed. `/tmp/t7-final-{generated,ownership,binding,declarations}.log`; unchanged boundary evidence is reused after the worker timer/shared-paint adjustment. |
+| Default and instrumented benchmarks | Each completed all 15 workloads and eight traffic witnesses; one warmup, seven samples, 16 appends. Raw samples are committed under `reports/t7-runtime/`. |
 
 The staged default addon SHA-256 is
-`57f6716870f2ea277d17b065a5f2cff4145185f0e511455c834973ee3ad1d624`.
-The benchmark JSON SHA-256 is
-`31c010703fe32cfe54cfd7d927e9cc442468bd12537be621695a96bd97e29705`;
-its production/benchmark source provenance is `0d7a5c8`.
+`a8ce714537810d59c381a210742d9c999a44b3b6932a9a920df4afb6428cf7d2`.
+The instrumented addon SHA-256 is
+`cacdd3b1814152c978416b906e91230e00604fb0ea9a19b45917e2a6c10c7723`.
+Both benchmark reports record production/benchmark source `a8ffcd9`, Bun 1.4.0,
+macOS arm64, build kind, and schema hash. Canonical compact JSON SHA-256 values:
+
+- `reports/t7-runtime/current-default.json`:
+  `4068a6a57a7827b590b90dee2e0456cec25c16ea476f960cc3e971e70cc83860`.
+- `reports/t7-runtime/current-instrumented.json`:
+  `22473801ecb38e8c127ccc5a38e5713e7ecb2257cce0641add726d7d4a43def5`.
 
 Exact traffic was: normalized no-op and callback replacement **0 records / 0
 bytes**; local style **1 / 96**; static replacement **1 / 115** including seven
@@ -72,16 +80,77 @@ environment recolor **0 / 0**. Animation additionally checks its changed pixels.
 Native editor, animation, and resize/theme/scroll samples now observe
 receipt-backed host epochs rather than an unchanged UI revision; editor and
 animation also require a changed physical frame. Their end-to-end p50/p95/p99
-milliseconds were respectively **0.123/1.028/1.335**, **1.336/1.460/1.493**, and
-**1.924/2.844/2.868**. These include benchmark-side observation and its 1 ms
+milliseconds were respectively **0.099/1.016/1.329**, **1.337/1.368/1.368**, and
+**2.754/2.864/2.865**. These include benchmark-side observation and its 1 ms
 timer granularity, not isolated native stage costs. Seven-sample p99 values are
 exploratory. Structural-barrier workloads remain labeled `visible`, not
 content-complete. No baseline speedup or regression percentage is claimed:
 the archived addon has a different schema and cannot run this source benchmark.
 
-Remaining parent work is the complete permanent-owner/complexity inventory,
-final handoff-contract synthesis, and any additional measurement justified by
-that review. This verification section does not itself accept all of T7/M2.
+The instrumentation review removed a dead synchronous-driver timer and routed
+worker paint through the same paint owner exercised by direct paint tests.
+`content_projection_nanos` now times actual worker projection, excluding queue
+wait; `direct_paint_nanos` measures the shared physical paint implementation.
+For the width-80 Source workload the seven instrumented samples recorded
+0.298–0.331 ms projection, 0.030–0.053 ms Taffy layout, and 0.171–0.209 ms paint.
+These are per-sample accumulated stage costs, not additive partitions of
+wall-clock latency: worker stages overlap and host timers include nested work.
+All `ScopedTimer` definitions and use sites are feature-gated, so default
+builds do not read the clock for this instrumentation.
+
+The shared-Source memory witness alternates one and two mounted occurrences:
+Source retained, accepted, and copied bytes remain 14 throughout. RSS and JS
+heap are separately reported; they are not precise per-occurrence native
+allocation measurements. No claim of zero occurrence cost is made.
+
+### Permanent-owner inventory and final contract review
+
+The before checkpoint is pre-T1 `74ae1b9`; the after checkpoint is `a8ffcd9`.
+The following is an ownership inventory, not a count of internal cache maps:
+
+| Responsibility | Before | After |
+|---|---|---|
+| UI publication | TS composition scopes and immutable View DAG, materialization/path correspondence, native View tables, separate ordinary ViewState publication | React Fiber/journal publishes directly to one native occurrence document; no intervening immutable semantic UI |
+| Semantic translations | View materialization plus native scene/general-layout recipes; semantic text lowered through View/TextRenderer | Occurrence properties adapt to Taffy geometry; semantic text lowers directly to terminal content blocks/runs; no semantic UI-to-UI translation |
+| Mutable UI registries | TS structural/path and state sessions; native View/build/edit/lease tables; ordinary retained-state registry and attachments | OccurrenceDocument owns topology/properties; UiResourceOwner owns qualified UI-resource membership; ContentSourceRegistry and ContentHostRegistry own distinct Source/Port/Connector lifetimes |
+| Transport | Generated View builders/edits/path operations plus state envelope, and independent content FFI | One `commitUiV1` typed UI batch for topology/property/literal/binding changes; content FFI remains the bulk Source owner; native controls/output/lifecycle retain purpose-specific methods |
+| Lifecycle state | Scope/child publication, View leases/materialization, ordinary state attachment, host/Source/Port/Connector and frame/History state | No publication leases or ordinary state attachment machine; explicit HostLifecycle, Source/Port/Connector lifecycles, PresentationState, HistoryWork and close phases; executor permits own reservations, not another publication lifetime |
+| Necessary backend state | General View allocator and retained indexes alongside content/physical caches | Taffy cache, immutable worker captures, one in-flight physical candidate, exact receipt promotion and physical History ledger; these are not rival semantic registries |
+
+Physical source-line inventory uses `git grep -c '^' <ref>` on `.rs`, `.ts`,
+`.tsx`, and `.h` files under the two TUI crates, both packages, `tools/tui-abi-gen`
+and `tools/tui-abi`. Generated files are identified by each revision's manifest
+and classified first; then dedicated test files, benchmark files, and remaining
+handwritten files. Blank/comment lines are included. Inline Rust tests remain
+in their owning handwritten file; this is reproducible file-level maintenance
+size, not an assertion that all handwritten lines are production logic.
+
+| File class | Before lines | After lines |
+|---|---:|---:|
+| Handwritten, including colocated Rust tests | 98,120 | 81,641 |
+| Generated code, including generated tests/benchmarks | 9,726 | 3,219 |
+| Dedicated handwritten tests | 13,110 | 8,354 |
+| Handwritten benchmarks | 535 | 1,154 |
+| Total | 121,491 | 94,368 |
+
+The generated-output manifest shrank from 16 files to four (including JSON and
+Markdown, excluded from the code-line table). No deletion percentage is an
+acceptance target. The benchmark is larger because it now retains actual
+traffic, stage, latency, and shared-resource witnesses rather than one append
+loop. Raw measurement JSON is additional evidence, not excluded production code.
+
+Parent review and the named gates establish the canonical React/occurrence
+route, exact delta traffic, atomic ingress, receipt isolation, resource teardown,
+current controls/content/Unicode/History behavior, and deletion of the old
+publication and renderer paths. The living migration guide now describes these
+owners and the asynchronous barrier distinction. Local T0–T7 implementation
+and contract verification are complete; **historical performance comparison
+is unverified**, not waived or reported as a passing regression gate. The
+archived source has only a different instrumented append benchmark and the
+preserved addon is default; it does not supply matching baseline samples for
+the current 15-workload report. No new historical build or clone was created.
+Perpetual-load starvation freedom and exact per-occurrence native allocation
+cost remain limitations of the available evidence, not proven properties.
 
 The T6 direct-host checkpoint below supersedes the earlier T4/M1 prose that
 describes `application/legacy_scene.rs` as an active adapter. That file is no
@@ -120,8 +189,8 @@ GPUI implementation remains out of scope for this tranche.
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. Linux is outside this assignment. |
-| T6 — direct terminal Taffy integration | **direct host implementation checkpoint; broader contract/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Archived captures may diagnose behavior, but legacy pixel parity is not an acceptance gate. Package/native-addon evidence, contract review, performance review and Linux native CI remain pending; this is not final T6 acceptance. |
-| T7 — content lowering and M2 deletion | **latency-isolation implementation tranche in progress** | Shared bounded content projection, nonblocking Taffy layout, and worker-owned direct paint are implemented. The old View/Scene/TextRenderer paths are already deleted; the full receipt, close, fairness, and Linux gates remain. |
+| T6 — direct terminal Taffy integration | **implementation and local contract verification complete** | Pinned Taffy, finite geometry, direct Box/control/History route, bounded content capture and receipt/control/History regressions pass. Legacy pixel parity is not an acceptance gate; Linux is outside this assignment. Historical performance comparison remains unverified. |
+| T7 — content lowering and M2 deletion | **implementation and local contract verification complete; comparison limitation recorded** | Bounded asynchronous content admission, Taffy layout, worker paint, exact receipts and completion-based close are implemented and verified as described above. Old View/Scene/TextRenderer paths are deleted. Current-only performance evidence does not claim a historical regression comparison or perpetual-load starvation proof. |
 
 ### T5 canonical React resource seam (current source)
 

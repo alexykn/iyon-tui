@@ -25,8 +25,13 @@ await root.whenVisible();
   component. These resources survive unmount and must be detached or
   deactivated before `dispose()`.
 - Use `root.whenVisible()` or `root.whenContentVisible()` as the presentation
-  barrier. The runtime and native host own asynchronous frame, receipt, and
-  source work; applications should not run a JavaScript frame pump.
+  barrier. `root.render()` acknowledges desired acceptance, not painting.
+  `whenVisible()` permits loading or retained content; use
+  `whenContentVisible()` when the desired text/product must be physically
+  visible. Neither React-revision barrier waits for a later native key or
+  animation tick, because those do not change the React revision. The runtime
+  and native host own asynchronous frame, receipt, and Source work;
+  applications should not run a JavaScript frame pump.
 - Consume terminal output and termination through `tui.nextEvent(signal)`.
   `Tui.bindKey()` retains global routing, while an accepted `Editor` ref can
   call `focus()` and `interceptPaste(routeId)` for targeted paste forwarding.
@@ -58,33 +63,37 @@ bun run perf:content
 bun run native:stage # restore the ordinary addon for development and checks
 ```
 
-`submittedUiRecords` measures commit records sent by the React coordinator.
-`nativeCounters` measures actual native projection, layout, paint and content
-work; it is not inferred from those submitted records. The result also records
-delivered native output and the confirmed visible receipt revision.
+`trafficWitnesses` and per-sample `traffic` measure actual coordinator calls,
+records, and separately accounted word/metadata/content bytes. Source accepted
+and copied bytes come from its native stats. `nativeCounters` measures native
+work, not classifications of submitted records. The instrumented build times
+worker-owned projection, Taffy layout, shared physical paint, and host frame
+stages. Timers compile out of the default build.
 
-## T5/M1 validation status
+Set `ION_PERF_OUTPUT` to retain JSON; `ION_PERF_SAMPLES` defaults to seven and
+`ION_PERF_WARMUPS` to one. Seven-sample p99 values are exploratory. Native-control
+benchmark barriers observe physical host epochs and changed editor/animation
+frames, with benchmark-side timer/inspection cost included. Do not interpret
+these end-to-end samples as isolated native execution time.
 
-The old native View publication ABI, generated View outputs, and ordinary
-Rust/native ViewState registry are absent from the current source. React is the
-only production UI route. Deletion checkpoint `e96d0b3` and the separate
-animation correction have passed parent source/design review and local M1
-validation. Animation state is installed before ticking; Stop persists across
-later ticks, and older receipts are reconciled before pending control changes
-or retirement. The private
-`LegacySceneAdapter`, current renderer/layout internals, native control
-mechanics, and independent History/content helpers remain as M2 residue until
-the direct Taffy and semantic-content deletion gates pass.
+## Current runtime and validation
 
-The deletion-only source passed formatting, workspace/all-feature checking and
-ownership checks on macOS arm64. The integrated animation correction then
-passed workspace/all-feature tests and the strict project Clippy gate, with
-existing warnings retained. The unchanged production addon retains its passing
-native smoke and 80-test Bun package/consumer results; subsequent edits changed
-only the receipt regression test. The final instrumented content benchmark
-completed 1,000 appends, and the default addon was restored with SHA-256
-`64c2ac3c1541d15023413202591efdbb87810886ef3a590bdab7bd2229a30a05`
-(6,799,168 bytes). Source content FFI remains part of this canonical addon,
-with staging symbol checks and native `content_ffi::tests`; there is no separate
-direct-FFI UI artifact or route. Linux x64 remains an unexecuted local gate
-covered by CI configuration, not a claimed passing result.
+React is the only production UI route. The old View ABI, ViewState registry,
+immutable publication path, `LegacySceneAdapter`, general View layout allocator,
+and TextRenderer lowering are deleted. Occurrences feed Taffy directly;
+semantic content uses the terminal content projector. Native controls and
+independent physical History behavior remain intentional owners, not a second
+UI publication route. Source content FFI is part of the canonical addon; there
+is no separate direct-FFI UI artifact.
+
+Projection admission is bounded and asynchronous. Saturation defers metadata
+and wakes the owner when capacity returns; it does not block React acceptance
+or create an unbounded snapshot queue. Layout and paint run on their worker,
+and receipt/close waits do not hold the host or global environment drain lock.
+
+Current checks, source/addon hashes, raw benchmark locations, and remaining
+comparison limitations are recorded in
+[`DOM-RUNTIME-IMPLEMENTATION.md`](../architecture/DOM-RUNTIME-IMPLEMENTATION.md).
+Linux execution and GPUI implementation are outside this assignment. Archived
+source/addon pairs are diagnostic artifacts; a schema-mismatched addon must
+never be loaded into the current benchmark to claim a baseline comparison.

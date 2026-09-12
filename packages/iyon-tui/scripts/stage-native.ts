@@ -26,15 +26,15 @@ if (nativeFeatures.length > 0)
 const cargo = Bun.spawnSync({
 	cmd: cargoCommand,
 	cwd: repositoryDirectory.pathname,
-	// The native addon links the full TUI dependency graph. Keep the default
-	// staging path reliable on constrained developer/CI machines; callers can
-	// opt into more parallelism explicitly with CARGO_BUILD_JOBS.
+	// The native addon links the full TUI dependency graph. Keep bounded
+	// defaults for staging on constrained developer/CI machines, while
+	// respecting explicit caller settings for all Cargo resource knobs.
 	env: {
 		...process.env,
-		CARGO_PROFILE_DEV_DEBUG: "0",
-		CARGO_PROFILE_TEST_DEBUG: "0",
-		CARGO_INCREMENTAL: "0",
-		CARGO_BUILD_JOBS: "2",
+		CARGO_PROFILE_DEV_DEBUG: process.env.CARGO_PROFILE_DEV_DEBUG ?? "0",
+		CARGO_PROFILE_TEST_DEBUG: process.env.CARGO_PROFILE_TEST_DEBUG ?? "0",
+		CARGO_INCREMENTAL: process.env.CARGO_INCREMENTAL ?? "0",
+		CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? "2",
 		CARGO_TARGET_DIR: targetRoot.pathname,
 	},
 	stdout: "pipe",

@@ -1484,7 +1484,13 @@ impl TuiHost {
         // when the caller does not immediately request a presentation barrier.
         // This admits automatic failure diagnostics and starts asynchronous
         // layout/content work without waiting under HostInner.
-        let _ = environment.drain_pending_for(32, true, Some(host_id));
+        for _ in 0..256 {
+            let report = environment.drain_pending_for(32, true, Some(host_id))?;
+            if !report.rearm && !report.waiting_for_presentation {
+                break;
+            }
+            std::thread::yield_now();
+        }
         Ok(result)
     }
 

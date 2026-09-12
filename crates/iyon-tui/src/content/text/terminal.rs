@@ -9,7 +9,10 @@
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
 use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
-use taffy::style_helpers::{auto, flex, length, line, max_content, minmax, span, zero};
+use taffy::style::TrackSizingFunction;
+use taffy::style_helpers::{
+    auto, fit_content, flex, length, line, max_content, minmax, span, zero,
+};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -932,6 +935,37 @@ fn layout_table_grid(
         .iter()
         .map(|input| measure_block_slice(input.cell.blocks(), policy))
         .collect::<Vec<_>>();
+    let has_colspan = cells.iter().any(|input| input.cell.col_span().get() > 1);
+    let column_metrics = if matches!(
+        policy.table_column_sizing(),
+        super::TableColumnSizing::Content
+    ) && !has_colspan
+    {
+        Some(table_column_metrics_from_intrinsic(
+            table,
+            cells,
+            &intrinsic_metrics,
+            policy.table_column_gap(),
+        ))
+    } else {
+        None
+    };
+    let content_max_widths = column_metrics
+        .as_ref()
+        .map(|metrics| {
+            metrics
+                .iter()
+                .map(|metrics| {
+                    u16::try_from(metrics.max_width).map_err(|_| {
+                        TerminalProjectionError::ExtentOverflow {
+                            axis: "table column max-content width",
+                            value: metrics.max_width,
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
     let mut cell_nodes = Vec::with_capacity(cells.len());
     for (cell_index, input) in cells.iter().enumerate() {
         let row_end = input
@@ -985,9 +1019,17 @@ fn layout_table_grid(
     table_style.display = Display::Grid;
     table_style.size.width = Dimension::length(f32::from(width));
     table_style.grid_template_columns = (0..table.columns().len())
-        .map(|_| {
+        .map(|column| {
             let track = match policy.table_column_sizing() {
-                super::TableColumnSizing::Content => minmax(zero(), max_content()),
+                super::TableColumnSizing::Content if has_colspan => minmax(zero(), max_content()),
+                super::TableColumnSizing::Content => {
+                    let max: TrackSizingFunction = fit_content(length(f32::from(
+                        content_max_widths
+                            .as_ref()
+                            .expect("content widths are prepared for content tracks")[column],
+                    )));
+                    minmax(zero(), max.max_sizing_function())
+                }
                 // The zero minimum is intentional: a plain `1fr` track has
                 // an automatic min-content minimum and can overflow a narrow
                 // definite table. Flex tracks own both allocation and that
@@ -2917,6 +2959,25 @@ fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<Intrins
                 policy.table_column_gap(),
             );
         }
+    }
+    columns
+}
+
+fn table_column_metrics_from_intrinsic(
+    table: &Table,
+    cells: &[TableCellInput<'_>],
+    intrinsic_metrics: &[IntrinsicMetrics],
+    gap: u16,
+) -> Vec<IntrinsicMetrics> {
+    let mut columns = vec![IntrinsicMetrics::default(); table.columns().len()];
+    for (input, metrics) in cells.iter().zip(intrinsic_metrics.iter().copied()) {
+        merge_table_cell_metrics(
+            &mut columns,
+            input.logical_column,
+            usize::from(input.cell.col_span().get()),
+            metrics,
+            gap,
+        );
     }
     columns
 }

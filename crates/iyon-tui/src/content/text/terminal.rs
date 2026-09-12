@@ -25,7 +25,6 @@ use crate::{
     stream::{StreamOffset, StreamRange},
 };
 
-use super::render::RenderContext;
 use super::{
     Alignment, Annotations, Block, BlockKind, BreakKind, CodeBlock, FormatId, HeadingLevel, Inline,
     InlineContent, InlineKind, LanguageId, List, ListItem, ListMarker, LiteralText, Mark,
@@ -34,7 +33,7 @@ use super::{
     TextTaskState, text_style_ref,
 };
 
-type SemanticContext = RenderContext;
+type SemanticContext = TerminalSemanticContext;
 
 /// Width request used by direct semantic content measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,6 +291,58 @@ impl TerminalSemanticContext {
     #[must_use]
     pub(crate) fn format(&self) -> Option<&FormatId> {
         self.format.as_ref()
+    }
+
+    fn for_node(&self, annotations: &Annotations) -> Self {
+        let mut next = self.clone();
+        if let Some(origin) = annotations.origin() {
+            next.origin = Some(origin);
+        }
+        next
+    }
+
+    fn with_role(&self, role: TextRole) -> Self {
+        let mut next = self.clone();
+        let mut roles = next.ancestor_roles.to_vec();
+        roles.push(role);
+        next.ancestor_roles = roles.into();
+        next
+    }
+
+    fn with_list_kind(&self, kind: TextListKind) -> Self {
+        let mut next = self.clone();
+        next.list_kind = Some(kind);
+        next
+    }
+
+    fn with_task_state(&self, state: Option<TextTaskState>) -> Self {
+        let mut next = self.clone();
+        next.task_state = state;
+        next
+    }
+
+    fn with_table_section(&self, section: TextTableSection) -> Self {
+        let mut next = self.clone();
+        next.table_section = Some(section);
+        next
+    }
+
+    fn with_language(&self, language: Option<&LanguageId>) -> Self {
+        let mut next = self.clone();
+        next.language = language.cloned();
+        next
+    }
+
+    fn with_format(&self, format: &FormatId) -> Self {
+        let mut next = self.clone();
+        next.format = Some(format.clone());
+        next
+    }
+
+    fn with_heading_level(&self, level: HeadingLevel) -> Self {
+        let mut next = self.clone();
+        next.heading_level = Some(level);
+        next
     }
 }
 
@@ -2007,7 +2058,9 @@ impl<'a> ProductBuilder<'a> {
         }
         let inline_role = role;
         for mark in inline.marks().marks() {
-            inline_context.ancestor_roles.push(mark_role(mark));
+            let mut roles = inline_context.ancestor_roles.to_vec();
+            roles.push(mark_role(mark));
+            inline_context.ancestor_roles = roles.into();
         }
         match inline.kind() {
             InlineKind::Text(run) => {

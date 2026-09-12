@@ -604,6 +604,7 @@ impl EnvironmentQueue {
         environment.waiting_for_presentation.remove(&host_id);
         environment.pending_set.insert(host_id);
         Self::queue_host(&mut environment, host_id);
+        Self::prioritize_host(&mut environment, host_id);
         environment.wake.notify_all();
         environment.notify.notify_waiters();
         Ok(WakeDisposition {

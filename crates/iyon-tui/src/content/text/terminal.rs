@@ -873,6 +873,7 @@ struct TableCellGeometry {
     x: u16,
     y: u16,
     width: u16,
+    wrap_width: u16,
     height: u16,
 }
 
@@ -1131,6 +1132,7 @@ fn layout_table_grid(
             .checked_sub(y)
             .ok_or(TerminalProjectionError::TableLayoutFailure)?;
         geometries.push(TableCellGeometry {
+            wrap_width: checked_table_width("table cell wrap width", layout.size.width)?,
             x: checked_extent(
                 "table cell x",
                 usize::try_from(x).map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
@@ -1837,7 +1839,7 @@ impl<'a> ProductBuilder<'a> {
         );
         let mut row_children = vec![Vec::new(); table.rows().len()];
         for (cell, geometry) in cells.iter().zip(grid.cells) {
-            let cell_product = build_cell_product(&self.policy, table, cell, geometry.width)?;
+            let cell_product = build_cell_product(&self.policy, table, cell, geometry.wrap_width)?;
             let cell_index = self.append_cell_product(
                 cell_product,
                 table_start,
@@ -3473,7 +3475,7 @@ mod tests {
             (0..product.rows().len())
                 .map(|row| row_text(&product, row))
                 .collect::<Vec<_>>(),
-            ["a ab a", "b    b"]
+            ["a a  a", "b b  b"]
         );
     }
 

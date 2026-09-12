@@ -186,6 +186,8 @@ pub(crate) struct SceneHost {
     pending_paint: Option<PendingPaint>,
     pending_layout_input: Option<PendingLayoutInput>,
     pending_layout_refined: bool,
+    pending_content_widths: HashMap<crate::occurrence::NodeKey, u16>,
+    pending_content_width_viewport: Option<Size>,
     direct_revision: u64,
     pending_content_invalidations: HashSet<u64>,
     pending_control_invalidations: HashSet<ComponentId>,
@@ -218,6 +220,8 @@ impl Default for SceneHost {
             pending_paint: None,
             pending_layout_input: None,
             pending_layout_refined: false,
+            pending_content_widths: HashMap::new(),
+            pending_content_width_viewport: None,
             direct_revision: 0,
             pending_content_invalidations: HashSet::new(),
             pending_control_invalidations: HashSet::new(),
@@ -286,6 +290,8 @@ impl SceneHost {
         self.pending_paint = None;
         self.pending_layout_input = None;
         self.pending_layout_refined = false;
+        self.pending_content_widths.clear();
+        self.pending_content_width_viewport = None;
         self.pending_content_invalidations.clear();
         self.pending_control_invalidations.clear();
         self.pending_sync_revision = None;
@@ -446,11 +452,19 @@ impl SceneHost {
         if self.direct_driver.is_none() {
             return Err(anyhow!("direct renderer driver is not started"));
         }
+        if self
+            .pending_content_width_viewport
+            .is_some_and(|viewport| viewport != size)
+        {
+            self.pending_content_widths.clear();
+            self.pending_content_width_viewport = None;
+            self.pending_layout_refined = false;
+        }
         let mut captures = {
             #[cfg(feature = "perf-counters")]
             let _perf_timer =
                 crate::perf::ScopedTimer::new(crate::perf::Counter::DirectCaptureNanos);
-            self.capture_direct_measurements(size.width, content)?
+            self.capture_direct_measurements(size.width, content, &self.pending_content_widths)?
         };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
         let current_signature = layout_request_signature(
@@ -466,11 +480,12 @@ impl SceneHost {
             .as_ref()
             .filter(|pending| pending.signature != current_signature)
             .map_or_else(Vec::new, |_| captures.keys().copied().collect());
-        let reuse_pending_captures = self.pending_layout_input.as_ref().is_some_and(|pending| {
-            pending.signature == current_signature
-                || (self.pending_layout_refined
-                    && captures_match_sources(&captures, &pending.captures))
-        });
+        let reuse_pending_captures = self.pending_content_widths.is_empty()
+            && self.pending_layout_input.as_ref().is_some_and(|pending| {
+                pending.signature == current_signature
+                    || (self.pending_layout_refined
+                        && captures_match_sources(&captures, &pending.captures))
+            });
         if reuse_pending_captures {
             let pending = self
                 .pending_layout_input
@@ -502,6 +517,8 @@ impl SceneHost {
                     return Err(anyhow::Error::new(SceneLayoutPending));
                 }
                 Some(surface) if pending.signature == signature => {
+                    self.pending_content_widths.clear();
+                    self.pending_content_width_viewport = None;
                     self.invalidated_components.clear();
                     return Ok(PreparedSceneFrame {
                         surface,
@@ -566,6 +583,8 @@ impl SceneHost {
                 capture.terminal_policy = next.terminal_policy;
                 capture.terminal_product = next.terminal_product;
                 capture.offered_width = width;
+                self.pending_content_widths.insert(*key, width);
+                self.pending_content_width_viewport = Some(size);
                 refined_content.push(*key);
             }
             #[cfg(feature = "perf-counters")]
@@ -762,6 +781,7 @@ impl SceneHost {
         &self,
         width: u16,
         content: &mut dyn ContentProvider,
+        width_overrides: &HashMap<crate::occurrence::NodeKey, u16>,
     ) -> Result<HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>> {
         self.direct_content_ports
             .iter()
@@ -771,9 +791,10 @@ impl SceneHost {
                     .get(resource)
                     .copied()
                     .ok_or_else(|| anyhow!("direct ContentPort is not installed"))?;
+                let offered_width = width_overrides.get(node).copied().unwrap_or(width);
                 let capture = content.capture_measurement(
                     port_id,
-                    width,
+                    offered_width,
                     crate::presentation::ContentWidthRule::Fit,
                 )?;
                 Ok((

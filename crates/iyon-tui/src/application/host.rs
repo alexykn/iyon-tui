@@ -589,6 +589,17 @@ impl HostAnimation {
 
 struct MountedAnimation(HostAnimation);
 impl Component for MountedAnimation {
+    fn control_snapshot(&self) -> Option<crate::component::ControlSnapshot> {
+        let state = self.0.state.lock().ok()?;
+        Some(crate::component::ControlSnapshot::Animation(
+            crate::component::AnimationSnapshot {
+                active_frame: state.active_frame,
+                frame_count: state.frame_count,
+                running: state.running,
+            },
+        ))
+    }
+
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
         cx.tick(Duration::from_millis(16), Self::tick);
     }
@@ -601,6 +612,10 @@ impl MountedAnimation {
 
 struct MountedScroll;
 impl Component for MountedScroll {
+    fn control_snapshot(&self) -> Option<crate::component::ControlSnapshot> {
+        Some(crate::component::ControlSnapshot::Scroll(Default::default()))
+    }
+
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
         cx.focusable();
     }
@@ -3671,6 +3686,19 @@ impl HostInner {
                 ..HostFlushOutcome::default()
             });
         }
+        // A host may receive theme/input work before its first accepted
+        // occurrence commit. There is no physical candidate to prepare until
+        // the direct occurrence tree is synchronized.
+        if !self.running.host_has_direct_occurrences()
+            && self
+                .ui_resources
+                .document
+                .as_ref()
+                .is_none_or(|document| document.accepted_ui_revision() == 0)
+        {
+            self.running.clear_dirty();
+            return Ok(HostFlushOutcome::default());
+        }
         let (prepared, history_plan) = if self.can_prepare_metadata_candidate() {
             (self.prepare_metadata_candidate(), None)
         } else {
@@ -3828,16 +3856,7 @@ impl HostInner {
                         _ => None,
                     })
                     .unwrap_or(crate::Insets::ZERO);
-                let port_id = snapshot
-                    .port
-                    .filter(|_| snapshot.kind == crate::occurrence::HostKind::ContentHost)
-                    .and_then(|port| self.content.ui_port_id(port))
-                    .unwrap_or(0);
-                let supported = port_id != 0
-                    && snapshot.properties.iter().all(|(property, value)| {
-                        !matches!(value, crate::occurrence::LayerValue::Value(_))
-                            || *property == crate::occurrence::PropertyId::Padding
-                    });
+                let (port_id, supported) = self.history_content_target(root)?;
                 Ok(super::kernel::HistoryUnitRecipe {
                     root,
                     port_id,
@@ -3855,11 +3874,52 @@ impl HostInner {
             .collect()
     }
 
+    /// Returns the one physical ContentHost export target for a History root.
+    /// A one-child Box wrapper is only an occurrence-owned physical shell;
+    /// arbitrary nested UI recipes and controls are intentionally blocked.
+    fn history_content_target(&self, key: crate::occurrence::NodeKey) -> Result<(u64, bool)> {
+        let snapshot = self
+            .ui_resources
+            .document_snapshot(key)
+            .map_err(anyhow::Error::msg)?;
+        let properties_supported = snapshot.properties.iter().all(|(property, value)| {
+            !matches!(value, crate::occurrence::LayerValue::Value(_))
+                || *property == crate::occurrence::PropertyId::Padding
+                || (snapshot.kind == crate::occurrence::HostKind::Box
+                    && *property == crate::occurrence::PropertyId::Layout)
+        });
+        if !properties_supported {
+            return Ok((0, false));
+        }
+        match snapshot.kind {
+            crate::occurrence::HostKind::ContentHost => {
+                let Some(port) = snapshot.port else {
+                    return Ok((0, false));
+                };
+                Ok((self.content.ui_port_id(port).unwrap_or(0), true))
+            }
+            crate::occurrence::HostKind::Box if snapshot.children.len() == 1 => {
+                self.history_content_target(snapshot.children[0])
+            }
+            _ => Ok((0, false)),
+        }
+    }
+
     fn sync_direct_occurrences(
         &mut self,
         changes: Option<&crate::occurrence::UiChangeSet>,
     ) -> Result<()> {
-        let snapshots = if self.running.host_has_direct_occurrences() && changes.is_some() {
+        let animation_changed = changes.is_some_and(|changes| {
+            changes.changed_nodes.iter().any(|key| {
+                self.ui_resources
+                    .document_snapshot(*key)
+                    .is_ok_and(|snapshot| snapshot.kind == crate::occurrence::HostKind::Animation)
+            })
+        });
+        let snapshots = if self.running.host_has_direct_occurrences()
+            && changes.is_some()
+            && !animation_changed
+        {
             self.ui_resources
                 .render_snapshot_delta(changes.expect("checked direct change set"))
         } else {
@@ -4107,17 +4167,19 @@ impl HostInner {
             let Some(node) = document.nodes_for_control(key).first().copied() else {
                 continue;
             };
+            let child_count = document
+                .snapshot(node)
+                .map_err(|error| anyhow::anyhow!("animation control snapshot failed: {error:?}"))?
+                .children
+                .len()
+                .try_into()
+                .unwrap_or(u32::MAX);
             match state {
                 crate::occurrence::ControlState::Scroll(_) => {}
                 crate::occurrence::ControlState::Animation(animation) => {
                     if let Some(slot) = self.ui_animations.get(&key) {
-                        let frame_count = document
-                            .nodes_for_control(key)
-                            .len()
-                            .try_into()
-                            .unwrap_or(u32::MAX);
                         slot.configure(
-                            frame_count,
+                            child_count,
                             animation.active_frame(),
                             Duration::from_millis(u64::from(animation.interval_ms().unwrap_or(0))),
                             animation.running(),

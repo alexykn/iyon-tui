@@ -1547,7 +1547,23 @@ fn paint_direct_node(
         DirectContent::Control(ControlSnapshot::Editor(editor)) => {
             paint_editor(editor, node, resolved, target, clip);
         }
-        DirectContent::Control(_) => {}
+        DirectContent::Control(ControlSnapshot::Scroll(_) | ControlSnapshot::Animation(_)) => {
+            for child in node.children.iter().copied() {
+                paint_direct_node(
+                    tree,
+                    child,
+                    layout,
+                    resolver,
+                    content,
+                    focused,
+                    graph,
+                    target,
+                    resolved,
+                    context.clone(),
+                    clip,
+                )?;
+            }
+        }
     }
     if let Some(border) = &node.decoration.border {
         crate::presentation::paint::paint_border_at(

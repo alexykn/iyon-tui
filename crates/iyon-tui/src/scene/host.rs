@@ -278,6 +278,45 @@ impl SceneHost {
                 control_snapshots.clone(),
             )?;
             invalidate_controls.clear();
+            let mut refined_content = Vec::new();
+            for (key, capture) in &mut captures {
+                let Some(width) = direct.content_widths.get(key).copied() else {
+                    continue;
+                };
+                if !width.is_finite() || width < 0.0 {
+                    return Err(anyhow!("direct content width is not finite"));
+                }
+                let width = width.floor().min(f32::from(u16::MAX)) as u16;
+                if width == capture.offered_width {
+                    continue;
+                }
+                let next = content.refine_captured_measurement(
+                    capture.port_id,
+                    capture.capture_id,
+                    width,
+                    crate::presentation::ContentWidthRule::Fill,
+                )?;
+                capture.measurement = next.measurement;
+                capture.min_content = next.min_content;
+                capture.max_content = next.max_content;
+                capture.history_adjustment = next.history_adjustment;
+                capture.semantic_contents = next.semantic_contents;
+                capture.terminal_policy = next.terminal_policy;
+                capture.terminal_product = next.terminal_product;
+                capture.offered_width = width;
+                refined_content.push(*key);
+            }
+            if !refined_content.is_empty() {
+                direct = driver.layout_with_intrinsic(
+                    root,
+                    size,
+                    history_anchor,
+                    captures.clone(),
+                    refined_content,
+                    control_snapshots.clone(),
+                    control_snapshots.clone(),
+                )?;
+            }
             self.direct_history_overflow_rows = direct.history_overflow_rows;
             let mounts = direct.component_mounts.clone();
             let mount_nodes = mounts

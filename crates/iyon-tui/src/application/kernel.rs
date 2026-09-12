@@ -331,7 +331,7 @@ impl NativeRuntime {
                     .history
                     .set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed),
             }
-            if binding.status == UiHistoryUnitStatus::Frozen {
+            if binding.status == UiHistoryUnitStatus::Frozen && unit.port_id != 0 {
                 content.set_history_unit(unit.port_id, binding.id.value(), unit.padding)?;
             }
             self.history
@@ -528,6 +528,10 @@ impl NativeRuntime {
     }
     pub(crate) fn invalidate_frame(&mut self) {
         self.dirty = true;
+    }
+
+    pub(crate) fn clear_dirty(&mut self) {
+        self.dirty = false;
     }
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty

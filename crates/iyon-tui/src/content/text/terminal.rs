@@ -966,6 +966,16 @@ fn layout_table_grid(
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?;
+    let content_tracks_fit = content_max_widths.as_ref().is_some_and(|widths| {
+        let gaps =
+            usize::from(policy.table_column_gap()).saturating_mul(widths.len().saturating_sub(1));
+        widths
+            .iter()
+            .map(|width| usize::from(*width))
+            .sum::<usize>()
+            .saturating_add(gaps)
+            <= usize::from(width)
+    });
     let mut cell_nodes = Vec::with_capacity(cells.len());
     for (cell_index, input) in cells.iter().enumerate() {
         let row_end = input
@@ -1022,11 +1032,14 @@ fn layout_table_grid(
         .map(|column| {
             let track = match policy.table_column_sizing() {
                 super::TableColumnSizing::Content if has_colspan => minmax(zero(), max_content()),
-                super::TableColumnSizing::Content => TrackSizingFunction::from_length(f32::from(
-                    content_max_widths
-                        .as_ref()
-                        .expect("content widths are prepared for content tracks")[column],
-                )),
+                super::TableColumnSizing::Content if content_tracks_fit => {
+                    TrackSizingFunction::from_length(f32::from(
+                        content_max_widths
+                            .as_ref()
+                            .expect("content widths are prepared for content tracks")[column],
+                    ))
+                }
+                super::TableColumnSizing::Content => auto(),
                 // The zero minimum is intentional: a plain `1fr` track has
                 // an automatic min-content minimum and can overflow a narrow
                 // definite table. Flex tracks own both allocation and that

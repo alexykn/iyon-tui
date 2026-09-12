@@ -1542,7 +1542,7 @@ impl TuiHost {
             (inner.environment.clone(), inner.host_id)
         };
         let mut combined = HostDrainReport::default();
-        for _ in 0..32 {
+        for _ in 0..256 {
             let report = environment.drain_pending_for(budget, force_retry, Some(host_id))?;
             combined.rearm = report.rearm;
             combined.waiting_for_presentation |= report.waiting_for_presentation;

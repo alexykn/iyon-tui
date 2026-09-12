@@ -3406,7 +3406,7 @@ impl HostInner {
                 ))?;
             self.content_dirty = true;
         }
-        self.sync_direct_occurrences(Some(&changes))?;
+        self.sync_direct_occurrences(None)?;
         Ok(())
     }
 

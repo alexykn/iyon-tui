@@ -376,6 +376,14 @@ impl SceneHost {
             .filter_map(|snapshot| snapshot.control.map(|control| (snapshot.key, control)))
             .collect::<HashMap<_, _>>();
         if !synchronization_complete {
+            if changes.is_none() {
+                // Scheduler-only animation updates carry a complete snapshot,
+                // but worker synchronization is asynchronous. Publish the
+                // matching capture indexes before the worker consumes the
+                // following layout command.
+                self.direct_content_ports = content_ports.clone();
+                self.direct_control_nodes = control_nodes.clone();
+            }
             driver.request_synchronize(
                 snapshots,
                 changes,

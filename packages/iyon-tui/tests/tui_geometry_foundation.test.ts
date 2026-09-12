@@ -192,7 +192,7 @@ describe("finite geometry boundary", () => {
 					)
 				).accepted,
 			).toBe(true);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(tui.screenRows().some((row) => row.includes("new"))).toBe(true);
 		} finally {
 			await root.unmount();

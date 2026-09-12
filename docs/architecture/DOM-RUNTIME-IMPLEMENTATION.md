@@ -10,6 +10,79 @@ deleted View/Scene/TextRenderer ownership is not to be restored.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
 
+### Current parent verification: asynchronous completion and bounded admission
+
+This section supersedes older pending receipt/close and Linux-gate statements
+below. Linux execution is excluded from this assignment by the owner; it is
+neither claimed nor a remaining acceptance gate here. GPUI implementation is
+also outside this assignment. Historical tranche results are provenance, not
+current-source test counts or evidence that deleted owners remain active.
+
+Production checkpoint `0d7a5c8` includes these parent-reviewed corrections:
+
+- Render acceptance does not pump projection, layout, paint, or receipts.
+  Structural visibility may expose loading or retained content; assertions
+  about the desired text use the content barrier instead.
+- Synchronization publishes its result before waking the host. Native animation
+  synchronization is consumed before frame capture, even when consecutive
+  ticks share one React revision. The repeated-frame regression and corrected
+  benchmark exposed the previously unconsumed completion; the benchmark failed
+  before this correction and completed afterward.
+- Taffy's renderer owns invalidation of changed content measurement metrics,
+  including content becoming ready after an earlier layout completed.
+- Queue service preserves a completion enqueued during service, exact products
+  outrank compatible retained products, and successful preparation clears the
+  kernel dirty obligation. Together these prevent lost Source updates and
+  completion-driven idle spin.
+- Content barriers include authoritative pending projection/admission work.
+  Backend receipt waits and close completion waits do not hold HostInner or the
+  global environment drain lock. Close waits on worker completion notification,
+  not an unbounded yield loop; held-worker and held-receipt tests cover progress.
+- The shared executor retains its 32 queued-job / 64 MiB queued-snapshot bound.
+  Saturation retains only per-Connector admission metadata, not a second task
+  queue. Atomic capacity-probe/waiter registration prevents missed capacity
+  wakes; RAII permits return reservations on early failure. A zero-admitted
+  second registry receives a wake and completes in the focused regression.
+  FIFO notification is not a proof of starvation freedom under perpetual load;
+  that stronger claim is not made. Registry drop unregisters its callback.
+
+Current verification on macOS arm64:
+
+| Check | Result and evidence |
+|---|---|
+| `cargo test --workspace --all-features` | 357 passed; one ignored doctest. `/tmp/t7-animation-workspace.log` |
+| Project `bun run rust:clippy` | Passed the configured gate; existing warn-mode diagnostics remain. `/tmp/t7-animation-clippy.log` |
+| `cargo fmt --all -- --check`, TypeScript, focused Biome | Passed for the changed production/test/benchmark source. |
+| Default addon staging and smoke | Passed. An initial staging process received SIGKILL; no process remained, and the same staging command succeeded on retry. `/tmp/t7-animation-final-stage-retry.log` |
+| Full root `bun test` | 87 passed, 398 expectations. `/tmp/t7-animation-final-bun-corrected.log`. The final geometry text assertion was corrected to use the content barrier; production was unchanged. |
+| Current default benchmark | All 15 workloads and eight traffic witnesses completed; one warmup, seven samples, 16 appends. `/tmp/t7-parent-epoch-perf-final.json` |
+
+The staged default addon SHA-256 is
+`57f6716870f2ea277d17b065a5f2cff4145185f0e511455c834973ee3ad1d624`.
+The benchmark JSON SHA-256 is
+`31c010703fe32cfe54cfd7d927e9cc442468bd12537be621695a96bd97e29705`;
+its production/benchmark source provenance is `0d7a5c8`.
+
+Exact traffic was: normalized no-op and callback replacement **0 records / 0
+bytes**; local style **1 / 96**; static replacement **1 / 115** including seven
+semantic bytes; keyed move **3 / 232**; Source append **0 UI records / 0 UI
+bytes**, with seven native Source bytes accepted/copied; native animation and
+environment recolor **0 / 0**. Animation additionally checks its changed pixels.
+
+Native editor, animation, and resize/theme/scroll samples now observe
+receipt-backed host epochs rather than an unchanged UI revision; editor and
+animation also require a changed physical frame. Their end-to-end p50/p95/p99
+milliseconds were respectively **0.123/1.028/1.335**, **1.336/1.460/1.493**, and
+**1.924/2.844/2.868**. These include benchmark-side observation and its 1 ms
+timer granularity, not isolated native stage costs. Seven-sample p99 values are
+exploratory. Structural-barrier workloads remain labeled `visible`, not
+content-complete. No baseline speedup or regression percentage is claimed:
+the archived addon has a different schema and cannot run this source benchmark.
+
+Remaining parent work is the complete permanent-owner/complexity inventory,
+final handoff-contract synthesis, and any additional measurement justified by
+that review. This verification section does not itself accept all of T7/M2.
+
 The T6 direct-host checkpoint below supersedes the earlier T4/M1 prose that
 describes `application/legacy_scene.rs` as an active adapter. That file is no
 longer part of the current source; the historical sections retain the old
@@ -46,7 +119,7 @@ GPUI implementation remains out of scope for this tranche.
 | T2 — qualified native ingress/resource preparation | **accepted** | Parent reviewed the qualified ingress, generated finite payload forms, resource preparation/install path, shared controls, Source lifecycle and rejection regressions. Workspace and Bun suites passed; remaining T1 lint failures are recorded below. No renderer, React, Taffy, or old-route deletion was attempted. |
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
-| T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
+| T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. Linux is outside this assignment. |
 | T6 — direct terminal Taffy integration | **direct host implementation checkpoint; broader contract/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Archived captures may diagnose behavior, but legacy pixel parity is not an acceptance gate. Package/native-addon evidence, contract review, performance review and Linux native CI remain pending; this is not final T6 acceptance. |
 | T7 — content lowering and M2 deletion | **latency-isolation implementation tranche in progress** | Shared bounded content projection, nonblocking Taffy layout, and worker-owned direct paint are implemented. The old View/Scene/TextRenderer paths are already deleted; the full receipt, close, fairness, and Linux gates remain. |
 
@@ -1212,13 +1285,11 @@ ownership remains required work in the T6/T7 migration.
   during staging plus `content_ffi::tests`; there is no second direct-FFI UI
   route or feature artifact. The canonical artifact is the default N-API build
   above.
-- Only the macOS arm64 toolchain/target is installed locally. The CI matrix
-  includes Linux x64 and macOS arm64; Linux x64 remains a CI gate and is not
-  claimed from this macOS run. Direct Taffy/content latency isolation is now
-  implemented, while the receipt/close/fairness evidence, Surface and GPUI
-  gates remain deferred.
-  Parent source/design acceptance covers M1, not those later migration
-  boundaries or unexecuted Linux validation.
+- Only the macOS arm64 toolchain/target was exercised locally. Linux execution
+  and GPUI implementation are outside this assignment. The current parent
+  verification section supersedes the older receipt/close evidence status;
+  it distinguishes tested bounded progress from unproven perpetual-load
+  starvation freedom. Final T7/M2 acceptance still requires parent synthesis.
 
 ### T6 foundation checkpoint — parent accepted
 

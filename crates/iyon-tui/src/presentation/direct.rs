@@ -25,8 +25,8 @@ use crate::{
         TextAttribute, View, layout::LayoutTree,
     },
     text::{
-        TerminalConstraints, TerminalRowWindow, TerminalTextProduct, TerminalTextProjector,
-        TextContent, TextRenderPolicy,
+        TerminalConstraints, TerminalTextProduct, TerminalTextProjector, TextContent,
+        TextRenderPolicy,
     },
 };
 
@@ -1137,7 +1137,7 @@ fn measured_for_request_with_intrinsic(
     let capture = capture.expect("content capture checked above");
     let request_width = request_width(capture, request);
     let requested_product = content_product_for_request(capture, request)?;
-    let measured = requested_product
+    let mut measured = requested_product
         .as_ref()
         .map(|product| {
             let size = product.size();
@@ -1206,6 +1206,15 @@ fn content_product_for_request(
             AvailableConstraint::MaxContent => TerminalConstraints::max_content(),
         },
     };
+    if matches!(
+        constraints.width(),
+        crate::text::TerminalWidthConstraint::Definite(width)
+            if width == capture.offered_width
+    ) {
+        if let Some(product) = capture.terminal_product.as_ref() {
+            return Ok(Some(std::sync::Arc::clone(product)));
+        }
+    }
     let projector = TerminalTextProjector::new(capture.terminal_policy.clone());
     projector
         .project_contents(contents, constraints)
@@ -1938,7 +1947,9 @@ mod tests {
                 offered_width: 8,
                 removed_rows: 1,
             }),
-            semantic_view: Some(crate::presentation::factory::text("abcdefgh")),
+            semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
+            terminal_policy: TextRenderPolicy::default(),
+            terminal_product: None,
         };
         let measured = measured_for_request(
             Some(&capture),
@@ -1950,8 +1961,45 @@ mod tests {
                 available_height: AvailableConstraint::MaxContent,
                 wrap_width: Some(4),
             },
-        );
+        )
+        .expect("measurement");
         assert_eq!(measured.height, 2.0);
+
+    }
+
+    #[test]
+    fn terminal_projection_errors_reach_the_direct_measurement_boundary() {
+        let contents: std::sync::Arc<[TextContent]> =
+            vec![TextContent::raw("x\n".repeat(usize::from(u16::MAX) + 1))].into();
+        let capture = CapturedContentMeasurement {
+            capture_id: 1,
+            port_id: 7,
+            offered_width: 1,
+            measurement: ContentMeasurement::default(),
+            min_content: crate::geometry::Size::new(1, 1),
+            max_content: crate::geometry::Size::new(1, 1),
+            history_adjustment: None,
+            semantic_contents: Some(contents),
+            terminal_policy: TextRenderPolicy::default(),
+            terminal_product: None,
+        };
+        let error = measured_for_request(
+            Some(&capture),
+            None,
+            crate::presentation::taffy::MeasureRequest {
+                known_width: Some(1.0),
+                known_height: None,
+                available_width: AvailableConstraint::Definite(1.0),
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: Some(1),
+            },
+        )
+        .expect_err("an overflowing terminal product must fail measurement");
+        let message = error.to_string();
+        assert!(
+            message.contains("terminal") && message.contains("exceeds u16"),
+            "unexpected terminal projection error: {message}"
+        );
     }
 
     #[test]

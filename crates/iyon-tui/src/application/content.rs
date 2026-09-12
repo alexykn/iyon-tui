@@ -14,6 +14,8 @@ use std::sync::{
 };
 use std::time::Instant;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{
     geometry::Size,
     physical::{PhysicalCell, PhysicalRow, PhysicalStyle, Surface},
@@ -1070,6 +1072,10 @@ fn project_text_snapshot(
     )?;
     let terminal_size = product.size();
     let size = Size::new(terminal_size.width(), terminal_size.height());
+    let terminal_intrinsic_size = product.intrinsic_size();
+    // Keep the natural width from the producer for WidthRule::Fit while the
+    // measured height remains tied to this exact offered-width product.
+    let intrinsic_size = Size::new(terminal_intrinsic_size.width(), size.height);
     let retain_rows = key.needs_physical_rows;
     let rows = retain_rows
         .then(|| paint_terminal_rows(&product, theme, offered_width))
@@ -1106,14 +1112,14 @@ fn project_text_snapshot(
                 .expect("delivery products retain visibility rows")
                 .reveal_bounds(reveal_units, size.width, size.height);
             (
-                Size::new(size.width, bounds.revealed_height),
+                Size::new(intrinsic_size.width, bounds.revealed_height),
                 usize::from(bounds.revealed_height),
                 bounds.cut,
                 bounds.fully_revealed_rows,
             )
         } else {
             (
-                size,
+                intrinsic_size,
                 usize::from(size.height),
                 None,
                 usize::from(size.height),

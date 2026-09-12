@@ -772,7 +772,11 @@ impl EnvironmentQueue {
             environment.waiting_for_presentation.remove(&host_id);
             environment.queued.remove(&host_id);
             environment.pending.retain(|id| *id != host_id);
-        } else if pending_epoch == committed_epoch {
+        } else if pending_epoch == committed_epoch && !environment.queued.contains(&host_id) {
+            // Equal host epochs only settle the candidate being committed.
+            // A worker may already have queued its completion during this
+            // service turn without advancing a host epoch. Preserve that
+            // queue entry so the next turn can install its result.
             environment.pending_set.remove(&host_id);
             environment.retry_blocked.remove(&host_id);
             environment.waiting_for_presentation.remove(&host_id);
@@ -1200,6 +1204,27 @@ mod tests {
     use std::sync::{Arc, Barrier, mpsc};
 
     use super::TuiEnvironment;
+
+    #[test]
+    fn committing_retained_frame_preserves_already_queued_worker_completion() {
+        let environment = TuiEnvironment::new_manual();
+        let mut state = environment.lifetime.queue.inner.lock().unwrap();
+        let host_id = 1;
+        state.pending_set.insert(host_id);
+        super::EnvironmentQueue::queue_host(&mut state, host_id);
+        super::EnvironmentQueue::complete_host_locked(
+            &mut state, host_id, 9, 9, false, true, false, false,
+        );
+        assert_eq!(state.pending.pop_front(), Some(host_id));
+        assert!(state.queued.remove(&host_id));
+        assert!(state.pending_set.contains(&host_id));
+        // Once the completion turn is consumed, equal epochs settle normally.
+        super::EnvironmentQueue::complete_host_locked(
+            &mut state, host_id, 9, 9, false, true, false, false,
+        );
+        assert!(state.pending_set.is_empty());
+        assert!(state.pending.is_empty());
+    }
 
     #[test]
     fn final_environment_owners_shutdown_driver_after_concurrent_drop() {

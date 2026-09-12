@@ -5483,25 +5483,21 @@ impl ContentHostRegistry {
                     && projection.key.needs_physical_rows == key.needs_physical_rows
                     && projection.source_snapshot.source_end <= snapshot.source_end)
         };
-        state
+        let mut projections = state
             .candidate_projection
-            .as_ref()
-            .filter(|projection| matches(projection))
-            .cloned()
-            .or_else(|| {
-                state
-                    .committed_projection
-                    .as_ref()
-                    .filter(|projection| matches(projection))
-                    .cloned()
-            })
-            .or_else(|| {
+            .iter()
+            .chain(state.committed_projection.iter())
+            .chain(
                 state
                     .projection_cache
                     .iter()
-                    .find(|(_, projection)| matches(projection))
-                    .map(|(_, projection)| Arc::clone(projection))
-            })
+                    .map(|(_, projection)| projection),
+            );
+        projections
+            .clone()
+            .find(|projection| projection.key == *key)
+            .or_else(|| projections.find(|projection| matches(projection)))
+            .cloned()
     }
 
     fn prepare_connector_projection(

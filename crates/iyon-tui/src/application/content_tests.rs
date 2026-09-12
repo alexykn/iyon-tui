@@ -393,6 +393,15 @@ fn continuous_source_appends_coalesce_while_projection_is_pending() {
     release.release();
     registry.wait_for_projection_jobs_for_test();
     registry.clear_projection_latch_for_test();
+    // A retained physical frame still owns the old compatible product when
+    // the exact newer result arrives. It must not shadow that cache entry.
+    {
+        let mut state = connector.record.lock().unwrap();
+        state.committed_projection = state
+            .projection_cache
+            .front()
+            .map(|(_, product)| Arc::clone(product));
+    }
     registry.begin_projection_candidate();
     registry
         .prepare_connector_projection(connector.id(), 20)

@@ -3334,7 +3334,12 @@ impl HostInner {
             };
             let frame = slot.frame_index()?;
             self.ui_resources.set_native_animation_frame(key, frame)?;
-            self.sync_native_animation_frame(key)?;
+            if let Err(error) = self.sync_native_animation_frame(key) {
+                if admit_wakes && is_async_work_pending(&error) {
+                    self.ensure_pending()?;
+                }
+                return Err(error);
+            }
         }
         if admit_wakes && dirty {
             self.ensure_pending()?;

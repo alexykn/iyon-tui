@@ -635,6 +635,11 @@ impl DirectOccurrenceRenderer {
         }
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
+        let measurement_keys = measurements
+            .keys()
+            .copied()
+            .filter(|key| self.layout.contains(*key))
+            .collect::<Vec<_>>();
         let mut layout_root = |root, width, height| {
             let mut measurement_error = None;
             let geometries = self
@@ -658,6 +663,15 @@ impl DirectOccurrenceRenderer {
                 })
                 .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
             if let Some(error) = measurement_error {
+                // The infallible Taffy callback had to return a placeholder
+                // after recording the real producer error. Mark every
+                // captured content leaf dirty before returning so Taffy's
+                // temporary zero result cannot poison a retrying candidate.
+                self.layout
+                    .invalidate_measurement(&measurement_keys)
+                    .map_err(|error| {
+                        anyhow!("direct Taffy retry invalidation failed: {error:?}")
+                    })?;
                 return Err(error.context("direct terminal content measurement failed"));
             }
             Ok(geometries)
@@ -2025,7 +2039,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_content_measurement_propagates_to_direct_layout() {
+    fn failed_content_measurement_dirties_taffy_before_retry_and_paint() {
         let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
         let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
         let body = document.body_root();
@@ -2073,6 +2087,8 @@ mod tests {
                 HashMap::new(),
             )
             .expect("direct synchronization");
+        let overflowing_contents: std::sync::Arc<[TextContent]> =
+            vec![TextContent::raw("x\n".repeat(usize::from(u16::MAX) + 1))].into();
         let mut captures = HashMap::new();
         captures.insert(
             node,
@@ -2081,15 +2097,54 @@ mod tests {
                 port_id: 9,
                 offered_width: 20,
                 measurement: ContentMeasurement {
-                    physically_complete: false,
                     ..ContentMeasurement::default()
                 },
-                min_content: crate::geometry::Size::new(0, 1),
-                max_content: crate::geometry::Size::new(0, 1),
+                min_content: crate::geometry::Size::new(1, 1),
+                max_content: crate::geometry::Size::new(1, 1),
                 history_adjustment: None,
-                semantic_contents: None,
+                semantic_contents: Some(overflowing_contents),
                 terminal_policy: TextRenderPolicy::default(),
                 terminal_product: None,
+            },
+        );
+        let error = renderer
+            .prepare(
+                body,
+                crate::geometry::Size::new(20, 4),
+                DirectHistoryAnchor::FollowEnd,
+                &captures,
+                &[],
+                &HashMap::new(),
+            )
+            .expect_err("projection failure must reject the direct candidate");
+        assert!(error.to_string().contains("terminal content measurement"));
+
+        let valid_contents: std::sync::Arc<[TextContent]> =
+            vec![TextContent::raw("recovered")].into();
+        let valid_product = std::sync::Arc::new(
+            TerminalTextProjector::new(TextRenderPolicy::default())
+                .project_contents(valid_contents.as_ref(), TerminalConstraints::definite(20))
+                .expect("valid terminal product"),
+        );
+        captures.insert(
+            node,
+            CapturedContentMeasurement {
+                capture_id: 2,
+                port_id: 9,
+                offered_width: 20,
+                measurement: ContentMeasurement {
+                    intrinsic_size: crate::geometry::Size::new(9, 1),
+                    physically_complete: true,
+                    connector_id: Some(9),
+                    projection_identity: 2,
+                    ..ContentMeasurement::default()
+                },
+                min_content: crate::geometry::Size::new(9, 1),
+                max_content: crate::geometry::Size::new(9, 1),
+                history_adjustment: None,
+                semantic_contents: Some(valid_contents),
+                terminal_policy: TextRenderPolicy::default(),
+                terminal_product: Some(valid_product.clone()),
             },
         );
         let layout = renderer
@@ -2101,8 +2156,72 @@ mod tests {
                 &[],
                 &HashMap::new(),
             )
-            .expect("direct layout");
-        assert!(!layout.tree.physically_complete);
+            .expect("valid retry must recompute the dirtied content leaf");
+        assert!(layout.tree.physically_complete);
+        let content_node = layout.tree.content_roots[&9][0];
+        assert!(layout.tree.node(content_node).content_rect.height > 0);
+
+        struct ProductProvider {
+            product: std::sync::Arc<TerminalTextProduct>,
+        }
+
+        impl crate::presentation::ContentProvider for ProductProvider {
+            fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
+                1
+            }
+
+            fn measure(
+                &mut self,
+                _port_id: u64,
+                _offered_width: u16,
+                _width_rule: crate::presentation::WidthRule,
+            ) -> ContentMeasurement {
+                ContentMeasurement {
+                    intrinsic_size: crate::geometry::Size::new(9, 1),
+                    physically_complete: true,
+                    connector_id: Some(9),
+                    projection_identity: 2,
+                    ..ContentMeasurement::default()
+                }
+            }
+
+            fn paint_window(
+                &self,
+                _ticket: crate::presentation::PreparedProjectionTicket,
+                window: crate::presentation::ContentWindow,
+                target: &mut crate::physical::Surface,
+                target_origin: (u16, u16),
+                clip: crate::geometry::Rect,
+                style: crate::physical::PhysicalStyle,
+            ) {
+                self.product
+                    .paint_window(
+                        &crate::Theme::default(),
+                        style,
+                        target,
+                        (i32::from(target_origin.0), i32::from(target_origin.1)),
+                        clip,
+                        crate::text::TerminalRowWindow::new(
+                            usize::try_from(window.first_row).expect("row index"),
+                            usize::try_from(window.row_count).expect("row count"),
+                        ),
+                    )
+                    .expect("captured product paints");
+            }
+        }
+
+        let mut paint_cache = crate::presentation::paint::PaintCache::default();
+        let compiler = crate::presentation::layout::ViewCompiler::default();
+        let surface = crate::presentation::paint::ViewPainter.paint_tree_with_content(
+            &compiler,
+            &layout.tree,
+            &mut paint_cache,
+            &ProductProvider {
+                product: valid_product,
+            },
+        );
+        let row = crate::physical::PhysicalRow::from_cells(surface.row_cells(3).to_vec());
+        assert_eq!(row.plain_text(), "recovered");
     }
 
     #[test]

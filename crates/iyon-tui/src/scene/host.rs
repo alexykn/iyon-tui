@@ -423,6 +423,17 @@ impl SceneHost {
             self.capture_direct_measurements(size.width, content)?
         };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
+        let mut invalidate_content =
+            self.pending_layout_input
+                .as_ref()
+                .map_or_else(Vec::new, |pending| {
+                    captures
+                        .iter()
+                        .filter_map(|(key, capture)| {
+                            (pending.captures.get(key) != Some(capture)).then_some(*key)
+                        })
+                        .collect()
+                });
         let current_signature = layout_request_signature(
             self.direct_revision,
             root,
@@ -476,14 +487,17 @@ impl SceneHost {
         }
         let mut invalidate_controls = Vec::new();
         for _ in 0..MAX_LAYOUT_PASSES {
+            let mut invalidate = invalidate_content.clone();
+            invalidate.extend(invalidate_controls.iter().copied());
             let mut direct = self.layout_or_pending(
                 root,
                 size,
                 history_anchor,
                 captures.clone(),
-                invalidate_controls.clone(),
+                invalidate,
                 control_snapshots.clone(),
             )?;
+            invalidate_content.clear();
             invalidate_controls.clear();
             let mut refined_content = Vec::new();
             #[cfg(feature = "perf-counters")]

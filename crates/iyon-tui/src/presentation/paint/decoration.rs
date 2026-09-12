@@ -47,7 +47,7 @@ pub(crate) fn paint_border(
 }
 
 /// Paints a decoration at a signed origin without allocating a temporary
-/// content-sized surface.  RowViewport uses this for a decorated ContentHost
+/// content-sized surface. A viewport uses this for a decorated ContentHost
 /// whose full allocation is larger than the visible window.
 pub(crate) fn paint_border_at(
     surface: &mut Surface,

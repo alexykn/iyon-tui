@@ -3,7 +3,7 @@
 //! The occurrence document and the Taffy driver are the only general layout
 //! route. This host owns interaction state and turns an immutable direct
 //! layout product into a terminal surface; it does not resolve semantic
-//! Views or maintain a parallel scene/cache/index tree.
+//! semantic UI recipes or maintain a parallel scene/cache/index tree.
 
 use std::{
     collections::{HashMap, HashSet},

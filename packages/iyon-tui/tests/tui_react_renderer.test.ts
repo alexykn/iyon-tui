@@ -981,7 +981,7 @@ describe("T3 React mutation renderer", () => {
 				"injected candidate projection failure",
 			);
 			await root.render(createElement(DynamicContent, { source: sourceB }));
-			await expect(root.whenVisible()).rejects.toBeInstanceOf(Error);
+			await expect(root.whenContentVisible()).rejects.toBeInstanceOf(Error);
 			expect(host.screenRows().some((row) => row.includes("confirmed-a"))).toBe(
 				true,
 			);

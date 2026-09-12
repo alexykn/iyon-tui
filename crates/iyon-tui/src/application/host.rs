@@ -1654,14 +1654,12 @@ impl TuiHost {
         if !inner.ui_resources.is_open() {
             return Ok(UiPresentationObservation::Closed);
         }
-        let content_is_visible = if content_visible {
-            inner.content.ui_content_visible(&inner.ui_resources)?
-        } else {
-            inner
-                .content
-                .ui_content_has_physical_product(&inner.ui_resources)?
-        };
-        let frame_is_physical = inner.frame.surface.physically_complete;
+        // The visible structural revision is receipt-confirmed even when
+        // Content is displaying its loading or retained-product fallback.
+        // Only the content barrier requires complete desired products.
+        let content_is_visible =
+            !content_visible || inner.content.ui_content_visible(&inner.ui_resources)?;
+        let frame_is_physical = !content_visible || inner.frame.surface.physically_complete;
         if inner.visible_structural_revision >= target_revision
             && content_is_visible
             && frame_is_physical
@@ -5485,6 +5483,16 @@ mod latency_tests {
             !host.ui_content_visible()?,
             "loading content must not satisfy content visibility"
         );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()?;
+        runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                host.wait_for_ui_presentation(created.acknowledgement.accepted_ui_revision, false),
+            )
+            .await
+        })??;
         host.focus_ui(editor)?;
         host.dispatch_key(KeyStroke::new(Key::Char('y')))?;
         for _ in 0..10_000 {

@@ -535,6 +535,27 @@ impl DirectOccurrenceRenderer {
             .map_err(|error| anyhow!("direct control measurement invalidation failed: {error:?}"))
     }
 
+    fn layout_root(
+        &mut self,
+        root: NodeKey,
+        width: AvailableConstraint,
+        height: AvailableConstraint,
+        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
+        control_views: &HashMap<NodeKey, View>,
+        intrinsic_control_views: &HashMap<NodeKey, View>,
+    ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
+        self.layout
+            .layout(root, width, height, &mut |key, request| {
+                measured_for_request_with_intrinsic(
+                    measurements.get(&key),
+                    control_views.get(&key),
+                    intrinsic_control_views.get(&key),
+                    request,
+                )
+            })
+            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
+    }
+
     fn layout_roots(
         &mut self,
         body_root: NodeKey,
@@ -585,43 +606,54 @@ impl DirectOccurrenceRenderer {
         }
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
-        let mut layout_root = |root, width, height| {
-            self.layout
-                .layout(root, width, height, &mut |key, request| {
-                    measured_for_request_with_intrinsic(
-                        measurements.get(&key),
-                        control_views.get(&key),
-                        intrinsic_control_views.get(&key),
-                        request,
-                    )
-                })
-                .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
-        };
 
-        // First obtain the body's intrinsic height without asking Taffy to
-        // fill the viewport. This is the same boundary used by the retained
-        // root resolver before it allocates the remaining History track.
-        let body_measurement = layout_root(
+        // First obtain intrinsic body height. The second pass introduces an
+        // ephemeral viewport boundary, without mutating root style, so a
+        // content-heavy column receives the same finite height allocation as
+        // the terminal root.
+        let body_intrinsic = self.layout_root(
             body,
             AvailableConstraint::Definite(f32::from(size.width)),
             AvailableConstraint::MaxContent,
+            measurements,
+            control_views,
+            intrinsic_control_views,
         )?;
-        let body_height = body_measurement
+        let body_height = body_intrinsic
             .iter()
             .find(|geometry| geometry.key == body)
             .map(|geometry| round_edge(geometry.logical.height))
             .transpose()?
             .ok_or_else(|| anyhow!("direct Body root geometry is missing"))?
             .clamp(0, i32::from(size.height)) as u16;
+        let body_measurement = self
+            .layout
+            .layout_in_viewport(
+                body,
+                f32::from(size.width),
+                f32::from(body_height),
+                &mut |key, request| {
+                    measured_for_request_with_intrinsic(
+                        measurements.get(&key),
+                        control_views.get(&key),
+                        intrinsic_control_views.get(&key),
+                        request,
+                    )
+                },
+            )
+            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
         let history_height = size.height.saturating_sub(body_height);
 
         let mut history_layouts = Vec::with_capacity(history_roots.len());
         let mut history_height_total = 0.0_f32;
         for root in history_roots {
-            let geometries = layout_root(
+            let geometries = self.layout_root(
                 root,
                 AvailableConstraint::Definite(f32::from(size.width)),
                 AvailableConstraint::MaxContent,
+                measurements,
+                control_views,
+                intrinsic_control_views,
             )?;
             let root_height = geometries
                 .iter()
@@ -679,10 +711,13 @@ impl DirectOccurrenceRenderer {
                 .copied()
                 .ok_or_else(|| anyhow!("direct Portal owner geometry is missing"))?;
             let owner_width = owner_geometry.logical_content_width.max(0.0);
-            let geometries = layout_root(
+            let geometries = self.layout_root(
                 root,
                 AvailableConstraint::Definite(owner_width),
                 AvailableConstraint::MaxContent,
+                measurements,
+                control_views,
+                intrinsic_control_views,
             )?;
             for mut geometry in geometries {
                 translate_geometry_by(

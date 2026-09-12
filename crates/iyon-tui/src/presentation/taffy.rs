@@ -621,6 +621,58 @@ impl TaffyLayoutAdapter {
             width: available_space(width)?,
             height: available_space(height)?,
         };
+        self.layout_node(root_node, root, available, measure)
+    }
+
+    /// Layout a root beneath an ephemeral viewport boundary. The viewport
+    /// constrains intrinsic descendants without mutating the occurrence's
+    /// style (or its explicit min/max dimensions).
+    pub(crate) fn layout_in_viewport(
+        &mut self,
+        root: NodeKey,
+        width: f32,
+        height: f32,
+        measure: &mut impl FnMut(NodeKey, MeasureRequest) -> MeasuredSize,
+    ) -> Result<Vec<ComputedGeometry>, TaffyAdapterError> {
+        if !width.is_finite() || width < 0.0 || !height.is_finite() || height < 0.0 {
+            return Err(TaffyAdapterError::NonFiniteGeometry);
+        }
+        let root_node = self.entry(root)?.node;
+        let viewport = self
+            .tree
+            .new_with_children(
+                Style {
+                    size: Size {
+                        width: Dimension::length(width),
+                        height: Dimension::length(height),
+                    },
+                    ..Style::default()
+                },
+                &[root_node],
+            )
+            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+        let result = self.layout_node(
+            viewport,
+            root,
+            Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::Definite(height),
+            },
+            measure,
+        );
+        self.tree
+            .remove(viewport)
+            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+        result
+    }
+
+    fn layout_node(
+        &mut self,
+        root_node: taffy::NodeId,
+        root: NodeKey,
+        available: Size<AvailableSpace>,
+        measure: &mut impl FnMut(NodeKey, MeasureRequest) -> MeasuredSize,
+    ) -> Result<Vec<ComputedGeometry>, TaffyAdapterError> {
         let mut measure_error = None;
         let mut failed_nodes = Vec::new();
         self.tree
@@ -941,6 +993,12 @@ fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
         )
     {
         style.min_size.width = Dimension::length(0.0);
+    }
+    if matches!(
+        property(snapshot, PropertyId::MinHeight),
+        None | Some(LayerValue::Unset | LayerValue::Null)
+    ) {
+        style.min_size.height = Dimension::length(0.0);
     }
     // Concrete controls are occurrence leaves. Their native component view is
     // painted inside this allocation, so a control without explicit geometry

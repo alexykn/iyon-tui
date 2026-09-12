@@ -151,7 +151,7 @@ layout time and pass count, and physical paint. The timer type, `Instant` reads,
 and timer guards are compiled only under `perf-counters`; the default addon
 contains no timer labels or `tuiPerf*` symbols.
 
-The exact traffic witness passed on current source at `c6acc54`:
+The exact traffic witness passed on current source at `665c0a8`:
 
 | Scenario | UI calls | UI records | semantic bytes | records |
 |---|---:|---:|---:|---|
@@ -181,17 +181,18 @@ process RSS and JS heap are reported separately and are not native allocation
 counts. With fewer than 20 samples, p99 is marked exploratory-max-adjacent and
 raw samples remain authoritative.
 
-Raw JSONL-style JSON reports from the latest run are:
+Raw JSONL-style JSON reports from the latest runs are:
 
-    /tmp/t7-m2-current-default-final-c6acc54.json
-    /tmp/t7-m2-perf-baseline-latest-a.json
-    /tmp/t7-m2-perf-baseline-latest-b.json
-    /tmp/t7-m2-current-instrumented-final-c6acc54.json
+    /tmp/t7-m2-stage-profile-665c0a8.json
+    /tmp/t7-m2-current-default-665c0a8.json
+    /tmp/t7-m2-perf-baseline-latest-a.json (historical, cross-version comparison withdrawn)
+    /tmp/t7-m2-perf-baseline-latest-b.json (historical, cross-version comparison withdrawn)
+    /tmp/t7-m2-current-instrumented-final-c6acc54.json (historical)
 
 The current default staged addon is darwin-arm64, SHA-256
-`28beac6f5ce212cf82563d522f1d0bfe9bee5de8669300b50e7736574548239d`.
+`595fec71c4c8b8a3e044eae4d546789128623d1b02a658a1ad7df1c3be392952`.
 The separate instrumented addon is SHA-256
-`1ff971b932f4e89bf07103ed8d4acacce516abe259c2dc3e45a539cb9d89bc0b`; it was
+`0deaef80e91c42d15a43ad7ee613af478b93b16424c520eb423dfe9a5c5cffe8`; it was
 used only for native counters/timing and was not used as the comparison
 artifact. The immutable M1 baseline remains unchanged at
 `/tmp/t6-m1-baseline/iyon-tui-native.node`, SHA-256
@@ -222,19 +223,20 @@ are shown equivalent. That separate archived-source rerun was not performed in
 this lane. Current-source stage timings above remain valid profiling evidence;
 no cross-version p95 claim is made and no Linux x64 execution is claimed.
 
-The additional stage profile `/tmp/t7-m2-stage-profile.json` used the same
-production route, one warmup, seven measured samples, and append count 16. The
+The additional stage profile `/tmp/t7-m2-stage-profile-665c0a8.json` (current
+source commit `665c0a8`) used the same production route, one warmup, seven
+measured samples, and append count 16. The
 median stage timings (milliseconds; `TaffyLayoutPasses` is the median count)
 were:
 
 | Workload | frame preparation | content capture | DirectDriver request | Taffy layout | Taffy passes | physical paint |
 |---|---:|---:|---:|---:|---:|---:|
-| stable-tree-leaf-style | 2.381 | 0.057 | 1.866 | 1.532 | 4 | 0.311 |
-| wide-keyed-reorder | 5.872 | 0.505 | 4.610 | 4.472 | 4 | 0.249 |
-| source-width-80 | 1.520 | 0.250 | 1.167 | 1.149 | 4 | 0.094 |
-| markdown-steady-smooth-native | 16.549 | 4.180 | 12.110 | 11.831 | 72 | 0.132 |
-| native-editor | 0.027 | 0.000 | 0.016 | 0.004 | 2 | 0.006 |
-| resize-theme-scroll | 3.626 | 0.281 | 2.832 | 2.617 | 14 | 0.403 |
+| stable-tree-leaf-style | 2.288 | 0.059 | 1.800 | 1.514 | 4 | 0.324 |
+| wide-keyed-reorder | 6.025 | 0.547 | 4.626 | 4.487 | 4 | 0.248 |
+| source-width-80 | 1.523 | 0.248 | 1.170 | 1.154 | 4 | 0.098 |
+| markdown-steady-smooth-native | 15.696 | 3.918 | 11.383 | 11.067 | 64 | 0.128 |
+| native-editor | 0.043 | 0.000 | 0.026 | 0.005 | 2 | 0.007 |
+| resize-theme-scroll | 3.563 | 0.271 | 2.797 | 2.601 | 14 | 0.397 |
 
 The profile confirms that the current interactive path waits on the existing
 Taffy worker response and that content capture can also be material on a

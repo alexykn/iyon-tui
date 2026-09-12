@@ -16,10 +16,12 @@ use crate::{
     geometry::Rect,
     physical::{PhysicalCell, PhysicalRow, PhysicalStyle, Surface, grapheme_cell_width},
     presentation::paint::{StyleContext, ThemeResolver},
+    presentation::wrap::{WrapToken, wrap_token_lines},
     presentation::{HorizontalAlign, WrapMode},
     stream::{StreamOffset, StreamRange},
 };
 
+use super::render::RenderContext;
 use super::{
     Alignment, Annotations, Block, BlockKind, BreakKind, CodeBlock, FormatId, HeadingLevel, Inline,
     InlineContent, InlineKind, LanguageId, List, ListItem, ListMarker, LiteralText, Mark,
@@ -27,6 +29,8 @@ use super::{
     TextOrigin, TextPart, TextProvenance, TextRenderPolicy, TextRole, TextRun, TextTableSection,
     TextTaskState, text_style_ref,
 };
+
+type SemanticContext = RenderContext;
 
 /// Width request used by direct semantic content measurement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -285,119 +289,6 @@ impl TerminalSemanticContext {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-struct SemanticContext {
-    ancestor_roles: Vec<TextRole>,
-    heading_level: Option<HeadingLevel>,
-    origin: Option<TextOrigin>,
-    list_kind: Option<TextListKind>,
-    task_state: Option<TextTaskState>,
-    table_section: Option<TextTableSection>,
-    language: Option<LanguageId>,
-    format: Option<FormatId>,
-}
-
-impl SemanticContext {
-    fn for_node(&self, annotations: &Annotations) -> Self {
-        let mut next = self.clone();
-        next.origin = annotations.origin().or_else(|| self.origin.clone());
-        next
-    }
-
-    fn with_role(&self, role: TextRole) -> Self {
-        let mut next = self.clone();
-        next.ancestor_roles.push(role);
-        next
-    }
-
-    fn with_heading_level(&self, level: HeadingLevel) -> Self {
-        let mut next = self.clone();
-        next.heading_level = Some(level);
-        next
-    }
-
-    fn with_list_kind(&self, kind: TextListKind) -> Self {
-        let mut next = self.clone();
-        next.list_kind = Some(kind);
-        next
-    }
-
-    fn with_task_state(&self, state: Option<TextTaskState>) -> Self {
-        let mut next = self.clone();
-        next.task_state = state;
-        next
-    }
-
-    fn with_table_section(&self, section: TextTableSection) -> Self {
-        let mut next = self.clone();
-        next.table_section = Some(section);
-        next
-    }
-
-    fn with_language(&self, language: Option<&LanguageId>) -> Self {
-        let mut next = self.clone();
-        next.language = language.cloned();
-        next
-    }
-
-    fn with_format(&self, format: &FormatId) -> Self {
-        let mut next = self.clone();
-        next.format = Some(format.clone());
-        next
-    }
-
-    fn identity(
-        &self,
-        role: TextRole,
-        part: Option<TextPart>,
-        annotations: &Annotations,
-    ) -> TerminalSemanticIdentity {
-        let mut facts = TextFacts::new()
-            .roles(self.ancestor_roles.iter().copied())
-            .role(role);
-        if let Some(part) = part {
-            facts = facts.part(part);
-        }
-        if let Some(origin) = &self.origin {
-            facts = facts.origin(origin);
-        }
-        if let Some(level) = self.heading_level {
-            facts = facts.heading_level(level);
-        }
-        if let Some(kind) = self.list_kind {
-            facts = facts.list_kind(kind);
-        }
-        if let Some(state) = self.task_state {
-            facts = facts.task_state(state);
-        }
-        if let Some(section) = self.table_section {
-            facts = facts.table_section(section);
-        }
-        if let Some(language) = &self.language {
-            facts = facts.language(language);
-        }
-        if let Some(format) = &self.format {
-            facts = facts.format(format);
-        }
-        TerminalSemanticIdentity {
-            role,
-            part,
-            context: TerminalSemanticContext {
-                ancestor_roles: self.ancestor_roles.clone().into(),
-                heading_level: self.heading_level,
-                origin: self.origin.clone(),
-                list_kind: self.list_kind,
-                task_state: self.task_state,
-                table_section: self.table_section,
-                language: self.language.clone(),
-                format: self.format.clone(),
-            },
-            annotations: annotations.clone(),
-            facts: facts.annotations(annotations).finish(),
-        }
-    }
-}
-
 /// Semantic identity retained by one block or run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TerminalSemanticIdentity {
@@ -406,6 +297,57 @@ pub(crate) struct TerminalSemanticIdentity {
     context: TerminalSemanticContext,
     annotations: Annotations,
     facts: crate::presentation::StyleFacts,
+}
+
+fn terminal_identity(
+    context: &SemanticContext,
+    role: TextRole,
+    part: Option<TextPart>,
+    annotations: &Annotations,
+) -> TerminalSemanticIdentity {
+    let mut facts = TextFacts::new()
+        .roles(context.ancestor_roles.iter().copied())
+        .role(role);
+    if let Some(part) = part {
+        facts = facts.part(part);
+    }
+    if let Some(origin) = &context.origin {
+        facts = facts.origin(origin);
+    }
+    if let Some(level) = context.heading_level {
+        facts = facts.heading_level(level);
+    }
+    if let Some(kind) = context.list_kind {
+        facts = facts.list_kind(kind);
+    }
+    if let Some(state) = context.task_state {
+        facts = facts.task_state(state);
+    }
+    if let Some(section) = context.table_section {
+        facts = facts.table_section(section);
+    }
+    if let Some(language) = &context.language {
+        facts = facts.language(language);
+    }
+    if let Some(format) = &context.format {
+        facts = facts.format(format);
+    }
+    TerminalSemanticIdentity {
+        role,
+        part,
+        context: TerminalSemanticContext {
+            ancestor_roles: context.ancestor_roles.clone().into(),
+            heading_level: context.heading_level,
+            origin: context.origin.clone(),
+            list_kind: context.list_kind,
+            task_state: context.task_state,
+            table_section: context.table_section,
+            language: context.language.clone(),
+            format: context.format.clone(),
+        },
+        annotations: annotations.clone(),
+        facts: facts.annotations(annotations).finish(),
+    }
 }
 
 impl TerminalSemanticIdentity {
@@ -867,7 +809,7 @@ impl<'a> ProductBuilder<'a> {
             let context = SemanticContext::default();
             let index = self.begin_block(
                 kind,
-                context.identity(block_role(content), None, &annotations),
+                terminal_identity(&context, block_role(content), None, &annotations),
                 0,
                 width,
             )?;
@@ -967,7 +909,7 @@ impl<'a> ProductBuilder<'a> {
     }
 
     fn add_text_run(&mut self, run: &TextRun, context: &SemanticContext, role: TextRole) -> Piece {
-        let identity = context.identity(role, None, run.annotations());
+        let identity = terminal_identity(context, role, None, run.annotations());
         let index = self.add_run(
             Arc::from(run.text()),
             run.provenance().clone(),
@@ -988,7 +930,7 @@ impl<'a> ProductBuilder<'a> {
         part: Option<TextPart>,
         annotations: &Annotations,
     ) -> Piece {
-        let identity = context.identity(role, part, annotations);
+        let identity = terminal_identity(context, role, part, annotations);
         let index = self.add_run(
             Arc::from(text),
             TextProvenance::Synthetic,
@@ -1002,7 +944,8 @@ impl<'a> ProductBuilder<'a> {
     }
 
     fn raw_pieces(&mut self, raw: &RawText, context: &SemanticContext) -> Vec<Piece> {
-        let identity = context.identity(TextRole::Paragraph, None, &Annotations::default());
+        let identity =
+            terminal_identity(context, TextRole::Paragraph, None, &Annotations::default());
         let index = self.add_run(
             Arc::from(raw.text()),
             TextProvenance::Synthetic,
@@ -1045,8 +988,12 @@ impl<'a> ProductBuilder<'a> {
                     WrapMode::WordThenGrapheme,
                     HorizontalAlign::Start,
                 )?;
-                self.blocks[index].identity =
-                    heading_context.identity(TextRole::Heading, None, block.annotations());
+                self.blocks[index].identity = terminal_identity(
+                    &heading_context,
+                    TextRole::Heading,
+                    None,
+                    block.annotations(),
+                );
                 self.blocks[index].kind = TerminalBlockKind::Heading(*level);
             }
             BlockKind::BlockQuote { blocks } => {
@@ -1122,7 +1069,8 @@ impl<'a> ProductBuilder<'a> {
             }
             let child_index = self.begin_block(
                 block_kind(child),
-                context.for_node(child.annotations()).identity(
+                terminal_identity(
+                    &context.for_node(child.annotations()),
                     block_role_for_kind(child.kind()),
                     None,
                     child.annotations(),
@@ -1166,7 +1114,7 @@ impl<'a> ProductBuilder<'a> {
         )?;
         for row in &mut self.rows[start_row..] {
             let mut spans = Vec::with_capacity(row.spans.len() + 1);
-            spans.push(span_for_piece(&marker, 0, marker.range.end, x, &self.runs));
+            spans.push(span_for_piece(&marker, 0, marker.range.end, x, &self.runs)?);
             spans.extend(row.spans.iter().cloned());
             row.spans = spans.into();
             row.width = row.width.max(x.saturating_add(2));
@@ -1208,14 +1156,26 @@ impl<'a> ProductBuilder<'a> {
             let marker_width = marker_pieces
                 .iter()
                 .map(|piece| {
-                    checked_text_width(&self.runs[piece.run_index].text[piece.range.clone()])
+                    checked_extent(
+                        "list marker",
+                        text_cell_extent(&self.runs[piece.run_index].text[piece.range.clone()]),
+                    )
                 })
-                .sum::<u16>();
-            let item_x = x.saturating_add(marker_width).min(self.width);
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(usize::from)
+                .sum::<usize>();
+            let marker_width = checked_extent("list marker", marker_width)?;
+            let item_x =
+                x.checked_add(marker_width)
+                    .ok_or(TerminalProjectionError::ExtentOverflow {
+                        axis: "list body x",
+                        value: usize::from(x).saturating_add(usize::from(marker_width)),
+                    })?;
             let item_width = width.saturating_sub(marker_width);
             let item_index_in_product = self.begin_block(
                 TerminalBlockKind::ListItem,
-                item_context.identity(TextRole::ListItem, None, item.annotations()),
+                terminal_identity(&item_context, TextRole::ListItem, None, item.annotations()),
                 x,
                 width,
             )?;
@@ -1235,14 +1195,14 @@ impl<'a> ProductBuilder<'a> {
                 let mut marker_x = x;
                 for piece in &marker_pieces {
                     let marker_text = &self.runs[piece.run_index].text[piece.range.clone()];
-                    let piece_width = checked_text_width(marker_text);
+                    let piece_width = checked_extent("list marker", text_cell_extent(marker_text))?;
                     spans.push(span_for_piece(
                         piece,
                         0,
                         piece.range.len(),
                         marker_x,
                         &self.runs,
-                    ));
+                    )?);
                     marker_x = marker_x.saturating_add(piece_width);
                 }
                 spans.extend(row.spans.iter().cloned());
@@ -1353,7 +1313,7 @@ impl<'a> ProductBuilder<'a> {
                 .with_table_section(section);
             let table_row_index = self.begin_block(
                 TerminalBlockKind::TableRow,
-                row_context.identity(TextRole::TableRow, None, row.annotations()),
+                terminal_identity(&row_context, TextRole::TableRow, None, row.annotations()),
                 x,
                 width,
             )?;
@@ -1377,7 +1337,7 @@ impl<'a> ProductBuilder<'a> {
                     .with_role(TextRole::TableCell);
                 let cell_index_in_product = self.begin_block(
                     TerminalBlockKind::TableCell,
-                    cell_context.identity(TextRole::TableCell, None, cell.annotations()),
+                    terminal_identity(&cell_context, TextRole::TableCell, None, cell.annotations()),
                     cell_x,
                     span_width,
                 )?;
@@ -1467,7 +1427,7 @@ impl<'a> ProductBuilder<'a> {
             .runs()
             .iter()
             .map(|run| {
-                let identity = context.identity(role, None, annotations);
+                let identity = terminal_identity(&context, role, None, annotations);
                 let index = self.add_run(
                     Arc::from(run.text()),
                     run.provenance().clone(),
@@ -1558,7 +1518,7 @@ impl<'a> ProductBuilder<'a> {
     ) {
         match inline.kind() {
             InlineKind::Text(run) => {
-                let identity = context.identity(role, part, run.annotations());
+                let identity = terminal_identity(context, role, part, run.annotations());
                 let index = self.add_run(
                     Arc::from(run.text()),
                     run.provenance().clone(),
@@ -1584,7 +1544,12 @@ impl<'a> ProductBuilder<'a> {
         align: HorizontalAlign,
     ) -> Result<(), TerminalProjectionError> {
         let hard_lines = self.tokenize_hard_lines(&pieces)?;
-        let rows = wrap_tokens(&hard_lines, width, mode, &self.runs);
+        let rows = {
+            let runs = &self.runs;
+            wrap_token_lines(&hard_lines, width, mode, |token| {
+                &runs[token.run_index].text[token.range.clone()]
+            })
+        };
         for tokens in &rows {
             self.push_token_row(block_index, tokens, x, width, align)?;
         }
@@ -1728,6 +1693,12 @@ struct Token {
     width: u16,
 }
 
+impl WrapToken for Token {
+    fn wrap_width(&self) -> usize {
+        usize::from(self.width)
+    }
+}
+
 fn empty_row(block_index: usize) -> TerminalRow {
     TerminalRow {
         block_index,
@@ -1767,101 +1738,6 @@ fn merged_provenance(left: &TextProvenance, right: &TextProvenance) -> TextProve
         (_, TextProvenance::Derived(right)) => TextProvenance::Derived(*right),
         _ => TextProvenance::Synthetic,
     }
-}
-
-fn wrap_tokens(
-    lines: &[Vec<Token>],
-    width: u16,
-    mode: WrapMode,
-    runs: &[TerminalRun],
-) -> Vec<Vec<Token>> {
-    let width = usize::from(width);
-    let mut output = Vec::new();
-    for line in lines {
-        if mode == WrapMode::NoWrap || width == 0 {
-            output.push(line.clone());
-        } else if line.is_empty() {
-            output.push(Vec::new());
-        } else if mode == WrapMode::Grapheme {
-            output.extend(wrap_graphemes(line, width));
-        } else {
-            output.extend(wrap_word_then_grapheme(line, width, runs));
-        }
-    }
-    output
-}
-
-fn wrap_graphemes(line: &[Token], width: usize) -> Vec<Vec<Token>> {
-    let mut output = Vec::new();
-    let mut current = Vec::new();
-    let mut used: usize = 0;
-    for token in line {
-        if used > 0 && used.saturating_add(usize::from(token.width)) > width {
-            output.push(std::mem::take(&mut current));
-            used = 0;
-        }
-        current.push(token.clone());
-        used = used.saturating_add(usize::from(token.width));
-    }
-    if !current.is_empty() {
-        output.push(current);
-    }
-    output
-}
-
-fn wrap_word_then_grapheme(line: &[Token], width: usize, runs: &[TerminalRun]) -> Vec<Vec<Token>> {
-    let mut text = String::new();
-    let mut ends = Vec::with_capacity(line.len());
-    for token in line {
-        text.push_str(
-            runs[token.run_index]
-                .text
-                .get(token.range.clone())
-                .unwrap_or(""),
-        );
-        ends.push(text.len());
-    }
-    let mut legal = vec![false; line.len()];
-    for (offset, opportunity) in linebreaks(&text) {
-        if matches!(
-            opportunity,
-            BreakOpportunity::Allowed | BreakOpportunity::Mandatory
-        ) && let Ok(index) = ends.binary_search(&offset)
-        {
-            legal[index] = true;
-        }
-    }
-    let mut output = Vec::new();
-    let mut cursor = 0;
-    while cursor < line.len() {
-        let start = cursor;
-        let mut used: usize = 0;
-        let mut last_break = None;
-        while cursor < line.len() {
-            let token_width = usize::from(line[cursor].width);
-            if used.saturating_add(token_width) <= width {
-                used += token_width;
-                if legal[cursor] {
-                    last_break = Some(cursor + 1);
-                }
-                cursor += 1;
-            } else {
-                break;
-            }
-        }
-        if cursor == line.len() {
-            output.push(line[start..cursor].to_vec());
-        } else if let Some(break_at) = last_break.filter(|break_at| *break_at > start) {
-            output.push(line[start..break_at].to_vec());
-            cursor = break_at;
-        } else if cursor > start {
-            output.push(line[start..cursor].to_vec());
-        } else {
-            output.push(vec![line[cursor].clone()]);
-            cursor += 1;
-        }
-    }
-    output
 }
 
 fn block_kind(block: &Block) -> TerminalBlockKind {
@@ -2080,11 +1956,8 @@ fn code_label_text(code: &CodeBlock, policy: super::CodeBlockLabelPolicy) -> Opt
     }
 }
 
-fn checked_text_width(text: &str) -> u16 {
-    text.graphemes(true)
-        .map(grapheme_cell_width)
-        .sum::<usize>()
-        .min(usize::from(u16::MAX)) as u16
+fn text_cell_extent(text: &str) -> usize {
+    text.graphemes(true).map(grapheme_cell_width).sum()
 }
 
 fn span_for_piece(
@@ -2093,16 +1966,16 @@ fn span_for_piece(
     end: usize,
     x: u16,
     runs: &[TerminalRun],
-) -> TerminalPaintSpan {
+) -> Result<TerminalPaintSpan, TerminalProjectionError> {
     let run = &runs[piece.run_index];
     let range = (piece.range.start + start)..(piece.range.start + end);
-    TerminalPaintSpan {
+    Ok(TerminalPaintSpan {
         run_index: piece.run_index,
         byte_range: range.clone(),
         source: token_source(&run.provenance, range.clone()),
         x,
-        cell_width: checked_text_width(&run.text[range]),
-    }
+        cell_width: checked_extent("paint span", text_cell_extent(&run.text[range]))?,
+    })
 }
 
 fn mark_role(mark: &Mark) -> TextRole {
@@ -2278,7 +2151,7 @@ fn measure_block(block: &Block, policy: &TextRenderPolicy) -> IntrinsicMetrics {
             |metrics, (index, item)| {
                 let body = measure_block_slice(item.blocks(), policy);
                 let marker = list_item_marker(policy, list.marker(), index, item);
-                let marker_width = usize::from(checked_text_width(&marker));
+                let marker_width = text_cell_extent(&marker);
                 IntrinsicMetrics {
                     min_width: metrics
                         .min_width
@@ -2292,7 +2165,7 @@ fn measure_block(block: &Block, policy: &TextRenderPolicy) -> IntrinsicMetrics {
         BlockKind::CodeBlock(code) => {
             let body = intrinsic_text(&code.body().text(), policy.code_wrap());
             let label = code_label_text(code, policy.code_block_label())
-                .map(|label| usize::from(checked_text_width(&label)))
+                .map(|label| text_cell_extent(&label))
                 .unwrap_or(0);
             IntrinsicMetrics {
                 min_width: body.min_width.max(label),

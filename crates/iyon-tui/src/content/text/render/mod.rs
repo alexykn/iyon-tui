@@ -30,7 +30,7 @@ use crate::content::Renderer;
 use crate::presentation::factory as vf;
 use crate::presentation::ir::{ColumnChild, PersistentSeq, ViewId};
 use crate::{HorizontalAlign, Insets, StyleRef, TextSpan, View, WrapMode};
-use identity::RenderContext;
+pub(crate) use identity::RenderContext;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct RawCacheKey {

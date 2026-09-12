@@ -6,35 +6,38 @@ use crate::View;
 use crate::presentation::factory as vf;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct RenderContextKey {
+pub(crate) struct RenderContextKey {
     /// The complete inherited role path is part of the cache key.  A depth
     /// alone is not enough: selectors can distinguish two paths with the
     /// same number of ancestors.
-    pub(super) ancestor_roles: Vec<TextRole>,
-    pub(super) origin: Option<TextOrigin>,
-    pub(super) list_kind: Option<TextListKind>,
-    pub(super) task_state: Option<TextTaskState>,
-    pub(super) table_section: Option<TextTableSection>,
-    pub(super) language: Option<LanguageId>,
-    pub(super) format: Option<FormatId>,
+    pub(crate) ancestor_roles: Vec<TextRole>,
+    pub(crate) heading_level: Option<super::super::HeadingLevel>,
+    pub(crate) origin: Option<TextOrigin>,
+    pub(crate) list_kind: Option<TextListKind>,
+    pub(crate) task_state: Option<TextTaskState>,
+    pub(crate) table_section: Option<TextTableSection>,
+    pub(crate) language: Option<LanguageId>,
+    pub(crate) format: Option<FormatId>,
 }
 
 /// Semantic environment known while lowering IR into Views.
 #[derive(Clone, Debug, Default)]
-pub(super) struct RenderContext {
-    pub(super) ancestor_roles: Vec<TextRole>,
-    pub(super) origin: Option<TextOrigin>,
-    pub(super) list_kind: Option<TextListKind>,
-    pub(super) task_state: Option<TextTaskState>,
-    pub(super) table_section: Option<TextTableSection>,
-    pub(super) language: Option<LanguageId>,
-    pub(super) format: Option<FormatId>,
+pub(crate) struct RenderContext {
+    pub(crate) ancestor_roles: Vec<TextRole>,
+    pub(crate) heading_level: Option<super::super::HeadingLevel>,
+    pub(crate) origin: Option<TextOrigin>,
+    pub(crate) list_kind: Option<TextListKind>,
+    pub(crate) task_state: Option<TextTaskState>,
+    pub(crate) table_section: Option<TextTableSection>,
+    pub(crate) language: Option<LanguageId>,
+    pub(crate) format: Option<FormatId>,
 }
 
 impl RenderContext {
-    pub(super) fn cache_key(&self) -> RenderContextKey {
+    pub(crate) fn cache_key(&self) -> RenderContextKey {
         RenderContextKey {
             ancestor_roles: self.ancestor_roles.clone(),
+            heading_level: self.heading_level,
             origin: self.origin.clone(),
             list_kind: self.list_kind,
             task_state: self.task_state,
@@ -44,49 +47,55 @@ impl RenderContext {
         }
     }
 
-    pub(super) fn effective_origin(&self, annotations: &Annotations) -> Option<TextOrigin> {
+    pub(crate) fn effective_origin(&self, annotations: &Annotations) -> Option<TextOrigin> {
         annotations.origin().or_else(|| self.origin.clone())
     }
 
-    pub(super) fn for_node(&self, annotations: &Annotations) -> Self {
+    pub(crate) fn for_node(&self, annotations: &Annotations) -> Self {
         let mut next = self.clone();
         next.origin = self.effective_origin(annotations);
         next
     }
 
-    pub(super) fn with_role(&self, role: TextRole) -> Self {
+    pub(crate) fn with_role(&self, role: TextRole) -> Self {
         let mut next = self.clone();
         next.ancestor_roles.push(role);
         next
     }
 
-    pub(super) fn with_list_kind(&self, kind: TextListKind) -> Self {
+    pub(crate) fn with_list_kind(&self, kind: TextListKind) -> Self {
         let mut next = self.clone();
         next.list_kind = Some(kind);
         next
     }
 
-    pub(super) fn with_task_state(&self, state: Option<TextTaskState>) -> Self {
+    pub(crate) fn with_task_state(&self, state: Option<TextTaskState>) -> Self {
         let mut next = self.clone();
         next.task_state = state;
         next
     }
 
-    pub(super) fn with_table_section(&self, section: TextTableSection) -> Self {
+    pub(crate) fn with_table_section(&self, section: TextTableSection) -> Self {
         let mut next = self.clone();
         next.table_section = Some(section);
         next
     }
 
-    pub(super) fn with_language(&self, language: Option<&LanguageId>) -> Self {
+    pub(crate) fn with_language(&self, language: Option<&LanguageId>) -> Self {
         let mut next = self.clone();
         next.language = language.cloned();
         next
     }
 
-    pub(super) fn with_format(&self, format: &FormatId) -> Self {
+    pub(crate) fn with_format(&self, format: &FormatId) -> Self {
         let mut next = self.clone();
         next.format = Some(format.clone());
+        next
+    }
+
+    pub(crate) fn with_heading_level(&self, level: super::super::HeadingLevel) -> Self {
+        let mut next = self.clone();
+        next.heading_level = Some(level);
         next
     }
 }

@@ -32,6 +32,21 @@ pub(crate) struct WrappedLine<'a> {
     pub(crate) fits: bool,
 }
 
+/// Token contract shared by every terminal grapheme wrapping consumer.
+///
+/// Keeping the wrapping kernel generic lets semantic content retain its own
+/// run/source references while the presentation text path uses borrowed
+/// `StyledGrapheme`s. Neither caller is allowed to recalculate width here.
+pub(crate) trait WrapToken: Clone {
+    fn wrap_width(&self) -> usize;
+}
+
+impl<'a> WrapToken for StyledGrapheme<'a> {
+    fn wrap_width(&self) -> usize {
+        self.width
+    }
+}
+
 impl<'a> WrappedLine<'a> {
     pub(crate) fn new(graphemes: Vec<StyledGrapheme<'a>>, target_width: usize) -> Self {
         let width = graphemes.iter().map(|g| g.width).sum();
@@ -272,52 +287,61 @@ pub(crate) fn wrap_styled_lines<'a>(
     width: u16,
     mode: WrapMode,
 ) -> Vec<WrappedLine<'a>> {
+    wrap_token_lines(hard_lines, width, mode, |grapheme| grapheme.text.as_ref())
+        .into_iter()
+        .map(|graphemes| WrappedLine::new(graphemes, usize::from(width)))
+        .collect()
+}
+
+/// Generic grapheme-aware wrapping kernel used by semantic and presentation
+/// text. Extended grapheme clusters are never split internally.
+pub(crate) fn wrap_token_lines<'a, T: WrapToken>(
+    lines: &'a [Vec<T>],
+    width: u16,
+    mode: WrapMode,
+    text: impl Fn(&'a T) -> &'a str,
+) -> Vec<Vec<T>> {
     let width = usize::from(width);
     let mut output = Vec::new();
 
-    for line in hard_lines {
+    for line in lines {
         if mode == WrapMode::NoWrap || width == 0 {
-            output.push(WrappedLine::new(line.clone(), width));
+            output.push(line.clone());
             continue;
         }
 
         if line.is_empty() {
-            output.push(WrappedLine::new(Vec::new(), width));
+            output.push(Vec::new());
             continue;
         }
 
         if mode == WrapMode::Grapheme {
             for row in wrap_graphemes_exact(line, width) {
-                output.push(WrappedLine::new(row, width));
+                output.push(row);
             }
             continue;
         }
 
         // WrapMode::WordThenGrapheme
-        for row in wrap_line_word_then_grapheme(line, width) {
-            output.push(WrappedLine::new(row, width));
-        }
+        output.extend(wrap_line_word_then_grapheme(line, width, &text));
     }
 
     output
 }
 
 /// Last-resort hard breaking between extended grapheme clusters.
-fn wrap_graphemes_exact<'a>(
-    line: &[StyledGrapheme<'a>],
-    width: usize,
-) -> Vec<Vec<StyledGrapheme<'a>>> {
+fn wrap_graphemes_exact<T: WrapToken>(line: &[T], width: usize) -> Vec<Vec<T>> {
     let mut output = Vec::new();
     let mut current = Vec::new();
     let mut used = 0usize;
 
     for grapheme in line {
-        if used > 0 && used.saturating_add(grapheme.width) > width {
+        if used > 0 && used.saturating_add(grapheme.wrap_width()) > width {
             output.push(std::mem::take(&mut current));
             used = 0;
         }
         current.push(grapheme.clone());
-        used = used.saturating_add(grapheme.width);
+        used = used.saturating_add(grapheme.wrap_width());
     }
 
     if !current.is_empty() {
@@ -329,10 +353,11 @@ fn wrap_graphemes_exact<'a>(
 
 /// Word-wrapping with UAX #14 break opportunities, falling back to grapheme-level
 /// hard breaks when words exceed the available width.
-fn wrap_line_word_then_grapheme<'a>(
-    line: &[StyledGrapheme<'a>],
+fn wrap_line_word_then_grapheme<'a, T: WrapToken>(
+    line: &'a [T],
     width: usize,
-) -> Vec<Vec<StyledGrapheme<'a>>> {
+    text: &impl Fn(&'a T) -> &'a str,
+) -> Vec<Vec<T>> {
     if line.is_empty() {
         return vec![Vec::new()];
     }
@@ -341,7 +366,7 @@ fn wrap_line_word_then_grapheme<'a>(
     let mut grapheme_byte_ends: Vec<usize> = Vec::with_capacity(line.len());
 
     for g in line {
-        full_text.push_str(g.text.as_ref());
+        full_text.push_str(text(g));
         grapheme_byte_ends.push(full_text.len());
     }
 
@@ -366,8 +391,8 @@ fn wrap_line_word_then_grapheme<'a>(
         while cursor < line.len() {
             let g = &line[cursor];
 
-            if used_width + g.width <= width {
-                used_width += g.width;
+            if used_width + g.wrap_width() <= width {
+                used_width += g.wrap_width();
                 if can_break_after[cursor] {
                     last_legal_break = Some(cursor + 1);
                 }

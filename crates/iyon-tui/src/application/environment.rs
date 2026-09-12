@@ -372,6 +372,13 @@ impl TuiEnvironment {
         self.lifetime.queue.mark_host_pending(host_id)
     }
 
+    /// Requeues a worker completion even when the host was marked as waiting
+    /// for a physical receipt. Content/layout completions are not receipts and
+    /// must be allowed to run the host's next short transition.
+    pub(super) fn mark_host_ready(&self, host_id: u64) -> anyhow::Result<()> {
+        self.lifetime.queue.mark_host_ready(host_id)
+    }
+
     pub(super) fn with_host_completion<R>(
         &self,
         host_id: u64,
@@ -585,6 +592,28 @@ impl EnvironmentQueue {
         Ok(WakeDisposition {
             schedule_environment_drain: schedule,
         })
+    }
+
+    pub(super) fn mark_host_ready(&self, host_id: u64) -> anyhow::Result<()> {
+        let mut environment = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))?;
+        if !environment.hosts.contains_key(&host_id) {
+            return Ok(());
+        }
+        environment.pending_set.insert(host_id);
+        environment.retry_blocked.remove(&host_id);
+        environment.waiting_for_presentation.remove(&host_id);
+        Self::queue_host(&mut environment, host_id);
+        environment.wake_latched = true;
+        environment.wake_epoch = environment
+            .wake_epoch
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("environment wake epoch exhausted"))?;
+        environment.wake.notify_all();
+        environment.notify.notify_waiters();
+        Ok(())
     }
 
     pub(super) fn complete_host(

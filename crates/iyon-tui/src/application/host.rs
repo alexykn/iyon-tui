@@ -3056,6 +3056,17 @@ impl HostInner {
         Ok(wake)
     }
 
+    /// Re-admits a host after an owned worker completion. The callback only
+    /// performs this short epoch/queue transition; worker code never holds
+    /// the host lock while parsing, projecting, laying out, or painting.
+    pub(super) fn wake_async_work(&mut self) {
+        if matches!(self.lifecycle, HostLifecycle::Open | HostLifecycle::Faulted) {
+            self.pending_epoch = self.pending_epoch.saturating_add(1);
+            let _ = self.environment.mark_host_ready(self.host_id);
+            self.presentation_notify.notify_waiters();
+        }
+    }
+
     fn admit_pending(&mut self) -> anyhow::Result<WakeDisposition> {
         match self.environment.mark_host_pending(self.host_id) {
             Ok(wake) => {
@@ -3619,6 +3630,14 @@ impl HostInner {
         ) {
             Ok(candidate) => candidate,
             Err(error) => {
+                if error
+                    .downcast_ref::<super::content::ContentProjectionPending>()
+                    .is_some()
+                {
+                    self.content.abort_candidate();
+                    self.running.host_discard_candidate();
+                    return Err(error);
+                }
                 // SceneHost may have staged derived layout/surface state before
                 // a late preparation error. Keep the HostInner frame as the
                 // sole visible authority and rebuild the candidate on retry.
@@ -3736,7 +3755,20 @@ impl HostInner {
         let (prepared, history_plan) = if self.can_prepare_metadata_candidate() {
             (self.prepare_metadata_candidate(), None)
         } else {
-            self.prepare_candidate_frame()?
+            match self.prepare_candidate_frame() {
+                Ok(candidate) => candidate,
+                Err(error)
+                    if error
+                        .downcast_ref::<super::content::ContentProjectionPending>()
+                        .is_some() =>
+                {
+                    return Ok(HostFlushOutcome {
+                        waiting_for_presentation: true,
+                        ..HostFlushOutcome::default()
+                    });
+                }
+                Err(error) => return Err(error),
+            }
         };
         if let Some(plan) = history_plan {
             if let Some(content) = prepared.content() {

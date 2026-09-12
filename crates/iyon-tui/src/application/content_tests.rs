@@ -36,6 +36,11 @@ fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
     registry
         .prepare_connector_projection(connector.id(), 20)
         .unwrap();
+    registry.wait_for_projection_jobs_for_test();
+    registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector.id(), 20)
+        .unwrap();
     registry.promote_candidate_projection(connector.id());
     registry.end_candidate();
     registry.begin_projection_candidate();
@@ -61,7 +66,19 @@ fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
         narrow >= 2,
         "known narrow width must recompute wrapped height"
     );
+    let captured_source = registry
+        .candidate_content_captures
+        .get(&captured.capture_id)
+        .and_then(|capture| match &capture.candidate {
+            CapturedCandidate::Prepared(binding) => Some(binding.source_snapshot.clone()),
+            CapturedCandidate::None | CapturedCandidate::Failed { .. } => None,
+        })
+        .expect("captured source snapshot");
     source.append_utf8(b"newest source\n", &[], &[]).unwrap();
+    registry
+        .prepare_connector_projection_async(connector.id(), 5, Some(&captured_source))
+        .unwrap();
+    registry.wait_for_projection_jobs_for_test();
     let refined = registry
         .refine_captured_measurement(
             port.id(),
@@ -123,6 +140,11 @@ fn final_width_failure_uses_the_captured_confirmed_a_product() {
     let a_measurement = registry
         .prepare_connector_projection(connector_a.id(), 20)
         .unwrap();
+    registry.wait_for_projection_jobs_for_test();
+    registry.begin_projection_candidate();
+    let a_measurement = registry
+        .prepare_connector_projection(connector_a.id(), 20)
+        .unwrap();
     registry.promote_candidate_projection(connector_a.id());
     registry.end_candidate();
     source_a.append_utf8(b"newest A\n", &[], &[]).unwrap();
@@ -138,6 +160,10 @@ fn final_width_failure_uses_the_captured_confirmed_a_product() {
         .unwrap()
         .requested = true;
     registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector_b.id(), 20)
+        .unwrap();
+    registry.wait_for_projection_jobs_for_test();
     let captured = registry
         .capture_measurement(port.id(), 20, crate::presentation::ContentWidthRule::Fit)
         .unwrap();
@@ -218,6 +244,11 @@ fn same_source_b_capture_cannot_replace_confirmed_a_frontier() {
     registry
         .prepare_connector_projection(connector_a.id(), 20)
         .unwrap();
+    registry.wait_for_projection_jobs_for_test();
+    registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector_a.id(), 20)
+        .unwrap();
     registry.promote_candidate_projection(connector_a.id());
     registry.end_candidate();
     source.append_utf8(b"B rev2\n", &[], &[]).unwrap();
@@ -233,6 +264,10 @@ fn same_source_b_capture_cannot_replace_confirmed_a_frontier() {
         .unwrap()
         .requested = true;
     registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector_b.id(), 20)
+        .unwrap();
+    registry.wait_for_projection_jobs_for_test();
     let captured = registry
         .capture_measurement(port.id(), 20, crate::presentation::ContentWidthRule::Fit)
         .unwrap();

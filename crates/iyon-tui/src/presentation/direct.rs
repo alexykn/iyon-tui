@@ -1926,6 +1926,58 @@ mod tests {
     }
 
     #[test]
+    fn direct_auto_content_uses_available_width_as_a_cap() {
+        let contents: std::sync::Arc<[TextContent]> = vec![TextContent::raw("x")].into();
+        let product = std::sync::Arc::new(
+            TerminalTextProjector::new(TextRenderPolicy::default())
+                .project(&contents[0], TerminalConstraints::definite(5))
+                .expect("content product"),
+        );
+        let capture = CapturedContentMeasurement {
+            capture_id: 1,
+            port_id: 7,
+            offered_width: 5,
+            measurement: ContentMeasurement {
+                intrinsic_size: crate::geometry::Size::new(1, 1),
+                ..ContentMeasurement::default()
+            },
+            min_content: crate::geometry::Size::new(1, 1),
+            max_content: crate::geometry::Size::new(1, 1),
+            history_adjustment: None,
+            semantic_contents: Some(contents),
+            terminal_policy: TextRenderPolicy::default(),
+            terminal_product: Some(product),
+        };
+        let measured = measured_for_request(
+            Some(&capture),
+            None,
+            crate::presentation::taffy::MeasureRequest {
+                known_width: None,
+                known_height: None,
+                available_width: AvailableConstraint::Definite(5.0),
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: Some(5),
+            },
+        )
+        .expect("auto content measurement");
+        assert_eq!(measured.width, 1.0);
+        assert_eq!(measured.height, 1.0);
+        let allocated = measured_for_request(
+            Some(&capture),
+            None,
+            crate::presentation::taffy::MeasureRequest {
+                known_width: Some(5.0),
+                known_height: None,
+                available_width: AvailableConstraint::Definite(5.0),
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: Some(5),
+            },
+        )
+        .expect("known fill content measurement");
+        assert_eq!(allocated.width, 5.0);
+    }
+
+    #[test]
     fn direct_semantic_measurement_ignores_unmatched_history_adjustment() {
         let capture = CapturedContentMeasurement {
             capture_id: 1,

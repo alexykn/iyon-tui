@@ -7,6 +7,8 @@ mod revision;
 mod slot;
 mod tick;
 
+use std::sync::Arc;
+
 pub use capability::ComponentCx;
 pub(crate) use graph::{MountGraph, MountNode};
 pub use id::ComponentHandle;
@@ -28,7 +30,7 @@ pub(crate) enum ControlSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EditorSnapshot {
-    pub(crate) text: String,
+    pub(crate) text: Arc<str>,
     pub(crate) cursor_bytes: usize,
     pub(crate) focused: bool,
     pub(crate) multiline: bool,

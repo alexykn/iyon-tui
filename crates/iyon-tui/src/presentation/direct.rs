@@ -1791,7 +1791,7 @@ mod tests {
 
     fn editor(text: &str, cursor_bytes: usize, focused: bool) -> EditorSnapshot {
         EditorSnapshot {
-            text: text.to_owned(),
+            text: text.to_owned().into(),
             cursor_bytes,
             focused,
             multiline: true,
@@ -1852,7 +1852,7 @@ mod tests {
     #[test]
     fn editor_measurement_distinguishes_min_and_max_content() {
         let control = ControlSnapshot::Editor(Box::new(EditorSnapshot {
-            text: "long word".to_owned(),
+            text: "long word".to_owned().into(),
             cursor_bytes: 0,
             focused: false,
             multiline: true,

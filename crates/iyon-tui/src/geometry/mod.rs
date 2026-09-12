@@ -1,4 +1,4 @@
-//! Private backend-neutral geometry and layout constraints.
+//! Private backend-neutral geometry types.
 
 mod rect;
 mod size;

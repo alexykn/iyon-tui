@@ -7,7 +7,7 @@ use super::TextInput;
 impl TextInput {
     pub(crate) fn frame_snapshot(&self) -> EditorSnapshot {
         EditorSnapshot {
-            text: self.buffer.text().to_owned(),
+            text: self.buffer.text().to_owned().into(),
             cursor_bytes: self.buffer.cursor_bytes(),
             focused: self.focused,
             multiline: self.multiline,
@@ -27,7 +27,7 @@ mod tests {
         input.set_text("hello\nworld");
         let capture = input.frame_snapshot();
 
-        assert_eq!(capture.text, "hello\nworld");
+        assert_eq!(capture.text, "hello\nworld".into());
         assert_eq!(capture.cursor_bytes, "hello\nworld".len());
         assert!(capture.multiline);
         assert!(!capture.focused);

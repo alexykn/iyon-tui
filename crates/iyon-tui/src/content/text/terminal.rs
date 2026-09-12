@@ -8,11 +8,11 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
-use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
-use taffy::style::TrackSizingFunction;
-use taffy::style_helpers::{
-    auto, fit_content, flex, length, line, max_content, minmax, span, zero,
+use taffy::prelude::{
+    AvailableSpace, Dimension, Display, FromLength, GridTemplateComponent, Size, Style,
+    TrackSizingFunction,
 };
+use taffy::style_helpers::{auto, flex, length, line, max_content, minmax, span, zero};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -1022,14 +1022,11 @@ fn layout_table_grid(
         .map(|column| {
             let track = match policy.table_column_sizing() {
                 super::TableColumnSizing::Content if has_colspan => minmax(zero(), max_content()),
-                super::TableColumnSizing::Content => {
-                    let max: TrackSizingFunction = fit_content(length(f32::from(
-                        content_max_widths
-                            .as_ref()
-                            .expect("content widths are prepared for content tracks")[column],
-                    )));
-                    minmax(zero(), max.max_sizing_function())
-                }
+                super::TableColumnSizing::Content => TrackSizingFunction::from_length(f32::from(
+                    content_max_widths
+                        .as_ref()
+                        .expect("content widths are prepared for content tracks")[column],
+                )),
                 // The zero minimum is intentional: a plain `1fr` track has
                 // an automatic min-content minimum and can overflow a narrow
                 // definite table. Flex tracks own both allocation and that
@@ -3572,5 +3569,38 @@ mod tests {
             error,
             TerminalProjectionError::MarkerExtentOverflow { value: u64::MAX }
         ));
+    }
+
+    #[test]
+    fn content_table_columns_use_intrinsic_maxima() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start(), TableColumn::start()],
+            0,
+            [TableRow::new([
+                TableCell::text("alpha beta"),
+                TableCell::text("123"),
+            ])],
+        )
+        .expect("table");
+        let product = TerminalTextProjector::new(
+            TextRenderPolicy::new()
+                .with_table_column_sizing(super::super::TableColumnSizing::Content),
+        )
+        .project(
+            &TextContent::block(Block::table(table)),
+            TerminalConstraints::definite(30),
+        )
+        .expect("table projection");
+        let cells = product
+            .blocks()
+            .iter()
+            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
+            .map(|block| block.rect())
+            .collect::<Vec<_>>();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].width(), 10);
+        assert_eq!(cells[1].x(), 11);
+        assert_eq!(cells[1].width(), 3);
     }
 }

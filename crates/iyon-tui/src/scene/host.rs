@@ -562,11 +562,10 @@ impl SceneHost {
             #[cfg(feature = "perf-counters")]
             drop(_refinement_timer);
             if !refined_content.is_empty() {
+                self.pending_layout_refined = true;
                 if let Some(pending) = self.pending_layout_input.as_mut() {
                     pending.captures = captures.clone();
-                    self.pending_layout_refined = true;
                 }
-                let pending_signature = self.pending_layout_signature;
                 direct = self.layout_or_pending(
                     root,
                     size,
@@ -575,9 +574,6 @@ impl SceneHost {
                     refined_content,
                     control_snapshots.clone(),
                 )?;
-                if self.pending_layout_signature != pending_signature {
-                    self.pending_layout_refined = false;
-                }
             }
             self.direct_history_overflow_rows = direct.history_overflow_rows;
             let mounts = direct.component_mounts.clone();
@@ -731,7 +727,6 @@ impl SceneHost {
             }
             self.pending_layout_signature = None;
             self.pending_layout_input = None;
-            self.pending_layout_refined = false;
         }
         let pending_input = PendingLayoutInput {
             signature,
@@ -751,7 +746,6 @@ impl SceneHost {
         self.pending_control_invalidations.clear();
         self.pending_layout_signature = Some(signature);
         self.pending_layout_input = Some(pending_input);
-        self.pending_layout_refined = false;
         Err(anyhow::Error::new(SceneLayoutPending))
     }
 

@@ -1550,7 +1550,7 @@ impl TuiHost {
             combined.commits.extend(report.commits);
             combined.errors.extend(report.errors);
             combined.wake_epoch = report.wake_epoch;
-            if !report.rearm {
+            if !report.rearm && !report.waiting_for_presentation {
                 break;
             }
             std::thread::yield_now();

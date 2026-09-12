@@ -58,6 +58,7 @@ pub struct TextRenderPolicy {
     code_block_label: CodeBlockLabelPolicy,
     code_block_gap: u16,
     code_wrap: WrapMode,
+    text_wrap: WrapMode,
 }
 
 impl Default for TextRenderPolicy {
@@ -72,6 +73,7 @@ impl Default for TextRenderPolicy {
             code_block_label: CodeBlockLabelPolicy::default(),
             code_block_gap: 0,
             code_wrap: WrapMode::NoWrap,
+            text_wrap: WrapMode::WordThenGrapheme,
         }
     }
 }
@@ -178,6 +180,17 @@ impl TextRenderPolicy {
     #[must_use]
     pub fn with_code_wrap(mut self, wrap: WrapMode) -> Self {
         self.code_wrap = wrap;
+        self
+    }
+
+    #[must_use]
+    pub fn text_wrap(&self) -> WrapMode {
+        self.text_wrap
+    }
+
+    #[must_use]
+    pub fn with_text_wrap(mut self, wrap: WrapMode) -> Self {
+        self.text_wrap = wrap;
         self
     }
 }

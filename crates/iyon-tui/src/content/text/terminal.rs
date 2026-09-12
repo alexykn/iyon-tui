@@ -8,6 +8,8 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
+use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
+use taffy::style_helpers::{auto, fr, length, line, span};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -89,6 +91,7 @@ pub(crate) enum TerminalProjectionError {
     RunIndexOverflow { value: usize },
     InvalidRunRange { run: usize, range: Range<usize> },
     PaintWindowOverflow { first_row: usize, row_count: usize },
+    TableLayoutFailure,
 }
 
 impl fmt::Display for TerminalProjectionError {
@@ -117,6 +120,7 @@ impl fmt::Display for TerminalProjectionError {
                 "terminal paint window {first_row}..{} exceeds product rows",
                 first_row.saturating_add(*row_count)
             ),
+            Self::TableLayoutFailure => write!(formatter, "terminal table Taffy layout failed"),
         }
     }
 }
@@ -599,14 +603,23 @@ impl TerminalTextProduct {
         for (row_index, row) in self.rows[window.first_row..end].iter().enumerate() {
             let mut row_surface = Surface::new(row_surface_width, 1);
             self.paint_row(row, &resolver, inherited, &mut row_surface)?;
-            target.composite_clipped(
-                &row_surface,
-                target_origin.0,
+            let row_offset = i32::try_from(row_index).map_err(|_| {
+                TerminalPaintError::Projection(TerminalProjectionError::PaintWindowOverflow {
+                    first_row: window.first_row,
+                    row_count: window.row_count,
+                })
+            })?;
+            let target_y =
                 target_origin
                     .1
-                    .saturating_add(i32::try_from(row_index).unwrap_or(i32::MAX)),
-                clip,
-            );
+                    .checked_add(row_offset)
+                    .ok_or(TerminalPaintError::Projection(
+                        TerminalProjectionError::PaintWindowOverflow {
+                            first_row: window.first_row,
+                            row_count: window.row_count,
+                        },
+                    ))?;
+            target.composite_clipped(&row_surface, target_origin.0, target_y, clip);
         }
         Ok(())
     }
@@ -659,7 +672,21 @@ impl TerminalTextProduct {
             surface.clear_glyph_at(span.x, 0);
             *surface.get_mut(span.x, 0) = cell;
             for offset in 1..width {
-                *surface.get_mut(span.x + offset as u16, 0) = PhysicalCell {
+                let column = span
+                    .x
+                    .checked_add(u16::try_from(offset).map_err(|_| {
+                        TerminalPaintError::Projection(TerminalProjectionError::ExtentOverflow {
+                            axis: "paint continuation",
+                            value: offset,
+                        })
+                    })?)
+                    .ok_or(TerminalPaintError::Projection(
+                        TerminalProjectionError::ExtentOverflow {
+                            axis: "paint continuation",
+                            value: usize::from(span.x).saturating_add(offset),
+                        },
+                    ))?;
+                *surface.get_mut(column, 0) = PhysicalCell {
                     grapheme: None,
                     style,
                     painted: true,
@@ -757,6 +784,313 @@ struct ProductBuilder<'a> {
     run_lookup: HashMap<usize, usize>,
 }
 
+#[derive(Clone, Debug)]
+struct TableCellInput<'a> {
+    row_index: usize,
+    logical_column: usize,
+    cell: &'a TableCell,
+    context: SemanticContext,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TableCellGeometry {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
+
+#[derive(Clone, Debug)]
+struct TableGridLayout {
+    height: usize,
+    row_edges: Vec<usize>,
+    cells: Vec<TableCellGeometry>,
+}
+
+fn build_cell_product<'a>(
+    policy: &'a TextRenderPolicy,
+    table: &Table,
+    cell: &TableCellInput<'_>,
+    width: u16,
+) -> Result<ProductBuilder<'a>, TerminalProjectionError> {
+    let mut product = ProductBuilder::new(policy, width);
+    let root = product.begin_block(
+        TerminalBlockKind::TableCell,
+        terminal_identity(
+            &cell.context,
+            TextRole::TableCell,
+            None,
+            cell.cell.annotations(),
+        ),
+        0,
+        width,
+    )?;
+    product.render_cell(
+        root,
+        table,
+        cell.cell,
+        cell.logical_column,
+        &cell.context,
+        0,
+        width,
+    )?;
+    product.finish_block(root, 0, width)?;
+    Ok(product)
+}
+
+fn layout_table_grid(
+    table: &Table,
+    cells: &[TableCellInput<'_>],
+    policy: &TextRenderPolicy,
+    width: u16,
+) -> Result<TableGridLayout, TerminalProjectionError> {
+    let row_count = table.rows().len();
+    if row_count == 0 {
+        return Ok(TableGridLayout {
+            height: 0,
+            row_edges: vec![0],
+            cells: Vec::new(),
+        });
+    }
+    let mut grid = taffy::TaffyTree::<()>::with_capacity(cells.len() + row_count + 1);
+    grid.disable_rounding();
+    let mut cell_nodes = Vec::with_capacity(cells.len());
+    for input in cells {
+        let row_end = input
+            .row_index
+            .checked_add(usize::from(input.cell.row_span().get()))
+            .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+        let column_end = input
+            .logical_column
+            .checked_add(usize::from(input.cell.col_span().get()))
+            .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+        if row_end > row_count || column_end > table.columns().len() {
+            return Err(TerminalProjectionError::TableLayoutFailure);
+        }
+        let row_line = i16::try_from(input.row_index + 1)
+            .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+        let column_line = i16::try_from(input.logical_column + 1)
+            .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+        let mut style = Style::default();
+        style.display = Display::Grid;
+        style.grid_row = taffy::geometry::Line {
+            start: line(row_line),
+            end: span(input.cell.row_span().get()),
+        };
+        style.grid_column = taffy::geometry::Line {
+            start: line(column_line),
+            end: span(input.cell.col_span().get()),
+        };
+        let node = grid
+            .new_leaf(style)
+            .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+        cell_nodes.push(node);
+    }
+    let mut row_markers = Vec::with_capacity(row_count);
+    for row in 0..row_count {
+        let row_line =
+            i16::try_from(row + 1).map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+        let mut style = Style::default();
+        style.position = taffy::prelude::Position::Absolute;
+        style.size = taffy::prelude::Size {
+            width: Dimension::length(0.0_f32),
+            height: Dimension::length(0.0_f32),
+        };
+        style.grid_row = line(row_line);
+        style.grid_column = line(1);
+        row_markers.push(
+            grid.new_leaf(style)
+                .map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+        );
+    }
+    let mut table_style = Style::default();
+    table_style.display = Display::Grid;
+    table_style.size.width = Dimension::length(f32::from(width));
+    table_style.grid_template_columns = (0..table.columns().len())
+        .map(|_| {
+            let track = if matches!(policy.table_column_sizing(), super::TableColumnSizing::Flex) {
+                fr(1.0_f32)
+            } else {
+                auto()
+            };
+            GridTemplateComponent::Single(track)
+        })
+        .collect();
+    table_style.grid_template_rows = (0..row_count)
+        .map(|_| GridTemplateComponent::Single(auto()))
+        .collect();
+    table_style.gap = Size {
+        width: length(f32::from(policy.table_column_gap())),
+        height: length(f32::from(policy.table_row_gap())),
+    };
+    let mut children = cell_nodes.clone();
+    children.extend(row_markers.iter().copied());
+    let root = grid
+        .new_with_children(table_style, &children)
+        .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+    let mut measure_error = None;
+    grid.compute_layout_with_measure(
+        root,
+        Size {
+            width: AvailableSpace::Definite(f32::from(width)),
+            height: AvailableSpace::MaxContent,
+        },
+        |known, available, node, _, _| {
+            let Some(cell_index) = cell_nodes.iter().position(|candidate| *candidate == node)
+            else {
+                return Size::ZERO;
+            };
+            let input = &cells[cell_index];
+            let metrics = measure_block_slice(input.cell.blocks(), policy);
+            let min_width = match u16::try_from(metrics.min_width) {
+                Ok(width) => f32::from(width),
+                Err(_) => {
+                    measure_error = Some(TerminalProjectionError::ExtentOverflow {
+                        axis: "table cell min-content width",
+                        value: metrics.min_width,
+                    });
+                    return Size::ZERO;
+                }
+            };
+            let max_width = match u16::try_from(metrics.max_width) {
+                Ok(width) => f32::from(width),
+                Err(_) => {
+                    measure_error = Some(TerminalProjectionError::ExtentOverflow {
+                        axis: "table cell max-content width",
+                        value: metrics.max_width,
+                    });
+                    return Size::ZERO;
+                }
+            };
+            let requested_width = known.width.or(match available.width {
+                AvailableSpace::Definite(value) => Some(value),
+                AvailableSpace::MinContent => Some(min_width),
+                AvailableSpace::MaxContent => Some(max_width),
+            });
+            let requested_width = requested_width.expect("table grid always supplies a width");
+            let width = match checked_table_value("table cell width", requested_width) {
+                Ok(value) => value,
+                Err(error) => {
+                    measure_error = Some(error);
+                    return Size::ZERO;
+                }
+            };
+            let width = match u16::try_from(width) {
+                Ok(width) => width,
+                Err(_) => {
+                    measure_error = Some(TerminalProjectionError::ExtentOverflow {
+                        axis: "table cell width",
+                        value: usize::try_from(width).expect("checked table width is nonnegative"),
+                    });
+                    return Size::ZERO;
+                }
+            };
+            let height = match build_cell_product(policy, table, input, width).and_then(|product| {
+                u16::try_from(product.rows.len()).map_err(|_| {
+                    TerminalProjectionError::RowCountOverflow {
+                        value: product.rows.len(),
+                    }
+                })
+            }) {
+                Ok(value) => f32::from(value),
+                Err(error) => {
+                    measure_error = Some(error);
+                    return Size::ZERO;
+                }
+            };
+            Size {
+                width: known.width.unwrap_or(requested_width),
+                height: known.height.unwrap_or(height),
+            }
+        },
+    )
+    .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+    if let Some(error) = measure_error {
+        return Err(error);
+    }
+    let root_layout = grid.unrounded_layout(root).to_owned();
+    let height = usize::from(checked_extent(
+        "table height",
+        usize::try_from(checked_table_value(
+            "table height",
+            root_layout.size.height,
+        )?)
+        .map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+    )?);
+    let mut row_edges = Vec::with_capacity(row_count + 1);
+    for marker in row_markers {
+        let edge = usize::try_from(checked_table_value(
+            "table row edge",
+            grid.unrounded_layout(marker).location.y,
+        )?)
+        .map_err(|_| TerminalProjectionError::TableLayoutFailure)?;
+        row_edges.push(usize::from(checked_extent("table row edge", edge)?));
+    }
+    row_edges.push(height);
+    for pair in row_edges.windows(2) {
+        if pair[1] < pair[0] {
+            return Err(TerminalProjectionError::TableLayoutFailure);
+        }
+    }
+    let mut geometries = Vec::with_capacity(cell_nodes.len());
+    for node in cell_nodes {
+        let layout = grid.unrounded_layout(node);
+        let x = checked_table_value("table cell x", layout.location.x)?;
+        let y = checked_table_value("table cell y", layout.location.y)?;
+        let right = checked_table_value("table cell right", layout.location.x + layout.size.width)?;
+        let bottom =
+            checked_table_value("table cell bottom", layout.location.y + layout.size.height)?;
+        let width = right
+            .checked_sub(x)
+            .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+        let height = bottom
+            .checked_sub(y)
+            .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+        geometries.push(TableCellGeometry {
+            x: checked_extent(
+                "table cell x",
+                usize::try_from(x).map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+            )?,
+            y: checked_extent(
+                "table cell y",
+                usize::try_from(y).map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+            )?,
+            width: checked_extent(
+                "table cell width",
+                usize::try_from(width).map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+            )?,
+            height: checked_extent(
+                "table cell height",
+                usize::try_from(height).map_err(|_| TerminalProjectionError::TableLayoutFailure)?,
+            )?,
+        });
+    }
+    Ok(TableGridLayout {
+        height,
+        row_edges,
+        cells: geometries,
+    })
+}
+
+fn checked_table_value(axis: &'static str, value: f32) -> Result<i32, TerminalProjectionError> {
+    let rounded = f64::from(value).round();
+    if !rounded.is_finite() || rounded < 0.0 || rounded > f64::from(i32::MAX) {
+        return Err(TerminalProjectionError::ExtentOverflow {
+            axis,
+            value: if value.is_sign_negative() {
+                0
+            } else {
+                usize::MAX
+            },
+        });
+    }
+    let rounded = rounded as i64;
+    i32::try_from(rounded).map_err(|_| TerminalProjectionError::ExtentOverflow {
+        axis,
+        value: usize::MAX,
+    })
+}
+
 impl<'a> ProductBuilder<'a> {
     fn new(policy: &'a TextRenderPolicy, width: u16) -> Self {
         Self {
@@ -821,7 +1155,7 @@ impl<'a> ProductBuilder<'a> {
                         pieces,
                         0,
                         width,
-                        WrapMode::WordThenGrapheme,
+                        self.policy.text_wrap(),
                         HorizontalAlign::Start,
                     )?;
                 }
@@ -860,7 +1194,11 @@ impl<'a> ProductBuilder<'a> {
         width: u16,
     ) -> Result<(), TerminalProjectionError> {
         let block = &mut self.blocks[index];
-        let height = self.rows.len().saturating_sub(usize::from(block.rect.y));
+        let height = self
+            .rows
+            .len()
+            .checked_sub(usize::from(block.rect.y))
+            .ok_or(TerminalProjectionError::TableLayoutFailure)?;
         block.rect = TerminalRect::new(
             block.rect.x,
             block.rect.y,
@@ -973,7 +1311,7 @@ impl<'a> ProductBuilder<'a> {
                 let mode = if is_pipe_source_paragraph(content) {
                     WrapMode::NoWrap
                 } else {
-                    WrapMode::WordThenGrapheme
+                    self.policy.text_wrap()
                 };
                 self.render_text_rows(index, pieces, x, width, mode, HorizontalAlign::Start)?;
             }
@@ -985,7 +1323,7 @@ impl<'a> ProductBuilder<'a> {
                     pieces,
                     x,
                     width,
-                    WrapMode::WordThenGrapheme,
+                    self.policy.text_wrap(),
                     HorizontalAlign::Start,
                 )?;
                 self.blocks[index].identity = terminal_identity(
@@ -1288,7 +1626,6 @@ impl<'a> ProductBuilder<'a> {
             self.rows.push(empty_row(index));
             return Ok(());
         }
-        let column_widths = table_column_widths(table, &self.policy, width);
         let starts = table.cell_start_columns();
         let mut children = Vec::new();
         if let Some(caption) = table.caption() {
@@ -1299,10 +1636,9 @@ impl<'a> ProductBuilder<'a> {
                 self.push_blank_rows(self.policy.block_gap());
             }
         }
+        let table_start = self.rows.len();
+        let mut cells = Vec::new();
         for (row_index, row) in table.rows().iter().enumerate() {
-            if row_index > 0 {
-                self.push_blank_rows(self.policy.table_row_gap());
-            }
             let section = if row_index < table.header_rows() {
                 TextTableSection::Header
             } else {
@@ -1311,63 +1647,205 @@ impl<'a> ProductBuilder<'a> {
             let row_context = table_context
                 .for_node(row.annotations())
                 .with_table_section(section);
-            let table_row_index = self.begin_block(
-                TerminalBlockKind::TableRow,
-                terminal_identity(&row_context, TextRole::TableRow, None, row.annotations()),
-                x,
-                width,
-            )?;
-            let row_start = self.rows.len();
-            let mut row_children = Vec::new();
             for (cell_index, cell) in row.cells().iter().enumerate() {
                 let logical_column = starts[row_index][cell_index];
-                let span_width = spanned_width(
-                    &column_widths,
+                cells.push(TableCellInput {
+                    row_index,
                     logical_column,
-                    usize::from(cell.col_span().get()),
-                    self.policy.table_column_gap(),
-                );
-                let cell_x = x.saturating_add(column_offset(
-                    &column_widths,
-                    logical_column,
-                    self.policy.table_column_gap(),
-                ));
-                let cell_context = row_context
-                    .for_node(cell.annotations())
-                    .with_role(TextRole::TableCell);
-                let cell_index_in_product = self.begin_block(
-                    TerminalBlockKind::TableCell,
-                    terminal_identity(&cell_context, TextRole::TableCell, None, cell.annotations()),
-                    cell_x,
-                    span_width,
-                )?;
-                let cell_start = self.rows.len();
-                self.render_cell(
-                    cell_index_in_product,
-                    table,
                     cell,
-                    logical_column,
-                    &cell_context,
-                    cell_x,
-                    span_width,
-                )?;
-                self.finish_block(cell_index_in_product, cell_start, span_width)?;
-                row_children.push(cell_index_in_product);
+                    context: row_context
+                        .for_node(cell.annotations())
+                        .with_role(TextRole::TableCell),
+                });
             }
-            if self.rows.len() == row_start {
-                self.rows.push(empty_row(table_row_index));
-            }
-            for row in &mut self.rows[row_start..] {
-                row.block_index = table_row_index;
-            }
-            self.blocks[table_row_index].children = row_children.into();
-            self.finish_block(table_row_index, row_start, width)?;
-            children.push(table_row_index);
-            let _ = row;
         }
+        let grid = layout_table_grid(table, &cells, &self.policy, width)?;
+        let row_blocks = table
+            .rows()
+            .iter()
+            .enumerate()
+            .map(|(row_index, row)| {
+                let row_y = table_start.checked_add(grid.row_edges[row_index]).ok_or(
+                    TerminalProjectionError::ExtentOverflow {
+                        axis: "table row y",
+                        value: table_start.saturating_add(grid.row_edges[row_index]),
+                    },
+                )?;
+                let row_end = grid.row_edges[row_index + 1];
+                let row_height = row_end
+                    .checked_sub(grid.row_edges[row_index])
+                    .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+                let row_context = table_context
+                    .for_node(row.annotations())
+                    .with_table_section(if row_index < table.header_rows() {
+                        TextTableSection::Header
+                    } else {
+                        TextTableSection::Body
+                    });
+                let row_index_in_product = self.blocks.len();
+                self.blocks.push(TerminalBlock {
+                    kind: TerminalBlockKind::TableRow,
+                    rect: TerminalRect::new(
+                        x,
+                        checked_extent("table row y", row_y)?,
+                        width,
+                        checked_extent("table row height", row_height)?,
+                    ),
+                    identity: terminal_identity(
+                        &row_context,
+                        TextRole::TableRow,
+                        None,
+                        row.annotations(),
+                    ),
+                    children: Arc::new([]),
+                });
+                Ok(row_index_in_product)
+            })
+            .collect::<Result<Vec<_>, TerminalProjectionError>>()?;
+        self.rows.resize(
+            table_start.checked_add(grid.height).ok_or(
+                TerminalProjectionError::ExtentOverflow {
+                    axis: "table rows",
+                    value: table_start.saturating_add(grid.height),
+                },
+            )?,
+            empty_row(index),
+        );
+        let mut row_children = vec![Vec::new(); table.rows().len()];
+        for (cell, geometry) in cells.iter().zip(grid.cells) {
+            let cell_product = build_cell_product(&self.policy, table, cell, geometry.width)?;
+            let cell_index = self.append_cell_product(
+                cell_product,
+                table_start,
+                geometry,
+                row_blocks[cell.row_index],
+            )?;
+            row_children[cell.row_index].push(cell_index);
+        }
+        for (row_index, row_block) in row_blocks.iter().copied().enumerate() {
+            self.blocks[row_block].children = row_children[row_index].clone().into();
+        }
+        children.extend(row_blocks);
         self.blocks[index].children = children.into();
         let _ = block;
         Ok(())
+    }
+
+    fn append_cell_product(
+        &mut self,
+        local: ProductBuilder<'_>,
+        table_start: usize,
+        geometry: TableCellGeometry,
+        row_block: usize,
+    ) -> Result<usize, TerminalProjectionError> {
+        let run_map = local
+            .runs
+            .iter()
+            .map(|run| {
+                self.add_run(
+                    Arc::clone(&run.text),
+                    run.provenance.clone(),
+                    run.identity.clone(),
+                    run.style.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let block_offset = self.blocks.len();
+        for mut child in local.blocks {
+            child.rect = TerminalRect::new(
+                checked_extent(
+                    "table cell x",
+                    usize::from(geometry.x).saturating_add(usize::from(child.rect.x)),
+                )?,
+                checked_extent(
+                    "table cell y",
+                    table_start
+                        .saturating_add(usize::from(geometry.y))
+                        .saturating_add(usize::from(child.rect.y)),
+                )?,
+                child.rect.width,
+                child.rect.height,
+            );
+            child.children = child
+                .children
+                .iter()
+                .copied()
+                .map(|index| {
+                    if index == usize::MAX {
+                        Ok(index)
+                    } else {
+                        index.checked_add(block_offset).ok_or(
+                            TerminalProjectionError::ExtentOverflow {
+                                axis: "table block index",
+                                value: index.saturating_add(block_offset),
+                            },
+                        )
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .into();
+            self.blocks.push(child);
+        }
+        let root = block_offset;
+        self.blocks[root].rect = TerminalRect::new(
+            geometry.x,
+            checked_extent(
+                "table cell y",
+                table_start.saturating_add(usize::from(geometry.y)),
+            )?,
+            geometry.width,
+            geometry.height,
+        );
+        let base_row = table_start.saturating_add(usize::from(geometry.y));
+        for (local_row_index, local_row) in local.rows.iter().enumerate() {
+            let row_index = base_row.checked_add(local_row_index).ok_or(
+                TerminalProjectionError::ExtentOverflow {
+                    axis: "table cell row",
+                    value: base_row.saturating_add(local_row_index),
+                },
+            )?;
+            let row = self
+                .rows
+                .get_mut(row_index)
+                .ok_or(TerminalProjectionError::TableLayoutFailure)?;
+            let mut spans = Vec::with_capacity(local_row.spans.len());
+            for span in local_row.spans.iter() {
+                let run_index = *run_map.get(span.run_index).ok_or(
+                    TerminalProjectionError::RunIndexOverflow {
+                        value: span.run_index,
+                    },
+                )?;
+                let span_x = usize::from(geometry.x)
+                    .checked_add(usize::from(span.x))
+                    .ok_or(TerminalProjectionError::ExtentOverflow {
+                        axis: "table span x",
+                        value: usize::from(geometry.x).saturating_add(usize::from(span.x)),
+                    })?;
+                spans.push(TerminalPaintSpan {
+                    run_index,
+                    byte_range: span.byte_range.clone(),
+                    source: span.source.clone(),
+                    x: checked_extent("table span x", span_x)?,
+                    cell_width: span.cell_width,
+                });
+            }
+            row.spans = row
+                .spans
+                .iter()
+                .cloned()
+                .chain(spans)
+                .collect::<Vec<_>>()
+                .into();
+            row.width = row.width.max(checked_extent(
+                "table row width",
+                usize::from(geometry.x).saturating_add(usize::from(local_row.width)),
+            )?);
+            row.fits &= local_row.fits;
+            if row.block_index == usize::MAX {
+                row.block_index = row_block;
+            }
+        }
+        Ok(root)
     }
 
     fn render_cell(
@@ -1392,7 +1870,7 @@ impl<'a> ProductBuilder<'a> {
                 pieces,
                 x,
                 width,
-                WrapMode::WordThenGrapheme,
+                self.policy.text_wrap(),
                 to_horizontal_align(alignment),
             )?;
         } else {
@@ -2111,7 +2589,7 @@ fn measure_contents(contents: &[TextContent], policy: &TextRenderPolicy) -> Intr
         .iter()
         .fold(IntrinsicMetrics::default(), |metrics, content| {
             let child = match content {
-                TextContent::Raw(raw) => intrinsic_text(raw.text(), WrapMode::WordThenGrapheme),
+                TextContent::Raw(raw) => intrinsic_text(raw.text(), policy.text_wrap()),
                 TextContent::Block(block) => measure_block(block, policy),
             };
             IntrinsicMetrics {
@@ -2127,14 +2605,13 @@ fn measure_block(block: &Block, policy: &TextRenderPolicy) -> IntrinsicMetrics {
             let mode = if is_pipe_source_paragraph(content) {
                 WrapMode::NoWrap
             } else {
-                WrapMode::WordThenGrapheme
+                policy.text_wrap()
             };
             intrinsic_text(&inline_plain_text(content, policy), mode)
         }
-        BlockKind::Heading { content, .. } => intrinsic_text(
-            &inline_plain_text(content, policy),
-            WrapMode::WordThenGrapheme,
-        ),
+        BlockKind::Heading { content, .. } => {
+            intrinsic_text(&inline_plain_text(content, policy), policy.text_wrap())
+        }
         BlockKind::BlockQuote { blocks } | BlockKind::Container { blocks } => {
             let metrics = measure_block_slice(blocks, policy);
             if matches!(block.kind(), BlockKind::BlockQuote { .. }) {
@@ -2228,71 +2705,6 @@ fn measure_table(table: &Table, policy: &TextRenderPolicy) -> IntrinsicMetrics {
             .sum::<usize>()
             .saturating_add(total_gap),
     }
-}
-
-fn table_column_widths(table: &Table, policy: &TextRenderPolicy, width: u16) -> Vec<u16> {
-    let count = table.columns().len();
-    if count == 0 {
-        return Vec::new();
-    }
-    let gap = usize::from(policy.table_column_gap());
-    let available = usize::from(width).saturating_sub(gap.saturating_mul(count - 1));
-    if matches!(policy.table_column_sizing(), super::TableColumnSizing::Flex) {
-        let base = available / count;
-        let remainder = available % count;
-        return (0..count)
-            .map(|column| {
-                (base + usize::from(column < remainder)).min(usize::from(u16::MAX)) as u16
-            })
-            .collect();
-    }
-    let metrics = measure_table(table, policy);
-    let mut widths = vec![0usize; count];
-    let starts = table.cell_start_columns();
-    for (row_index, row) in table.rows().iter().enumerate() {
-        for (cell_index, cell) in row.cells().iter().enumerate() {
-            let requirement = measure_block_slice(cell.blocks(), policy).max_width;
-            let start = starts[row_index][cell_index];
-            let span = usize::from(cell.col_span().get());
-            let current = widths[start..start + span].iter().sum::<usize>();
-            let needed = requirement.saturating_sub(current);
-            let each = needed.div_ceil(span);
-            for column in &mut widths[start..start + span] {
-                *column = column.saturating_add(each);
-            }
-        }
-    }
-    let total = widths.iter().sum::<usize>();
-    if total > available && total > 0 {
-        let mut remaining = available;
-        for (index, column) in widths.iter_mut().enumerate() {
-            let scaled = if index + 1 == count {
-                remaining
-            } else {
-                column.saturating_mul(available) / total
-            };
-            *column = scaled;
-            remaining = remaining.saturating_sub(scaled);
-        }
-    }
-    let _ = metrics;
-    widths.into_iter().map(|width| width as u16).collect()
-}
-
-fn column_offset(widths: &[u16], column: usize, gap: u16) -> u16 {
-    widths[..column].iter().fold(0usize, |offset, width| {
-        offset
-            .saturating_add(usize::from(*width))
-            .saturating_add(usize::from(gap))
-    }) as u16
-}
-
-fn spanned_width(widths: &[u16], start: usize, span: usize, gap: u16) -> u16 {
-    widths[start..start + span]
-        .iter()
-        .map(|width| usize::from(*width))
-        .sum::<usize>()
-        .saturating_add(usize::from(gap).saturating_mul(span.saturating_sub(1))) as u16
 }
 
 #[cfg(test)]
@@ -2513,5 +2925,69 @@ mod tests {
             )
             .expect("signed clipped paint");
         assert_eq!(surface.row_cells(0).len(), 4);
+    }
+
+    #[test]
+    fn table_grid_places_cells_on_shared_rows_and_preserves_spans() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start(), TableColumn::start()],
+            0,
+            [
+                TableRow::new([TableCell::text("a\nb"), TableCell::text("x\ny")]),
+                TableRow::new([TableCell::new(
+                    [Block::paragraph("wide")],
+                    None,
+                    std::num::NonZeroU16::new(1).expect("span"),
+                    std::num::NonZeroU16::new(2).expect("span"),
+                )]),
+            ],
+        )
+        .expect("valid table");
+        let product = TerminalTextProjector::new(TextRenderPolicy::new())
+            .project(
+                &TextContent::block(Block::table(table)),
+                TerminalConstraints::definite(10),
+            )
+            .expect("table projection");
+        let rows = (0..product.rows().len())
+            .map(|row| row_text(&product, row))
+            .collect::<Vec<_>>();
+        assert_eq!(rows, ["a     x", "b     y", "wide"]);
+        let table_cell_blocks = product
+            .blocks()
+            .iter()
+            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
+            .collect::<Vec<_>>();
+        assert_eq!(table_cell_blocks.len(), 3);
+        assert_eq!(table_cell_blocks[2].rect().width(), 10);
+    }
+
+    #[test]
+    fn table_grid_handles_rows_with_no_starting_cells() {
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [TableColumn::start(), TableColumn::start()],
+            0,
+            [
+                TableRow::new([TableCell::new(
+                    [Block::paragraph("a")],
+                    None,
+                    std::num::NonZeroU16::new(2).expect("span"),
+                    std::num::NonZeroU16::new(2).expect("span"),
+                )]),
+                TableRow::new([]),
+            ],
+        )
+        .expect("valid table with a covered row");
+        let product = TerminalTextProjector::new(TextRenderPolicy::new())
+            .project(
+                &TextContent::block(Block::table(table)),
+                TerminalConstraints::definite(10),
+            )
+            .expect("covered-row table projection");
+        assert_eq!(product.rows().len(), 1);
+        assert_eq!(product.blocks().len(), 4);
+        assert_eq!(product.blocks()[3].rect().height(), 1);
     }
 }

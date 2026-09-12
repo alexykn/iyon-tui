@@ -140,6 +140,7 @@ struct PreparedParent {
     key: NodeKey,
     children: Vec<NodeKey>,
     structure_revision: u64,
+    legacy_row: bool,
 }
 
 struct PreparedSync<'a> {
@@ -153,6 +154,8 @@ struct PreparedSync<'a> {
 pub(crate) struct TaffyLayoutAdapter {
     tree: taffy::TaffyTree<LeafContext>,
     entries: HashMap<NodeKey, LayoutEntry>,
+    legacy_row_children: HashSet<NodeKey>,
+    explicit_flex_shrink: HashSet<NodeKey>,
 }
 
 impl Default for TaffyLayoutAdapter {
@@ -168,6 +171,8 @@ impl TaffyLayoutAdapter {
         Self {
             tree,
             entries: HashMap::new(),
+            legacy_row_children: HashSet::new(),
+            explicit_flex_shrink: HashSet::new(),
         }
     }
 
@@ -371,6 +376,7 @@ impl TaffyLayoutAdapter {
                 key: *parent,
                 children: snapshot.children.clone(),
                 structure_revision: snapshot.structure_revision,
+                legacy_row: is_legacy_row(snapshot),
             });
         }
         Ok(parents)
@@ -416,6 +422,18 @@ impl TaffyLayoutAdapter {
     }
 
     fn install_topology(&mut self, plan: &PreparedSync<'_>) -> Result<(), TaffyAdapterError> {
+        for prepared in &plan.nodes {
+            if has_explicit_flex_shrink(prepared.snapshot) {
+                self.explicit_flex_shrink.insert(prepared.key);
+            } else {
+                self.explicit_flex_shrink.remove(&prepared.key);
+            }
+        }
+        for parent in &plan.parents {
+            for child in &parent.children {
+                self.legacy_row_children.remove(child);
+            }
+        }
         // Sever every affected old edge first. This is what makes a sparse
         // cross-parent move independent of changed-parent iteration order.
         // Retiring subtrees are included so removing each retired child does
@@ -446,6 +464,17 @@ impl TaffyLayoutAdapter {
                 .get_mut(&parent.key)
                 .ok_or(TaffyAdapterError::MissingNode(parent.key))?
                 .child_list_revision = parent.structure_revision;
+            if parent.legacy_row {
+                for child in parent
+                    .children
+                    .iter()
+                    .take(parent.children.len().saturating_sub(1))
+                {
+                    if !self.explicit_flex_shrink.contains(child) {
+                        self.legacy_row_children.insert(*child);
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -479,6 +508,29 @@ impl TaffyLayoutAdapter {
             entry.display_none = prepared.display_none;
             entry.participates = prepared.participates;
         }
+        for prepared in &plan.parents {
+            for (index, child) in prepared.children.iter().copied().enumerate() {
+                if self.explicit_flex_shrink.contains(&child) {
+                    continue;
+                }
+                let node = self.entry(child)?.node;
+                let should_preserve = index + 1 < prepared.children.len()
+                    && prepared.legacy_row
+                    && self.legacy_row_children.contains(&child);
+                let mut style = self
+                    .tree
+                    .style(node)
+                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
+                    .clone();
+                let flex_shrink = if should_preserve { 0.0 } else { 1.0 };
+                if style.flex_shrink != flex_shrink {
+                    style.flex_shrink = flex_shrink;
+                    self.tree
+                        .set_style(node, style)
+                        .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -491,6 +543,8 @@ impl TaffyLayoutAdapter {
             self.tree
                 .remove(entry.node)
                 .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+            self.legacy_row_children.remove(key);
+            self.explicit_flex_shrink.remove(key);
         }
         Ok(())
     }
@@ -800,6 +854,22 @@ fn display_for(snapshot: &OccurrenceSnapshot) -> DisplayMode {
             _ => DisplayMode::Flex,
         },
     }
+}
+
+fn is_legacy_row(snapshot: &OccurrenceSnapshot) -> bool {
+    matches!(
+        property(snapshot, PropertyId::Layout),
+        Some(LayerValue::Value(PropertyValue::LayoutMode(
+            LayoutMode::Row
+        )))
+    )
+}
+
+fn has_explicit_flex_shrink(snapshot: &OccurrenceSnapshot) -> bool {
+    matches!(
+        property(snapshot, PropertyId::FlexShrink),
+        Some(LayerValue::Value(PropertyValue::Scalar(_)))
+    )
 }
 
 fn validate_legacy_alignment(snapshot: &OccurrenceSnapshot) -> Result<(), TaffyAdapterError> {

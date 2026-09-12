@@ -189,8 +189,14 @@ impl Drop for ContentExecutorPermit {
             .accounting
             .lock()
             .expect("content executor accounting lock must remain usable");
-        accounting.queued_jobs = accounting.queued_jobs.saturating_sub(1);
-        accounting.queued_bytes = accounting.queued_bytes.saturating_sub(self.bytes);
+        accounting.queued_jobs = accounting
+            .queued_jobs
+            .checked_sub(1)
+            .expect("content executor queued job accounting underflow");
+        accounting.queued_bytes = accounting
+            .queued_bytes
+            .checked_sub(self.bytes)
+            .expect("content executor queued byte accounting underflow");
         drop(accounting);
         wake_content_executor_waiters(&self.accounting);
     }
@@ -295,7 +301,6 @@ impl ContentExecutor {
         job: ContentProjectionTask,
     ) -> Result<(), ContentExecutorRejected> {
         debug_assert_eq!(permit.bytes, job.bytes);
-        permit.commit();
         let semantic_cache = Arc::clone(&self.semantic_cache);
         let parser_states = Arc::clone(&self.parser_states);
         let wake = job.wake.clone();
@@ -362,7 +367,28 @@ impl ContentExecutor {
                 wake();
             }),
         };
-        self.submit_reserved(task)
+        match self.commands.try_send(ContentExecutorCommand::Run(task)) {
+            Ok(()) => {
+                // The permit remains armed through the fallible send. A
+                // disconnected worker therefore returns the exact slot via
+                // its Drop implementation instead of relying on a second
+                // rollback path.
+                permit.commit();
+                Ok(())
+            }
+            Err(error) => {
+                let diagnostic = format!(
+                    "CONTENT_EXECUTOR_UNAVAILABLE: content executor queue is unavailable: {error}"
+                );
+                match error {
+                    TrySendError::Full(_) | TrySendError::Disconnected(_) => {}
+                }
+                Err(ContentExecutorRejected {
+                    kind: ContentExecutorRejectKind::Unavailable,
+                    diagnostic,
+                })
+            }
+        }
     }
 
     #[cfg(test)]
@@ -389,44 +415,12 @@ impl ContentExecutor {
             .expect("content test latch lock must remain usable") = None;
     }
 
-    fn submit_reserved(&self, job: ContentExecutorJob) -> Result<(), ContentExecutorRejected> {
-        if let Err(error) = self.commands.try_send(ContentExecutorCommand::Run(job)) {
-            let diagnostic = format!(
-                "CONTENT_EXECUTOR_UNAVAILABLE: content executor queue is unavailable: {error}"
-            );
-            let mut accounting = self
-                .accounting
-                .lock()
-                .expect("content executor accounting lock must remain usable");
-            accounting.queued_jobs = accounting.queued_jobs.saturating_sub(1);
-            // The only command that can fail here is a dropped worker. The
-            // submitted job is still owned by TrySendError and its byte size
-            // therefore remains available for exact accounting rollback.
-            let job = match error {
-                TrySendError::Full(job) | TrySendError::Disconnected(job) => job,
-            };
-            let ContentExecutorCommand::Run(job) = job;
-            accounting.queued_bytes = accounting.queued_bytes.saturating_sub(job.bytes);
-            drop(accounting);
-            self.wake_waiters();
-            return Err(ContentExecutorRejected {
-                kind: ContentExecutorRejectKind::Unavailable,
-                diagnostic,
-            });
-        }
-        Ok(())
-    }
-
     fn unregister_waiter(&self, waiter_id: u64) {
         self.accounting
             .lock()
             .expect("content executor accounting lock must remain usable")
             .waiters
             .retain(|(candidate, _)| *candidate != waiter_id);
-    }
-
-    fn wake_waiters(&self) {
-        wake_content_executor_waiters(&self.accounting);
     }
 }
 
@@ -586,9 +580,14 @@ fn content_executor_loop(
                     let mut accounting_guard = accounting
                         .lock()
                         .expect("content executor accounting lock must remain usable");
-                    accounting_guard.queued_jobs = accounting_guard.queued_jobs.saturating_sub(1);
-                    accounting_guard.queued_bytes =
-                        accounting_guard.queued_bytes.saturating_sub(job.bytes);
+                    accounting_guard.queued_jobs = accounting_guard
+                        .queued_jobs
+                        .checked_sub(1)
+                        .expect("content executor queued job accounting underflow");
+                    accounting_guard.queued_bytes = accounting_guard
+                        .queued_bytes
+                        .checked_sub(job.bytes)
+                        .expect("content executor queued byte accounting underflow");
                 }
                 // Capacity returns when the command leaves the bounded
                 // handoff, before projection work runs. Wake every live

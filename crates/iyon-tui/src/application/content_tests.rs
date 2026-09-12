@@ -499,6 +499,44 @@ fn prepared_content_commit_preserves_newer_requested_selection() {
 
 #[test]
 fn saturated_admission_wakes_a_zero_admitted_owner_and_eventually_progresses() {
+    // Exercise the early-return ownership edge independently of projection
+    // construction: a dropped admitted permit must restore both budget
+    // counters and wake an owner that registered while the queue was full.
+    let permit_executor = ContentExecutor::new().unwrap();
+    let held_permits = (0..CONTENT_EXECUTOR_MAX_JOBS)
+        .map(|_| {
+            permit_executor
+                .reserve_projection(1, None)
+                .unwrap()
+                .0
+                .expect("test permit reservation")
+        })
+        .collect::<Vec<_>>();
+    let (permit_wake, permit_wake_receive) = std::sync::mpsc::channel();
+    let (_, waiter_id) = permit_executor
+        .reserve_projection(
+            1,
+            Some(Arc::new(move || {
+                let _ = permit_wake.send(());
+            })),
+        )
+        .unwrap();
+    let waiter_id = waiter_id.expect("full executor registers a waiter");
+    let mut held_permits = held_permits;
+    drop(held_permits.pop().expect("held permit for rollback"));
+    permit_wake_receive
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("dropped permit wakes a deferred owner");
+    let restored = permit_executor
+        .reserve_projection(1, None)
+        .unwrap()
+        .0
+        .expect("dropped permit restores executor capacity");
+    drop(restored);
+    drop(held_permits);
+    permit_executor.unregister_waiter(waiter_id);
+    drop(permit_executor);
+
     let source_registry = ContentSourceRegistry::new();
     let executor = Arc::downgrade(&source_registry.executor);
     let source = source_registry.create(TextSourceKind::Stream).unwrap();

@@ -1384,7 +1384,7 @@ impl TuiHost {
         sources: &[crate::application::content::HostContentSource],
     ) -> std::result::Result<crate::occurrence::UiOperationResult, crate::occurrence::UiRejection>
     {
-        let (result, wakes, environment, host_id, changes_have_work) = {
+        let (result, wakes) = {
             let mut inner = self.lock_mut().map_err(|error| {
                 crate::occurrence::UiRejection::internal(
                     0,
@@ -1468,31 +1468,9 @@ impl TuiHost {
                 debug_assert!(inner.scheduler_failure.is_some());
                 let _ = error;
             }
-            (
-                result,
-                wakes,
-                inner.environment.clone(),
-                inner.host_id,
-                changes_have_work,
-            )
+            (result, wakes)
         };
         crate::application::content::HostContentSource::finish_prepared_wakes(wakes);
-        if changes_have_work {
-            let _ = environment.mark_host_ready(host_id);
-        }
-        // Accepted structural work must receive one native service turn even
-        // when the caller does not immediately request a presentation barrier.
-        // This admits automatic failure diagnostics and starts asynchronous
-        // layout/content work without waiting under HostInner.
-        for _ in 0..256 {
-            let Ok(report) = environment.drain_pending_for(32, true, Some(host_id)) else {
-                break;
-            };
-            if !report.rearm && !report.waiting_for_presentation {
-                break;
-            }
-            std::thread::yield_now();
-        }
         Ok(result)
     }
 
@@ -1568,21 +1546,7 @@ impl TuiHost {
             let inner = self.lock()?;
             (inner.environment.clone(), inner.host_id)
         };
-        let mut combined = HostDrainReport::default();
-        for _ in 0..256 {
-            let report = environment.drain_pending_for(budget, force_retry, Some(host_id))?;
-            combined.rearm = report.rearm;
-            combined.waiting_for_presentation |= report.waiting_for_presentation;
-            combined.attempted = combined.attempted.saturating_add(report.attempted);
-            combined.commits.extend(report.commits);
-            combined.errors.extend(report.errors);
-            combined.wake_epoch = report.wake_epoch;
-            if !report.rearm && !report.waiting_for_presentation {
-                break;
-            }
-            std::thread::yield_now();
-        }
-        Ok(combined)
+        environment.drain_pending_for(budget, force_retry, Some(host_id))
     }
 
     /// Waits for a native presentation barrier without requiring a JS frame

@@ -211,7 +211,7 @@ describe("finite geometry boundary", () => {
 					createElement(Content, {}, "abcdefghij\nend"),
 				),
 			);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(
 				tui
 					.screenRows()
@@ -246,7 +246,7 @@ describe("finite geometry boundary", () => {
 					),
 				),
 			);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(
 				tui.screenRows().filter((row) => row.includes("abcd")),
 			).toHaveLength(1);
@@ -278,7 +278,7 @@ describe("finite geometry boundary", () => {
 					),
 				),
 			);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(
 				tui.screenRows().filter((row) => row.includes("abcd")),
 			).toHaveLength(1);

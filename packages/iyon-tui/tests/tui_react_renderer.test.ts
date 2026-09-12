@@ -2726,14 +2726,15 @@ describe("T3 React mutation renderer", () => {
 			);
 			expect(committedOpcodes).toHaveLength(1);
 
-			// This is the ordinary public render API, intentionally kept
-			// synchronous. It supersedes the yielded transition without giving
-			// any candidate Content token a native owner.
+			// Acceptance supersedes the yielded transition without giving any
+			// candidate Content token a native owner. Physical content delivery
+			// remains asynchronous and has its own barrier below.
 			await root.render(createElement(Text, {}, "replacement"));
 			expect(nativeCalls).toBe(2);
 			expect(committedOpcodes.at(-1)).toEqual(
 				expect.arrayContaining([UI_OPCODES.replaceLiteral]),
 			);
+			await root.whenContentVisible();
 			expect(tui.screenRows().some((row) => row.includes("replacement"))).toBe(
 				true,
 			);

@@ -502,11 +502,12 @@ fn direct_driver_loop(
                 latch,
             } => {
                 #[cfg(test)]
-                if let Some(latch) = latch
+                let held_job = latch
                     .lock()
                     .expect("layout test latch lock must remain usable")
-                    .as_ref()
-                {
+                    .take();
+                #[cfg(test)]
+                if let Some(latch) = held_job {
                     let _ = latch.entered.send(());
                     let _ = latch
                         .release

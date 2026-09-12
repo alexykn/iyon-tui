@@ -257,19 +257,20 @@ enum HistoryWork {
     },
 }
 
-/// A close waiter must register before inspecting `HistoryWork`. The
-/// generation is protected by the same mutex used by the Condvar, so the
-/// predicate check and the Condvar's atomic release-and-sleep operation obey
-/// the standard lost-wake-free contract. State transitions happen under
-/// `HostInner`; transition owners notify only after releasing that mutex.
-pub(super) struct HistoryWorkSignal {
+/// A lifecycle waiter must register before inspecting the owned work it is
+/// joining. The generation is protected by the same mutex used by the
+/// Condvar, so the predicate check and the Condvar's atomic release-and-sleep
+/// operation obey the standard lost-wake-free contract. State transitions
+/// happen under `HostInner`; transition owners notify only after releasing
+/// that mutex.
+pub(super) struct CompletionSignal {
     generation: Mutex<u64>,
     wake: Condvar,
     #[cfg(test)]
     before_wait: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
-impl HistoryWorkSignal {
+impl CompletionSignal {
     fn new() -> Self {
         Self {
             generation: Mutex::new(0),
@@ -283,7 +284,7 @@ impl HistoryWorkSignal {
         let guard = self
             .generation
             .lock()
-            .map_err(|_| anyhow::anyhow!("History work wait lock is poisoned"))?;
+            .map_err(|_| anyhow::anyhow!("completion wait lock is poisoned"))?;
         let generation = *guard;
         Ok((guard, generation))
     }
@@ -301,7 +302,7 @@ impl HistoryWorkSignal {
             guard = self
                 .wake
                 .wait(guard)
-                .map_err(|_| anyhow::anyhow!("History work wait lock is poisoned"))?;
+                .map_err(|_| anyhow::anyhow!("completion wait lock is poisoned"))?;
         }
         Ok(())
     }
@@ -310,10 +311,10 @@ impl HistoryWorkSignal {
         let mut generation = self
             .generation
             .lock()
-            .map_err(|_| anyhow::anyhow!("History work wait lock is poisoned"))?;
+            .map_err(|_| anyhow::anyhow!("completion wait lock is poisoned"))?;
         *generation = generation
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("History work generation exhausted"))?;
+            .ok_or_else(|| anyhow::anyhow!("completion generation exhausted"))?;
         self.wake.notify_all();
         Ok(())
     }
@@ -450,8 +451,7 @@ pub(crate) struct HostInner {
     #[cfg(test)]
     ui_control_keys_visited: usize,
     #[cfg(test)]
-    waiting_for_presentation_hook:
-        Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+    waiting_for_presentation_hook: Option<std::sync::mpsc::Sender<()>>,
     #[cfg(test)]
     close_started_hook: Option<std::sync::mpsc::Sender<ClosePhase>>,
     #[cfg(test)]
@@ -459,7 +459,11 @@ pub(crate) struct HostInner {
     #[cfg(test)]
     test_history_receipt: Option<crate::terminal::HistoryReceipt>,
     presentation_notify: Arc<tokio::sync::Notify>,
-    history_work_notify: Arc<HistoryWorkSignal>,
+    history_work_notify: Arc<CompletionSignal>,
+    /// Completion edge for direct layout/paint and content workers. Close
+    /// cancels scheduling, but final-exit settlement still waits on this
+    /// signal after releasing HostInner.
+    worker_completion_notify: Arc<CompletionSignal>,
     worker_wake_cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -949,7 +953,8 @@ impl TuiHost {
                 #[cfg(test)]
                 test_history_receipt: None,
                 presentation_notify: Arc::new(tokio::sync::Notify::new()),
-                history_work_notify: Arc::new(HistoryWorkSignal::new()),
+                history_work_notify: Arc::new(CompletionSignal::new()),
+                worker_completion_notify: Arc::new(CompletionSignal::new()),
                 worker_wake_cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             }));
         let host_id = environment.register_host(&inner)?;
@@ -1506,7 +1511,10 @@ impl TuiHost {
     pub fn flush_pending(&self) -> Result<()> {
         let (result, environment, host_id, history_signal) = {
             let mut inner = self.lock_mut()?;
-            let result = inner.flush_for_environment(true, true);
+            // This compatibility entrypoint also performs only a
+            // non-blocking state-machine turn under HostInner. A terminal
+            // receipt is completed by its native wake and a later queue turn.
+            let result = inner.flush_for_environment(true);
             (
                 result,
                 inner.environment.clone(),
@@ -2461,6 +2469,17 @@ fn settle_close(host: &Arc<Mutex<HostInner>>, plan: ClosePlan) -> Result<()> {
     {
         let mut advanced = false;
         loop {
+            // Register before polling the candidate. The worker callback may
+            // race with this close thread; registering first makes the
+            // completion edge lost-wake-free without retaining HostInner
+            // across the wait.
+            let worker_signal = {
+                let inner = host
+                    .lock()
+                    .map_err(|error| anyhow::anyhow!("host lock is poisoned: {error}"))?;
+                Arc::clone(&inner.worker_completion_notify)
+            };
+            let (worker_guard, worker_generation) = worker_signal.register()?;
             let candidate = match host.lock() {
                 Ok(mut inner) => {
                     let candidate = if advanced {
@@ -2486,6 +2505,7 @@ fn settle_close(host: &Arc<Mutex<HostInner>>, plan: ClosePlan) -> Result<()> {
             };
             match candidate {
                 (Ok(_frame), Some(history_plan)) => {
+                    drop(worker_guard);
                     match settle_history_plan_with_backend(host, &mut plan.backend, history_plan) {
                         Ok(outcome)
                             if outcome.inserted == 0
@@ -2520,6 +2540,7 @@ fn settle_close(host: &Arc<Mutex<HostInner>>, plan: ClosePlan) -> Result<()> {
                     }
                 }
                 (Ok(frame), None) => {
+                    drop(worker_guard);
                     match host.lock() {
                         Ok(mut inner) => {
                             inner.content.begin_prepared_candidate(
@@ -2540,10 +2561,11 @@ fn settle_close(host: &Arc<Mutex<HostInner>>, plan: ClosePlan) -> Result<()> {
                     // layout/paint worker finish, then retry the same final
                     // candidate rather than reporting an internal pending
                     // state as a terminal exit failure.
-                    std::thread::yield_now();
+                    worker_signal.wait_for_change(worker_guard, worker_generation)?;
                     continue;
                 }
                 (Err(error), _) => {
+                    drop(worker_guard);
                     final_prepare_error = Some(error);
                     break;
                 }
@@ -2962,22 +2984,17 @@ impl HostInner {
 
     pub(super) fn flush_for_environment(
         &mut self,
-        wait_for_presentation: bool,
         force_retry: bool,
     ) -> Result<(HostFlushOutcome, u64, u64)> {
         if force_retry {
             self.history_sink_blocked = false;
         }
-        let mut outcome = self.flush_pending_frame()?;
+        let outcome = self.flush_pending_frame()?;
         #[cfg(test)]
         if outcome.waiting_for_presentation
-            && let Some((entered, release)) = self.waiting_for_presentation_hook.take()
+            && let Some(entered) = self.waiting_for_presentation_hook.take()
         {
             let _ = entered.send(());
-            let _ = release.recv();
-        }
-        if wait_for_presentation && outcome.waiting_for_presentation {
-            outcome = self.finish_presentation_blocking()?;
         }
         Ok((outcome, self.pending_epoch, self.committed_epoch))
     }
@@ -2994,7 +3011,7 @@ impl HostInner {
     /// Returns the completion signal while the caller still owns the host
     /// guard. The caller must drop that guard before invoking notify; this
     /// preserves the signal-before-host lock order used by close.
-    pub(super) fn history_work_signal(&self) -> Arc<HistoryWorkSignal> {
+    pub(super) fn history_work_signal(&self) -> Arc<CompletionSignal> {
         Arc::clone(&self.history_work_notify)
     }
 
@@ -3002,12 +3019,16 @@ impl HostInner {
         let environment = self.environment.clone();
         let host_id = self.host_id;
         let notification = Arc::clone(&self.presentation_notify);
+        let worker_completion = Arc::clone(&self.worker_completion_notify);
         let cancelled = Arc::clone(&self.worker_wake_cancelled);
         Arc::new(move || {
-            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
-                return;
+            if !cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = environment.mark_host_ready(host_id);
             }
-            let _ = environment.mark_host_ready(host_id);
+            // Closing suppresses queue scheduling, not completion
+            // observation. Final-exit settlement waits on this edge outside
+            // HostInner before retrying a pending layout/paint pass.
+            let _ = worker_completion.notify();
             notification.notify_waiters();
         })
     }
@@ -5141,50 +5162,6 @@ impl HostInner {
         Ok(Some(HostFlushOutcome::default()))
     }
 
-    fn finish_presentation_blocking(&mut self) -> Result<HostFlushOutcome> {
-        if let Some(receipt) = self.bootstrap_receipt.take() {
-            if let Err(error) = receipt.blocking_recv() {
-                self.physical_sync_unknown = true;
-                let failure = host_attempt_error(
-                    "backend",
-                    "BACKEND_IO_FAILED",
-                    true,
-                    format!("terminal presentation failed: {error}"),
-                );
-                let ui_revision = self.ui_resources.document.as_ref().map_or(
-                    0,
-                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
-                );
-                self.record_failed_frame(&failure, "backend", ui_revision, self.pending_epoch);
-                return Err(failure);
-            }
-        }
-        let presentation = std::mem::replace(&mut self.presentation_state, PresentationState::Idle);
-        if let PresentationState::InFlight { frame, receipt } = presentation {
-            if let Err(error) = receipt.blocking_recv() {
-                self.physical_sync_unknown = true;
-                let failure = host_attempt_error(
-                    "backend",
-                    "BACKEND_IO_FAILED",
-                    true,
-                    format!("terminal presentation failed: {error}"),
-                );
-                self.record_failed_frame(&failure, "backend", frame.ui_revision, frame.work_epoch);
-                return Err(failure);
-            }
-            self.presentation_state = PresentationState::Completing { frame };
-        } else {
-            self.presentation_state = presentation;
-        }
-        if matches!(
-            self.presentation_state,
-            PresentationState::Completing { .. }
-        ) {
-            return self.commit_frame();
-        }
-        self.flush_pending_frame()
-    }
-
     fn flush_pending_frame(&mut self) -> Result<HostFlushOutcome> {
         if self.is_closed() {
             return Err(anyhow::anyhow!("host is closed"));
@@ -5631,6 +5608,259 @@ mod latency_tests {
             "close must not join a shared content worker under its latch"
         );
         close_release.release()?;
+        Ok(())
+    }
+
+    #[test]
+    fn async_barrier_does_not_hold_queue_or_host_on_backend_receipt() -> Result<()> {
+        let environment = TuiEnvironment::new_manual();
+        let blocked = TuiHost::open_in_environment_with_ui(
+            24,
+            8,
+            true,
+            environment.clone(),
+            crate::occurrence::HostNamespace::allocate()
+                .ok_or_else(|| anyhow::anyhow!("blocked host UI namespace exhausted"))?,
+        )?;
+        let other = TuiHost::open_in_environment_with_ui(
+            24,
+            8,
+            true,
+            environment.clone(),
+            crate::occurrence::HostNamespace::allocate()
+                .ok_or_else(|| anyhow::anyhow!("other host UI namespace exhausted"))?,
+        )?;
+
+        // Prepare an actual Editor occurrence on a second host before the
+        // receipt is held. Its later key dispatch must cross the same fair
+        // environment drain that the barrier uses.
+        let body = other.ui_body_handle()?;
+        let mut editor_commit = crate::occurrence::UiCommit::new(0);
+        editor_commit.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Editor,
+        });
+        editor_commit.push(UiOperation::CreateControl {
+            local_ordinal: 2,
+            kind: ControlKind::Editor,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(crate::occurrence::NodeRef::Local(1)),
+        });
+        editor_commit.push(UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Existing(body),
+            child: crate::occurrence::NodeRef::Local(1),
+            before: None,
+        });
+        editor_commit.push(UiOperation::AttachControl {
+            node: crate::occurrence::NodeRef::Local(1),
+            control: Some(ResourceRef::Local(2)),
+        });
+        editor_commit.push(UiOperation::SetSubscriptions {
+            node: crate::occurrence::NodeRef::Local(1),
+            mask_low: u32::MAX,
+            mask_high: 0,
+        });
+        let editor_result = other
+            .commit_ui(editor_commit, &[])
+            .map_err(|rejection| anyhow::anyhow!("editor commit rejected: {rejection:?}"))?;
+        let editor = editor_result.acknowledgement.created[0];
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()?;
+        runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                other.wait_for_ui_presentation(
+                    editor_result.acknowledgement.accepted_ui_revision,
+                    false,
+                ),
+            )
+            .await
+        })??;
+        other.focus_ui(editor)?;
+
+        let (receipt_send, receipt_receive) = tokio::sync::oneshot::channel();
+        let (barrier_entered, barrier_entered_receive) = std::sync::mpsc::channel();
+        {
+            let mut inner = blocked
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("blocked host lock"))?;
+            inner.desired_structural_revision = 1;
+            inner.ensure_pending()?;
+            inner.install_test_in_flight(
+                PreparedSceneFrame {
+                    surface: Surface::new(24, 8),
+                    component_geometry: Default::default(),
+                    occurrence_geometry: HashMap::new(),
+                },
+                receipt_receive,
+            )?;
+            inner.waiting_for_presentation_hook = Some(barrier_entered);
+        }
+
+        let barrier_host = blocked.clone();
+        let barrier = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .map_err(anyhow::Error::from)?;
+            runtime.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(1),
+                    barrier_host.wait_for_ui_presentation(1, false),
+                )
+                .await
+            })??;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        // This acknowledgement is emitted from the queue turn before the
+        // old blocking path would wait on the receipt. It therefore proves
+        // the barrier has reached native service, rather than merely proving
+        // that a competing thread happened to run first.
+        barrier_entered_receive
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| anyhow::anyhow!("barrier did not enter native queue: {error}"))?;
+
+        let (other_done, other_result) = std::sync::mpsc::channel();
+        let other_for_input = other.clone();
+        std::thread::spawn(move || {
+            let result = other_for_input
+                .dispatch_key(KeyStroke::new(Key::Char('x')))
+                .map(|_| ());
+            let _ = other_done.send(result);
+        });
+        let responsiveness = other_result.recv_timeout(std::time::Duration::from_secs(1));
+
+        // Release only after the competing host has had a bounded chance to
+        // complete. The old implementation held drain_gate and HostInner
+        // while waiting here, so the Editor dispatch could not return.
+        receipt_send
+            .send(Ok(()))
+            .map_err(|_| anyhow::anyhow!("backend receipt receiver disappeared"))?;
+        let barrier_result = barrier
+            .join()
+            .map_err(|_| anyhow::anyhow!("barrier thread panicked"))?;
+        barrier_result?;
+        responsiveness
+            .map_err(|error| anyhow::anyhow!("other host input was blocked: {error}"))??;
+        let events = other.drain_ui_events()?;
+        assert_eq!(
+            events.len(),
+            1,
+            "editor input must be delivered while barrier waits"
+        );
+        assert_eq!(events[0].text.as_deref(), Some("x"));
+        Ok(())
+    }
+
+    #[test]
+    fn exit_waits_for_pending_renderer_worker_without_polling() -> Result<()> {
+        let environment = TuiEnvironment::new_manual();
+        let host = TuiHost::open_in_environment_with_ui(
+            24,
+            8,
+            true,
+            environment,
+            crate::occurrence::HostNamespace::allocate()
+                .ok_or_else(|| anyhow::anyhow!("host UI namespace exhausted"))?,
+        )?;
+        let body = host.ui_body_handle()?;
+        let mut commit = crate::occurrence::UiCommit::new(0);
+        commit.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Editor,
+        });
+        commit.push(UiOperation::CreateControl {
+            local_ordinal: 2,
+            kind: ControlKind::Editor,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(crate::occurrence::NodeRef::Local(1)),
+        });
+        commit.push(UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Existing(body),
+            child: crate::occurrence::NodeRef::Local(1),
+            before: None,
+        });
+        commit.push(UiOperation::AttachControl {
+            node: crate::occurrence::NodeRef::Local(1),
+            control: Some(ResourceRef::Local(2)),
+        });
+        let accepted = host
+            .commit_ui(commit, &[])
+            .map_err(|rejection| anyhow::anyhow!("UI commit rejected: {rejection:?}"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()?;
+        runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                host.wait_for_ui_presentation(accepted.acknowledgement.accepted_ui_revision, false),
+            )
+            .await
+        })??;
+
+        let (worker_entered, worker_release) = {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.install_test_layout_latch()?
+        };
+        let mut worker_release = LatchRelease(Some(worker_release));
+        host.resize(20, 8)?;
+        {
+            let mut inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.ensure_pending()?;
+        }
+        render_host_after_mutation(&host.inner)?;
+        worker_entered
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| anyhow::anyhow!("layout worker did not start: {error}"))?;
+        {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.running.scene_host().clear_layout_latch_for_test();
+        }
+
+        let (wait_started, wait_started_receive) = std::sync::mpsc::channel();
+        {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner
+                .worker_completion_notify
+                .install_before_wait_hook(wait_started);
+        }
+        let exit_host = host.clone();
+        let (finished, exit_result) = std::sync::mpsc::channel();
+        let exit_thread = std::thread::spawn(move || {
+            let _ = finished.send(exit_host.exit());
+        });
+        let waiting = wait_started_receive.recv_timeout(std::time::Duration::from_secs(1));
+
+        // The worker is deliberately held until exit has registered its
+        // authoritative completion wait. No caller-side frame pump or
+        // polling loop is involved in settling the final frame.
+        worker_release.release()?;
+        exit_result
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .map_err(|error| {
+                anyhow::anyhow!("exit did not finish after worker release: {error}")
+            })??;
+        exit_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("exit thread panicked"))?;
+        waiting
+            .map_err(|error| anyhow::anyhow!("exit did not wait for worker completion: {error}"))?;
+        assert!(host.exited());
         Ok(())
     }
 }

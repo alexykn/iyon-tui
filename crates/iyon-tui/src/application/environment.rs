@@ -979,7 +979,12 @@ impl EnvironmentQueue {
             };
             let history_signal = host.history_work_signal();
             let queued_epoch = host.environment_pending_epoch()?;
-            let result = host.flush_for_environment(force_retry, force_retry);
+            // Queue admission only performs a non-blocking state-machine
+            // turn. In particular, retry admission must never wait for a
+            // terminal receipt while this drain owns either the queue gate or
+            // HostInner; the receipt's wake requeues the host for a later
+            // turn.
+            let result = host.flush_for_environment(force_retry);
             let waiting_for_physical_work = result
                 .as_ref()
                 .is_ok_and(|(outcome, _, _)| outcome.waiting_for_physical_work);

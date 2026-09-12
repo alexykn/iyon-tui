@@ -731,6 +731,8 @@ impl SceneHost {
                     self.pending_layout_signature = None;
                     self.pending_layout_input = None;
                     self.pending_layout_refined = false;
+                    self.pending_content_invalidations.clear();
+                    self.pending_control_invalidations.clear();
                     Ok(layout)
                 }
                 Ok(None) => Err(anyhow::Error::new(SceneLayoutPending)),

@@ -49,7 +49,8 @@ pub(crate) use engine::{
     measure_view_with_overlay_and_cache_and_content,
 };
 pub(crate) use tree::{
-    ComponentGeometry, ComponentGeometryMap, LayoutContent, LayoutNode, LayoutNodeId, LayoutTree,
+    ChildDependency, ComponentGeometry, ComponentGeometryMap, LayoutContent, LayoutNode,
+    LayoutNodeId, LayoutStyle, LayoutTree,
 };
 
 #[cfg(test)]

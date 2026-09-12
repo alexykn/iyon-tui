@@ -17,7 +17,6 @@ mod input;
 #[cfg(feature = "native-host")]
 mod kernel;
 #[cfg(feature = "native-host")]
-pub(crate) mod legacy_scene;
 #[cfg(feature = "native-host")]
 mod run;
 #[cfg(feature = "native-host")]

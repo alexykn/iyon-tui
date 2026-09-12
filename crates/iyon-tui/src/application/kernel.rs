@@ -77,6 +77,16 @@ pub(crate) struct NativeRuntime {
 struct UiHistoryBinding {
     id: HistoryUnitId,
     status: HistoryUnitStatus,
+    native_transfer_allowed: bool,
+}
+
+pub(crate) struct HistoryUnitRecipe {
+    pub(crate) root: crate::occurrence::NodeKey,
+    pub(crate) view: View,
+    pub(crate) native_transfer_allowed: bool,
+    pub(crate) unit_identity: HistoryUnitId,
+    pub(crate) status: HistoryUnitStatus,
+    pub(crate) flow_boundary: FlowBoundary,
 }
 
 enum UiHistoryMutation {
@@ -167,17 +177,128 @@ impl NativeRuntime {
     }
 
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_invalidate_component(&mut self, id: u64) {
+    pub(crate) fn host_invalidate_component(&mut self, id: u64) -> anyhow::Result<()> {
         let id = crate::component::ComponentId::from_raw(id);
+        self.scene_host.invalidate_direct_control_measurement(id)?;
         self.components.invalidate(id);
         self.scene_host.invalidate_component(id);
         self.invalidate_frame();
+        Ok(())
     }
 
     #[cfg(feature = "native-host")]
-    pub(crate) fn host_invalidate_content(&mut self, dirty: crate::presentation::ContentDirty) {
+    pub(crate) fn host_invalidate_content(
+        &mut self,
+        dirty: crate::presentation::ContentDirty,
+    ) -> anyhow::Result<()> {
+        self.scene_host
+            .invalidate_direct_content_measurement(dirty.port_id)?;
         self.scene_host.invalidate_content(dirty);
         self.invalidate_frame();
+        Ok(())
+    }
+
+    pub(crate) fn host_set_direct_control_component(
+        &mut self,
+        key: crate::occurrence::ResourceKey,
+        component: u64,
+    ) {
+        self.scene_host
+            .set_direct_control_component(key, crate::component::ComponentId::from_raw(component));
+    }
+
+    pub(crate) fn host_set_direct_driver_id(&mut self, driver_id: u64) -> anyhow::Result<()> {
+        self.scene_host.set_direct_driver_id(driver_id)
+    }
+
+    pub(crate) fn host_clear_direct_driver(&mut self) -> anyhow::Result<()> {
+        self.scene_host.clear_direct_driver()
+    }
+
+    pub(crate) fn host_remove_direct_control_component(
+        &mut self,
+        key: crate::occurrence::ResourceKey,
+    ) {
+        self.scene_host.remove_direct_control_component(key);
+    }
+
+    pub(crate) fn host_sync_direct_occurrences(
+        &mut self,
+        snapshots: Vec<crate::occurrence::OccurrenceSnapshot>,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+        participation: &[crate::presentation::taffy::NodeParticipation],
+        port_ids: HashMap<crate::occurrence::ResourceKey, u64>,
+        roots: Vec<crate::occurrence::NodeKey>,
+        body_root: crate::occurrence::NodeKey,
+        portal_owners: HashMap<crate::occurrence::NodeKey, crate::occurrence::NodeKey>,
+    ) -> anyhow::Result<()> {
+        self.scene_host.sync_direct_occurrences(
+            snapshots,
+            changes,
+            participation,
+            port_ids,
+            roots,
+            body_root,
+            portal_owners,
+        )
+    }
+
+    pub(crate) fn host_direct_control_for_component(
+        &self,
+        component: u64,
+    ) -> Option<crate::occurrence::ResourceKey> {
+        self.scene_host
+            .direct_control_for_component(crate::component::ComponentId::from_raw(component))
+    }
+
+    pub(crate) fn host_direct_component_for_control(
+        &self,
+        control: crate::occurrence::ResourceKey,
+    ) -> Option<crate::component::ComponentId> {
+        self.scene_host.direct_component_for_control(control)
+    }
+
+    pub(crate) fn host_direct_body_root(&self) -> Option<crate::occurrence::NodeKey> {
+        self.scene_host.direct_body_root()
+    }
+
+    pub(crate) fn host_has_direct_occurrences(&self) -> bool {
+        self.scene_host.has_direct_occurrences()
+    }
+
+    pub(crate) fn host_direct_history_overflow_rows(&self) -> usize {
+        self.scene_host.direct_history_overflow_rows()
+    }
+
+    pub(crate) fn host_native_history_anchored(&self) -> bool {
+        self.scene
+            .history()
+            .is_some_and(crate::History::native_has_physical_rows)
+    }
+
+    pub(crate) fn host_native_history_blocked(&self) -> bool {
+        self.scene
+            .history()
+            .is_some_and(crate::History::native_transfer_semantically_blocked_front)
+    }
+
+    pub(crate) fn host_native_history_front_content_port(&self) -> Option<u64> {
+        self.scene
+            .history()
+            .and_then(crate::History::front_content_attachment_id)
+    }
+
+    pub(crate) fn host_ui_history_exported(&self, root: crate::occurrence::NodeKey) -> bool {
+        let Some(binding) = self.ui_history_units.get(&root).copied() else {
+            return false;
+        };
+        self.scene
+            .history()
+            .is_some_and(|history| !history.contains_unit(binding.id))
+    }
+
+    pub(crate) fn host_direct_port_ids(&self) -> HashMap<crate::occurrence::ResourceKey, u64> {
+        self.scene_host.direct_port_ids().clone()
     }
 
     #[cfg(feature = "native-host")]
@@ -372,7 +493,7 @@ impl NativeRuntime {
 
     pub(crate) fn host_sync_ui_history(
         &mut self,
-        units: Vec<crate::application::legacy_scene::HistoryUnitRecipe>,
+        units: Vec<HistoryUnitRecipe>,
         changes: Option<&crate::occurrence::UiChangeSet>,
         content: &mut crate::application::content::ContentHostRegistry,
     ) -> anyhow::Result<()> {
@@ -409,6 +530,7 @@ impl NativeRuntime {
             self.ui_history_units.remove(&root);
         }
         for (root, binding) in delta.updates {
+            history.set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed);
             self.ui_history_units.insert(root, binding);
         }
         self.scene_host.invalidate_root();
@@ -418,7 +540,7 @@ impl NativeRuntime {
 
     fn prepare_ui_history_delta(
         &self,
-        units: Vec<crate::application::legacy_scene::HistoryUnitRecipe>,
+        units: Vec<HistoryUnitRecipe>,
         changes: Option<&crate::occurrence::UiChangeSet>,
     ) -> anyhow::Result<UiHistoryDelta> {
         let history = self
@@ -434,6 +556,7 @@ impl NativeRuntime {
             let binding = UiHistoryBinding {
                 id: unit.unit_identity,
                 status: unit.status,
+                native_transfer_allowed: unit.native_transfer_allowed,
             };
             let present = history.unit_is_live(binding.id);
             match (self.ui_history_units.get(&unit.root).copied(), present) {
@@ -711,11 +834,53 @@ impl NativeRuntime {
         now: Instant,
         size: Size,
         content: &mut dyn ContentProvider,
+        direct_root: Option<crate::occurrence::NodeKey>,
+        direct_port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
+        direct_history_anchor: crate::presentation::direct::DirectHistoryAnchor,
     ) -> anyhow::Result<(
         PreparedSceneFrame,
         Option<crate::history::NativeTransferPlan>,
     )> {
         content.set_theme(&self.theme);
+        if let Some(root) = direct_root
+            && self.scene_host.has_direct_occurrences()
+        {
+            let frame = self.scene_host.prepare_direct_at_with_content(
+                now,
+                root,
+                size,
+                direct_history_anchor,
+                &mut self.components,
+                &self.theme,
+                content,
+                direct_port_ids,
+            )?;
+            let history_plan = (self.scene_host.direct_history_overflow_rows() > 0)
+                .then(|| {
+                    let front_content_blocked = self
+                        .scene
+                        .history()
+                        .and_then(crate::History::front_content_attachment_id)
+                        .is_some_and(|port_id| {
+                            content.history_transfer_blocked(port_id, size.width)
+                        });
+                    (!front_content_blocked)
+                        .then(|| {
+                            self.scene.history().and_then(|history| {
+                                crate::history::prepare_native_transfer_with_theme_and_content(
+                                    history,
+                                    size.width,
+                                    self.scene_host.direct_history_overflow_rows(),
+                                    &self.theme,
+                                    content,
+                                )
+                            })
+                        })
+                        .flatten()
+                })
+                .flatten();
+            return Ok((frame, history_plan));
+        }
         let frame = self
             .scene_host
             .prepare_at_with_content(

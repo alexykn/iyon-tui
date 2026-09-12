@@ -102,8 +102,21 @@ pub(crate) struct LayoutNode {
     pub(crate) paint_cacheable: bool,
     pub(crate) rect: Rect,
     pub(crate) content_rect: Rect,
+    /// Exact width used to prepare a ContentHost product. This can differ
+    /// from the rounded allocation width by one cell under fractional
+    /// terminal quantization.
+    pub(crate) content_width: u16,
     pub(crate) clip_rect: Rect,
+    /// Signed logical origins retained by the direct terminal route. Rects
+    /// remain bounded terminal allocation metadata, while these origins keep
+    /// an offscreen inset from shifting content/source columns during clip.
+    pub(crate) paint_origin: (i32, i32),
+    pub(crate) content_origin: (i32, i32),
     pub(crate) component: Option<ComponentId>,
+    /// Native controls retain their concrete component View as a local
+    /// projection. Ordinary occurrence boxes never use this field; their
+    /// paint comes directly from the occurrence-owned Taffy tree.
+    pub(crate) native_component_view: Option<crate::presentation::View>,
     pub(crate) children: Vec<LayoutNodeId>,
     /// Dependency metadata recorded by the layout algorithm for each child.
     /// It is parallel to `children` and lets retained mutations stop at a
@@ -215,6 +228,10 @@ fn translate_rect(rect: Rect, dx: i32, dy: i32) -> Rect {
         rect.width,
         rect.height,
     )
+}
+
+fn translate_origin(origin: (i32, i32), dx: i32, dy: i32) -> (i32, i32) {
+    (origin.0.saturating_add(dx), origin.1.saturating_add(dy))
 }
 
 fn contains(outer: Rect, inner: Rect) -> bool {
@@ -460,6 +477,16 @@ impl LayoutTree {
                 old_origin.x.into(),
                 old_origin.y.into(),
             );
+            patched.paint_origin = translate_origin(
+                patched.paint_origin,
+                old_origin.x.into(),
+                old_origin.y.into(),
+            );
+            patched.content_origin = translate_origin(
+                patched.content_origin,
+                old_origin.x.into(),
+                old_origin.y.into(),
+            );
             patched.clip_rect =
                 translate_rect(patched.clip_rect, old_origin.x.into(), old_origin.y.into())
                     .intersection(old_clip)
@@ -520,6 +547,8 @@ impl LayoutTree {
             let mut patched = new_node.clone();
             patched.rect = translate_rect(patched.rect, dx, dy);
             patched.content_rect = translate_rect(patched.content_rect, dx, dy);
+            patched.paint_origin = translate_origin(patched.paint_origin, dx, dy);
+            patched.content_origin = translate_origin(patched.content_origin, dx, dy);
             patched.clip_rect = translate_rect(patched.clip_rect, dx, dy)
                 .intersection(old_clip)
                 .unwrap_or(Rect::new(old_clip.x, old_clip.y, 0, 0));

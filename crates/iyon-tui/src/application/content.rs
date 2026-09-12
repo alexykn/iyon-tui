@@ -19,10 +19,11 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     geometry::Size,
-    physical::{PhysicalCell, PhysicalRow, Surface},
+    physical::{PhysicalCell, PhysicalRow, Surface, grapheme_cell_width},
     presentation::{
-        ContentDirty, ContentDirtyReason, ContentMeasurement, ContentProvider, ContentWindow,
-        HistoryContentRows, PreparedProjectionTicket,
+        ContentDirty, ContentDirtyReason, ContentMeasurement, ContentMeasurementCapture,
+        ContentProvider, ContentWindow, HistoryContentRows, HistoryMeasurementAdjustment,
+        PreparedProjectionTicket,
     },
     projection::{Projection, ProjectionBuilder, Projector, Smooth, SmoothConfig},
     stream::{StreamOffset, StreamRange},
@@ -333,6 +334,7 @@ struct HostContentProjection {
     /// eviction/reuse.
     identity: u64,
     key: TextProjectionKey,
+    source_snapshot: HostContentSourceSnapshot,
     intrinsic_size: Size,
     physically_complete: bool,
     /// Immediate non-History projections may defer physical row lowering to
@@ -340,6 +342,7 @@ struct HostContentProjection {
     /// reveal and scrollback semantics.
     rows: Option<Arc<Vec<PhysicalRow>>>,
     layout: Option<Arc<crate::presentation::layout::LayoutTree>>,
+    semantic_view: Option<Arc<crate::presentation::View>>,
     text_geometry: Option<Arc<Mutex<crate::presentation::paint::TextGeometryCache>>>,
     /// Immutable palette captured with this projection. Deferred row-window
     /// painting must not consult the Connector's newer host theme.
@@ -490,6 +493,30 @@ impl HostContentProjection {
     }
 }
 
+#[derive(Clone, Debug)]
+struct CapturedProjection {
+    connector_id: u64,
+    source_snapshot: HostContentSourceSnapshot,
+    product: Arc<HostContentProjection>,
+}
+
+#[derive(Clone, Debug)]
+enum CapturedCandidate {
+    None,
+    Prepared(CapturedProjection),
+    Failed {
+        connector_id: u64,
+        source_snapshot: HostContentSourceSnapshot,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct CandidateContentCapture {
+    port_id: u64,
+    candidate: CapturedCandidate,
+    confirmed: Option<CapturedProjection>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct HostContentSourceStats {
     pub revision: u64,
@@ -550,6 +577,7 @@ impl std::fmt::Display for ContentProjectionFailure {
 impl std::error::Error for ContentProjectionFailure {}
 
 static NEXT_CONTENT_PROJECTION_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_CONTENT_CAPTURE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_content_projection_id() -> u64 {
     NEXT_CONTENT_PROJECTION_ID
@@ -557,6 +585,14 @@ fn next_content_projection_id() -> u64 {
             current.checked_add(1)
         })
         .expect("content projection identity exhausted")
+}
+
+fn next_content_capture_id() -> u64 {
+    NEXT_CONTENT_CAPTURE_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .expect("content capture identity exhausted")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -571,7 +607,9 @@ fn projected_bounds(
     wrap: TextWrapMode,
     offered_width: u16,
 ) -> (u64, u64) {
-    let width = u64::from(offered_width.max(1));
+    // Zero-width content is a real terminal constraint. It preserves hard
+    // line boundaries instead of being silently widened to one cell.
+    let width = u64::from(offered_width);
     let mut rows = 0u64;
     let mut line_bytes = 0u64;
     let mut max_line_bytes = 0u64;
@@ -579,7 +617,7 @@ fn projected_bounds(
         for byte in bytes {
             if *byte == b'\n' {
                 max_line_bytes = max_line_bytes.max(line_bytes);
-                rows = if wrap == TextWrapMode::NoWrap {
+                rows = if wrap == TextWrapMode::NoWrap || offered_width == 0 {
                     rows.saturating_add(1)
                 } else {
                     rows.saturating_add(line_bytes.div_ceil(width).max(1))
@@ -591,7 +629,7 @@ fn projected_bounds(
         }
     }
     max_line_bytes = max_line_bytes.max(line_bytes);
-    rows = if wrap == TextWrapMode::NoWrap {
+    rows = if wrap == TextWrapMode::NoWrap || offered_width == 0 {
         rows.saturating_add(1)
     } else {
         rows.saturating_add(line_bytes.div_ceil(width).max(1))
@@ -760,7 +798,7 @@ fn compile_semantic_content(
         let compiler = crate::presentation::layout::ViewCompiler::new(theme);
         let tree = Arc::new(compiler.layout_tree(
             &view,
-            crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+            crate::geometry::LayoutConstraints::width_only(offered_width),
         ));
         return Ok((
             crate::presentation::layout::LayoutBlock {
@@ -775,7 +813,7 @@ fn compile_semantic_content(
     let compiler = crate::presentation::layout::ViewCompiler::new(theme);
     let tree = Arc::new(compiler.layout_tree(
         &view,
-        crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+        crate::geometry::LayoutConstraints::width_only(offered_width),
     ));
     Ok((
         compiler.compile_tree_with_text_cache(&tree, text_geometry),
@@ -793,7 +831,7 @@ fn layout_semantic_content(
     let compiler = crate::presentation::layout::ViewCompiler::new(theme);
     let tree = Arc::new(compiler.layout_tree(
         &view,
-        crate::geometry::LayoutConstraints::width_only(offered_width.max(1)),
+        crate::geometry::LayoutConstraints::width_only(offered_width),
     ));
     (tree.size.width, tree.physically_complete, tree)
 }
@@ -914,6 +952,7 @@ struct PreparedPaintProduct {
     /// theme-only repaint.  The physical rows below are the theme-resolved
     /// paint product layered on top of this retained tree.
     layout: Arc<crate::presentation::layout::LayoutTree>,
+    semantic_view: Arc<crate::presentation::View>,
     text_geometry: Arc<Mutex<crate::presentation::paint::TextGeometryCache>>,
     rows: Option<Arc<Vec<PhysicalRow>>>,
     width: u16,
@@ -966,7 +1005,7 @@ fn prove_finalized_prefix(
     let key = PrefixProofKey {
         semantic: semantic_key.clone(),
         source_end: stable_end,
-        width: offered_width.max(1),
+        width: offered_width,
     };
     let (proof, initial_rows) = if let Some(proof) = prefix_proof_cache
         .iter()
@@ -1038,7 +1077,7 @@ fn project_text_snapshot(
         source_generation: snapshot.source_generation,
         content_generation: snapshot.content_generation,
         source_revision: snapshot.revision,
-        width: offered_width.max(1),
+        width: offered_width,
         wrap: funnel.wrap,
         funnel_kind: funnel.kind,
         delivery_revision,
@@ -1050,10 +1089,12 @@ fn project_text_snapshot(
         return Ok(HostContentProjection {
             identity: next_content_projection_id(),
             key,
+            source_snapshot: snapshot.clone(),
             intrinsic_size: Size::new(0, 0),
             physically_complete: true,
             rows: Some(Arc::new(Vec::new())),
             layout: None,
+            semantic_view: None,
             text_geometry: None,
             theme: Arc::clone(theme),
             finalized_prefix: None,
@@ -1088,7 +1129,7 @@ fn project_text_snapshot(
     let paint_key = PreparedPaintKey {
         semantic_key: semantic_key.clone(),
         theme_revision,
-        width: offered_width.max(1),
+        width: offered_width,
         needs_finalized_prefix,
         needs_physical_rows: key.needs_physical_rows,
     };
@@ -1104,11 +1145,16 @@ fn project_text_snapshot(
         let semantic = resolve_cached_semantic(semantic_cache, semantic_key.clone(), || {
             project_semantic_snapshot(snapshot, funnel, execution)
         })?;
+        let semantic_view = Arc::new(
+            execution
+                .renderer
+                .lower_semantic_iter(semantic.spans().iter().flat_map(|span| span.values())),
+        );
         let reusable_product = prepared_paint_cache
             .iter()
             .find(|(candidate, _)| {
                 candidate.semantic_key == semantic_key
-                    && candidate.width == offered_width.max(1)
+                    && candidate.width == offered_width
                     && candidate.needs_finalized_prefix == needs_finalized_prefix
                     && candidate.needs_physical_rows == key.needs_physical_rows
             })
@@ -1189,6 +1235,7 @@ fn project_text_snapshot(
         };
         let product = Arc::new(PreparedPaintProduct {
             layout,
+            semantic_view,
             text_geometry,
             rows,
             width,
@@ -1244,10 +1291,12 @@ fn project_text_snapshot(
     Ok(HostContentProjection {
         identity: next_content_projection_id(),
         key,
+        source_snapshot: snapshot.clone(),
         intrinsic_size,
         physically_complete: paint_product.physically_complete,
         rows: paint_product.rows.clone(),
         layout: Some(Arc::clone(&paint_product.layout)),
+        semantic_view: Some(Arc::clone(&paint_product.semantic_view)),
         text_geometry: Some(Arc::clone(&paint_product.text_geometry)),
         theme: Arc::clone(theme),
         finalized_prefix: paint_product.finalized_prefix.clone(),
@@ -3569,6 +3618,10 @@ pub(crate) struct ContentHostRegistry {
     /// Candidate selection/projection is discarded on frame abort and
     /// promoted only after the backend receipt commits.
     candidate_selections: HashMap<u64, Option<u64>>,
+    /// Candidate-local immutable product captures. Each entry retains the
+    /// exact candidate/confirmed Arc products and Source frontier used by a
+    /// bounded final-width refinement.
+    candidate_content_captures: HashMap<u64, CandidateContentCapture>,
     /// Desired association changes accepted outside a candidate. They are
     /// moved into `candidate_binding_changes` at attempt start and remain
     /// independent from newer changes while a receipt is in flight.
@@ -3609,7 +3662,8 @@ pub(crate) struct ContentHostRegistry {
     /// lookups in that candidate.  Interior mutability keeps the read-only
     /// provider revision queries on the existing seam without making the map a
     /// second Source authority.
-    candidate_source_snapshots: RefCell<HashMap<u64, HostContentSourceSnapshot>>,
+    candidate_source_snapshots:
+        RefCell<HashMap<super::ui_resources::SourceIdentity, HostContentSourceSnapshot>>,
     candidate_capture_active: bool,
     candidate_commit_prepared: bool,
     history_adapter: HistoryTerminalAdapter,
@@ -3617,6 +3671,10 @@ pub(crate) struct ContentHostRegistry {
     /// The occurrence owner remains authoritative; these handles are only
     /// the existing `ContentProvider` execution objects used by the M1 adapter.
     ui_ports: HashMap<ResourceKey, u64>,
+    /// A physically exported History unit may retain its occurrence root until
+    /// React removes it. Keep its derived Port retired rather than recreating
+    /// the content product on a later sparse sync.
+    retired_ui_ports: HashSet<ResourceKey>,
     ui_connectors: HashMap<ResourceKey, u64>,
     ui_connector_keys: HashMap<ResourceKey, ResourceKey>,
     /// Every derived adapter retains its qualified occurrence Connector key
@@ -3649,6 +3707,7 @@ impl ContentHostRegistry {
             connectors: HashMap::new(),
             in_flight_connectors: HashSet::new(),
             candidate_selections: HashMap::new(),
+            candidate_content_captures: HashMap::new(),
             pending_binding_changes: HashSet::new(),
             pending_binding_revisions: HashMap::new(),
             next_binding_revision: 0,
@@ -3670,6 +3729,7 @@ impl ContentHostRegistry {
             candidate_commit_prepared: false,
             history_adapter: HistoryTerminalAdapter::new(),
             ui_ports: HashMap::new(),
+            retired_ui_ports: HashSet::new(),
             ui_connectors: HashMap::new(),
             ui_connector_keys: HashMap::new(),
             ui_connector_keys_by_id: HashMap::new(),
@@ -3693,6 +3753,8 @@ impl ContentHostRegistry {
             return Err(anyhow!("UI content adapter has no owning host"));
         }
         let initial = changes.is_none();
+        self.retired_ui_ports
+            .retain(|key| owner.ports.contains(key));
         let (mut port_keys, mut stale_keys, owner_visited) =
             Self::ui_sync_port_keys(&self.ui_ports, owner, changes)?;
         crate::perf::add(
@@ -3713,7 +3775,7 @@ impl ContentHostRegistry {
         let demanded_keys = self.demanded_ui_ports(owner, &port_keys, initial)?;
 
         for key in port_keys {
-            if !owner.ports.contains(&key) {
+            if !owner.ports.contains(&key) || self.retired_ui_ports.contains(&key) {
                 continue;
             }
             self.sync_ui_port(owner, &host, key)?;
@@ -4009,7 +4071,10 @@ impl ContentHostRegistry {
     }
 
     pub(crate) fn ui_port_id(&self, key: ResourceKey) -> Option<u64> {
-        self.ui_ports.get(&key).copied()
+        self.ui_ports
+            .get(&key)
+            .copied()
+            .filter(|port_id| self.ports.contains_key(port_id))
     }
 
     pub(crate) fn ui_connector_owner_key(&self, connector: ResourceKey) -> Option<ResourceKey> {
@@ -4492,6 +4557,7 @@ impl ContentHostRegistry {
             }
         }
         self.candidate_source_snapshots.borrow_mut().clear();
+        self.candidate_content_captures.clear();
         self.candidate_touched_connectors.extend(
             self.pending_source_cleanups
                 .iter()
@@ -4731,30 +4797,80 @@ impl ContentHostRegistry {
             .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
             .id;
         let snapshot = self.source_snapshot_for(&state.source)?;
+        Self::projection_key_for_state(
+            &state,
+            port_id,
+            width,
+            self.theme_revision,
+            &self.history_adapter,
+            &snapshot,
+        )
+    }
+
+    fn projection_key_for_state(
+        state: &ConnectorRecord,
+        port_id: u64,
+        width: u16,
+        theme_revision: u64,
+        history_adapter: &HistoryTerminalAdapter,
+        snapshot: &HostContentSourceSnapshot,
+    ) -> Result<TextProjectionKey> {
         Ok(TextProjectionKey {
             source_id: snapshot.source_id,
             source_generation: snapshot.source_generation,
             content_generation: snapshot.content_generation,
             source_revision: snapshot.revision,
-            width: width.max(1),
+            width,
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
-            theme_revision: self.theme_revision,
-            needs_finalized_prefix: self.history_adapter.unit_id(port_id).is_some(),
-            needs_physical_rows: self.history_adapter.unit_id(port_id).is_some()
+            theme_revision,
+            needs_finalized_prefix: history_adapter.unit_id(port_id).is_some(),
+            needs_physical_rows: history_adapter.unit_id(port_id).is_some()
                 || state.funnel.smooth_config().is_some(),
         })
+    }
+
+    fn connector_projection_key_for_snapshot(
+        &self,
+        connector_id: u64,
+        width: u16,
+        snapshot: &HostContentSourceSnapshot,
+    ) -> Result<TextProjectionKey> {
+        let connector =
+            self.connectors.get(&connector_id).cloned().ok_or_else(|| {
+                anyhow!("INTERNAL_INVARIANT: Connector {connector_id} disappeared")
+            })?;
+        let state = connector
+            .lock()
+            .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+        let port = state
+            .port
+            .upgrade()
+            .ok_or_else(|| anyhow!("PORT_DISPOSED: Connector's ContentPort is gone"))?;
+        let port_id = port
+            .lock()
+            .map_err(|_| anyhow!("ContentPort lock is poisoned"))?
+            .id;
+        Self::projection_key_for_state(
+            &state,
+            port_id,
+            width,
+            self.theme_revision,
+            &self.history_adapter,
+            snapshot,
+        )
     }
 
     fn source_snapshot_for(&self, source: &HostContentSource) -> Result<HostContentSourceSnapshot> {
         if !self.candidate_capture_active {
             return source.snapshot();
         }
+        let identity = super::ui_resources::SourceIdentity::from_source(source);
         if let Some(snapshot) = self
             .candidate_source_snapshots
             .borrow()
-            .get(&source.id())
+            .get(&identity)
             .cloned()
         {
             return Ok(snapshot);
@@ -4762,7 +4878,7 @@ impl ContentHostRegistry {
         let snapshot = source.snapshot()?;
         self.candidate_source_snapshots
             .borrow_mut()
-            .insert(source.id(), snapshot.clone());
+            .insert(identity, snapshot.clone());
         Ok(snapshot)
     }
 
@@ -4853,6 +4969,15 @@ impl ContentHostRegistry {
         connector_id: u64,
         offered_width: u16,
     ) -> Result<ContentMeasurement> {
+        self.prepare_connector_projection_with_snapshot(connector_id, offered_width, None)
+    }
+
+    fn prepare_connector_projection_with_snapshot(
+        &mut self,
+        connector_id: u64,
+        offered_width: u16,
+        captured_source: Option<&HostContentSourceSnapshot>,
+    ) -> Result<ContentMeasurement> {
         self.touch_connector(connector_id);
         let connector =
             self.connectors.get(&connector_id).cloned().ok_or_else(|| {
@@ -4883,7 +5008,9 @@ impl ContentHostRegistry {
             )
         };
         crate::perf::inc(crate::perf::Counter::SemanticPreparations);
-        let snapshot = self.source_snapshot_for(&source)?;
+        let snapshot = captured_source
+            .cloned()
+            .map_or_else(|| self.source_snapshot_for(&source), Ok)?;
         if funnel.kind == TextFunnelKind::Markdown && snapshot.source_base != 0 {
             return Err(anyhow::Error::new(ContentProjectionFailure {
                 kind: ContentProjectionFailureKind::RetentionIncompatible,
@@ -4896,7 +5023,7 @@ impl ContentHostRegistry {
             source_generation: snapshot.source_generation,
             content_generation: snapshot.content_generation,
             source_revision: snapshot.revision,
-            width: offered_width.max(1),
+            width: offered_width,
             wrap: funnel.wrap,
             funnel_kind: funnel.kind,
             delivery_revision,
@@ -5096,7 +5223,7 @@ impl ContentHostRegistry {
     ) -> ContentMeasurement {
         if width_rule != crate::presentation::WidthRule::Fit
             || measurement.intrinsic_size.width == 0
-            || measurement.intrinsic_size.width >= offered_width.max(1)
+            || measurement.intrinsic_size.width >= offered_width
         {
             return measurement;
         }
@@ -5131,14 +5258,14 @@ impl ContentHostRegistry {
         let connector = self.connectors.get(&connector_id).cloned()?;
         let mut state = connector.lock().ok()?;
         let projection = state.candidate_projection.as_ref()?.clone();
-        if projection.key.width != offered_width.max(1)
+        if projection.key.width != offered_width
             || projection.intrinsic_size.width != intrinsic_width
             || intrinsic_width == 0
         {
             return None;
         }
         let mut key = projection.key;
-        key.width = intrinsic_width.max(1);
+        key.width = intrinsic_width;
         if key == projection.key {
             return Some(projection.measurement(connector_id));
         }
@@ -5173,6 +5300,24 @@ impl ContentHostRegistry {
             .height
             .saturating_sub(u16::try_from(committed_rows).unwrap_or(u16::MAX));
         measurement
+    }
+
+    fn history_measurement_adjustment(
+        &self,
+        port_id: u64,
+        offered_width: u16,
+        measurement: &ContentMeasurement,
+        product: Option<&HostContentProjection>,
+    ) -> Option<HistoryMeasurementAdjustment> {
+        let removed_rows = self.history_adapter.committed_content_rows(port_id);
+        let product = product?;
+        (removed_rows > 0 && measurement.projection_identity == product.identity).then_some(
+            HistoryMeasurementAdjustment {
+                projection_identity: product.identity,
+                offered_width,
+                removed_rows,
+            },
+        )
     }
 
     fn measure_content(
@@ -5274,7 +5419,7 @@ impl ContentHostRegistry {
         ticket: PreparedProjectionTicket,
         window: ContentWindow,
         target: &mut Surface,
-        target_origin: (u16, u16),
+        target_origin: (i32, i32),
         clip: crate::geometry::Rect,
         style: crate::physical::PhysicalStyle,
     ) {
@@ -5283,6 +5428,7 @@ impl ContentHostRegistry {
         // delivery tick, Connector switch, or theme change may have created
         // another candidate while this frame is still being painted.
         let Some(projection) = self.projection_for_ticket(ticket) else {
+            target.physically_complete = false;
             return;
         };
         if !projection.physically_complete {
@@ -5350,7 +5496,7 @@ impl ContentHostRegistry {
         let target_height = i32::from(target.height());
 
         for (i, row) in window_slice.iter().enumerate() {
-            let target_y = i32::from(target_origin.1).saturating_add(i as i32);
+            let target_y = target_origin.1.saturating_add(i as i32);
             if target_y < clip_top
                 || target_y >= clip_bottom
                 || target_y < 0
@@ -5369,14 +5515,14 @@ impl ContentHostRegistry {
             {
                 0
             } else {
-                usize::from(ticket.offered_width.max(1))
+                usize::from(ticket.offered_width)
             };
 
             if max_col == 0 {
                 continue;
             }
 
-            let dest_origin_x = i32::from(target_origin.0);
+            let dest_origin_x = target_origin.0;
             let src_cells = row.cells();
             for glyph in row.glyphs() {
                 if !glyph.leader.painted {
@@ -5443,7 +5589,7 @@ impl ContentHostRegistry {
         let connector = self.connectors.get(&connector_id)?.lock().ok()?;
         let matches = |projection: &Arc<HostContentProjection>| {
             projection.identity == ticket.projection_identity
-                && projection.key.width == ticket.offered_width.max(1)
+                && projection.key.width == ticket.offered_width
                 && projection.key.revision() == ticket.projection_revision
         };
         if connector.candidate_projection.as_ref().is_some_and(matches) {
@@ -5937,7 +6083,7 @@ impl ContentHostRegistry {
             source_generation: snapshot.source_generation,
             content_generation: snapshot.content_generation,
             source_revision: snapshot.revision,
-            width: offered_width.max(1),
+            width: offered_width,
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
             delivery_revision: state.delivery_revision,
@@ -5982,6 +6128,7 @@ impl ContentHostRegistry {
         // to constant-time ownership flags avoids a post-receipt registry scan
         // and cannot consume newer desired operations.
         self.candidate_selections.clear();
+        self.candidate_content_captures.clear();
         self.candidate_binding_changes.clear();
         self.candidate_binding_revisions.clear();
         self.candidate_touched_connectors.clear();
@@ -5989,6 +6136,7 @@ impl ContentHostRegistry {
         self.candidate_capture_active = false;
         self.candidate_commit_prepared = false;
         self.candidate_source_snapshots.borrow_mut().clear();
+        self.candidate_content_captures.clear();
     }
 
     /// Aborts a candidate without changing visible bindings. Deferred control
@@ -6845,6 +6993,7 @@ impl ContentHostRegistry {
         self.active_sync_scratch.clear();
         self.due_connector_scratch.clear();
         self.candidate_selections.clear();
+        self.candidate_content_captures.clear();
         self.pending_binding_changes.clear();
         self.pending_binding_revisions.clear();
         self.candidate_binding_changes.clear();
@@ -6862,6 +7011,7 @@ impl ContentHostRegistry {
         self.candidate_commit_prepared = false;
         self.history_adapter = HistoryTerminalAdapter::new();
         self.ui_ports.clear();
+        self.retired_ui_ports.clear();
         self.ui_connectors.clear();
         self.ui_connector_keys.clear();
         self.ui_connector_keys_by_id.clear();
@@ -7379,6 +7529,11 @@ impl ContentHostRegistry {
     pub(crate) fn history_unit_retired(&mut self, unit_id: u64) {
         let ports = self.history_adapter.retire_unit(unit_id);
         for port_id in ports {
+            let ui_keys = self
+                .ui_ports
+                .iter()
+                .filter_map(|(key, candidate)| (*candidate == port_id).then_some(*key))
+                .collect::<Vec<_>>();
             self.pending_binding_changes.remove(&port_id);
             self.pending_binding_revisions.remove(&port_id);
             self.candidate_binding_changes.remove(&port_id);
@@ -7401,6 +7556,13 @@ impl ContentHostRegistry {
             for connector_id in connector_ids {
                 self.candidate_touched_connectors.remove(&connector_id);
                 self.remove_connector(connector_id);
+            }
+            for key in ui_keys {
+                self.ui_ports.remove(&key);
+                self.ui_connectors.remove(&key);
+                self.ui_connector_keys.remove(&key);
+                self.ui_confirmed_connectors.remove(&key);
+                self.retired_ui_ports.insert(key);
             }
         }
     }
@@ -7646,12 +7808,296 @@ impl ContentProvider for ContentHostRegistry {
         self.measure_content(port_id, offered_width, width_rule)
     }
 
+    fn capture_measurement(
+        &mut self,
+        port_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+    ) -> anyhow::Result<ContentMeasurementCapture> {
+        let measurement = self.measure_content(port_id, offered_width, width_rule);
+        let capture_id = next_content_capture_id();
+        let candidate_connector = self.candidate_selections.get(&port_id).copied().flatten();
+        let port = self
+            .ports
+            .get(&port_id)
+            .ok_or_else(|| anyhow!("CONTENT_CAPTURE_FAILED: ContentPort {port_id} is unavailable"))?
+            .lock()
+            .map_err(|_| {
+                anyhow!("CONTENT_CAPTURE_FAILED: ContentPort {port_id} lock is poisoned")
+            })?;
+        let confirmed_connector = port.visible_connector;
+        let desired_connector = port.desired_connector;
+        let candidate_product = measurement
+            .connector_id
+            .and_then(|connector| self.projection_for_measurement(connector, measurement));
+        let history_adjustment = self.history_measurement_adjustment(
+            port_id,
+            offered_width,
+            &measurement,
+            candidate_product.as_deref(),
+        );
+        let confirmed_product =
+            confirmed_connector.and_then(|connector| self.confirmed_projection(connector));
+        let source_snapshot = if let Some(product) = candidate_product.as_ref() {
+            Some(product.source_snapshot.clone())
+        } else if let Some(connector) = candidate_connector {
+            let source = self.connector_source(connector).ok_or_else(|| {
+                anyhow!("INTERNAL_INVARIANT: candidate Connector source is missing")
+            })?;
+            Some(self.source_snapshot_for(&source)?)
+        } else {
+            None
+        };
+        let candidate = match (candidate_connector, source_snapshot, candidate_product) {
+            (None, None, None) => CapturedCandidate::None,
+            (Some(connector_id), Some(source_snapshot), Some(product)) => {
+                CapturedCandidate::Prepared(CapturedProjection {
+                    connector_id,
+                    source_snapshot,
+                    product,
+                })
+            }
+            (Some(connector_id), Some(source_snapshot), None) => CapturedCandidate::Failed {
+                connector_id,
+                source_snapshot,
+            },
+            _ => {
+                return Err(anyhow!(
+                    "INTERNAL_INVARIANT: candidate content capture state is incomplete"
+                ));
+            }
+        };
+        let confirmed = match (confirmed_connector, confirmed_product) {
+            (None, None) => None,
+            (Some(connector_id), Some(product)) => Some(CapturedProjection {
+                connector_id,
+                source_snapshot: product.source_snapshot.clone(),
+                product,
+            }),
+            _ => {
+                return Err(anyhow!(
+                    "INTERNAL_INVARIANT: confirmed content product is unavailable"
+                ));
+            }
+        };
+        if confirmed.is_none() {
+            if let Some(desired_connector) = desired_connector
+                && self
+                    .connectors
+                    .get(&desired_connector)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} is unavailable"
+                        )
+                    })?
+                    .lock()
+                    .map_err(|_| {
+                        anyhow!(
+                            "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} lock is poisoned"
+                        )
+                    })?
+                    .error
+                    .is_some()
+            {
+                return Err(anyhow!(
+                    "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} has no valid candidate or confirmed product"
+                ));
+            }
+        }
+        if let CapturedCandidate::Failed {
+            connector_id,
+            source_snapshot,
+        } = &candidate
+            && confirmed.is_none()
+        {
+            return Err(anyhow!(
+                "CONTENT_CAPTURE_FAILED: Connector {connector_id} projection failed at Source revision {} without a confirmed product",
+                source_snapshot.revision,
+            ));
+        }
+        self.candidate_content_captures.insert(
+            capture_id,
+            CandidateContentCapture {
+                port_id,
+                candidate: candidate.clone(),
+                confirmed: confirmed.clone(),
+            },
+        );
+        let (min_content, max_content) = self.content_measurement_bounds(
+            offered_width,
+            measurement,
+            match &candidate {
+                CapturedCandidate::Prepared(capture) => Some(&capture.product),
+                CapturedCandidate::None | CapturedCandidate::Failed { .. } => {
+                    confirmed.as_ref().map(|capture| &capture.product)
+                }
+            },
+        );
+        let semantic_view = match &candidate {
+            CapturedCandidate::Prepared(capture) => Some(&capture.product),
+            CapturedCandidate::None | CapturedCandidate::Failed { .. } => {
+                confirmed.as_ref().map(|capture| &capture.product)
+            }
+        }
+        .and_then(|product| product.semantic_view.as_ref())
+        .map(|view| (**view).clone());
+        Ok(ContentMeasurementCapture {
+            capture_id,
+            min_content,
+            max_content,
+            history_adjustment,
+            semantic_view,
+            measurement,
+        })
+    }
+
+    fn refine_captured_measurement(
+        &mut self,
+        port_id: u64,
+        capture_id: u64,
+        offered_width: u16,
+        _width_rule: crate::presentation::WidthRule,
+    ) -> anyhow::Result<ContentMeasurementCapture> {
+        let Some(capture) = self.candidate_content_captures.get(&capture_id).cloned() else {
+            return Err(anyhow!(
+                "INTERNAL_INVARIANT: direct content capture is unavailable"
+            ));
+        };
+        if capture.port_id != port_id {
+            return Err(anyhow!(
+                "INTERNAL_INVARIANT: direct content capture targets another Port"
+            ));
+        }
+        let candidate = match capture.candidate {
+            CapturedCandidate::None => None,
+            CapturedCandidate::Failed {
+                connector_id,
+                source_snapshot,
+            } if capture.confirmed.is_none() => {
+                return Err(anyhow!(
+                    "CONTENT_CAPTURE_FAILED: Connector {connector_id} projection failed at Source revision {} without a confirmed product",
+                    source_snapshot.revision,
+                ));
+            }
+            CapturedCandidate::Failed { .. } => None,
+            CapturedCandidate::Prepared(binding) => {
+                match self.prepare_connector_projection_with_snapshot(
+                    binding.connector_id,
+                    offered_width,
+                    Some(&binding.source_snapshot),
+                ) {
+                    Ok(measurement) => {
+                        let product = measurement
+                            .connector_id
+                            .and_then(|connector| {
+                                self.projection_for_measurement(connector, measurement)
+                            })
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "INTERNAL_INVARIANT: prepared candidate product disappeared"
+                                )
+                            })?;
+                        Some((binding.connector_id, measurement, product))
+                    }
+                    Err(error) => {
+                        let key = self.connector_projection_key_for_snapshot(
+                            binding.connector_id,
+                            offered_width,
+                            &binding.source_snapshot,
+                        )?;
+                        self.record_projection_failure(binding.connector_id, key, &error);
+                        None
+                    }
+                }
+            }
+        };
+        let (selected_connector, measurement, product) =
+            if let Some((connector, measurement, product)) = candidate {
+                (Some(connector), measurement, Some(product))
+            } else if let Some(binding) = capture.confirmed {
+                match self.prepare_connector_projection_with_snapshot(
+                    binding.connector_id,
+                    offered_width,
+                    Some(&binding.source_snapshot),
+                ) {
+                    Ok(measurement) => {
+                        let product = measurement
+                            .connector_id
+                            .and_then(|connector| {
+                                self.projection_for_measurement(connector, measurement)
+                            })
+                            .ok_or_else(|| {
+                                anyhow!("INTERNAL_INVARIANT: confirmed A product disappeared")
+                            })?;
+                        (Some(binding.connector_id), measurement, Some(product))
+                    }
+                    Err(error) => {
+                        let key = self.connector_projection_key_for_snapshot(
+                            binding.connector_id,
+                            offered_width,
+                            &binding.source_snapshot,
+                        )?;
+                        self.record_projection_failure(binding.connector_id, key, &error);
+                        (
+                            Some(binding.connector_id),
+                            binding.product.measurement(binding.connector_id),
+                            Some(binding.product),
+                        )
+                    }
+                }
+            } else {
+                (None, ContentMeasurement::default(), None)
+            };
+        let measurement = self.adjust_history_measurement(port_id, measurement);
+        self.candidate_selections
+            .insert(port_id, selected_connector);
+        let (min_content, max_content) =
+            self.content_measurement_bounds(offered_width, measurement, product.as_ref());
+        let semantic_view = product
+            .as_ref()
+            .and_then(|product| product.semantic_view.as_ref())
+            .map(|view| (**view).clone());
+        let history_adjustment = self.history_measurement_adjustment(
+            port_id,
+            offered_width,
+            &measurement,
+            product.as_deref(),
+        );
+        Ok(ContentMeasurementCapture {
+            capture_id,
+            min_content,
+            max_content,
+            history_adjustment,
+            semantic_view,
+            measurement,
+        })
+    }
+
     fn paint_window(
         &self,
         ticket: PreparedProjectionTicket,
         window: ContentWindow,
         target: &mut Surface,
         target_origin: (u16, u16),
+        clip: crate::geometry::Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        self.paint_window_direct(
+            ticket,
+            window,
+            target,
+            (i32::from(target_origin.0), i32::from(target_origin.1)),
+            clip,
+            style,
+        );
+    }
+
+    fn paint_window_signed(
+        &self,
+        ticket: PreparedProjectionTicket,
+        window: ContentWindow,
+        target: &mut Surface,
+        target_origin: (i32, i32),
         clip: crate::geometry::Rect,
         style: crate::physical::PhysicalStyle,
     ) {
@@ -7725,6 +8171,104 @@ impl ContentProvider for ContentHostRegistry {
         drop(state);
         let rows = self.history_rows(port_id, offered_width);
         rows.is_none_or(|rows| rows.rows.is_empty() && !rows.complete)
+    }
+}
+
+impl ContentHostRegistry {
+    fn connector_source(&self, connector_id: u64) -> Option<HostContentSource> {
+        self.connectors
+            .get(&connector_id)
+            .and_then(|connector| connector.lock().ok())
+            .map(|connector| connector.source.clone())
+    }
+
+    fn projection_for_measurement(
+        &self,
+        connector_id: u64,
+        measurement: ContentMeasurement,
+    ) -> Option<Arc<HostContentProjection>> {
+        let connector = self.connectors.get(&connector_id)?.lock().ok()?;
+        let matches = |projection: &Arc<HostContentProjection>| {
+            projection.identity == measurement.projection_identity
+        };
+        connector
+            .candidate_projection
+            .as_ref()
+            .filter(|projection| matches(projection))
+            .cloned()
+            .or_else(|| {
+                connector
+                    .committed_projection
+                    .as_ref()
+                    .filter(|projection| matches(projection))
+                    .cloned()
+            })
+            .or_else(|| {
+                connector
+                    .projection_cache
+                    .iter()
+                    .find(|(_, projection)| matches(projection))
+                    .map(|(_, projection)| Arc::clone(projection))
+            })
+    }
+
+    fn confirmed_projection(&self, connector_id: u64) -> Option<Arc<HostContentProjection>> {
+        let connector = self.connectors.get(&connector_id)?.lock().ok()?;
+        connector.committed_projection.as_ref().cloned()
+    }
+
+    fn content_measurement_bounds(
+        &self,
+        offered_width: u16,
+        measurement: ContentMeasurement,
+        product: Option<&Arc<HostContentProjection>>,
+    ) -> (Size, Size) {
+        let Some(projection) = product else {
+            return (measurement.intrinsic_size, measurement.intrinsic_size);
+        };
+        let Some(layout) = projection.layout.as_ref() else {
+            return (measurement.intrinsic_size, measurement.intrinsic_size);
+        };
+        let mut min_width = 0usize;
+        let mut max_width = 0usize;
+        for node in &layout.nodes {
+            let crate::presentation::layout::LayoutContent::Text { text, .. } = &node.content
+            else {
+                continue;
+            };
+            let source = text
+                .spans
+                .iter()
+                .map(crate::presentation::TextSpan::text)
+                .collect::<String>();
+            for line in source.split('\n') {
+                let mut unbreakable = 0usize;
+                let mut line_width = 0usize;
+                for grapheme in line.graphemes(true) {
+                    let width = grapheme_cell_width(grapheme);
+                    line_width = line_width.saturating_add(width);
+                    if grapheme.chars().all(char::is_whitespace) {
+                        min_width = min_width.max(unbreakable);
+                        unbreakable = 0;
+                    } else {
+                        unbreakable = unbreakable.saturating_add(width);
+                    }
+                }
+                min_width = min_width.max(unbreakable);
+                max_width = max_width.max(line_width);
+            }
+        }
+        let fallback = usize::from(measurement.intrinsic_size.width);
+        if min_width == 0 {
+            min_width = fallback.min(usize::from(offered_width));
+        }
+        max_width = max_width.max(fallback);
+        let min_width = u16::try_from(min_width.min(usize::from(u16::MAX))).unwrap_or(u16::MAX);
+        let max_width = u16::try_from(max_width.min(usize::from(u16::MAX))).unwrap_or(u16::MAX);
+        (
+            Size::new(min_width, measurement.intrinsic_size.height),
+            Size::new(max_width, measurement.intrinsic_size.height),
+        )
     }
 }
 
@@ -10818,6 +11362,287 @@ mod tests {
             1,
             "shared Source captures are keyed once per candidate"
         );
+        registry.abort_candidate();
+    }
+
+    #[test]
+    fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"alpha beta\n", &[], &[]).unwrap();
+        let source_revision = source.snapshot().unwrap().revision;
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.visible_mounted = true;
+            state.desired_connector = Some(connector.id());
+            state.visible_connector = Some(connector.id());
+        }
+        {
+            let record = registry.connectors.get(&connector.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.begin_projection_candidate();
+        registry
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+        registry.promote_candidate_projection(connector.id());
+        registry.end_candidate();
+        registry.begin_projection_candidate();
+        let captured = registry
+            .capture_measurement(port.id(), 20, crate::presentation::WidthRule::Fit)
+            .unwrap();
+        assert!(
+            captured.min_content.width < captured.max_content.width,
+            "word wrapping must expose a smaller min-content width"
+        );
+        let narrow = captured
+            .semantic_view
+            .as_ref()
+            .map(|view| {
+                crate::presentation::layout::layout_view(
+                    view,
+                    crate::geometry::LayoutConstraints::width_only(5),
+                )
+                .size
+                .height
+            })
+            .expect("captured semantic content product");
+        assert!(
+            narrow >= 2,
+            "known narrow width must recompute wrapped height"
+        );
+        source.append_utf8(b"newest source\n", &[], &[]).unwrap();
+        let refined = registry
+            .refine_captured_measurement(
+                port.id(),
+                captured.capture_id,
+                5,
+                crate::presentation::WidthRule::Fill,
+            )
+            .unwrap();
+        assert_eq!(refined.capture_id, captured.capture_id);
+        let projection = registry
+            .projection_for_measurement(connector.id(), refined.measurement)
+            .expect("captured refined projection");
+        assert_eq!(projection.key.source_revision, source_revision);
+        assert_eq!(registry.candidate_source_snapshots.borrow().len(), 1);
+        registry.abort_candidate();
+    }
+
+    #[test]
+    fn final_width_failure_uses_the_captured_confirmed_a_product() {
+        let source_registry = ContentSourceRegistry::new();
+        let source_a = source_registry.create(TextSourceKind::Stream).unwrap();
+        let source_b = source_registry.create(TextSourceKind::Stream).unwrap();
+        source_a.append_utf8(b"confirmed A\n", &[], &[]).unwrap();
+        source_b.append_utf8(b"candidate B\n", &[], &[]).unwrap();
+        let a_revision = source_a.snapshot().unwrap().revision;
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector_a = registry
+            .connect(
+                &port.record,
+                &source_a,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let connector_b = registry
+            .connect(
+                &port.record,
+                &source_b,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.visible_mounted = true;
+            state.desired_connector = Some(connector_a.id());
+            state.visible_connector = Some(connector_a.id());
+        }
+        {
+            let record = registry.connectors.get(&connector_a.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.visible = true;
+        }
+        registry.begin_projection_candidate();
+        let a_measurement = registry
+            .prepare_connector_projection(connector_a.id(), 20)
+            .unwrap();
+        registry.promote_candidate_projection(connector_a.id());
+        registry.end_candidate();
+        source_a.append_utf8(b"newest A\n", &[], &[]).unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_connector = Some(connector_b.id());
+        }
+        {
+            let record = registry.connectors.get(&connector_b.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+        }
+        registry.begin_projection_candidate();
+        let captured = registry
+            .capture_measurement(port.id(), 20, crate::presentation::WidthRule::Fit)
+            .unwrap();
+        let confirmed = registry
+            .candidate_content_captures
+            .get(&captured.capture_id)
+            .and_then(|capture| capture.confirmed.as_ref())
+            .map(|capture| &capture.product)
+            .expect("captured confirmed A product");
+        assert_eq!(confirmed.identity, a_measurement.projection_identity);
+        assert_eq!(confirmed.key.source_revision, a_revision);
+        let failed_key = registry
+            .connector_projection_key(connector_b.id(), 5)
+            .unwrap();
+        {
+            let record = registry.connectors.get(&connector_b.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.error = Some(ContentConnectorError {
+                code: "PROJECTION_FAILED".to_owned(),
+                diagnostic: "final-width failure".to_owned(),
+            });
+            state.projection_failure_key = Some(failed_key);
+        }
+        let refined = registry
+            .refine_captured_measurement(
+                port.id(),
+                captured.capture_id,
+                5,
+                crate::presentation::WidthRule::Fill,
+            )
+            .unwrap();
+        assert_eq!(refined.measurement.connector_id, Some(connector_a.id()));
+        let product = registry
+            .projection_for_measurement(connector_a.id(), refined.measurement)
+            .expect("confirmed A product");
+        assert_eq!(product.key.source_revision, a_revision);
+        registry.abort_candidate();
+    }
+
+    #[test]
+    fn same_source_b_capture_cannot_replace_confirmed_a_frontier() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        source.append_utf8(b"A rev1\n", &[], &[]).unwrap();
+        let a_revision = source.snapshot().unwrap().revision;
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector_a = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        let connector_b = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.visible_mounted = true;
+            state.desired_connector = Some(connector_a.id());
+            state.visible_connector = Some(connector_a.id());
+        }
+        {
+            let record = registry.connectors.get(&connector_a.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+            state.visible = true;
+        }
+        registry.begin_projection_candidate();
+        registry
+            .prepare_connector_projection(connector_a.id(), 20)
+            .unwrap();
+        registry.promote_candidate_projection(connector_a.id());
+        registry.end_candidate();
+        source.append_utf8(b"B rev2\n", &[], &[]).unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_connector = Some(connector_b.id());
+        }
+        {
+            let record = registry.connectors.get(&connector_b.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.requested = true;
+        }
+        registry.begin_projection_candidate();
+        let captured = registry
+            .capture_measurement(port.id(), 20, crate::presentation::WidthRule::Fit)
+            .unwrap();
+        let candidate = registry
+            .candidate_content_captures
+            .get(&captured.capture_id)
+            .expect("candidate capture");
+        assert_eq!(
+            match &candidate.candidate {
+                CapturedCandidate::Prepared(capture) => &capture.product,
+                CapturedCandidate::None | CapturedCandidate::Failed { .. } => {
+                    panic!("B product")
+                }
+            }
+            .key
+            .source_revision,
+            a_revision + 1
+        );
+        assert_eq!(
+            candidate
+                .confirmed
+                .as_ref()
+                .map(|capture| &capture.product)
+                .expect("A product")
+                .key
+                .source_revision,
+            a_revision
+        );
+        let failed_key = registry
+            .connector_projection_key(connector_b.id(), 5)
+            .unwrap();
+        {
+            let record = registry.connectors.get(&connector_b.id()).unwrap();
+            let mut state = record.lock().unwrap();
+            state.error = Some(ContentConnectorError {
+                code: "PROJECTION_FAILED".to_owned(),
+                diagnostic: "same-source final-width failure".to_owned(),
+            });
+            state.projection_failure_key = Some(failed_key);
+        }
+        let refined = registry
+            .refine_captured_measurement(
+                port.id(),
+                captured.capture_id,
+                5,
+                crate::presentation::WidthRule::Fill,
+            )
+            .unwrap();
+        let product = registry
+            .projection_for_measurement(connector_a.id(), refined.measurement)
+            .expect("A fallback product");
+        assert_eq!(product.key.source_revision, a_revision);
         registry.abort_candidate();
     }
 

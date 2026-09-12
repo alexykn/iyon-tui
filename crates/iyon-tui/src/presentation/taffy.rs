@@ -18,8 +18,9 @@ use taffy::style_helpers::{FromFr, FromLength, FromPercent};
 use crate::occurrence::{
     Alignment, AlignmentAxis, AlignmentMode, DimensionInsets, DimensionValue, DirectionMode,
     DisplayMode, FlexDirectionMode, FlexWrapMode, GridAutoFlowMode, GridLineValue,
-    GridPlacementValue, LayerValue, LayoutMode, NodeKey, OccurrenceSnapshot, PositionMode,
-    PropertyId, PropertyValue, TrackListValue, TrackMaxBound, TrackMinBound, TrackValue,
+    GridPlacementValue, HostKind, LayerValue, LayoutMode, NodeKey, OccurrenceSnapshot,
+    PositionMode, PropertyId, PropertyValue, TrackListValue, TrackMaxBound, TrackMinBound,
+    TrackValue,
 };
 
 /// A terminal geometry rectangle after one accumulated-edge quantization.
@@ -38,6 +39,8 @@ pub(crate) struct ComputedGeometry {
     pub(crate) logical: LogicalRect,
     pub(crate) logical_content_width: f32,
     pub(crate) logical_content_height: f32,
+    pub(crate) logical_content_x: f32,
+    pub(crate) logical_content_y: f32,
     /// Renderer hiding does not remove ownership or layout-node identity.
     pub(crate) renderer_hidden: bool,
     /// `display:none` is a semantic layout value, distinct from renderer
@@ -168,10 +171,39 @@ impl TaffyLayoutAdapter {
         }
     }
 
+    pub(crate) fn contains(&self, key: NodeKey) -> bool {
+        self.entries.contains_key(&key)
+    }
+
     /// Synchronize explicit changed-style nodes and explicit canonical parent
     /// child lists. The caller must supply every changed parent snapshot; this
     /// boundary never searches child lists to rediscover parentage.
     pub(crate) fn synchronize(
+        &mut self,
+        snapshots: &[OccurrenceSnapshot],
+        changed_styles: &[NodeKey],
+        changed_parents: &[NodeKey],
+        participation: &[NodeParticipation],
+        retired: &[NodeKey],
+    ) -> Result<(), TaffyAdapterError> {
+        let plan = self.prepare_sync(
+            snapshots,
+            changed_styles,
+            changed_parents,
+            participation,
+            retired,
+        )?;
+        self.install_new_nodes(&plan)?;
+        self.install_topology(&plan)?;
+        self.install_styles_and_metadata(&plan)?;
+        self.retire_nodes(&plan.retirement_order)
+    }
+
+    /// Apply a sparse occurrence frontier after initial synchronization. The
+    /// supplied snapshots contain only changed leaves/parents and their
+    /// affected participation facts; unchanged entries remain owned by this
+    /// derived adapter and are not cloned into a second snapshot universe.
+    pub(crate) fn synchronize_sparse(
         &mut self,
         snapshots: &[OccurrenceSnapshot],
         changed_styles: &[NodeKey],
@@ -214,6 +246,7 @@ impl TaffyLayoutAdapter {
             if snapshot_map.insert(snapshot.key, snapshot).is_some() {
                 return Err(TaffyAdapterError::DuplicateSnapshot(snapshot.key));
             }
+            validate_legacy_alignment(snapshot)?;
         }
         let style_set: HashSet<NodeKey> = changed_styles.iter().copied().collect();
         let parent_set: HashSet<NodeKey> = changed_parents.iter().copied().collect();
@@ -645,6 +678,8 @@ impl TaffyLayoutAdapter {
                 logical,
                 logical_content_width: layout.content_box_width(),
                 logical_content_height: layout.content_box_height(),
+                logical_content_x: x + layout.border.left + layout.padding.left,
+                logical_content_y: y + layout.border.top + layout.padding.top,
                 renderer_hidden: entry.renderer_hidden,
                 display_none: entry.display_none,
             });
@@ -721,7 +756,7 @@ fn round_rect(
     if edges.iter().any(|value| !value.is_finite()) {
         return Err(TaffyAdapterError::NonFiniteGeometry);
     }
-    let [x, y, right, bottom] = edges.map(|value| f64::from(value.round()));
+    let [x, y, right, bottom] = edges.map(|value| f64::from(value).round());
     if [x, y, right, bottom]
         .iter()
         .any(|value| *value < f64::from(i32::MIN) || *value > f64::from(i32::MAX))
@@ -744,6 +779,17 @@ fn round_rect(
     })
 }
 
+pub(crate) fn checked_round_edge(value: f32) -> Result<i32, TaffyAdapterError> {
+    if !value.is_finite() {
+        return Err(TaffyAdapterError::NonFiniteGeometry);
+    }
+    let value = f64::from(value).round();
+    if value < f64::from(i32::MIN) || value > f64::from(i32::MAX) {
+        return Err(TaffyAdapterError::PhysicalOverflow);
+    }
+    Ok(value as i32)
+}
+
 fn display_for(snapshot: &OccurrenceSnapshot) -> DisplayMode {
     match property(snapshot, PropertyId::Display) {
         Some(LayerValue::Value(PropertyValue::Display(mode))) => *mode,
@@ -754,6 +800,43 @@ fn display_for(snapshot: &OccurrenceSnapshot) -> DisplayMode {
             _ => DisplayMode::Flex,
         },
     }
+}
+
+fn validate_legacy_alignment(snapshot: &OccurrenceSnapshot) -> Result<(), TaffyAdapterError> {
+    let Some(LayerValue::Value(PropertyValue::Alignment(alignment))) =
+        property(snapshot, PropertyId::Alignment)
+    else {
+        return Ok(());
+    };
+    if alignment
+        .horizontal
+        .is_some_and(|axis| axis != crate::occurrence::AlignmentAxis::Start)
+    {
+        return Err(TaffyAdapterError::InvalidInput(
+            "alignment.horizontal is unsupported in the M1 terminal adapter; text alignment remains content-owned",
+            snapshot.key,
+        ));
+    }
+    let Some(vertical) = alignment.vertical else {
+        return Ok(());
+    };
+    if matches!(
+        vertical,
+        crate::occurrence::AlignmentAxis::Start | crate::occurrence::AlignmentAxis::Top
+    ) {
+        return Ok(());
+    }
+    let layout_mode = match property(snapshot, PropertyId::Layout) {
+        Some(LayerValue::Value(PropertyValue::LayoutMode(mode))) => *mode,
+        _ => LayoutMode::Box,
+    };
+    if snapshot.kind != HostKind::Box || layout_mode != LayoutMode::Row {
+        return Err(TaffyAdapterError::InvalidInput(
+            "alignment.vertical is unsupported in the M1 terminal adapter except for Box rows",
+            snapshot.key,
+        ));
+    }
+    Ok(())
 }
 
 fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
@@ -778,6 +861,27 @@ fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
     style.flex_direction = flex_direction_for(snapshot, layout_mode);
     style.flex_wrap = flex_wrap_for(snapshot);
     apply_dimensions(&mut style, snapshot);
+    if snapshot.root_role.is_some() {
+        style.size.width = Dimension::percent(1.0);
+    }
+    // Concrete controls are occurrence leaves. Their native component view is
+    // painted inside this allocation, so a control without explicit geometry
+    // must participate in its parent's width and retain one terminal row
+    // instead of being treated as a zero-sized Taffy leaf.
+    if snapshot.control.is_some() {
+        if matches!(
+            property(snapshot, PropertyId::Width),
+            None | Some(LayerValue::Unset | LayerValue::Null)
+        ) {
+            style.size.width = Dimension::percent(1.0);
+        }
+        if matches!(
+            property(snapshot, PropertyId::Height),
+            None | Some(LayerValue::Unset | LayerValue::Null)
+        ) {
+            style.min_size.height = Dimension::length(1.0);
+        }
+    }
     apply_flex_values(&mut style, snapshot);
     apply_alignment(&mut style, snapshot);
     apply_grid(&mut style, snapshot);

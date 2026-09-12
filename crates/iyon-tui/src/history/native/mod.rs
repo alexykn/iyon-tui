@@ -113,6 +113,14 @@ pub(crate) fn prepare_native_transfer_with_theme_and_content(
         return None;
     }
 
+    // Eligibility belongs to the accepted History unit.  A direct occurrence
+    // may remain active for layout while its physical shape is not the
+    // temporary content-only export contract; do not derive a fake transfer
+    // View or silently emit a substitute row product.
+    if history.native_transfer_blocked_front() {
+        return None;
+    }
+
     if let Some(rows) = spacing_rows(
         &history.native.top_padding,
         width,
@@ -484,6 +492,12 @@ fn transfer_native_prefix_inner<S: NativeHistorySink>(
             .units
             .front()
             .map(|unit| match &unit.content {
+                _ if history.native.blocked_units.contains(&unit.id) => {
+                    NativeTransferStatus::SemanticBlocked {
+                        unit: unit.id,
+                        reason: NativeBlockReason::ContentHost,
+                    }
+                }
                 HistoryUnitContent::Live(_) => NativeTransferStatus::SemanticBlocked {
                     unit: unit.id,
                     reason: NativeBlockReason::Live,
@@ -535,6 +549,30 @@ fn map_plan_result<E>(
             unreachable!("physical transfer plan cannot produce sink error: {error}")
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blocked_history_frontier_does_not_prepare_a_replacement_plan() {
+        let mut history = History::new();
+        let unit = history
+            .push(crate::presentation::factory::text("already-owned"))
+            .expect("History unit");
+        history.set_native_transfer_blocked(unit, true);
+        assert!(
+            prepare_native_transfer_with_theme_and_content(
+                &history,
+                20,
+                4,
+                &crate::Theme::new(),
+                &EmptyContentProvider,
+            )
+            .is_none()
+        );
+    }
 }
 
 fn outcome(

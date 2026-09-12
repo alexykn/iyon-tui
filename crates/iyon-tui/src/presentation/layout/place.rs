@@ -60,8 +60,12 @@ pub(super) fn emit_prepared(
         paint_cacheable: prepared.measured.cacheable,
         rect,
         content_rect,
+        content_width: content_rect.width,
         clip_rect: node_clip,
+        paint_origin: (i32::from(rect.x), i32::from(rect.y)),
+        content_origin: (i32::from(content_rect.x), i32::from(content_rect.y)),
         component: prepared.measured.component,
+        native_component_view: None,
         children: Vec::new(),
         child_dependencies: Vec::new(),
         style: LayoutStyle {

@@ -8,6 +8,7 @@
 #[doc(hidden)]
 pub mod api;
 pub(crate) mod content;
+pub(crate) mod direct;
 #[doc(hidden)]
 pub mod factory;
 pub(crate) mod ir;
@@ -28,7 +29,8 @@ pub(crate) use api::{StyleFacts, StyleStates};
 // Retained IR types remain private implementation details of the semantic
 // layout engine.
 pub(crate) use content::{
-    ContentDirty, ContentDirtyReason, ContentMeasurement, ContentProvider, ContentWindow,
-    EmptyContentProvider, HistoryContentRows, PreparedProjectionTicket,
+    ContentDirty, ContentDirtyReason, ContentMeasurement, ContentMeasurementCapture,
+    ContentProvider, ContentWindow, EmptyContentProvider, HistoryContentRows,
+    HistoryMeasurementAdjustment, PreparedProjectionTicket,
 };
 pub(crate) use ir::WidthRule;

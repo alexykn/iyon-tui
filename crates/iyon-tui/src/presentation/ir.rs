@@ -796,6 +796,20 @@ impl View {
         self.inner.id
     }
 
+    /// Returns a renderer-local identity for an occurrence-backed layout
+    /// node.  Occurrence identity remains the canonical key; this value only
+    /// lets the existing paint cache and layout metadata represent a direct
+    /// Taffy tree without materializing a semantic View for every occurrence.
+    pub(crate) fn direct_id(key: crate::occurrence::NodeKey) -> ViewId {
+        let mut value = u64::from(key.slot) << 32 | u64::from(key.generation);
+        value |= 1 << 63;
+        ViewId(value)
+    }
+
+    pub(crate) fn direct_root_id(driver_id: u64) -> ViewId {
+        ViewId((1 << 63) | (driver_id & u64::from(u32::MAX)))
+    }
+
     pub(crate) fn width(&self) -> WidthRule {
         self.inner.width
     }

@@ -147,6 +147,52 @@ impl UiResourceOwner {
             .map_err(|error| format!("occurrence snapshot failed for {key:?}: {error:?}"))
     }
 
+    /// Captures the complete live occurrence frontier once for a renderer
+    /// candidate.  The result is an owned snapshot set; derived backends never
+    /// walk the mutable document while Taffy or paint is running.
+    pub(crate) fn render_snapshots(
+        &self,
+    ) -> anyhow::Result<Vec<crate::occurrence::OccurrenceSnapshot>> {
+        let document = self.document_ref();
+        let mut stack = vec![document.body_root()];
+        stack.extend(document.history_roots());
+        stack.extend(document.portal_roots());
+        let mut seen = HashSet::new();
+        let mut snapshots = Vec::new();
+        while let Some(key) = stack.pop() {
+            if !seen.insert(key) {
+                continue;
+            }
+            let snapshot = self.document_snapshot(key).map_err(anyhow::Error::msg)?;
+            stack.extend(snapshot.children.iter().rev().copied());
+            snapshots.push(snapshot);
+        }
+        Ok(snapshots)
+    }
+
+    pub(crate) fn render_snapshot_delta(
+        &self,
+        changes: &crate::occurrence::UiChangeSet,
+    ) -> anyhow::Result<Vec<crate::occurrence::OccurrenceSnapshot>> {
+        let mut keys = changes.changed_nodes.clone();
+        keys.extend(changes.membership_nodes.iter().copied());
+        keys.extend(changes.history_roots.iter().copied());
+        keys.sort_unstable_by_key(|key| (key.slot, key.generation));
+        keys.dedup();
+        let mut snapshots = Vec::new();
+        let mut stack = keys;
+        let mut seen = HashSet::new();
+        while let Some(key) = stack.pop() {
+            if !seen.insert(key) {
+                continue;
+            }
+            let snapshot = self.document_snapshot(key).map_err(anyhow::Error::msg)?;
+            stack.extend(snapshot.children.iter().rev().copied());
+            snapshots.push(snapshot);
+        }
+        Ok(snapshots)
+    }
+
     pub(crate) fn demanded_ports(&self) -> anyhow::Result<Vec<ResourceKey>> {
         let document = self.document_ref();
         let mut demanded = Vec::new();
@@ -157,7 +203,19 @@ impl UiResourceOwner {
                 stack.push(root);
             }
         }
+        let active_animation = |control| {
+            self.control_state(control)
+                .and_then(crate::occurrence::ControlState::animation_active_frame)
+                .map(|frame| frame as usize)
+        };
         while let Some(node) = stack.pop() {
+            if !document
+                .demanded_node(node, active_animation)
+                .map_err(|error| anyhow!("occurrence demand lookup failed: {error:?}"))?
+                .0
+            {
+                continue;
+            }
             let snapshot = self.document_snapshot(node).map_err(anyhow::Error::msg)?;
             if let Some(port) = snapshot.port {
                 demanded.push(port);

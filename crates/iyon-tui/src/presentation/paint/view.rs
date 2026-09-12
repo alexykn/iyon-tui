@@ -395,162 +395,197 @@ impl ViewPainter {
         let local_row = usize::from(global_row.saturating_sub(node.rect.y));
         let local_clip = local_clip_for_row(node.rect, effective_clip);
 
-        match &node.content {
-            LayoutContent::Text { text, width_rule } => {
-                if global_row >= node.content_rect.y && global_row < node.content_rect.bottom() {
-                    let geometry = text_rows.entry(id).or_insert_with(|| {
-                        compiler.compile_text_geometry(text, node.content_rect.width, *width_rule)
-                    });
-                    if let Some(row) = geometry
-                        .rows
-                        .get(usize::from(global_row.saturating_sub(node.content_rect.y)))
+        if let Some(component_view) = node.native_component_view.as_ref() {
+            // Native controls keep their interaction implementation in the
+            // component registry, but their occurrence box is laid out by
+            // Taffy.  Project the concrete control view only inside that
+            // already allocated box; ordinary occurrence children never
+            // enter this path.
+            let local_tree = crate::presentation::layout::layout_view(
+                component_view,
+                crate::geometry::LayoutConstraints::bounded(node.content_rect.size()),
+            );
+            let painted = self.paint_tree_with_content(
+                compiler,
+                &local_tree,
+                &mut PaintCache::default(),
+                content,
+            );
+            let x = node.content_rect.x.saturating_sub(node.rect.x);
+            let y = node.content_rect.y.saturating_sub(node.rect.y);
+            let clip = Rect::new(x, y, node.content_rect.width, node.content_rect.height);
+            output.composite_clipped(&painted, i32::from(x), i32::from(y), clip);
+            output.physically_complete &= painted.physically_complete;
+        } else {
+            match &node.content {
+                LayoutContent::Text { text, width_rule } => {
+                    if global_row >= node.content_rect.y && global_row < node.content_rect.bottom()
                     {
-                        let x = node.content_rect.x.saturating_sub(node.rect.x);
-                        let (row, complete) = compiler.paint_text_geometry_row(
-                            text,
-                            geometry,
-                            row,
-                            resolved,
-                            &descendant_context,
-                        );
-                        let row_surface = surface_from_row(row, complete);
-                        output.composite_clipped(&row_surface, i32::from(x), 0, local_clip);
-                        if !complete {
-                            output.physically_complete = false;
+                        let geometry = text_rows.entry(id).or_insert_with(|| {
+                            compiler.compile_text_geometry(
+                                text,
+                                node.content_rect.width,
+                                *width_rule,
+                            )
+                        });
+                        if let Some(row) = geometry
+                            .rows
+                            .get(usize::from(global_row.saturating_sub(node.content_rect.y)))
+                        {
+                            let x = node.content_rect.x.saturating_sub(node.rect.x);
+                            let (row, complete) = compiler.paint_text_geometry_row(
+                                text,
+                                geometry,
+                                row,
+                                resolved,
+                                &descendant_context,
+                            );
+                            let row_surface = surface_from_row(row, complete);
+                            output.composite_clipped(&row_surface, i32::from(x), 0, local_clip);
+                            if !complete {
+                                output.physically_complete = false;
+                            }
                         }
                     }
                 }
-            }
-            LayoutContent::Spacer { .. } => {}
-            LayoutContent::ContentHost {
-                port_id,
-                projection_revision,
-                ..
-            } => {
-                if global_row >= node.content_rect.y && global_row < node.content_rect.bottom() {
-                    let x = node.content_rect.x.saturating_sub(node.rect.x);
-                    let ticket = crate::presentation::PreparedProjectionTicket {
-                        port_id: *port_id,
-                        connector_id: node_content_connector_id(&node.content),
-                        offered_width: node.content_rect.width,
-                        projection_revision: *projection_revision,
-                        projection_identity: node_content_projection_identity(&node.content),
-                    };
-                    let window = crate::presentation::ContentWindow {
-                        first_row: u64::from(global_row.saturating_sub(node.content_rect.y)),
-                        row_count: 1,
-                    };
-                    let content_clip =
-                        local_clip.intersection(Rect::new(x, 0, node.content_rect.width, 1));
-                    if let Some(content_clip) = content_clip {
-                        content.paint_window(
-                            ticket,
-                            window,
+                LayoutContent::Spacer { .. } => {}
+                LayoutContent::ContentHost {
+                    port_id,
+                    projection_revision,
+                    ..
+                } => {
+                    if global_row >= node.content_rect.y && global_row < node.content_rect.bottom()
+                    {
+                        let x = node.content_rect.x.saturating_sub(node.rect.x);
+                        let ticket = crate::presentation::PreparedProjectionTicket {
+                            port_id: *port_id,
+                            connector_id: node_content_connector_id(&node.content),
+                            offered_width: node.content_width,
+                            projection_revision: *projection_revision,
+                            projection_identity: node_content_projection_identity(&node.content),
+                        };
+                        let window = crate::presentation::ContentWindow {
+                            first_row: u64::from(global_row.saturating_sub(node.content_rect.y)),
+                            row_count: 1,
+                        };
+                        let content_clip =
+                            local_clip.intersection(Rect::new(x, 0, node.content_rect.width, 1));
+                        if let Some(content_clip) = content_clip {
+                            content.paint_window(
+                                ticket,
+                                window,
+                                &mut output,
+                                (x, 0),
+                                content_clip,
+                                resolved,
+                            );
+                        }
+                    }
+                }
+                LayoutContent::Children | LayoutContent::Clamp { .. } => {
+                    for_each_child_for_row(
+                        tree,
+                        node,
+                        global_row,
+                        child_y_sorted[id.0],
+                        |child_id| {
+                            let child = tree.node(child_id);
+                            let Some(child_surface) = self.paint_row_node(
+                                compiler,
+                                tree,
+                                child_id,
+                                global_row,
+                                resolved,
+                                descendant_context.clone(),
+                                effective_clip,
+                                true,
+                                content,
+                                text_rows,
+                                child_y_sorted,
+                            ) else {
+                                return;
+                            };
+                            let child_x = i32::from(child.rect.x.saturating_sub(node.rect.x));
+                            output.composite_clipped(&child_surface, child_x, 0, local_clip);
+                            if !child_surface.physically_complete {
+                                output.physically_complete = false;
+                            }
+                        },
+                    );
+                    if let LayoutContent::Clamp { overflow } = &node.content
+                        && global_row == node.rect.bottom().saturating_sub(1)
+                        && node
+                            .children
+                            .first()
+                            .is_some_and(|child| tree.node(*child).rect.height > node.rect.height)
+                    {
+                        self.paint_overflow_indicator_row(
+                            compiler,
                             &mut output,
-                            (x, 0),
-                            content_clip,
+                            node,
+                            overflow,
                             resolved,
+                            &descendant_context,
+                            local_clip,
                         );
                     }
                 }
-            }
-            LayoutContent::Children | LayoutContent::Clamp { .. } => {
-                for_each_child_for_row(tree, node, global_row, child_y_sorted[id.0], |child_id| {
-                    let child = tree.node(child_id);
-                    let Some(child_surface) = self.paint_row_node(
-                        compiler,
-                        tree,
-                        child_id,
-                        global_row,
-                        resolved,
-                        descendant_context.clone(),
-                        effective_clip,
-                        true,
-                        content,
-                        text_rows,
-                        child_y_sorted,
-                    ) else {
-                        return;
-                    };
-                    let child_x = i32::from(child.rect.x.saturating_sub(node.rect.x));
-                    output.composite_clipped(&child_surface, child_x, 0, local_clip);
-                    if !child_surface.physically_complete {
-                        output.physically_complete = false;
-                    }
-                });
-                if let LayoutContent::Clamp { overflow } = &node.content
-                    && global_row == node.rect.bottom().saturating_sub(1)
-                    && node
-                        .children
-                        .first()
-                        .is_some_and(|child| tree.node(*child).rect.height > node.rect.height)
-                {
-                    self.paint_overflow_indicator_row(
-                        compiler,
-                        &mut output,
-                        node,
-                        overflow,
-                        resolved,
-                        &descendant_context,
-                        local_clip,
-                    );
-                }
-            }
-            LayoutContent::RowViewport { skip_rows } => {
-                let Some(child_id) = node.children.first().copied() else {
-                    return Some(output);
-                };
-                let child = tree.node(child_id);
-                let viewport_row = global_row.saturating_sub(node.rect.y);
-                if let LayoutContent::ContentHost {
-                    port_id,
-                    connector_id,
-                    projection_revision,
-                    projection_identity,
-                    ..
-                } = &child.content
-                {
-                    self.paint_viewport_content_host_row(
-                        compiler,
-                        node,
-                        child,
-                        viewport_row,
-                        *skip_rows,
-                        *port_id,
-                        *connector_id,
-                        *projection_revision,
-                        *projection_identity,
-                        &mut output,
-                        resolved,
-                        &descendant_context,
-                        effective_clip,
-                        content,
-                    );
-                } else {
-                    let source_row = child
-                        .rect
-                        .y
-                        .saturating_add(u16::from(*skip_rows))
-                        .saturating_add(viewport_row);
-                    let Some(child_surface) = self.paint_row_node(
-                        compiler,
-                        tree,
-                        child_id,
-                        source_row,
-                        resolved,
-                        descendant_context.clone(),
-                        effective_clip,
-                        false,
-                        content,
-                        text_rows,
-                        child_y_sorted,
-                    ) else {
+                LayoutContent::RowViewport { skip_rows } => {
+                    let Some(child_id) = node.children.first().copied() else {
                         return Some(output);
                     };
-                    let child_x = i32::from(child.rect.x.saturating_sub(node.rect.x));
-                    output.composite_clipped(&child_surface, child_x, 0, local_clip);
-                    if !child_surface.physically_complete {
-                        output.physically_complete = false;
+                    let child = tree.node(child_id);
+                    let viewport_row = global_row.saturating_sub(node.rect.y);
+                    if let LayoutContent::ContentHost {
+                        port_id,
+                        connector_id,
+                        projection_revision,
+                        projection_identity,
+                        ..
+                    } = &child.content
+                    {
+                        self.paint_viewport_content_host_row(
+                            compiler,
+                            node,
+                            child,
+                            viewport_row,
+                            *skip_rows,
+                            *port_id,
+                            *connector_id,
+                            *projection_revision,
+                            *projection_identity,
+                            &mut output,
+                            resolved,
+                            &descendant_context,
+                            effective_clip,
+                            content,
+                        );
+                    } else {
+                        let source_row = child
+                            .rect
+                            .y
+                            .saturating_add(u16::from(*skip_rows))
+                            .saturating_add(viewport_row);
+                        let Some(child_surface) = self.paint_row_node(
+                            compiler,
+                            tree,
+                            child_id,
+                            source_row,
+                            resolved,
+                            descendant_context.clone(),
+                            effective_clip,
+                            false,
+                            content,
+                            text_rows,
+                            child_y_sorted,
+                        ) else {
+                            return Some(output);
+                        };
+                        let child_x = i32::from(child.rect.x.saturating_sub(node.rect.x));
+                        output.composite_clipped(&child_surface, child_x, 0, local_clip);
+                        if !child_surface.physically_complete {
+                            output.physically_complete = false;
+                        }
                     }
                 }
             }
@@ -917,7 +952,7 @@ impl ViewPainter {
             content,
         );
         let mut surface = Arc::try_unwrap(surface).unwrap_or_else(|surface| (*surface).clone());
-        surface.physically_complete = tree.physically_complete;
+        surface.physically_complete &= tree.physically_complete;
         surface
     }
 
@@ -975,131 +1010,178 @@ impl ViewPainter {
         );
         let mut output = Surface::new(node.rect.width, node.rect.height);
 
-        match &node.content {
-            LayoutContent::Text { text, width_rule } => {
-                let painted = compiler.paint_text(
-                    text,
-                    node.content_rect.width,
-                    *width_rule,
-                    resolved,
-                    &descendant_context,
-                );
-                let x = node.content_rect.x.saturating_sub(node.rect.x);
-                let y = node.content_rect.y.saturating_sub(node.rect.y);
-                output.composite(&painted, x, y);
-                output.physically_complete = painted.physically_complete;
-            }
-            LayoutContent::Spacer { rows } => {
-                let height = (*rows).min(node.content_rect.height);
-                perf::add(
-                    Counter::PaintCellsAllocated,
-                    u64::from(node.content_rect.width) * u64::from(height),
-                );
-                let painted = Surface::new(node.content_rect.width, height);
-                let x = node.content_rect.x.saturating_sub(node.rect.x);
-                let y = node.content_rect.y.saturating_sub(node.rect.y);
-                output.composite(&painted, x, y);
-            }
-            LayoutContent::ContentHost {
-                port_id,
-                projection_revision,
-                ..
-            } => {
-                let x = node.content_rect.x.saturating_sub(node.rect.x);
-                let y = node.content_rect.y.saturating_sub(node.rect.y);
-                let clip = Rect::new(x, y, node.content_rect.width, node.content_rect.height);
-                let ticket = crate::presentation::PreparedProjectionTicket {
-                    port_id: *port_id,
-                    connector_id: node_content_connector_id(&node.content),
-                    offered_width: node.content_rect.width,
-                    projection_revision: *projection_revision,
-                    projection_identity: node_content_projection_identity(&node.content),
-                };
-                let window = crate::presentation::ContentWindow {
-                    first_row: 0,
-                    row_count: u32::from(node.content_rect.height),
-                };
-                content.paint_window(ticket, window, &mut output, (x, y), clip, resolved);
-            }
-            LayoutContent::Children | LayoutContent::Clamp { .. } => {
-                self.paint_children(
-                    compiler,
-                    tree,
-                    node,
-                    &mut output,
-                    resolved,
-                    &descendant_context,
-                    cache,
-                    content,
-                );
-                if let LayoutContent::Clamp { overflow } = &node.content
-                    && node
-                        .children
-                        .first()
-                        .is_some_and(|child| tree.node(*child).rect.height > node.rect.height)
-                {
-                    self.paint_overflow_indicator(
-                        compiler,
-                        &mut output,
-                        node,
-                        overflow,
+        if let Some(component_view) = node.native_component_view.as_ref() {
+            let local_tree = crate::presentation::layout::layout_view(
+                component_view,
+                crate::geometry::LayoutConstraints::bounded(node.content_rect.size()),
+            );
+            let painted = self.paint_tree_with_content(
+                compiler,
+                &local_tree,
+                &mut PaintCache::default(),
+                content,
+            );
+            let target_origin = (
+                node.content_origin.0.saturating_sub(node.paint_origin.0),
+                node.content_origin.1.saturating_sub(node.paint_origin.1),
+            );
+            output.composite_clipped(
+                &painted,
+                target_origin.0,
+                target_origin.1,
+                local_node_clip(node, output.size),
+            );
+            output.physically_complete &= painted.physically_complete;
+        } else {
+            match &node.content {
+                LayoutContent::Text { text, width_rule } => {
+                    let painted = compiler.paint_text(
+                        text,
+                        node.content_rect.width,
+                        *width_rule,
                         resolved,
                         &descendant_context,
                     );
+                    let x = node.content_rect.x.saturating_sub(node.rect.x);
+                    let y = node.content_rect.y.saturating_sub(node.rect.y);
+                    output.composite(&painted, x, y);
+                    output.physically_complete = painted.physically_complete;
                 }
-            }
-            LayoutContent::RowViewport { skip_rows } => {
-                if output.width() != 0 && output.height() != 0 {
-                    let child_id = node
-                        .children
-                        .first()
-                        .copied()
-                        .expect("row viewport must have one child");
-                    let child_node = tree.node(child_id);
-                    if let LayoutContent::ContentHost {
-                        port_id,
-                        connector_id,
-                        projection_revision,
-                        projection_identity,
-                        ..
-                    } = child_node.content
+                LayoutContent::Spacer { rows } => {
+                    let height = (*rows).min(node.content_rect.height);
+                    perf::add(
+                        Counter::PaintCellsAllocated,
+                        u64::from(node.content_rect.width) * u64::from(height),
+                    );
+                    let painted = Surface::new(node.content_rect.width, height);
+                    let x = node.content_rect.x.saturating_sub(node.rect.x);
+                    let y = node.content_rect.y.saturating_sub(node.rect.y);
+                    output.composite(&painted, x, y);
+                }
+                LayoutContent::ContentHost {
+                    port_id,
+                    projection_revision,
+                    ..
+                } => {
+                    let ticket = crate::presentation::PreparedProjectionTicket {
+                        port_id: *port_id,
+                        connector_id: node_content_connector_id(&node.content),
+                        offered_width: node.content_width,
+                        projection_revision: *projection_revision,
+                        projection_identity: node_content_projection_identity(&node.content),
+                    };
+                    let window = crate::presentation::ContentWindow {
+                        first_row: 0,
+                        row_count: u32::from(node.content_rect.height),
+                    };
+                    let normal_origin = node.paint_origin
+                        == (i32::from(node.rect.x), i32::from(node.rect.y))
+                        && node.content_origin
+                            == (
+                                i32::from(node.content_rect.x),
+                                i32::from(node.content_rect.y),
+                            );
+                    if normal_origin {
+                        let x = node.content_rect.x.saturating_sub(node.rect.x);
+                        let y = node.content_rect.y.saturating_sub(node.rect.y);
+                        let clip =
+                            Rect::new(x, y, node.content_rect.width, node.content_rect.height);
+                        content.paint_window(ticket, window, &mut output, (x, y), clip, resolved);
+                    } else {
+                        let x = node.content_origin.0.saturating_sub(node.paint_origin.0);
+                        let y = node.content_origin.1.saturating_sub(node.paint_origin.1);
+                        let output_size = output.size;
+                        content.paint_window_signed(
+                            ticket,
+                            window,
+                            &mut output,
+                            (x, y),
+                            local_node_clip(node, output_size),
+                            resolved,
+                        );
+                    }
+                }
+                LayoutContent::Children | LayoutContent::Clamp { .. } => {
+                    self.paint_children(
+                        compiler,
+                        tree,
+                        node,
+                        &mut output,
+                        resolved,
+                        &descendant_context,
+                        cache,
+                        content,
+                    );
+                    if let LayoutContent::Clamp { overflow } = &node.content
+                        && node
+                            .children
+                            .first()
+                            .is_some_and(|child| tree.node(*child).rect.height > node.rect.height)
                     {
-                        self.paint_viewport_content_host(
+                        self.paint_overflow_indicator(
                             compiler,
+                            &mut output,
                             node,
-                            child_node,
-                            *skip_rows,
+                            overflow,
+                            resolved,
+                            &descendant_context,
+                        );
+                    }
+                }
+                LayoutContent::RowViewport { skip_rows } => {
+                    if output.width() != 0 && output.height() != 0 {
+                        let child_id = node
+                            .children
+                            .first()
+                            .copied()
+                            .expect("row viewport must have one child");
+                        let child_node = tree.node(child_id);
+                        if let LayoutContent::ContentHost {
                             port_id,
                             connector_id,
                             projection_revision,
                             projection_identity,
-                            &mut output,
-                            resolved,
-                            &descendant_context,
-                            content,
-                        );
-                    } else {
-                        let painted = self.paint_node(
-                            compiler,
-                            tree,
-                            child_id,
-                            resolved,
-                            descendant_context.clone(),
-                            cache,
-                            true,
-                            content,
-                        );
-                        for y in 0..output.height() {
-                            let source_y = usize::from(*skip_rows).saturating_add(usize::from(y));
-                            if source_y >= usize::from(painted.height()) {
-                                continue;
+                            ..
+                        } = child_node.content
+                        {
+                            self.paint_viewport_content_host(
+                                compiler,
+                                node,
+                                child_node,
+                                *skip_rows,
+                                port_id,
+                                connector_id,
+                                projection_revision,
+                                projection_identity,
+                                &mut output,
+                                resolved,
+                                &descendant_context,
+                                content,
+                            );
+                        } else {
+                            let painted = self.paint_node(
+                                compiler,
+                                tree,
+                                child_id,
+                                resolved,
+                                descendant_context.clone(),
+                                cache,
+                                true,
+                                content,
+                            );
+                            for y in 0..output.height() {
+                                let source_y =
+                                    usize::from(*skip_rows).saturating_add(usize::from(y));
+                                if source_y >= usize::from(painted.height()) {
+                                    continue;
+                                }
+                                for x in 0..output.width().min(painted.width()) {
+                                    *output.get_mut(x, y) = painted.get(x, source_y as u16).clone();
+                                    perf::inc(Counter::SurfaceCellsComposited);
+                                }
                             }
-                            for x in 0..output.width().min(painted.width()) {
-                                *output.get_mut(x, y) = painted.get(x, source_y as u16).clone();
-                                perf::inc(Counter::SurfaceCellsComposited);
-                            }
+                            output.physically_complete = painted.physically_complete;
                         }
-                        output.physically_complete = painted.physically_complete;
                     }
                 }
             }
@@ -1249,9 +1331,15 @@ impl ViewPainter {
                 true,
                 content,
             );
-            let x = child_node.rect.x.saturating_sub(node.rect.x);
-            let y = child_node.rect.y.saturating_sub(node.rect.y);
-            output.composite(&painted, x, y);
+            let x = child_node
+                .paint_origin
+                .0
+                .saturating_sub(node.paint_origin.0);
+            let y = child_node
+                .paint_origin
+                .1
+                .saturating_sub(node.paint_origin.1);
+            output.composite_clipped(&painted, x, y, local_node_clip(node, output.size));
         }
     }
 
@@ -1376,6 +1464,27 @@ fn local_clip_for_row(node: Rect, clip: Rect) -> Rect {
     let left = clip.x.saturating_sub(node.x).min(node.width);
     let right = clip.right().saturating_sub(node.x).min(node.width);
     Rect::new(left, 0, right.saturating_sub(left), 1)
+}
+
+fn local_node_clip(node: &LayoutNode, size: crate::geometry::Size) -> Rect {
+    let left = (i32::from(node.clip_rect.x) - node.paint_origin.0)
+        .max(0)
+        .min(i32::from(size.width));
+    let top = (i32::from(node.clip_rect.y) - node.paint_origin.1)
+        .max(0)
+        .min(i32::from(size.height));
+    let right = (i32::from(node.clip_rect.right()) - node.paint_origin.0)
+        .max(left)
+        .min(i32::from(size.width));
+    let bottom = (i32::from(node.clip_rect.bottom()) - node.paint_origin.1)
+        .max(top)
+        .min(i32::from(size.height));
+    Rect::new(
+        left as u16,
+        top as u16,
+        (right - left) as u16,
+        (bottom - top) as u16,
+    )
 }
 
 fn for_each_child_for_row(

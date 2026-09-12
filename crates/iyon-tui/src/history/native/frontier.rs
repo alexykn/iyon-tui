@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::physical::PhysicalRow;
 
 use super::super::HistoryUnitId;
@@ -67,6 +69,11 @@ pub(crate) struct NativeFrontier {
     /// this list even when a later sink operation fails, so content ownership
     /// cannot leak after an irreversible semantic retirement.
     pub(crate) retired_units: Vec<HistoryUnitId>,
+    /// Native export eligibility owned by the History frontier.  A direct
+    /// occurrence may remain mounted while its shape is intentionally not a
+    /// content-only physical export; that frontier must block transfer rather
+    /// than manufacture a replacement View or rows.
+    pub(crate) blocked_units: HashSet<HistoryUnitId>,
 }
 
 impl NativeFrontier {
@@ -90,6 +97,14 @@ impl NativeFrontier {
         self.leading_gap = None;
         self.frozen_static = None;
         self.frozen_content = None;
+    }
+
+    pub(crate) fn set_transfer_blocked(&mut self, unit: HistoryUnitId, blocked: bool) {
+        if blocked {
+            self.blocked_units.insert(unit);
+        } else {
+            self.blocked_units.remove(&unit);
+        }
     }
 
     pub(super) fn blank_rows(width: u16, count: usize) -> Vec<PhysicalRow> {

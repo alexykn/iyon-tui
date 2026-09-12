@@ -9,6 +9,11 @@ not a permanent architecture.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
 
+The T6 direct-host checkpoint below supersedes the earlier T4/M1 prose that
+describes `application/legacy_scene.rs` as an active adapter. That file is no
+longer part of the current source; the historical sections retain the old
+tranche record for migration provenance only.
+
 **Baseline:** branch agent/dom-occurrence-runtime, accepted React/T4 source
 HEAD `79a8c90261b9c10a3255ea89c2369d4e4a1c8b77`. The handoff and this ledger
 describe the accepted pre-deletion route; the current source and
@@ -27,7 +32,7 @@ the current-source authority.
 | T3 — minimal React renderer | **accepted** | Parent reviewed the React shim, speculative instances, journal/acknowledgement path, hook lifecycles, typed portals, finite properties, native resource changes and public consumer. Current-source full Bun suite: 164 passed; native UI commit tests: 12 passed. TypeScript, Biome, generated ABI, binding, ownership and formatting checks pass. Clippy completes with warnings. Acceptance is limited to the minimal desired-state renderer, not T4 frame realization or M1/M2 cutover. |
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
-| T6 — direct terminal Taffy integration | **foundation checkpoint parent accepted; tranche integration/cutover remaining** | Pinned Taffy, generated finite geometry, typed ingress and the derived adapter passed parent design review and local checks. Box/control/History production cutover, parity/performance evidence and Linux native CI remain pending; this is not T6 acceptance. |
+| T6 — direct terminal Taffy integration | **direct host implementation checkpoint; final parity/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Baseline comparison, package/native-addon evidence, parity/performance review and Linux native CI remain pending; this is not final T6 acceptance. |
 | T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
 
 ### T5 canonical React resource seam (current source)
@@ -977,6 +982,44 @@ failure: the first temporary guard rejected new property IDs even when their
 effective value was Unset. The archived M1 baseline passed the exact test.
 Parent review identified the cause, the guard was corrected, and the final
 19-test native suite passed. No failure is waived as unrelated.
+
+### T6 direct occurrence host cutover — implementation checkpoint
+
+The production terminal host now synchronizes the accepted occurrence
+snapshots directly into the derived Taffy adapter. Ordinary Box layout,
+including Grid, no longer calls the legacy occurrence-to-View adapter or its
+unsupported-geometry guard. The direct candidate retains one
+generation-qualified occurrence geometry map and builds a disposable paint
+tree from those resolved rectangles. ContentHost leaves capture each content
+product before layout, keep Taffy measurement callbacks pure, and perform at
+most one bounded final-width measurement pass. The content key accepts real
+zero-width constraints; no width-one or maximum-width sentinel is introduced.
+
+Native control registration and event routing remain the existing concrete
+Editor/Scroll/Animation mechanics. Their View is projected only inside the
+Taffy-assigned control box, while occurrence geometry, focus visibility and
+animation participation remain occurrence-keyed. Taffy is thread-affine in the
+pinned release, so each host owns a dedicated renderer-driver command boundary
+and keeps its persistent derived tree on that driver thread rather than adding
+an unsafe Send assertion to HostInner.
+
+History roots use the same occurrence snapshot synchronization, direct Taffy
+root stacking, and occurrence-keyed painting as the body. Physical prefix
+acknowledgement continues through the existing native transfer owner using a
+narrow transparent content-shell descriptor; the exact candidate rows and
+receipt ownership remain unchanged. History flow spacing/anchor refinements
+and component-only Surface export are later Surface work, not a View fallback
+for ordinary History layout. The old `legacy_scene.rs` ordinary adapter and
+its stale recipe tests were removed rather than retained as a fallback. The
+remaining local View projection is limited to native control pixels and the
+History physical transfer descriptor and is deleted/rewritten at the T7
+semantic-content gate.
+
+Focused current-source evidence for this checkpoint includes the direct
+occurrence row/grid geometry test, the native host Grid/content/geometry test,
+the all-features host receipt/control/History tests, and the all-features
+content tests. The full package/native-addon and baseline capture comparison
+remain parent-owned final gates; Linux execution is not claimed locally.
 
 Separate matching M1 source/addon captures are preserved under
 `/tmp/t6-m1-baseline`: 18 integral UI/control fixtures and 27 content

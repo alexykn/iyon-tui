@@ -40,8 +40,52 @@ use super::{
     resolve_component_subtree, resolve_root_scene_with_anchor_and_cache_and_content,
 };
 use crate::history::{HistoryViewportAnchor, project_into_session_for_host_with_content};
+use crate::presentation::direct::{
+    CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor, DirectLayout,
+    snapshot_display_none,
+};
 
 const MAX_LAYOUT_PASSES: usize = 8;
+
+fn direct_floor_width(value: f32) -> Result<u16> {
+    if !value.is_finite() || value < 0.0 || value >= f32::from(u16::MAX) {
+        return Err(anyhow::anyhow!(
+            "direct content width is outside terminal range"
+        ));
+    }
+    Ok(value.floor() as u16)
+}
+
+fn validate_direct_measurement_widths(
+    direct: &DirectLayout,
+    captures: &HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+) -> Result<()> {
+    for (key, capture) in captures {
+        let Some(width) = direct.content_widths.get(key).copied() else {
+            continue;
+        };
+        if direct_floor_width(width)? != capture.offered_width {
+            return Err(anyhow::anyhow!(
+                "direct content width did not converge within bounded preparation"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_direct_content_products(
+    direct: &DirectLayout,
+    captures: &HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+) -> Result<()> {
+    for (key, capture) in captures {
+        if direct.content_products.get(key) != Some(capture) {
+            return Err(anyhow::anyhow!(
+                "direct ContentHost ticket does not match captured product"
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Outcome of one `drain_native_pressure` call.
 enum NativePressure {
@@ -191,6 +235,18 @@ pub(crate) struct SceneHost {
     outputs: OutputQueue,
     graph: MountGraph,
     capabilities: MountedCapabilities,
+    /// Direct occurrence route. This is the production path for the React UI
+    /// document. The retained View resolver below serves only native
+    /// component/content compatibility while the T7 semantic-content gate is
+    /// completed.
+    direct_driver: Option<DirectDriverHandle>,
+    direct_controls: HashMap<crate::occurrence::ResourceKey, ComponentId>,
+    direct_content_ports: HashMap<crate::occurrence::NodeKey, crate::occurrence::ResourceKey>,
+    direct_control_nodes: HashMap<crate::occurrence::NodeKey, crate::occurrence::ResourceKey>,
+    direct_port_ids: HashMap<crate::occurrence::ResourceKey, u64>,
+    direct_body_root: Option<crate::occurrence::NodeKey>,
+    direct_synchronized: bool,
+    direct_history_overflow_rows: usize,
     layout_cache: LayoutCache,
     paint_cache: PaintCache,
     /// The last successfully painted semantic/layout frame. Local component
@@ -257,6 +313,353 @@ impl SceneHost {
     pub(crate) fn is_mounted(&self, id: crate::component::ComponentId) -> bool {
         self.graph.contains(id)
     }
+
+    pub(crate) fn set_direct_control_component(
+        &mut self,
+        key: crate::occurrence::ResourceKey,
+        component: crate::component::ComponentId,
+    ) {
+        self.direct_controls.insert(key, component);
+    }
+
+    pub(crate) fn set_direct_driver_id(&mut self, driver_id: u64) -> Result<()> {
+        if self.direct_driver.is_none() {
+            self.direct_driver = Some(DirectDriverHandle::start(driver_id)?);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_direct_driver(&mut self) -> Result<()> {
+        if let Some(mut driver) = self.direct_driver.take() {
+            driver.shutdown()?;
+        }
+        self.direct_synchronized = false;
+        self.direct_history_overflow_rows = 0;
+        Ok(())
+    }
+
+    pub(crate) fn remove_direct_control_component(&mut self, key: crate::occurrence::ResourceKey) {
+        self.direct_controls.remove(&key);
+    }
+
+    pub(crate) fn direct_control_for_component(
+        &self,
+        component: crate::component::ComponentId,
+    ) -> Option<crate::occurrence::ResourceKey> {
+        self.direct_controls
+            .iter()
+            .find_map(|(key, candidate)| (*candidate == component).then_some(*key))
+    }
+
+    pub(crate) fn direct_component_for_control(
+        &self,
+        control: crate::occurrence::ResourceKey,
+    ) -> Option<crate::component::ComponentId> {
+        self.direct_controls.get(&control).copied()
+    }
+
+    pub(crate) fn sync_direct_occurrences(
+        &mut self,
+        snapshots: Vec<crate::occurrence::OccurrenceSnapshot>,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+        participation: &[crate::presentation::taffy::NodeParticipation],
+        port_ids: HashMap<crate::occurrence::ResourceKey, u64>,
+        roots: Vec<crate::occurrence::NodeKey>,
+        body_root: crate::occurrence::NodeKey,
+        portal_owners: HashMap<crate::occurrence::NodeKey, crate::occurrence::NodeKey>,
+    ) -> Result<()> {
+        let Some(driver) = self.direct_driver.as_ref() else {
+            return Err(anyhow::anyhow!("direct renderer driver is not started"));
+        };
+        let participation_map = participation
+            .iter()
+            .map(|item| (item.key, item.participates))
+            .collect::<HashMap<_, _>>();
+        let content_ports = snapshots
+            .iter()
+            .filter_map(|snapshot| {
+                snapshot
+                    .port
+                    .filter(|port| {
+                        participation_map
+                            .get(&snapshot.key)
+                            .copied()
+                            .unwrap_or(true)
+                            && !snapshot_display_none(snapshot)
+                            && port_ids.contains_key(port)
+                    })
+                    .map(|port| (snapshot.key, port))
+            })
+            .collect::<HashMap<_, _>>();
+        let control_nodes = snapshots
+            .iter()
+            .filter_map(|snapshot| snapshot.control.map(|control| (snapshot.key, control)))
+            .collect::<HashMap<_, _>>();
+        let changed_snapshot_keys = snapshots
+            .iter()
+            .map(|snapshot| snapshot.key)
+            .collect::<Vec<_>>();
+        driver.synchronize(
+            snapshots,
+            changes,
+            participation.to_vec(),
+            port_ids.clone(),
+            roots.clone(),
+            portal_owners,
+            self.direct_controls.clone(),
+        )?;
+        if changes.is_none() || !self.direct_synchronized {
+            self.direct_content_ports = content_ports;
+            self.direct_control_nodes = control_nodes;
+        } else {
+            for key in changed_snapshot_keys {
+                self.direct_content_ports.remove(&key);
+                self.direct_control_nodes.remove(&key);
+            }
+            for key in &changes.expect("checked change set").retired_nodes {
+                self.direct_content_ports.remove(key);
+                self.direct_control_nodes.remove(key);
+            }
+            self.direct_content_ports.extend(content_ports);
+            self.direct_control_nodes.extend(control_nodes);
+        }
+        self.direct_port_ids = port_ids;
+        self.direct_body_root = Some(body_root);
+        self.direct_synchronized = true;
+        Ok(())
+    }
+
+    pub(crate) fn has_direct_occurrences(&self) -> bool {
+        self.direct_synchronized && self.direct_driver.is_some()
+    }
+
+    pub(crate) fn direct_history_overflow_rows(&self) -> usize {
+        self.direct_history_overflow_rows
+    }
+
+    pub(crate) fn direct_body_root(&self) -> Option<crate::occurrence::NodeKey> {
+        self.direct_body_root
+    }
+
+    pub(crate) fn direct_port_ids(&self) -> &HashMap<crate::occurrence::ResourceKey, u64> {
+        &self.direct_port_ids
+    }
+
+    pub(crate) fn invalidate_direct_content_measurement(&mut self, port_id: u64) -> Result<()> {
+        let Some(driver) = self.direct_driver.as_ref() else {
+            return Ok(());
+        };
+        driver.invalidate_content(port_id)
+    }
+
+    pub(crate) fn invalidate_direct_control_measurement(
+        &mut self,
+        component: crate::component::ComponentId,
+    ) -> Result<()> {
+        let Some(driver) = self.direct_driver.as_ref() else {
+            return Ok(());
+        };
+        driver.invalidate_control(component)
+    }
+
+    pub(crate) fn prepare_direct_at_with_content(
+        &mut self,
+        now: Instant,
+        root: crate::occurrence::NodeKey,
+        size: Size,
+        history_anchor: DirectHistoryAnchor,
+        registry: &mut ComponentRegistry,
+        theme: &Theme,
+        content: &mut dyn ContentProvider,
+        _port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
+    ) -> Result<PreparedSceneFrame> {
+        let mut captures = self.capture_direct_measurements(size.width, content)?;
+        let mut control_views = self.capture_direct_control_views(registry)?;
+        let mut invalidate_controls = Vec::new();
+        for _ in 0..MAX_LAYOUT_PASSES {
+            let direct = self.prepare_direct_layout(
+                root,
+                size,
+                history_anchor,
+                &mut captures,
+                &control_views,
+                &invalidate_controls,
+                content,
+            )?;
+            invalidate_controls.clear();
+            self.direct_history_overflow_rows = direct.history_overflow_rows;
+            let mounts = direct.component_mounts.clone();
+            let mount_nodes = mounts
+                .iter()
+                .map(|(id, parent)| {
+                    let snapshot = registry
+                        .resolution(*id)
+                        .ok_or_else(|| anyhow::anyhow!("direct mounted component disappeared"))?;
+                    Ok(crate::component::MountNode {
+                        id: *id,
+                        parent: *parent,
+                        revision: snapshot.revision,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let graph = MountGraph::new(mount_nodes);
+            let mut capabilities = MountedCapabilities::default();
+            for id in graph.ids() {
+                if let Some(snapshot) = registry.resolution(id) {
+                    capabilities.insert(id, snapshot.capabilities);
+                }
+            }
+            self.graph = graph.clone();
+            self.capabilities = capabilities.clone();
+            let transitions = self.mounted.reconcile(graph.clone());
+            self.ticker
+                .sync_capabilities(&graph, &capabilities, &transitions, now);
+            let geometry = direct.tree.component_geometry();
+            if matches!(
+                self.synchronizer
+                    .synchronize(&graph, &capabilities, &geometry, registry),
+                super::LayoutSync::Dirty
+            ) {
+                control_views = self.capture_direct_control_views(registry)?;
+                invalidate_controls = self.direct_control_nodes.keys().copied().collect();
+                continue;
+            }
+            if self
+                .focus
+                .reconcile_with_geometry(&graph, &capabilities, Some(&geometry), registry)
+            {
+                control_views = self.capture_direct_control_views(registry)?;
+                invalidate_controls = self.direct_control_nodes.keys().copied().collect();
+                continue;
+            }
+            let compiler = ViewCompiler::with_interaction(theme, self.focus.focused(), &self.graph);
+            self.paint_cache.begin_epoch(theme);
+            let surface = ViewPainter.paint_tree_with_content(
+                &compiler,
+                &direct.tree,
+                &mut self.paint_cache,
+                content,
+            );
+            self.invalidated_components.clear();
+            let component_geometry = geometry;
+            return Ok(PreparedSceneFrame {
+                surface,
+                history_overlay: None,
+                damage: DamageRegion::full(size),
+                component_geometry,
+                view_geometry: direct.tree.view_geometry(),
+                occurrence_geometry: direct.occurrence_geometry,
+            });
+        }
+        Err(anyhow::anyhow!("direct occurrence layout did not converge"))
+    }
+
+    fn prepare_direct_layout(
+        &self,
+        root: crate::occurrence::NodeKey,
+        size: Size,
+        history_anchor: DirectHistoryAnchor,
+        captures: &mut HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+        control_views: &HashMap<ComponentId, crate::presentation::View>,
+        invalidate_controls: &[crate::occurrence::NodeKey],
+        content: &mut dyn ContentProvider,
+    ) -> Result<DirectLayout> {
+        let driver = self
+            .direct_driver
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("direct renderer driver is not started"))?;
+        let mut direct = driver.layout(
+            root,
+            size,
+            history_anchor,
+            captures.clone(),
+            invalidate_controls.to_vec(),
+            control_views.clone(),
+        )?;
+        let mut invalidate = Vec::new();
+        for (key, capture) in captures.iter_mut() {
+            let Some(width) = direct.content_widths.get(key) else {
+                continue;
+            };
+            let width = direct_floor_width(*width)?;
+            if width == capture.offered_width {
+                continue;
+            }
+            let next = content.refine_captured_measurement(
+                capture.port_id,
+                capture.capture_id,
+                width,
+                crate::presentation::WidthRule::Fill,
+            )?;
+            capture.measurement = next.measurement;
+            capture.min_content = next.min_content;
+            capture.max_content = next.max_content;
+            capture.history_adjustment = next.history_adjustment;
+            capture.semantic_view = next.semantic_view;
+            capture.offered_width = width;
+            invalidate.push(*key);
+        }
+        if !invalidate.is_empty() {
+            direct = driver.layout(
+                root,
+                size,
+                history_anchor,
+                captures.clone(),
+                invalidate,
+                control_views.clone(),
+            )?;
+        }
+        validate_direct_measurement_widths(&direct, captures)?;
+        validate_direct_content_products(&direct, captures)?;
+        Ok(direct)
+    }
+
+    fn capture_direct_measurements(
+        &self,
+        width: u16,
+        content: &mut dyn ContentProvider,
+    ) -> Result<HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>> {
+        let mut captures = HashMap::new();
+        for (node, resource) in &self.direct_content_ports {
+            let port_id = self
+                .direct_port_ids
+                .get(resource)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("direct ContentPort is not installed"))?;
+            let capture =
+                content.capture_measurement(port_id, width, crate::presentation::WidthRule::Fit)?;
+            captures.insert(
+                *node,
+                CapturedContentMeasurement {
+                    capture_id: capture.capture_id,
+                    port_id,
+                    offered_width: width,
+                    measurement: capture.measurement,
+                    min_content: capture.min_content,
+                    max_content: capture.max_content,
+                    history_adjustment: capture.history_adjustment,
+                    semantic_view: capture.semantic_view.clone(),
+                },
+            );
+        }
+        Ok(captures)
+    }
+
+    fn capture_direct_control_views(
+        &self,
+        registry: &ComponentRegistry,
+    ) -> Result<HashMap<ComponentId, crate::presentation::View>> {
+        self.direct_controls
+            .values()
+            .copied()
+            .map(|component| {
+                registry
+                    .resolution(component)
+                    .map(|snapshot| (component, snapshot.view))
+                    .ok_or_else(|| anyhow::anyhow!("direct control component disappeared"))
+            })
+            .collect()
+    }
 }
 
 impl Default for SceneHost {
@@ -269,6 +672,14 @@ impl Default for SceneHost {
             outputs: OutputQueue::new(),
             graph: MountGraph::default(),
             capabilities: MountedCapabilities::default(),
+            direct_driver: None,
+            direct_controls: HashMap::new(),
+            direct_content_ports: HashMap::new(),
+            direct_control_nodes: HashMap::new(),
+            direct_port_ids: HashMap::new(),
+            direct_body_root: None,
+            direct_synchronized: false,
+            direct_history_overflow_rows: 0,
             layout_cache: LayoutCache::default(),
             paint_cache: PaintCache::default(),
             retained: None,

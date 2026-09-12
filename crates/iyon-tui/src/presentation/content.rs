@@ -120,6 +120,32 @@ pub(crate) struct ContentMeasurement {
     pub(crate) projection_identity: u64,
 }
 
+/// One immutable capture used by all Taffy intrinsic requests for a leaf.
+/// Capturing this product once keeps min-content/max-content/definite queries
+/// on one selected Connector frontier instead of re-running selection from a
+/// callback.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ContentMeasurementCapture {
+    pub(crate) capture_id: u64,
+    pub(crate) measurement: ContentMeasurement,
+    pub(crate) min_content: Size,
+    pub(crate) max_content: Size,
+    /// Exact irreversible History-prefix adjustment for this immutable
+    /// semantic product and offered width. Consumers must match both fields;
+    /// this is not a global intrinsic-height cap.
+    pub(crate) history_adjustment: Option<HistoryMeasurementAdjustment>,
+    /// Theme-independent semantic content used by the renderer driver for
+    /// pure width-dependent height measurement.
+    pub(crate) semantic_view: Option<crate::presentation::View>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HistoryMeasurementAdjustment {
+    pub(crate) projection_identity: u64,
+    pub(crate) offered_width: u16,
+    pub(crate) removed_rows: usize,
+}
+
 impl Default for ContentMeasurement {
     fn default() -> Self {
         Self {
@@ -171,6 +197,33 @@ pub(crate) trait ContentProvider {
         width_rule: crate::presentation::WidthRule,
     ) -> ContentMeasurement;
 
+    fn capture_measurement(
+        &mut self,
+        port_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+    ) -> anyhow::Result<ContentMeasurementCapture> {
+        let measurement = self.measure(port_id, offered_width, width_rule);
+        Ok(ContentMeasurementCapture {
+            capture_id: 0,
+            min_content: measurement.intrinsic_size,
+            max_content: measurement.intrinsic_size,
+            history_adjustment: None,
+            semantic_view: None,
+            measurement,
+        })
+    }
+
+    fn refine_captured_measurement(
+        &mut self,
+        port_id: u64,
+        _capture_id: u64,
+        offered_width: u16,
+        width_rule: crate::presentation::WidthRule,
+    ) -> anyhow::Result<ContentMeasurementCapture> {
+        self.capture_measurement(port_id, offered_width, width_rule)
+    }
+
     /// Direct row-window paint contract. Writes directly into `target` at
     /// `target_origin` clipped to `clip` without full offscreen surface allocation.
     fn paint_window(
@@ -182,6 +235,34 @@ pub(crate) trait ContentProvider {
         clip: crate::geometry::Rect,
         style: crate::physical::PhysicalStyle,
     );
+
+    /// Signed-origin variant used by direct occurrence paint. The target
+    /// origin is kept in logical cell coordinates so clipping a box that
+    /// starts offscreen never shifts its content source column.
+    fn paint_window_signed(
+        &self,
+        ticket: PreparedProjectionTicket,
+        window: ContentWindow,
+        target: &mut Surface,
+        target_origin: (i32, i32),
+        clip: crate::geometry::Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        if target_origin.0 < 0 || target_origin.1 < 0 {
+            return;
+        }
+        self.paint_window(
+            ticket,
+            window,
+            target,
+            (
+                u16::try_from(target_origin.0).unwrap_or(u16::MAX),
+                u16::try_from(target_origin.1).unwrap_or(u16::MAX),
+            ),
+            clip,
+            style,
+        );
+    }
 
     /// Returns committed/candidate physical rows for a History `ContentHost`.
     /// Open content may return only a stable prefix; `complete` is true when

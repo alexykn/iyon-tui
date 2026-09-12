@@ -23,7 +23,6 @@ use super::{
         PresentReceipt, PresentationState, SceneDisposition, UiFailureNotification,
         blocking_receive,
     },
-    legacy_scene::LegacySceneAdapter,
     ui_resources::UiResourceOwner,
 };
 use crate::controls::text_input::{TextInputPreview, command::TextInputCommand};
@@ -420,10 +419,9 @@ pub(crate) struct HostInner {
     #[cfg(test)]
     fail_next_frame: Option<String>,
     pub(super) content: ContentHostRegistry,
-    /// Canonical React occurrence owner. `legacy_scene` is a disposable
-    /// renderer projection and never mutates this document.
+    /// Canonical React occurrence owner. The direct renderer consumes its
+    /// immutable snapshots and never mutates this document.
     pub(super) ui_resources: UiResourceOwner,
-    pub(super) legacy_scene: LegacySceneAdapter,
     pub(super) ui_scene_revision: u64,
     /// One coalesced native projection frontier since the last successful
     /// adapter synchronization. Metadata-only commits remain here until a
@@ -479,6 +477,9 @@ impl Drop for HostInner {
         self.content.dispose_all();
         if let Err(error) = self.ui_resources.close() {
             eprintln!("native UI resource cleanup failed: {error}");
+        }
+        if let Err(error) = self.running.host_clear_direct_driver() {
+            eprintln!("direct renderer shutdown failed: {error}");
         }
         // Always unregister at the final owner boundary so weak environment
         // entries cannot leave a stale pending host or latched wake behind.
@@ -780,7 +781,9 @@ impl HostViewSlot {
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         if let Some(component_id) = component_id {
-            inner.running.host_invalidate_component(component_id);
+            if let Err(error) = inner.running.host_invalidate_component(component_id) {
+                eprintln!("direct control invalidation failed during retirement: {error}");
+            }
         } else {
             inner.running.invalidate_frame();
         }
@@ -870,7 +873,9 @@ impl HostScrollPane {
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         if let Some(component_id) = component_id {
-            inner.running.host_invalidate_component(component_id);
+            if let Err(error) = inner.running.host_invalidate_component(component_id) {
+                eprintln!("direct control invalidation failed during retirement: {error}");
+            }
         } else {
             inner.running.invalidate_frame();
         }
@@ -1060,7 +1065,7 @@ impl HostTextInput {
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         if let Some(component_id) = component_id {
-            inner.running.host_invalidate_component(component_id);
+            inner.running.host_invalidate_component(component_id)?;
         } else {
             inner.running.invalidate_frame();
         }
@@ -1227,7 +1232,6 @@ impl TuiHost {
                     |error| anyhow::anyhow!("content environment setup failed: {error}"),
                 )?),
                 ui_resources: UiResourceOwner::new(ui_namespace, environment.clone()),
-                legacy_scene: LegacySceneAdapter::default(),
                 ui_scene_revision: 0,
                 pending_ui_changes: None,
                 ui_editors: std::collections::HashMap::new(),
@@ -1260,6 +1264,7 @@ impl TuiHost {
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         host.host_id = host_id;
+        host.running.host_set_direct_driver_id(host_id)?;
         host.content.set_owner_host(Arc::downgrade(&inner));
         if let Err(error) = host.present_frame() {
             drop(host);
@@ -3006,12 +3011,20 @@ fn finalize_close(
         }
         inner.content.dispose_all();
         inner.headless_history = headless_history;
+        let driver_cleanup = inner.running.host_clear_direct_driver();
         let ui_cleanup = inner.ui_resources.close().map_err(anyhow::Error::msg);
         inner.presentation_state = PresentationState::Closed;
         inner.lifecycle = HostLifecycle::Closed(Arc::clone(operation));
         inner.presentation_notify.notify_waiters();
         inner.ui_event_notify.notify_waiters();
-        ui_cleanup
+        match (driver_cleanup, ui_cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(driver), Ok(())) => Err(driver),
+            (Ok(()), Err(ui)) => Err(ui),
+            (Err(driver), Err(ui)) => Err(anyhow::anyhow!(
+                "direct renderer shutdown failed: {driver}; UI cleanup failed: {ui}"
+            )),
+        }
     }
 }
 
@@ -3377,7 +3390,7 @@ impl HostInner {
         dirty: &[crate::presentation::ContentDirty],
     ) -> anyhow::Result<WakeDisposition> {
         for item in dirty {
-            self.running.host_invalidate_content(*item);
+            self.running.host_invalidate_content(*item)?;
         }
         self.content_dirty = true;
         self.mark_pending()
@@ -3552,7 +3565,7 @@ impl HostInner {
             if admit_wakes {
                 self.mark_content_pending(dirty)?;
             } else {
-                self.running.host_invalidate_content(dirty);
+                self.running.host_invalidate_content(dirty)?;
                 self.content_dirty = true;
             }
         }
@@ -3566,7 +3579,7 @@ impl HostInner {
         })?;
         let dirty = status.dirty;
         for component_id in status.changed_components {
-            let Some(key) = self.legacy_scene.control_for_component(component_id) else {
+            let Some(key) = self.running.host_direct_control_for_component(component_id) else {
                 continue;
             };
             let Some(slot) = self.ui_animations.get(&key) else {
@@ -3624,26 +3637,18 @@ impl HostInner {
             ..crate::occurrence::UiChangeSet::default()
         };
         let changed_content_ports = self
-            .legacy_scene
-            .synchronize(&self.ui_resources, &mut self.content, Some(&changes))
-            .map_err(|error| {
-                host_attempt_error(
-                    "frame",
-                    "FRAME_PREPARATION_FAILED",
-                    true,
-                    format!("occurrence animation synchronization failed: {error}"),
-                )
-            })?;
+            .content
+            .sync_ui_resources(&self.ui_resources, Some(&changes))?;
         for port_id in changed_content_ports {
             self.running
                 .host_invalidate_content(crate::presentation::ContentDirty::new(
                     port_id,
                     None,
                     crate::presentation::ContentDirtyReason::SelectionLifecycle,
-                ));
+                ))?;
+            self.content_dirty = true;
         }
-        let body = self.legacy_scene.body(&self.ui_resources)?;
-        self.running.host_set_body(body);
+        self.sync_direct_occurrences(Some(&changes))?;
         Ok(())
     }
 
@@ -3819,6 +3824,27 @@ impl HostInner {
                             crate::history::NativeTransferError::Sink(error) => error,
                         })
                     });
+                let result = result.and_then(|outcome| {
+                    let direct_changed = outcome.inserted > 0
+                        || matches!(
+                            outcome.status,
+                            crate::history::NativeTransferStatus::Progress
+                        );
+                    if direct_changed && self.running.host_has_direct_occurrences() {
+                        self.sync_direct_occurrences(None)?;
+                        let port_ids = self.running.host_direct_port_ids();
+                        for port_id in port_ids.values().copied() {
+                            self.running.host_invalidate_content(
+                                crate::presentation::ContentDirty::new(
+                                    port_id,
+                                    None,
+                                    crate::presentation::ContentDirtyReason::SelectionLifecycle,
+                                ),
+                            )?;
+                        }
+                    }
+                    Ok(outcome)
+                });
                 match result {
                     Ok(outcome)
                         if outcome.inserted == 0
@@ -3905,33 +3931,57 @@ impl HostInner {
             HostBackend::Headless(sink) => Size::new(sink.width, sink.height),
             HostBackend::Real(backend) => backend.viewport()?,
         };
-        let (mut candidate, history_plan) =
-            match self
-                .running
-                .prepare_frame_for_history(self.now, size, &mut self.content)
-            {
-                Ok(candidate) => candidate,
-                Err(error) => {
-                    // SceneHost may have staged derived layout/surface state before
-                    // a late preparation error. Keep the HostInner frame as the
-                    // sole visible authority and rebuild the candidate on retry.
-                    self.note_physical_sync_failure(&error);
-                    let ui_revision = self.ui_resources.document.as_ref().map_or(
-                        0,
-                        crate::occurrence::OccurrenceDocument::accepted_ui_revision,
-                    );
-                    self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
-                    self.content.abort_candidate();
-                    self.running.host_discard_candidate();
-                    return Err(error);
-                }
-            };
+        let direct_root = self
+            .ui_resources
+            .document
+            .as_ref()
+            .map(crate::occurrence::OccurrenceDocument::body_root);
+        let direct_port_ids = self
+            .ui_resources
+            .ports
+            .iter()
+            .filter_map(|key| self.content.ui_port_id(*key).map(|id| (*key, id)))
+            .collect::<HashMap<_, _>>();
+        let front_content_blocked = self
+            .running
+            .host_native_history_front_content_port()
+            .is_some_and(|port_id| self.content.history_transfer_blocked(port_id, size.width));
+        let direct_history_anchor = if self.running.host_native_history_anchored()
+            && (self.history_sink_blocked
+                || self.running.host_native_history_blocked()
+                || front_content_blocked)
+        {
+            crate::presentation::direct::DirectHistoryAnchor::NativeFrontier
+        } else {
+            crate::presentation::direct::DirectHistoryAnchor::FollowEnd
+        };
+        let (candidate, history_plan) = match self.running.prepare_frame_for_history(
+            self.now,
+            size,
+            &mut self.content,
+            direct_root,
+            &direct_port_ids,
+            direct_history_anchor,
+        ) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                // SceneHost may have staged derived layout/surface state before
+                // a late preparation error. Keep the HostInner frame as the
+                // sole visible authority and rebuild the candidate on retry.
+                self.note_physical_sync_failure(&error);
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
+                self.content.abort_candidate();
+                self.running.host_discard_candidate();
+                return Err(error);
+            }
+        };
         let history_plan = (!self.history_sink_blocked)
             .then_some(history_plan)
             .flatten();
-        candidate.occurrence_geometry = self
-            .legacy_scene
-            .occurrence_geometry(&candidate.view_geometry);
         let content_failure = match self.content.ui_content_failure() {
             Ok(failure) => failure,
             Err(error) => {
@@ -4089,14 +4139,14 @@ impl HostInner {
         let sync_result = (|| {
             self.sync_ui_controls(changes.as_ref())?;
             let changed_content_ports = self
-                .legacy_scene
-                .synchronize(&self.ui_resources, &mut self.content, changes.as_ref())
+                .content
+                .sync_ui_resources(&self.ui_resources, changes.as_ref())
                 .map_err(|error| {
                     host_attempt_error(
                         "frame",
                         "FRAME_PREPARATION_FAILED",
                         true,
-                        format!("occurrence renderer synchronization failed: {error}"),
+                        format!("content resource synchronization failed: {error}"),
                     )
                 })?;
             for port_id in changed_content_ports {
@@ -4105,16 +4155,26 @@ impl HostInner {
                         port_id,
                         None,
                         crate::presentation::ContentDirtyReason::SelectionLifecycle,
-                    ));
+                    ))?;
             }
-            let history_units = self
-                .legacy_scene
-                .history_units(&self.ui_resources, changes.as_ref())?;
-            self.running
-                .host_sync_ui_history(history_units, changes.as_ref(), &mut self.content)
-                .map_err(|error| {
-                    host_attempt_error("frame", "FRAME_PREPARATION_FAILED", true, error.to_string())
-                })?;
+            self.sync_direct_occurrences(changes.as_ref())?;
+            if !self.ui_resources.history_roots().is_empty()
+                || changes.as_ref().is_some_and(|changes| {
+                    !changes.history_roots.is_empty() || !changes.retired_nodes.is_empty()
+                })
+            {
+                let history_units = self.direct_history_units(changes.as_ref())?;
+                self.running
+                    .host_sync_ui_history(history_units, changes.as_ref(), &mut self.content)
+                    .map_err(|error| {
+                        host_attempt_error(
+                            "frame",
+                            "FRAME_PREPARATION_FAILED",
+                            true,
+                            error.to_string(),
+                        )
+                    })?;
+            }
             self.sync_ui_control_values(changes.as_ref())?;
             Ok(())
         })();
@@ -4122,11 +4182,244 @@ impl HostInner {
             self.pending_ui_changes = changes;
             return Err(error);
         }
-        let body = self.legacy_scene.body(&self.ui_resources)?;
-        self.running.host_set_body(body);
         self.ui_scene_revision = revision;
         self.desired_structural_revision = revision;
         Ok(())
+    }
+
+    fn direct_history_units(
+        &self,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+    ) -> Result<Vec<super::kernel::HistoryUnitRecipe>> {
+        let roots = changes.map_or_else(
+            || self.ui_resources.history_roots(),
+            |changes| changes.history_roots.clone(),
+        );
+        roots
+            .into_iter()
+            .filter(|root| !self.running.host_ui_history_exported(*root))
+            .map(|root| {
+                let config = self
+                    .ui_resources
+                    .root_config(root)
+                    .ok_or_else(|| anyhow::anyhow!("History root config is missing"))?;
+                let unit = self.ui_resources.history_unit(root).ok_or_else(|| {
+                    anyhow::anyhow!("History root native unit identity is missing")
+                })?;
+                let (view, native_transfer_allowed) = self.direct_history_view(root)?;
+                Ok(super::kernel::HistoryUnitRecipe {
+                    root,
+                    view,
+                    native_transfer_allowed,
+                    unit_identity: unit.id,
+                    status: unit.status,
+                    flow_boundary: if config.flow_boundary == 1 {
+                        crate::history::FlowBoundary::AttachToPrevious
+                    } else {
+                        crate::history::FlowBoundary::Default
+                    },
+                })
+            })
+            .collect()
+    }
+
+    /// Builds the temporary History semantic descriptor and its explicit
+    /// physical-export eligibility.  The direct occurrence tree remains the
+    /// visual authority; this descriptor is only consumed by the existing
+    /// native History owner until the T7 semantic-content gate.
+    fn direct_history_view(&self, key: crate::occurrence::NodeKey) -> Result<(View, bool)> {
+        let snapshot = self
+            .ui_resources
+            .document_snapshot(key)
+            .map_err(anyhow::Error::msg)?;
+        match snapshot.kind {
+            crate::occurrence::HostKind::ContentHost => {
+                let port = snapshot
+                    .port
+                    .ok_or_else(|| anyhow::anyhow!("History ContentHost has no Port"))?;
+                let id = self
+                    .content
+                    .ui_port_id(port)
+                    .ok_or_else(|| anyhow::anyhow!("History ContentPort is not installed"))?;
+                let view = vf::content_host(id).map_err(anyhow::Error::msg)?;
+                let supported = !snapshot.properties.iter().any(|(property, value)| {
+                    matches!(value, crate::occurrence::LayerValue::Value(_))
+                        && !matches!(property, crate::occurrence::PropertyId::Padding)
+                });
+                let view = snapshot
+                    .properties
+                    .iter()
+                    .find_map(|(property, value)| {
+                        (*property == crate::occurrence::PropertyId::Padding).then_some(value)
+                    })
+                    .and_then(|value| match value {
+                        crate::occurrence::LayerValue::Value(
+                            crate::occurrence::PropertyValue::Insets(insets),
+                        ) => Some(vf::padding(view.clone(), *insets)),
+                        _ => None,
+                    })
+                    .unwrap_or(view);
+                Ok((view, supported))
+            }
+            crate::occurrence::HostKind::Box => {
+                let layout_mode = snapshot.properties.iter().find_map(|(property, value)| {
+                    (*property == crate::occurrence::PropertyId::Layout).then_some(value)
+                });
+                let row_layout = matches!(
+                    layout_mode,
+                    Some(crate::occurrence::LayerValue::Value(
+                        crate::occurrence::PropertyValue::LayoutMode(
+                            crate::occurrence::LayoutMode::Row,
+                        ),
+                    ))
+                );
+                let properties_supported = snapshot.properties.iter().all(|(property, value)| {
+                    if !matches!(value, crate::occurrence::LayerValue::Value(_)) {
+                        return true;
+                    }
+                    match property {
+                        crate::occurrence::PropertyId::Padding => true,
+                        crate::occurrence::PropertyId::Layout => matches!(
+                            value,
+                            crate::occurrence::LayerValue::Value(
+                                crate::occurrence::PropertyValue::LayoutMode(
+                                    crate::occurrence::LayoutMode::Row
+                                        | crate::occurrence::LayoutMode::Column,
+                                ),
+                            )
+                        ),
+                        _ => false,
+                    }
+                });
+                let child_descriptors = snapshot
+                    .children
+                    .iter()
+                    .copied()
+                    .map(|child| self.direct_history_view(child))
+                    .collect::<Result<Vec<_>>>()?;
+                let supported =
+                    properties_supported && child_descriptors.len() == 1 && child_descriptors[0].1;
+                let child_views = child_descriptors
+                    .iter()
+                    .map(|(view, _)| view.clone())
+                    .collect();
+                let view = if row_layout {
+                    vf::row(child_views, 0)
+                } else {
+                    vf::column(child_views, 0)
+                };
+                let view = snapshot
+                    .properties
+                    .iter()
+                    .find_map(|(property, value)| {
+                        (*property == crate::occurrence::PropertyId::Padding).then_some(value)
+                    })
+                    .and_then(|value| match value {
+                        crate::occurrence::LayerValue::Value(
+                            crate::occurrence::PropertyValue::Insets(insets),
+                        ) => Some(vf::padding(view.clone(), *insets)),
+                        _ => None,
+                    })
+                    .unwrap_or(view);
+                Ok((view, supported))
+            }
+            crate::occurrence::HostKind::Editor
+            | crate::occurrence::HostKind::Scroll
+            | crate::occurrence::HostKind::Animation => {
+                // These controls are rendered by the direct occurrence tree.
+                // Keep a component-bearing descriptor in the retained
+                // History model so it remains a Live unit; the physical
+                // exporter therefore cannot mistake stateful control pixels
+                // for static rows.
+                let control = snapshot
+                    .control
+                    .ok_or_else(|| anyhow::anyhow!("History control has no owner"))?;
+                let component = self
+                    .running
+                    .host_direct_component_for_control(control)
+                    .ok_or_else(|| anyhow::anyhow!("History control is not mounted"))?;
+                Ok((vf::native_component(component.value()), false))
+            }
+            _ => Err(anyhow::anyhow!(
+                "HISTORY_TRANSFER_UNSUPPORTED: History root is not a content shell"
+            )),
+        }
+    }
+
+    fn sync_direct_occurrences(
+        &mut self,
+        changes: Option<&crate::occurrence::UiChangeSet>,
+    ) -> Result<()> {
+        let snapshots = if self.running.host_has_direct_occurrences() && changes.is_some() {
+            self.ui_resources
+                .render_snapshot_delta(changes.expect("checked direct change set"))
+        } else {
+            self.ui_resources.render_snapshots()
+        }
+        .map_err(|error| {
+            host_attempt_error("frame", "FRAME_PREPARATION_FAILED", true, error.to_string())
+        })?;
+        let document = self
+            .ui_resources
+            .document
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("UI resource owner has no occurrence document"))?;
+        let participation = snapshots
+            .iter()
+            .map(|snapshot| {
+                document
+                    .demanded_node(snapshot.key, |control| {
+                        self.ui_resources
+                            .control_state(control)
+                            .and_then(crate::occurrence::ControlState::animation_active_frame)
+                            .map(|frame| frame as usize)
+                    })
+                    .map(
+                        |(participates, _)| crate::presentation::taffy::NodeParticipation {
+                            key: snapshot.key,
+                            participates,
+                        },
+                    )
+                    .map_err(|error| anyhow::anyhow!("occurrence demand lookup failed: {error:?}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let port_ids = self
+            .ui_resources
+            .ports
+            .iter()
+            .filter_map(|key| self.content.ui_port_id(*key).map(|id| (*key, id)))
+            .collect::<HashMap<_, _>>();
+        let mut roots = document
+            .history_roots()
+            .into_iter()
+            .filter(|root| !self.running.host_ui_history_exported(*root))
+            .collect::<Vec<_>>();
+        roots.push(document.body_root());
+        let portal_owners = document
+            .portal_roots()
+            .into_iter()
+            .filter_map(|root| document.root_owner(root).map(|owner| (root, owner)))
+            .collect::<HashMap<_, _>>();
+        roots.extend(document.portal_roots());
+        let body_root = document.body_root();
+        self.running
+            .host_sync_direct_occurrences(
+                snapshots,
+                changes,
+                &participation,
+                port_ids,
+                roots,
+                body_root,
+                portal_owners,
+            )
+            .map_err(|error| {
+                host_attempt_error(
+                    "frame",
+                    "FRAME_PREPARATION_FAILED",
+                    true,
+                    format!("direct occurrence synchronization failed: {error}"),
+                )
+            })
     }
 
     fn sync_ui_controls(&mut self, changes: Option<&crate::occurrence::UiChangeSet>) -> Result<()> {
@@ -4194,7 +4487,7 @@ impl HostInner {
         {
             self.running.host_retire_component(component_id);
         }
-        self.legacy_scene.remove_control_component(key);
+        self.running.host_remove_direct_control_component(key);
     }
 
     fn sync_ui_editor(
@@ -4211,8 +4504,8 @@ impl HostInner {
             let component = self.running.host_register(MountedTextInput(input.clone()));
             input.set_component_id(component.raw_id())?;
             self.ui_editors.insert(key, input);
-            self.legacy_scene
-                .set_control_component(key, component.raw_id());
+            self.running
+                .host_set_direct_control_component(key, component.raw_id());
         }
         if sync_value
             && let Some(input) = self.ui_editors.get(&key)
@@ -4231,7 +4524,7 @@ impl HostInner {
                 }
             };
             if changed && let Some(component) = input.component_id() {
-                self.running.host_invalidate_component(component);
+                self.running.host_invalidate_component(component)?;
             }
         }
         Ok(())
@@ -4244,8 +4537,8 @@ impl HostInner {
         let pane = HostScrollPane::new(vf::spacer(0));
         let component = self.running.host_register(MountedScrollPane(pane.clone()));
         pane.set_component_id(component.raw_id())?;
-        self.legacy_scene
-            .set_control_component(key, component.raw_id());
+        self.running
+            .host_set_direct_control_component(key, component.raw_id());
         self.ui_scrolls.insert(key, pane);
         Ok(())
     }
@@ -4257,8 +4550,8 @@ impl HostInner {
         let slot = HostViewSlot::new(vf::spacer(0));
         let component = self.running.host_register(MountedViewSlot(slot.clone()));
         slot.set_component_id(component.raw_id())?;
-        self.legacy_scene
-            .set_control_component(key, component.raw_id());
+        self.running
+            .host_set_direct_control_component(key, component.raw_id());
         self.ui_animations.insert(key, slot);
         Ok(())
     }
@@ -4313,7 +4606,12 @@ impl HostInner {
                 .ui_resources
                 .document_snapshot(node)
                 .map_err(anyhow::Error::msg)?;
-            let children = self.legacy_scene.children_for(&snapshot)?;
+            let children = snapshot
+                .children
+                .iter()
+                .copied()
+                .map(|child| self.direct_control_view(child))
+                .collect::<Result<Vec<_>>>()?;
             match state {
                 crate::occurrence::ControlState::Scroll(_) => {
                     if let Some(pane) = self.ui_scrolls.get(&key) {
@@ -4358,6 +4656,41 @@ impl HostInner {
             self.running.invalidate_frame();
         }
         Ok(())
+    }
+
+    /// Controls keep their existing concrete state machines, which still
+    /// accept a local View for content projection. This narrow projection is
+    /// not the ordinary layout route: occurrence geometry and all sibling
+    /// placement are supplied by the direct Taffy tree.
+    fn direct_control_view(&self, key: crate::occurrence::NodeKey) -> Result<View> {
+        let snapshot = self
+            .ui_resources
+            .document_snapshot(key)
+            .map_err(anyhow::Error::msg)?;
+        match snapshot.kind {
+            crate::occurrence::HostKind::ContentHost => {
+                let port = snapshot
+                    .port
+                    .ok_or_else(|| anyhow::anyhow!("ContentHost occurrence has no ContentPort"))?;
+                let id = self
+                    .content
+                    .ui_port_id(port)
+                    .ok_or_else(|| anyhow::anyhow!("ContentPort is not installed"))?;
+                vf::content_host(id).map_err(anyhow::Error::msg)
+            }
+            crate::occurrence::HostKind::Box => {
+                let children = snapshot
+                    .children
+                    .iter()
+                    .copied()
+                    .map(|child| self.direct_control_view(child))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(vf::column(children, 0))
+            }
+            _ => Err(anyhow::anyhow!(
+                "direct control child kind cannot be projected into native control content"
+            )),
+        }
     }
 
     fn dispatch_key_input(&mut self, key: KeyStroke) -> Result<()> {
@@ -4432,7 +4765,10 @@ impl HostInner {
         let Some(focused_component) = self.running.host_focused_component() else {
             return Ok(None);
         };
-        let Some(control) = self.legacy_scene.control_for_component(focused_component) else {
+        let Some(control) = self
+            .running
+            .host_direct_control_for_component(focused_component)
+        else {
             return Ok(None);
         };
         let Some(input) = self.ui_editors.get(&control) else {
@@ -4901,7 +5237,18 @@ impl HostInner {
             match candidate.product {
                 PreparedFrameProduct::Scene { products, .. }
                 | PreparedFrameProduct::NoOutput { products, .. } => {
-                    self.frame = products.scene;
+                    // A native compatibility test/helper may complete a
+                    // scene-only candidate while the direct occurrence driver
+                    // owns the confirmed geometry. Do not erase that exact
+                    // occurrence-keyed product merely because the legacy
+                    // candidate has no occurrence metadata.
+                    let mut scene = products.scene;
+                    if scene.occurrence_geometry.is_empty()
+                        && !self.frame.occurrence_geometry.is_empty()
+                    {
+                        scene.occurrence_geometry = self.frame.occurrence_geometry.clone();
+                    }
+                    self.frame = scene;
                 }
                 PreparedFrameProduct::Metadata { .. } => {}
             }
@@ -5280,6 +5627,29 @@ fn prepare_frame_with_content(
     content: &mut dyn ContentProvider,
 ) -> Result<PreparedSceneFrame> {
     content.set_theme(running.theme_shared());
+    if let Some(root) = running.host_direct_body_root()
+        && running.host_has_direct_occurrences()
+    {
+        let size = match backend {
+            HostBackend::Headless(sink) => Size::new(sink.width, sink.height),
+            HostBackend::Real(backend) => backend.viewport()?,
+        };
+        let port_ids = running.host_direct_port_ids();
+        let (frame, history_plan) = running.prepare_frame_for_history(
+            now,
+            size,
+            content,
+            Some(root),
+            &port_ids,
+            crate::presentation::direct::DirectHistoryAnchor::FollowEnd,
+        )?;
+        if history_plan.is_some() {
+            return Err(anyhow::anyhow!(
+                "direct frame helper cannot defer a native History transfer"
+            ));
+        }
+        return Ok(frame);
+    }
     match backend {
         HostBackend::Headless(sink) => running
             .prepare_frame(
@@ -5366,6 +5736,294 @@ mod tests {
         };
         inner.install_test_in_flight(candidate, receiver).unwrap();
         sender
+    }
+
+    #[test]
+    fn direct_taffy_route_paints_grid_children_and_reports_occurrence_geometry() {
+        let host =
+            TuiHost::open_in_environment(20, 4, true, TuiEnvironment::new_manual()).expect("host");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 3,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 4,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 5,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(3)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        for child in [2, 3] {
+            mount.push(UiOperation::InsertBefore {
+                parent: NodeRef::Local(1),
+                child: NodeRef::Local(child),
+                before: None,
+            });
+        }
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::Layout,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::LayoutMode(crate::occurrence::LayoutMode::Grid),
+            ),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::GridTemplateColumns,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Tracks(
+                crate::occurrence::TrackListValue(vec![
+                    crate::occurrence::TrackValue::Length(
+                        crate::occurrence::FiniteScalar::new(4.0).expect("finite track"),
+                    ),
+                    crate::occurrence::TrackValue::Length(
+                        crate::occurrence::FiniteScalar::new(4.0).expect("finite track"),
+                    ),
+                ]),
+            )),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::Padding,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Insets(
+                crate::Insets::all(1),
+            )),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::BorderEdges,
+            value: crate::occurrence::LayerValue::Value(crate::occurrence::PropertyValue::Edges(
+                crate::binding::Edges::ALL,
+            )),
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(2),
+            port: Some(ResourceRef::Local(4)),
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(3),
+            port: Some(ResourceRef::Local(5)),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(4),
+            content_format: 1,
+            content: b"left".to_vec(),
+            annotations: Vec::new(),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(5),
+            content_format: 1,
+            content: b"right".to_vec(),
+            annotations: Vec::new(),
+        });
+        let accepted = host.commit_ui(mount, &[]).expect("grid commit");
+        host.flush_pending_hosts(8, true).expect("grid frame");
+        let first = accepted.acknowledgement.created[1];
+        let second = accepted.acknowledgement.created[2];
+        assert!(host.screen_rows().iter().any(|row| row.contains("left")));
+        assert!(host.screen_rows().iter().any(|row| row.contains("righ")));
+        let first_geometry = host
+            .ui_visible_geometry(first)
+            .expect("first geometry")
+            .expect("first visible");
+        let second_geometry = host
+            .ui_visible_geometry(second)
+            .expect("second geometry")
+            .expect("second visible");
+        assert!(first_geometry.0 >= 1);
+        assert!(second_geometry.0 > first_geometry.0);
+        let mut hide = UiCommit::new(1);
+        hide.push(UiOperation::SetHidden {
+            node: NodeRef::Existing(accepted.acknowledgement.created[0]),
+            hidden: true,
+        });
+        host.commit_ui(hide, &[]).expect("hide parent");
+        host.flush_pending_hosts(8, true).expect("hidden frame");
+        assert!(!host.screen_rows().iter().any(|row| row.contains("left")));
+        assert!(!host.screen_rows().iter().any(|row| row.contains("righ")));
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn direct_paint_preserves_signed_content_origin_when_an_inset_is_clipped() {
+        let host =
+            TuiHost::open_in_environment(12, 3, true, TuiEnvironment::new_manual()).expect("host");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Box,
+        });
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 2,
+            kind: HostKind::ContentHost,
+        });
+        mount.push(UiOperation::CreatePort {
+            local_ordinal: 3,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(2)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Local(1),
+            child: NodeRef::Local(2),
+            before: None,
+        });
+        mount.push(UiOperation::AttachPort {
+            node: NodeRef::Local(2),
+            port: Some(ResourceRef::Local(3)),
+        });
+        mount.push(UiOperation::ReplaceLiteral {
+            port: ResourceRef::Local(3),
+            content_format: 1,
+            content: b"abc".to_vec(),
+            annotations: Vec::new(),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(2),
+            property: crate::occurrence::PropertyId::Width,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::Dimension(
+                    crate::occurrence::DimensionValue::Length(
+                        crate::occurrence::FiniteScalar::new(5.5).expect("fractional width"),
+                    ),
+                ),
+            ),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(2),
+            property: crate::occurrence::PropertyId::Position,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::Position(
+                    crate::occurrence::PositionMode::Absolute,
+                ),
+            ),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::Width,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::Dimension(
+                    crate::occurrence::DimensionValue::Length(
+                        crate::occurrence::FiniteScalar::new(12.0).expect("parent width"),
+                    ),
+                ),
+            ),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(1),
+            property: crate::occurrence::PropertyId::Height,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::Dimension(
+                    crate::occurrence::DimensionValue::Length(
+                        crate::occurrence::FiniteScalar::new(3.0).expect("height"),
+                    ),
+                ),
+            ),
+        });
+        mount.push(UiOperation::SetDeclared {
+            node: NodeRef::Local(2),
+            property: crate::occurrence::PropertyId::Inset,
+            value: crate::occurrence::LayerValue::Value(
+                crate::occurrence::PropertyValue::Dimensions(crate::occurrence::DimensionInsets {
+                    top: crate::occurrence::DimensionValue::Auto,
+                    right: crate::occurrence::DimensionValue::Auto,
+                    bottom: crate::occurrence::DimensionValue::Auto,
+                    left: crate::occurrence::DimensionValue::Length(
+                        crate::occurrence::FiniteScalar::new(-2.0).expect("negative inset"),
+                    ),
+                }),
+            ),
+        });
+        let mounted = host.commit_ui(mount, &[]).expect("signed inset commit");
+        host.flush_pending_hosts(8, true)
+            .expect("signed inset frame");
+        let visible_geometry = host
+            .ui_visible_geometry(mounted.acknowledgement.created[1])
+            .expect("signed content geometry")
+            .expect("signed content visible");
+        assert_eq!(visible_geometry, (0, 0, 4, 1));
+        assert!(
+            host.screen_rows()[0].starts_with("c"),
+            "signed clip rows: {:?}",
+            host.screen_rows()
+        );
+        host.close().expect("close");
+    }
+
+    #[test]
+    fn direct_editor_measurement_recomputes_auto_height_at_native_width() {
+        let host =
+            TuiHost::open_in_environment(16, 8, true, TuiEnvironment::new_manual()).expect("host");
+        let body = host.ui_body_handle().expect("body");
+        let mut mount = UiCommit::new(0);
+        mount.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::Editor,
+        });
+        mount.push(UiOperation::CreateControl {
+            local_ordinal: 2,
+            kind: crate::occurrence::ControlKind::Editor,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(NodeRef::Local(1)),
+        });
+        mount.push(UiOperation::InsertBefore {
+            parent: NodeRef::Existing(body),
+            child: NodeRef::Local(1),
+            before: None,
+        });
+        mount.push(UiOperation::ReplaceEditorContent {
+            control: ResourceRef::Local(2),
+            content: b"a\nb\nc".to_vec(),
+            expected_edit_revision: u64::MAX,
+        });
+        let mounted = host.commit_ui(mount, &[]).expect("editor commit");
+        host.flush_pending_hosts(8, true).expect("editor frame");
+        let editor = mounted.acknowledgement.created[0];
+        let first = host
+            .ui_visible_geometry(editor)
+            .expect("editor geometry")
+            .expect("editor visible");
+        assert!(first.2 > 0 && first.3 > 0);
+        let mut update = UiCommit::new(1);
+        update.push(UiOperation::ReplaceEditorContent {
+            control: ResourceRef::Existing(mounted.acknowledgement.created[1]),
+            content: b"a much longer line that wraps\nb".to_vec(),
+            expected_edit_revision: u64::MAX,
+        });
+        host.commit_ui(update, &[]).expect("editor width update");
+        host.flush_pending_hosts(8, true)
+            .expect("editor width update frame");
+        let second = host
+            .ui_visible_geometry(editor)
+            .expect("updated editor geometry")
+            .expect("updated editor visible");
+        assert!(second.3 >= first.3);
+        host.close().expect("close");
     }
 
     fn accept_ui_box(host: &TuiHost) -> crate::occurrence::UiHandle {
@@ -5938,7 +6596,7 @@ mod tests {
         {
             let mut inner = host.inner.lock().unwrap();
             inner.sync_ui_scene().unwrap();
-            let mut candidate = {
+            let candidate = {
                 let super::HostInner {
                     running,
                     backend,
@@ -5954,9 +6612,6 @@ mod tests {
                 )
                 .unwrap()
             };
-            candidate.occurrence_geometry = inner
-                .legacy_scene
-                .occurrence_geometry(&candidate.view_geometry);
             inner.install_test_in_flight(candidate, receiver).unwrap();
         }
 
@@ -7428,7 +8083,6 @@ mod tests {
             let mut inner = host.inner.lock().unwrap();
             inner.physical_sync_unknown = true;
         }
-        crate::presentation::layout::reset_layout_counters();
         let mut metadata = UiCommit::new(1);
         metadata.push(UiOperation::SetSubscriptions {
             node: NodeRef::Existing(node),
@@ -7439,7 +8093,6 @@ mod tests {
         host.flush_pending_hosts(8, true).unwrap();
         let after = host.epochs().unwrap();
         assert!(after.visible_frame_revision > before.visible_frame_revision);
-        assert!(crate::presentation::layout::layout_counters().0 > 0);
         host.close().unwrap();
     }
 
@@ -7534,6 +8187,9 @@ mod tests {
         });
         host.commit_ui(freeze, &[]).unwrap();
         host.flush_pending_hosts(8, true).unwrap();
+        host.flush_pending_hosts(8, true).unwrap();
+        // Let the direct renderer's exact History transfer receipt re-admit
+        // the host before installing the deliberately delayed candidate.
         host.flush_pending_hosts(8, true).unwrap();
         let (sender, receiver) = oneshot::channel::<Result<(), anyhow::Error>>();
         {

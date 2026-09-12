@@ -73,6 +73,32 @@ impl History {
         self.units.iter().any(|unit| unit.id == id)
     }
 
+    pub(crate) fn native_has_physical_rows(&self) -> bool {
+        self.native.has_physical_rows()
+    }
+
+    pub(crate) fn set_native_transfer_blocked(&mut self, id: HistoryUnitId, blocked: bool) {
+        self.native.set_transfer_blocked(id, blocked);
+    }
+
+    pub(crate) fn native_transfer_blocked_front(&self) -> bool {
+        self.units
+            .front()
+            .is_some_and(|unit| self.native.blocked_units.contains(&unit.id))
+    }
+
+    pub(crate) fn native_transfer_semantically_blocked_front(&self) -> bool {
+        self.native_transfer_blocked_front()
+            || self.units.front().is_some_and(|unit| match &unit.content {
+                HistoryUnitContent::Live(_) => true,
+                HistoryUnitContent::Static(view) => {
+                    view.contains_component_identity()
+                        || (view.contains_content_identity()
+                            && view.content_history_transfer().is_none())
+                }
+            })
+    }
+
     pub(crate) fn unit_is_live(&self, id: HistoryUnitId) -> Option<bool> {
         self.units.iter().find_map(|unit| {
             (unit.id == id).then_some(matches!(unit.content, HistoryUnitContent::Live(_)))
@@ -183,6 +209,7 @@ impl History {
             return Err(HistoryError::UnitNotLive { unit });
         }
         self.units.remove(index);
+        self.native.blocked_units.remove(&unit);
         self.cached_total_height.set(None);
         self.stale_cached_heights.set(0);
         self.bump_revision();
@@ -192,6 +219,7 @@ impl History {
     pub(crate) fn retire_unit(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
         let index = self.index_of(unit)?;
         self.units.remove(index);
+        self.native.blocked_units.remove(&unit);
         self.cached_total_height.set(None);
         self.stale_cached_heights.set(0);
         self.bump_revision();

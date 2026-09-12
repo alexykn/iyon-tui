@@ -2963,15 +2963,21 @@ impl HostInner {
 
     #[cfg(test)]
     pub(crate) fn prepare_test_candidate(&mut self) -> Result<PreparedSceneFrame> {
-        self.content.begin_projection_candidate();
-        prepare_frame_with_content(
-            &mut self.running,
-            self.backend
-                .as_mut()
-                .expect("open host must own its terminal backend"),
-            self.now,
-            &mut self.content,
-        )
+        let mut backend = self
+            .backend
+            .take()
+            .expect("open host must own its terminal backend");
+        let result = self
+            .prepare_candidate_frame_with_backend(&mut backend)
+            .and_then(|(frame, _)| match frame.product {
+                PreparedFrameProduct::Scene { products, .. }
+                | PreparedFrameProduct::NoOutput { products, .. } => Ok(products.scene),
+                PreparedFrameProduct::Metadata { .. } => {
+                    Err(anyhow::anyhow!("test candidate did not prepare a scene"))
+                }
+            });
+        self.backend = Some(backend);
+        result
     }
 
     #[cfg(test)]

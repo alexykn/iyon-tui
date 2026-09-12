@@ -1136,10 +1136,10 @@ fn measure_control(
     let border_height = editor.border.as_ref().map_or(0, |border| {
         border.top_height().saturating_add(border.bottom_height())
     });
-    let min_content_width = editor_intrinsic_width(&editor.text, true)
-        .saturating_add(usize::from(editor.focused));
-    let max_content_width = editor_intrinsic_width(&editor.text, false)
-        .saturating_add(usize::from(editor.focused));
+    let min_content_width =
+        editor_intrinsic_width(&editor.text, true).saturating_add(usize::from(editor.focused));
+    let max_content_width =
+        editor_intrinsic_width(&editor.text, false).saturating_add(usize::from(editor.focused));
     let intrinsic_width = match request.available_width {
         AvailableConstraint::MinContent => min_content_width,
         AvailableConstraint::MaxContent => max_content_width,
@@ -1519,29 +1519,30 @@ fn paint_editor(
     target: &mut crate::physical::Surface,
     clip: Rect,
 ) {
-    let (origin, size) = editor
-        .border
-        .as_ref()
-        .map_or((node.content_origin, node.content_rect.size()), |border| {
-            (
+    let (origin, size) =
+        editor
+            .border
+            .as_ref()
+            .map_or((node.content_origin, node.content_rect.size()), |border| {
                 (
-                    node.content_origin
-                        .0
-                        .saturating_add(i32::from(border.left_width())),
-                    node.content_origin
-                        .1
-                        .saturating_add(i32::from(border.top_height())),
-                ),
-                crate::geometry::Size::new(
-                    node.content_rect
-                        .width
-                        .saturating_sub(border.left_width().saturating_add(border.right_width())),
-                    node.content_rect
-                        .height
-                        .saturating_sub(border.top_height().saturating_add(border.bottom_height())),
-                ),
-            )
-        });
+                    (
+                        node.content_origin
+                            .0
+                            .saturating_add(i32::from(border.left_width())),
+                        node.content_origin
+                            .1
+                            .saturating_add(i32::from(border.top_height())),
+                    ),
+                    crate::geometry::Size::new(
+                        node.content_rect.width.saturating_sub(
+                            border.left_width().saturating_add(border.right_width()),
+                        ),
+                        node.content_rect.height.saturating_sub(
+                            border.top_height().saturating_add(border.bottom_height()),
+                        ),
+                    ),
+                )
+            });
     let ranges = crate::presentation::wrap::input_wrap_ranges(&editor.text, size.width);
     let first = editor.scroll_row;
     let cursor_row = if editor.focused {
@@ -1714,6 +1715,151 @@ fn physical_box(x: f32, y: f32, width: f32, height: f32) -> Result<DirectRect> {
         ),
         origin: (origin_x, origin_y),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor_node(width: u16, height: u16) -> DirectNode {
+        DirectNode {
+            key: NodeKey {
+                slot: 1,
+                generation: 1,
+            },
+            snapshot: None,
+            rect: Rect::new(0, 0, width, height),
+            content_rect: Rect::new(0, 0, width, height),
+            content_width: width,
+            clip_rect: Rect::new(0, 0, width, height),
+            paint_origin: (0, 0),
+            content_origin: (0, 0),
+            component: None,
+            children: Vec::new(),
+            style_states: Default::default(),
+            style_facts: Default::default(),
+            decoration: Default::default(),
+            content: DirectContent::Children,
+        }
+    }
+
+    fn editor(text: &str, cursor_bytes: usize, focused: bool) -> EditorSnapshot {
+        EditorSnapshot {
+            text: text.to_owned(),
+            cursor_bytes,
+            focused,
+            multiline: true,
+            scroll_row: 0,
+            border: None,
+        }
+    }
+
+    #[test]
+    fn unfocused_editor_has_no_caret_and_soft_wrap_boundary_has_one() {
+        let mut target = crate::physical::Surface::new(4, 2);
+        let node = editor_node(4, 2);
+        paint_editor(
+            &editor("abc", 3, false),
+            &node,
+            crate::physical::PhysicalStyle::default(),
+            &mut target,
+            Rect::new(0, 0, 4, 2),
+        );
+        assert!(target.cells.iter().all(|cell| !cell.style.reversed));
+
+        let mut target = crate::physical::Surface::new(4, 2);
+        paint_editor(
+            &editor("abcd", 3, true),
+            &node,
+            crate::physical::PhysicalStyle::default(),
+            &mut target,
+            Rect::new(0, 0, 4, 2),
+        );
+        let reversed = target
+            .cells
+            .iter()
+            .filter(|cell| cell.style.reversed)
+            .count();
+        assert_eq!(reversed, 1, "soft-wrap boundary must paint one caret");
+        assert_eq!(target.get(0, 0).grapheme.as_deref(), Some("a"));
+        assert_eq!(target.get(1, 0).grapheme.as_deref(), Some("b"));
+        assert_eq!(target.get(2, 0).grapheme.as_deref(), Some("c"));
+        assert!(target.get(0, 1).style.reversed);
+    }
+
+    #[test]
+    fn wide_editor_caret_reverses_only_the_grapheme_leader() {
+        let mut target = crate::physical::Surface::new(3, 1);
+        let node = editor_node(3, 1);
+        paint_editor(
+            &editor("界", 0, true),
+            &node,
+            crate::physical::PhysicalStyle::default(),
+            &mut target,
+            Rect::new(0, 0, 3, 1),
+        );
+        assert!(target.get(0, 0).style.reversed);
+        assert!(!target.get(1, 0).style.reversed);
+        assert!(target.get(1, 0).continuation);
+    }
+
+    #[test]
+    fn editor_measurement_distinguishes_min_and_max_content() {
+        let control = ControlSnapshot::Editor(EditorSnapshot {
+            text: "long word".to_owned(),
+            cursor_bytes: 0,
+            focused: false,
+            multiline: true,
+            scroll_row: 0,
+            border: None,
+        });
+        let request = |available_width| crate::presentation::taffy::MeasureRequest {
+            known_width: None,
+            known_height: None,
+            available_width,
+            available_height: AvailableConstraint::MaxContent,
+            wrap_width: None,
+        };
+        assert_eq!(
+            measure_control(&control, request(AvailableConstraint::MinContent))
+                .expect("min-content measurement")
+                .width,
+            4.0
+        );
+        assert_eq!(
+            measure_control(&control, request(AvailableConstraint::MaxContent))
+                .expect("max-content measurement")
+                .width,
+            9.0
+        );
+    }
+
+    #[test]
+    fn bordered_editor_body_is_inset_and_zero_size_is_safe() {
+        let mut target = crate::physical::Surface::new(4, 3);
+        let mut node = editor_node(4, 3);
+        let mut snapshot = editor("a", 0, false);
+        snapshot.border = Some(crate::BorderSpec::plain());
+        paint_editor(
+            &snapshot,
+            &node,
+            crate::physical::PhysicalStyle::default(),
+            &mut target,
+            Rect::new(0, 0, 4, 3),
+        );
+        assert_eq!(target.get(1, 1).grapheme.as_deref(), Some("a"));
+        assert_eq!(target.get(0, 0).grapheme, None);
+
+        node.content_rect = Rect::new(0, 0, 0, 0);
+        let mut empty = crate::physical::Surface::new(0, 0);
+        paint_editor(
+            &snapshot,
+            &node,
+            crate::physical::PhysicalStyle::default(),
+            &mut empty,
+            Rect::new(0, 0, 0, 0),
+        );
+    }
 }
 
 fn signed_intersection(

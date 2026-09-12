@@ -592,3 +592,94 @@ impl SceneHost {
         self.content_candidate_epoch = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Component, ComponentCx, component::MountNode};
+
+    #[derive(Default)]
+    struct GeometryAware {
+        layouts: Vec<Size>,
+        extents: Vec<Size>,
+    }
+
+    impl Component for GeometryAware {
+        fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {
+            cx.on_layout_changed(Self::layout_changed);
+            cx.on_content_extent_changed(Self::extent_changed);
+        }
+    }
+
+    impl GeometryAware {
+        fn layout_changed(component: &mut Self, size: Size) {
+            component.layouts.push(size);
+        }
+
+        fn extent_changed(component: &mut Self, size: Size) {
+            component.extents.push(size);
+        }
+    }
+
+    fn geometry(size: Size, extent: Size, id: ComponentId) -> ComponentGeometryMap {
+        ComponentGeometryMap {
+            entries: HashMap::from([(
+                id,
+                crate::presentation::direct_tree::ComponentGeometry {
+                    outer: Rect::new(0, 0, size.width, size.height),
+                    content: Rect::new(0, 0, size.width, size.height),
+                    visible: Some(Rect::new(0, 0, size.width, size.height)),
+                },
+            )]),
+            content_extents: HashMap::from([(id, extent)]),
+        }
+    }
+
+    #[test]
+    fn direct_candidate_delivers_layout_and_extent_once_per_value() {
+        let mut registry = ComponentRegistry::new();
+        let handle = registry.register(GeometryAware::default());
+        let id = handle.id();
+        let mut host = SceneHost::default();
+        host.graph = MountGraph::new(vec![MountNode {
+            id,
+            parent: None,
+            revision: Default::default(),
+        }]);
+        let snapshot = registry
+            .resolution(id)
+            .expect("geometry-aware component remains registered");
+        host.capabilities.insert(id, snapshot.capabilities);
+
+        assert!(
+            host.synchronize_direct_control_feedback(
+                &geometry(Size::new(8, 2), Size::new(8, 12), id),
+                &mut registry,
+            )
+            .expect("first candidate feedback")
+        );
+        assert!(
+            !host
+                .synchronize_direct_control_feedback(
+                    &geometry(Size::new(8, 2), Size::new(8, 12), id),
+                    &mut registry,
+                )
+                .expect("unchanged candidate feedback")
+        );
+        assert!(
+            host.synchronize_direct_control_feedback(
+                &geometry(Size::new(7, 2), Size::new(8, 13), id),
+                &mut registry,
+            )
+            .expect("changed candidate feedback")
+        );
+
+        let facts = registry
+            .with(handle, |component| {
+                (component.layouts.clone(), component.extents.clone())
+            })
+            .expect("geometry-aware component remains registered");
+        assert_eq!(facts.0, vec![Size::new(8, 2), Size::new(7, 2)]);
+        assert_eq!(facts.1, vec![Size::new(8, 12), Size::new(8, 13)]);
+    }
+}

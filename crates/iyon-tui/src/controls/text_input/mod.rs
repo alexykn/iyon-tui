@@ -11,6 +11,9 @@ mod edit;
 mod output;
 mod presentation;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) use buffer::TextBuffer;
 pub(crate) use command::TextInputCommand;
 

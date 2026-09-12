@@ -2644,7 +2644,9 @@ mod tests {
                 min_content: measurement.intrinsic_size,
                 max_content: measurement.intrinsic_size,
                 history_adjustment: None,
-                semantic_view: None,
+                semantic_contents: None,
+                terminal_policy: crate::text::TextRenderPolicy::default(),
+                terminal_product: None,
                 measurement,
             })
         }

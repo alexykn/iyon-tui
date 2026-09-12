@@ -773,7 +773,12 @@ fn project_semantic_snapshot(
         .map_err(|error| anyhow!(error.to_string()))
 }
 
-fn content_text_policy() -> crate::text::TextRenderPolicy {
+fn content_text_policy(wrap: TextWrapMode) -> crate::text::TextRenderPolicy {
+    let text_wrap = match wrap {
+        TextWrapMode::Word => crate::WrapMode::WordThenGrapheme,
+        TextWrapMode::Grapheme => crate::WrapMode::Grapheme,
+        TextWrapMode::NoWrap => crate::WrapMode::NoWrap,
+    };
     let policy = crate::TextRenderPolicy::new()
         .with_block_gap(1)
         .with_soft_break(crate::SoftBreakPolicy::LineBreak)
@@ -783,7 +788,8 @@ fn content_text_policy() -> crate::text::TextRenderPolicy {
         .with_task_list_marker(crate::TaskListMarkerPolicy::TaskOnly)
         .with_code_block_label(crate::CodeBlockLabelPolicy::Language)
         .with_code_block_gap(0)
-        .with_code_wrap(crate::WrapMode::NoWrap);
+        .with_code_wrap(crate::WrapMode::NoWrap)
+        .with_text_wrap(text_wrap);
     policy
 }
 
@@ -984,7 +990,7 @@ fn prove_finalized_prefix(
         })
         .ok()?;
         let contents = semantic_values(&prefix_semantic);
-        let policy = content_text_policy();
+        let policy = content_text_policy(funnel.wrap);
         let product = project_terminal_contents(
             &contents,
             &policy,
@@ -1055,7 +1061,7 @@ fn project_text_snapshot(
         project_semantic_snapshot(snapshot, funnel, execution)
     })?;
     let semantic_contents = semantic_values(&semantic);
-    let terminal_policy = content_text_policy();
+    let terminal_policy = content_text_policy(funnel.wrap);
     let product = project_terminal_contents(
         &semantic_contents,
         &terminal_policy,
@@ -7789,7 +7795,7 @@ impl ContentProvider for ContentHostRegistry {
                 Some(Arc::clone(&product.product)),
             )
         })
-        .unwrap_or_else(|| (None, content_text_policy(), None));
+        .unwrap_or_else(|| (None, content_text_policy(TextWrapMode::Word), None));
         Ok(ContentMeasurementCapture {
             capture_id,
             min_content,
@@ -7926,7 +7932,7 @@ impl ContentProvider for ContentHostRegistry {
                     Some(Arc::clone(&product.product)),
                 )
             })
-            .unwrap_or_else(|| (None, content_text_policy(), None));
+            .unwrap_or_else(|| (None, content_text_policy(TextWrapMode::Word), None));
         let history_adjustment = self.history_measurement_adjustment(
             port_id,
             offered_width,

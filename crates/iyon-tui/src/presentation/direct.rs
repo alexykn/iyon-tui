@@ -573,12 +573,8 @@ impl DirectOccurrenceRenderer {
         control_views: &HashMap<NodeKey, View>,
         intrinsic_control_views: &HashMap<NodeKey, View>,
     ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
-        let measurement_keys = measurements
-            .keys()
-            .copied()
-            .filter(|key| self.layout.contains(*key))
-            .collect::<Vec<_>>();
         let mut measurement_error = None;
+        let mut failed_measurement_keys = Vec::new();
         let geometries = self
             .layout
             .layout(root, width, height, &mut |key, request| {
@@ -591,6 +587,7 @@ impl DirectOccurrenceRenderer {
                     Ok(measured) => measured,
                     Err(error) => {
                         measurement_error = Some(error);
+                        failed_measurement_keys.push(key);
                         MeasuredSize::default()
                     }
                 }
@@ -598,7 +595,7 @@ impl DirectOccurrenceRenderer {
             .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
         if let Some(error) = measurement_error {
             self.layout
-                .invalidate_measurement(&measurement_keys)
+                .invalidate_measurement(&failed_measurement_keys)
                 .map_err(|error| anyhow!("direct Taffy retry invalidation failed: {error:?}"))?;
             return Err(error.context("direct terminal content measurement failed"));
         }
@@ -1144,8 +1141,16 @@ fn measured_for_request_with_intrinsic(
     // History's owning content adapter may have irreversibly exported a
     // prefix. Apply that exact adjustment only to the captured immutable
     // product and width; ordinary semantic products retain their wrapping.
+    let uses_captured_product = requested_product.as_ref().is_some_and(|product| {
+        capture
+            .terminal_product
+            .as_ref()
+            .is_some_and(|captured| std::sync::Arc::ptr_eq(product, captured))
+    });
     if let Some(adjustment) = capture.history_adjustment
+        && uses_captured_product
         && adjustment.projection_identity == capture.measurement.projection_identity
+        && adjustment.offered_width == capture.offered_width
     {
         measured.height = (measured.height - adjustment.removed_rows as f32).max(0.0);
     }
@@ -1736,7 +1741,8 @@ mod tests {
                     available_height: AvailableConstraint::MaxContent,
                     wrap_width: None,
                 },
-            );
+            )
+            .expect("intrinsic editor measurement");
             assert_eq!(
                 measured,
                 MeasuredSize {
@@ -1755,7 +1761,8 @@ mod tests {
                 available_height: AvailableConstraint::MaxContent,
                 wrap_width: Some(0),
             },
-        );
+        )
+        .expect("zero-width editor measurement");
         assert_eq!(zero_width.width, 0.0);
         assert_eq!(zero_width.height, 2.0);
 
@@ -1785,7 +1792,8 @@ mod tests {
                 available_height: AvailableConstraint::MaxContent,
                 wrap_width: None,
             },
-        );
+        )
+        .expect("allocated editor intrinsic measurement");
         assert_eq!(allocated_intrinsic.width, 5.0);
 
         let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
@@ -1940,7 +1948,6 @@ mod tests {
         )
         .expect("measurement");
         assert_eq!(measured.height, 2.0);
-
     }
 
     #[test]
@@ -2451,7 +2458,9 @@ mod tests {
                 min_content: crate::geometry::Size::new(8, 1),
                 max_content: crate::geometry::Size::new(8, 1),
                 history_adjustment: None,
-                semantic_view: Some(crate::presentation::factory::text("abcdefgh")),
+                semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
+                terminal_policy: TextRenderPolicy::default(),
+                terminal_product: None,
             };
             renderer.prepare(
                 body,

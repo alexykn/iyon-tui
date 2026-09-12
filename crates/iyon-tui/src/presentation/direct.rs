@@ -1454,7 +1454,8 @@ fn paint_direct_node(
     }
 
     match &node.content {
-        DirectContent::Children => {
+        DirectContent::Children
+        | DirectContent::Control(ControlSnapshot::Scroll(_) | ControlSnapshot::Animation(_)) => {
             for child in node.children.iter().copied() {
                 paint_direct_node(
                     tree,
@@ -1507,22 +1508,6 @@ fn paint_direct_node(
                 );
             }
             paint_editor(editor, node, resolved, target, clip);
-        }
-        DirectContent::Control(ControlSnapshot::Scroll(_) | ControlSnapshot::Animation(_)) => {
-            for child in node.children.iter().copied() {
-                paint_direct_node(
-                    tree,
-                    child,
-                    resolver,
-                    content,
-                    focused,
-                    graph,
-                    target,
-                    resolved,
-                    context.clone(),
-                    clip,
-                )?;
-            }
         }
     }
     if let Some(border) = &node.decoration.border {
@@ -1985,7 +1970,7 @@ mod tests {
         let surface = paint_direct_layout(
             &layout,
             &crate::Theme::default(),
-            &crate::presentation::EmptyContentProvider,
+            &crate::presentation::content::EmptyContentProvider,
             None,
             &crate::component::MountGraph::default(),
         )

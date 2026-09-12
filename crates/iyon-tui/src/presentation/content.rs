@@ -311,9 +311,11 @@ pub(crate) trait ContentProvider {
 
 /// Empty provider used by generic layout/paint callers and existing tests that
 /// do not mount a retained `ContentPort`.
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct EmptyContentProvider;
 
+#[cfg(test)]
 impl ContentProvider for EmptyContentProvider {
     fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
         0

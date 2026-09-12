@@ -12,7 +12,7 @@ use crate::{physical::PhysicalRow, presentation::ContentProvider};
 use super::model::HistoryUnit;
 use super::{History, HistoryUnitContent, HistoryUnitId};
 #[cfg(test)]
-use crate::{backend::NativeHistorySink, presentation::EmptyContentProvider};
+use crate::{backend::NativeHistorySink, presentation::content::EmptyContentProvider};
 pub(super) use frontier::NativeFrontier;
 use frontier::{
     FrozenContentRemainder, FrozenPhysicalRows, FrozenStaticRemainder, SpacingTransferState,

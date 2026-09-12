@@ -22,6 +22,6 @@ pub(crate) use api::{StyleFacts, StyleStates};
 
 pub(crate) use content::{
     ContentDirty, ContentDirtyReason, ContentMeasurement, ContentMeasurementCapture,
-    ContentProvider, ContentWidthRule, ContentWindow, EmptyContentProvider, HistoryContentRows,
+    ContentProvider, ContentWidthRule, ContentWindow, HistoryContentRows,
     HistoryMeasurementAdjustment, PreparedProjectionTicket,
 };

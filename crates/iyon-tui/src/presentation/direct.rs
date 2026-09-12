@@ -439,10 +439,8 @@ impl DirectDriverHandle {
             return Ok(());
         };
         self.shutdown.store(true, Ordering::Release);
-        let join_result = join
-            .join()
-            .map_err(|_| anyhow!("direct renderer driver panicked"));
-        join_result
+        join.join()
+            .map_err(|_| anyhow!("direct renderer driver panicked"))
     }
 }
 

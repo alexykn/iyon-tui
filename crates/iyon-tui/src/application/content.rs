@@ -5591,15 +5591,9 @@ impl ContentHostRegistry {
                 state.projection_failure_key = None;
                 return Ok(projection.measurement(connector_id));
             }
-            if self
-                .pending_content_projections
+            self.pending_content_projections
                 .get(&connector_id)
                 .is_some_and(|pending| pending.key == key)
-            {
-                true
-            } else {
-                false
-            }
         };
         if !ready {
             // One in-flight task per Connector is the coalescing boundary.

@@ -12,9 +12,7 @@ use std::{
 
 use anyhow::Result;
 
-use super::content::{
-    ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit, TextSourceKind,
-};
+use super::content::{ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
@@ -5338,6 +5336,7 @@ impl HostInner {
 #[cfg(test)]
 mod latency_tests {
     use super::*;
+    use crate::application::content::TextSourceKind;
     use crate::interaction::{Key, KeyStroke};
     use crate::occurrence::{ControlKind, HostKind, OwnershipMode, ResourceRef, UiOperation};
 
@@ -5460,7 +5459,7 @@ mod latency_tests {
         };
         let mut initial_release = LatchRelease(Some(initial_release));
         let created = host
-            .commit_ui(create, &[source_a.clone()])
+            .commit_ui(create, std::slice::from_ref(&source_a))
             .map_err(|rejection| anyhow::anyhow!("initial UI commit rejected: {rejection:?}"))?;
         for _ in 0..10_000 {
             let _ = environment.drain_pending(32, true)?;

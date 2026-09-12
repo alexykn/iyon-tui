@@ -103,7 +103,7 @@ fn layout_request_signature(
     control_keys.sort_unstable();
     for key in control_keys {
         key.hash(&mut hasher);
-        format!("{:?}", &controls[&key]).hash(&mut hasher);
+        format!("{:?}", controls[&key]).hash(&mut hasher);
     }
     hasher.finish()
 }

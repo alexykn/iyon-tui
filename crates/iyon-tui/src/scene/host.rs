@@ -26,7 +26,7 @@ use crate::{
     output::{OutputQueue, OutputRouter},
     physical::{PhysicalCell, PhysicalStyle, Surface, grapheme_cell_width},
     presentation::{
-        ContentDirty, ContentProvider, StyleFacts, StyleStates,
+        ContentProvider, StyleFacts, StyleStates,
         direct::{
             CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor, DirectLayout,
             paint_direct_layout,
@@ -75,6 +75,8 @@ pub(crate) struct SceneHost {
     direct_body_root: Option<crate::occurrence::NodeKey>,
     direct_synchronized: bool,
     direct_history_overflow_rows: usize,
+    direct_delivered_layout: HashMap<ComponentId, Size>,
+    direct_delivered_content_extents: HashMap<ComponentId, Size>,
     invalidated_components: HashSet<ComponentId>,
     content_candidate_epoch: Option<u64>,
 }
@@ -96,6 +98,8 @@ impl Default for SceneHost {
             direct_body_root: None,
             direct_synchronized: false,
             direct_history_overflow_rows: 0,
+            direct_delivered_layout: HashMap::new(),
+            direct_delivered_content_extents: HashMap::new(),
             invalidated_components: HashSet::new(),
             content_candidate_epoch: None,
         }
@@ -132,6 +136,8 @@ impl SceneHost {
         }
         self.direct_synchronized = false;
         self.direct_history_overflow_rows = 0;
+        self.direct_delivered_layout.clear();
+        self.direct_delivered_content_extents.clear();
         Ok(())
     }
 
@@ -260,23 +266,25 @@ impl SceneHost {
         content: &mut dyn ContentProvider,
         _port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
     ) -> Result<PreparedSceneFrame> {
-        let driver = self
-            .direct_driver
-            .as_ref()
-            .ok_or_else(|| anyhow!("direct renderer driver is not started"))?;
+        if self.direct_driver.is_none() {
+            return Err(anyhow!("direct renderer driver is not started"));
+        }
         let mut captures = self.capture_direct_measurements(size.width, content)?;
         let mut control_snapshots = self.capture_direct_controls(registry)?;
         let mut invalidate_controls = Vec::new();
         for _ in 0..MAX_LAYOUT_PASSES {
-            let mut direct = driver.layout_with_intrinsic(
-                root,
-                size,
-                history_anchor,
-                captures.clone(),
-                invalidate_controls.clone(),
-                control_snapshots.clone(),
-                control_snapshots.clone(),
-            )?;
+            let mut direct = self
+                .direct_driver
+                .as_ref()
+                .expect("direct renderer driver checked above")
+                .layout(
+                    root,
+                    size,
+                    history_anchor,
+                    captures.clone(),
+                    invalidate_controls.clone(),
+                    control_snapshots.clone(),
+                )?;
             invalidate_controls.clear();
             let mut refined_content = Vec::new();
             for (key, capture) in &mut captures {
@@ -307,15 +315,18 @@ impl SceneHost {
                 refined_content.push(*key);
             }
             if !refined_content.is_empty() {
-                direct = driver.layout_with_intrinsic(
-                    root,
-                    size,
-                    history_anchor,
-                    captures.clone(),
-                    refined_content,
-                    control_snapshots.clone(),
-                    control_snapshots.clone(),
-                )?;
+                direct = self
+                    .direct_driver
+                    .as_ref()
+                    .expect("direct renderer driver checked above")
+                    .layout(
+                        root,
+                        size,
+                        history_anchor,
+                        captures.clone(),
+                        refined_content,
+                        control_snapshots.clone(),
+                    )?;
             }
             self.direct_history_overflow_rows = direct.history_overflow_rows;
             let mounts = direct.component_mounts.clone();
@@ -341,10 +352,19 @@ impl SceneHost {
             }
             self.graph = graph.clone();
             self.capabilities = capabilities.clone();
+            self.direct_delivered_layout
+                .retain(|id, _| self.graph.contains(*id));
+            self.direct_delivered_content_extents
+                .retain(|id, _| self.graph.contains(*id));
             let transitions = self.mounted.reconcile(graph.clone());
             self.ticker
                 .sync_capabilities(&graph, &capabilities, &transitions, now);
             let geometry = direct.tree.component_geometry();
+            if self.synchronize_direct_control_feedback(&geometry, registry)? {
+                control_snapshots = self.capture_direct_controls(registry)?;
+                invalidate_controls = self.direct_control_nodes.keys().copied().collect();
+                continue;
+            }
             if self
                 .focus
                 .reconcile_with_geometry(&graph, &capabilities, Some(&geometry), registry)
@@ -421,18 +441,74 @@ impl SceneHost {
             .collect()
     }
 
+    /// Delivers the physical candidate geometry to controls that explicitly
+    /// requested it. A changed callback mutates the mounted control state, so
+    /// the caller must recapture the immutable control snapshots and run a
+    /// bounded layout pass before painting this candidate.
+    fn synchronize_direct_control_feedback(
+        &mut self,
+        geometry: &ComponentGeometryMap,
+        registry: &mut ComponentRegistry,
+    ) -> Result<bool> {
+        let mut dirty = false;
+        for id in self.graph.ids() {
+            let entry = geometry
+                .entries
+                .get(&id)
+                .ok_or_else(|| anyhow!("mounted component has no direct geometry"))?;
+            let size = entry.content.size();
+            let layout_handler = self
+                .capabilities
+                .get(id)
+                .and_then(|caps| caps.layout_changed.as_ref())
+                .cloned();
+            if let Some(handler) = layout_handler {
+                if self.direct_delivered_layout.get(&id).copied() != Some(size) {
+                    self.direct_delivered_layout.insert(id, size);
+                    registry
+                        .with_any_mut(id, |component| handler(component, size))
+                        .ok_or_else(|| {
+                            anyhow!("mounted component disappeared during layout feedback")
+                        })?;
+                    dirty = true;
+                }
+            } else {
+                self.direct_delivered_layout.remove(&id);
+            }
+
+            let extent = geometry.content_extents.get(&id).copied();
+            let extent_handler = self
+                .capabilities
+                .get(id)
+                .and_then(|caps| caps.content_extent_changed.as_ref())
+                .cloned();
+            if let Some(handler) = extent_handler {
+                if let Some(extent) = extent {
+                    if self.direct_delivered_content_extents.get(&id).copied() != Some(extent) {
+                        self.direct_delivered_content_extents.insert(id, extent);
+                        registry
+                            .with_any_mut(id, |component| handler(component, extent))
+                            .ok_or_else(|| {
+                                anyhow!("mounted component disappeared during extent feedback")
+                            })?;
+                        dirty = true;
+                    }
+                } else {
+                    self.direct_delivered_content_extents.remove(&id);
+                }
+            } else {
+                self.direct_delivered_content_extents.remove(&id);
+            }
+        }
+        Ok(dirty)
+    }
+
     pub(crate) fn invalidate_component(&mut self, id: ComponentId) {
         self.invalidated_components.insert(id);
     }
     pub(crate) fn has_invalidated_components(&self) -> bool {
         !self.invalidated_components.is_empty()
     }
-    pub(crate) fn invalidate_content(&mut self, _dirty: ContentDirty) {}
-    pub(crate) fn invalidate_root(&mut self) {}
-    pub(crate) fn invalidate_theme(&mut self) {}
-    pub(crate) fn discard_candidate(&mut self) {}
-    pub(crate) fn clear_retained_views(&mut self) {}
-
     pub(crate) fn focus_component(
         &mut self,
         id: ComponentId,

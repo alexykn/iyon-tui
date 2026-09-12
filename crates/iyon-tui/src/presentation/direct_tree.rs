@@ -94,7 +94,36 @@ impl DirectTree {
                 },
             );
         }
+        for (index, node) in self.nodes.iter().enumerate() {
+            let Some(component) = node.component else {
+                continue;
+            };
+            if let Some(extent) = self.content_extent_in_subtree(DirectNodeId(index)) {
+                map.content_extents.insert(component, extent);
+            }
+        }
         map
+    }
+
+    /// Returns the full physical extent owned by a control's content route.
+    /// A Scroll control reports its first laid-out child rather than its
+    /// clipped allocation; ContentHost reports its measured content box.
+    /// This is geometry feedback for the mounted control, not a second
+    /// viewport/layout owner.
+    fn content_extent_in_subtree(&self, id: DirectNodeId) -> Option<Size> {
+        let node = self.node(id);
+        match &node.content {
+            DirectContent::ContentHost { .. } => Some(node.content_rect.size()),
+            DirectContent::Control(ControlSnapshot::Scroll(_)) => node
+                .children
+                .first()
+                .map(|child| self.node(*child).rect.size())
+                .or(Some(node.content_rect.size())),
+            _ => node
+                .children
+                .iter()
+                .find_map(|child| self.content_extent_in_subtree(*child)),
+        }
     }
 
     pub(crate) fn index(&mut self) {
@@ -122,4 +151,5 @@ pub(crate) struct ComponentGeometry {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ComponentGeometryMap {
     pub(crate) entries: HashMap<ComponentId, ComponentGeometry>,
+    pub(crate) content_extents: HashMap<ComponentId, Size>,
 }

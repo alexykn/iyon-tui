@@ -146,7 +146,6 @@ impl NativeRuntime {
     ) -> anyhow::Result<()> {
         self.scene_host
             .invalidate_direct_content_measurement(dirty.port_id)?;
-        self.scene_host.invalidate_content(dirty);
         self.invalidate_frame();
         Ok(())
     }
@@ -268,11 +267,7 @@ impl NativeRuntime {
         self.scene_host.abort_content_candidate();
     }
     pub(crate) fn host_discard_candidate(&mut self) {
-        self.scene_host.discard_candidate();
         self.invalidate_frame();
-    }
-    pub(crate) fn host_clear_retained_views(&mut self) {
-        self.scene_host.clear_retained_views();
     }
 
     pub(crate) fn host_sync_ui_history(
@@ -361,7 +356,6 @@ impl NativeRuntime {
 
     pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
         self.theme = Arc::new(theme);
-        self.scene_host.invalidate_theme();
         self.invalidate_frame();
     }
     pub(crate) fn host_exit(&mut self) {

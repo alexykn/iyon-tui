@@ -116,8 +116,7 @@ enum DirectDriverCommand {
         history_anchor: DirectHistoryAnchor,
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, ControlSnapshot>,
-        intrinsic_control_views: HashMap<ComponentId, ControlSnapshot>,
+        controls: HashMap<ComponentId, ControlSnapshot>,
         response: SyncSender<Result<DirectLayout>>,
     },
     InvalidateContent {
@@ -196,28 +195,7 @@ impl DirectDriverHandle {
         history_anchor: DirectHistoryAnchor,
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, ControlSnapshot>,
-    ) -> Result<DirectLayout> {
-        self.layout_with_intrinsic(
-            root,
-            size,
-            history_anchor,
-            measurements,
-            invalidate,
-            control_views,
-            HashMap::new(),
-        )
-    }
-
-    pub(crate) fn layout_with_intrinsic(
-        &self,
-        root: NodeKey,
-        size: crate::geometry::Size,
-        history_anchor: DirectHistoryAnchor,
-        measurements: HashMap<NodeKey, CapturedContentMeasurement>,
-        invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, ControlSnapshot>,
-        intrinsic_control_views: HashMap<ComponentId, ControlSnapshot>,
+        controls: HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         let (response, receive) = sync_channel(1);
         self.command
@@ -227,8 +205,7 @@ impl DirectDriverHandle {
                 history_anchor,
                 measurements,
                 invalidate,
-                control_views,
-                intrinsic_control_views,
+                controls,
                 response,
             })
             .map_err(|_| anyhow!("direct renderer driver is closed"))?;
@@ -318,18 +295,16 @@ fn direct_driver_loop(
                 history_anchor,
                 measurements,
                 invalidate,
-                control_views,
-                intrinsic_control_views,
+                controls,
                 response,
             } => {
-                let _ = response.send(renderer.prepare_with_intrinsic(
+                let _ = response.send(renderer.prepare(
                     root,
                     size,
                     history_anchor,
                     &measurements,
                     &invalidate,
-                    &control_views,
-                    &intrinsic_control_views,
+                    &controls,
                 ));
             }
             DirectDriverCommand::InvalidateContent { port_id, response } => {
@@ -458,28 +433,7 @@ impl DirectOccurrenceRenderer {
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: &[NodeKey],
-        control_views: &HashMap<ComponentId, ControlSnapshot>,
-    ) -> Result<DirectLayout> {
-        self.prepare_with_intrinsic(
-            root,
-            size,
-            history_anchor,
-            measurements,
-            invalidate,
-            control_views,
-            &HashMap::new(),
-        )
-    }
-
-    fn prepare_with_intrinsic(
-        &mut self,
-        root: NodeKey,
-        size: crate::geometry::Size,
-        history_anchor: DirectHistoryAnchor,
-        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        invalidate: &[NodeKey],
-        control_views: &HashMap<ComponentId, ControlSnapshot>,
-        intrinsic_control_views: &HashMap<ComponentId, ControlSnapshot>,
+        controls: &HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         if !self.synchronized {
             return Err(anyhow!("direct occurrence renderer is not synchronized"));
@@ -493,8 +447,7 @@ impl DirectOccurrenceRenderer {
                     .collect::<Vec<_>>(),
             )
             .map_err(|error| anyhow!("direct Taffy measurement invalidation failed: {error:?}"))?;
-        let mut control_views_by_node = HashMap::new();
-        let mut intrinsic_control_views_by_node = HashMap::new();
+        let mut controls_by_node = HashMap::new();
         for snapshot in self.snapshots.values() {
             let Some(component) = snapshot
                 .control
@@ -502,29 +455,20 @@ impl DirectOccurrenceRenderer {
             else {
                 continue;
             };
-            let view = control_views
+            let control = controls
                 .get(&component)
                 .cloned()
-                .ok_or_else(|| anyhow!("direct control view capture is missing"))?;
-            control_views_by_node.insert(snapshot.key, view);
-            if let Some(view) = intrinsic_control_views.get(&component) {
-                intrinsic_control_views_by_node.insert(snapshot.key, view.clone());
-            }
+                .ok_or_else(|| anyhow!("direct control snapshot is missing"))?;
+            controls_by_node.insert(snapshot.key, control);
         }
-        let (geometries, history_overflow_rows) = self.layout_roots_with_intrinsic(
-            root,
-            size,
-            history_anchor,
-            measurements,
-            &control_views_by_node,
-            &intrinsic_control_views_by_node,
-        )?;
+        let (geometries, history_overflow_rows) =
+            self.layout_roots(root, size, history_anchor, measurements, &controls_by_node)?;
         self.build_layout_tree(
             root,
             size,
             &geometries,
             measurements,
-            control_views,
+            controls,
             history_overflow_rows,
         )
     }
@@ -572,18 +516,19 @@ impl DirectOccurrenceRenderer {
         width: AvailableConstraint,
         height: AvailableConstraint,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, ControlSnapshot>,
-        intrinsic_control_views: &HashMap<NodeKey, ControlSnapshot>,
+        controls: &HashMap<NodeKey, ControlSnapshot>,
     ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
         let mut measurement_error = None;
         let mut failed_measurement_keys = Vec::new();
         let geometries = self
             .layout
-            .layout(root, width, height, &mut |key, request| {
-                match measured_for_request_with_intrinsic(
+            .layout(
+                root,
+                width,
+                height,
+                &mut |key, request| match measured_for_request(
                     measurements.get(&key),
-                    control_views.get(&key),
-                    intrinsic_control_views.get(&key),
+                    controls.get(&key),
                     request,
                 ) {
                     Ok(measured) => measured,
@@ -592,8 +537,8 @@ impl DirectOccurrenceRenderer {
                         failed_measurement_keys.push(key);
                         MeasuredSize::default()
                     }
-                }
-            })
+                },
+            )
             .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
         if let Some(error) = measurement_error {
             self.layout
@@ -610,26 +555,7 @@ impl DirectOccurrenceRenderer {
         size: crate::geometry::Size,
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, ControlSnapshot>,
-    ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
-        self.layout_roots_with_intrinsic(
-            body_root,
-            size,
-            history_anchor,
-            measurements,
-            control_views,
-            &HashMap::new(),
-        )
-    }
-
-    fn layout_roots_with_intrinsic(
-        &mut self,
-        body_root: NodeKey,
-        size: crate::geometry::Size,
-        history_anchor: DirectHistoryAnchor,
-        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, ControlSnapshot>,
-        intrinsic_control_views: &HashMap<NodeKey, ControlSnapshot>,
+        controls: &HashMap<NodeKey, ControlSnapshot>,
     ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
         let mut history_roots = Vec::new();
         let mut portal_roots = Vec::new();
@@ -661,8 +587,7 @@ impl DirectOccurrenceRenderer {
             AvailableConstraint::Definite(f32::from(size.width)),
             AvailableConstraint::MaxContent,
             measurements,
-            control_views,
-            intrinsic_control_views,
+            controls,
         )?;
         let body_height = body_intrinsic
             .iter()
@@ -676,8 +601,7 @@ impl DirectOccurrenceRenderer {
             AvailableConstraint::Definite(f32::from(size.width)),
             AvailableConstraint::Definite(f32::from(body_height)),
             measurements,
-            control_views,
-            intrinsic_control_views,
+            controls,
         )?;
         let history_height = size.height.saturating_sub(body_height);
 
@@ -689,8 +613,7 @@ impl DirectOccurrenceRenderer {
                 AvailableConstraint::Definite(f32::from(size.width)),
                 AvailableConstraint::MaxContent,
                 measurements,
-                control_views,
-                intrinsic_control_views,
+                controls,
             )?;
             let root_height = intrinsic_geometries
                 .iter()
@@ -705,8 +628,7 @@ impl DirectOccurrenceRenderer {
                 AvailableConstraint::Definite(f32::from(size.width)),
                 AvailableConstraint::Definite(root_height),
                 measurements,
-                control_views,
-                intrinsic_control_views,
+                controls,
             )?;
             history_height_total += root_height;
             history_layouts.push((geometries, root_height));
@@ -761,8 +683,7 @@ impl DirectOccurrenceRenderer {
                 AvailableConstraint::Definite(owner_width),
                 AvailableConstraint::MaxContent,
                 measurements,
-                control_views,
-                intrinsic_control_views,
+                controls,
             )?;
             for mut geometry in geometries {
                 translate_geometry_by(
@@ -782,7 +703,7 @@ impl DirectOccurrenceRenderer {
         size: crate::geometry::Size,
         geometries: &[crate::presentation::taffy::ComputedGeometry],
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<ComponentId, ControlSnapshot>,
+        controls: &HashMap<ComponentId, ControlSnapshot>,
         history_overflow_rows: usize,
     ) -> Result<DirectLayout> {
         let geometry_map = geometries
@@ -820,7 +741,7 @@ impl DirectOccurrenceRenderer {
                 Some(Rect::new(0, 0, size.width, size.height)),
                 &geometry_map,
                 measurements,
-                control_views,
+                controls,
                 &mut occurrence_geometry,
                 &mut content_widths,
                 &mut nodes,
@@ -859,7 +780,7 @@ impl DirectOccurrenceRenderer {
         inherited_clip: Option<Rect>,
         geometries: &HashMap<NodeKey, &crate::presentation::taffy::ComputedGeometry>,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<ComponentId, ControlSnapshot>,
+        controls: &HashMap<ComponentId, ControlSnapshot>,
         occurrence_geometry: &mut HashMap<NodeKey, ComponentGeometry>,
         content_widths: &mut HashMap<NodeKey, f32>,
         nodes: &mut Vec<DirectNode>,
@@ -911,7 +832,7 @@ impl DirectOccurrenceRenderer {
         let control_snapshot = (snapshot.kind == HostKind::Editor)
             .then(|| component)
             .flatten()
-            .and_then(|component| control_views.get(&component).cloned());
+            .and_then(|component| controls.get(&component).cloned());
         let id = DirectNodeId(nodes.len());
         let direct_content = if let Some(control) = control_snapshot {
             DirectContent::Control(control)
@@ -951,7 +872,7 @@ impl DirectOccurrenceRenderer {
                 Some(clip_rect),
                 geometries,
                 measurements,
-                control_views,
+                controls,
                 occurrence_geometry,
                 content_widths,
                 nodes,
@@ -1068,31 +989,10 @@ fn visit_portal(
 
 fn measured_for_request(
     capture: Option<&CapturedContentMeasurement>,
-    control_view: Option<&ControlSnapshot>,
-    request: crate::presentation::taffy::MeasureRequest,
-) -> Result<MeasuredSize> {
-    measured_for_request_with_intrinsic(capture, control_view, None, request)
-}
-
-fn measured_for_request_with_intrinsic(
-    capture: Option<&CapturedContentMeasurement>,
-    control_view: Option<&ControlSnapshot>,
-    intrinsic_control_view: Option<&ControlSnapshot>,
+    control: Option<&ControlSnapshot>,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> Result<MeasuredSize> {
     if capture.is_none() {
-        let intrinsic_request = matches!(
-            (request.known_width, request.available_width),
-            (
-                None,
-                AvailableConstraint::MinContent | AvailableConstraint::MaxContent
-            )
-        );
-        let control = if intrinsic_request {
-            intrinsic_control_view.or(control_view)
-        } else {
-            control_view
-        };
         let Some(control) = control else {
             // A childless ordinary Box has no intrinsic content. This is a
             // valid zero-sized leaf, unlike a missing ContentHost/control
@@ -1236,18 +1136,16 @@ fn measure_control(
     let border_height = editor.border.as_ref().map_or(0, |border| {
         border.top_height().saturating_add(border.bottom_height())
     });
-    let natural_width = editor
-        .text
-        .split('\n')
-        .map(|line| {
-            line.graphemes(true)
-                .map(crate::physical::grapheme_cell_width)
-                .sum::<usize>()
-        })
-        .max()
-        .unwrap_or(0)
+    let min_content_width = editor_intrinsic_width(&editor.text, true)
         .saturating_add(usize::from(editor.focused));
-    let natural_width = natural_width
+    let max_content_width = editor_intrinsic_width(&editor.text, false)
+        .saturating_add(usize::from(editor.focused));
+    let intrinsic_width = match request.available_width {
+        AvailableConstraint::MinContent => min_content_width,
+        AvailableConstraint::MaxContent => max_content_width,
+        AvailableConstraint::Definite(_) => max_content_width,
+    };
+    let intrinsic_width = intrinsic_width
         .saturating_add(usize::from(border_width))
         .min(usize::from(u16::MAX));
     let requested_width = request
@@ -1258,10 +1156,10 @@ fn measure_control(
         })
         .map(floor_constraint_width)
         .transpose()?
-        .unwrap_or(natural_width as u16);
+        .unwrap_or(intrinsic_width as u16);
     let inner_width = requested_width.saturating_sub(border_width);
     let rows = if editor.multiline {
-        crate::presentation::wrap::input_wrap_ranges(&editor.text, inner_width.max(1)).len()
+        crate::presentation::wrap::input_wrap_ranges(&editor.text, inner_width).len()
     } else {
         1
     };
@@ -1277,6 +1175,28 @@ fn measure_control(
         measured.height = height;
     }
     Ok(measured)
+}
+
+fn editor_intrinsic_width(text: &str, min_content: bool) -> usize {
+    text.split('\n')
+        .map(|line| {
+            if min_content {
+                line.split_whitespace()
+                    .map(|word| {
+                        word.graphemes(true)
+                            .map(crate::physical::grapheme_cell_width)
+                            .sum::<usize>()
+                    })
+                    .max()
+                    .unwrap_or(0)
+            } else {
+                line.graphemes(true)
+                    .map(crate::physical::grapheme_cell_width)
+                    .sum::<usize>()
+            }
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 fn content_width_for_layout(
@@ -1545,6 +1465,18 @@ fn paint_direct_node(
             );
         }
         DirectContent::Control(ControlSnapshot::Editor(editor)) => {
+            if let Some(border) = &editor.border {
+                crate::presentation::paint::paint_border_at(
+                    target,
+                    border,
+                    resolver,
+                    resolved,
+                    &context,
+                    node.content_origin,
+                    (node.content_rect.width, node.content_rect.height),
+                    clip,
+                );
+            }
             paint_editor(editor, node, resolved, target, clip);
         }
         DirectContent::Control(ControlSnapshot::Scroll(_) | ControlSnapshot::Animation(_)) => {
@@ -1587,29 +1519,73 @@ fn paint_editor(
     target: &mut crate::physical::Surface,
     clip: Rect,
 ) {
-    let width = node.content_width;
-    let ranges = crate::presentation::wrap::input_wrap_ranges(&editor.text, width);
+    let (origin, size) = editor
+        .border
+        .as_ref()
+        .map_or((node.content_origin, node.content_rect.size()), |border| {
+            (
+                (
+                    node.content_origin
+                        .0
+                        .saturating_add(i32::from(border.left_width())),
+                    node.content_origin
+                        .1
+                        .saturating_add(i32::from(border.top_height())),
+                ),
+                crate::geometry::Size::new(
+                    node.content_rect
+                        .width
+                        .saturating_sub(border.left_width().saturating_add(border.right_width())),
+                    node.content_rect
+                        .height
+                        .saturating_sub(border.top_height().saturating_add(border.bottom_height())),
+                ),
+            )
+        });
+    let ranges = crate::presentation::wrap::input_wrap_ranges(&editor.text, size.width);
     let first = editor.scroll_row;
+    let cursor_row = if editor.focused {
+        ranges
+            .iter()
+            .enumerate()
+            .find(|(_, range)| {
+                editor.cursor_bytes >= range.start && editor.cursor_bytes < range.end
+            })
+            .map(|(index, _)| index)
+            .or_else(|| {
+                ranges
+                    .iter()
+                    .enumerate()
+                    .rfind(|(_, range)| editor.cursor_bytes == range.end)
+                    .map(|(index, _)| index)
+            })
+    } else {
+        None
+    };
     for (row_index, range) in ranges.iter().enumerate().skip(first) {
-        let y = node
-            .content_origin
+        let y = origin
             .1
             .saturating_add(i32::try_from(row_index - first).unwrap_or(i32::MAX));
         if y < i32::from(clip.y)
             || y >= i32::from(clip.bottom())
             || y < 0
             || y >= i32::from(target.height())
+            || row_index.saturating_sub(first) >= usize::from(size.height)
         {
             continue;
         }
-        let mut x = node.content_origin.0;
+        let mut x = origin.0;
         let text = &editor.text[range.clone()];
         for (offset, grapheme) in text.grapheme_indices(true) {
             let cell_width = grapheme_cell_width(grapheme);
             if cell_width == 0 {
                 continue;
             }
-            let cursor = editor.cursor_bytes == range.start.saturating_add(offset);
+            let grapheme_start = range.start.saturating_add(offset);
+            let grapheme_end = grapheme_start.saturating_add(grapheme.len());
+            let cursor = cursor_row == Some(row_index)
+                && editor.cursor_bytes >= grapheme_start
+                && editor.cursor_bytes < grapheme_end;
             let mut cell_style = style;
             if cursor {
                 cell_style.reversed = !cell_style.reversed;
@@ -1630,7 +1606,7 @@ fn paint_editor(
                 for continuation in 1..cell_width {
                     *target.get_mut((x as usize + continuation) as u16, y as u16) = PhysicalCell {
                         grapheme: None,
-                        style: cell_style,
+                        style,
                         painted: true,
                         continuation: true,
                     };
@@ -1638,7 +1614,8 @@ fn paint_editor(
             }
             x = end;
         }
-        if editor.cursor_bytes == range.end
+        if cursor_row == Some(row_index)
+            && editor.cursor_bytes == range.end
             && x < i32::from(clip.right())
             && x >= i32::from(clip.x)
             && x >= 0

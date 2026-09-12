@@ -2615,7 +2615,6 @@ fn finalize_close(
         let mut inner = host
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
-        inner.running.host_clear_retained_views();
         if receipt_failed {
             inner.physical_sync_unknown = true;
         }

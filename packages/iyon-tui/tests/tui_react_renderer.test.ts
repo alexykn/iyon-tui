@@ -328,6 +328,92 @@ describe("T3 React mutation renderer", () => {
 		}
 	});
 
+	test("post-mount traffic carries only the changed semantic lane", async () => {
+		const tui = await AppHarness.open({ width: 40, height: 10 });
+		const root = createReactRoot(tui);
+		const host = required(
+			nativeHostForReact(tui) as NativeTuiHostContract | undefined,
+			"native host association is unavailable",
+		);
+		const commits: Array<{
+			readonly words: Uint32Array;
+			readonly metadata: Uint8Array;
+			readonly content: Uint8Array;
+		}> = [];
+		const originalCommit = host.commitUiV1.bind(host);
+		host.commitUiV1 = (words, metadata, content, sources) => {
+			commits.push({ words, metadata, content });
+			return originalCommit(words, metadata, content, sources);
+		};
+		const resetTraffic = () => {
+			commits.length = 0;
+		};
+		const opcodes = () => commits.flatMap(({ words }) => commitOpcodes(words));
+		const trafficBytes = () =>
+			commits.reduce(
+				(total, { words, metadata, content }) =>
+					total + words.byteLength + metadata.byteLength + content.byteLength,
+				0,
+			);
+		const callback = () => {};
+		const keyed = (
+			background: "red" | "blue",
+			items: readonly (string | readonly [string, string])[],
+			handler: () => void,
+		) =>
+			createElement(
+				Box,
+				{ background: { type: "named", value: background }, onPress: handler },
+				items.map((item) => {
+					const key = typeof item === "string" ? item : item[0];
+					const text = typeof item === "string" ? item : item[1];
+					return createElement(Text, { key }, text);
+				}),
+			);
+		try {
+			await root.render(keyed("red", ["a", "b", "c", "d"], callback));
+			await root.whenVisible();
+			resetTraffic();
+			await root.render(keyed("red", ["a", "b", "c", "d"], callback));
+			expect(opcodes()).toEqual([]);
+			expect(trafficBytes()).toBe(0);
+
+			resetTraffic();
+			await root.render(keyed("red", ["a", "b", "c", "d"], () => {}));
+			expect(opcodes()).toEqual([]);
+			expect(trafficBytes()).toBe(0);
+
+			resetTraffic();
+			await root.render(keyed("blue", ["a", "b", "c", "d"], callback));
+			expect(opcodes()).toEqual([UI_OPCODES.setDeclared]);
+			expect(commits[0]?.metadata.byteLength).toBe(0);
+			expect(commits[0]?.content.byteLength).toBe(0);
+
+			resetTraffic();
+			await root.render(
+				keyed("blue", [["a", "a"], ["b", "changed"], "c", "d"], callback),
+			);
+			expect(opcodes()).toEqual([UI_OPCODES.replaceLiteral]);
+			expect(commits[0]?.content.byteLength).toBeGreaterThan(0);
+			expect(commits[0]?.metadata.byteLength).toBe(0);
+
+			resetTraffic();
+			await root.render(
+				keyed("blue", ["d", "c", ["b", "changed"], "a"], callback),
+			);
+			expect(opcodes().length).toBeGreaterThan(0);
+			expect(
+				opcodes().every((opcode) => opcode === UI_OPCODES.insertBefore),
+			).toBe(true);
+			expect(commits[0]?.metadata.byteLength).toBe(0);
+			expect(commits[0]?.content.byteLength).toBe(0);
+		} finally {
+			await root.unmount();
+			root.close();
+			tui.close();
+		}
+	});
+
 	test("public style states lower through the theme and explicit ref overrides", async () => {
 		const tui = await AppHarness.open({ width: 24, height: 6 });
 		tui.setTheme(

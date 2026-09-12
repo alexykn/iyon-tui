@@ -135,6 +135,83 @@ External migration and benchmark instructions are in
 `docs/migration/REACT-RUNTIME.md`. The T4/prerequisite sections below retain their
 historical validation results; they do not override this current slice status.
 
+### T7/M2 performance and exact-traffic witness — current source evidence
+
+This is implementation evidence for the remaining T7/M2 gates, not a claim that
+T7/M2 or the complete handoff is accepted. `packages/iyon-tui/bench/react_content.ts`
+now exercises the production React + `AppHarness` + occurrence + Content/native
+route. It separates initial mount from post-mount mutation, records raw samples,
+and reports p50/p95/p99 in milliseconds plus absolute transport bytes. The
+default addon reports JavaScript acceptance/barrier timings and exact UI
+traffic. An opt-in `perf-counters` stage additionally reports native-owned
+`HostInner` preparation, scheduler advancement, physical submission, and frame
+completion nanoseconds. The timer type, `Instant` reads, and timer guards are
+compiled only under `perf-counters`; the default addon contains no timer labels
+or `tuiPerf*` symbols.
+
+The exact traffic witness passed on current source at `3f7096f`:
+
+| Scenario | UI calls | UI records | semantic bytes | records |
+|---|---:|---:|---:|---|
+| same normalized output | 0 | 0 | 0 | — |
+| callback identity only | 0 | 0 | 0 | — |
+| one local background change | 1 | 1 | 0 | `SetDeclared` |
+| static text replacement | 1 | 1 | 7 | `ReplaceLiteral` |
+| keyed move | 1 | 3 | 0 | `InsertBefore` only |
+| Source append | 0 | 0 | 0 | Source stats: 7 accepted/copied UTF-8 bytes |
+| native animation tick | 0 | 0 | 0 | — |
+| native environment recolor | 0 | 0 | 0 | — |
+
+The focused owning-layer regression `post-mount traffic carries only the
+changed semantic lane` passed with 14 expectations. The package/consumer Bun
+suite then passed with 87 tests and 395 expectations. These witnesses use no
+fake renderer.
+
+The bounded matrix uses one warmup and seven measured samples per workload,
+with 16 appended lines per mutation (the count is configurable but capped at
+256). It covers a 48-row stable tree leaf style change, 64-item keyed reorder,
+12-level local insertion/removal, one Source at widths 20/80/160, steady and
+burst Markdown with native smoothing on/off, native Editor, native Animation,
+resize/theme/scroll, natural delayed-receipt mount/unmount, and shared Source
+versus duplicated occurrence memory. `sourceRetainedBytes` is the native
+retained Source statistic; Source accepted/copied counters are cumulative;
+process RSS and JS heap are reported separately and are not native allocation
+counts. With fewer than 20 samples, p99 is marked exploratory-max-adjacent and
+raw samples remain authoritative.
+
+Raw JSONL-style JSON reports from the latest run are:
+
+    /tmp/t7-m2-current-default-final-3f7096f.json
+    /tmp/t7-m2-perf-baseline-latest-a.json
+    /tmp/t7-m2-perf-baseline-latest-b.json
+    /tmp/t7-m2-current-instrumented-final-3f7096f.json
+
+The current default staged addon is darwin-arm64, SHA-256
+`28beac6f5ce212cf82563d522f1d0bfe9bee5de8669300b50e7736574548239d`.
+The separate instrumented addon is SHA-256
+`1ff971b932f4e89bf07103ed8d4acacce516abe259c2dc3e45a539cb9d89bc0b`; it was
+used only for native counters/timing and was not used as the comparison
+artifact. The immutable M1 baseline remains unchanged at
+`/tmp/t6-m1-baseline/iyon-tui-native.node`, SHA-256
+`64c2ac3c1541d15023413202591efdbb87810886ef3a590bdab7bd2229a30a05`, source
+archive SHA-256
+`9a42664709cd367af0b97e9807925f5f7896f9f063a4cd9ae93800f178386d7b`, and
+schema hash `b5d1fe98d102d16d7f9533ff2044e36b675ef993fda62b8866583a45b77376e0`.
+Both default artifacts loaded successfully with the current bounded benchmark;
+the baseline/current timing comparison therefore uses matching default
+artifacts, while native counters are current-instrumented-only evidence.
+
+Alternating baseline/current runs are repeatably slower on current source in
+several preparation/barrier workloads (notably keyed reorder and steady
+Markdown). The instrumented counters place the hot phase in
+`prepare_candidate_frame_with_backend` rather than physical submission; for
+example, the latest current keyed-reorder samples report roughly 6.0 ms of
+native frame preparation and roughly 6.7 ms post-acceptance barrier time. This
+is a documented performance investigation result, not a waiver: no small
+owning runtime fix was identified within the benchmark/traffic scope, and the
+15% plus 0.10 ms p95 threshold remains an open review gate. No Linux x64
+execution is claimed.
+
 ### T4 handoff boundary
 
 The React route now installs accepted UI mutations into the same native host

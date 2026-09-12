@@ -9,6 +9,8 @@
 use std::cell::Cell;
 #[cfg(feature = "perf-counters")]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "perf-counters")]
+use std::time::Instant;
 
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -48,10 +50,18 @@ pub enum Counter {
     ContentDemandNodesVisited,
     ContentOwnerNodesVisited,
     UiControlKeysVisited,
+    // These four stage timing variants are only observed by ScopedTimer in
+    // perf-counters builds. Their names remain in the canonical counter lane
+    // so benchmarks can distinguish stage ownership without changing the
+    // default addon surface.
+    FramePrepareNanos,
+    RuntimeAdvanceNanos,
+    FramePresentNanos,
+    FrameCommitNanos,
 }
 
 impl Counter {
-    pub const COUNT: usize = Self::UiControlKeysVisited as usize + 1;
+    pub const COUNT: usize = Self::FrameCommitNanos as usize + 1;
 
     const fn index(self) -> usize {
         self as usize
@@ -94,6 +104,10 @@ const NAMES: [&str; Counter::COUNT] = [
     "content_demand_nodes_visited",
     "content_owner_nodes_visited",
     "ui_control_keys_visited",
+    "frame_prepare_nanos",
+    "runtime_advance_nanos",
+    "frame_present_nanos",
+    "frame_commit_nanos",
 ];
 
 #[cfg(feature = "perf-counters")]
@@ -179,6 +193,39 @@ pub fn add(counter: Counter, amount: u64) {
     VALUES[counter.index()].fetch_add(amount, Ordering::Relaxed);
     #[cfg(not(feature = "perf-counters"))]
     let _ = (counter, amount);
+}
+
+/// Accumulates elapsed time for one actual native-owned stage.
+///
+/// This is deliberately scoped to the performance feature. The default build
+/// pays neither for an `Instant` nor for a timing branch, and benchmark output
+/// can identify the owner of each measured stage instead of inferring native
+/// work from a JavaScript wall-clock interval.
+#[cfg(feature = "perf-counters")]
+pub(crate) struct ScopedTimer {
+    counter: Counter,
+    started: Instant,
+}
+
+#[cfg(feature = "perf-counters")]
+impl ScopedTimer {
+    #[must_use]
+    pub(crate) fn new(counter: Counter) -> Self {
+        Self {
+            counter,
+            started: Instant::now(),
+        }
+    }
+}
+
+#[cfg(feature = "perf-counters")]
+impl Drop for ScopedTimer {
+    fn drop(&mut self) {
+        add(
+            self.counter,
+            u64::try_from(self.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+    }
 }
 
 /// Sets a counter used as a current restart/offset gauge.

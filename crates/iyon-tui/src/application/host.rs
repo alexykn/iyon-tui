@@ -3202,6 +3202,8 @@ impl HostInner {
     }
 
     fn advance_runtime_for_candidate(&mut self, admit_wakes: bool) -> Result<bool> {
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::RuntimeAdvanceNanos);
         self.sync_pending_ui_scene_before_tick()?;
         let content_dirty = self.content.advance(self.now).map_err(|error| {
             host_attempt_error(
@@ -3566,6 +3568,8 @@ impl HostInner {
         &mut self,
         backend: &mut HostBackend,
     ) -> Result<(PreparedFrame, Option<crate::history::NativeTransferPlan>)> {
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::FramePrepareNanos);
         let target_epoch = self.pending_epoch;
         if let Err(error) = self.sync_ui_scene() {
             let ui_revision = self.ui_resources.document.as_ref().map_or(
@@ -4473,6 +4477,8 @@ impl HostInner {
     }
 
     fn present_frame(&mut self) -> Result<()> {
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::FramePresentNanos);
         self.poll_bootstrap_receipt()?;
         if self.bootstrap_receipt.is_some() {
             return Ok(());
@@ -4673,6 +4679,8 @@ impl HostInner {
     }
 
     fn commit_frame(&mut self) -> Result<HostFlushOutcome> {
+        #[cfg(feature = "perf-counters")]
+        let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::FrameCommitNanos);
         // All normal preconditions are checked before entering the
         // environment-owned completion authority. The environment mutex then
         // remains held across content/state/frame promotion and its queue

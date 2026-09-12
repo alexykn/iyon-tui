@@ -1125,12 +1125,24 @@ fn measured_for_request_with_intrinsic(
     }
     let capture = capture.expect("content capture checked above");
     let requested_product = content_product_for_request(capture, request)?;
+    let available_width = match request.available_width {
+        AvailableConstraint::Definite(width) => Some(floor_constraint_width(width)?),
+        AvailableConstraint::MinContent | AvailableConstraint::MaxContent => None,
+    };
     let mut measured = requested_product
         .as_ref()
         .map(|product| {
             let size = product.size();
+            let width = if request.known_width.is_none() {
+                available_width.map_or_else(
+                    || size.width(),
+                    |available| product.intrinsic_size().width().min(available),
+                )
+            } else {
+                size.width()
+            };
             MeasuredSize {
-                width: f32::from(size.width()),
+                width: f32::from(width),
                 height: f32::from(size.height()),
             }
         })

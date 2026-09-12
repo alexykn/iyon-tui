@@ -471,7 +471,8 @@ impl ConnectorExecution {
             // Replacement/clear starts a new logical document even when the
             // retained byte range happens to have the same coordinates. Only
             // parser state is lineage-bound; Smooth keeps its existing
-            // replacement policy and the renderer remains reusable.
+            // replacement policy and terminal products are rebuilt from the
+            // new immutable semantic lineage.
             self.markdown = None;
             self.diff = None;
             self.ansi = None;

@@ -89,13 +89,9 @@ fn layout_request_signature(
         key.hash(&mut hasher);
         let capture = &captures[&key];
         capture.port_id.hash(&mut hasher);
-        capture.offered_width.hash(&mut hasher);
         capture.measurement.source_id.hash(&mut hasher);
         capture.measurement.source_generation.hash(&mut hasher);
         capture.measurement.content_generation.hash(&mut hasher);
-        capture.measurement.projection_revision.hash(&mut hasher);
-        capture.measurement.metric_revision.hash(&mut hasher);
-        capture.measurement.paint_revision.hash(&mut hasher);
         capture.measurement.physically_complete.hash(&mut hasher);
         capture.measurement.intrinsic_size.hash(&mut hasher);
         capture.measurement.source_base.hash(&mut hasher);

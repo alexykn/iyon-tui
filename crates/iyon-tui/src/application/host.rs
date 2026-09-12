@@ -2575,6 +2575,14 @@ fn settle_close(host: &Arc<Mutex<HostInner>>, plan: ClosePlan) -> Result<()> {
                     final_frame = Some(frame);
                     break;
                 }
+                (Err(error), _) if is_async_work_pending(&error) => {
+                    // Close owns the final frame lifecycle. Let the native
+                    // layout/paint worker finish, then retry the same final
+                    // candidate rather than reporting an internal pending
+                    // state as a terminal exit failure.
+                    std::thread::yield_now();
+                    continue;
+                }
                 (Err(error), _) => {
                     final_prepare_error = Some(error);
                     break;

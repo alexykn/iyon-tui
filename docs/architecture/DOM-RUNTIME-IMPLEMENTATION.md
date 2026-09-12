@@ -3,9 +3,10 @@
 **Scope:** T0 through T7/M2, with T5/M1 locally accepted and the T6 finite
 geometry/layout foundation accepted as a separate checkpoint. React is the
 only production UI authoring route. The old native View ABI/generated outputs
-and ordinary Rust/native ViewState owners are deleted. Direct host rendering
-and content cutover remain T6/T7 work; the private current-renderer adapter is
-not a permanent architecture.
+and ordinary Rust/native ViewState owners are deleted. Direct host rendering,
+semantic content lowering, and the latency-isolation request path are now in
+the current source. Remaining T7/M2 work is contract evidence and cleanup;
+deleted View/Scene/TextRenderer ownership is not to be restored.
 This document is the implementation ledger for IYON-DOM-LIKE-RUNTIME-HANDOFF.md;
 it is not a claim that the M1/M2 migration is complete.
 
@@ -15,10 +16,11 @@ longer part of the current source; the historical sections retain the old
 tranche record for migration provenance only.
 
 **Baseline:** branch agent/dom-occurrence-runtime, accepted React/T4 source
-HEAD `79a8c90261b9c10a3255ea89c2369d4e4a1c8b77`. The handoff and this ledger
-describe the accepted pre-deletion route; the current source and
-generated-output checks below record the T5 implementation and validation
-slice for parent review, not self-acceptance of M1.
+HEAD `79a8c90261b9c10a3255ea89c2369d4e4a1c8b77`. The handoff records the
+historical migration decisions; the current source and generated-output checks
+below record the post-M1 direct occurrence/Taffy/content route and the
+latency-isolation implementation slice for parent review, not self-acceptance
+of the remaining T7 gates.
 The atlas at docs/architecture/atlas-4355c02 is historical navigation, not
 the current-source authority.
 
@@ -46,7 +48,7 @@ GPUI implementation remains out of scope for this tranche.
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
 | T6 — direct terminal Taffy integration | **direct host implementation checkpoint; broader contract/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Archived captures may diagnose behavior, but legacy pixel parity is not an acceptance gate. Package/native-addon evidence, contract review, performance review and Linux native CI remain pending; this is not final T6 acceptance. |
-| T7 — content lowering and M2 deletion | **latency-isolation implementation tranche in progress** | Shared bounded content projection, nonblocking Taffy layout, and worker-owned direct paint are implemented. Semantic-content/adapter deletion and the full receipt, close, fairness, and Linux gates remain. |
+| T7 — content lowering and M2 deletion | **latency-isolation implementation tranche in progress** | Shared bounded content projection, nonblocking Taffy layout, and worker-owned direct paint are implemented. The old View/Scene/TextRenderer paths are already deleted; the full receipt, close, fairness, and Linux gates remain. |
 
 ### T5 canonical React resource seam (current source)
 
@@ -68,14 +70,14 @@ replacement clears it, and unmount clears visibility. React refs expose the fini
 `interceptPaste(routeId)` operation, resolved atomically against the accepted
 Editor and existing native paste router.
 
-The approved M2 residue is limited to private current-renderer recipe/layout
-internals, native control mechanics still used by the private adapter, and
-History/content helpers that independently own behavior. None is a public
-View authoring route or ordinary UI state authority. The deletion gate is T7:
-direct Taffy and semantic-content realization plus receipt/History/input
-witnesses must pass before deleting `application/legacy_scene.rs` and its
-superseded renderer internals. Legacy pixel captures may diagnose the
-replacement, but they do not authorize retaining that allocator.
+The remaining M2 work is limited to private renderer/layout internals, native
+control mechanics, and History/content helpers that independently own
+behavior. None is a public View authoring route or ordinary UI state
+authority. The T7 gate is now the receipt/History/input, close, fairness, and
+cross-backend evidence for the direct route; no `application/legacy_scene.rs`,
+View allocator, or superseded TextRenderer ownership exists in the current
+source. Legacy pixel captures may diagnose the replacement, but they do not
+authorize restoring deleted paths.
 
 ### T5 canonical cutover — parent acceptance evidence
 
@@ -253,7 +255,7 @@ reason to weaken content semantics or chase a local Markdown micro-optimization.
 The current route now has an asynchronous latency boundary for content
 projection, Taffy layout, and direct paint. The following observations describe
 the implemented ownership and the remaining synchronous preparation around it;
-they do not claim that the M2 adapter-deletion gate is complete:
+they do not claim that every T7/M2 acceptance gate is complete:
 
 - `NativeTuiHost::commit_ui` accepts a desired occurrence transaction while
   holding `Arc<Mutex<HostInner>>`. It releases that guard before calling
@@ -287,6 +289,13 @@ The implementation is one replacement ownership path: a bounded shared
 executor, not one OS thread per Source or Connector, with the following state
 and transitions. The remaining proof work below is still required before
 claiming full T7/M2 acceptance.
+
+This source tranche uses one FIFO executor worker. That choice gives ordered
+parser ownership and strict queue bounds, but a large projection can serialize
+other content jobs; it does not claim preemption or parser-incremental
+checkpoints that the current parser APIs do not provide. Per-Connector
+coalescing and byte/job limits prevent append bursts from creating unbounded
+pending work, while Source append/event/receipt records remain lossless.
 
 #### Content executor and exact product identity
 
@@ -429,20 +438,18 @@ deletion of the temporary legacy adapter and redundant general layout path.
 
 The React route now installs accepted UI mutations into the same native host
 that owns terminal presentation. `UiResourceOwner` is the sole occurrence,
-resource, and Source-membership authority; `application/legacy_scene.rs` is a
-private one-way recipe projection into the existing renderer and is explicitly
-scheduled for deletion at T7. Literal ContentHost occurrences and Source-backed
-Connectors are adapted into the existing ContentProvider, including source
-subscription/wake behavior. The terminal host drains accepted work without a
-required TypeScript pump, and `whenVisible` observes the native visible
-revision after that drain.
+resource, and Source-membership authority. Literal ContentHost occurrences and
+Source-backed Connectors use the direct semantic ContentProvider route,
+including source subscription/wake behavior. The terminal host drains
+accepted work without a required TypeScript pump, and `whenVisible` observes
+the native visible revision after that drain.
 
 The Rust coordinator now stores one typed `PresentationState` in
 `HostInner`; the superseded correlated candidate fields and receipt slot are
 removed. A separate bootstrap receipt exists only for the initial physical
-frame, which has no desired UI candidate. T5 still owns old-route/publication
-deletion; T6 owns direct Taffy layout; T7 owns semantic content lowering and
-deletion of the legacy adapter. The component-only Surface migration, explicit
+frame, which has no desired UI candidate. T5 owns old-route/publication
+deletion; T6 owns direct Taffy layout; T7 owns semantic content barriers and
+latency isolation. The component-only Surface migration, explicit
 physical export policy, and GPUI host remain later work under the separate
 Surface gate; they are not T4 acceptance claims.
 
@@ -453,11 +460,10 @@ includes parent review of the resulting ownership and execution paths, not
 only the delegate reports or test counts. The T4 implementation has these
 ownership boundaries:
 
-- `application/legacy_scene.rs` is the single private, one-way
-  occurrence-to-current-renderer adapter allowed by the M1 migration boundary.
-  It is not a public View authoring surface. Its deletion gate is T7, after
-  the direct Taffy/content route and its receipt/History/input evidence are
-  accepted. Archived pixel comparisons are diagnostic only.
+- The deleted native View ABI, ViewState publication path, and temporary
+  occurrence-to-View adapter are not part of the current route. The direct
+  occurrence/Taffy/content path is the only general renderer; archived pixel
+  comparisons are diagnostic only.
 - `application/frame.rs` owns the exact presentation products and one native
   receipt per physical submission. `PresentationState` keeps the candidate
   and receipt correlated until completion; metadata-only `NoOutput` products
@@ -675,12 +681,12 @@ The current production route is:
     React HostConfig / CommitCoordinator
       -> commitUiV1 (qualified direct-occurrence batch)
       -> UiResourceOwner / OccurrenceDocument
-      -> private LegacySceneAdapter
       -> SceneHost layout/paint
       -> environment pending queue / exact physical receipt
 
-No immutable View-to-occurrence compatibility reconciler exists. The private
-legacy adapter is one-way and scheduled for deletion at T7/M2.
+No immutable View-to-occurrence compatibility reconciler exists. The deleted
+View allocator and superseded Scene/TextRenderer ownership are not fallback
+paths for the direct route.
 
 ## T1 schema and core
 
@@ -1176,10 +1182,9 @@ the existing `row_specs` path. Neutral/default axes are accepted as identity
 layout, while only non-neutral Box-row vertical axes are mapped; unsupported
 non-neutral axes are reported at the frame
 barrier rather than ignored. The correction is now applied on the direct
-occurrence route. The private adapter remains only as M2 renderer residue; the
-ordinary ViewState plane and old publication route are deleted. Physical
-History export still requires a public React consumer witness before the
-separate Surface gate.
+occurrence route. The ordinary ViewState plane, old publication route, and
+private occurrence-to-View adapter are deleted. Physical History export still
+requires a public React consumer witness before the separate Surface gate.
 T4's accepted source is `ca1216335d57569a4171d10b86bcf3aad0872671`; this
 historical alignment record does not impose an M1 pixel-parity requirement on
 the replacement React/Taffy route.
@@ -1190,12 +1195,11 @@ ownership remains required work in the T6/T7 migration.
 
 ## Remaining proof and risks
 
-- The occurrence document is connected to the React mutation renderer and the
-  existing terminal renderer through one private one-way adapter. The adapter,
-  current View IR and general Scene/layout helpers remain explicit M2 residue;
-  T7 deletes them after direct Taffy/content realization and
-  receipt/History/input evidence. Archived pixel comparisons are diagnostic
-  only and do not authorize retaining the adapter.
+- The occurrence document is connected directly to the React mutation renderer
+  and the Taffy/content terminal renderer. The old View ABI, ViewState plane,
+  temporary occurrence-to-View adapter, and superseded TextRenderer ownership
+  remain absent from the current source. Archived pixel comparisons are
+  diagnostic only and do not authorize restoring deleted paths.
 - The old native View ABI, generated C/Rust/TypeScript outputs, old N-API
   ViewRef classes, state envelope and ordinary Rust/native ViewState registry
   are absent from the current source. The current generator emits only the
@@ -1211,8 +1215,8 @@ ownership remains required work in the T6/T7 migration.
 - Only the macOS arm64 toolchain/target is installed locally. The CI matrix
   includes Linux x64 and macOS arm64; Linux x64 remains a CI gate and is not
   claimed from this macOS run. Direct Taffy/content latency isolation is now
-  implemented, while the T7 semantic-content lowering, adapter deletion,
-  receipt/close/fairness evidence, Surface and GPUI gates remain deferred.
+  implemented, while the receipt/close/fairness evidence, Surface and GPUI
+  gates remain deferred.
   Parent source/design acceptance covers M1, not those later migration
   boundaries or unexecuted Linux validation.
 
@@ -1319,12 +1323,11 @@ acknowledgement continues through the existing native transfer owner using a
 narrow transparent content-shell descriptor; the exact candidate rows and
 receipt ownership remain unchanged. FollowEnd/NativeFrontier placement and
 bounded transfer receipts remain part of the terminal History contract;
-component-only Surface export is separately scheduled. No View fallback is
-used for ordinary History layout. The old `legacy_scene.rs` ordinary adapter and
-its stale recipe tests were removed rather than retained as a fallback. The
-remaining local View projection is limited to native control pixels and the
-History physical transfer descriptor and is deleted/rewritten at the T7
-semantic-content gate.
+  component-only Surface export is separately scheduled. No View fallback or
+  local View projection is used for ordinary History layout. The old
+  `legacy_scene.rs` ordinary adapter and its stale recipe tests were removed
+  rather than retained as a fallback. History physical transfer continues to
+  use its typed native descriptor until the separate Surface gate.
 
 Focused current-source evidence for this checkpoint includes the direct
 occurrence row/grid geometry test, the native host Grid/content/geometry test,

@@ -1697,6 +1697,19 @@ impl crate::presentation::ContentProvider for CapturedContentProvider<'_> {
             target.physically_complete = false;
             return;
         };
+        let first_row = usize::try_from(window.first_row)
+            .unwrap_or(usize::MAX)
+            .saturating_add(
+                capture
+                    .and_then(|capture| capture.history_adjustment)
+                    .map_or(0, |adjustment| adjustment.removed_rows),
+            );
+        let row_count = usize::try_from(window.row_count)
+            .unwrap_or(usize::MAX)
+            .min(product.rows().len().saturating_sub(first_row));
+        if row_count == 0 {
+            return;
+        }
         if product
             .paint_window(
                 self.theme,
@@ -1704,16 +1717,7 @@ impl crate::presentation::ContentProvider for CapturedContentProvider<'_> {
                 target,
                 target_origin,
                 clip,
-                crate::text::TerminalRowWindow::new(
-                    usize::try_from(window.first_row)
-                        .unwrap_or(usize::MAX)
-                        .saturating_add(
-                            capture
-                                .and_then(|capture| capture.history_adjustment)
-                                .map_or(0, |adjustment| adjustment.removed_rows),
-                        ),
-                    usize::try_from(window.row_count).unwrap_or(usize::MAX),
-                ),
+                crate::text::TerminalRowWindow::new(first_row, row_count),
             )
             .is_err()
         {
@@ -2081,6 +2085,22 @@ fn signed_intersection(
 mod tests {
     use super::*;
 
+    struct LatchRelease(Option<std::sync::mpsc::Sender<()>>);
+
+    impl LatchRelease {
+        fn release(&mut self) {
+            if let Some(release) = self.0.take() {
+                let _ = release.send(());
+            }
+        }
+    }
+
+    impl Drop for LatchRelease {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
     fn editor_node(width: u16, height: u16) -> DirectNode {
         DirectNode {
             key: NodeKey {
@@ -2346,6 +2366,7 @@ mod tests {
             std::thread::yield_now();
         }
         let (entered, release) = driver.install_layout_latch_for_test();
+        let mut release = LatchRelease(Some(release));
         driver
             .request_layout(
                 root,
@@ -2361,7 +2382,7 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(1))
             .expect("layout worker entered latch");
         assert!(driver.poll_layout().expect("layout poll").is_none());
-        release.send(()).expect("release layout worker");
+        release.release();
         let layout = loop {
             if let Some(layout) = driver.poll_layout().expect("layout completion poll") {
                 break layout;

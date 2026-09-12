@@ -12,7 +12,9 @@ use std::{
 
 use anyhow::Result;
 
-use super::content::{ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit};
+use super::content::{
+    ContentFamily, ContentHostRegistry, HostContentPort, PreparedContentCommit, TextSourceKind,
+};
 use super::environment::{
     HostDrainReport, HostEpochs, HostFlushOutcome, TuiEnvironment, WakeDisposition,
     host_attempt_error,
@@ -460,6 +462,7 @@ pub(crate) struct HostInner {
     test_history_receipt: Option<crate::terminal::HistoryReceipt>,
     presentation_notify: Arc<tokio::sync::Notify>,
     history_work_notify: Arc<HistoryWorkSignal>,
+    worker_wake_cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 const _: () = {
@@ -949,6 +952,7 @@ impl TuiHost {
                 test_history_receipt: None,
                 presentation_notify: Arc::new(tokio::sync::Notify::new()),
                 history_work_notify: Arc::new(HistoryWorkSignal::new()),
+                worker_wake_cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             }));
         let host_id = environment.register_host(&inner)?;
         let mut host = inner
@@ -956,7 +960,8 @@ impl TuiHost {
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         host.host_id = host_id;
         let async_wake = host.async_wake_callback();
-        host.running.set_async_wake(async_wake);
+        host.running.set_async_wake(Arc::clone(&async_wake));
+        host.content.set_worker_wake(async_wake);
         host.running.host_set_direct_driver_id(host_id)?;
         host.content.set_owner_host(Arc::downgrade(&inner));
         if let Err(error) = host.present_frame() {
@@ -2124,6 +2129,9 @@ fn close_host_inner_with_position(
             HostLifecycle::Open | HostLifecycle::Faulted => {
                 let operation = CloseOperation::new();
                 inner.lifecycle = HostLifecycle::Closing(Arc::clone(&operation));
+                inner
+                    .worker_wake_cancelled
+                    .store(true, std::sync::atomic::Ordering::Release);
                 inner.presentation_notify.notify_waiters();
                 #[cfg(test)]
                 if let Some(hook) = inner.close_started_hook.as_ref() {
@@ -2787,6 +2795,15 @@ fn is_event_backpressure(error: &anyhow::Error) -> bool {
         .is_some_and(|error| matches!(error, UiInputAdmissionError::Backpressure(_)))
 }
 
+fn is_async_work_pending(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<super::content::ContentProjectionPending>()
+        .is_some()
+        || error
+            .downcast_ref::<crate::scene::SceneLayoutPending>()
+            .is_some()
+}
+
 fn ignore_terminal_shutdown_error(result: Result<()>) -> Result<()> {
     match result {
         Ok(()) => Ok(()),
@@ -2930,7 +2947,11 @@ impl HostInner {
         let environment = self.environment.clone();
         let host_id = self.host_id;
         let notification = Arc::clone(&self.presentation_notify);
+        let cancelled = Arc::clone(&self.worker_wake_cancelled);
         Arc::new(move || {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
             let _ = environment.mark_host_ready(host_id);
             notification.notify_waiters();
         })
@@ -3082,17 +3103,6 @@ impl HostInner {
         let wake = self.admit_pending()?;
         self.presentation_notify.notify_waiters();
         Ok(wake)
-    }
-
-    /// Re-admits a host after an owned worker completion. The callback only
-    /// performs this short epoch/queue transition; worker code never holds
-    /// the host lock while parsing, projecting, laying out, or painting.
-    pub(super) fn wake_async_work(&mut self) {
-        if matches!(self.lifecycle, HostLifecycle::Open | HostLifecycle::Faulted) {
-            self.pending_epoch = self.pending_epoch.saturating_add(1);
-            let _ = self.environment.mark_host_ready(self.host_id);
-            self.presentation_notify.notify_waiters();
-        }
     }
 
     fn admit_pending(&mut self) -> anyhow::Result<WakeDisposition> {
@@ -3688,7 +3698,7 @@ impl HostInner {
                         .downcast_ref::<crate::scene::SceneLayoutPending>()
                         .is_some()
                 {
-                    self.content.abort_candidate();
+                    self.content.suspend_candidate_for_async();
                     self.running.host_discard_candidate();
                     return Err(error);
                 }
@@ -5166,7 +5176,16 @@ impl HostInner {
             self.record_failed_frame(&error, "frame", ui_revision, self.pending_epoch);
             return Err(error);
         }
-        let status_dirty = self.advance_runtime_for_candidate(true)?;
+        let status_dirty = match self.advance_runtime_for_candidate(true) {
+            Ok(dirty) => dirty,
+            Err(error) if is_async_work_pending(&error) => {
+                return Ok(HostFlushOutcome {
+                    waiting_for_presentation: true,
+                    ..HostFlushOutcome::default()
+                });
+            }
+            Err(error) => return Err(error),
+        };
 
         if (self.bootstrap_receipt.is_some() || self.presentation_state.is_in_flight())
             && let Some(outcome) = self.poll_presentation()?
@@ -5247,5 +5266,296 @@ impl HostInner {
         if matches!(self.backend, Some(HostBackend::Real(_))) {
             self.now = Instant::now();
         }
+    }
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+    use crate::interaction::{Key, KeyStroke};
+    use crate::occurrence::{ControlKind, HostKind, OwnershipMode, ResourceRef, UiOperation};
+
+    struct LatchRelease(Option<std::sync::mpsc::Sender<()>>);
+
+    impl LatchRelease {
+        fn release(&mut self) -> Result<()> {
+            self.0
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("latch already released"))?
+                .send(())
+                .map_err(|_| anyhow::anyhow!("release latch"))
+        }
+    }
+
+    impl Drop for LatchRelease {
+        fn drop(&mut self) {
+            if let Some(release) = self.0.take() {
+                let _ = release.send(());
+            }
+        }
+    }
+
+    fn drain_until(
+        environment: &TuiEnvironment,
+        host: &TuiHost,
+        target_revision: u64,
+        content_visible: bool,
+    ) -> Result<()> {
+        for _ in 0..10_000 {
+            let report = environment.drain_pending(32, true)?;
+            if let Some(error) = report.errors.first() {
+                return Err(anyhow::anyhow!("latency drain failed: {error:?}"));
+            }
+            let epochs = host.epochs()?;
+            let visible = !content_visible || host.ui_content_visible()?;
+            if epochs.visible_structural_revision >= target_revision && visible {
+                return Ok(());
+            }
+            std::thread::yield_now();
+        }
+        Err(anyhow::anyhow!(
+            "latency test host did not settle target={target_revision} content_visible={content_visible}"
+        ))
+    }
+
+    #[test]
+    fn content_stall_keeps_editor_frame_and_input_live_until_receipt() -> Result<()> {
+        let environment = TuiEnvironment::new_manual();
+        let namespace = crate::occurrence::HostNamespace::allocate()
+            .ok_or_else(|| anyhow::anyhow!("test UI namespace exhausted"))?;
+        let host =
+            TuiHost::open_in_environment_with_ui(24, 8, true, environment.clone(), namespace)?;
+        let source_a = environment.create_content_source(TextSourceKind::Stream)?;
+        let source_b = environment.create_content_source(TextSourceKind::Stream)?;
+        source_a.append_utf8(b"confirmed-A\n", &[], &[])?;
+        source_b.append_utf8(b"replacement-B\n", &[], &[])?;
+        let body = host.ui_body_handle()?;
+
+        let mut create = crate::occurrence::UiCommit::new(0);
+        create.push(UiOperation::CreateNode {
+            local_ordinal: 1,
+            kind: HostKind::ContentHost,
+        });
+        create.push(UiOperation::CreatePort {
+            local_ordinal: 2,
+            content_family: 1,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(crate::occurrence::NodeRef::Local(1)),
+        });
+        create.push(UiOperation::CreateConnector {
+            local_ordinal: 3,
+            source_index: 0,
+            port: ResourceRef::Local(2),
+            ownership: OwnershipMode::Explicit,
+        });
+        create.push(UiOperation::SelectConnector {
+            port: ResourceRef::Local(2),
+            connector: Some(ResourceRef::Local(3)),
+        });
+        create.push(UiOperation::CreateNode {
+            local_ordinal: 4,
+            kind: HostKind::Editor,
+        });
+        create.push(UiOperation::CreateControl {
+            local_ordinal: 5,
+            kind: ControlKind::Editor,
+            ownership: OwnershipMode::OccurrenceOwned,
+            owner: Some(crate::occurrence::NodeRef::Local(4)),
+        });
+        create.push(UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Existing(body),
+            child: crate::occurrence::NodeRef::Local(1),
+            before: None,
+        });
+        create.push(UiOperation::InsertBefore {
+            parent: crate::occurrence::NodeRef::Existing(body),
+            child: crate::occurrence::NodeRef::Local(4),
+            before: None,
+        });
+        create.push(UiOperation::AttachPort {
+            node: crate::occurrence::NodeRef::Local(1),
+            port: Some(ResourceRef::Local(2)),
+        });
+        create.push(UiOperation::AttachControl {
+            node: crate::occurrence::NodeRef::Local(4),
+            control: Some(ResourceRef::Local(5)),
+        });
+        create.push(UiOperation::SetSubscriptions {
+            node: crate::occurrence::NodeRef::Local(4),
+            mask_low: u32::MAX,
+            mask_high: 0,
+        });
+        let (initial_entered, initial_release) = {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.install_test_content_latch()
+        };
+        let mut initial_release = LatchRelease(Some(initial_release));
+        let created = host
+            .commit_ui(create, &[source_a.clone()])
+            .map_err(|rejection| anyhow::anyhow!("initial UI commit rejected: {rejection:?}"))?;
+        for _ in 0..10_000 {
+            let _ = environment.drain_pending(32, true)?;
+            if initial_entered.try_recv().is_ok() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        drain_until(
+            &environment,
+            &host,
+            created.acknowledgement.accepted_ui_revision,
+            false,
+        )?;
+        let editor = created.acknowledgement.created[3];
+        let port = created.acknowledgement.created[1];
+        assert!(
+            !host.ui_content_visible()?,
+            "loading content must not satisfy content visibility"
+        );
+        host.focus_ui(editor)?;
+        host.dispatch_key(KeyStroke::new(Key::Char('y')))?;
+        for _ in 0..10_000 {
+            let _ = environment.drain_pending(32, true)?;
+            if host.screen_rows().iter().any(|row| row.contains('y')) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let initial_events = host.drain_ui_events()?;
+        assert_eq!(
+            initial_events.len(),
+            1,
+            "loading content must not block editor input"
+        );
+        initial_release.release()?;
+        {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.content.clear_projection_latch_for_test();
+        }
+        drain_until(
+            &environment,
+            &host,
+            created.acknowledgement.accepted_ui_revision,
+            true,
+        )?;
+        let before_input = host.screen_rows();
+
+        let (entered, release) = {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.install_test_content_latch()
+        };
+        let mut release = LatchRelease(Some(release));
+        let expected_revision = host.epochs()?.desired_structural_revision;
+        let mut switch = crate::occurrence::UiCommit::new(expected_revision);
+        switch.push(UiOperation::CreateConnector {
+            local_ordinal: 1,
+            source_index: 1,
+            port: ResourceRef::Existing(port),
+            ownership: OwnershipMode::Explicit,
+        });
+        switch.push(UiOperation::SelectConnector {
+            port: ResourceRef::Existing(port),
+            connector: Some(ResourceRef::Local(1)),
+        });
+        let switched = host
+            .commit_ui(switch, &[source_a.clone(), source_b.clone()])
+            .map_err(|rejection| anyhow::anyhow!("switch UI commit rejected: {rejection:?}"))?;
+        for _ in 0..10_000 {
+            let _ = environment.drain_pending(32, true)?;
+            if entered.try_recv().is_ok() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        // The replacement task is held at the real projection owner. Input
+        // must still be admitted and produce an editor frame from A.
+        host.dispatch_key(KeyStroke::new(Key::Char('x')))?;
+        let events = host.drain_ui_events()?;
+        assert_eq!(events.len(), 1, "editor input event must be delivered");
+        assert_eq!(events[0].text.as_deref(), Some("yx"));
+        for _ in 0..10_000 {
+            let _ = environment.drain_pending(32, true)?;
+            if host.screen_rows() != before_input {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let while_held = host.screen_rows();
+        assert_ne!(
+            while_held, before_input,
+            "editor frame must complete while B is held"
+        );
+        assert!(while_held.iter().any(|row| row.contains("confirmed-A")));
+        assert!(while_held.iter().any(|row| row.contains('x')));
+        assert!(
+            !host.ui_content_visible()?,
+            "B must not be visible before its receipt"
+        );
+
+        release.release()?;
+        {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.content.clear_projection_latch_for_test();
+        }
+        drain_until(
+            &environment,
+            &host,
+            switched.acknowledgement.accepted_ui_revision,
+            true,
+        )?;
+        let after_release = host.screen_rows();
+        assert!(
+            after_release
+                .iter()
+                .any(|row| row.contains("replacement-B"))
+        );
+        assert!(host.ui_content_visible()?);
+        host.resize(12, 8)?;
+        let resized_revision = host.epochs()?.desired_structural_revision;
+        drain_until(&environment, &host, resized_revision, true)?;
+        assert!(
+            host.screen_rows()
+                .iter()
+                .any(|row| row.contains("replacement-B"))
+        );
+        let (close_entered, close_release) = {
+            let inner = host
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("host lock"))?;
+            inner.install_test_content_latch()
+        };
+        let mut close_release = LatchRelease(Some(close_release));
+        source_b.append_utf8(b"close-pending\n", &[], &[])?;
+        let mut close_started = false;
+        for _ in 0..10_000 {
+            let _ = environment.drain_pending(32, true)?;
+            if close_entered.try_recv().is_ok() {
+                close_started = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(close_started, "close test projection entered its latch");
+        let close_started = std::time::Instant::now();
+        host.close()?;
+        assert!(
+            close_started.elapsed() < std::time::Duration::from_secs(1),
+            "close must not join a shared content worker under its latch"
+        );
+        close_release.release()?;
+        Ok(())
     }
 }

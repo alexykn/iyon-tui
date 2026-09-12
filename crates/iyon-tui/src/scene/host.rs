@@ -63,6 +63,12 @@ struct PendingPaint {
         HashMap<crate::occurrence::NodeKey, crate::presentation::direct_tree::ComponentGeometry>,
 }
 
+struct PendingLayoutInput {
+    signature: u64,
+    captures: HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+    controls: HashMap<ComponentId, ControlSnapshot>,
+}
+
 fn layout_request_signature(
     direct_revision: u64,
     root: crate::occurrence::NodeKey,
@@ -82,12 +88,14 @@ fn layout_request_signature(
     for key in capture_keys {
         key.hash(&mut hasher);
         let capture = &captures[&key];
-        capture.capture_id.hash(&mut hasher);
         capture.port_id.hash(&mut hasher);
-        capture.offered_width.hash(&mut hasher);
-        capture.measurement.projection_revision.hash(&mut hasher);
-        capture.measurement.projection_identity.hash(&mut hasher);
-        capture.measurement.metric_revision.hash(&mut hasher);
+        capture.measurement.source_id.hash(&mut hasher);
+        capture.measurement.source_generation.hash(&mut hasher);
+        capture.measurement.content_generation.hash(&mut hasher);
+        capture.measurement.source_base.hash(&mut hasher);
+        capture.measurement.source_end.hash(&mut hasher);
+        capture.measurement.sealed.hash(&mut hasher);
+        capture.measurement.head_partial.hash(&mut hasher);
     }
     let mut control_keys = controls.keys().copied().collect::<Vec<_>>();
     control_keys.sort_unstable();
@@ -142,6 +150,7 @@ pub(crate) struct SceneHost {
     async_wake: Arc<dyn Fn() + Send + Sync>,
     pending_layout_signature: Option<u64>,
     pending_paint: Option<PendingPaint>,
+    pending_layout_input: Option<PendingLayoutInput>,
     direct_revision: u64,
     pending_content_invalidations: HashSet<u64>,
     pending_control_invalidations: HashSet<ComponentId>,
@@ -172,6 +181,7 @@ impl Default for SceneHost {
             async_wake: Arc::new(|| {}),
             pending_layout_signature: None,
             pending_paint: None,
+            pending_layout_input: None,
             direct_revision: 0,
             pending_content_invalidations: HashSet::new(),
             pending_control_invalidations: HashSet::new(),
@@ -238,6 +248,7 @@ impl SceneHost {
         self.direct_revision = self.direct_revision.saturating_add(1);
         self.pending_layout_signature = None;
         self.pending_paint = None;
+        self.pending_layout_input = None;
         self.pending_content_invalidations.clear();
         self.pending_control_invalidations.clear();
         self.pending_sync_revision = None;
@@ -405,6 +416,24 @@ impl SceneHost {
             self.capture_direct_measurements(size.width, content)?
         };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
+        let current_signature = layout_request_signature(
+            self.direct_revision,
+            root,
+            size,
+            history_anchor,
+            &captures,
+            &control_snapshots,
+        );
+        if let Some(pending) = self.pending_layout_input.as_ref()
+            && pending.signature == current_signature
+        {
+            // A Fit probe may be refined to the actual allocated width before
+            // the worker request. Reuse that immutable request capture on the
+            // next queue turn instead of reconstructing a new attempt with a
+            // fresh capture id/fit width and rejecting the ready result.
+            captures = pending.captures.clone();
+            control_snapshots = pending.controls.clone();
+        }
         let signature = layout_request_signature(
             self.direct_revision,
             root,
@@ -454,6 +483,13 @@ impl SceneHost {
             let _refinement_timer =
                 crate::perf::ScopedTimer::new(crate::perf::Counter::DirectRefinementNanos);
             for (key, capture) in &mut captures {
+                if capture.measurement.projection_identity == 0 {
+                    // Explicit loading captures have no width realization to
+                    // refine. Keeping their bounded placeholder metrics lets
+                    // unrelated controls complete without repeatedly
+                    // resubmitting a width-zero pseudo-product.
+                    continue;
+                }
                 let Some(width) = direct.content_widths.get(key).copied() else {
                     continue;
                 };
@@ -618,11 +654,13 @@ impl SceneHost {
             return match driver.poll_layout() {
                 Ok(Some(layout)) => {
                     self.pending_layout_signature = None;
+                    self.pending_layout_input = None;
                     Ok(layout)
                 }
                 Ok(None) => Err(anyhow::Error::new(SceneLayoutPending)),
                 Err(error) => {
                     self.pending_layout_signature = None;
+                    self.pending_layout_input = None;
                     Err(error)
                 }
             };
@@ -633,11 +671,18 @@ impl SceneHost {
                 Ok(Some(_)) => {}
                 Err(error) => {
                     self.pending_layout_signature = None;
+                    self.pending_layout_input = None;
                     return Err(error);
                 }
             }
             self.pending_layout_signature = None;
+            self.pending_layout_input = None;
         }
+        let pending_input = PendingLayoutInput {
+            signature,
+            captures: measurements.clone(),
+            controls: controls.clone(),
+        };
         driver.request_layout(
             root,
             size,
@@ -650,6 +695,7 @@ impl SceneHost {
         self.pending_content_invalidations.clear();
         self.pending_control_invalidations.clear();
         self.pending_layout_signature = Some(signature);
+        self.pending_layout_input = Some(pending_input);
         Err(anyhow::Error::new(SceneLayoutPending))
     }
 
@@ -949,6 +995,72 @@ mod tests {
             .expect("geometry-aware component remains registered");
         assert_eq!(facts.0, vec![Size::new(8, 2), Size::new(7, 2)]);
         assert_eq!(facts.1, vec![Size::new(8, 12), Size::new(8, 13)]);
+    }
+
+    #[test]
+    fn layout_signature_ignores_per_attempt_capture_ids() {
+        let key = crate::occurrence::NodeKey {
+            slot: 1,
+            generation: 1,
+        };
+        let capture = CapturedContentMeasurement {
+            capture_id: 1,
+            port_id: 7,
+            offered_width: 8,
+            measurement: crate::presentation::ContentMeasurement::default(),
+            min_content: Size::new(1, 1),
+            max_content: Size::new(8, 2),
+            history_adjustment: None,
+            semantic_contents: None,
+            terminal_policy: crate::text::TextRenderPolicy::default(),
+            terminal_product: None,
+        };
+        let mut next = capture.clone();
+        next.capture_id = 2;
+        let first = HashMap::from([(key, capture)]);
+        let second = HashMap::from([(key, next)]);
+        assert_eq!(
+            layout_request_signature(
+                1,
+                key,
+                Size::new(8, 2),
+                DirectHistoryAnchor::FollowEnd,
+                &first,
+                &HashMap::new(),
+            ),
+            layout_request_signature(
+                1,
+                key,
+                Size::new(8, 2),
+                DirectHistoryAnchor::FollowEnd,
+                &second,
+                &HashMap::new(),
+            )
+        );
+        let mut replacement = second.clone();
+        replacement
+            .get_mut(&key)
+            .expect("capture exists")
+            .measurement
+            .source_end = 9;
+        assert_ne!(
+            layout_request_signature(
+                1,
+                key,
+                Size::new(8, 2),
+                DirectHistoryAnchor::FollowEnd,
+                &first,
+                &HashMap::new(),
+            ),
+            layout_request_signature(
+                1,
+                key,
+                Size::new(8, 2),
+                DirectHistoryAnchor::FollowEnd,
+                &replacement,
+                &HashMap::new(),
+            )
+        );
     }
 
     #[test]

@@ -246,6 +246,8 @@ impl TuiEnvironment {
         let identity = EnvironmentIdentity::allocate();
         let wake = Arc::new(Condvar::new());
         let notify = Arc::new(tokio::sync::Notify::new());
+        let content_sources = ContentSourceRegistry::with_identity(identity);
+        let startup_error = content_sources.executor_startup_error();
         let inner = Arc::new(Mutex::new(EnvironmentInner {
             identity,
             hosts: HashMap::new(),
@@ -259,8 +261,8 @@ impl TuiEnvironment {
             wake: Arc::clone(&wake),
             notify: Arc::clone(&notify),
             shutdown: false,
-            startup_error: None,
-            content_sources: ContentSourceRegistry::with_identity(identity),
+            startup_error,
+            content_sources,
             #[cfg(test)]
             last_completion_capacities: None,
             #[cfg(test)]

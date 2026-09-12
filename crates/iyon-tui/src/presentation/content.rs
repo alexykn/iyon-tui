@@ -126,6 +126,17 @@ pub(crate) struct ContentMeasurement {
     /// These fields stay private to the presentation/content seam.
     pub(crate) connector_id: Option<u64>,
     pub(crate) projection_identity: u64,
+    /// Source frontier identity used to compare asynchronous layout captures.
+    /// Width/backend realization remains separate; these fields let a
+    /// compatible append use an older product without treating replacement
+    /// or truncation as the same content.
+    pub(crate) source_id: u64,
+    pub(crate) source_generation: u32,
+    pub(crate) content_generation: u64,
+    pub(crate) source_base: u64,
+    pub(crate) source_end: u64,
+    pub(crate) sealed: bool,
+    pub(crate) head_partial: bool,
 }
 
 /// One immutable capture used by all Taffy intrinsic requests for a leaf.
@@ -169,6 +180,13 @@ impl Default for ContentMeasurement {
             paint_revision: 0,
             connector_id: None,
             projection_identity: 0,
+            source_id: 0,
+            source_generation: 0,
+            content_generation: 0,
+            source_base: 0,
+            source_end: 0,
+            sealed: false,
+            head_partial: false,
         }
     }
 }

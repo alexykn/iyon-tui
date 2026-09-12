@@ -2,6 +2,22 @@ use std::sync::Weak;
 
 use super::*;
 
+struct LatchRelease(Option<std::sync::mpsc::Sender<()>>);
+
+impl LatchRelease {
+    fn release(&mut self) {
+        if let Some(release) = self.0.take() {
+            let _ = release.send(());
+        }
+    }
+}
+
+impl Drop for LatchRelease {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 #[test]
 fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
     let source_registry = ContentSourceRegistry::new();
@@ -33,6 +49,7 @@ fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
         state.visible = true;
     }
     let (entered, release) = registry.install_projection_latch_for_test();
+    let mut release = LatchRelease(Some(release));
     registry.begin_projection_candidate();
     registry
         .prepare_connector_projection(connector.id(), 20)
@@ -40,7 +57,7 @@ fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
     entered
         .recv_timeout(std::time::Duration::from_secs(1))
         .expect("content worker entered latch");
-    release.send(()).expect("release content worker");
+    release.release();
     registry.wait_for_projection_jobs_for_test();
     registry.clear_projection_latch_for_test();
     registry.begin_projection_candidate();
@@ -325,6 +342,70 @@ fn same_source_b_capture_cannot_replace_confirmed_a_frontier() {
         .expect("A fallback product");
     assert_eq!(product.key.source_revision, a_revision);
     registry.abort_candidate();
+}
+
+#[test]
+fn continuous_source_appends_coalesce_while_projection_is_pending() {
+    let source_registry = ContentSourceRegistry::new();
+    let source = source_registry.create(TextSourceKind::Stream).unwrap();
+    source.append_utf8(b"prefix\n", &[], &[]).unwrap();
+    let mut registry = ContentHostRegistry::new(source_registry);
+    let port = registry
+        .create_port(Weak::new(), ContentFamily::Text)
+        .unwrap();
+    let connector = registry
+        .connect(
+            &port.record,
+            &source,
+            HostContentFunnel::plain(TextWrapMode::Word),
+        )
+        .unwrap();
+    {
+        let mut port_state = port.record.lock().unwrap();
+        port_state.desired_mounted = true;
+        port_state.visible_mounted = true;
+        port_state.desired_connector = Some(connector.id());
+        port_state.visible_connector = Some(connector.id());
+    }
+    {
+        let connector_state = registry.connectors.get(&connector.id()).unwrap();
+        let mut connector_state = connector_state.lock().unwrap();
+        connector_state.requested = true;
+        connector_state.visible = true;
+    }
+    let (entered, release) = registry.install_projection_latch_for_test();
+    let mut release = LatchRelease(Some(release));
+    registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector.id(), 20)
+        .unwrap();
+    entered
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("projection worker entered latch");
+    for _ in 0..64 {
+        source.append_utf8(b"append\n", &[], &[]).unwrap();
+        registry
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+        assert_eq!(registry.pending_content_projections.len(), 1);
+    }
+    let latest = source.snapshot().unwrap();
+    release.release();
+    registry.wait_for_projection_jobs_for_test();
+    registry.clear_projection_latch_for_test();
+    registry.begin_projection_candidate();
+    registry
+        .prepare_connector_projection(connector.id(), 20)
+        .unwrap();
+    registry.wait_for_projection_jobs_for_test();
+    registry.begin_projection_candidate();
+    let measurement = registry
+        .prepare_connector_projection(connector.id(), 20)
+        .unwrap();
+    let projection = registry
+        .projection_for_measurement(connector.id(), measurement)
+        .expect("latest coalesced projection");
+    assert_eq!(projection.source_snapshot.source_end, latest.source_end);
 }
 
 #[test]

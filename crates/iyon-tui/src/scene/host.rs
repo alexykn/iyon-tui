@@ -804,7 +804,7 @@ impl SceneHost {
                     CapturedContentMeasurement {
                         capture_id: capture.capture_id,
                         port_id,
-                        offered_width: width,
+                        offered_width,
                         measurement: capture.measurement,
                         min_content: capture.min_content,
                         max_content: capture.max_content,

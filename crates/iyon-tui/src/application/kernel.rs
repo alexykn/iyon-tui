@@ -169,6 +169,10 @@ impl NativeRuntime {
     ) -> Option<crate::presentation::direct::DirectDriverHandle> {
         self.scene_host.take_direct_driver()
     }
+
+    pub(crate) fn set_async_wake(&mut self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.scene_host.set_async_wake(wake);
+    }
     pub(crate) fn host_remove_direct_control_component(
         &mut self,
         key: crate::occurrence::ResourceKey,

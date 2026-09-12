@@ -955,6 +955,8 @@ impl TuiHost {
             .lock()
             .map_err(|_| anyhow::anyhow!("host lock is poisoned"))?;
         host.host_id = host_id;
+        let async_wake = host.async_wake_callback();
+        host.running.set_async_wake(async_wake);
         host.running.host_set_direct_driver_id(host_id)?;
         host.content.set_owner_host(Arc::downgrade(&inner));
         if let Err(error) = host.present_frame() {
@@ -3526,8 +3528,8 @@ impl HostInner {
                             crate::history::NativeTransferStatus::Progress
                         );
                     if direct_changed && self.running.host_has_direct_occurrences() {
-                        self.sync_direct_occurrences(None)?;
                         let port_ids = self.running.host_direct_port_ids();
+                        let sync_result = self.sync_direct_occurrences(None);
                         for port_id in port_ids.values().copied() {
                             self.running.host_invalidate_content(
                                 crate::presentation::ContentDirty::new(
@@ -3537,6 +3539,7 @@ impl HostInner {
                                 ),
                             )?;
                         }
+                        sync_result?;
                     }
                     Ok(outcome)
                 });
@@ -3556,6 +3559,14 @@ impl HostInner {
                         self.content.end_candidate();
                         self.history_sink_blocked = false;
                         Ok(HistoryWorkPoll::Progress)
+                    }
+                    Err(error)
+                        if error
+                            .downcast_ref::<crate::scene::SceneLayoutPending>()
+                            .is_some() =>
+                    {
+                        self.ensure_pending()?;
+                        Ok(HistoryWorkPoll::Pending)
                     }
                     Err(error) => {
                         self.fail_history_transfer();
@@ -3615,6 +3626,12 @@ impl HostInner {
         let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::FramePrepareNanos);
         let target_epoch = self.pending_epoch;
         if let Err(error) = self.sync_ui_scene() {
+            if error
+                .downcast_ref::<crate::scene::SceneLayoutPending>()
+                .is_some()
+            {
+                return Err(error);
+            }
             let ui_revision = self.ui_resources.document.as_ref().map_or(
                 0,
                 crate::occurrence::OccurrenceDocument::accepted_ui_revision,

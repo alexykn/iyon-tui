@@ -279,15 +279,19 @@ impl SceneHost {
             .as_ref()
             .ok_or_else(|| anyhow!("direct renderer driver is not started"))?;
         let synchronization_complete = if let Some(pending_revision) = self.pending_sync_revision {
-            match driver.poll_synchronize()? {
-                None => return Err(anyhow::Error::new(SceneLayoutPending)),
-                Some(()) if pending_revision == sync_revision => {
+            match driver.poll_synchronize() {
+                Ok(None) => return Err(anyhow::Error::new(SceneLayoutPending)),
+                Ok(Some(())) if pending_revision == sync_revision => {
                     self.pending_sync_revision = None;
                     true
                 }
-                Some(()) => {
+                Ok(Some(())) => {
                     self.pending_sync_revision = None;
                     false
+                }
+                Err(error) => {
+                    self.pending_sync_revision = None;
+                    return Err(error);
                 }
             }
         } else {
@@ -611,17 +615,26 @@ impl SceneHost {
             .as_ref()
             .expect("direct renderer driver checked above");
         if self.pending_layout_signature == Some(signature) {
-            return match driver.poll_layout()? {
-                Some(layout) => {
+            return match driver.poll_layout() {
+                Ok(Some(layout)) => {
                     self.pending_layout_signature = None;
                     Ok(layout)
                 }
-                None => Err(anyhow::Error::new(SceneLayoutPending)),
+                Ok(None) => Err(anyhow::Error::new(SceneLayoutPending)),
+                Err(error) => {
+                    self.pending_layout_signature = None;
+                    Err(error)
+                }
             };
         }
         if self.pending_layout_signature.is_some() {
-            if driver.poll_layout()?.is_none() {
-                return Err(anyhow::Error::new(SceneLayoutPending));
+            match driver.poll_layout() {
+                Ok(None) => return Err(anyhow::Error::new(SceneLayoutPending)),
+                Ok(Some(_)) => {}
+                Err(error) => {
+                    self.pending_layout_signature = None;
+                    return Err(error);
+                }
             }
             self.pending_layout_signature = None;
         }

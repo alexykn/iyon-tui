@@ -465,6 +465,19 @@ struct ContentProjectionTask {
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
+struct ContentProjectionAdmission<'a> {
+    connector: &'a Arc<Mutex<ConnectorRecord>>,
+    connector_id: u64,
+    key: TextProjectionKey,
+    snapshot: &'a HostContentSourceSnapshot,
+    funnel: HostContentFunnel,
+    offered_width: u16,
+    delivery_revision: u64,
+    needs_finalized_prefix: bool,
+    task_bytes: usize,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ParserExecutionKey {
     source_id: u64,
@@ -1124,7 +1137,6 @@ enum ContentProjectionFailureKind {
     LimitExceeded,
     RetentionIncompatible,
     Projection,
-    Backpressure,
     ExecutorUnavailable,
 }
 
@@ -1134,7 +1146,6 @@ impl ContentProjectionFailureKind {
             Self::LimitExceeded => "LIMIT_EXCEEDED",
             Self::RetentionIncompatible => "RETENTION_INCOMPATIBLE",
             Self::Projection => "PROJECTION_FAILED",
-            Self::Backpressure => "CONTENT_BACKPRESSURE",
             Self::ExecutorUnavailable => "CONTENT_EXECUTOR_UNAVAILABLE",
         }
     }
@@ -5698,17 +5709,20 @@ impl ContentHostRegistry {
 
     fn admit_connector_projection(
         &mut self,
-        connector: &Arc<Mutex<ConnectorRecord>>,
-        connector_id: u64,
-        key: TextProjectionKey,
-        snapshot: &HostContentSourceSnapshot,
-        funnel: HostContentFunnel,
-        offered_width: u16,
-        delivery_revision: u64,
-        needs_finalized_prefix: bool,
-        task_bytes: usize,
-        cancelled: Arc<std::sync::atomic::AtomicBool>,
+        request: ContentProjectionAdmission<'_>,
     ) -> Result<()> {
+        let ContentProjectionAdmission {
+            connector,
+            connector_id,
+            key,
+            snapshot,
+            funnel,
+            offered_width,
+            delivery_revision,
+            needs_finalized_prefix,
+            task_bytes,
+            cancelled,
+        } = request;
         let waiter = if self.deferred_projection_waiter.is_none() {
             Some(self.completion_wake())
         } else {
@@ -5785,7 +5799,7 @@ impl ContentHostRegistry {
             pending.key = key;
             pending.result = Some(result);
             self.release_deferred_projection_waiter_if_idle();
-            return Ok(());
+            Ok(())
         }
     }
 
@@ -5904,18 +5918,18 @@ impl ContentHostRegistry {
             .map(|pending| Arc::clone(&pending.cancelled))
             .expect("projection admission marker must retain cancellation state");
         let task_bytes = usize::try_from(snapshot.retained_bytes()).unwrap_or(usize::MAX);
-        self.admit_connector_projection(
-            &connector,
+        self.admit_connector_projection(ContentProjectionAdmission {
+            connector: &connector,
             connector_id,
             key,
-            &snapshot,
+            snapshot: &snapshot,
             funnel,
             offered_width,
             delivery_revision,
             needs_finalized_prefix,
             task_bytes,
             cancelled,
-        )?;
+        })?;
         if self
             .pending_content_projections
             .get(&connector_id)

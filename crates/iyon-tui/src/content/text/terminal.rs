@@ -8,10 +8,7 @@
 
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
-use taffy::prelude::{
-    AvailableSpace, Dimension, Display, FromLength, GridTemplateComponent, Size, Style,
-    TrackSizingFunction,
-};
+use taffy::prelude::{AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style};
 use taffy::style_helpers::{auto, flex, length, line, max_content, minmax, span, zero};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
@@ -935,47 +932,6 @@ fn layout_table_grid(
         .iter()
         .map(|input| measure_block_slice(input.cell.blocks(), policy))
         .collect::<Vec<_>>();
-    let has_colspan = cells.iter().any(|input| input.cell.col_span().get() > 1);
-    let column_metrics = if matches!(
-        policy.table_column_sizing(),
-        super::TableColumnSizing::Content
-    ) && !has_colspan
-    {
-        Some(table_column_metrics_from_intrinsic(
-            table,
-            cells,
-            &intrinsic_metrics,
-            policy.table_column_gap(),
-        ))
-    } else {
-        None
-    };
-    let content_max_widths = column_metrics
-        .as_ref()
-        .map(|metrics| {
-            metrics
-                .iter()
-                .map(|metrics| {
-                    u16::try_from(metrics.max_width).map_err(|_| {
-                        TerminalProjectionError::ExtentOverflow {
-                            axis: "table column max-content width",
-                            value: metrics.max_width,
-                        }
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .transpose()?;
-    let content_tracks_fit = content_max_widths.as_ref().is_some_and(|widths| {
-        let gaps =
-            usize::from(policy.table_column_gap()).saturating_mul(widths.len().saturating_sub(1));
-        widths
-            .iter()
-            .map(|width| usize::from(*width))
-            .sum::<usize>()
-            .saturating_add(gaps)
-            <= usize::from(width)
-    });
     let mut cell_nodes = Vec::with_capacity(cells.len());
     for (cell_index, input) in cells.iter().enumerate() {
         let row_end = input
@@ -1029,17 +985,9 @@ fn layout_table_grid(
     table_style.display = Display::Grid;
     table_style.size.width = Dimension::length(f32::from(width));
     table_style.grid_template_columns = (0..table.columns().len())
-        .map(|column| {
+        .map(|_| {
             let track = match policy.table_column_sizing() {
-                super::TableColumnSizing::Content if has_colspan => minmax(zero(), max_content()),
-                super::TableColumnSizing::Content if content_tracks_fit => {
-                    TrackSizingFunction::from_length(f32::from(
-                        content_max_widths
-                            .as_ref()
-                            .expect("content widths are prepared for content tracks")[column],
-                    ))
-                }
-                super::TableColumnSizing::Content => auto(),
+                super::TableColumnSizing::Content => minmax(zero(), max_content()),
                 // The zero minimum is intentional: a plain `1fr` track has
                 // an automatic min-content minimum and can overflow a narrow
                 // definite table. Flex tracks own both allocation and that
@@ -1106,20 +1054,10 @@ fn layout_table_grid(
                 AvailableSpace::MaxContent => Some(max_width),
             });
             let requested_width = requested_width.expect("table grid always supplies a width");
-            let width = match checked_table_value("table cell width", requested_width) {
-                Ok(value) => value,
+            let width = match checked_table_width("table cell width", requested_width) {
+                Ok(width) => width,
                 Err(error) => {
                     measure_error = Some(error);
-                    return Size::ZERO;
-                }
-            };
-            let width = match u16::try_from(width) {
-                Ok(width) => width,
-                Err(_) => {
-                    measure_error = Some(TerminalProjectionError::ExtentOverflow {
-                        axis: "table cell width",
-                        value: usize::try_from(width).expect("checked table width is nonnegative"),
-                    });
                     return Size::ZERO;
                 }
             };
@@ -1227,6 +1165,21 @@ fn checked_table_value(axis: &'static str, value: f32) -> Result<i32, TerminalPr
         axis,
         value: usize::MAX,
     })
+}
+
+fn checked_table_width(axis: &'static str, value: f32) -> Result<u16, TerminalProjectionError> {
+    let floored = f64::from(value).floor();
+    if !floored.is_finite() || floored < 0.0 || floored > f64::from(u16::MAX) {
+        return Err(TerminalProjectionError::ExtentOverflow {
+            axis,
+            value: if value.is_sign_negative() {
+                0
+            } else {
+                usize::MAX
+            },
+        });
+    }
+    Ok(floored as u16)
 }
 
 impl<'a> ProductBuilder<'a> {
@@ -2973,25 +2926,6 @@ fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<Intrins
     columns
 }
 
-fn table_column_metrics_from_intrinsic(
-    table: &Table,
-    cells: &[TableCellInput<'_>],
-    intrinsic_metrics: &[IntrinsicMetrics],
-    gap: u16,
-) -> Vec<IntrinsicMetrics> {
-    let mut columns = vec![IntrinsicMetrics::default(); table.columns().len()];
-    for (input, metrics) in cells.iter().zip(intrinsic_metrics.iter().copied()) {
-        merge_table_cell_metrics(
-            &mut columns,
-            input.logical_column,
-            usize::from(input.cell.col_span().get()),
-            metrics,
-            gap,
-        );
-    }
-    columns
-}
-
 fn merge_table_cell_metrics(
     columns: &mut [IntrinsicMetrics],
     start: usize,
@@ -3504,6 +3438,38 @@ mod tests {
     }
 
     #[test]
+    fn fractional_table_tracks_floor_cell_wrap_widths() {
+        assert_eq!(checked_table_width("test", 1.9).expect("bounded width"), 1);
+        let table = Table::new(
+            None::<Vec<Block>>,
+            [
+                TableColumn::start(),
+                TableColumn::start(),
+                TableColumn::start(),
+            ],
+            0,
+            [TableRow::new([
+                TableCell::text("ab"),
+                TableCell::text("ab"),
+                TableCell::text("ab"),
+            ])],
+        )
+        .expect("table");
+        let product = TerminalTextProjector::new(TextRenderPolicy::new())
+            .project(
+                &TextContent::block(Block::table(table)),
+                TerminalConstraints::definite(6),
+            )
+            .expect("fractional flex table projection");
+        assert_eq!(
+            (0..product.rows().len())
+                .map(|row| row_text(&product, row))
+                .collect::<Vec<_>>(),
+            ["a ab a", "b    b"]
+        );
+    }
+
+    #[test]
     fn content_table_tracks_retain_intrinsic_width_when_space_remains() {
         let table = Table::new(
             None::<Vec<Block>>,
@@ -3582,38 +3548,5 @@ mod tests {
             error,
             TerminalProjectionError::MarkerExtentOverflow { value: u64::MAX }
         ));
-    }
-
-    #[test]
-    fn content_table_columns_use_intrinsic_maxima() {
-        let table = Table::new(
-            None::<Vec<Block>>,
-            [TableColumn::start(), TableColumn::start()],
-            0,
-            [TableRow::new([
-                TableCell::text("alpha beta"),
-                TableCell::text("123"),
-            ])],
-        )
-        .expect("table");
-        let product = TerminalTextProjector::new(
-            TextRenderPolicy::new()
-                .with_table_column_sizing(super::super::TableColumnSizing::Content),
-        )
-        .project(
-            &TextContent::block(Block::table(table)),
-            TerminalConstraints::definite(30),
-        )
-        .expect("table projection");
-        let cells = product
-            .blocks()
-            .iter()
-            .filter(|block| block.kind() == TerminalBlockKind::TableCell)
-            .map(|block| block.rect())
-            .collect::<Vec<_>>();
-        assert_eq!(cells.len(), 2);
-        assert_eq!(cells[0].width(), 10);
-        assert_eq!(cells[1].x(), 11);
-        assert_eq!(cells[1].width(), 3);
     }
 }

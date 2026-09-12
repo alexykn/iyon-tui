@@ -2,7 +2,7 @@
  * Content-plane control transport.
  *
  * This module owns the small N-API control calls for Source, Port, and
- * Connector identities. It does not lower semantic Views or implement Source
+ * Connector identities. It does not lower structural UI or implement Source
  * payload/projection work; bulk Source data belongs to the content data plane.
  */
 

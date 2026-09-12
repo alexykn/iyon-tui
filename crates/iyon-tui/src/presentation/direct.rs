@@ -1481,6 +1481,10 @@ fn paint_direct_node(
         .unwrap_or(Rect::new(node.rect.x, node.rect.y, 0, 0));
 
     if let Some(background) = &node.decoration.surface_background {
+        eprintln!(
+            "background {:?} origin={:?} rect={:?} color={:?}",
+            node.key, node.paint_origin, node.rect, background
+        );
         let color = resolver.resolve_color(background, &context);
         let left = node.paint_origin.0.max(i32::from(clip.x)).max(0);
         let top = node.paint_origin.1.max(i32::from(clip.y)).max(0);

@@ -1021,8 +1021,8 @@ fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
     {
         style.min_size.width = Dimension::length(0.0);
     }
-    // Concrete controls are occurrence leaves. Their native component view is
-    // painted inside this allocation, so a control without explicit geometry
+    // Concrete controls are occurrence leaves. Their immutable control
+    // snapshot is painted inside this allocation, so a control without explicit geometry
     // must participate in its parent's width and retain one terminal row
     // instead of being treated as a zero-sized Taffy leaf.
     if snapshot.control.is_some() {

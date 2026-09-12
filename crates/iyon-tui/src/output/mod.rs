@@ -2,7 +2,7 @@
 //!
 //! This module owns the generic, backend-neutral boundary between component
 //! event emission and application action mapping. It intentionally does not
-//! know about components, views, input, or runtime state.
+//! know about components, UI layout, input, or runtime state.
 
 mod event;
 mod handle;

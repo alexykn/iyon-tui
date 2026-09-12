@@ -7827,6 +7827,25 @@ impl ContentProvider for ContentHostRegistry {
             })?;
         let confirmed_connector = port.visible_connector;
         let desired_connector = port.desired_connector;
+        // `measure_content` records a failed candidate and clears its
+        // selection when no confirmed product exists. Retain that failed
+        // connector in the capture so the host can publish its structured
+        // projection diagnostic after preparation instead of replacing the
+        // root cause with a generic capture error.
+        let failed_desired_connector = if let Some(connector_id) = desired_connector {
+            let connector = self.connectors.get(&connector_id).ok_or_else(|| {
+                anyhow!("CONTENT_CAPTURE_FAILED: requested Connector {connector_id} is unavailable")
+            })?;
+            let state = connector.lock().map_err(|_| {
+                anyhow!(
+                    "CONTENT_CAPTURE_FAILED: requested Connector {connector_id} lock is poisoned"
+                )
+            })?;
+            (!state.visible && state.error.is_some()).then_some(connector_id)
+        } else {
+            None
+        };
+        let candidate_connector = candidate_connector.or(failed_desired_connector);
         let candidate_product = measurement
             .connector_id
             .and_then(|connector| self.projection_for_measurement(connector, measurement));
@@ -7880,35 +7899,26 @@ impl ContentProvider for ContentHostRegistry {
                 ));
             }
         };
-        if confirmed.is_none() {
-            if let Some(desired_connector) = desired_connector
-                && self
-                    .connectors
-                    .get(&desired_connector)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} is unavailable"
-                        )
-                    })?
+        let candidate_failure_without_error = match &candidate {
+            CapturedCandidate::Failed { connector_id, .. } if confirmed.is_none() => {
+                let connector = self.connectors.get(connector_id).ok_or_else(|| {
+                    anyhow!(
+                        "INTERNAL_INVARIANT: failed candidate Connector {connector_id} disappeared"
+                    )
+                })?;
+                !connector
                     .lock()
-                    .map_err(|_| {
-                        anyhow!(
-                            "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} lock is poisoned"
-                        )
-                    })?
+                    .map_err(|_| anyhow!("CONTENT_CAPTURE_FAILED: Connector lock is poisoned"))?
                     .error
                     .is_some()
-            {
-                return Err(anyhow!(
-                    "CONTENT_CAPTURE_FAILED: requested Connector {desired_connector} has no valid candidate or confirmed product"
-                ));
             }
-        }
+            _ => false,
+        };
         if let CapturedCandidate::Failed {
             connector_id,
             source_snapshot,
         } = &candidate
-            && confirmed.is_none()
+            && candidate_failure_without_error
         {
             return Err(anyhow!(
                 "CONTENT_CAPTURE_FAILED: Connector {connector_id} projection failed at Source revision {} without a confirmed product",
@@ -9272,6 +9282,56 @@ mod tests {
         assert_eq!(second.status().unwrap().phase, "active");
         host.close().unwrap();
         source.dispose().unwrap();
+    }
+
+    #[test]
+    fn failed_unconfirmed_capture_preserves_projection_failure_diagnostic() {
+        let source_registry = ContentSourceRegistry::new();
+        let source = source_registry.create(TextSourceKind::Stream).unwrap();
+        let mut registry = ContentHostRegistry::new(source_registry);
+        let port = registry
+            .create_port(Weak::new(), ContentFamily::Text)
+            .unwrap();
+        let connector = registry
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut state = port.record.lock().unwrap();
+            state.desired_mounted = true;
+            state.desired_connector = Some(connector.id());
+        }
+        {
+            let mut state = connector.record.lock().unwrap();
+            state.requested = true;
+        }
+        registry
+            .fail_next_activation(connector.id(), "automatic diagnostic probe".to_owned())
+            .unwrap();
+        registry.begin_projection_candidate();
+        let capture = registry
+            .capture_measurement(port.id(), 20, crate::presentation::WidthRule::Fill)
+            .expect("a failed candidate remains capturable until host failure publication");
+        assert_eq!(capture.measurement.connector_id, None);
+        assert!(matches!(
+            registry
+                .candidate_content_captures
+                .get(&capture.capture_id)
+                .map(|capture| &capture.candidate),
+            Some(CapturedCandidate::Failed { .. })
+        ));
+        let connector_state = connector.record.lock().unwrap();
+        let failure = connector_state
+            .error
+            .as_ref()
+            .expect("failed connector diagnostic");
+        assert_eq!(failure.code, "PROJECTION_FAILED");
+        assert_eq!(failure.diagnostic, "automatic diagnostic probe");
+        drop(connector_state);
+        registry.abort_candidate();
     }
 
     #[test]

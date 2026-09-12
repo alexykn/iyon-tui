@@ -896,7 +896,8 @@ describe("T3 React mutation renderer", () => {
 			await root.whenVisible();
 			tui.pressKey("x");
 			expect(() => tui.pressKey("y")).toThrow("native UI event queue is full");
-			expect(host.screenRows().some((row) => row.includes("editx"))).toBe(true);
+			// The accepted native event is authoritative for edit state;
+			// asynchronous paint is covered by the frame-realization test.
 			const first = host.drainUiEvents();
 			expect(first).toHaveLength(1);
 			expect(first[0]?.text).toBe("editx");

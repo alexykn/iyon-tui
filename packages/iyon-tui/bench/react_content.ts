@@ -780,6 +780,7 @@ function witnessTraffic(
 	name: string,
 	traffic: TrafficSnapshot,
 ): Readonly<Record<string, unknown>> {
+	console.error(`Measured traffic: ${name}`);
 	return { name, ...traffic };
 }
 
@@ -1025,6 +1026,7 @@ async function provenance() {
 	};
 }
 
+console.error("Measuring traffic witnesses");
 const trafficWitnesses = await runTrafficWitnesses();
 const workloadFactories: readonly [string, () => Promise<Session>][] = [
 	["stable-tree-leaf-style", openStableSession],
@@ -1044,8 +1046,10 @@ const workloadFactories: readonly [string, () => Promise<Session>][] = [
 	["shared-source-duplicate-occurrence-memory", openSharedMemorySession],
 ];
 const workloads = [];
-for (const [name, factory] of workloadFactories)
+for (const [name, factory] of workloadFactories) {
+	console.error(`Measuring ${name}`);
 	workloads.push(await runSession(name, await factory()));
+}
 
 const report = {
 	schema: "t7-m2-performance-v2",

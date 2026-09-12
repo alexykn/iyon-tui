@@ -950,4 +950,121 @@ mod tests {
         assert_eq!(facts.0, vec![Size::new(8, 2), Size::new(7, 2)]);
         assert_eq!(facts.1, vec![Size::new(8, 12), Size::new(8, 13)]);
     }
+
+    #[test]
+    fn direct_host_keeps_input_invalidation_nonblocking_during_layout() {
+        let mut host = SceneHost::default();
+        host.set_direct_driver_id(17)
+            .expect("direct driver startup");
+        let root = crate::occurrence::NodeKey {
+            slot: 1,
+            generation: 1,
+        };
+        let snapshot = crate::occurrence::OccurrenceSnapshot {
+            key: root,
+            kind: crate::occurrence::HostKind::Box,
+            root_role: Some(crate::occurrence::RootRole::Body),
+            children: Vec::new(),
+            port: None,
+            control: None,
+            hidden: false,
+            subscriptions: 0,
+            history_action: None,
+            properties: Vec::new(),
+            style_states: Vec::new(),
+            structure_revision: 1,
+            geometry_revision: 1,
+            presentation_revision: 0,
+            interaction_revision: 0,
+        };
+        let synchronize = host.sync_direct_occurrences(
+            1,
+            vec![snapshot.clone()],
+            None,
+            &[NodeParticipation {
+                key: root,
+                participates: true,
+            }],
+            HashMap::new(),
+            vec![root],
+            root,
+            HashMap::new(),
+        );
+        assert!(synchronize.is_err(), "initial sync is asynchronous");
+        for _ in 0..1000 {
+            let synchronize = host.sync_direct_occurrences(
+                1,
+                vec![snapshot.clone()],
+                None,
+                &[NodeParticipation {
+                    key: root,
+                    participates: true,
+                }],
+                HashMap::new(),
+                vec![root],
+                root,
+                HashMap::new(),
+            );
+            if synchronize.is_ok() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(host.has_direct_occurrences());
+
+        let (entered, release) = host
+            .install_layout_latch_for_test()
+            .expect("layout latch installation");
+        let mut registry = ComponentRegistry::new();
+        let mut content = crate::presentation::content::EmptyContentProvider;
+        let prepare = host.prepare_direct_at_with_content(
+            Instant::now(),
+            root,
+            Size::new(8, 2),
+            DirectHistoryAnchor::FollowEnd,
+            &mut registry,
+            &Theme::default(),
+            &mut content,
+            &HashMap::new(),
+        );
+        assert!(prepare.is_err(), "layout request is asynchronous");
+        entered
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("layout worker entered latch");
+        host.invalidate_direct_control_measurement(ComponentId::from_raw(1))
+            .expect("input invalidation must not wait for layout");
+        let prepare = host.prepare_direct_at_with_content(
+            Instant::now(),
+            root,
+            Size::new(8, 2),
+            DirectHistoryAnchor::FollowEnd,
+            &mut registry,
+            &Theme::default(),
+            &mut content,
+            &HashMap::new(),
+        );
+        assert!(prepare.is_err(), "latched layout remains pending");
+        release.send(()).expect("release layout worker");
+        host.clear_layout_latch_for_test();
+        let mut prepared = false;
+        for _ in 0..1000 {
+            let prepare = host.prepare_direct_at_with_content(
+                Instant::now(),
+                root,
+                Size::new(8, 2),
+                DirectHistoryAnchor::FollowEnd,
+                &mut registry,
+                &Theme::default(),
+                &mut content,
+                &HashMap::new(),
+            );
+            if prepare.is_ok() {
+                prepared = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(prepared, "layout and paint complete after release");
+        host.clear_direct_driver().expect("direct driver shutdown");
+    }
 }

@@ -1486,6 +1486,40 @@ mod tests {
     }
 
     #[test]
+    fn direct_semantic_measurement_ignores_unmatched_history_adjustment() {
+        let capture = CapturedContentMeasurement {
+            capture_id: 1,
+            port_id: 7,
+            offered_width: 8,
+            measurement: ContentMeasurement {
+                intrinsic_size: crate::geometry::Size::new(8, 1),
+                projection_identity: 7,
+                ..ContentMeasurement::default()
+            },
+            min_content: crate::geometry::Size::new(1, 8),
+            max_content: crate::geometry::Size::new(8, 1),
+            history_adjustment: Some(HistoryMeasurementAdjustment {
+                projection_identity: 99,
+                offered_width: 8,
+                removed_rows: 1,
+            }),
+            semantic_view: Some(crate::presentation::factory::text("abcdefgh")),
+        };
+        let measured = measured_for_request(
+            Some(&capture),
+            None,
+            crate::presentation::taffy::MeasureRequest {
+                known_width: Some(4.0),
+                known_height: None,
+                available_width: AvailableConstraint::Definite(4.0),
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: Some(4),
+            },
+        );
+        assert_eq!(measured.height, 2.0);
+    }
+
+    #[test]
     fn direct_driver_owns_taffy_until_explicit_shutdown() {
         let mut driver = DirectDriverHandle::start(0xfeed).expect("driver startup");
         driver.shutdown().expect("driver shutdown");

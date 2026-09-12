@@ -1453,8 +1453,9 @@ impl TuiHost {
                     inner.pending_ui_changes = Some(frontier);
                 }
             }
+            let changes_have_work = changes.has_work();
             inner.queue_ui_changes(changes);
-            if result.acknowledgement.wake_flags != 0
+            if (changes_have_work || result.acknowledgement.wake_flags != 0)
                 && let Err(error) = inner.mark_pending()
             {
                 // The UI and Source transaction is already authoritative.

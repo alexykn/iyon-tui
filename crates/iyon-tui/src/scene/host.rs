@@ -327,6 +327,7 @@ impl SceneHost {
         roots: Vec<crate::occurrence::NodeKey>,
         body_root: crate::occurrence::NodeKey,
         portal_owners: HashMap<crate::occurrence::NodeKey, crate::occurrence::NodeKey>,
+        wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<()> {
         let driver = self
             .direct_driver
@@ -392,6 +393,7 @@ impl SceneHost {
                 roots,
                 portal_owners,
                 self.direct_controls.clone(),
+                wake,
             )?;
             self.pending_sync_revision = Some(sync_revision);
             return Err(anyhow::Error::new(SceneLayoutPending));
@@ -1191,6 +1193,7 @@ mod tests {
             vec![root],
             root,
             HashMap::new(),
+            Arc::new(|| {}),
         );
         assert!(synchronize.is_err(), "initial sync is asynchronous");
         for _ in 0..1000 {
@@ -1206,6 +1209,7 @@ mod tests {
                 vec![root],
                 root,
                 HashMap::new(),
+                Arc::new(|| {}),
             );
             if synchronize.is_ok() {
                 break;

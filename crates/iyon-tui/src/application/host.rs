@@ -3747,7 +3747,7 @@ impl HostInner {
             crate::presentation::direct::DirectHistoryAnchor::FollowEnd
         };
         let async_wake = self.async_wake_callback();
-        let (candidate, history_plan) = match self.running.prepare_frame_for_history(
+        let preparation = self.running.prepare_frame_for_history(
             self.now,
             size,
             &mut self.content,
@@ -3755,37 +3755,10 @@ impl HostInner {
             &direct_port_ids,
             direct_history_anchor,
             async_wake,
-        ) {
-            Ok(candidate) => candidate,
-            Err(error) => {
-                if error
-                    .downcast_ref::<super::content::ContentProjectionPending>()
-                    .is_some()
-                    || error
-                        .downcast_ref::<crate::scene::SceneLayoutPending>()
-                        .is_some()
-                {
-                    self.content.suspend_candidate_for_async();
-                    self.running.host_discard_candidate();
-                    return Err(error);
-                }
-                // SceneHost may have staged derived layout/surface state before
-                // a late preparation error. Keep the HostInner frame as the
-                // sole visible authority and rebuild the candidate on retry.
-                self.note_physical_sync_failure(&error);
-                let ui_revision = self.ui_resources.document.as_ref().map_or(
-                    0,
-                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
-                );
-                self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
-                self.content.abort_candidate();
-                self.running.host_discard_candidate();
-                return Err(error);
-            }
-        };
-        let history_plan = (!self.history_sink_blocked)
-            .then_some(history_plan)
-            .flatten();
+        );
+        // Content preparation can fail while another part of the frame is
+        // still awaiting layout or paint. Publish that failure now rather
+        // than requiring a complete frame before the error observer can run.
         let content_failure = match self.content.ui_content_failure() {
             Ok(failure) => failure,
             Err(error) => {
@@ -3816,6 +3789,31 @@ impl HostInner {
             self.running.host_discard_candidate();
             return Err(error);
         }
+        let (candidate, history_plan) = match preparation {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                if is_async_work_pending(&error) {
+                    self.content.suspend_candidate_for_async();
+                    self.running.host_discard_candidate();
+                    return Err(error);
+                }
+                // SceneHost may have staged derived layout/surface state before
+                // a late preparation error. Keep the HostInner frame as the
+                // sole visible authority and rebuild the candidate on retry.
+                self.note_physical_sync_failure(&error);
+                let ui_revision = self.ui_resources.document.as_ref().map_or(
+                    0,
+                    crate::occurrence::OccurrenceDocument::accepted_ui_revision,
+                );
+                self.record_failed_frame(&error, "frame", ui_revision, target_epoch);
+                self.content.abort_candidate();
+                self.running.host_discard_candidate();
+                return Err(error);
+            }
+        };
+        let history_plan = (!self.history_sink_blocked)
+            .then_some(history_plan)
+            .flatten();
         let content_commit = match self.candidate_content_commit() {
             Ok(commit) => commit,
             Err(error) => {
@@ -4175,6 +4173,7 @@ impl HostInner {
         roots.extend(document.portal_roots());
         let body_root = document.body_root();
         let sync_revision = document.accepted_ui_revision();
+        let wake = self.async_wake_callback();
         self.running
             .host_sync_direct_occurrences(
                 sync_revision,
@@ -4185,6 +4184,7 @@ impl HostInner {
                 roots,
                 body_root,
                 portal_owners,
+                wake,
             )
             .map_err(|error| {
                 if error

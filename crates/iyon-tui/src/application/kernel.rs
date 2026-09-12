@@ -189,6 +189,7 @@ impl NativeRuntime {
         roots: Vec<crate::occurrence::NodeKey>,
         body_root: crate::occurrence::NodeKey,
         portal_owners: HashMap<crate::occurrence::NodeKey, crate::occurrence::NodeKey>,
+        wake: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) -> anyhow::Result<()> {
         self.scene_host.sync_direct_occurrences(
             sync_revision,
@@ -199,6 +200,7 @@ impl NativeRuntime {
             roots,
             body_root,
             portal_owners,
+            wake,
         )
     }
 

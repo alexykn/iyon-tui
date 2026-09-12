@@ -114,6 +114,7 @@ enum DirectDriverCommand {
         portal_owners: HashMap<NodeKey, NodeKey>,
         controls: HashMap<crate::occurrence::ResourceKey, ComponentId>,
         response: SyncSender<Result<()>>,
+        wake: Arc<dyn Fn() + Send + Sync>,
     },
     Layout {
         root: NodeKey,
@@ -198,6 +199,7 @@ impl DirectDriverHandle {
         roots: Vec<NodeKey>,
         portal_owners: HashMap<NodeKey, NodeKey>,
         controls: HashMap<crate::occurrence::ResourceKey, ComponentId>,
+        wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Result<()> {
         let mut pending = self
             .pending_synchronize
@@ -217,6 +219,7 @@ impl DirectDriverHandle {
                 portal_owners,
                 controls,
                 response,
+                wake,
             })
             .map_err(|_| anyhow!("direct renderer driver is closed"))?;
         *pending = Some(receive);
@@ -446,6 +449,7 @@ fn direct_driver_loop(
                 portal_owners,
                 controls,
                 response,
+                wake,
             } => {
                 let _ = response.send(renderer.synchronize(
                     snapshots,
@@ -456,6 +460,7 @@ fn direct_driver_loop(
                     portal_owners,
                     controls,
                 ));
+                wake();
             }
             DirectDriverCommand::Layout {
                 root,
@@ -2347,6 +2352,7 @@ mod tests {
             presentation_revision: 0,
             interaction_revision: 0,
         };
+        let (synchronized, synchronization_wake) = std::sync::mpsc::channel();
         driver
             .request_synchronize(
                 vec![snapshot],
@@ -2359,15 +2365,19 @@ mod tests {
                 vec![root],
                 HashMap::new(),
                 HashMap::new(),
+                Arc::new(move || synchronized.send(()).expect("synchronization observer")),
             )
             .expect("direct synchronization request");
-        while driver
-            .poll_synchronize()
-            .expect("direct synchronization poll")
-            .is_none()
-        {
-            std::thread::yield_now();
-        }
+        synchronization_wake
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("synchronization completion must wake its host");
+        assert!(
+            driver
+                .poll_synchronize()
+                .expect("direct synchronization poll")
+                .is_some(),
+            "the synchronization result must be published before its wake"
+        );
         let (entered, release) = driver.install_layout_latch_for_test();
         let mut release = LatchRelease(Some(release));
         driver

@@ -142,8 +142,6 @@ struct PreparedParent {
     structure_revision: u64,
     legacy_row: bool,
     legacy_column: bool,
-    body_root: bool,
-    history_root: bool,
 }
 
 struct PreparedSync<'a> {
@@ -159,9 +157,6 @@ pub(crate) struct TaffyLayoutAdapter {
     entries: HashMap<NodeKey, LayoutEntry>,
     legacy_row_children: HashSet<NodeKey>,
     legacy_column_children: HashSet<NodeKey>,
-    body_content_children: HashSet<NodeKey>,
-    body_fit_children: HashSet<NodeKey>,
-    history_root_children: HashSet<NodeKey>,
     explicit_flex_shrink: HashSet<NodeKey>,
 }
 
@@ -180,9 +175,6 @@ impl TaffyLayoutAdapter {
             entries: HashMap::new(),
             legacy_row_children: HashSet::new(),
             legacy_column_children: HashSet::new(),
-            body_content_children: HashSet::new(),
-            body_fit_children: HashSet::new(),
-            history_root_children: HashSet::new(),
             explicit_flex_shrink: HashSet::new(),
         }
     }
@@ -200,15 +192,10 @@ impl TaffyLayoutAdapter {
         body_fit_children: impl IntoIterator<Item = NodeKey>,
         history_root_children: impl IntoIterator<Item = NodeKey>,
     ) -> Result<(), TaffyAdapterError> {
-        self.body_content_children = body_content_children.into_iter().collect();
-        self.body_fit_children = body_fit_children.into_iter().collect();
-        self.history_root_children = history_root_children.into_iter().collect();
-        for key in self
-            .body_content_children
-            .iter()
-            .chain(self.body_fit_children.iter())
-            .chain(self.history_root_children.iter())
-            .copied()
+        for key in body_content_children
+            .into_iter()
+            .chain(body_fit_children)
+            .chain(history_root_children)
         {
             let node = self.entry(key)?.node;
             let mut style = self
@@ -424,8 +411,6 @@ impl TaffyLayoutAdapter {
                 structure_revision: snapshot.structure_revision,
                 legacy_row: is_legacy_row(snapshot),
                 legacy_column: is_legacy_column(snapshot),
-                body_root: is_body_root(snapshot),
-                history_root: is_history_root(snapshot),
             });
         }
         Ok(parents)
@@ -479,31 +464,6 @@ impl TaffyLayoutAdapter {
             }
         }
         for parent in &plan.parents {
-            if parent.body_root {
-                self.body_content_children
-                    .retain(|child| parent.children.contains(child));
-                for child in &parent.children {
-                    if plan.nodes.iter().any(|prepared| {
-                        prepared.key == *child && prepared.snapshot.kind == HostKind::ContentHost
-                    }) {
-                        self.body_content_children.insert(*child);
-                    }
-                    if plan.nodes.iter().any(|prepared| {
-                        prepared.key == *child && is_intrinsic_body_child(prepared.snapshot)
-                    }) {
-                        self.body_fit_children.insert(*child);
-                    }
-                }
-                self.body_fit_children
-                    .retain(|child| parent.children.contains(child));
-            }
-            if parent.history_root {
-                self.history_root_children
-                    .retain(|child| parent.children.contains(child));
-                for child in &parent.children {
-                    self.history_root_children.insert(*child);
-                }
-            }
             for child in &parent.children {
                 self.legacy_row_children.remove(child);
                 self.legacy_column_children.remove(child);
@@ -570,15 +530,6 @@ impl TaffyLayoutAdapter {
         plan: &PreparedSync<'_>,
     ) -> Result<(), TaffyAdapterError> {
         for prepared in &plan.nodes {
-            if !is_history_root(prepared.snapshot) {
-                continue;
-            }
-            self.history_root_children
-                .retain(|child| prepared.snapshot.children.contains(child));
-            self.history_root_children
-                .extend(prepared.snapshot.children.iter().copied());
-        }
-        for prepared in &plan.nodes {
             let PreparedStyle::Update(style) = &prepared.style else {
                 continue;
             };
@@ -635,48 +586,6 @@ impl TaffyLayoutAdapter {
                 }
             }
         }
-        for child in self.body_content_children.iter().copied() {
-            let node = self.entry(child)?.node;
-            let mut style = self
-                .tree
-                .style(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                .clone();
-            if style.align_self.is_none() {
-                style.align_self = Some(AlignSelf::START);
-                self.tree
-                    .set_style(node, style)
-                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            }
-        }
-        for child in self.body_fit_children.iter().copied() {
-            let node = self.entry(child)?.node;
-            let mut style = self
-                .tree
-                .style(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                .clone();
-            if style.align_self.is_none() {
-                style.align_self = Some(AlignSelf::START);
-                self.tree
-                    .set_style(node, style)
-                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            }
-        }
-        for child in self.history_root_children.iter().copied() {
-            let node = self.entry(child)?.node;
-            let mut style = self
-                .tree
-                .style(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                .clone();
-            if style.align_self.is_none() {
-                style.align_self = Some(AlignSelf::START);
-                self.tree
-                    .set_style(node, style)
-                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            }
-        }
         Ok(())
     }
 
@@ -691,9 +600,6 @@ impl TaffyLayoutAdapter {
                 .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
             self.legacy_row_children.remove(key);
             self.legacy_column_children.remove(key);
-            self.body_content_children.remove(key);
-            self.body_fit_children.remove(key);
-            self.history_root_children.remove(key);
             self.explicit_flex_shrink.remove(key);
         }
         Ok(())
@@ -1131,10 +1037,6 @@ fn is_legacy_column(snapshot: &OccurrenceSnapshot) -> bool {
     )
 }
 
-fn is_body_root(snapshot: &OccurrenceSnapshot) -> bool {
-    matches!(snapshot.root_role, Some(crate::occurrence::RootRole::Body))
-}
-
 pub(crate) fn is_intrinsic_body_child(snapshot: &OccurrenceSnapshot) -> bool {
     if snapshot.kind != HostKind::Box {
         return false;
@@ -1145,13 +1047,6 @@ pub(crate) fn is_intrinsic_body_child(snapshot: &OccurrenceSnapshot) -> bool {
             | Some(LayerValue::Value(PropertyValue::LayoutMode(
                 LayoutMode::Box
             )))
-    )
-}
-
-fn is_history_root(snapshot: &OccurrenceSnapshot) -> bool {
-    matches!(
-        snapshot.root_role,
-        Some(crate::occurrence::RootRole::LegacyHistoryUnit)
     )
 }
 

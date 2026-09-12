@@ -1379,7 +1379,7 @@ fn source_range_for_piece(
 }
 
 // ContentPort IDs cross the structural/native boundary, so they must not be
-// host-local: a View built for host A must not accidentally resolve to host B's
+// host-local: a product built for host A must not accidentally resolve to host B's
 // port with the same local slot. IDs are monotonic and never reused.
 static NEXT_CONTENT_PORT_ID: AtomicU64 = AtomicU64::new(1);
 

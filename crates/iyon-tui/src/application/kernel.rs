@@ -2,7 +2,7 @@
 //!
 //! The runtime keeps interaction, scheduling, content ownership, and the
 //! physical History frontier. General UI layout is always delegated to the
-//! occurrence/Taffy route; no Scene or semantic View shell is retained.
+//! occurrence/Taffy route; no second semantic UI shell is retained.
 
 use std::{
     collections::{HashMap, VecDeque},

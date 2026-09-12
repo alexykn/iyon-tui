@@ -2,7 +2,7 @@
 //!
 //! The N-API entrypoint is a boundary decoder; semantic control transitions
 //! live in the core occurrence control module, while this module coordinates
-//! the host-local resource plan. It owns no renderer, frame, or View state.
+//! the host-local resource plan. It owns no renderer, frame, or semantic UI state.
 //! JavaScript values are qualified and copied before the typed occurrence
 //! transaction is prepared; only the already-owned acknowledgement is returned
 //! after the core apply.

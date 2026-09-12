@@ -1617,6 +1617,8 @@ fn project_text_snapshot(
     semantic_cache: &mut SemanticProjectionCache,
     prefix_proof_cache: &mut PrefixProofCache,
 ) -> Result<HostContentProjection> {
+    #[cfg(feature = "perf-counters")]
+    let _perf_timer = crate::perf::ScopedTimer::new(crate::perf::Counter::ContentProjectionNanos);
     let key = TextProjectionKey {
         source_id: snapshot.source_id,
         source_generation: snapshot.source_generation,

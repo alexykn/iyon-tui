@@ -50,7 +50,7 @@ pub enum Counter {
     ContentDemandNodesVisited,
     ContentOwnerNodesVisited,
     UiControlKeysVisited,
-    // These four stage timing variants are only observed by ScopedTimer in
+    // These stage timing variants are only observed by ScopedTimer in
     // perf-counters builds. Their names remain in the canonical counter lane
     // so benchmarks can distinguish stage ownership without changing the
     // default addon surface.
@@ -60,7 +60,7 @@ pub enum Counter {
     FrameCommitNanos,
     DirectCaptureNanos,
     DirectRefinementNanos,
-    DirectDriverLayoutNanos,
+    ContentProjectionNanos,
     TaffyLayoutNanos,
     TaffyLayoutPasses,
     DirectPaintNanos,
@@ -116,7 +116,7 @@ const NAMES: [&str; Counter::COUNT] = [
     "frame_commit_nanos",
     "direct_capture_nanos",
     "direct_refinement_nanos",
-    "direct_driver_layout_nanos",
+    "content_projection_nanos",
     "taffy_layout_nanos",
     "taffy_layout_passes",
     "direct_paint_nanos",

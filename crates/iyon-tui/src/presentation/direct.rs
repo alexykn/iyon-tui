@@ -1671,21 +1671,7 @@ fn paint_direct_layout_owned(
         captures: &layout.content_products,
         theme,
     };
-    let mut surface =
-        crate::physical::Surface::new(layout.tree.size.width, layout.tree.size.height);
-    let resolver = crate::presentation::paint::ThemeResolver::new(theme);
-    paint_direct_node(
-        &layout.tree,
-        layout.tree.root,
-        &resolver,
-        &content,
-        focused,
-        graph,
-        &mut surface,
-        crate::physical::PhysicalStyle::default(),
-        crate::presentation::paint::StyleContext::default(),
-        Rect::new(0, 0, layout.tree.size.width, layout.tree.size.height),
-    )?;
+    let mut surface = paint_direct_layout(layout, theme, &content, focused, graph)?;
     if !layout.tree.physically_complete {
         surface.physically_complete = false;
     }

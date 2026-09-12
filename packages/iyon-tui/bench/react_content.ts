@@ -409,7 +409,7 @@ function selectedNativeCounters(): Readonly<Record<string, number>> {
 		"frame_commit_nanos",
 		"direct_capture_nanos",
 		"direct_refinement_nanos",
-		"direct_driver_layout_nanos",
+		"content_projection_nanos",
 		"taffy_layout_nanos",
 		"taffy_layout_passes",
 		"direct_paint_nanos",
@@ -1137,8 +1137,8 @@ const report = {
 				"SceneHost::capture_direct_measurements (content capture/projection entry)",
 			direct_refinement_nanos:
 				"SceneHost::prepare_direct_at_with_content (final-width refinement)",
-			direct_driver_layout_nanos:
-				"DirectDriverHandle::layout (layout-thread handoff and response)",
+			content_projection_nanos:
+				"project_text_snapshot (worker-owned content projection; excludes queue wait)",
 			taffy_layout_nanos:
 				"TaffyLayoutAdapter::layout (one intrinsic/definite layout pass)",
 			taffy_layout_passes: "TaffyLayoutAdapter::layout invocation count",

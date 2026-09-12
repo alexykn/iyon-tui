@@ -9,8 +9,7 @@
 use std::{collections::HashMap, fmt, ops::Range, sync::Arc};
 
 use taffy::prelude::{
-    AlignContent, AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style,
-    TrackSizingFunction,
+    AvailableSpace, Dimension, Display, GridTemplateComponent, Size, Style, TrackSizingFunction,
 };
 use taffy::style_helpers::{FromLength, auto, fr, length, line, span};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
@@ -913,12 +912,12 @@ fn layout_table_grid(
         policy.table_column_sizing(),
         super::TableColumnSizing::Content
     )
-    .then(|| table_column_widths(table, policy))
+    .then(|| table_column_widths(table, policy, width))
     .transpose()?;
     table_style.grid_template_columns = (0..table.columns().len())
         .map(|column| {
-            let track = if let Some(width) = content_widths.as_ref() {
-                TrackSizingFunction::from_length(f32::from(width[column]))
+            let track = if let Some(widths) = content_widths.as_ref() {
+                TrackSizingFunction::from_length(f32::from(widths[column]))
             } else {
                 fr(1.0_f32)
             };
@@ -932,16 +931,6 @@ fn layout_table_grid(
         width: length(f32::from(policy.table_column_gap())),
         height: length(f32::from(policy.table_row_gap())),
     };
-    if matches!(
-        policy.table_column_sizing(),
-        super::TableColumnSizing::Content
-    ) {
-        // Content tracks retain their intrinsic width. Taffy's default grid
-        // alignment stretches auto tracks to a definite container, turning
-        // the established content-column policy into a fill policy.
-        table_style.align_content = Some(AlignContent::START);
-        table_style.justify_content = Some(AlignContent::START);
-    }
     let mut children = cell_nodes.clone();
     children.extend(row_markers.iter().copied());
     let root = grid
@@ -2734,14 +2723,30 @@ fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<Intrins
 fn table_column_widths(
     table: &Table,
     policy: &TextRenderPolicy,
+    width: u16,
 ) -> Result<Vec<u16>, TerminalProjectionError> {
-    table_column_metrics(table, policy)
+    let preferred = table_column_metrics(table, policy)
         .into_iter()
         .map(|column| {
             u16::try_from(column.max_width).map_err(|_| TerminalProjectionError::ExtentOverflow {
                 axis: "table column",
                 value: column.max_width,
             })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let gaps = usize::from(policy.table_column_gap())
+        .checked_mul(preferred.len().saturating_sub(1))
+        .ok_or(TerminalProjectionError::ExtentOverflow {
+            axis: "table column gaps",
+            value: usize::MAX,
+        })?;
+    let mut remaining = usize::from(width).saturating_sub(gaps);
+    preferred
+        .into_iter()
+        .map(|preferred| {
+            let allocated = usize::from(preferred).min(remaining);
+            remaining = remaining.saturating_sub(allocated);
+            checked_extent("table column", allocated)
         })
         .collect()
 }

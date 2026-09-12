@@ -46,7 +46,7 @@ GPUI implementation remains out of scope for this tranche.
 | T4 — current renderer, controls, exact frame state | **accepted** | Parent reviewed the canonical adapter, sparse resource synchronization, native controls/events, exact frame and geometry ownership, metadata-only completion, accepted History lifecycle, asynchronous physical transfer, close joining, and failure/replay barriers. Broad integration checks and the final zero-progress close correction passed; evidence and remaining migration gates are recorded below. |
 | T5 — M1 TypeScript cutover/publication deletion | **parent source/design accepted; local validation passed; Linux CI pending** | React is the sole production UI route. Native deletion checkpoint `e96d0b3` removes the old View ABI/schema/generated outputs, N-API View calls/classes and ordinary Rust/native ViewState owners. The separate animation correction preserves native ticking, persistent stop, receipt ordering and retirement. |
 | T6 — direct terminal Taffy integration | **direct host implementation checkpoint; broader contract/performance review remaining** | Pinned Taffy, generated finite geometry, direct Box/control/History host route, bounded content capture and receipt/control/History regressions are implemented. Archived captures may diagnose behavior, but legacy pixel parity is not an acceptance gate. Package/native-addon evidence, contract review, performance review and Linux native CI remain pending; this is not final T6 acceptance. |
-| T7 — content lowering and M2 deletion | remaining | Direct semantic-content realization; delete the temporary legacy adapter and redundant general View layout. |
+| T7 — content lowering and M2 deletion | **latency-isolation implementation tranche in progress** | Shared bounded content projection, nonblocking Taffy layout, and worker-owned direct paint are implemented. Semantic-content/adapter deletion and the full receipt, close, fairness, and Linux gates remain. |
 
 ### T5 canonical React resource seam (current source)
 
@@ -248,29 +248,33 @@ passes because the bounded workload submits 16 Source appends and native
 smoothing wakes; this is an architectural latency-isolation signal, not a
 reason to weaken content semantics or chase a local Markdown micro-optimization.
 
-### T7/M2 latency-isolation design — implementation-ready, not implemented
+### T7/M2 latency-isolation design — async implementation tranche landed; full gate remains
 
-The current route has a clear latency boundary that is not yet asynchronous.
-The following observations are from the current source, not proposed
-ownership:
+The current route now has an asynchronous latency boundary for content
+projection, Taffy layout, and direct paint. The following observations describe
+the implemented ownership and the remaining synchronous preparation around it;
+they do not claim that the M2 adapter-deletion gate is complete:
 
 - `NativeTuiHost::commit_ui` accepts a desired occurrence transaction while
   holding `Arc<Mutex<HostInner>>`. It releases that guard before calling
-  `render_host_after_mutation`, but that helper reacquires the same guard and
-  calls `HostInner::advance_and_render` through the complete preparation path.
+  `render_host_after_mutation`; that helper reacquires the same guard only for
+  short acceptance, capture, and worker-request transitions, then drains the
+  environment queue outside the guard.
   Public input, resize, theme, and native-control mutation methods use the same
   release-then-render shape (`application/host.rs`).
 - The `iyon-native-environment` thread scans the registered hosts and invokes
-  `service_native_deadline_inner` and `drain_pending`. Each path locks
-  `HostInner` while `advance_runtime_for_candidate`, content scheduling,
-  `running.prepare_frame_for_history`, direct scene preparation, and candidate
-  bookkeeping execute. `ContentHostRegistry::advance` and
-  `prepare_connector_projection` therefore currently run under the host guard.
-- `SceneHost::prepare_direct_at_with_content` calls
-  `DirectDriverHandle::layout`. The `iyon-tui-layout-{host_id}` worker owns
-  Taffy, but the handle sends a command and waits on a synchronous response;
-  the caller is still holding `HostInner` for that wait. The same preparation
-  function performs direct physical paint on the caller after the response.
+  `service_native_deadline_inner` and `drain_pending`. The host guard still
+  owns short acceptance, capture, and candidate transitions, but
+  `ContentHostRegistry::prepare_connector_projection` now captures an
+  immutable `HostContentSourceSnapshot` and submits a typed task to the one
+  bounded executor shared by the environment's hosts. Parser state and the
+  width-independent semantic cache are retained by that executor; completion
+  is installed on a later environment-queue turn.
+- `SceneHost::prepare_direct_at_with_content` now calls
+  `DirectDriverHandle::request_layout`/`poll_layout` and
+  `request_paint`/`poll_paint`. The `iyon-tui-layout-{host_id}` worker owns
+  Taffy and direct paint; the host performs only the short mount/geometry
+  feedback transition and never waits on a layout or paint response.
 - The `iyon-terminal` worker owns termwiz I/O and `TermwizPresenter`. Normal
   `begin_frame` only sends an ordered command and returns a oneshot receipt;
   `presenter.present` uses `presented.diff_screens` when its shadow is known.
@@ -279,9 +283,10 @@ ownership:
   The existing ordered presenter/diff shadow is the physical-output authority;
   this design does not add a second backend or a second damage model.
 
-The latency-isolation implementation must be a bounded shared executor, not one
-OS thread per Source or Connector. It should be introduced as one replacement
-ownership path, with the following state and transitions.
+The implementation is one replacement ownership path: a bounded shared
+executor, not one OS thread per Source or Connector, with the following state
+and transitions. The remaining proof work below is still required before
+claiming full T7/M2 acceptance.
 
 #### Content executor and exact product identity
 
@@ -415,8 +420,10 @@ Source accepted/copied-byte, Unicode, History, and presenter diff contracts
 remain required regressions; none may be weakened to make asynchronous work
 appear complete.
 
-This is a design boundary for the next implementation tranche. It is not an
-implementation or an acceptance waiver for the current synchronous route.
+The source now implements this asynchronous boundary, but this section is not
+an acceptance waiver: full T7/M2 still requires the deterministic receipt,
+stale-generation, close, fairness, idle-frame, and cross-backend evidence, then
+deletion of the temporary legacy adapter and redundant general layout path.
 
 ### T4 handoff boundary
 
@@ -1203,9 +1210,11 @@ ownership remains required work in the T6/T7 migration.
   above.
 - Only the macOS arm64 toolchain/target is installed locally. The CI matrix
   includes Linux x64 and macOS arm64; Linux x64 remains a CI gate and is not
-  claimed from this macOS run. Taffy/T6, content-lowering/T7, Surface and GPUI
-  remain deferred. Parent source/design acceptance covers M1, not those later
-  migration boundaries or unexecuted Linux validation.
+  claimed from this macOS run. Direct Taffy/content latency isolation is now
+  implemented, while the T7 semantic-content lowering, adapter deletion,
+  receipt/close/fairness evidence, Surface and GPUI gates remain deferred.
+  Parent source/design acceptance covers M1, not those later migration
+  boundaries or unexecuted Linux validation.
 
 ### T6 foundation checkpoint — parent accepted
 

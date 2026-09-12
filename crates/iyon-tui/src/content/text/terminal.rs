@@ -2748,7 +2748,7 @@ fn measure_table(table: &Table, policy: &TextRenderPolicy) -> IntrinsicMetrics {
     let columns = table_column_metrics(table, policy);
     let gap = usize::from(policy.table_column_gap());
     let total_gap = gap.saturating_mul(columns.len().saturating_sub(1));
-    IntrinsicMetrics {
+    let mut metrics = IntrinsicMetrics {
         min_width: columns
             .iter()
             .map(|column| column.min_width)
@@ -2759,7 +2759,13 @@ fn measure_table(table: &Table, policy: &TextRenderPolicy) -> IntrinsicMetrics {
             .map(|column| column.max_width)
             .sum::<usize>()
             .saturating_add(total_gap),
+    };
+    if let Some(caption) = table.caption() {
+        let caption = measure_block_slice(caption, policy);
+        metrics.min_width = metrics.min_width.max(caption.min_width);
+        metrics.max_width = metrics.max_width.max(caption.max_width);
     }
+    metrics
 }
 
 fn table_column_metrics(table: &Table, policy: &TextRenderPolicy) -> Vec<IntrinsicMetrics> {

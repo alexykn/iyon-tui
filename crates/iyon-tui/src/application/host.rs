@@ -1557,6 +1557,17 @@ impl TuiHost {
             let notified = notification.notified();
             tokio::pin!(notified);
 
+            // An explicit barrier is allowed to service one fair native
+            // queue turn, but it never holds HostInner while doing so. This
+            // makes barriers deterministic for embeddings whose host thread
+            // is not running the optional environment driver, while worker
+            // completions still provide the only subsequent wakeups.
+            let (environment, host_id) = {
+                let inner = self.lock()?;
+                (inner.environment.clone(), inner.host_id)
+            };
+            let _ = environment.drain_pending_for(32, true, Some(host_id))?;
+
             let observation = self.observe_ui_presentation(target_revision, content_visible)?;
             match observation {
                 UiPresentationObservation::Closed => {

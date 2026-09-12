@@ -12,6 +12,7 @@ use crate::{
     presentation::{ContentProvider, EmptyContentProvider},
 };
 
+use super::model::HistoryUnit;
 use super::{History, HistoryUnitContent, HistoryUnitId};
 pub(super) use frontier::NativeFrontier;
 use frontier::{
@@ -414,6 +415,30 @@ pub(crate) fn transfer_native_prefix_with_theme_and_content<S: NativeHistorySink
     if history.native.synchronization_unknown {
         return Err(NativeTransferError::SynchronizationUnknown);
     }
+    let result = transfer_native_prefix_inner(history, sink, width, max_rows, theme, content);
+    match result {
+        Err(
+            error @ (NativeTransferError::Sink(_)
+            | NativeTransferError::InvalidAcknowledgement { .. }),
+        ) => {
+            // A backend error may follow an unknown amount of physical output.
+            // Keep the confirmed logical prefix and disable automatic replay
+            // until the owner performs explicit physical recovery.
+            history.mark_native_synchronization_unknown();
+            Err(error)
+        }
+        result => result,
+    }
+}
+
+fn transfer_native_prefix_inner<S: NativeHistorySink>(
+    history: &mut History,
+    sink: &mut S,
+    width: u16,
+    max_rows: usize,
+    theme: &crate::Theme,
+    content: &mut dyn ContentProvider,
+) -> Result<NativeTransferOutcome, NativeTransferError<S::Error>> {
     let Some(plan) =
         prepare_native_transfer_with_theme_and_content(history, width, max_rows, theme, content)
     else {
@@ -536,4 +561,146 @@ fn retire_front(history: &mut History) {
     history.native.retired_units.push(unit.id);
     history.native.last_native_unit = Some(unit.id);
     history.native.reset_unit_state();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct BudgetSink {
+        budgets: Vec<Result<usize, &'static str>>,
+        rows: Vec<PhysicalRow>,
+    }
+
+    impl NativeHistorySink for BudgetSink {
+        type Error = &'static str;
+
+        fn insert_history_rows(&mut self, rows: &[PhysicalRow]) -> Result<usize, Self::Error> {
+            let accepted = match self.budgets.remove(0) {
+                Ok(accepted) => accepted,
+                Err(error) => return Err(error),
+            };
+            assert!(accepted <= rows.len());
+            self.rows.extend(rows[..accepted].iter().cloned());
+            Ok(accepted)
+        }
+    }
+
+    fn row(text: &str) -> PhysicalRow {
+        PhysicalRow::from_cells(vec![crate::physical::PhysicalCell {
+            grapheme: Some(text.to_owned()),
+            style: crate::physical::PhysicalStyle::default(),
+            painted: true,
+            continuation: false,
+        }])
+    }
+
+    fn static_history() -> History {
+        let mut history = History::new();
+        history.units.push_back(HistoryUnit {
+            id: HistoryUnitId::allocate(),
+            boundary: super::super::FlowBoundary::Default,
+            content: HistoryUnitContent::StaticRows(vec![row("a"), row("b"), row("c")]),
+            live: false,
+        });
+        history
+    }
+
+    #[test]
+    fn blocked_history_frontier_does_not_prepare_a_replacement_plan() {
+        let mut history = History::new();
+        let unit = HistoryUnitId::allocate();
+        history
+            .push_content_with_identity(
+                unit,
+                1,
+                crate::Insets::ZERO,
+                super::super::FlowBoundary::Default,
+                false,
+                true,
+            )
+            .expect("History unit");
+        assert!(
+            prepare_native_transfer_with_theme_and_content(
+                &history,
+                20,
+                4,
+                &crate::Theme::new(),
+                &EmptyContentProvider,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn live_history_frontier_remains_semantically_blocked() {
+        let mut history = History::new();
+        history
+            .push_content_with_identity(
+                HistoryUnitId::allocate(),
+                1,
+                crate::Insets::ZERO,
+                super::super::FlowBoundary::Default,
+                true,
+                false,
+            )
+            .expect("live History unit");
+        assert!(history.native_transfer_semantically_blocked_front());
+        assert!(
+            prepare_native_transfer_with_theme_and_content(
+                &history,
+                20,
+                4,
+                &crate::Theme::new(),
+                &EmptyContentProvider,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn partial_and_zero_receipts_resume_from_the_confirmed_prefix() {
+        let mut history = static_history();
+        let mut sink = BudgetSink {
+            budgets: vec![Ok(1), Ok(0), Ok(2)],
+            rows: Vec::new(),
+        };
+
+        let first =
+            transfer_native_prefix(&mut history, &mut sink, 20, 8).expect("first native receipt");
+        assert_eq!(first.inserted, 1);
+        let zero =
+            transfer_native_prefix(&mut history, &mut sink, 20, 8).expect("zero native receipt");
+        assert_eq!(zero.inserted, 0);
+        assert!(matches!(zero.status, NativeTransferStatus::SinkBlocked));
+        let remainder = transfer_native_prefix(&mut history, &mut sink, 20, 8)
+            .expect("remainder native receipt");
+        assert_eq!(remainder.inserted, 2);
+        assert_eq!(
+            sink.rows
+                .iter()
+                .map(PhysicalRow::plain_text)
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn failed_native_receipt_disables_suffix_replay() {
+        let mut history = static_history();
+        let mut sink = BudgetSink {
+            budgets: vec![Err("simulated physical failure")],
+            rows: Vec::new(),
+        };
+        let result = transfer_native_prefix(&mut history, &mut sink, 20, 8);
+        assert!(matches!(result, Err(NativeTransferError::Sink(_))));
+        assert!(history.native_synchronization_unknown());
+        let result = transfer_native_prefix(&mut history, &mut sink, 20, 8);
+        assert!(matches!(
+            result,
+            Err(NativeTransferError::SynchronizationUnknown)
+        ));
+        assert!(sink.rows.is_empty());
+    }
 }

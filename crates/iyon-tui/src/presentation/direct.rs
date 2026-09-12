@@ -1602,6 +1602,24 @@ mod tests {
         );
         assert_eq!(zero_width.width, 0.0);
         assert_eq!(zero_width.height, 2.0);
+
+        crate::controls::text_input::TextInput::layout_changed(
+            &mut editor,
+            crate::geometry::Size::new(20, 4),
+        );
+        let allocated_view = crate::Component::view(&editor);
+        let allocated_intrinsic = measured_for_request(
+            None,
+            Some(&allocated_view),
+            crate::presentation::taffy::MeasureRequest {
+                known_width: None,
+                known_height: None,
+                available_width: AvailableConstraint::MaxContent,
+                available_height: AvailableConstraint::MaxContent,
+                wrap_width: None,
+            },
+        );
+        assert_eq!(allocated_intrinsic.width, 5.0);
     }
 
     #[test]

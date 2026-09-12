@@ -496,3 +496,131 @@ fn prepared_content_commit_preserves_newer_requested_selection() {
             .requested
     );
 }
+
+#[test]
+fn saturated_admission_wakes_a_zero_admitted_owner_and_eventually_progresses() {
+    let source_registry = ContentSourceRegistry::new();
+    let executor = Arc::downgrade(&source_registry.executor);
+    let source = source_registry.create(TextSourceKind::Stream).unwrap();
+    source.append_utf8(b"tiny\n", &[], &[]).unwrap();
+    let mut first = ContentHostRegistry::new(source_registry.clone());
+    let mut second = ContentHostRegistry::new(source_registry.clone());
+    let (first_wake, first_wake_receive) = std::sync::mpsc::channel();
+    let (second_wake, second_wake_receive) = std::sync::mpsc::channel();
+    first.set_worker_wake(Arc::new(move || {
+        let _ = first_wake.send(());
+    }));
+    second.set_worker_wake(Arc::new(move || {
+        let _ = second_wake.send(());
+    }));
+
+    let (entered, release) = first.install_projection_latch_for_test();
+    let mut release = LatchRelease(Some(release));
+    let mut first_connectors = Vec::new();
+    for _ in 0..(CONTENT_EXECUTOR_MAX_JOBS + 1) {
+        let port = first.create_port(Weak::new(), ContentFamily::Text).unwrap();
+        let connector = first
+            .connect(
+                &port.record,
+                &source,
+                HostContentFunnel::plain(TextWrapMode::Word),
+            )
+            .unwrap();
+        {
+            let mut port_state = port.record.lock().unwrap();
+            port_state.desired_mounted = true;
+            port_state.visible_mounted = true;
+            port_state.desired_connector = Some(connector.id());
+            port_state.visible_connector = Some(connector.id());
+        }
+        connector.record.lock().unwrap().requested = true;
+        connector.record.lock().unwrap().visible = true;
+        first_connectors.push((port, connector));
+    }
+    first.begin_projection_candidate();
+    first
+        .prepare_connector_projection(first_connectors[0].1.id(), 20)
+        .unwrap();
+    entered
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("first projection entered the latch");
+    for (_, connector) in first_connectors.iter().skip(1) {
+        first
+            .prepare_connector_projection(connector.id(), 20)
+            .unwrap();
+    }
+    assert_eq!(
+        first.pending_content_projections.len(),
+        CONTENT_EXECUTOR_MAX_JOBS + 1
+    );
+
+    let second_port = second
+        .create_port(Weak::new(), ContentFamily::Text)
+        .unwrap();
+    let second_connector = second
+        .connect(
+            &second_port.record,
+            &source,
+            HostContentFunnel::plain(TextWrapMode::Word),
+        )
+        .unwrap();
+    {
+        let mut port_state = second_port.record.lock().unwrap();
+        port_state.desired_mounted = true;
+        port_state.visible_mounted = true;
+        port_state.desired_connector = Some(second_connector.id());
+        port_state.visible_connector = Some(second_connector.id());
+    }
+    {
+        let mut state = second_connector.record.lock().unwrap();
+        state.requested = true;
+        state.visible = true;
+    }
+    second.begin_projection_candidate();
+    let loading = second
+        .prepare_connector_projection(second_connector.id(), 20)
+        .unwrap();
+    assert_eq!(loading.projection_identity, 0);
+    assert!(second_connector.record.lock().unwrap().error.is_none());
+    assert!(
+        second
+            .pending_content_projections
+            .get(&second_connector.id())
+            .is_some_and(|pending| pending.result.is_none())
+    );
+
+    release.release();
+    second_wake_receive
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("zero-admitted owner receives the returned-capacity wake");
+    second
+        .prepare_connector_projection(second_connector.id(), 20)
+        .unwrap();
+    second.wait_for_projection_jobs_for_test();
+    first.wait_for_projection_jobs_for_test();
+    first.clear_projection_latch_for_test();
+    assert!(first.pending_content_projections.is_empty());
+    assert!(second.pending_content_projections.is_empty());
+    assert!(first_wake_receive.try_iter().count() > 0);
+    assert!(
+        second_connector
+            .record
+            .lock()
+            .unwrap()
+            .projection_cache
+            .iter()
+            .any(|(_, projection)| projection.key.width == 20)
+    );
+
+    drop(first_connectors);
+    drop(second_connector);
+    drop(second_port);
+    drop(first);
+    drop(second);
+    drop(source);
+    drop(source_registry);
+    assert!(
+        executor.upgrade().is_none(),
+        "executor must have finite RAII cleanup"
+    );
+}

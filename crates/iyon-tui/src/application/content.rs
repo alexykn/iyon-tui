@@ -72,10 +72,37 @@ struct ContentExecutor {
     projection_latch: Arc<Mutex<Option<TestContentLatch>>>,
 }
 
-#[derive(Debug, Default)]
+/// Accounting and waiter registration share one mutex. A capacity probe and
+/// a waiter registration therefore form one transition: a worker cannot
+/// return capacity between the probe and the registration and strand an
+/// owner.
 struct ContentExecutorAccounting {
     queued_jobs: usize,
     queued_bytes: usize,
+    waiters: VecDeque<(u64, Arc<dyn Fn() + Send + Sync>)>,
+    next_waiter_id: u64,
+}
+
+impl Default for ContentExecutorAccounting {
+    fn default() -> Self {
+        Self {
+            queued_jobs: 0,
+            queued_bytes: 0,
+            waiters: VecDeque::new(),
+            next_waiter_id: 0,
+        }
+    }
+}
+
+impl std::fmt::Debug for ContentExecutorAccounting {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ContentExecutorAccounting")
+            .field("queued_jobs", &self.queued_jobs)
+            .field("queued_bytes", &self.queued_bytes)
+            .field("waiter_count", &self.waiters.len())
+            .finish()
+    }
 }
 
 #[cfg(test)]
@@ -107,16 +134,67 @@ impl std::fmt::Debug for ContentExecutorJob {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ContentExecutorRejectKind {
+    Startup,
+    Oversized,
+    Unavailable,
+}
+
 #[derive(Debug)]
-struct ContentExecutorRejected(String);
+struct ContentExecutorRejected {
+    kind: ContentExecutorRejectKind,
+    diagnostic: String,
+}
+
+impl ContentExecutorRejected {
+    fn new(kind: ContentExecutorRejectKind, diagnostic: impl Into<String>) -> Self {
+        Self {
+            kind,
+            diagnostic: diagnostic.into(),
+        }
+    }
+}
 
 impl std::fmt::Display for ContentExecutorRejected {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.diagnostic)
     }
 }
 
 impl std::error::Error for ContentExecutorRejected {}
+
+/// An admitted queue slot remains owned until the command is actually sent.
+/// This closes the fallible gap between capacity reservation and Connector
+/// execution capture: poisoned state or any other early return cannot leak a
+/// slot from the shared executor budget.
+struct ContentExecutorPermit {
+    accounting: Arc<Mutex<ContentExecutorAccounting>>,
+    bytes: usize,
+    committed: bool,
+}
+
+impl ContentExecutorPermit {
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for ContentExecutorPermit {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let mut accounting = self
+            .accounting
+            .lock()
+            .expect("content executor accounting lock must remain usable");
+        accounting.queued_jobs = accounting.queued_jobs.saturating_sub(1);
+        accounting.queued_bytes = accounting.queued_bytes.saturating_sub(self.bytes);
+        drop(accounting);
+        wake_content_executor_waiters(&self.accounting);
+    }
+}
 
 impl ContentExecutor {
     fn new() -> Result<Arc<Self>> {
@@ -159,19 +237,72 @@ impl ContentExecutor {
         })
     }
 
+    fn reserve_projection(
+        &self,
+        bytes: usize,
+        waiter: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<(Option<ContentExecutorPermit>, Option<u64>), ContentExecutorRejected> {
+        if let Some(error) = self.startup_error.as_ref() {
+            return Err(ContentExecutorRejected::new(
+                ContentExecutorRejectKind::Startup,
+                error.to_string(),
+            ));
+        }
+        if bytes > CONTENT_EXECUTOR_MAX_BYTES {
+            return Err(ContentExecutorRejected::new(
+                ContentExecutorRejectKind::Oversized,
+                format!(
+                    "CONTENT_LIMIT_EXCEEDED: content projection requires {bytes} bytes, exceeding the executor limit of {CONTENT_EXECUTOR_MAX_BYTES}"
+                ),
+            ));
+        }
+        let mut accounting = self
+            .accounting
+            .lock()
+            .expect("content executor accounting lock must remain usable");
+        let next_jobs = accounting.queued_jobs.saturating_add(1);
+        let next_bytes = accounting.queued_bytes.saturating_add(bytes);
+        if next_jobs <= CONTENT_EXECUTOR_MAX_JOBS && next_bytes <= CONTENT_EXECUTOR_MAX_BYTES {
+            accounting.queued_jobs = next_jobs;
+            accounting.queued_bytes = next_bytes;
+            return Ok((
+                Some(ContentExecutorPermit {
+                    accounting: Arc::clone(&self.accounting),
+                    bytes,
+                    committed: false,
+                }),
+                None,
+            ));
+        }
+        let waiter_id = match waiter {
+            Some(waiter) => {
+                let waiter_id = accounting
+                    .next_waiter_id
+                    .checked_add(1)
+                    .expect("content executor waiter identity exhausted");
+                accounting.next_waiter_id = waiter_id;
+                accounting.waiters.push_back((waiter_id, waiter));
+                Some(waiter_id)
+            }
+            None => None,
+        };
+        Ok((None, waiter_id))
+    }
+
     fn submit_projection(
         &self,
+        mut permit: ContentExecutorPermit,
         job: ContentProjectionTask,
-    ) -> Result<Receiver<ContentProjectionResult>, ContentExecutorRejected> {
-        let (result, receive) = sync_channel(1);
-        let bytes = job.bytes;
+    ) -> Result<(), ContentExecutorRejected> {
+        debug_assert_eq!(permit.bytes, job.bytes);
+        permit.commit();
         let semantic_cache = Arc::clone(&self.semantic_cache);
         let parser_states = Arc::clone(&self.parser_states);
         let wake = job.wake.clone();
         #[cfg(test)]
         let projection_latch = Arc::clone(&self.projection_latch);
         let task = ContentExecutorJob {
-            bytes,
+            bytes: job.bytes,
             run: Box::new(move || {
                 let mut job = job;
                 let parser_key = ParserExecutionKey::for_snapshot(&job.snapshot, job.funnel);
@@ -221,7 +352,7 @@ impl ContentExecutor {
                     parser_states.pop_back();
                 }
                 drop(parser_states);
-                let _ = result.send(ContentProjectionResult {
+                let _ = job.result.send(ContentProjectionResult {
                     connector_id: job.connector_id,
                     key: job.key,
                     projection,
@@ -231,27 +362,7 @@ impl ContentExecutor {
                 wake();
             }),
         };
-        self.submit(task)?;
-        Ok(receive)
-    }
-
-    fn check_capacity(&self, bytes: usize) -> Result<(), ContentExecutorRejected> {
-        if let Some(error) = self.startup_error.as_ref() {
-            return Err(ContentExecutorRejected(error.to_string()));
-        }
-        let accounting = self
-            .accounting
-            .lock()
-            .expect("content executor accounting lock must remain usable");
-        let next_jobs = accounting.queued_jobs.saturating_add(1);
-        let next_bytes = accounting.queued_bytes.saturating_add(bytes);
-        (next_jobs <= CONTENT_EXECUTOR_MAX_JOBS && next_bytes <= CONTENT_EXECUTOR_MAX_BYTES)
-            .then_some(())
-            .ok_or_else(|| {
-                ContentExecutorRejected(
-                    "CONTENT_BACKPRESSURE: content executor queue is full".to_owned(),
-                )
-            })
+        self.submit_reserved(task)
     }
 
     #[cfg(test)]
@@ -278,25 +389,11 @@ impl ContentExecutor {
             .expect("content test latch lock must remain usable") = None;
     }
 
-    fn submit(&self, job: ContentExecutorJob) -> Result<(), ContentExecutorRejected> {
-        let mut accounting = self
-            .accounting
-            .lock()
-            .expect("content executor accounting lock must remain usable");
-        if let Some(error) = self.startup_error.as_ref() {
-            return Err(ContentExecutorRejected(error.to_string()));
-        }
-        let next_jobs = accounting.queued_jobs.saturating_add(1);
-        let next_bytes = accounting.queued_bytes.saturating_add(job.bytes);
-        if next_jobs > CONTENT_EXECUTOR_MAX_JOBS || next_bytes > CONTENT_EXECUTOR_MAX_BYTES {
-            return Err(ContentExecutorRejected(
-                "CONTENT_BACKPRESSURE: content executor queue is full".to_owned(),
-            ));
-        }
-        accounting.queued_jobs = next_jobs;
-        accounting.queued_bytes = next_bytes;
-        drop(accounting);
+    fn submit_reserved(&self, job: ContentExecutorJob) -> Result<(), ContentExecutorRejected> {
         if let Err(error) = self.commands.try_send(ContentExecutorCommand::Run(job)) {
+            let diagnostic = format!(
+                "CONTENT_EXECUTOR_UNAVAILABLE: content executor queue is unavailable: {error}"
+            );
             let mut accounting = self
                 .accounting
                 .lock()
@@ -310,11 +407,40 @@ impl ContentExecutor {
             };
             let ContentExecutorCommand::Run(job) = job;
             accounting.queued_bytes = accounting.queued_bytes.saturating_sub(job.bytes);
-            return Err(ContentExecutorRejected(
-                "CONTENT_BACKPRESSURE: content executor queue is unavailable".to_owned(),
-            ));
+            drop(accounting);
+            self.wake_waiters();
+            return Err(ContentExecutorRejected {
+                kind: ContentExecutorRejectKind::Unavailable,
+                diagnostic,
+            });
         }
         Ok(())
+    }
+
+    fn unregister_waiter(&self, waiter_id: u64) {
+        self.accounting
+            .lock()
+            .expect("content executor accounting lock must remain usable")
+            .waiters
+            .retain(|(candidate, _)| *candidate != waiter_id);
+    }
+
+    fn wake_waiters(&self) {
+        wake_content_executor_waiters(&self.accounting);
+    }
+}
+
+fn wake_content_executor_waiters(accounting: &Arc<Mutex<ContentExecutorAccounting>>) {
+    let waiters = accounting
+        .lock()
+        .expect("content executor accounting lock must remain usable")
+        .waiters
+        .iter()
+        .map(|(_, waiter)| waiter)
+        .cloned()
+        .collect::<Vec<_>>();
+    for waiter in waiters {
+        waiter();
     }
 }
 
@@ -325,6 +451,7 @@ struct ContentProjectionTask {
     bytes: usize,
     connector_id: u64,
     key: TextProjectionKey,
+    result: std::sync::mpsc::SyncSender<ContentProjectionResult>,
     snapshot: HostContentSourceSnapshot,
     funnel: HostContentFunnel,
     offered_width: u16,
@@ -413,7 +540,10 @@ struct ContentProjectionResult {
 #[derive(Debug)]
 struct PendingContentProjection {
     key: TextProjectionKey,
-    result: Receiver<ContentProjectionResult>,
+    /// `None` means this Connector is waiting for executor admission. The
+    /// pending marker retains no Source snapshot or parser execution; the
+    /// next owner turn captures fresh input after capacity is reserved.
+    result: Option<Receiver<ContentProjectionResult>>,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -439,12 +569,19 @@ fn content_executor_loop(
         };
         match command {
             ContentExecutorCommand::Run(job) => {
-                let mut accounting = accounting
-                    .lock()
-                    .expect("content executor accounting lock must remain usable");
-                accounting.queued_jobs = accounting.queued_jobs.saturating_sub(1);
-                accounting.queued_bytes = accounting.queued_bytes.saturating_sub(job.bytes);
-                drop(accounting);
+                {
+                    let mut accounting_guard = accounting
+                        .lock()
+                        .expect("content executor accounting lock must remain usable");
+                    accounting_guard.queued_jobs = accounting_guard.queued_jobs.saturating_sub(1);
+                    accounting_guard.queued_bytes =
+                        accounting_guard.queued_bytes.saturating_sub(job.bytes);
+                }
+                // Capacity returns when the command leaves the bounded
+                // handoff, before projection work runs. Wake every live
+                // owner; the environment queue supplies the fair one-turn
+                // ordering and each owner coalesces its own Connector work.
+                wake_content_executor_waiters(&accounting);
                 (job.run)();
             }
         }
@@ -988,6 +1125,7 @@ enum ContentProjectionFailureKind {
     RetentionIncompatible,
     Projection,
     Backpressure,
+    ExecutorUnavailable,
 }
 
 impl ContentProjectionFailureKind {
@@ -997,6 +1135,7 @@ impl ContentProjectionFailureKind {
             Self::RetentionIncompatible => "RETENTION_INCOMPATIBLE",
             Self::Projection => "PROJECTION_FAILED",
             Self::Backpressure => "CONTENT_BACKPRESSURE",
+            Self::ExecutorUnavailable => "CONTENT_EXECUTOR_UNAVAILABLE",
         }
     }
 }
@@ -4020,6 +4159,10 @@ pub(crate) struct ContentHostRegistry {
     ui_failure_injections: HashMap<ResourceKey, String>,
     ui_next_failure_injection: Option<String>,
     pending_content_projections: HashMap<u64, PendingContentProjection>,
+    /// One wake registration covers all Connectors waiting on this host's
+    /// shared executor. The registration is removed once no Connector still
+    /// needs admission, so it cannot retain a closed host or registry.
+    deferred_projection_waiter: Option<u64>,
     projection_results_ready: bool,
     #[cfg(test)]
     ui_demand_nodes_visited: usize,
@@ -4074,6 +4217,7 @@ impl ContentHostRegistry {
             ui_failure_injections: HashMap::new(),
             ui_next_failure_injection: None,
             pending_content_projections: HashMap::new(),
+            deferred_projection_waiter: None,
             projection_results_ready: false,
             #[cfg(test)]
             ui_demand_nodes_visited: 0,
@@ -4428,6 +4572,31 @@ impl ContentHostRegistry {
         if let Some(pending) = self.pending_content_projections.remove(&connector_id) {
             pending.cancelled.store(true, Ordering::Release);
         }
+        self.release_deferred_projection_waiter_if_idle();
+    }
+
+    fn release_deferred_projection_waiter_if_idle(&mut self) {
+        if self
+            .pending_content_projections
+            .values()
+            .any(|pending| pending.result.is_none())
+        {
+            return;
+        }
+        if let Some(waiter_id) = self.deferred_projection_waiter.take() {
+            self.executor.unregister_waiter(waiter_id);
+        }
+    }
+
+    fn projection_admission_failure(
+        error: &ContentExecutorRejected,
+    ) -> ContentProjectionFailureKind {
+        match error.kind {
+            ContentExecutorRejectKind::Oversized => ContentProjectionFailureKind::LimitExceeded,
+            ContentExecutorRejectKind::Startup | ContentExecutorRejectKind::Unavailable => {
+                ContentProjectionFailureKind::ExecutorUnavailable
+            }
+        }
     }
 
     /// Installs completed immutable products into the Connector cache. This
@@ -4442,11 +4611,16 @@ impl ContentHostRegistry {
             .collect::<Vec<_>>();
         for connector_id in connector_ids {
             let result = match self.pending_content_projections.get_mut(&connector_id) {
-                Some(pending) => match pending.result.try_recv() {
-                    Ok(result) => Some(Ok(result)),
-                    Err(TryRecvError::Empty) => None,
-                    Err(TryRecvError::Disconnected) => Some(Err(())),
-                },
+                Some(pending) => {
+                    let Some(result) = pending.result.as_mut() else {
+                        continue;
+                    };
+                    match result.try_recv() {
+                        Ok(result) => Some(Ok(result)),
+                        Err(TryRecvError::Empty) => None,
+                        Err(TryRecvError::Disconnected) => Some(Err(())),
+                    }
+                }
                 None => None,
             };
             let Some(result) = result else {
@@ -4531,6 +4705,20 @@ impl ContentHostRegistry {
         while !self.pending_content_projections.is_empty() {
             self.drain_projection_results()
                 .expect("content executor test result handling must remain valid");
+            let admission_pending = self
+                .pending_content_projections
+                .iter()
+                .filter_map(|(connector_id, pending)| {
+                    pending
+                        .result
+                        .is_none()
+                        .then_some((*connector_id, pending.key.width))
+                })
+                .collect::<Vec<_>>();
+            for (connector_id, width) in admission_pending {
+                self.prepare_connector_projection_async(connector_id, width, None)
+                    .expect("content executor test admission must remain valid");
+            }
             if !self.pending_content_projections.is_empty() {
                 std::thread::yield_now();
             }
@@ -5508,6 +5696,99 @@ impl ContentHostRegistry {
         self.prepare_connector_projection_async(connector_id, offered_width, None)
     }
 
+    fn admit_connector_projection(
+        &mut self,
+        connector: &Arc<Mutex<ConnectorRecord>>,
+        connector_id: u64,
+        key: TextProjectionKey,
+        snapshot: &HostContentSourceSnapshot,
+        funnel: HostContentFunnel,
+        offered_width: u16,
+        delivery_revision: u64,
+        needs_finalized_prefix: bool,
+        task_bytes: usize,
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<()> {
+        let waiter = if self.deferred_projection_waiter.is_none() {
+            Some(self.completion_wake())
+        } else {
+            None
+        };
+        let (permit, waiter_id) = match self.executor.reserve_projection(task_bytes, waiter) {
+            Ok(admission) => admission,
+            Err(error) => {
+                self.pending_content_projections.remove(&connector_id);
+                self.release_deferred_projection_waiter_if_idle();
+                return Err(anyhow::Error::new(ContentProjectionFailure {
+                    kind: Self::projection_admission_failure(&error),
+                    diagnostic: error.to_string(),
+                }));
+            }
+        };
+        let Some(permit) = permit else {
+            if let Some(waiter_id) = waiter_id {
+                self.deferred_projection_waiter = Some(waiter_id);
+            }
+            let pending = self
+                .pending_content_projections
+                .get_mut(&connector_id)
+                .expect("saturated projection must retain its pending marker");
+            pending.key = key;
+            return Ok(());
+        };
+        {
+            let (result_sender, result) = sync_channel(1);
+            let (execution, prefix_proof_cache) = match connector.lock() {
+                Ok(mut state) => (
+                    state
+                        .execution
+                        .take()
+                        .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
+                    std::mem::take(&mut state.prefix_proof_cache),
+                ),
+                Err(_) => {
+                    self.pending_content_projections.remove(&connector_id);
+                    self.release_deferred_projection_waiter_if_idle();
+                    drop(permit);
+                    return Err(anyhow!("Connector lock is poisoned"));
+                }
+            };
+            let task = ContentProjectionTask {
+                bytes: task_bytes,
+                connector_id,
+                key,
+                result: result_sender,
+                snapshot: snapshot.clone(),
+                funnel,
+                offered_width,
+                needs_finalized_prefix,
+                theme: Arc::clone(&self.theme),
+                theme_revision: self.theme_revision,
+                delivery_revision,
+                execution,
+                prefix_proof_cache,
+                wake: self.completion_wake(),
+                cancelled,
+            };
+            if let Err(error) = self.executor.submit_projection(permit, task) {
+                self.pending_content_projections.remove(&connector_id);
+                self.release_deferred_projection_waiter_if_idle();
+                return Err(anyhow::Error::new(ContentProjectionFailure {
+                    kind: Self::projection_admission_failure(&error),
+                    diagnostic: error.to_string(),
+                }));
+            }
+            let pending = self
+                .pending_content_projections
+                .get_mut(&connector_id)
+                .expect("admitted projection must retain its pending marker");
+            pending.key = key;
+            pending.result = Some(result);
+            self.release_deferred_projection_waiter_if_idle();
+            return Ok(());
+        }
+    }
+
     /// Schedules a missing width realization on the shared content executor.
     /// The method intentionally returns a ready compatible product when one
     /// exists, otherwise a loading measurement. It never waits for the task;
@@ -5573,7 +5854,7 @@ impl ContentHostRegistry {
             needs_finalized_prefix,
             needs_physical_rows,
         };
-        let ready = {
+        {
             let mut state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -5591,15 +5872,13 @@ impl ContentHostRegistry {
                 state.projection_failure_key = None;
                 return Ok(projection.measurement(connector_id));
             }
-            self.pending_content_projections
-                .get(&connector_id)
-                .is_some_and(|pending| pending.key == key)
-        };
-        if !ready {
-            // One in-flight task per Connector is the coalescing boundary.
-            // New Source revisions are observed after this task wakes and are
-            // then scheduled as a fresh exact key.
-            if self.pending_content_projections.contains_key(&connector_id) {
+        }
+        // One in-flight task or admission marker per Connector is the
+        // coalescing boundary. Saturation retains only this marker; Source
+        // snapshots and parser execution are captured after a later atomic
+        // executor reservation succeeds.
+        if let Some(pending) = self.pending_content_projections.get(&connector_id) {
+            if pending.result.is_some() {
                 let state = connector
                     .lock()
                     .map_err(|_| anyhow!("Connector lock is poisoned"))?;
@@ -5608,56 +5887,47 @@ impl ContentHostRegistry {
                         projection.measurement(connector_id)
                     }));
             }
-            let task_bytes = usize::try_from(snapshot.retained_bytes()).unwrap_or(usize::MAX);
-            self.executor.check_capacity(task_bytes).map_err(|error| {
-                anyhow::Error::new(ContentProjectionFailure {
-                    kind: ContentProjectionFailureKind::Backpressure,
-                    diagnostic: error.to_string(),
-                })
-            })?;
-            let (execution, prefix_proof_cache) = {
-                let mut state = connector
-                    .lock()
-                    .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-                (
-                    state
-                        .execution
-                        .take()
-                        .unwrap_or_else(|| ConnectorExecution::new(&funnel)),
-                    std::mem::take(&mut state.prefix_proof_cache),
-                )
-            };
+        } else {
             let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let task = ContentProjectionTask {
-                bytes: task_bytes,
-                connector_id,
-                key,
-                snapshot: snapshot.clone(),
-                funnel,
-                offered_width,
-                needs_finalized_prefix,
-                theme: Arc::clone(&self.theme),
-                theme_revision: self.theme_revision,
-                delivery_revision,
-                execution,
-                prefix_proof_cache,
-                wake: self.completion_wake(),
-                cancelled: Arc::clone(&cancelled),
-            };
-            let result = self.executor.submit_projection(task).map_err(|error| {
-                anyhow::Error::new(ContentProjectionFailure {
-                    kind: ContentProjectionFailureKind::Backpressure,
-                    diagnostic: error.to_string(),
-                })
-            })?;
             self.pending_content_projections.insert(
                 connector_id,
                 PendingContentProjection {
                     key,
-                    result,
-                    cancelled,
+                    result: None,
+                    cancelled: Arc::clone(&cancelled),
                 },
             );
+        }
+        let cancelled = self
+            .pending_content_projections
+            .get(&connector_id)
+            .map(|pending| Arc::clone(&pending.cancelled))
+            .expect("projection admission marker must retain cancellation state");
+        let task_bytes = usize::try_from(snapshot.retained_bytes()).unwrap_or(usize::MAX);
+        self.admit_connector_projection(
+            &connector,
+            connector_id,
+            key,
+            &snapshot,
+            funnel,
+            offered_width,
+            delivery_revision,
+            needs_finalized_prefix,
+            task_bytes,
+            cancelled,
+        )?;
+        if self
+            .pending_content_projections
+            .get(&connector_id)
+            .is_some_and(|pending| pending.result.is_none())
+        {
+            let state = connector
+                .lock()
+                .map_err(|_| anyhow!("Connector lock is poisoned"))?;
+            return Ok(Self::projection_for_key(&state, &key, &snapshot)
+                .map_or_else(ContentMeasurement::default, |projection| {
+                    projection.measurement(connector_id)
+                }));
         }
         let state = connector
             .lock()
@@ -7579,6 +7849,7 @@ impl ContentHostRegistry {
         {
             pending.cancelled.store(true, Ordering::Release);
         }
+        self.release_deferred_projection_waiter_if_idle();
         self.in_flight_connectors.clear();
         let connector_ids = self.connectors.keys().copied().collect::<Vec<_>>();
         for connector_id in connector_ids {
@@ -8866,6 +9137,21 @@ impl ContentHostRegistry {
             (measurement.intrinsic_size, measurement.intrinsic_size),
             |projection| (projection.min_content, projection.max_content),
         )
+    }
+}
+
+impl Drop for ContentHostRegistry {
+    fn drop(&mut self) {
+        // HostInner normally calls dispose_all first. This final owner guard
+        // also covers direct registry tests and releases the waiter callback
+        // even when an admitted command is still finishing on the executor.
+        for pending in self.pending_content_projections.values() {
+            pending.cancelled.store(true, Ordering::Release);
+        }
+        self.pending_content_projections.clear();
+        if let Some(waiter_id) = self.deferred_projection_waiter.take() {
+            self.executor.unregister_waiter(waiter_id);
+        }
     }
 }
 

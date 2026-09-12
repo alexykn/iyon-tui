@@ -1860,6 +1860,64 @@ mod tests {
             Rect::new(0, 0, 0, 0),
         );
     }
+
+    #[test]
+    fn direct_editor_paint_includes_native_border_and_label() {
+        let mut root = editor_node(6, 3);
+        let mut snapshot = editor("a", 0, false);
+        snapshot.border = Some(crate::BorderSpec::plain().top_label("in"));
+        root.content = DirectContent::Control(ControlSnapshot::Editor(snapshot));
+        let mut tree = DirectTree {
+            root: DirectNodeId(0),
+            nodes: vec![
+                DirectNode {
+                    key: NodeKey {
+                        slot: 0,
+                        generation: 1,
+                    },
+                    snapshot: None,
+                    rect: Rect::new(0, 0, 6, 3),
+                    content_rect: Rect::new(0, 0, 6, 3),
+                    content_width: 6,
+                    clip_rect: Rect::new(0, 0, 6, 3),
+                    paint_origin: (0, 0),
+                    content_origin: (0, 0),
+                    component: None,
+                    children: vec![DirectNodeId(1)],
+                    style_states: Default::default(),
+                    style_facts: Default::default(),
+                    decoration: Default::default(),
+                    content: DirectContent::Children,
+                },
+                root,
+            ],
+            size: crate::geometry::Size::new(6, 3),
+            physically_complete: true,
+            content_roots: HashMap::new(),
+            parents: Vec::new(),
+        };
+        tree.index();
+        let layout = DirectLayout {
+            tree,
+            occurrence_geometry: HashMap::new(),
+            content_widths: HashMap::new(),
+            content_products: HashMap::new(),
+            component_mounts: Vec::new(),
+            history_overflow_rows: 0,
+        };
+        let surface = paint_direct_layout(
+            &layout,
+            &crate::Theme::default(),
+            &crate::presentation::EmptyContentProvider,
+            None,
+            &crate::component::MountGraph::default(),
+        )
+        .expect("direct editor paint");
+        assert_eq!(surface.get(0, 1).grapheme.as_deref(), Some("│"));
+        assert_eq!(surface.get(1, 1).grapheme.as_deref(), Some("a"));
+        assert_eq!(surface.get(0, 0).grapheme.as_deref(), Some("i"));
+        assert_eq!(surface.get(1, 0).grapheme.as_deref(), Some("n"));
+    }
 }
 
 fn signed_intersection(

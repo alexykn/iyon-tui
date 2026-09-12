@@ -1435,10 +1435,29 @@ impl<'a> ProductBuilder<'a> {
         x: u16,
         width: u16,
     ) -> Result<(), TerminalProjectionError> {
+        self.render_block_children_with_gap(
+            parent,
+            blocks,
+            context,
+            x,
+            width,
+            self.policy.block_gap(),
+        )
+    }
+
+    fn render_block_children_with_gap(
+        &mut self,
+        parent: usize,
+        blocks: &[Block],
+        context: &SemanticContext,
+        x: u16,
+        width: u16,
+        gap: u16,
+    ) -> Result<(), TerminalProjectionError> {
         let mut children = Vec::with_capacity(blocks.len());
         for (position, child) in blocks.iter().enumerate() {
             if position > 0 {
-                self.push_blank_rows(self.policy.block_gap());
+                self.push_blank_rows(gap);
             }
             let child_index = self.begin_block(
                 block_kind(child),
@@ -1553,12 +1572,17 @@ impl<'a> ProductBuilder<'a> {
                 width,
             )?;
             let start_row = self.rows.len();
-            self.render_block_children(
+            self.render_block_children_with_gap(
                 item_index_in_product,
                 item.blocks(),
                 &item_context.with_role(TextRole::ListItem),
                 item_x,
                 item_width,
+                if list.tight() || item.blocks().len() <= 1 {
+                    0
+                } else {
+                    self.policy.block_gap()
+                },
             )?;
             if self.rows.len() == start_row {
                 self.rows.push(empty_row(item_index_in_product));

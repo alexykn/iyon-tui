@@ -1604,9 +1604,6 @@ pub(crate) fn paint_direct_layout(
         crate::presentation::paint::StyleContext::default(),
         Rect::new(0, 0, layout.tree.size.width, layout.tree.size.height),
     )?;
-    if !layout.tree.physically_complete {
-        surface.physically_complete = false;
-    }
     Ok(surface)
 }
 

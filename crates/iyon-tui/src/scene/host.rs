@@ -125,8 +125,8 @@ fn captures_match_sources(
                 && capture.measurement.source_end == previous.measurement.source_end
                 && capture.measurement.sealed == previous.measurement.sealed
                 && capture.measurement.head_partial == previous.measurement.head_partial
-                && (!previous.measurement.physically_complete
-                    || capture.measurement.physically_complete)
+                && capture.measurement.physically_complete
+                    == previous.measurement.physically_complete
                 && capture.measurement.connector_id == previous.measurement.connector_id
                 && (!capture.measurement.physically_complete
                     || !previous.measurement.physically_complete
@@ -549,10 +549,9 @@ impl SceneHost {
                     return Err(anyhow!("direct content width is not finite"));
                 }
                 let width = width.floor().min(f32::from(u16::MAX)) as u16;
-                if width == capture.offered_width {
+                if width == capture.offered_width && capture.measurement.physically_complete {
                     continue;
                 }
-                eprintln!("T7REFINE {} -> {}", capture.offered_width, width);
                 let next = content.refine_captured_measurement(
                     capture.port_id,
                     capture.capture_id,
@@ -567,10 +566,6 @@ impl SceneHost {
                 capture.terminal_policy = next.terminal_policy;
                 capture.terminal_product = next.terminal_product;
                 capture.offered_width = width;
-                eprintln!(
-                    "T7REFINED {} -> {}",
-                    capture.measurement.intrinsic_size.width, width
-                );
                 refined_content.push(*key);
             }
             #[cfg(feature = "perf-counters")]

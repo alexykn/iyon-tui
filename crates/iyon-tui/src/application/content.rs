@@ -4453,7 +4453,6 @@ impl ContentHostRegistry {
                 .pending_content_projections
                 .remove(&connector_id)
                 .expect("completed content task must remain registered");
-            eprintln!("T7DRAINPROJ connector={connector_id} key={:?}", pending.key);
             let Ok(result) = result else {
                 if self.connectors.contains_key(&connector_id) {
                     self.record_connector_operating_failure(
@@ -5630,7 +5629,6 @@ impl ContentHostRegistry {
                 .get(&connector_id)
                 .is_some_and(|pending| pending.key == key)
             {
-                eprintln!("T7PENDINGPROJ connector={connector_id} key={:?}", key);
                 true
             } else {
                 false

@@ -650,43 +650,6 @@ impl TaffyLayoutAdapter {
         Ok(output)
     }
 
-    /// Layout a direct root against a definite viewport height while keeping
-    /// the root's ordinary intrinsic style for later max-content probes. The
-    /// occurrence root is the boundary that establishes percentage heights;
-    /// its temporary viewport size is restored before returning.
-    pub(crate) fn layout_with_root_height(
-        &mut self,
-        root: NodeKey,
-        width: AvailableConstraint,
-        height: f32,
-        measure: &mut impl FnMut(NodeKey, MeasureRequest) -> MeasuredSize,
-    ) -> Result<Vec<ComputedGeometry>, TaffyAdapterError> {
-        if !height.is_finite() || height < 0.0 {
-            return Err(TaffyAdapterError::NonFiniteGeometry);
-        }
-        let node = self.entry(root)?.node;
-        let mut style = self
-            .tree
-            .style(node)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-            .clone();
-        let original = style.clone();
-        style.size.height = Dimension::length(height);
-        self.tree
-            .set_style(node, style)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        let result = self.layout(
-            root,
-            width,
-            AvailableConstraint::Definite(height),
-            measure,
-        );
-        self.tree
-            .set_style(node, original)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        result
-    }
-
     fn collect_geometry(
         &self,
         key: NodeKey,
@@ -901,15 +864,12 @@ fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
     if snapshot.root_role.is_some() {
         style.size.width = Dimension::percent(1.0);
     }
-    if matches!(
-        property(snapshot, PropertyId::Width),
-        None | Some(LayerValue::Unset | LayerValue::Null)
-            | Some(LayerValue::Value(PropertyValue::SizeMode(
-                crate::occurrence::SizeMode::Fit,
-            )))
-            | Some(LayerValue::Value(PropertyValue::Dimension(DimensionValue::Auto)))
-    ) {
-        style.max_size.width = Dimension::percent(1.0);
+    if snapshot.kind == HostKind::ContentHost
+        && matches!(
+            property(snapshot, PropertyId::MinWidth),
+            None | Some(LayerValue::Unset | LayerValue::Null)
+        )
+    {
         style.min_size.width = Dimension::length(0.0);
     }
     // Concrete controls are occurrence leaves. Their native component view is
@@ -932,6 +892,14 @@ fn style_for(snapshot: &OccurrenceSnapshot, participates: bool) -> Style {
     }
     apply_flex_values(&mut style, snapshot);
     apply_alignment(&mut style, snapshot);
+    if snapshot.root_role.is_some()
+        && matches!(
+            property(snapshot, PropertyId::AlignItems),
+            None | Some(LayerValue::Unset | LayerValue::Null)
+        )
+    {
+        style.align_items = Some(AlignItems::STRETCH);
+    }
     apply_grid(&mut style, snapshot);
     apply_border(&mut style, snapshot);
     style

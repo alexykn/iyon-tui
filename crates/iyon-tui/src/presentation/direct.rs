@@ -585,40 +585,17 @@ impl DirectOccurrenceRenderer {
         }
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
-        let mut layout_root = |root, width, height, fill_root_height| {
-            let result = if fill_root_height {
-                let AvailableConstraint::Definite(height) = height else {
-                    return Err(anyhow!("direct root height must be definite"));
-                };
-                self.layout.layout_with_root_height(
-                    root,
-                    width,
-                    height,
-                    &mut |key, request| {
-                        measured_for_request_with_intrinsic(
-                            measurements.get(&key),
-                            control_views.get(&key),
-                            intrinsic_control_views.get(&key),
-                            request,
-                        )
-                    },
-                )
-            } else {
-                self.layout.layout(
-                    root,
-                    width,
-                    height,
-                    &mut |key, request| {
-                        measured_for_request_with_intrinsic(
-                            measurements.get(&key),
-                            control_views.get(&key),
-                            intrinsic_control_views.get(&key),
-                            request,
-                        )
-                    },
-                )
-            };
-            result.map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
+        let mut layout_root = |root, width, height| {
+            self.layout
+                .layout(root, width, height, &mut |key, request| {
+                    measured_for_request_with_intrinsic(
+                        measurements.get(&key),
+                        control_views.get(&key),
+                        intrinsic_control_views.get(&key),
+                        request,
+                    )
+                })
+                .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
         };
 
         // First obtain the body's intrinsic height without asking Taffy to
@@ -628,7 +605,6 @@ impl DirectOccurrenceRenderer {
             body,
             AvailableConstraint::Definite(f32::from(size.width)),
             AvailableConstraint::MaxContent,
-            false,
         )?;
         let body_height = body_measurement
             .iter()
@@ -637,12 +613,6 @@ impl DirectOccurrenceRenderer {
             .transpose()?
             .ok_or_else(|| anyhow!("direct Body root geometry is missing"))?
             .clamp(0, i32::from(size.height)) as u16;
-        let body_layout = layout_root(
-            body,
-            AvailableConstraint::Definite(f32::from(size.width)),
-            AvailableConstraint::Definite(f32::from(size.height)),
-            true,
-        )?;
         let history_height = size.height.saturating_sub(body_height);
 
         let mut history_layouts = Vec::with_capacity(history_roots.len());
@@ -652,7 +622,6 @@ impl DirectOccurrenceRenderer {
                 root,
                 AvailableConstraint::Definite(f32::from(size.width)),
                 AvailableConstraint::MaxContent,
-                false,
             )?;
             let root_height = geometries
                 .iter()
@@ -684,7 +653,7 @@ impl DirectOccurrenceRenderer {
         }
         output.extend(translated);
 
-        let mut body_geometries = body_layout;
+        let mut body_geometries = body_measurement;
         let body_y = if !has_history {
             i32::from(size.height.saturating_sub(body_height))
         } else {
@@ -714,7 +683,6 @@ impl DirectOccurrenceRenderer {
                 root,
                 AvailableConstraint::Definite(owner_width),
                 AvailableConstraint::MaxContent,
-                false,
             )?;
             for mut geometry in geometries {
                 translate_geometry_by(
@@ -723,21 +691,6 @@ impl DirectOccurrenceRenderer {
                     owner_geometry.logical_content_y,
                 )?;
                 output.push(geometry);
-            }
-        }
-        if std::env::var_os("IYON_DEBUG_DIRECT").is_some() {
-            eprintln!("DIRECT GEOMETRY root={body_root:?} size={size:?}");
-            for geometry in &output {
-                eprintln!(
-                    "  {:?} rect={:?} logical={:?} content=({}, {}, {}, {})",
-                    geometry.key,
-                    geometry.rect,
-                    geometry.logical,
-                    geometry.logical_content_x,
-                    geometry.logical_content_y,
-                    geometry.logical_content_width,
-                    geometry.logical_content_height,
-                );
             }
         }
         Ok((output, history_overflow_rows))
@@ -843,9 +796,6 @@ impl DirectOccurrenceRenderer {
             .snapshots
             .get(&key)
             .ok_or_else(|| anyhow!("snapshot missing for {key:?}"))?;
-        if std::env::var_os("IYON_DEBUG_DIRECT").is_some() {
-            eprintln!("  SNAPSHOT {:?} kind={:?} props={:?}", key, snapshot.kind, snapshot.properties);
-        }
         let geometry = geometries
             .get(&key)
             .ok_or_else(|| anyhow!("geometry missing for {key:?}"))?;
@@ -972,13 +922,14 @@ fn portal_order(
     snapshots: &HashMap<NodeKey, OccurrenceSnapshot>,
 ) -> Result<Vec<NodeKey>> {
     let root_set = roots.iter().copied().collect::<HashSet<_>>();
+    let ownership_index = portal_root_index(roots, snapshots)?;
     let dependencies = roots
         .iter()
         .copied()
         .filter_map(|root| {
             owners
                 .get(&root)
-                .and_then(|owner| portal_root_containing(*owner, roots, snapshots))
+                .and_then(|owner| ownership_index.get(owner).copied())
                 .map(|owner_root| (root, owner_root))
         })
         .collect::<HashMap<_, _>>();
@@ -990,30 +941,32 @@ fn portal_order(
     Ok(ordered)
 }
 
-fn portal_root_containing(
-    owner: NodeKey,
+/// Index every node in each portal subtree once. Portal dependencies are
+/// then resolved by lookup rather than by recursively searching every root
+/// for every portal owner.
+fn portal_root_index(
     roots: &[NodeKey],
     snapshots: &HashMap<NodeKey, OccurrenceSnapshot>,
-) -> Option<NodeKey> {
-    roots
-        .iter()
-        .copied()
-        .find(|root| *root == owner || subtree_contains(*root, owner, snapshots))
-}
-
-fn subtree_contains(
-    root: NodeKey,
-    target: NodeKey,
-    snapshots: &HashMap<NodeKey, OccurrenceSnapshot>,
-) -> bool {
-    let Some(snapshot) = snapshots.get(&root) else {
-        return false;
-    };
-    snapshot
-        .children
-        .iter()
-        .copied()
-        .any(|child| child == target || subtree_contains(child, target, snapshots))
+) -> Result<HashMap<NodeKey, NodeKey>> {
+    let mut ownership = HashMap::new();
+    let mut stack = Vec::new();
+    for root in roots.iter().rev().copied() {
+        stack.push((root, root));
+    }
+    while let Some((key, portal_root)) = stack.pop() {
+        if ownership.insert(key, portal_root).is_some() {
+            return Err(anyhow!(
+                "direct Portal subtree contains a duplicate occurrence"
+            ));
+        }
+        let snapshot = snapshots
+            .get(&key)
+            .ok_or_else(|| anyhow!("direct Portal snapshot is missing for {key:?}"))?;
+        for child in snapshot.children.iter().rev().copied() {
+            stack.push((child, portal_root));
+        }
+    }
+    Ok(ownership)
 }
 
 fn visit_portal(
@@ -1406,43 +1359,6 @@ fn signed_intersection(
 mod tests {
     use super::*;
     use crate::occurrence::{DimensionValue, FiniteScalar, LayoutMode, NodeRef};
-
-    #[test]
-    fn debug_old_layout_fixture_geometry() {
-        let view = crate::presentation::factory::column(
-            vec![
-                crate::presentation::factory::padding(
-                    crate::presentation::factory::text("word word word"),
-                    crate::presentation::Insets::new(1, 1, 1, 1),
-                ),
-                crate::presentation::factory::text("tail"),
-            ],
-            1,
-        );
-        let tree = crate::presentation::layout::layout_view(
-            &view,
-            crate::geometry::LayoutConstraints::bounded(crate::geometry::Size::new(5, 8)),
-        );
-        eprintln!("OLD TREE size={:?}", tree.size);
-        for node in &tree.nodes {
-            eprintln!("  old {:?} rect={:?} content={:?}", node.view_id, node.rect, node.content_rect);
-        }
-        let compiler = crate::presentation::layout::ViewCompiler::default();
-        let block = compiler.compile_tree(&tree);
-        eprintln!("OLD ROWS {:?}", block.rows);
-        let renderer = crate::text::TextRenderer::new();
-        let semantic = renderer.lower_semantic_iter(
-            [crate::content::text::TextContent::raw("word word word")].iter(),
-        );
-        let semantic_tree = crate::presentation::layout::layout_view(
-            &semantic,
-            crate::geometry::LayoutConstraints::width_only(3),
-        );
-        eprintln!("SEMANTIC TREE size={:?}", semantic_tree.size);
-        for node in &semantic_tree.nodes {
-            eprintln!("  semantic {:?} rect={:?} content={:?}", node.view_id, node.rect, node.content_rect);
-        }
-    }
 
     fn direct_history_layout(heights: &[f32], viewport_height: u16) -> Result<DirectLayout> {
         let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");

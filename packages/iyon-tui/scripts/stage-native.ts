@@ -31,7 +31,10 @@ const cargo = Bun.spawnSync({
 	// opt into more parallelism explicitly with CARGO_BUILD_JOBS.
 	env: {
 		...process.env,
-		CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? "1",
+		CARGO_PROFILE_DEV_DEBUG: "0",
+		CARGO_PROFILE_TEST_DEBUG: "0",
+		CARGO_INCREMENTAL: "0",
+		CARGO_BUILD_JOBS: "2",
 		CARGO_TARGET_DIR: targetRoot.pathname,
 	},
 	stdout: "pipe",

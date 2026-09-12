@@ -8672,15 +8672,11 @@ impl ContentProvider for ContentHostRegistry {
                             .pending_content_projections
                             .contains_key(&binding.connector_id)
                         {
-                            // Keep the confirmed/compatible capture's
-                            // actual old-width metrics while the requested
-                            // realization is pending. The layout callback
-                            // must not manufacture a new height.
-                            Some((
-                                binding.connector_id,
-                                binding.product.measurement(binding.connector_id),
-                                binding.product,
-                            ))
+                            // This is the desired candidate, not a retained
+                            // confirmed fallback. Do not let its old-width
+                            // product become the visible geometry while the
+                            // exact final-width realization is pending.
+                            return Err(anyhow::Error::new(ContentProjectionPending));
                         } else {
                             return Err(anyhow!(
                                 "INTERNAL_INVARIANT: prepared candidate product disappeared"

@@ -3300,6 +3300,12 @@ impl HostInner {
             return Ok(());
         }
         if let Err(error) = self.sync_ui_scene() {
+            if error
+                .downcast_ref::<crate::scene::SceneLayoutPending>()
+                .is_some()
+            {
+                return Err(error);
+            }
             let ui_revision = self.ui_resources.document.as_ref().map_or(
                 0,
                 crate::occurrence::OccurrenceDocument::accepted_ui_revision,
@@ -4071,8 +4077,10 @@ impl HostInner {
             .collect::<HashMap<_, _>>();
         roots.extend(document.portal_roots());
         let body_root = document.body_root();
+        let sync_revision = document.accepted_ui_revision();
         self.running
             .host_sync_direct_occurrences(
+                sync_revision,
                 snapshots,
                 changes,
                 &participation,
@@ -4082,12 +4090,19 @@ impl HostInner {
                 portal_owners,
             )
             .map_err(|error| {
-                host_attempt_error(
-                    "frame",
-                    "FRAME_PREPARATION_FAILED",
-                    true,
-                    format!("direct occurrence synchronization failed: {error}"),
-                )
+                if error
+                    .downcast_ref::<crate::scene::SceneLayoutPending>()
+                    .is_some()
+                {
+                    error
+                } else {
+                    host_attempt_error(
+                        "frame",
+                        "FRAME_PREPARATION_FAILED",
+                        true,
+                        format!("direct occurrence synchronization failed: {error}"),
+                    )
+                }
             })
     }
 

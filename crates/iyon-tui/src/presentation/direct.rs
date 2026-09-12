@@ -154,6 +154,7 @@ pub(crate) struct DirectDriverHandle {
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     pending_layout: Mutex<Option<Receiver<Result<DirectLayout>>>>,
     pending_paint: Mutex<Option<Receiver<Result<crate::physical::Surface>>>>,
+    pending_synchronize: Mutex<Option<Receiver<Result<()>>>>,
     #[cfg(test)]
     layout_latch: Arc<Mutex<Option<TestLayoutLatch>>>,
 }
@@ -182,12 +183,13 @@ impl DirectDriverHandle {
             shutdown,
             pending_layout: Mutex::new(None),
             pending_paint: Mutex::new(None),
+            pending_synchronize: Mutex::new(None),
             #[cfg(test)]
             layout_latch: Arc::new(Mutex::new(None)),
         })
     }
 
-    pub(crate) fn synchronize(
+    pub(crate) fn request_synchronize(
         &self,
         snapshots: Vec<OccurrenceSnapshot>,
         changes: Option<&UiChangeSet>,
@@ -197,6 +199,13 @@ impl DirectDriverHandle {
         portal_owners: HashMap<NodeKey, NodeKey>,
         controls: HashMap<crate::occurrence::ResourceKey, ComponentId>,
     ) -> Result<()> {
+        let mut pending = self
+            .pending_synchronize
+            .lock()
+            .map_err(|_| anyhow!("direct synchronization pending lock is poisoned"))?;
+        if pending.is_some() {
+            return Err(anyhow!("direct synchronization request is already pending"));
+        }
         let (response, receive) = sync_channel(1);
         self.command
             .try_send(DirectDriverCommand::Synchronize {
@@ -210,9 +219,28 @@ impl DirectDriverHandle {
                 response,
             })
             .map_err(|_| anyhow!("direct renderer driver is closed"))?;
-        receive
-            .recv()
-            .map_err(|_| anyhow!("direct renderer driver dropped synchronization"))?
+        *pending = Some(receive);
+        Ok(())
+    }
+
+    pub(crate) fn poll_synchronize(&self) -> Result<Option<()>> {
+        let mut pending = self
+            .pending_synchronize
+            .lock()
+            .map_err(|_| anyhow!("direct synchronization pending lock is poisoned"))?;
+        let Some(receive) = pending.take() else {
+            return Ok(Some(()));
+        };
+        match receive.try_recv() {
+            Ok(result) => result.map(Some),
+            Err(TryRecvError::Empty) => {
+                *pending = Some(receive);
+                Ok(None)
+            }
+            Err(TryRecvError::Disconnected) => {
+                Err(anyhow!("direct renderer driver dropped synchronization"))
+            }
+        }
     }
 
     pub(crate) fn request_layout(
@@ -2297,7 +2325,7 @@ mod tests {
             interaction_revision: 0,
         };
         driver
-            .synchronize(
+            .request_synchronize(
                 vec![snapshot],
                 None,
                 vec![NodeParticipation {
@@ -2309,7 +2337,14 @@ mod tests {
                 HashMap::new(),
                 HashMap::new(),
             )
-            .expect("direct synchronization");
+            .expect("direct synchronization request");
+        while driver
+            .poll_synchronize()
+            .expect("direct synchronization poll")
+            .is_none()
+        {
+            std::thread::yield_now();
+        }
         let (entered, release) = driver.install_layout_latch_for_test();
         driver
             .request_layout(

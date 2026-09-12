@@ -177,6 +177,7 @@ impl NativeRuntime {
     }
     pub(crate) fn host_sync_direct_occurrences(
         &mut self,
+        sync_revision: u64,
         snapshots: Vec<crate::occurrence::OccurrenceSnapshot>,
         changes: Option<&crate::occurrence::UiChangeSet>,
         participation: &[crate::presentation::taffy::NodeParticipation],
@@ -186,6 +187,7 @@ impl NativeRuntime {
         portal_owners: HashMap<crate::occurrence::NodeKey, crate::occurrence::NodeKey>,
     ) -> anyhow::Result<()> {
         self.scene_host.sync_direct_occurrences(
+            sync_revision,
             snapshots,
             changes,
             participation,

@@ -145,6 +145,7 @@ pub(crate) struct SceneHost {
     direct_revision: u64,
     pending_content_invalidations: HashSet<u64>,
     pending_control_invalidations: HashSet<ComponentId>,
+    pending_sync_revision: Option<u64>,
 }
 
 impl Default for SceneHost {
@@ -174,6 +175,7 @@ impl Default for SceneHost {
             direct_revision: 0,
             pending_content_invalidations: HashSet::new(),
             pending_control_invalidations: HashSet::new(),
+            pending_sync_revision: None,
         }
     }
 }
@@ -238,6 +240,7 @@ impl SceneHost {
         self.pending_paint = None;
         self.pending_content_invalidations.clear();
         self.pending_control_invalidations.clear();
+        self.pending_sync_revision = None;
         self.direct_history_overflow_rows = 0;
         self.direct_delivered_layout.clear();
         self.direct_delivered_content_extents.clear();
@@ -262,6 +265,7 @@ impl SceneHost {
 
     pub(crate) fn sync_direct_occurrences(
         &mut self,
+        sync_revision: u64,
         snapshots: Vec<crate::occurrence::OccurrenceSnapshot>,
         changes: Option<&crate::occurrence::UiChangeSet>,
         participation: &[NodeParticipation],
@@ -274,6 +278,21 @@ impl SceneHost {
             .direct_driver
             .as_ref()
             .ok_or_else(|| anyhow!("direct renderer driver is not started"))?;
+        let synchronization_complete = if let Some(pending_revision) = self.pending_sync_revision {
+            match driver.poll_synchronize()? {
+                None => return Err(anyhow::Error::new(SceneLayoutPending)),
+                Some(()) if pending_revision == sync_revision => {
+                    self.pending_sync_revision = None;
+                    true
+                }
+                Some(()) => {
+                    self.pending_sync_revision = None;
+                    false
+                }
+            }
+        } else {
+            false
+        };
         let participation_map = participation
             .iter()
             .map(|item| (item.key, item.participates))
@@ -298,15 +317,19 @@ impl SceneHost {
             .iter()
             .filter_map(|snapshot| snapshot.control.map(|control| (snapshot.key, control)))
             .collect::<HashMap<_, _>>();
-        driver.synchronize(
-            snapshots,
-            changes,
-            participation.to_vec(),
-            port_ids.clone(),
-            roots,
-            portal_owners,
-            self.direct_controls.clone(),
-        )?;
+        if !synchronization_complete {
+            driver.request_synchronize(
+                snapshots,
+                changes,
+                participation.to_vec(),
+                port_ids.clone(),
+                roots,
+                portal_owners,
+                self.direct_controls.clone(),
+            )?;
+            self.pending_sync_revision = Some(sync_revision);
+            return Err(anyhow::Error::new(SceneLayoutPending));
+        }
         if changes.is_none() || !self.direct_synchronized {
             self.direct_content_ports = content_ports;
             self.direct_control_nodes = control_nodes;

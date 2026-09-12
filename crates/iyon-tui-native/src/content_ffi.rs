@@ -628,11 +628,21 @@ mod tests {
                 .iter()
                 .any(|row| row.contains("ffi wake"))
         );
-        let idle = healthy.flush_pending_hosts(32, false).unwrap();
+        // The receipt can settle before an already-queued completion turn is
+        // consumed. Let those finite native turns drain; the failed host must
+        // remain blocked rather than keep the environment runnable forever.
+        let idle_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let mut idle = healthy.flush_pending_hosts(32, false).unwrap();
+        while idle.rearm && std::time::Instant::now() < idle_deadline {
+            assert!(idle.errors.is_empty());
+            std::thread::yield_now();
+            idle = healthy.flush_pending_hosts(32, false).unwrap();
+        }
         assert!(idle.errors.is_empty());
         assert!(
             !idle.rearm,
-            "a failed wake must not create an automatic spin"
+            "a failed wake must not create an automatic spin: {idle:?}, {:?}",
+            healthy.epochs()
         );
 
         healthy.close().unwrap();

@@ -526,6 +526,10 @@ impl NativeRuntime {
             content,
             &HashMap::new(),
         )?;
+        // This successful candidate captured the current kernel state under
+        // the host lock. Later input dirties it again; failed preparation
+        // returns above without consuming the obligation.
+        self.dirty = false;
         let plan = (self.scene_host.direct_history_overflow_rows() > 0)
             .then(|| {
                 crate::history::prepare_native_transfer_with_theme_and_content(

@@ -96,7 +96,6 @@ fn layout_request_signature(
         capture.measurement.projection_revision.hash(&mut hasher);
         capture.measurement.metric_revision.hash(&mut hasher);
         capture.measurement.paint_revision.hash(&mut hasher);
-        capture.measurement.projection_identity.hash(&mut hasher);
         capture.measurement.physically_complete.hash(&mut hasher);
         capture.measurement.intrinsic_size.hash(&mut hasher);
         capture.measurement.source_base.hash(&mut hasher);
@@ -423,17 +422,6 @@ impl SceneHost {
             self.capture_direct_measurements(size.width, content)?
         };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
-        let mut invalidate_content =
-            self.pending_layout_input
-                .as_ref()
-                .map_or_else(Vec::new, |pending| {
-                    captures
-                        .iter()
-                        .filter_map(|(key, capture)| {
-                            (pending.captures.get(key) != Some(capture)).then_some(*key)
-                        })
-                        .collect()
-                });
         let current_signature = layout_request_signature(
             self.direct_revision,
             root,
@@ -441,6 +429,26 @@ impl SceneHost {
             history_anchor,
             &captures,
             &control_snapshots,
+        );
+        let mut invalidate_content = self
+            .pending_layout_input
+            .as_ref()
+            .filter(|pending| pending.signature != current_signature)
+            .map_or_else(Vec::new, |_| captures.keys().copied().collect());
+        eprintln!(
+            "T7SCENE rev={} pending_sig={:?} current_sig={:?} cap={:?} inval={:?}",
+            self.direct_revision,
+            self.pending_layout_signature,
+            current_signature,
+            captures
+                .values()
+                .map(|capture| (
+                    capture.measurement.projection_identity,
+                    capture.measurement.intrinsic_size,
+                    capture.offered_width
+                ))
+                .collect::<Vec<_>>(),
+            invalidate_content
         );
         if let Some(pending) = self.pending_layout_input.as_ref()
             && pending.signature == current_signature

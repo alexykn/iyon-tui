@@ -136,6 +136,10 @@ pub struct TuiEnvironment {
 #[derive(Clone)]
 struct EnvironmentQueue {
     inner: Arc<Mutex<EnvironmentInner>>,
+    /// A host drain may release `inner` while it services a host. Keep those
+    /// service turns single-threaded so the native driver and an explicit
+    /// barrier cannot concurrently pop/reconcile the same pending host.
+    drain_gate: Arc<Mutex<()>>,
 }
 
 /// The one real owner of environment shutdown. Every public environment
@@ -270,6 +274,7 @@ impl TuiEnvironment {
         }));
         let queue = EnvironmentQueue {
             inner: Arc::clone(&inner),
+            drain_gate: Arc::new(Mutex::new(())),
         };
         let environment = Self {
             lifetime: Arc::new(EnvironmentLifetime {
@@ -352,6 +357,10 @@ impl TuiEnvironment {
 
     pub(super) fn wake_epoch(&self) -> u64 {
         self.lifetime.queue.wake_epoch()
+    }
+
+    pub(super) fn wake_notification(&self) -> anyhow::Result<Arc<tokio::sync::Notify>> {
+        self.lifetime.queue.wake_notification()
     }
 
     pub(crate) fn receipt_wake(&self, host_id: u64) -> ReceiptWake {
@@ -456,6 +465,13 @@ impl EnvironmentQueue {
         self.inner
             .lock()
             .map_or(0, |environment| environment.wake_epoch)
+    }
+
+    pub(super) fn wake_notification(&self) -> anyhow::Result<Arc<tokio::sync::Notify>> {
+        self.inner
+            .lock()
+            .map(|environment| Arc::clone(&environment.notify))
+            .map_err(|_| anyhow::anyhow!("environment lock is poisoned"))
     }
 
     pub(crate) fn receipt_wake(&self, host_id: u64) -> ReceiptWake {
@@ -834,6 +850,10 @@ impl EnvironmentQueue {
         force_retry: bool,
         preferred_host_id: Option<u64>,
     ) -> anyhow::Result<HostDrainReport> {
+        let _drain_guard = self
+            .drain_gate
+            .lock()
+            .map_err(|_| anyhow::anyhow!("environment drain gate is poisoned"))?;
         let mut report = HostDrainReport::default();
         let budget = budget.max(1);
         let mut candidates = Vec::new();

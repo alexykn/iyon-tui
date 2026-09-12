@@ -1262,6 +1262,7 @@ impl TuiHost {
             };
             let notified = notification.notified();
             tokio::pin!(notified);
+            notified.as_mut().enable();
 
             let batch = {
                 let mut inner = self.lock_mut()?;
@@ -1290,6 +1291,10 @@ impl TuiHost {
             let notification = self.presentation_notification()?;
             let notified = notification.notified();
             tokio::pin!(notified);
+            // Tokio's `Notified` future registers on poll, not when it is
+            // constructed. Enable it before servicing or observing native
+            // work so a worker completion between those steps cannot be lost.
+            notified.as_mut().enable();
             let failure = {
                 let mut inner = self.lock_mut()?;
                 if matches!(
@@ -1553,19 +1558,31 @@ impl TuiHost {
             // Register before inspecting state. A receipt can complete in the
             // interval between those operations; the pinned notification then
             // observes the host-local outcome instead of losing the wake.
-            let notification = self.presentation_notification()?;
+            let (notification, environment, host_id) = {
+                let inner = self.lock()?;
+                (
+                    inner.presentation_notification(),
+                    inner.environment.clone(),
+                    inner.host_id,
+                )
+            };
             let notified = notification.notified();
+            let environment_notification = environment.wake_notification()?;
+            let environment_notified = environment_notification.notified();
             tokio::pin!(notified);
+            tokio::pin!(environment_notified);
+            // Tokio's `Notified` future registers on poll, not when it is
+            // constructed. Enable both authoritative wake lanes before
+            // servicing or observing native work so a worker completion
+            // between those steps cannot be lost.
+            notified.as_mut().enable();
+            environment_notified.as_mut().enable();
 
             // An explicit barrier is allowed to service one fair native
             // queue turn, but it never holds HostInner while doing so. This
             // makes barriers deterministic for embeddings whose host thread
             // is not running the optional environment driver, while worker
             // completions still provide the only subsequent wakeups.
-            let (environment, host_id) = {
-                let inner = self.lock()?;
-                (inner.environment.clone(), inner.host_id)
-            };
             let _ = environment.drain_pending_for(32, true, Some(host_id))?;
 
             let observation = self.observe_ui_presentation(target_revision, content_visible)?;
@@ -1583,7 +1600,10 @@ impl TuiHost {
                         // failed state remains authoritative until the driver
                         // starts that newer attempt, so do not return the old
                         // diagnostic before it has had a chance to run.
-                        notified.await;
+                        tokio::select! {
+                            _ = notified.as_mut() => {},
+                            _ = environment_notified.as_mut() => {},
+                        }
                         continue;
                     }
                     if admitted_failure_attempt.is_some() {
@@ -1594,13 +1614,19 @@ impl TuiHost {
                     // old failure from the result of this retry.
                     self.lock_mut()?.ensure_pending()?;
                     admitted_failure_attempt = Some(attempt);
-                    notified.await;
+                    tokio::select! {
+                        _ = notified.as_mut() => {},
+                        _ = environment_notified.as_mut() => {},
+                    }
                 }
                 UiPresentationObservation::Pending { in_flight } => {
                     if !in_flight {
                         self.lock_mut()?.ensure_pending()?;
                     }
-                    notified.await;
+                    tokio::select! {
+                        _ = notified.as_mut() => {},
+                        _ = environment_notified.as_mut() => {},
+                    }
                 }
                 UiPresentationObservation::Stalled => {
                     return Err(anyhow::anyhow!(
@@ -1626,9 +1652,15 @@ impl TuiHost {
         let content_is_visible = if content_visible {
             inner.content.ui_content_visible(&inner.ui_resources)?
         } else {
-            true
+            inner
+                .content
+                .ui_content_has_physical_product(&inner.ui_resources)?
         };
-        if inner.visible_structural_revision >= target_revision && content_is_visible {
+        let frame_is_physical = inner.frame.surface.physically_complete;
+        if inner.visible_structural_revision >= target_revision
+            && content_is_visible
+            && frame_is_physical
+        {
             return Ok(UiPresentationObservation::Ready);
         }
         if let Some(failure) = &inner.scheduler_failure {
@@ -1647,6 +1679,9 @@ impl TuiHost {
         }
         let in_flight =
             inner.bootstrap_receipt.is_some() || inner.presentation_state.is_in_flight();
+        if !frame_is_physical {
+            return Ok(UiPresentationObservation::Pending { in_flight });
+        }
         if inner.pending_epoch != inner.committed_epoch || in_flight {
             return Ok(UiPresentationObservation::Pending { in_flight });
         }

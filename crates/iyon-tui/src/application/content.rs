@@ -4649,7 +4649,14 @@ impl ContentHostRegistry {
             let state = connector
                 .lock()
                 .map_err(|_| anyhow!("Connector lock is poisoned"))?;
-            if !state.visible || state.committed_projection.is_none() {
+            if !state.visible
+                || !state
+                    .committed_projection
+                    .as_ref()
+                    .is_some_and(|projection| {
+                        projection.identity != 0 && projection.physically_complete
+                    })
+            {
                 return Ok(false);
             }
             let Some((_, source, _)) = owner.content_binding(key)? else {
@@ -4657,6 +4664,48 @@ impl ContentHostRegistry {
             };
             let source_revision = source.snapshot()?.revision;
             if state.projected_source_revision != Some(source_revision) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Returns whether every demanded ContentPort has a physically complete
+    /// confirmed product, without requiring its current desired Connector to
+    /// match. A structural barrier may therefore expose a retained A frame
+    /// while a requested B replacement is still preparing; the content
+    /// barrier above remains strict about B's desired binding.
+    pub(crate) fn ui_content_has_physical_product(&self, owner: &UiResourceOwner) -> Result<bool> {
+        for key in owner.demanded_ports()? {
+            let Some(port_id) = self.ui_ports.get(&key).copied() else {
+                return Ok(false);
+            };
+            let Some(port) = self.ports.get(&port_id) else {
+                return Ok(false);
+            };
+            let state = port.lock().map_err(|_| {
+                anyhow!("ContentPort lock is poisoned during product visibility read")
+            })?;
+            if !state.visible_mounted {
+                return Ok(false);
+            }
+            let Some(connector_id) = state.visible_connector else {
+                return Ok(false);
+            };
+            let Some(connector) = self.connectors.get(&connector_id) else {
+                return Ok(false);
+            };
+            let connector = connector.lock().map_err(|_| {
+                anyhow!("Connector lock is poisoned during product visibility read")
+            })?;
+            if !connector.visible
+                || !connector
+                    .committed_projection
+                    .as_ref()
+                    .is_some_and(|projection| {
+                        projection.identity != 0 && projection.physically_complete
+                    })
+            {
                 return Ok(false);
             }
         }

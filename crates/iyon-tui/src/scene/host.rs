@@ -128,6 +128,15 @@ fn captures_match_sources(
                 && capture.measurement.physically_complete
                     == previous.measurement.physically_complete
                 && capture.measurement.connector_id == previous.measurement.connector_id
+                && (!capture.measurement.physically_complete
+                    || !previous.measurement.physically_complete
+                    || capture.terminal_product.as_ref().map(|product| {
+                        let size = product.size();
+                        (size.width(), size.height())
+                    }) == previous.terminal_product.as_ref().map(|product| {
+                        let size = product.size();
+                        (size.width(), size.height())
+                    }))
         })
 }
 
@@ -543,6 +552,7 @@ impl SceneHost {
                 if width == capture.offered_width {
                     continue;
                 }
+                eprintln!("T7REFINE {} -> {}", capture.offered_width, width);
                 let next = content.refine_captured_measurement(
                     capture.port_id,
                     capture.capture_id,
@@ -557,6 +567,10 @@ impl SceneHost {
                 capture.terminal_policy = next.terminal_policy;
                 capture.terminal_product = next.terminal_product;
                 capture.offered_width = width;
+                eprintln!(
+                    "T7REFINED {} -> {}",
+                    capture.measurement.intrinsic_size.width, width
+                );
                 refined_content.push(*key);
             }
             #[cfg(feature = "perf-counters")]

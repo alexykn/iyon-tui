@@ -4453,6 +4453,7 @@ impl ContentHostRegistry {
                 .pending_content_projections
                 .remove(&connector_id)
                 .expect("completed content task must remain registered");
+            eprintln!("T7DRAINPROJ connector={connector_id} key={:?}", pending.key);
             let Ok(result) = result else {
                 if self.connectors.contains_key(&connector_id) {
                     self.record_connector_operating_failure(
@@ -5629,6 +5630,7 @@ impl ContentHostRegistry {
                 .get(&connector_id)
                 .is_some_and(|pending| pending.key == key)
             {
+                eprintln!("T7PENDINGPROJ connector={connector_id} key={:?}", key);
                 true
             } else {
                 false
@@ -8672,11 +8674,15 @@ impl ContentProvider for ContentHostRegistry {
                             .pending_content_projections
                             .contains_key(&binding.connector_id)
                         {
-                            // This is the desired candidate, not a retained
-                            // confirmed fallback. Do not let its old-width
-                            // product become the visible geometry while the
-                            // exact final-width realization is pending.
-                            return Err(anyhow::Error::new(ContentProjectionPending));
+                            // Keep the confirmed/compatible capture's
+                            // actual old-width metrics while the requested
+                            // realization is pending. The layout callback
+                            // must not manufacture a new height.
+                            Some((
+                                binding.connector_id,
+                                binding.product.measurement(binding.connector_id),
+                                binding.product,
+                            ))
                         } else {
                             return Err(anyhow!(
                                 "INTERNAL_INVARIANT: prepared candidate product disappeared"

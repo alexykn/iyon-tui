@@ -573,16 +573,36 @@ impl DirectOccurrenceRenderer {
         control_views: &HashMap<NodeKey, View>,
         intrinsic_control_views: &HashMap<NodeKey, View>,
     ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
-        self.layout
+        let measurement_keys = measurements
+            .keys()
+            .copied()
+            .filter(|key| self.layout.contains(*key))
+            .collect::<Vec<_>>();
+        let mut measurement_error = None;
+        let geometries = self
+            .layout
             .layout(root, width, height, &mut |key, request| {
-                measured_for_request_with_intrinsic(
+                match measured_for_request_with_intrinsic(
                     measurements.get(&key),
                     control_views.get(&key),
                     intrinsic_control_views.get(&key),
                     request,
-                )
+                ) {
+                    Ok(measured) => measured,
+                    Err(error) => {
+                        measurement_error = Some(error);
+                        MeasuredSize::default()
+                    }
+                }
             })
-            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
+            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
+        if let Some(error) = measurement_error {
+            self.layout
+                .invalidate_measurement(&measurement_keys)
+                .map_err(|error| anyhow!("direct Taffy retry invalidation failed: {error:?}"))?;
+            return Err(error.context("direct terminal content measurement failed"));
+        }
+        Ok(geometries)
     }
 
     fn layout_roots(
@@ -635,48 +655,6 @@ impl DirectOccurrenceRenderer {
         }
         let has_history = !history_roots.is_empty();
         let mut output = Vec::new();
-        let measurement_keys = measurements
-            .keys()
-            .copied()
-            .filter(|key| self.layout.contains(*key))
-            .collect::<Vec<_>>();
-        let mut layout_root = |root, width, height| {
-            let mut measurement_error = None;
-            let geometries = self
-                .layout
-                .layout(root, width, height, &mut |key, request| {
-                    if measurement_error.is_some() {
-                        return MeasuredSize::default();
-                    }
-                    match measured_for_request_with_intrinsic(
-                        measurements.get(&key),
-                        control_views.get(&key),
-                        intrinsic_control_views.get(&key),
-                        request,
-                    ) {
-                        Ok(measured) => measured,
-                        Err(error) => {
-                            measurement_error = Some(error);
-                            MeasuredSize::default()
-                        }
-                    }
-                })
-                .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))?;
-            if let Some(error) = measurement_error {
-                // The infallible Taffy callback had to return a placeholder
-                // after recording the real producer error. Mark every
-                // captured content leaf dirty before returning so Taffy's
-                // temporary zero result cannot poison a retrying candidate.
-                self.layout
-                    .invalidate_measurement(&measurement_keys)
-                    .map_err(|error| {
-                        anyhow!("direct Taffy retry invalidation failed: {error:?}")
-                    })?;
-                return Err(error.context("direct terminal content measurement failed"));
-            }
-            Ok(geometries)
-        };
-
         // Obtain the body's intrinsic height before placing it against the
         // terminal viewport, matching the retained root resolver's anchor.
         let body_intrinsic = self.layout_root(
@@ -1149,7 +1127,6 @@ fn measured_for_request_with_intrinsic(
         return Ok(measured);
     }
     let capture = capture.expect("content capture checked above");
-    let request_width = request_width(capture, request);
     let requested_product = content_product_for_request(capture, request)?;
     let mut measured = requested_product
         .as_ref()
@@ -1261,21 +1238,6 @@ fn control_layout_constraints(
 }
 
 fn control_request_width(value: f32) -> u16 {
-    value.floor().clamp(0.0, f32::from(u16::MAX)) as u16
-}
-
-fn request_width(
-    capture: &CapturedContentMeasurement,
-    request: crate::presentation::taffy::MeasureRequest,
-) -> u16 {
-    let value = match request.known_width {
-        Some(width) => width,
-        None => match request.available_width {
-            AvailableConstraint::Definite(width) => width,
-            AvailableConstraint::MinContent => f32::from(capture.min_content.width),
-            AvailableConstraint::MaxContent => f32::from(capture.max_content.width),
-        },
-    };
     value.floor().clamp(0.0, f32::from(u16::MAX)) as u16
 }
 

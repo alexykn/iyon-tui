@@ -94,7 +94,7 @@ interface BenchmarkSample {
 	readonly endToEndMs: number;
 	readonly frontendCallbackNormalizationMs: number;
 	readonly nativeAcceptanceMs: number;
-	readonly barrier: "visible" | "content-visible";
+	readonly barrier: "visible" | "content-visible" | "native-epoch";
 	readonly traffic: TrafficSnapshot;
 	readonly nativeCounters: Readonly<Record<string, number>>;
 	readonly memory?: Readonly<Record<string, number | string>>;
@@ -103,7 +103,7 @@ interface BenchmarkSample {
 interface Session {
 	readonly context: Context;
 	readonly mountMs: number;
-	readonly barrier: "visible" | "content-visible";
+	readonly barrier: "visible" | "content-visible" | "native-epoch";
 	prepare?(): Promise<void>;
 	mutate(sample: number): PendingWork;
 	memory?(): Readonly<Record<string, number | string>>;
@@ -113,7 +113,7 @@ interface Session {
 interface SessionDefinition {
 	readonly children: ReactNode;
 	readonly content?: boolean;
-	readonly barrier: "visible" | "content-visible";
+	readonly barrier: "visible" | "content-visible" | "native-epoch";
 	prepare?(): Promise<void>;
 	mutate(sample: number): PendingWork;
 	memory?(): Readonly<Record<string, number | string>>;
@@ -350,6 +350,39 @@ function barrierWork(context: Context, content = false): PendingWork {
 		visible: content
 			? context.root.whenContentVisible()
 			: context.root.whenVisible(),
+	};
+}
+
+// Native input and environment changes do not advance the React revision.
+// Observe receipt-backed host epochs instead. These benchmark-only samples
+// include the cost and timer granularity of observing completion; they are not
+// isolated native stage timings.
+async function nativeEpochVisible(
+	context: Context,
+	frameReady: () => boolean = () => true,
+): Promise<void> {
+	const target = BigInt(context.harness.epochs().pending_epoch);
+	const deadline = performance.now() + 5_000;
+	for (;;) {
+		context.harness.flush();
+		const epochs = context.harness.epochs();
+		const committed = BigInt(epochs.committed_epoch);
+		if (
+			committed >= target &&
+			committed === BigInt(epochs.pending_epoch) &&
+			frameReady()
+		)
+			return;
+		if (performance.now() >= deadline)
+			throw new Error(`native frame did not settle: ${JSON.stringify(epochs)}`);
+		await Bun.sleep(1);
+	}
+}
+
+function nativeWork(context: Context, frameReady?: () => boolean): PendingWork {
+	return {
+		accepted: Promise.resolve(),
+		visible: nativeEpochVisible(context, frameReady),
 	};
 }
 
@@ -657,10 +690,15 @@ async function openMarkdownSession(
 async function openEditorSession(): Promise<Session> {
 	return newSession(40, 12, (context) => ({
 		children: createElement(Editor, { defaultValue: "editor" }),
-		barrier: "visible",
+		content: true,
+		barrier: "native-epoch",
 		mutate: () => {
+			const before = context.harness.screenRows().join("\n");
 			context.harness.pressKey("x");
-			return barrierWork(context);
+			return nativeWork(
+				context,
+				() => context.harness.screenRows().join("\n") !== before,
+			);
 		},
 	}));
 }
@@ -673,10 +711,15 @@ async function openAnimationSession(): Promise<Session> {
 			createElement(Box, {}, createElement(Text, {}, "animation-a")),
 			createElement(Box, {}, createElement(Text, {}, "animation-b")),
 		),
-		barrier: "visible",
+		content: true,
+		barrier: "native-epoch",
 		mutate: () => {
-			context.harness.advance(10);
-			return barrierWork(context);
+			const before = context.harness.screenRows().join("\n");
+			context.harness.advance(20);
+			return nativeWork(
+				context,
+				() => context.harness.screenRows().join("\n") !== before,
+			);
 		},
 	}));
 }
@@ -696,7 +739,8 @@ async function openResizeThemeSession(): Promise<Session> {
 					createElement(Text, { key: index }, `scroll row ${index}`),
 				),
 			),
-			barrier: "visible",
+			content: true,
+			barrier: "native-epoch",
 			mutate: (sample) => {
 				context.harness.resize(sample % 2 === 0 ? 100 : 80, 24);
 				scrollRef?.focus();
@@ -707,7 +751,7 @@ async function openResizeThemeSession(): Promise<Session> {
 						new StyleSpec().foreground({ type: "named", value: "cyan" }),
 					),
 				);
-				return barrierWork(context);
+				return nativeWork(context);
 			},
 		};
 	});
@@ -942,8 +986,15 @@ async function runTrafficWitnesses(): Promise<
 			),
 		);
 		animationContext.capture.reset();
-		animationContext.harness.advance(10);
-		await animationContext.root.whenVisible();
+		await animationContext.root.whenContentVisible();
+		animationContext.harness.advance(20);
+		await nativeEpochVisible(animationContext, () =>
+			animationContext.harness.screenRows().join("\n").includes("animation-b"),
+		);
+		assertCondition(
+			animationContext.harness.screenRows().join("\n").includes("animation-b"),
+			"native-animation: advanced frame must be physically visible",
+		);
 		const animation = animationContext.capture.snapshot();
 		assertZeroTraffic("native-animation", animation);
 		witnesses.push(witnessTraffic("native-animation", animation));
@@ -954,6 +1005,7 @@ async function runTrafficWitnesses(): Promise<
 	const recolorContext = await openContext(40, 10);
 	try {
 		await mount(recolorContext, createElement(Text, {}, "recolor"));
+		await recolorContext.root.whenContentVisible();
 		recolorContext.capture.reset();
 		recolorContext.harness.setTheme(
 			Theme.new().withStyle(
@@ -961,7 +1013,7 @@ async function runTrafficWitnesses(): Promise<
 				new StyleSpec().foreground({ type: "named", value: "green" }),
 			),
 		);
-		await recolorContext.root.whenVisible();
+		await nativeEpochVisible(recolorContext);
 		const recolor = recolorContext.capture.snapshot();
 		assertZeroTraffic("native-environment-recolor", recolor);
 		witnesses.push(witnessTraffic("native-environment-recolor", recolor));

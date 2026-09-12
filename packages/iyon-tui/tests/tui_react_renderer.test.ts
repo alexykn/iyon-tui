@@ -1023,17 +1023,27 @@ describe("T3 React mutation renderer", () => {
 					createElement(Box, {}, createElement(Text, {}, "frame-b")),
 				),
 			);
-			await root.whenVisible();
+			await root.whenContentVisible();
 			expect(tui.screenRows().some((row) => row.includes("frame-a"))).toBe(
 				true,
 			);
 			const acceptedCommits = nativeCommits;
-			tui.advance(20);
-			await root.whenVisible();
-			expect(nativeCommits).toBe(acceptedCommits);
-			expect(tui.screenRows().some((row) => row.includes("frame-b"))).toBe(
-				true,
-			);
+			// A completed native sync must be consumed before the next tick:
+			// these changes deliberately share the same accepted UI revision.
+			for (const expected of ["frame-b", "frame-a", "frame-b"]) {
+				tui.advance(20);
+				const deadline = performance.now() + 1_000;
+				while (
+					!tui.screenRows().some((row) => row.includes(expected)) &&
+					performance.now() < deadline
+				) {
+					await Bun.sleep(1);
+				}
+				expect(nativeCommits).toBe(acceptedCommits);
+				expect(tui.screenRows().some((row) => row.includes(expected))).toBe(
+					true,
+				);
+			}
 		} finally {
 			await root.unmount();
 			tui.close();

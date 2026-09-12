@@ -461,6 +461,25 @@ impl SceneHost {
         if self.direct_driver.is_none() {
             return Err(anyhow!("direct renderer driver is not started"));
         }
+        // Native animation changes synchronize at the current UI revision.
+        // Unlike a React update, they have no later sync_ui_scene retry to
+        // consume the completion. Finish that command before capturing or
+        // laying out its frame; otherwise the next tick can mistake the old
+        // acknowledgement for its own synchronization.
+        if self.pending_sync_revision.is_some() {
+            let driver = self.direct_driver.as_ref().expect("driver checked above");
+            match driver.poll_synchronize() {
+                Ok(None) => return Err(anyhow::Error::new(SceneLayoutPending)),
+                Ok(Some(())) => {
+                    self.pending_sync_revision = None;
+                    self.direct_revision = self.direct_revision.saturating_add(1);
+                }
+                Err(error) => {
+                    self.pending_sync_revision = None;
+                    return Err(error);
+                }
+            }
+        }
         if self
             .pending_content_width_viewport
             .is_some_and(|viewport| viewport != size)

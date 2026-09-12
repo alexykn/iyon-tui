@@ -11,7 +11,7 @@ use std::str;
 use std::sync::{
     Arc, Mutex, Weak,
     atomic::{AtomicU64, Ordering},
-    mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel},
+    mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, sync_channel},
 };
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
@@ -380,9 +380,6 @@ impl ContentExecutor {
                 let diagnostic = format!(
                     "CONTENT_EXECUTOR_UNAVAILABLE: content executor queue is unavailable: {error}"
                 );
-                match error {
-                    TrySendError::Full(_) | TrySendError::Disconnected(_) => {}
-                }
                 Err(ContentExecutorRejected {
                     kind: ContentExecutorRejectKind::Unavailable,
                     diagnostic,

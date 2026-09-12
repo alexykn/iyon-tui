@@ -987,10 +987,12 @@ describe("T3 React mutation renderer", () => {
 			).toBe(true);
 			expect(instance.clearOverride("background").accepted).toBe(true);
 			expect(() => instance.focus()).toThrow("FOCUS_UNSUPPORTED");
+			// The Body's Flex cross-axis stretch applies to an auto-width Box.
+			// The ref reports the allocated Box, not its fitted text product.
 			expect(await instance.visibleGeometry()).toEqual({
 				x: 0,
 				y: 23,
-				width: 3,
+				width: 80,
 				height: 1,
 			});
 		} finally {

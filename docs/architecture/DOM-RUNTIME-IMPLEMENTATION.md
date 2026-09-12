@@ -1007,9 +1007,10 @@ History roots use the same occurrence snapshot synchronization, direct Taffy
 root stacking, and occurrence-keyed painting as the body. Physical prefix
 acknowledgement continues through the existing native transfer owner using a
 narrow transparent content-shell descriptor; the exact candidate rows and
-receipt ownership remain unchanged. History flow spacing/anchor refinements
-and component-only Surface export are later Surface work, not a View fallback
-for ordinary History layout. The old `legacy_scene.rs` ordinary adapter and
+receipt ownership remain unchanged. FollowEnd/NativeFrontier placement and
+bounded transfer receipts remain part of the terminal History contract;
+component-only Surface export is separately scheduled. No View fallback is
+used for ordinary History layout. The old `legacy_scene.rs` ordinary adapter and
 its stale recipe tests were removed rather than retained as a fallback. The
 remaining local View projection is limited to native control pixels and the
 History physical transfer descriptor and is deleted/rewritten at the T7
@@ -1027,3 +1028,32 @@ fixtures at multiple widths, including complete cell styles. These are
 comparison inputs, not evidence that the replacement production route or its
 performance is already accepted. Linux native execution, direct-host parity,
 fractional paint/clip behavior and the T6/T7 performance gates remain pending.
+
+#### Selected terminal layout semantics
+
+Parent review selected the declared Iyon Flex/Grid behavior rather than
+reconstructing the old allocator through sibling-specific shrink factors.
+Ordinary Row/Column children use `flexShrink: 1` unless explicitly overridden.
+The Body uses cross-axis stretch: an auto-width Box occupies the available
+width, and its ref reports that outer allocation rather than the width of its
+fitted text. Explicit dimensions and alignment remain authoritative.
+
+Each retained root has one stable, derived Taffy constraint boundary. Its
+tracks use `minmax(0, 1fr)`: the finite terminal constraint must not be widened
+by an automatic min-content track minimum before text is measured. Intrinsic
+and definite passes use the same occurrence topology. There is no overflow
+subtree clone, sibling-position allocation override, or fractional compatibility
+shrink constant. Content paint uses the exact width-specific captured product;
+explicit/Fill widths are refined to the resolved logical content-box width.
+
+The parent comparison after correcting root constraints reproduces all 27 M1
+content fixture-width cases, including cell styles. Two of the 18 integral
+cases intentionally differ at width 5: the Row proportionally shrinks both
+children and wraps both without losing text, and the padded Column paints its
+sixth available inner row instead of the old allocator's five. These differences
+are approved layout semantics, not content-parity exemptions. The native root
+regression requires the final hard line to remain visible after wrapping an
+unbreakable line in a narrow terminal.
+
+These decisions do not claim completion of the T7 content-lowering/deletion,
+performance, Linux, or final workspace acceptance gates.

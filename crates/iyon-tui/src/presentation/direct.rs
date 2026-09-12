@@ -520,6 +520,11 @@ impl DirectOccurrenceRenderer {
     ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
         let mut measurement_error = None;
         let mut failed_measurement_keys = Vec::new();
+        let control_fill_width = self
+            .snapshots
+            .values()
+            .map(|snapshot| (snapshot.key, control_fills_available_width(snapshot)))
+            .collect::<HashMap<_, _>>();
         let geometries = self
             .layout
             .layout(
@@ -529,6 +534,7 @@ impl DirectOccurrenceRenderer {
                 &mut |key, request| match measured_for_request(
                     measurements.get(&key),
                     controls.get(&key),
+                    control_fill_width.get(&key).copied().unwrap_or(true),
                     request,
                 ) {
                     Ok(measured) => measured,
@@ -990,6 +996,7 @@ fn visit_portal(
 fn measured_for_request(
     capture: Option<&CapturedContentMeasurement>,
     control: Option<&ControlSnapshot>,
+    fill_available_width: bool,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> Result<MeasuredSize> {
     if capture.is_none() {
@@ -999,7 +1006,7 @@ fn measured_for_request(
             // capture, which is rejected at tree emission.
             return Ok(MeasuredSize::default());
         };
-        let mut measured = measure_control(control, request)?;
+        let mut measured = measure_control(control, request, fill_available_width)?;
         if let Some(width) = request.known_width {
             measured.width = width;
         }
@@ -1126,6 +1133,7 @@ fn floor_constraint_width(value: f32) -> Result<u16> {
 fn measure_control(
     control: &ControlSnapshot,
     request: crate::presentation::taffy::MeasureRequest,
+    fill_available_width: bool,
 ) -> Result<MeasuredSize> {
     let ControlSnapshot::Editor(editor) = control else {
         return Ok(MeasuredSize::default());
@@ -1148,15 +1156,23 @@ fn measure_control(
     let intrinsic_width = intrinsic_width
         .saturating_add(usize::from(border_width))
         .min(usize::from(u16::MAX));
-    let requested_width = request
-        .known_width
-        .or(match request.available_width {
-            AvailableConstraint::Definite(width) => Some(width),
-            AvailableConstraint::MinContent | AvailableConstraint::MaxContent => None,
-        })
-        .map(floor_constraint_width)
-        .transpose()?
-        .unwrap_or(intrinsic_width as u16);
+    let requested_width = match request.known_width {
+        Some(width) => floor_constraint_width(width)?,
+        None => match request.available_width {
+            AvailableConstraint::Definite(width) if fill_available_width => {
+                floor_constraint_width(width)?
+            }
+            AvailableConstraint::Definite(width) => {
+                intrinsic_width.min(usize::from(floor_constraint_width(width)?)) as u16
+            }
+            AvailableConstraint::MinContent => min_content_width
+                .saturating_add(usize::from(border_width))
+                .min(usize::from(u16::MAX)) as u16,
+            AvailableConstraint::MaxContent => max_content_width
+                .saturating_add(usize::from(border_width))
+                .min(usize::from(u16::MAX)) as u16,
+        },
+    };
     let inner_width = requested_width.saturating_sub(border_width);
     let rows = if editor.multiline {
         crate::presentation::wrap::input_wrap_ranges(&editor.text, inner_width).len()
@@ -1197,6 +1213,17 @@ fn editor_intrinsic_width(text: &str, min_content: bool) -> usize {
         })
         .max()
         .unwrap_or(0)
+}
+
+fn control_fills_available_width(snapshot: &OccurrenceSnapshot) -> bool {
+    !matches!(
+        property(snapshot, PropertyId::Width),
+        Some(LayerValue::Value(PropertyValue::SizeMode(
+            crate::occurrence::SizeMode::Fit,
+        ))) | Some(LayerValue::Value(PropertyValue::Dimension(
+            crate::occurrence::DimensionValue::Auto,
+        )))
+    )
 }
 
 fn content_width_for_layout(
@@ -1821,16 +1848,32 @@ mod tests {
             wrap_width: None,
         };
         assert_eq!(
-            measure_control(&control, request(AvailableConstraint::MinContent))
+            measure_control(&control, request(AvailableConstraint::MinContent), false)
                 .expect("min-content measurement")
                 .width,
             4.0
         );
         assert_eq!(
-            measure_control(&control, request(AvailableConstraint::MaxContent))
+            measure_control(&control, request(AvailableConstraint::MaxContent), false)
                 .expect("max-content measurement")
                 .width,
             9.0
+        );
+        assert_eq!(
+            measure_control(
+                &control,
+                request(AvailableConstraint::Definite(20.0)),
+                false,
+            )
+            .expect("fit available measurement")
+            .width,
+            9.0
+        );
+        assert_eq!(
+            measure_control(&control, request(AvailableConstraint::Definite(20.0)), true,)
+                .expect("fill available measurement")
+                .width,
+            20.0
         );
     }
 

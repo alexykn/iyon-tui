@@ -136,8 +136,16 @@ impl Surface {
                     break;
                 }
                 let dest_row = self.row_cells_mut(target_y);
+                let backing_background = dest_row[dest_start].style.background;
                 perf::add(Counter::SurfaceCellsComposited, glyph.width as u64);
                 write_glyph_span(dest_row, dest_start, child_row, glyph.start, glyph.width);
+                if backing_background.is_some() {
+                    for cell in &mut dest_row[dest_start..dest_end] {
+                        if cell.style.background.is_none() {
+                            cell.style.background = backing_background;
+                        }
+                    }
+                }
             }
             debug_assert!(validate_cells(self.row_cells(target_y)).is_ok());
         }
@@ -145,7 +153,7 @@ impl Surface {
 
     /// Overlay `child` at a signed vertical offset while respecting an
     /// additional physical clip. This is the incremental counterpart to the
-    /// full-tree `RowViewport` composition path.
+    /// full-tree occurrence composition path.
     pub(crate) fn composite_clipped(
         &mut self,
         child: &Self,
@@ -184,6 +192,7 @@ impl Surface {
                     continue;
                 }
                 let dest_row = self.row_cells_mut(target_y as u16);
+                let backing_background = dest_row[dest_start as usize].style.background;
                 perf::add(Counter::SurfaceCellsComposited, glyph.width as u64);
                 write_glyph_span(
                     dest_row,
@@ -192,6 +201,13 @@ impl Surface {
                     glyph.start,
                     glyph.width,
                 );
+                if backing_background.is_some() {
+                    for cell in &mut dest_row[dest_start as usize..dest_end as usize] {
+                        if cell.style.background.is_none() {
+                            cell.style.background = backing_background;
+                        }
+                    }
+                }
             }
             debug_assert!(validate_cells(self.row_cells(target_y as u16)).is_ok());
         }

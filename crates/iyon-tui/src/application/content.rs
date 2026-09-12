@@ -5384,6 +5384,9 @@ impl ContentHostRegistry {
                 }
 
                 let dest_row = target.row_cells_mut(target_y as u16);
+                let backing_background = dest_row
+                    .get(dest_start as usize)
+                    .and_then(|cell| cell.style.background);
                 crate::perf::add(
                     crate::perf::Counter::SurfaceCellsComposited,
                     glyph.width as u64,
@@ -5403,7 +5406,7 @@ impl ContentHostRegistry {
                             cell.style.foreground = style.foreground;
                         }
                         if cell.style.background.is_none() {
-                            cell.style.background = style.background;
+                            cell.style.background = backing_background.or(style.background);
                         }
                         cell.style.bold |= style.bold;
                         cell.style.dim |= style.dim;
@@ -5412,6 +5415,12 @@ impl ContentHostRegistry {
                         cell.style.reversed |= style.reversed;
                         cell.style.strikethrough |= style.strikethrough;
                     }
+                }
+                if backing_background.is_some() {
+                    eprintln!(
+                        "content backing {:?} final={:?}",
+                        backing_background, dest_row[dest_start as usize].style.background
+                    );
                 }
             }
             debug_assert!(

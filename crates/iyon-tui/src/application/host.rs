@@ -3357,6 +3357,9 @@ impl HostInner {
                 format!("content delivery advance failed: {error}"),
             )
         })?;
+        if admit_wakes && self.content.take_projection_results_ready() {
+            self.ensure_pending()?;
+        }
         for dirty in content_dirty {
             if admit_wakes {
                 self.mark_content_pending(dirty)?;

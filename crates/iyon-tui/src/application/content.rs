@@ -4020,6 +4020,7 @@ pub(crate) struct ContentHostRegistry {
     ui_failure_injections: HashMap<ResourceKey, String>,
     ui_next_failure_injection: Option<String>,
     pending_content_projections: HashMap<u64, PendingContentProjection>,
+    projection_results_ready: bool,
     #[cfg(test)]
     ui_demand_nodes_visited: usize,
     #[cfg(test)]
@@ -4073,6 +4074,7 @@ impl ContentHostRegistry {
             ui_failure_injections: HashMap::new(),
             ui_next_failure_injection: None,
             pending_content_projections: HashMap::new(),
+            projection_results_ready: false,
             #[cfg(test)]
             ui_demand_nodes_visited: 0,
             #[cfg(test)]
@@ -4432,6 +4434,7 @@ impl ContentHostRegistry {
     /// is a short registry transition performed on the environment queue;
     /// projection itself has already finished on the shared executor.
     fn drain_projection_results(&mut self) -> Result<()> {
+        let mut changed = false;
         let connector_ids = self
             .pending_content_projections
             .keys()
@@ -4449,6 +4452,7 @@ impl ContentHostRegistry {
             let Some(result) = result else {
                 continue;
             };
+            changed = true;
             let pending = self
                 .pending_content_projections
                 .remove(&connector_id)
@@ -4510,7 +4514,12 @@ impl ContentHostRegistry {
             // the content barrier complete.
             let _ = pending.key;
         }
+        self.projection_results_ready |= changed;
         Ok(())
+    }
+
+    pub(crate) fn take_projection_results_ready(&mut self) -> bool {
+        std::mem::take(&mut self.projection_results_ready)
     }
 
     #[cfg(test)]

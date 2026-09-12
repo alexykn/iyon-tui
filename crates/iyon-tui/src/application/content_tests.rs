@@ -32,11 +32,17 @@ fn captured_measurement_refinement_keeps_the_candidate_source_frontier() {
         state.requested = true;
         state.visible = true;
     }
+    let (entered, release) = registry.install_projection_latch_for_test();
     registry.begin_projection_candidate();
     registry
         .prepare_connector_projection(connector.id(), 20)
         .unwrap();
+    entered
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .expect("content worker entered latch");
+    release.send(()).expect("release content worker");
     registry.wait_for_projection_jobs_for_test();
+    registry.clear_projection_latch_for_test();
     registry.begin_projection_candidate();
     registry
         .prepare_connector_projection(connector.id(), 20)
@@ -137,7 +143,7 @@ fn final_width_failure_uses_the_captured_confirmed_a_product() {
         .unwrap()
         .visible = true;
     registry.begin_projection_candidate();
-    let a_measurement = registry
+    registry
         .prepare_connector_projection(connector_a.id(), 20)
         .unwrap();
     registry.wait_for_projection_jobs_for_test();

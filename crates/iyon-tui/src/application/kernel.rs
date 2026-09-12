@@ -491,11 +491,13 @@ impl NativeRuntime {
         direct_root: Option<crate::occurrence::NodeKey>,
         _direct_port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
         anchor: crate::presentation::direct::DirectHistoryAnchor,
+        async_wake: std::sync::Arc<dyn Fn() + Send + Sync>,
     ) -> anyhow::Result<(
         PreparedSceneFrame,
         Option<crate::history::NativeTransferPlan>,
     )> {
         content.set_theme(&self.theme);
+        self.scene_host.set_async_wake(async_wake);
         let root = direct_root.ok_or_else(|| anyhow::anyhow!("direct Body root is unavailable"))?;
         let frame = self.scene_host.prepare_direct_at_with_content(
             now,

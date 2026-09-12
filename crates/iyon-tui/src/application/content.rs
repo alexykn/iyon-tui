@@ -62,13 +62,23 @@ struct ContentExecutor {
     commands: SyncSender<ContentExecutorCommand>,
     accounting: Arc<Mutex<ContentExecutorAccounting>>,
     semantic_cache: Arc<Mutex<SemanticProjectionCache>>,
+    parser_states: Arc<Mutex<VecDeque<(ParserExecutionKey, ParserExecution)>>>,
     join: Mutex<Option<JoinHandle<()>>>,
+    #[cfg(test)]
+    projection_latch: Arc<Mutex<Option<TestContentLatch>>>,
 }
 
 #[derive(Debug, Default)]
 struct ContentExecutorAccounting {
     queued_jobs: usize,
     queued_bytes: usize,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct TestContentLatch {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
 }
 
 enum ContentExecutorCommand {
@@ -78,6 +88,7 @@ enum ContentExecutorCommand {
 
 const CONTENT_EXECUTOR_MAX_JOBS: usize = 32;
 const CONTENT_EXECUTOR_MAX_BYTES: usize = 64 * 1024 * 1024;
+const CONTENT_EXECUTOR_PARSER_STATE_CAPACITY: usize = 16;
 
 struct ContentExecutorJob {
     bytes: usize,
@@ -117,7 +128,10 @@ impl ContentExecutor {
             commands,
             accounting,
             semantic_cache: Arc::new(Mutex::new(VecDeque::new())),
+            parser_states: Arc::new(Mutex::new(VecDeque::new())),
             join: Mutex::new(Some(join)),
+            #[cfg(test)]
+            projection_latch: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -128,11 +142,30 @@ impl ContentExecutor {
         let (result, receive) = sync_channel(1);
         let bytes = job.bytes;
         let semantic_cache = Arc::clone(&self.semantic_cache);
+        let parser_states = Arc::clone(&self.parser_states);
         let wake = job.wake.clone();
+        #[cfg(test)]
+        let projection_latch = Arc::clone(&self.projection_latch);
         let task = ContentExecutorJob {
             bytes,
             run: Box::new(move || {
                 let mut job = job;
+                let parser_key = ParserExecutionKey::for_snapshot(&job.snapshot, job.funnel);
+                let parser = take_parser_execution(&parser_states, parser_key, &mut job.execution);
+                parser.install_into(&mut job.execution);
+                #[cfg(test)]
+                if let Some(latch) = projection_latch
+                    .lock()
+                    .expect("content test latch lock must remain usable")
+                    .as_ref()
+                {
+                    let _ = latch.entered.send(());
+                    let _ = latch
+                        .release
+                        .lock()
+                        .expect("content test latch release lock must remain usable")
+                        .recv();
+                }
                 let projection = {
                     let mut semantic_cache = semantic_cache
                         .lock()
@@ -150,6 +183,16 @@ impl ContentExecutor {
                         &mut job.prefix_proof_cache,
                     )
                 };
+                let parser = ParserExecution::from_execution(&mut job.execution);
+                let mut parser_states = parser_states
+                    .lock()
+                    .expect("content parser state lock must remain usable");
+                parser_states.retain(|(candidate, _)| *candidate != parser_key);
+                parser_states.push_front((parser_key, parser));
+                while parser_states.len() > CONTENT_EXECUTOR_PARSER_STATE_CAPACITY {
+                    parser_states.pop_back();
+                }
+                drop(parser_states);
                 let _ = result.send(ContentProjectionResult {
                     connector_id: job.connector_id,
                     key: job.key,
@@ -162,6 +205,30 @@ impl ContentExecutor {
         };
         self.submit(task)?;
         Ok(receive)
+    }
+
+    #[cfg(test)]
+    fn install_projection_latch(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (entered, entered_receive) = std::sync::mpsc::channel();
+        let (release, release_receive) = std::sync::mpsc::channel();
+        *self
+            .projection_latch
+            .lock()
+            .expect("content test latch lock must remain usable") = Some(TestContentLatch {
+            entered,
+            release: Arc::new(Mutex::new(release_receive)),
+        });
+        (entered_receive, release)
+    }
+
+    #[cfg(test)]
+    fn clear_projection_latch(&self) {
+        *self
+            .projection_latch
+            .lock()
+            .expect("content test latch lock must remain usable") = None;
     }
 
     fn submit(&self, job: ContentExecutorJob) -> Result<(), ContentExecutorRejected> {
@@ -214,6 +281,68 @@ struct ContentProjectionTask {
     execution: ConnectorExecution,
     prefix_proof_cache: PrefixProofCache,
     wake: Arc<dyn Fn() + Send + Sync>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ParserExecutionKey {
+    source_id: u64,
+    source_generation: u32,
+    content_generation: u64,
+    funnel_kind: TextFunnelKind,
+    hyperlinks: bool,
+}
+
+impl ParserExecutionKey {
+    fn for_snapshot(snapshot: &HostContentSourceSnapshot, funnel: HostContentFunnel) -> Self {
+        Self {
+            source_id: snapshot.source_id,
+            source_generation: snapshot.source_generation,
+            content_generation: snapshot.content_generation,
+            funnel_kind: funnel.kind,
+            hyperlinks: funnel.hyperlinks,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ParserExecution {
+    markdown: Option<MarkdownProjector>,
+    diff: Option<DiffProjector>,
+    ansi: Option<AnsiProjector>,
+    parser_lineage: Option<ContentLineage>,
+}
+
+impl ParserExecution {
+    fn from_execution(execution: &mut ConnectorExecution) -> Self {
+        Self {
+            markdown: execution.markdown.take(),
+            diff: execution.diff.take(),
+            ansi: execution.ansi.take(),
+            parser_lineage: execution.parser_lineage,
+        }
+    }
+
+    fn install_into(self, execution: &mut ConnectorExecution) {
+        execution.markdown = self.markdown;
+        execution.diff = self.diff;
+        execution.ansi = self.ansi;
+        execution.parser_lineage = self.parser_lineage;
+    }
+}
+
+fn take_parser_execution(
+    states: &Mutex<VecDeque<(ParserExecutionKey, ParserExecution)>>,
+    key: ParserExecutionKey,
+    fallback: &mut ConnectorExecution,
+) -> ParserExecution {
+    let mut states = states
+        .lock()
+        .expect("content parser state lock must remain usable");
+    states
+        .iter()
+        .position(|(candidate, _)| *candidate == key)
+        .and_then(|index| states.remove(index).map(|(_, parser)| parser))
+        .unwrap_or_else(|| ParserExecution::from_execution(fallback))
 }
 
 struct ContentProjectionResult {
@@ -433,6 +562,7 @@ struct TextProjectionKey {
     source_revision: u64,
     source_base: u64,
     source_end: u64,
+    head_partial: bool,
     width: u16,
     wrap: TextWrapMode,
     funnel_kind: TextFunnelKind,
@@ -500,6 +630,7 @@ struct SemanticProjectionKey {
     source_base: u64,
     source_end: u64,
     sealed: bool,
+    head_partial: bool,
     funnel_kind: TextFunnelKind,
     hyperlinks: bool,
 }
@@ -514,6 +645,7 @@ impl SemanticProjectionKey {
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
             sealed: snapshot.sealed,
+            head_partial: snapshot.head_partial,
             funnel_kind: funnel.kind,
             hyperlinks: funnel.hyperlinks,
         }
@@ -1265,6 +1397,7 @@ fn project_text_snapshot(
         source_revision: snapshot.revision,
         source_base: snapshot.source_base,
         source_end: snapshot.source_end,
+        head_partial: snapshot.head_partial,
         width: offered_width,
         wrap: funnel.wrap,
         funnel_kind: funnel.kind,
@@ -3486,6 +3619,7 @@ struct ConnectorRecord {
     /// Connector-local theme-independent semantic IR. A palette/presentation
     /// recolor reuses these products and repaints only; inactive connectors
     /// clear this cache alongside the terminal products.
+    #[cfg(test)]
     semantic_cache: SemanticProjectionCache,
     prefix_proof_cache: PrefixProofCache,
     committed_projection: Option<Arc<HostContentProjection>>,
@@ -3625,6 +3759,7 @@ fn set_connector_visible_committed(
         state.committed_projection = None;
         state.candidate_projection = None;
         state.projection_cache.clear();
+        #[cfg(test)]
         state.semantic_cache.clear();
         state.prefix_proof_cache.clear();
         state.projected_source_revision = None;
@@ -4289,6 +4424,18 @@ impl ContentHostRegistry {
         }
     }
 
+    #[cfg(test)]
+    fn install_projection_latch_for_test(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.executor.install_projection_latch()
+    }
+
+    #[cfg(test)]
+    fn clear_projection_latch_for_test(&self) {
+        self.executor.clear_projection_latch();
+    }
+
     pub(crate) fn ui_connector_owner_key(&self, connector: ResourceKey) -> Option<ResourceKey> {
         self.ui_connector_keys
             .iter()
@@ -4621,6 +4768,7 @@ impl ContentHostRegistry {
             failed_source_revision: None,
             activation_failure: None,
             projection_cache: VecDeque::new(),
+            #[cfg(test)]
             semantic_cache: VecDeque::new(),
             prefix_proof_cache: VecDeque::new(),
             committed_projection: None,
@@ -5036,6 +5184,7 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
+            head_partial: snapshot.head_partial,
             width,
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
@@ -5194,6 +5343,7 @@ impl ContentHostRegistry {
                     && projection.key.source_generation == key.source_generation
                     && projection.key.content_generation == key.content_generation
                     && projection.key.source_base == key.source_base
+                    && projection.key.head_partial == key.head_partial
                     && projection.key.width == key.width
                     && projection.key.wrap == key.wrap
                     && projection.key.funnel_kind == key.funnel_kind
@@ -5232,6 +5382,7 @@ impl ContentHostRegistry {
         self.prepare_connector_projection_async(connector_id, offered_width, None)
     }
 
+    #[cfg(test)]
     fn prepare_connector_projection_sync(
         &mut self,
         connector_id: u64,
@@ -5285,6 +5436,7 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
+            head_partial: snapshot.head_partial,
             width: offered_width,
             wrap: funnel.wrap,
             funnel_kind: funnel.kind,
@@ -5446,6 +5598,7 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
+            head_partial: snapshot.head_partial,
             width: offered_width,
             wrap: funnel.wrap,
             funnel_kind: funnel.kind,
@@ -6473,6 +6626,7 @@ impl ContentHostRegistry {
             source_revision: snapshot.revision,
             source_base: snapshot.source_base,
             source_end: snapshot.source_end,
+            head_partial: snapshot.head_partial,
             width: offered_width,
             wrap: state.funnel.wrap,
             funnel_kind: state.funnel.kind,
@@ -6604,6 +6758,7 @@ impl ContentHostRegistry {
             if !state.visible {
                 state.committed_projection = None;
                 state.projection_cache.clear();
+                #[cfg(test)]
                 state.semantic_cache.clear();
                 state.prefix_proof_cache.clear();
                 state.projected_source_revision = None;
@@ -6977,6 +7132,7 @@ impl ContentHostRegistry {
                 if !state.visible {
                     state.committed_projection = None;
                     state.projection_cache.clear();
+                    #[cfg(test)]
                     state.semantic_cache.clear();
                     state.prefix_proof_cache.clear();
                     state.projected_source_revision = None;
@@ -7576,6 +7732,7 @@ impl ContentHostRegistry {
             state.committed_projection = None;
             state.candidate_projection = None;
             state.projection_cache.clear();
+            #[cfg(test)]
             state.semantic_cache.clear();
             state.prefix_proof_cache.clear();
             state.projected_source_revision = None;

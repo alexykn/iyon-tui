@@ -2922,6 +2922,16 @@ impl HostInner {
         Arc::clone(&self.history_work_notify)
     }
 
+    fn async_wake_callback(&self) -> Arc<dyn Fn() + Send + Sync> {
+        let environment = self.environment.clone();
+        let host_id = self.host_id;
+        let notification = Arc::clone(&self.presentation_notify);
+        Arc::new(move || {
+            let _ = environment.mark_host_ready(host_id);
+            notification.notify_waiters();
+        })
+    }
+
     pub(super) fn presentation_notification(&self) -> std::sync::Arc<tokio::sync::Notify> {
         Arc::clone(&self.presentation_notify)
     }
@@ -3620,6 +3630,7 @@ impl HostInner {
         } else {
             crate::presentation::direct::DirectHistoryAnchor::FollowEnd
         };
+        let async_wake = self.async_wake_callback();
         let (candidate, history_plan) = match self.running.prepare_frame_for_history(
             self.now,
             size,
@@ -3627,12 +3638,16 @@ impl HostInner {
             direct_root,
             &direct_port_ids,
             direct_history_anchor,
+            async_wake,
         ) {
             Ok(candidate) => candidate,
             Err(error) => {
                 if error
                     .downcast_ref::<super::content::ContentProjectionPending>()
                     .is_some()
+                    || error
+                        .downcast_ref::<crate::scene::SceneLayoutPending>()
+                        .is_some()
                 {
                     self.content.abort_candidate();
                     self.running.host_discard_candidate();
@@ -3760,7 +3775,10 @@ impl HostInner {
                 Err(error)
                     if error
                         .downcast_ref::<super::content::ContentProjectionPending>()
-                        .is_some() =>
+                        .is_some()
+                        || error
+                            .downcast_ref::<crate::scene::SceneLayoutPending>()
+                            .is_some() =>
                 {
                     return Ok(HostFlushOutcome {
                         waiting_for_presentation: true,

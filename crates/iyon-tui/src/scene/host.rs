@@ -7,6 +7,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
+    sync::Arc,
     time::Instant,
 };
 
@@ -27,10 +29,7 @@ use crate::{
     physical::Surface,
     presentation::{
         ContentProvider,
-        direct::{
-            CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor,
-            paint_direct_layout,
-        },
+        direct::{CapturedContentMeasurement, DirectDriverHandle, DirectHistoryAnchor},
         direct_tree::ComponentGeometryMap,
         taffy::NodeParticipation,
     },
@@ -40,6 +39,64 @@ use crate::{
 use crate::geometry::Rect;
 
 const MAX_LAYOUT_PASSES: usize = 8;
+
+pub(crate) struct SceneLayoutPending;
+
+impl std::fmt::Display for SceneLayoutPending {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LAYOUT_PENDING: direct layout or paint is running")
+    }
+}
+
+impl std::fmt::Debug for SceneLayoutPending {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SceneLayoutPending")
+    }
+}
+
+impl std::error::Error for SceneLayoutPending {}
+
+struct PendingPaint {
+    signature: u64,
+    component_geometry: ComponentGeometryMap,
+    occurrence_geometry:
+        HashMap<crate::occurrence::NodeKey, crate::presentation::direct_tree::ComponentGeometry>,
+}
+
+fn layout_request_signature(
+    direct_revision: u64,
+    root: crate::occurrence::NodeKey,
+    size: Size,
+    history_anchor: DirectHistoryAnchor,
+    captures: &HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+    controls: &HashMap<ComponentId, ControlSnapshot>,
+) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    direct_revision.hash(&mut hasher);
+    root.hash(&mut hasher);
+    size.width.hash(&mut hasher);
+    size.height.hash(&mut hasher);
+    history_anchor.hash(&mut hasher);
+    let mut capture_keys = captures.keys().copied().collect::<Vec<_>>();
+    capture_keys.sort_unstable_by_key(|key| (key.slot, key.generation));
+    for key in capture_keys {
+        key.hash(&mut hasher);
+        let capture = &captures[&key];
+        capture.capture_id.hash(&mut hasher);
+        capture.port_id.hash(&mut hasher);
+        capture.offered_width.hash(&mut hasher);
+        capture.measurement.projection_revision.hash(&mut hasher);
+        capture.measurement.projection_identity.hash(&mut hasher);
+        capture.measurement.metric_revision.hash(&mut hasher);
+    }
+    let mut control_keys = controls.keys().copied().collect::<Vec<_>>();
+    control_keys.sort_unstable();
+    for key in control_keys {
+        key.hash(&mut hasher);
+        format!("{:?}", &controls[&key]).hash(&mut hasher);
+    }
+    hasher.finish()
+}
 
 /// A fully synchronized occurrence/Taffy frame ready for the terminal
 /// adapter. All fields are derived from the same candidate.
@@ -82,6 +139,10 @@ pub(crate) struct SceneHost {
     direct_delivered_content_extents: HashMap<ComponentId, Size>,
     invalidated_components: HashSet<ComponentId>,
     content_candidate_epoch: Option<u64>,
+    async_wake: Arc<dyn Fn() + Send + Sync>,
+    pending_layout_signature: Option<u64>,
+    pending_paint: Option<PendingPaint>,
+    direct_revision: u64,
 }
 
 impl Default for SceneHost {
@@ -105,6 +166,10 @@ impl Default for SceneHost {
             direct_delivered_content_extents: HashMap::new(),
             invalidated_components: HashSet::new(),
             content_candidate_epoch: None,
+            async_wake: Arc::new(|| {}),
+            pending_layout_signature: None,
+            pending_paint: None,
+            direct_revision: 0,
         }
     }
 }
@@ -133,11 +198,35 @@ impl SceneHost {
         Ok(())
     }
 
+    pub(crate) fn set_async_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.async_wake = wake;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_layout_latch_for_test(
+        &self,
+    ) -> Result<(std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>)> {
+        self.direct_driver
+            .as_ref()
+            .ok_or_else(|| anyhow!("direct renderer driver is not started"))
+            .map(DirectDriverHandle::install_layout_latch_for_test)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_layout_latch_for_test(&self) {
+        if let Some(driver) = self.direct_driver.as_ref() {
+            driver.clear_layout_latch_for_test();
+        }
+    }
+
     pub(crate) fn clear_direct_driver(&mut self) -> Result<()> {
         if let Some(mut driver) = self.direct_driver.take() {
             driver.shutdown()?;
         }
         self.direct_synchronized = false;
+        self.direct_revision = self.direct_revision.saturating_add(1);
+        self.pending_layout_signature = None;
+        self.pending_paint = None;
         self.direct_history_overflow_rows = 0;
         self.direct_delivered_layout.clear();
         self.direct_delivered_content_extents.clear();
@@ -227,6 +316,7 @@ impl SceneHost {
         self.direct_port_ids = port_ids;
         self.direct_body_root = Some(body_root);
         self.direct_synchronized = true;
+        self.direct_revision = self.direct_revision.saturating_add(1);
         Ok(())
     }
 
@@ -279,20 +369,49 @@ impl SceneHost {
             self.capture_direct_measurements(size.width, content)?
         };
         let mut control_snapshots = self.capture_direct_controls(registry)?;
-        let mut invalidate_controls = Vec::new();
-        for _ in 0..MAX_LAYOUT_PASSES {
-            let mut direct = self
+        let signature = layout_request_signature(
+            self.direct_revision,
+            root,
+            size,
+            history_anchor,
+            &captures,
+            &control_snapshots,
+        );
+        if let Some(pending) = self.pending_paint.take() {
+            let driver = self
                 .direct_driver
                 .as_ref()
-                .expect("direct renderer driver checked above")
-                .layout(
-                    root,
-                    size,
-                    history_anchor,
-                    captures.clone(),
-                    invalidate_controls.clone(),
-                    control_snapshots.clone(),
-                )?;
+                .expect("direct renderer driver checked above");
+            match driver.poll_paint()? {
+                None => {
+                    self.pending_paint = Some(pending);
+                    return Err(anyhow::Error::new(SceneLayoutPending));
+                }
+                Some(surface) if pending.signature == signature => {
+                    self.invalidated_components.clear();
+                    return Ok(PreparedSceneFrame {
+                        surface,
+                        component_geometry: pending.component_geometry,
+                        occurrence_geometry: pending.occurrence_geometry,
+                    });
+                }
+                Some(_) => {
+                    // The immutable paint finished for an older control or
+                    // content capture. Drop it and prepare a fresh request;
+                    // no stale completion can become a visible candidate.
+                }
+            }
+        }
+        let mut invalidate_controls = Vec::new();
+        for _ in 0..MAX_LAYOUT_PASSES {
+            let mut direct = self.layout_or_pending(
+                root,
+                size,
+                history_anchor,
+                captures.clone(),
+                invalidate_controls.clone(),
+                control_snapshots.clone(),
+            )?;
             invalidate_controls.clear();
             let mut refined_content = Vec::new();
             #[cfg(feature = "perf-counters")]
@@ -328,18 +447,14 @@ impl SceneHost {
             #[cfg(feature = "perf-counters")]
             drop(_refinement_timer);
             if !refined_content.is_empty() {
-                direct = self
-                    .direct_driver
-                    .as_ref()
-                    .expect("direct renderer driver checked above")
-                    .layout(
-                        root,
-                        size,
-                        history_anchor,
-                        captures.clone(),
-                        refined_content,
-                        control_snapshots.clone(),
-                    )?;
+                direct = self.layout_or_pending(
+                    root,
+                    size,
+                    history_anchor,
+                    captures.clone(),
+                    refined_content,
+                    control_snapshots.clone(),
+                )?;
             }
             self.direct_history_overflow_rows = direct.history_overflow_rows;
             let mounts = direct.component_mounts.clone();
@@ -386,16 +501,84 @@ impl SceneHost {
                 invalidate_controls = self.direct_control_nodes.keys().copied().collect();
                 continue;
             }
-            let surface =
-                paint_direct_layout(&direct, theme, content, self.focus.focused(), &graph)?;
-            self.invalidated_components.clear();
-            return Ok(PreparedSceneFrame {
-                surface,
-                component_geometry: geometry,
-                occurrence_geometry: direct.occurrence_geometry,
+            let signature = layout_request_signature(
+                self.direct_revision,
+                root,
+                size,
+                history_anchor,
+                &captures,
+                &control_snapshots,
+            );
+            let component_geometry = geometry;
+            let occurrence_geometry = direct.occurrence_geometry.clone();
+            let driver = self
+                .direct_driver
+                .as_ref()
+                .expect("direct renderer driver checked above");
+            driver.request_paint(
+                direct,
+                Arc::new(theme.clone()),
+                self.focus.focused(),
+                graph,
+                Arc::clone(&self.async_wake),
+            )?;
+            self.pending_paint = Some(PendingPaint {
+                signature,
+                component_geometry,
+                occurrence_geometry,
             });
+            return Err(anyhow::Error::new(SceneLayoutPending));
         }
         Err(anyhow!("direct occurrence layout did not converge"))
+    }
+
+    fn layout_or_pending(
+        &mut self,
+        root: crate::occurrence::NodeKey,
+        size: Size,
+        history_anchor: DirectHistoryAnchor,
+        measurements: HashMap<crate::occurrence::NodeKey, CapturedContentMeasurement>,
+        invalidate: Vec<crate::occurrence::NodeKey>,
+        controls: HashMap<ComponentId, ControlSnapshot>,
+    ) -> Result<crate::presentation::direct::DirectLayout> {
+        let signature = layout_request_signature(
+            self.direct_revision,
+            root,
+            size,
+            history_anchor,
+            &measurements,
+            &controls,
+        );
+        let driver = self
+            .direct_driver
+            .as_ref()
+            .expect("direct renderer driver checked above");
+        if self.pending_layout_signature == Some(signature) {
+            return match driver.poll_layout()? {
+                Some(layout) => {
+                    self.pending_layout_signature = None;
+                    Ok(layout)
+                }
+                None => Err(anyhow::Error::new(SceneLayoutPending)),
+            };
+        }
+        if self.pending_layout_signature.is_some() {
+            if driver.poll_layout()?.is_none() {
+                return Err(anyhow::Error::new(SceneLayoutPending));
+            }
+            self.pending_layout_signature = None;
+        }
+        driver.request_layout(
+            root,
+            size,
+            history_anchor,
+            measurements,
+            invalidate,
+            controls,
+            Arc::clone(&self.async_wake),
+        )?;
+        self.pending_layout_signature = Some(signature);
+        Err(anyhow::Error::new(SceneLayoutPending))
     }
 
     fn capture_direct_measurements(

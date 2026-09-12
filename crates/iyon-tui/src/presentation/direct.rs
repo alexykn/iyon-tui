@@ -8,7 +8,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::mpsc::{Receiver, SyncSender, sync_channel},
+    sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
 };
 
@@ -26,10 +27,7 @@ use crate::{
         BorderSpec, BorderStyle, ContentMeasurement, StyleSpec, StyleStateKey, StyleStateValue,
         TextAttribute,
     },
-    text::{
-        TerminalConstraints, TerminalTextProduct, TerminalTextProjector, TextContent,
-        TextRenderPolicy,
-    },
+    text::{TerminalConstraints, TerminalTextProduct, TextContent, TextRenderPolicy},
 };
 
 use super::content::HistoryMeasurementAdjustment;
@@ -79,7 +77,7 @@ impl PartialEq for CapturedContentMeasurement {
 }
 
 /// Direct candidate output. The scene host adds physical receipt metadata.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DirectLayout {
     pub(crate) tree: DirectTree,
     pub(crate) occurrence_geometry: HashMap<NodeKey, ComponentGeometry>,
@@ -89,11 +87,17 @@ pub(crate) struct DirectLayout {
     pub(crate) history_overflow_rows: usize,
 }
 
+#[cfg(test)]
+struct TestLayoutLatch {
+    entered: std::sync::mpsc::Sender<()>,
+    release: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+}
+
 /// Controls the placement of the active History suffix after a native
 /// transfer.  FollowEnd keeps the current suffix bottom anchored; a blocked
 /// native frontier must instead pin the active rows at the top of the
 /// History track so the screen does not follow rows that were not accepted.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum DirectHistoryAnchor {
     FollowEnd,
     NativeFrontier,
@@ -118,6 +122,17 @@ enum DirectDriverCommand {
         invalidate: Vec<NodeKey>,
         controls: HashMap<ComponentId, ControlSnapshot>,
         response: SyncSender<Result<DirectLayout>>,
+        wake: Arc<dyn Fn() + Send + Sync>,
+        #[cfg(test)]
+        latch: Arc<Mutex<Option<TestLayoutLatch>>>,
+    },
+    Paint {
+        layout: DirectLayout,
+        theme: Arc<crate::Theme>,
+        focused: Option<ComponentId>,
+        graph: crate::component::MountGraph,
+        response: SyncSender<Result<crate::physical::Surface>>,
+        wake: Arc<dyn Fn() + Send + Sync>,
     },
     InvalidateContent {
         port_id: u64,
@@ -136,6 +151,10 @@ enum DirectDriverCommand {
 pub(crate) struct DirectDriverHandle {
     command: SyncSender<DirectDriverCommand>,
     join: Option<JoinHandle<()>>,
+    pending_layout: Mutex<Option<Receiver<Result<DirectLayout>>>>,
+    pending_paint: Mutex<Option<Receiver<Result<crate::physical::Surface>>>>,
+    #[cfg(test)]
+    layout_latch: Arc<Mutex<Option<TestLayoutLatch>>>,
 }
 
 impl DirectDriverHandle {
@@ -157,6 +176,10 @@ impl DirectDriverHandle {
         Ok(Self {
             command,
             join: Some(join),
+            pending_layout: Mutex::new(None),
+            pending_paint: Mutex::new(None),
+            #[cfg(test)]
+            layout_latch: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -188,7 +211,7 @@ impl DirectDriverHandle {
             .map_err(|_| anyhow!("direct renderer driver dropped synchronization"))?
     }
 
-    pub(crate) fn layout(
+    pub(crate) fn request_layout(
         &self,
         root: NodeKey,
         size: crate::geometry::Size,
@@ -196,13 +219,20 @@ impl DirectDriverHandle {
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
         controls: HashMap<ComponentId, ControlSnapshot>,
-    ) -> Result<DirectLayout> {
-        #[cfg(feature = "perf-counters")]
-        let _perf_timer =
-            crate::perf::ScopedTimer::new(crate::perf::Counter::DirectDriverLayoutNanos);
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<()> {
+        let mut pending = self
+            .pending_layout
+            .lock()
+            .map_err(|_| anyhow!("direct layout pending lock is poisoned"))?;
+        if pending.is_some() {
+            return Err(anyhow!("direct layout request is already pending"));
+        }
         let (response, receive) = sync_channel(1);
+        #[cfg(test)]
+        let latch = Arc::clone(&self.layout_latch);
         self.command
-            .send(DirectDriverCommand::Layout {
+            .try_send(DirectDriverCommand::Layout {
                 root,
                 size,
                 history_anchor,
@@ -210,11 +240,105 @@ impl DirectDriverHandle {
                 invalidate,
                 controls,
                 response,
+                wake,
+                #[cfg(test)]
+                latch,
             })
-            .map_err(|_| anyhow!("direct renderer driver is closed"))?;
-        receive
-            .recv()
-            .map_err(|_| anyhow!("direct renderer driver dropped layout"))?
+            .map_err(|_| anyhow!("direct renderer driver queue is full or closed"))?;
+        *pending = Some(receive);
+        Ok(())
+    }
+
+    pub(crate) fn poll_layout(&self) -> Result<Option<DirectLayout>> {
+        let mut pending = self
+            .pending_layout
+            .lock()
+            .map_err(|_| anyhow!("direct layout pending lock is poisoned"))?;
+        let Some(receive) = pending.take() else {
+            return Ok(None);
+        };
+        match receive.try_recv() {
+            Ok(result) => result.map(Some),
+            Err(TryRecvError::Empty) => {
+                *pending = Some(receive);
+                Ok(None)
+            }
+            Err(TryRecvError::Disconnected) => {
+                Err(anyhow!("direct renderer driver dropped layout"))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn install_layout_latch_for_test(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (entered, entered_receive) = std::sync::mpsc::channel();
+        let (release, release_receive) = std::sync::mpsc::channel();
+        *self
+            .layout_latch
+            .lock()
+            .expect("layout test latch lock must remain usable") = Some(TestLayoutLatch {
+            entered,
+            release: Arc::new(Mutex::new(release_receive)),
+        });
+        (entered_receive, release)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_layout_latch_for_test(&self) {
+        *self
+            .layout_latch
+            .lock()
+            .expect("layout test latch lock must remain usable") = None;
+    }
+
+    pub(crate) fn request_paint(
+        &self,
+        layout: DirectLayout,
+        theme: Arc<crate::Theme>,
+        focused: Option<ComponentId>,
+        graph: crate::component::MountGraph,
+        wake: Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<()> {
+        let mut pending = self
+            .pending_paint
+            .lock()
+            .map_err(|_| anyhow!("direct paint pending lock is poisoned"))?;
+        if pending.is_some() {
+            return Err(anyhow!("direct paint request is already pending"));
+        }
+        let (response, receive) = sync_channel(1);
+        self.command
+            .try_send(DirectDriverCommand::Paint {
+                layout,
+                theme,
+                focused,
+                graph,
+                response,
+                wake,
+            })
+            .map_err(|_| anyhow!("direct renderer driver queue is full or closed"))?;
+        *pending = Some(receive);
+        Ok(())
+    }
+
+    pub(crate) fn poll_paint(&self) -> Result<Option<crate::physical::Surface>> {
+        let mut pending = self
+            .pending_paint
+            .lock()
+            .map_err(|_| anyhow!("direct paint pending lock is poisoned"))?;
+        let Some(receive) = pending.take() else {
+            return Ok(None);
+        };
+        match receive.try_recv() {
+            Ok(result) => result.map(Some),
+            Err(TryRecvError::Empty) => {
+                *pending = Some(receive);
+                Ok(None)
+            }
+            Err(TryRecvError::Disconnected) => Err(anyhow!("direct renderer driver dropped paint")),
+        }
     }
 
     pub(crate) fn invalidate_content(&self, port_id: u64) -> Result<()> {
@@ -300,15 +424,45 @@ fn direct_driver_loop(
                 invalidate,
                 controls,
                 response,
+                wake,
+                #[cfg(test)]
+                latch,
             } => {
-                let _ = response.send(renderer.prepare(
+                #[cfg(test)]
+                if let Some(latch) = latch
+                    .lock()
+                    .expect("layout test latch lock must remain usable")
+                    .as_ref()
+                {
+                    let _ = latch.entered.send(());
+                    let _ = latch
+                        .release
+                        .lock()
+                        .expect("layout test latch release lock must remain usable")
+                        .recv();
+                }
+                let result = renderer.prepare(
                     root,
                     size,
                     history_anchor,
                     &measurements,
                     &invalidate,
                     &controls,
-                ));
+                );
+                let _ = response.send(result);
+                wake();
+            }
+            DirectDriverCommand::Paint {
+                layout,
+                theme,
+                focused,
+                graph,
+                response,
+                wake,
+            } => {
+                let result = paint_direct_layout_owned(&layout, &theme, focused, &graph);
+                let _ = response.send(result);
+                wake();
             }
             DirectDriverCommand::InvalidateContent { port_id, response } => {
                 let _ = response.send(renderer.invalidate_content_measurement(port_id));
@@ -1099,9 +1253,6 @@ fn content_product_for_request(
     capture: &CapturedContentMeasurement,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> Result<Option<std::sync::Arc<TerminalTextProduct>>> {
-    let Some(contents) = capture.semantic_contents.as_deref() else {
-        return Ok(None);
-    };
     let constraints = match request.known_width {
         Some(width) => TerminalConstraints::definite(floor_constraint_width(width)?),
         None => match request.available_width {
@@ -1121,12 +1272,13 @@ fn content_product_for_request(
             return Ok(Some(std::sync::Arc::clone(product)));
         }
     }
-    let projector = TerminalTextProjector::new(capture.terminal_policy.clone());
-    projector
-        .project_contents(contents, constraints)
-        .map(std::sync::Arc::new)
-        .map(Some)
-        .map_err(|error| anyhow!(error.to_string()))
+    // A Taffy measurement callback may only read a captured immutable
+    // realization. Rewrapping or projecting from semantic values here would
+    // put expensive content work back on the layout thread and could produce
+    // geometry that has no receipt-pinned product. Width misses are scheduled
+    // by the ContentHost owner; the retained capture supplies its old metrics
+    // until the matching width product is ready.
+    Ok(None)
 }
 
 fn floor_constraint_width(value: f32) -> Result<u16> {
@@ -1413,6 +1565,115 @@ pub(crate) fn paint_direct_layout(
         Rect::new(0, 0, layout.tree.size.width, layout.tree.size.height),
     )?;
     Ok(surface)
+}
+
+/// Paint implementation used by the layout owner thread. Every ContentHost
+/// lookup resolves against the immutable capture carried by `DirectLayout`;
+/// it cannot reach a live Source, Connector, or HostInner while the worker is
+/// painting.
+fn paint_direct_layout_owned(
+    layout: &DirectLayout,
+    theme: &crate::Theme,
+    focused: Option<ComponentId>,
+    graph: &crate::component::MountGraph,
+) -> Result<crate::physical::Surface> {
+    let content = CapturedContentProvider {
+        captures: &layout.content_products,
+        theme,
+    };
+    let mut surface =
+        crate::physical::Surface::new(layout.tree.size.width, layout.tree.size.height);
+    let resolver = crate::presentation::paint::ThemeResolver::new(theme);
+    paint_direct_node(
+        &layout.tree,
+        layout.tree.root,
+        &resolver,
+        &content,
+        focused,
+        graph,
+        &mut surface,
+        crate::physical::PhysicalStyle::default(),
+        crate::presentation::paint::StyleContext::default(),
+        Rect::new(0, 0, layout.tree.size.width, layout.tree.size.height),
+    )?;
+    Ok(surface)
+}
+
+struct CapturedContentProvider<'a> {
+    captures: &'a HashMap<NodeKey, CapturedContentMeasurement>,
+    theme: &'a crate::Theme,
+}
+
+impl crate::presentation::ContentProvider for CapturedContentProvider<'_> {
+    fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
+        0
+    }
+
+    fn measure(
+        &mut self,
+        _port_id: u64,
+        _offered_width: u16,
+        _width_rule: crate::presentation::ContentWidthRule,
+    ) -> ContentMeasurement {
+        ContentMeasurement::default()
+    }
+
+    fn paint_window(
+        &self,
+        ticket: crate::presentation::PreparedProjectionTicket,
+        window: crate::presentation::ContentWindow,
+        target: &mut crate::physical::Surface,
+        target_origin: (u16, u16),
+        clip: Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        self.paint_window_signed(
+            ticket,
+            window,
+            target,
+            (i32::from(target_origin.0), i32::from(target_origin.1)),
+            clip,
+            style,
+        );
+    }
+
+    fn paint_window_signed(
+        &self,
+        ticket: crate::presentation::PreparedProjectionTicket,
+        window: crate::presentation::ContentWindow,
+        target: &mut crate::physical::Surface,
+        target_origin: (i32, i32),
+        clip: Rect,
+        style: crate::physical::PhysicalStyle,
+    ) {
+        let capture = self.captures.values().find(|capture| {
+            capture.port_id == ticket.port_id
+                && capture.offered_width == ticket.offered_width
+                && capture.measurement.connector_id == ticket.connector_id
+                && capture.measurement.projection_identity == ticket.projection_identity
+                && capture.measurement.projection_revision == ticket.projection_revision
+        });
+        let Some(product) = capture.and_then(|capture| capture.terminal_product.as_ref()) else {
+            target.physically_complete = false;
+            return;
+        };
+        if product
+            .paint_window(
+                self.theme,
+                style,
+                target,
+                target_origin,
+                clip,
+                crate::text::TerminalRowWindow::new(
+                    usize::try_from(window.first_row).unwrap_or(usize::MAX),
+                    usize::try_from(window.row_count).unwrap_or(usize::MAX),
+                ),
+            )
+            .is_err()
+        {
+            target.physically_complete = false;
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1991,5 +2252,70 @@ mod tests {
     #[test]
     fn physical_box_rejects_positive_origin_outside_terminal_range() {
         assert!(physical_box(f32::from(u16::MAX) + 1.0, 0.0, 1.0, 1.0).is_err());
+    }
+
+    #[test]
+    fn layout_request_is_nonblocking_while_real_driver_job_is_latched() {
+        let driver = DirectDriverHandle::start(7).expect("direct driver startup");
+        let root = NodeKey {
+            slot: 1,
+            generation: 1,
+        };
+        let snapshot = OccurrenceSnapshot {
+            key: root,
+            kind: HostKind::Box,
+            root_role: Some(crate::occurrence::RootRole::Body),
+            children: Vec::new(),
+            port: None,
+            control: None,
+            hidden: false,
+            subscriptions: 0,
+            history_action: None,
+            properties: Vec::new(),
+            style_states: Vec::new(),
+            structure_revision: 1,
+            geometry_revision: 1,
+            presentation_revision: 0,
+            interaction_revision: 0,
+        };
+        driver
+            .synchronize(
+                vec![snapshot],
+                None,
+                vec![NodeParticipation {
+                    key: root,
+                    participates: true,
+                }],
+                HashMap::new(),
+                vec![root],
+                HashMap::new(),
+                HashMap::new(),
+            )
+            .expect("direct synchronization");
+        let (entered, release) = driver.install_layout_latch_for_test();
+        driver
+            .request_layout(
+                root,
+                crate::geometry::Size::new(4, 2),
+                DirectHistoryAnchor::FollowEnd,
+                HashMap::new(),
+                Vec::new(),
+                HashMap::new(),
+                Arc::new(|| {}),
+            )
+            .expect("layout request admission");
+        entered
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("layout worker entered latch");
+        assert!(driver.poll_layout().expect("layout poll").is_none());
+        release.send(()).expect("release layout worker");
+        let layout = loop {
+            if let Some(layout) = driver.poll_layout().expect("layout completion poll") {
+                break layout;
+            }
+            std::thread::yield_now();
+        };
+        driver.clear_layout_latch_for_test();
+        assert_eq!(layout.tree.size, crate::geometry::Size::new(4, 2));
     }
 }

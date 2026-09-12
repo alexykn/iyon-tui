@@ -1090,7 +1090,6 @@ fn measured_for_request(
     capture: Option<&CapturedContentMeasurement>,
     control_view: Option<&View>,
     request: crate::presentation::taffy::MeasureRequest,
-) -> MeasuredSize {
 ) -> Result<MeasuredSize> {
     measured_for_request_with_intrinsic(capture, control_view, None, request)
 }

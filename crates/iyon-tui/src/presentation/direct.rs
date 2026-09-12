@@ -404,36 +404,6 @@ impl DirectOccurrenceRenderer {
             )
         };
         sync.map_err(|error| anyhow!("direct Taffy synchronization failed: {error:?}"))?;
-        let body_children = self
-            .snapshots
-            .values()
-            .find(|snapshot| snapshot.root_role == Some(crate::occurrence::RootRole::Body))
-            .map(|snapshot| snapshot.children.clone())
-            .unwrap_or_default();
-        let body_content_children = body_children.iter().copied().filter(|key| {
-            self.snapshots
-                .get(key)
-                .is_some_and(|snapshot| snapshot.kind == HostKind::ContentHost)
-        });
-        let body_fit_children = body_children.iter().copied().filter(|key| {
-            self.snapshots
-                .get(key)
-                .is_some_and(crate::presentation::taffy::is_intrinsic_body_child)
-        });
-        let history_root_children = self
-            .snapshots
-            .values()
-            .filter(|snapshot| {
-                snapshot.root_role == Some(crate::occurrence::RootRole::LegacyHistoryUnit)
-            })
-            .flat_map(|snapshot| snapshot.children.iter().copied());
-        self.layout
-            .synchronize_root_child_alignment(
-                body_content_children,
-                body_fit_children,
-                history_root_children,
-            )
-            .map_err(|error| anyhow!("direct root alignment synchronization failed: {error:?}"))?;
         if let Some(changes) = changes {
             for key in &changes.retired_nodes {
                 self.participation.remove(key);
@@ -586,27 +556,6 @@ impl DirectOccurrenceRenderer {
             .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
     }
 
-    fn layout_root_allocation(
-        &mut self,
-        root: NodeKey,
-        width: f32,
-        height: f32,
-        measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, View>,
-        intrinsic_control_views: &HashMap<NodeKey, View>,
-    ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
-        self.layout
-            .layout_with_root_allocation(root, width, height, &mut |key, request| {
-                measured_for_request_with_intrinsic(
-                    measurements.get(&key),
-                    control_views.get(&key),
-                    intrinsic_control_views.get(&key),
-                    request,
-                )
-            })
-            .map_err(|error| anyhow!("direct Taffy layout failed: {error:?}"))
-    }
-
     fn layout_roots(
         &mut self,
         body_root: NodeKey,
@@ -675,28 +624,20 @@ impl DirectOccurrenceRenderer {
             .transpose()?
             .ok_or_else(|| anyhow!("direct Body root geometry is missing"))?
             .clamp(0, i32::from(size.height)) as u16;
-        let body_overflows_viewport = body_intrinsic.iter().any(|geometry| {
-            geometry.key != body
-                && geometry.logical.y + geometry.logical.height > f32::from(body_height)
-        });
-        let body_measurement = if body_overflows_viewport {
-            self.layout_root_allocation(
-                body,
-                f32::from(size.width),
-                f32::from(body_height),
-                measurements,
-                control_views,
-                intrinsic_control_views,
-            )?
-        } else {
-            body_intrinsic
-        };
+        let body_measurement = self.layout_root(
+            body,
+            AvailableConstraint::Definite(f32::from(size.width)),
+            AvailableConstraint::Definite(f32::from(body_height)),
+            measurements,
+            control_views,
+            intrinsic_control_views,
+        )?;
         let history_height = size.height.saturating_sub(body_height);
 
         let mut history_layouts = Vec::with_capacity(history_roots.len());
         let mut history_height_total = 0.0_f32;
         for root in history_roots {
-            let geometries = self.layout_root(
+            let intrinsic_geometries = self.layout_root(
                 root,
                 AvailableConstraint::Definite(f32::from(size.width)),
                 AvailableConstraint::MaxContent,
@@ -704,7 +645,7 @@ impl DirectOccurrenceRenderer {
                 control_views,
                 intrinsic_control_views,
             )?;
-            let root_height = geometries
+            let root_height = intrinsic_geometries
                 .iter()
                 .find(|geometry| geometry.key == root)
                 .map(|geometry| geometry.logical.height)
@@ -712,6 +653,14 @@ impl DirectOccurrenceRenderer {
             if !root_height.is_finite() || root_height < 0.0 {
                 return Err(anyhow!("direct History root height is invalid"));
             }
+            let geometries = self.layout_root(
+                root,
+                AvailableConstraint::Definite(f32::from(size.width)),
+                AvailableConstraint::Definite(root_height),
+                measurements,
+                control_views,
+                intrinsic_control_views,
+            )?;
             history_height_total += root_height;
             history_layouts.push((geometries, root_height));
         }
@@ -2002,6 +1951,125 @@ mod tests {
         assert_eq!(history_nodes[0].rect.height, 0);
         assert_eq!(history_nodes[1].rect.y, 1);
         assert_eq!(history_nodes[1].rect.height, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn direct_row_respects_declared_flex_shrink_across_width_and_height() -> Result<()> {
+        let body = NodeKey {
+            slot: 70,
+            generation: 1,
+        };
+        let row = NodeKey {
+            slot: 71,
+            generation: 1,
+        };
+        let first = NodeKey {
+            slot: 72,
+            generation: 1,
+        };
+        let second = NodeKey {
+            slot: 73,
+            generation: 1,
+        };
+        let scalar = |value| crate::occurrence::FiniteScalar::new(value).expect("finite value");
+        let length = |value| {
+            LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(scalar(
+                value,
+            ))))
+        };
+        let snapshot = |key, children, root_role, properties| OccurrenceSnapshot {
+            key,
+            kind: HostKind::Box,
+            root_role,
+            children,
+            port: None,
+            control: None,
+            hidden: false,
+            subscriptions: 0,
+            history_action: None,
+            properties,
+            style_states: Vec::new(),
+            structure_revision: 1,
+            geometry_revision: 1,
+            presentation_revision: 0,
+            interaction_revision: 0,
+        };
+        let snapshots = vec![
+            snapshot(
+                body,
+                vec![row],
+                Some(crate::occurrence::RootRole::Body),
+                Vec::new(),
+            ),
+            snapshot(
+                row,
+                vec![first, second],
+                None,
+                vec![
+                    (
+                        PropertyId::Layout,
+                        LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
+                    ),
+                    (PropertyId::Width, length(6.0)),
+                    (PropertyId::Height, length(2.0)),
+                ],
+            ),
+            snapshot(
+                first,
+                Vec::new(),
+                None,
+                vec![
+                    (PropertyId::Width, length(5.0)),
+                    (PropertyId::Height, length(2.0)),
+                    (
+                        PropertyId::FlexShrink,
+                        LayerValue::Value(PropertyValue::Scalar(scalar(0.0))),
+                    ),
+                ],
+            ),
+            snapshot(
+                second,
+                Vec::new(),
+                None,
+                vec![
+                    (PropertyId::Width, length(5.0)),
+                    (PropertyId::Height, length(2.0)),
+                ],
+            ),
+        ];
+        let participation = snapshots
+            .iter()
+            .map(|snapshot| NodeParticipation {
+                key: snapshot.key,
+                participates: true,
+            })
+            .collect::<Vec<_>>();
+        let mut renderer = DirectOccurrenceRenderer::new(70);
+        renderer.synchronize(
+            snapshots,
+            None,
+            &participation,
+            HashMap::new(),
+            vec![body],
+            HashMap::new(),
+            HashMap::new(),
+        )?;
+        let layout = renderer.prepare(
+            body,
+            crate::geometry::Size::new(8, 4),
+            DirectHistoryAnchor::FollowEnd,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+        )?;
+        let first_rect = layout.occurrence_geometry[&first].outer;
+        let second_rect = layout.occurrence_geometry[&second].outer;
+        assert_eq!(first_rect.width, 5);
+        assert_eq!(second_rect.width, 1);
+        assert_eq!(first_rect.height, 2);
+        assert_eq!(second_rect.height, 2);
+        assert_eq!(first_rect.x + first_rect.width, second_rect.x);
         Ok(())
     }
 

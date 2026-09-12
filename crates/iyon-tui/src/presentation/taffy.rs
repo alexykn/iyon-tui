@@ -112,6 +112,12 @@ struct LeafContext {
     key: NodeKey,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum LayoutContext {
+    Occurrence(LeafContext),
+    RootBoundary,
+}
+
 #[derive(Clone, Debug)]
 struct LayoutEntry {
     node: taffy::NodeId,
@@ -140,8 +146,6 @@ struct PreparedParent {
     key: NodeKey,
     children: Vec<NodeKey>,
     structure_revision: u64,
-    legacy_row: bool,
-    legacy_column: bool,
 }
 
 struct PreparedSync<'a> {
@@ -153,11 +157,9 @@ struct PreparedSync<'a> {
 /// Renderer-driver-owned derived layout state.
 #[derive(Debug)]
 pub(crate) struct TaffyLayoutAdapter {
-    tree: taffy::TaffyTree<LeafContext>,
+    tree: taffy::TaffyTree<LayoutContext>,
     entries: HashMap<NodeKey, LayoutEntry>,
-    legacy_row_children: HashSet<NodeKey>,
-    legacy_column_children: HashSet<NodeKey>,
-    explicit_flex_shrink: HashSet<NodeKey>,
+    root_boundaries: HashMap<NodeKey, taffy::NodeId>,
 }
 
 impl Default for TaffyLayoutAdapter {
@@ -173,44 +175,12 @@ impl TaffyLayoutAdapter {
         Self {
             tree,
             entries: HashMap::new(),
-            legacy_row_children: HashSet::new(),
-            legacy_column_children: HashSet::new(),
-            explicit_flex_shrink: HashSet::new(),
+            root_boundaries: HashMap::new(),
         }
     }
 
     pub(crate) fn contains(&self, key: NodeKey) -> bool {
         self.entries.contains_key(&key)
-    }
-
-    /// Refresh root-boundary alignment from the authoritative occurrence
-    /// snapshot index. This is separate from sparse topology synchronization:
-    /// an unchanged root may still gain a child snapshot in the host frontier.
-    pub(crate) fn synchronize_root_child_alignment(
-        &mut self,
-        body_content_children: impl IntoIterator<Item = NodeKey>,
-        body_fit_children: impl IntoIterator<Item = NodeKey>,
-        history_root_children: impl IntoIterator<Item = NodeKey>,
-    ) -> Result<(), TaffyAdapterError> {
-        for key in body_content_children
-            .into_iter()
-            .chain(body_fit_children)
-            .chain(history_root_children)
-        {
-            let node = self.entry(key)?.node;
-            let mut style = self
-                .tree
-                .style(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                .clone();
-            if style.align_self.is_none() {
-                style.align_self = Some(AlignSelf::START);
-                self.tree
-                    .set_style(node, style)
-                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            }
-        }
-        Ok(())
     }
 
     /// Synchronize explicit changed-style nodes and explicit canonical parent
@@ -232,6 +202,7 @@ impl TaffyLayoutAdapter {
             retired,
         )?;
         self.install_new_nodes(&plan)?;
+        self.install_root_boundaries(&plan)?;
         self.install_topology(&plan)?;
         self.install_styles_and_metadata(&plan)?;
         self.retire_nodes(&plan.retirement_order)
@@ -257,6 +228,7 @@ impl TaffyLayoutAdapter {
             retired,
         )?;
         self.install_new_nodes(&plan)?;
+        self.install_root_boundaries(&plan)?;
         self.install_topology(&plan)?;
         self.install_styles_and_metadata(&plan)?;
         self.retire_nodes(&plan.retirement_order)
@@ -284,7 +256,7 @@ impl TaffyLayoutAdapter {
             if snapshot_map.insert(snapshot.key, snapshot).is_some() {
                 return Err(TaffyAdapterError::DuplicateSnapshot(snapshot.key));
             }
-            validate_legacy_alignment(snapshot)?;
+            validate_alignment(snapshot)?;
         }
         let style_set: HashSet<NodeKey> = changed_styles.iter().copied().collect();
         let parent_set: HashSet<NodeKey> = changed_parents.iter().copied().collect();
@@ -409,8 +381,6 @@ impl TaffyLayoutAdapter {
                 key: *parent,
                 children: snapshot.children.clone(),
                 structure_revision: snapshot.structure_revision,
-                legacy_row: is_legacy_row(snapshot),
-                legacy_column: is_legacy_column(snapshot),
             });
         }
         Ok(parents)
@@ -421,15 +391,14 @@ impl TaffyLayoutAdapter {
             return Ok(None);
         };
         let node = entry.node;
-        self.tree
-            .parent(node)
-            .map(|parent| {
-                self.tree
-                    .get_node_context(parent)
-                    .map(|context| context.key)
-                    .ok_or(TaffyAdapterError::InvalidTaffyTree)
-            })
-            .transpose()
+        let Some(parent) = self.tree.parent(node) else {
+            return Ok(None);
+        };
+        match self.tree.get_node_context(parent) {
+            Some(LayoutContext::Occurrence(context)) => Ok(Some(context.key)),
+            Some(LayoutContext::RootBoundary) => Ok(None),
+            None => Err(TaffyAdapterError::InvalidTaffyTree),
+        }
     }
 
     fn install_new_nodes(&mut self, plan: &PreparedSync<'_>) -> Result<(), TaffyAdapterError> {
@@ -439,7 +408,10 @@ impl TaffyLayoutAdapter {
             };
             let taffy_node = self
                 .tree
-                .new_leaf_with_context(style.clone(), LeafContext { key: prepared.key })
+                .new_leaf_with_context(
+                    style.clone(),
+                    LayoutContext::Occurrence(LeafContext { key: prepared.key }),
+                )
                 .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
             self.entries.insert(
                 prepared.key,
@@ -455,20 +427,46 @@ impl TaffyLayoutAdapter {
         Ok(())
     }
 
-    fn install_topology(&mut self, plan: &PreparedSync<'_>) -> Result<(), TaffyAdapterError> {
+    fn install_root_boundaries(
+        &mut self,
+        plan: &PreparedSync<'_>,
+    ) -> Result<(), TaffyAdapterError> {
         for prepared in &plan.nodes {
-            if has_explicit_flex_shrink(prepared.snapshot) {
-                self.explicit_flex_shrink.insert(prepared.key);
-            } else {
-                self.explicit_flex_shrink.remove(&prepared.key);
+            match prepared.snapshot.root_role {
+                Some(_) => {
+                    let boundary = if let Some(boundary) = self.root_boundaries.get(&prepared.key) {
+                        *boundary
+                    } else {
+                        let boundary = self
+                            .tree
+                            .new_leaf_with_context(
+                                root_boundary_style(),
+                                LayoutContext::RootBoundary,
+                            )
+                            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                        self.root_boundaries.insert(prepared.key, boundary);
+                        boundary
+                    };
+                    self.tree
+                        .set_children(boundary, &[self.entry(prepared.key)?.node])
+                        .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                }
+                None => {
+                    if let Some(boundary) = self.root_boundaries.remove(&prepared.key) {
+                        self.tree
+                            .set_children(boundary, &[])
+                            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                        self.tree
+                            .remove(boundary)
+                            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                    }
+                }
             }
         }
-        for parent in &plan.parents {
-            for child in &parent.children {
-                self.legacy_row_children.remove(child);
-                self.legacy_column_children.remove(child);
-            }
-        }
+        Ok(())
+    }
+
+    fn install_topology(&mut self, plan: &PreparedSync<'_>) -> Result<(), TaffyAdapterError> {
         // Sever every affected old edge first. This is what makes a sparse
         // cross-parent move independent of changed-parent iteration order.
         // Retiring subtrees are included so removing each retired child does
@@ -499,28 +497,6 @@ impl TaffyLayoutAdapter {
                 .get_mut(&parent.key)
                 .ok_or(TaffyAdapterError::MissingNode(parent.key))?
                 .child_list_revision = parent.structure_revision;
-            if parent.legacy_row {
-                for child in parent
-                    .children
-                    .iter()
-                    .take(parent.children.len().saturating_sub(1))
-                {
-                    if !self.explicit_flex_shrink.contains(child) {
-                        self.legacy_row_children.insert(*child);
-                    }
-                }
-            }
-            if parent.legacy_column {
-                for child in parent
-                    .children
-                    .iter()
-                    .take(parent.children.len().saturating_sub(1))
-                {
-                    if !self.explicit_flex_shrink.contains(child) {
-                        self.legacy_column_children.insert(*child);
-                    }
-                }
-            }
         }
         Ok(())
     }
@@ -554,43 +530,19 @@ impl TaffyLayoutAdapter {
             entry.display_none = prepared.display_none;
             entry.participates = prepared.participates;
         }
-        for prepared in &plan.parents {
-            for (index, child) in prepared.children.iter().copied().enumerate() {
-                if self.explicit_flex_shrink.contains(&child) {
-                    continue;
-                }
-                let node = self.entry(child)?.node;
-                let should_preserve = index + 1 < prepared.children.len()
-                    && prepared.legacy_row
-                    && self.legacy_row_children.contains(&child);
-                let should_shrink_column = index + 1 < prepared.children.len()
-                    && prepared.legacy_column
-                    && self.legacy_column_children.contains(&child);
-                let mut style = self
-                    .tree
-                    .style(node)
-                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                    .clone();
-                let flex_shrink = if should_preserve {
-                    0.0
-                } else if should_shrink_column {
-                    1.0 / 6.0
-                } else {
-                    1.0
-                };
-                if style.flex_shrink != flex_shrink {
-                    style.flex_shrink = flex_shrink;
-                    self.tree
-                        .set_style(node, style)
-                        .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-                }
-            }
-        }
         Ok(())
     }
 
     fn retire_nodes(&mut self, retirement_order: &[NodeKey]) -> Result<(), TaffyAdapterError> {
         for key in retirement_order {
+            if let Some(boundary) = self.root_boundaries.remove(key) {
+                self.tree
+                    .set_children(boundary, &[])
+                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+                self.tree
+                    .remove(boundary)
+                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+            }
             let entry = self
                 .entries
                 .remove(key)
@@ -598,9 +550,6 @@ impl TaffyLayoutAdapter {
             self.tree
                 .remove(entry.node)
                 .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            self.legacy_row_children.remove(key);
-            self.legacy_column_children.remove(key);
-            self.explicit_flex_shrink.remove(key);
         }
         Ok(())
     }
@@ -636,8 +585,11 @@ impl TaffyLayoutAdapter {
                     let child_key = self
                         .tree
                         .get_node_context(child)
-                        .ok_or(TaffyAdapterError::InvalidTaffyTree)?
-                        .key;
+                        .and_then(|context| match context {
+                            LayoutContext::Occurrence(context) => Some(context.key),
+                            LayoutContext::RootBoundary => None,
+                        })
+                        .ok_or(TaffyAdapterError::InvalidTaffyTree)?;
                     if retired_set.contains(&child_key) && !visited.contains(&child_key) {
                         stack.push((child_key, false));
                     }
@@ -677,103 +629,25 @@ impl TaffyLayoutAdapter {
             width: available_space(width)?,
             height: available_space(height)?,
         };
-        self.layout_node(root_node, root, root_node, available, measure)
-    }
-
-    /// Layout an occurrence root using a derived fixed-size copy of its
-    /// boundary style. The occurrence-owned Taffy node is never mutated;
-    /// this keeps explicit dimensions and root semantics intact while giving
-    /// descendants a finite allocation for terminal overflow handling.
-    pub(crate) fn layout_with_root_allocation(
-        &mut self,
-        root: NodeKey,
-        width: f32,
-        height: f32,
-        measure: &mut impl FnMut(NodeKey, MeasureRequest) -> MeasuredSize,
-    ) -> Result<Vec<ComputedGeometry>, TaffyAdapterError> {
-        if !width.is_finite() || width < 0.0 || !height.is_finite() || height < 0.0 {
-            return Err(TaffyAdapterError::NonFiniteGeometry);
-        }
-        let root_node = self.entry(root)?.node;
-        let mut style = self
-            .tree
-            .style(root_node)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-            .clone();
-        style.size.width = Dimension::length(width);
-        style.size.height = Dimension::length(height);
-        let boundary = self.clone_subtree(root_node, root, style)?;
-        let result = self.layout_node(
-            boundary,
-            root,
-            boundary,
-            Size {
-                width: AvailableSpace::Definite(width),
-                height: AvailableSpace::Definite(height),
-            },
-            measure,
-        );
-        self.remove_ephemeral_subtree(boundary)?;
-        result
-    }
-
-    fn clone_subtree(
-        &mut self,
-        original: taffy::NodeId,
-        key: NodeKey,
-        mut style: Style,
-    ) -> Result<taffy::NodeId, TaffyAdapterError> {
-        // Auto minimum block sizes are useful for CSS, but the retained M1
-        // column allocator can give a later child the zero remaining track.
-        // Apply that terminal rule only to this ephemeral constrained copy;
-        // explicit min-height values (and native-control minimums) remain.
-        if style.min_size.height == Dimension::auto() {
-            style.min_size.height = Dimension::length(0.0);
-        }
-        let clone = self
-            .tree
-            .new_leaf_with_context(style, LeafContext { key })
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        let original_children = self
-            .tree
-            .children(original)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        let mut cloned_children = Vec::with_capacity(original_children.len());
-        for child in original_children {
-            let context = self
+        let layout_root = self
+            .root_boundaries
+            .get(&root)
+            .copied()
+            .unwrap_or(root_node);
+        if let Some(boundary) = self.root_boundaries.get(&root).copied() {
+            let style = root_boundary_style_for(width, height)?;
+            if self
                 .tree
-                .get_node_context(child)
-                .ok_or(TaffyAdapterError::InvalidTaffyTree)?;
-            let child_style = self
-                .tree
-                .style(child)
+                .style(boundary)
                 .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?
-                .clone();
-            cloned_children.push(self.clone_subtree(child, context.key, child_style)?);
+                != &style
+            {
+                self.tree
+                    .set_style(boundary, style)
+                    .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
+            }
         }
-        self.tree
-            .set_children(clone, &cloned_children)
-            .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        Ok(clone)
-    }
-
-    fn remove_ephemeral_subtree(&mut self, root: taffy::NodeId) -> Result<(), TaffyAdapterError> {
-        let mut nodes = Vec::new();
-        let mut stack = vec![root];
-        while let Some(node) = stack.pop() {
-            let children = self
-                .tree
-                .children(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-            stack.extend(children);
-            nodes.push(node);
-        }
-        for node in nodes.into_iter().rev() {
-            self.tree
-                .remove(node)
-                .map_err(|_| TaffyAdapterError::InvalidTaffyTree)?;
-        }
-        Ok(())
+        self.layout_node(layout_root, root, root_node, available, measure)
     }
 
     fn layout_node(
@@ -791,7 +665,11 @@ impl TaffyLayoutAdapter {
                 root_node,
                 available,
                 |known, available, node, context, _| {
-                    let context = context.expect("every adapter node has a LeafContext");
+                    let Some(LayoutContext::Occurrence(context)) = context else {
+                        measure_error = Some(TaffyAdapterError::InvalidTaffyTree);
+                        failed_nodes.push(node);
+                        return Size::ZERO;
+                    };
                     let key = context.key;
                     let width_available = match available_constraint(available.width) {
                         Ok(value) => value,
@@ -862,8 +740,20 @@ impl TaffyLayoutAdapter {
             return Err(error);
         }
 
+        let collect_origin = if root_node == collect_node {
+            (0.0, 0.0)
+        } else {
+            let layout = self.tree.unrounded_layout(collect_node);
+            (layout.location.x, layout.location.y)
+        };
         let mut output = Vec::new();
-        self.collect_geometry_from_node(collect_node, root, 0.0, 0.0, &mut output)?;
+        self.collect_geometry_from_node(
+            collect_node,
+            root,
+            collect_origin.0,
+            collect_origin.1,
+            &mut output,
+        )?;
         Ok(output)
     }
 
@@ -909,6 +799,9 @@ impl TaffyLayoutAdapter {
                     .tree
                     .get_node_context(child)
                     .ok_or(TaffyAdapterError::InvalidTaffyTree)?;
+                let LayoutContext::Occurrence(context) = context else {
+                    return Err(TaffyAdapterError::InvalidTaffyTree);
+                };
                 stack.push((child, context.key, x, y));
             }
         }
@@ -924,6 +817,42 @@ fn available_space(constraint: AvailableConstraint) -> Result<AvailableSpace, Ta
         AvailableConstraint::Definite(_) => Err(TaffyAdapterError::NonFiniteGeometry),
         AvailableConstraint::MinContent => Ok(AvailableSpace::MinContent),
         AvailableConstraint::MaxContent => Ok(AvailableSpace::MaxContent),
+    }
+}
+
+fn root_boundary_style() -> Style {
+    let mut style = Style::default();
+    style.display = Display::Grid;
+    style.grid_template_columns = vec![taffy::style::GridTemplateComponent::Single(
+        TrackSizingFunction::from_fr(1.0_f32),
+    )];
+    style.grid_template_rows = vec![taffy::style::GridTemplateComponent::Single(
+        TrackSizingFunction::from_fr(1.0_f32),
+    )];
+    style.align_items = Some(AlignItems::STRETCH);
+    style.justify_items = Some(AlignItems::STRETCH);
+    style
+}
+
+fn root_boundary_style_for(
+    width: AvailableConstraint,
+    height: AvailableConstraint,
+) -> Result<Style, TaffyAdapterError> {
+    let mut style = root_boundary_style();
+    style.size = Size {
+        width: boundary_dimension(width)?,
+        height: boundary_dimension(height)?,
+    };
+    Ok(style)
+}
+
+fn boundary_dimension(constraint: AvailableConstraint) -> Result<Dimension, TaffyAdapterError> {
+    match constraint {
+        AvailableConstraint::Definite(value) if value.is_finite() && value >= 0.0 => {
+            Ok(Dimension::length(value))
+        }
+        AvailableConstraint::Definite(_) => Err(TaffyAdapterError::NonFiniteGeometry),
+        AvailableConstraint::MinContent | AvailableConstraint::MaxContent => Ok(Dimension::auto()),
     }
 }
 
@@ -1019,45 +948,7 @@ fn display_for(snapshot: &OccurrenceSnapshot) -> DisplayMode {
     }
 }
 
-fn is_legacy_row(snapshot: &OccurrenceSnapshot) -> bool {
-    matches!(
-        property(snapshot, PropertyId::Layout),
-        Some(LayerValue::Value(PropertyValue::LayoutMode(
-            LayoutMode::Row
-        )))
-    )
-}
-
-fn is_legacy_column(snapshot: &OccurrenceSnapshot) -> bool {
-    matches!(
-        property(snapshot, PropertyId::Layout),
-        Some(LayerValue::Value(PropertyValue::LayoutMode(
-            LayoutMode::Column
-        )))
-    )
-}
-
-pub(crate) fn is_intrinsic_body_child(snapshot: &OccurrenceSnapshot) -> bool {
-    if snapshot.kind != HostKind::Box {
-        return false;
-    }
-    matches!(
-        property(snapshot, PropertyId::Layout),
-        None | Some(LayerValue::Unset | LayerValue::Null)
-            | Some(LayerValue::Value(PropertyValue::LayoutMode(
-                LayoutMode::Box
-            )))
-    )
-}
-
-fn has_explicit_flex_shrink(snapshot: &OccurrenceSnapshot) -> bool {
-    matches!(
-        property(snapshot, PropertyId::FlexShrink),
-        Some(LayerValue::Value(PropertyValue::Scalar(_)))
-    )
-}
-
-fn validate_legacy_alignment(snapshot: &OccurrenceSnapshot) -> Result<(), TaffyAdapterError> {
+fn validate_alignment(snapshot: &OccurrenceSnapshot) -> Result<(), TaffyAdapterError> {
     let Some(LayerValue::Value(PropertyValue::Alignment(alignment))) =
         property(snapshot, PropertyId::Alignment)
     else {

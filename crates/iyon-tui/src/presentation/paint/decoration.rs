@@ -5,8 +5,9 @@ use std::cell::Cell;
 
 use crate::{
     physical::{PhysicalStyle, Surface},
-    presentation::{BorderSpec, WidthRule, WrapMode, ir::TextView, layout::ViewCompiler},
+    presentation::BorderSpec,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::{StyleContext, ThemeResolver};
 
@@ -120,30 +121,15 @@ pub(crate) fn paint_border_at(
         && visible_point(origin.1, clip.y, clip.bottom(), surface.height())
         && let Some(label) = &border.top_label
     {
-        let mut text = TextView::plain(label.clone());
-        text.wrap = WrapMode::NoWrap;
-        let painted = ViewCompiler::with_resolver(theme).paint_text(
-            &text,
-            size.0,
-            WidthRule::Fill,
-            style,
-            context,
-        );
-        let mut label_surface = painted;
-        for x in 0..label_surface.width() {
-            let target_x = origin.0.saturating_add(i32::from(x));
-            if target_x < 0
-                || target_x >= i32::from(surface.width())
-                || !label_surface.get(x, 0).painted
-            {
+        let mut x = origin.0;
+        for grapheme in label.graphemes(true) {
+            let width = crate::physical::grapheme_cell_width(grapheme);
+            if width == 0 {
                 continue;
             }
-            label_surface.get_mut(x, 0).style.background = surface
-                .get(target_x as u16, origin.1 as u16)
-                .style
-                .background;
+            set_cell_at(surface, x, origin.1, grapheme.to_owned(), style, clip);
+            x = x.saturating_add(i32::try_from(width).unwrap_or(i32::MAX));
         }
-        surface.composite_clipped(&label_surface, origin.0, origin.1, clip);
     }
     if edges.top && edges.right {
         set_cell_at(

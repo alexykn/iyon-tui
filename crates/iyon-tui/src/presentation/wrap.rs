@@ -1,15 +1,11 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::perf::{self, Counter};
 use crate::physical::{PhysicalStyle, grapheme_cell_width};
 use unicode_linebreak::{BreakOpportunity, linebreaks};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::presentation::{
-    WidthRule, WrapMode,
-    ir::{TextCursorAnchor, TextView},
-};
+use crate::presentation::WrapMode;
 
 /// An atomic extended-grapheme cluster with style and optional source range.
 ///
@@ -185,97 +181,6 @@ fn tokenize_hard_line<'a>(fragments: Vec<SpanFragment<'a>>) -> Vec<StyledGraphem
     }
 
     line
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StyledTextFlow<'a> {
-    pub(crate) width: u16,
-    pub(crate) rows: Vec<WrappedLine<'a>>,
-    pub(crate) cursor: Option<(usize, usize)>,
-}
-
-pub(crate) fn text_flow<'a>(
-    text: &TextView,
-    hard_lines: Vec<Vec<StyledGrapheme<'a>>>,
-    source: Option<&str>,
-    max_width: u16,
-    inherited_width: WidthRule,
-) -> StyledTextFlow<'a> {
-    let intrinsic_width = hard_lines
-        .iter()
-        .map(|line| line.iter().map(|grapheme| grapheme.width).sum::<usize>())
-        .max()
-        .unwrap_or(0);
-    let cursor_needs_cell = text.cursor.is_some_and(|anchor| {
-        !hard_lines.iter().flatten().any(|grapheme| {
-            grapheme
-                .source
-                .as_ref()
-                .is_some_and(|range| range.start == anchor.byte_offset)
-        })
-    });
-    let intrinsic_width = intrinsic_width + usize::from(cursor_needs_cell);
-    let width = match inherited_width {
-        WidthRule::Fit => intrinsic_width.min(usize::from(max_width)) as u16,
-        WidthRule::Fill => max_width,
-    };
-    let mut rows = if source.is_some() && text.cursor.is_some() && text.wrap != WrapMode::NoWrap {
-        wrap_input_styled_lines(&hard_lines, width)
-    } else {
-        wrap_styled_lines(&hard_lines, width, text.wrap)
-    };
-    let cursor = text.cursor.and_then(|anchor| {
-        source.map(|source| {
-            assert!(
-                anchor.byte_offset <= source.len(),
-                "text cursor anchor exceeds source length"
-            );
-            assert!(
-                source.is_char_boundary(anchor.byte_offset),
-                "text cursor anchor is not a UTF-8 boundary"
-            );
-            cursor_position(source, anchor, usize::from(width), &mut rows)
-        })
-    });
-    StyledTextFlow {
-        width,
-        rows,
-        cursor,
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TextFlowMetrics {
-    pub(crate) width: u16,
-    pub(crate) row_count: u16,
-    pub(crate) fits: bool,
-}
-
-pub(crate) fn text_flow_metrics(text: &TextView, width: u16) -> TextFlowMetrics {
-    perf::inc(Counter::TextFlowMeasureCalls);
-    let mut source_offset = 0usize;
-    let hard_lines = styled_hard_lines(text.spans.iter().map(|span| {
-        let base = Some(source_offset);
-        source_offset += span.text().len();
-        (span.text(), PhysicalStyle::default(), base)
-    }));
-    let source = text
-        .spans
-        .iter()
-        .map(|span| span.text())
-        .collect::<String>();
-    let flow = text_flow(
-        text,
-        hard_lines,
-        text.cursor.map(|_| source.as_str()),
-        width,
-        WidthRule::Fit,
-    );
-    TextFlowMetrics {
-        width: flow.width,
-        row_count: flow.rows.len().max(1) as u16,
-        fits: flow.rows.iter().all(|row| row.fits),
-    }
 }
 
 /// Generic grapheme-aware line-wrapping kernel.
@@ -512,73 +417,10 @@ pub(crate) fn input_wrap_ranges(text: &str, width: u16) -> Vec<Range<usize>> {
     ranges
 }
 
-fn cursor_position(
-    source: &str,
-    anchor: TextCursorAnchor,
-    max_columns: usize,
-    rows: &mut Vec<WrappedLine<'_>>,
-) -> (usize, usize) {
-    let max_columns = max_columns.max(1);
-    let caret = anchor.byte_offset;
-    let _ = source;
-
-    // Caret x is the sum of already-stored grapheme widths. A caret that sits
-    // in a gap (the newline between hard lines, or a wrap boundary) belongs at
-    // the end of the preceding row, not at column 0 of the next grapheme.
-    let mut last_end = (0usize, 0usize);
-    for (row_index, row) in rows.iter().enumerate() {
-        let mut column = 0usize;
-        for grapheme in &row.graphemes {
-            let Some(range) = grapheme.source.as_ref() else {
-                column = column.saturating_add(grapheme.width);
-                last_end = (row_index, column);
-                continue;
-            };
-            if caret < range.start {
-                return place_caret(last_end.0, last_end.1, max_columns, rows);
-            }
-            if caret < range.end {
-                // Inside an EGC: snap to the leading edge so the terminal never
-                // bisects a cluster.
-                return place_caret(row_index, column, max_columns, rows);
-            }
-            column = column.saturating_add(grapheme.width);
-            last_end = (row_index, column);
-        }
-        last_end = (row_index, column);
-    }
-
-    place_caret(last_end.0, last_end.1, max_columns, rows)
-}
-
-fn place_caret(
-    mut row: usize,
-    mut column: usize,
-    max_columns: usize,
-    rows: &mut Vec<WrappedLine<'_>>,
-) -> (usize, usize) {
-    if column >= max_columns {
-        row = row.saturating_add(1);
-        column = 0;
-    }
-    while rows.len() <= row {
-        rows.push(WrappedLine::new(
-            Vec::new(),
-            max_columns.saturating_sub(1).max(1),
-        ));
-    }
-    if let Some(wrapped) = rows.get_mut(row) {
-        wrapped.width = wrapped.width.max(column.saturating_add(1));
-        wrapped.fits = wrapped.width <= max_columns;
-    }
-    (row, column)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::physical::PhysicalColor;
-    use crate::presentation::layout::compile_view;
     fn fg(color: PhysicalColor) -> PhysicalStyle {
         PhysicalStyle {
             foreground: Some(color),
@@ -627,50 +469,6 @@ mod tests {
         assert_eq!(ranges.len(), 2, "{ranges:?}");
         assert_eq!(ranges[0], 0..sun.len());
         assert_eq!(ranges[1], sun.len()..source.len());
-    }
-
-    #[test]
-    fn no_wrap_cursor_movement_does_not_rewrap_the_row() {
-        let text = "it jump now ";
-        let compiled = [2, 7, 11]
-            .into_iter()
-            .map(|cursor| {
-                let view = crate::presentation::factory::cursor_at(
-                    crate::presentation::factory::wrap(
-                        crate::presentation::factory::text(text),
-                        crate::WrapMode::NoWrap,
-                        None,
-                    ),
-                    cursor,
-                );
-                compile_view(&view, 12)
-            })
-            .collect::<Vec<_>>();
-
-        let plain_rows = compiled
-            .iter()
-            .map(|view| {
-                view.rows
-                    .iter()
-                    .map(|row| row.plain_text())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        assert!(plain_rows.windows(2).all(|rows| rows[0] == rows[1]));
-        assert_eq!(plain_rows[0], vec!["it jump now "]);
-
-        let reversed_columns = compiled
-            .iter()
-            .map(|view| {
-                view.rows[0]
-                    .cells()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(column, cell)| cell.style.reversed.then_some(column))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(reversed_columns, vec![vec![2], vec![7], vec![11]]);
     }
 
     #[test]

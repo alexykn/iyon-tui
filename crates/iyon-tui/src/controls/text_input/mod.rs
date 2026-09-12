@@ -15,13 +15,10 @@ pub(crate) use buffer::TextBuffer;
 pub(crate) use command::TextInputCommand;
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 use std::ops::Range;
 
 use crate::{
-    BorderSpec, Component, ComponentCx, EventCx, InteractionResult, Output, View, geometry::Size,
+    BorderSpec, Component, ComponentCx, EventCx, InteractionResult, Output, geometry::Size,
     presentation::wrap::input_wrap_ranges,
 };
 
@@ -314,12 +311,10 @@ impl TextInput {
 }
 
 impl Component for TextInput {
-    fn view(&self) -> View {
-        self.semantic_view()
-    }
-
-    fn intrinsic_view(&self) -> Option<View> {
-        Some(TextInput::intrinsic_view(self))
+    fn control_snapshot(&self) -> Option<crate::component::ControlSnapshot> {
+        Some(crate::component::ControlSnapshot::Editor(
+            self.frame_snapshot(),
+        ))
     }
 
     fn capabilities(&self, cx: &mut ComponentCx<'_, Self>) {

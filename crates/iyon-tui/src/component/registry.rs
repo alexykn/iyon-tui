@@ -3,11 +3,8 @@ use std::{any::Any, cell::RefCell, collections::HashMap, fmt};
 use super::{Component, ComponentHandle, ComponentId, ComponentRevision};
 use crate::interaction::{ComponentCapabilities, ComponentCx};
 use crate::perf::{self, Counter};
-use crate::presentation::View;
-
 trait ErasedComponent: Send {
-    fn view(&self) -> View;
-    fn intrinsic_view(&self) -> Option<View>;
+    fn control_snapshot(&self) -> Option<super::ControlSnapshot>;
     fn capabilities(&self) -> ComponentCapabilities;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -18,13 +15,8 @@ impl<C> ErasedComponent for C
 where
     C: Component,
 {
-    fn view(&self) -> View {
-        perf::inc(Counter::ComponentViewCalls);
-        Component::view(self)
-    }
-
-    fn intrinsic_view(&self) -> Option<View> {
-        Component::intrinsic_view(self)
+    fn control_snapshot(&self) -> Option<super::ControlSnapshot> {
+        Component::control_snapshot(self)
     }
 
     fn capabilities(&self) -> ComponentCapabilities {
@@ -50,8 +42,7 @@ where
 
 #[derive(Clone, Debug)]
 pub(crate) struct ComponentSnapshot {
-    pub(crate) view: View,
-    pub(crate) intrinsic_view: Option<View>,
+    pub(crate) control: Option<super::ControlSnapshot>,
     pub(crate) revision: ComponentRevision,
     pub(crate) capabilities: ComponentCapabilities,
 }
@@ -173,8 +164,7 @@ impl ComponentRegistry {
         }
 
         let snapshot = ComponentSnapshot {
-            view: entry.component.view(),
-            intrinsic_view: entry.component.intrinsic_view(),
+            control: entry.component.control_snapshot(),
             revision: entry.revision,
             capabilities: entry.component.capabilities(),
         };

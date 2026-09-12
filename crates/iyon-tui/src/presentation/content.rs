@@ -10,6 +10,14 @@ use crate::{
     physical::{PhysicalRow, Surface},
 };
 
+/// Width policy for one captured content product. This is content-local
+/// measurement intent, not a general semantic layout rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ContentWidthRule {
+    Fit,
+    Fill,
+}
+
 /// A content invalidation is deliberately narrower than a host-wide frame
 /// invalidation.  The application/content registry records the affected
 /// destination identity and the reason; SceneHost uses the committed layout
@@ -199,14 +207,14 @@ pub(crate) trait ContentProvider {
         &mut self,
         port_id: u64,
         offered_width: u16,
-        width_rule: crate::presentation::WidthRule,
+        width_rule: crate::presentation::ContentWidthRule,
     ) -> ContentMeasurement;
 
     fn capture_measurement(
         &mut self,
         port_id: u64,
         offered_width: u16,
-        width_rule: crate::presentation::WidthRule,
+        width_rule: crate::presentation::ContentWidthRule,
     ) -> anyhow::Result<ContentMeasurementCapture> {
         let measurement = self.measure(port_id, offered_width, width_rule);
         Ok(ContentMeasurementCapture {
@@ -226,7 +234,7 @@ pub(crate) trait ContentProvider {
         port_id: u64,
         _capture_id: u64,
         offered_width: u16,
-        width_rule: crate::presentation::WidthRule,
+        width_rule: crate::presentation::ContentWidthRule,
     ) -> anyhow::Result<ContentMeasurementCapture> {
         self.capture_measurement(port_id, offered_width, width_rule)
     }
@@ -290,13 +298,6 @@ pub(crate) trait ContentProvider {
     ) {
     }
 
-    /// Returns the resident History view for a `ContentHost`. Providers may
-    /// remove decoration already accepted by native History while preserving
-    /// the caller's body occurrence unchanged.
-    fn history_view(&self, view: &crate::presentation::View) -> crate::presentation::View {
-        view.clone()
-    }
-
     /// Releases a History-backed `ContentHost` after its rows have been
     /// accepted by the native scrollback sink.
     fn history_unit_retired(&mut self, _unit_id: u64) {}
@@ -322,7 +323,7 @@ impl ContentProvider for EmptyContentProvider {
         &mut self,
         _port_id: u64,
         _offered_width: u16,
-        _width_rule: crate::presentation::WidthRule,
+        _width_rule: crate::presentation::ContentWidthRule,
     ) -> ContentMeasurement {
         ContentMeasurement::default()
     }

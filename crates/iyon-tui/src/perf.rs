@@ -13,19 +13,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[repr(usize)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Counter {
-    ViewNodesConstructedRust,
-    ViewCloneCalls,
     ResolverNodesVisited,
-    ComponentViewCalls,
     ComponentCapabilityCalls,
     MeasureNodeCalls,
-    TextFlowMeasureCalls,
     PrepareNodeCalls,
     LayoutNodesEmitted,
     PaintNodesVisited,
     PaintCellsAllocated,
-    PaintCacheHits,
-    PaintCacheMisses,
     SurfaceCellsComposited,
     HistoryUnitsExamined,
     HistoryUnitsMeasured,
@@ -67,19 +61,13 @@ impl Counter {
 }
 
 const NAMES: [&str; Counter::COUNT] = [
-    "view_nodes_constructed_rust",
-    "view_clone_calls",
     "resolver_nodes_visited",
-    "component_view_calls",
     "component_capability_calls",
     "measure_node_calls",
-    "text_flow_measure_calls",
     "prepare_node_calls",
     "layout_nodes_emitted",
     "paint_nodes_visited",
     "paint_cells_allocated",
-    "paint_cache_hits",
-    "paint_cache_misses",
     "surface_cells_composited",
     "history_units_examined",
     "history_units_measured",

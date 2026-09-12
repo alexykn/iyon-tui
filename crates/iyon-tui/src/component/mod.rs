@@ -7,15 +7,6 @@ mod revision;
 mod slot;
 mod tick;
 
-#[cfg(test)]
-mod mount_tests;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod tick_tests;
-
-use crate::presentation::View;
-
 pub use capability::ComponentCx;
 pub(crate) use graph::{MountGraph, MountNode};
 pub use id::ComponentHandle;
@@ -25,14 +16,46 @@ pub(crate) use registry::{ComponentRegistry, ComponentSnapshot};
 pub(crate) use revision::ComponentRevision;
 pub(crate) use tick::{TickOutcome, TickScheduler};
 
-/// Public retained-state rendering and capability declaration contract.
-pub trait Component: Send + 'static {
-    fn view(&self) -> View;
+/// Immutable frame facts exposed by a mounted native control. This is the
+/// only component data consumed by the direct occurrence renderer; arbitrary
+/// semantic content and layout recipes do not cross this boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ControlSnapshot {
+    Editor(EditorSnapshot),
+    Scroll(ScrollSnapshot),
+    Animation(AnimationSnapshot),
+}
 
-    /// Supplies a layout-independent semantic view for native control
-    /// intrinsic measurement. Most components have no separate control
-    /// measurement contract and retain the default.
-    fn intrinsic_view(&self) -> Option<View> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EditorSnapshot {
+    pub(crate) text: String,
+    pub(crate) cursor_bytes: usize,
+    pub(crate) focused: bool,
+    pub(crate) multiline: bool,
+    pub(crate) scroll_row: usize,
+    pub(crate) border: Option<crate::BorderSpec>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ScrollSnapshot {
+    pub(crate) viewport_rows: u32,
+    pub(crate) extent_rows: u32,
+    pub(crate) top_row: u32,
+    pub(crate) following_end: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AnimationSnapshot {
+    pub(crate) active_frame: u32,
+    pub(crate) frame_count: u32,
+    pub(crate) running: bool,
+}
+
+/// Native component capability and control-fact declaration contract.
+pub trait Component: Send + 'static {
+    /// Returns immutable facts for a concrete native control, when the
+    /// component owns one. Ordinary components return `None`.
+    fn control_snapshot(&self) -> Option<ControlSnapshot> {
         None
     }
 

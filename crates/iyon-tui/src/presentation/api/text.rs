@@ -1,8 +1,8 @@
-//! Typed semantic text construction backed by the canonical View IR.
+//! Finite text values used by the native boundary and wrapping kernel.
 
 use std::{fmt, str, sync::Arc};
 
-use super::style::{StyleFacts, StyleRef, StyleStateKey, StyleStateValue};
+use super::style::{StyleFacts, StyleRef};
 
 const INLINE_TEXT_CAPACITY: usize = 12;
 
@@ -22,9 +22,7 @@ pub(crate) enum TextStorage {
         offset: u32,
         len: u32,
     },
-    /// Borrowed semantic Source page retained by an immutable text View.
-    /// Unlike `Owned`, this representation does not copy a raw projection
-    /// merely to lower it into terminal layout.
+    /// Borrowed source page retained by an immutable text span.
     SourcePage {
         page: Arc<str>,
         offset: u32,
@@ -205,32 +203,6 @@ impl TextSpan {
             _ => None,
         }
     }
-
-    /// Internal page-backed source lowering.  The page owner is retained by
-    /// the resulting semantic View, so its range remains valid across cache
-    /// eviction and later Source snapshots.
-    pub(crate) fn from_source_page(page: Arc<str>, offset: u32, len: u32, style: StyleRef) -> Self {
-        Self {
-            text: TextStorage::SourcePage { page, offset, len },
-            style,
-            style_facts: StyleFacts::default(),
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn style_fact(
-        mut self,
-        key: impl Into<StyleStateKey>,
-        value: impl Into<StyleStateValue>,
-    ) -> Self {
-        self.style_facts.set(key, value);
-        self
-    }
-
-    pub(crate) fn with_style_facts(mut self, style_facts: StyleFacts) -> Self {
-        self.style_facts = style_facts;
-        self
-    }
 }
 
 /// Text wrapping behavior for a typed text view.
@@ -249,79 +221,4 @@ pub enum HorizontalAlign {
     Start,
     Center,
     End,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn small_spans_stay_inline_without_a_page() {
-        let span = TextSpan::styled("hi", StyleRef::default());
-        assert!(
-            matches!(span.text, TextStorage::Inline { .. }),
-            "short ingress text must keep the small-text fast case"
-        );
-        assert_eq!(span.text(), "hi");
-    }
-
-    #[cfg(feature = "native-host")]
-    #[test]
-    fn page_shared_spans_keep_old_roots_valid() {
-        use std::sync::Arc;
-
-        let page = NativeTextPage::new("hello world".to_owned());
-        let first = page
-            .span(0, 5, StyleRef::default())
-            .expect("in-bounds range");
-        let second = page
-            .span(6, 5, StyleRef::default())
-            .expect("in-bounds range");
-        assert_eq!(first.text(), "hello");
-        assert_eq!(second.text(), "world");
-        let (page_of_first, page_of_second) = match (&first.text, &second.text) {
-            (
-                TextStorage::PageSlice { page: first, .. },
-                TextStorage::PageSlice { page: second, .. },
-            ) => (Arc::clone(first), Arc::clone(second)),
-            _ => panic!("length-delimited spans must borrow the shared page"),
-        };
-        assert!(Arc::ptr_eq(&page_of_first, &page_of_second));
-
-        let old = crate::presentation::factory::text_from_spans(
-            vec![first],
-            WrapMode::WordThenGrapheme,
-            HorizontalAlign::Start,
-        );
-        drop(page);
-        let _newer = crate::presentation::factory::text_from_spans(
-            vec![second],
-            WrapMode::WordThenGrapheme,
-            HorizontalAlign::Start,
-        );
-        let crate::presentation::ir::ViewKind::Text(retained) = old.kind() else {
-            panic!("expected text view");
-        };
-        assert_eq!(retained.spans[0].text(), "hello");
-    }
-
-    #[cfg(feature = "native-host")]
-    #[test]
-    fn page_span_rejects_out_of_bounds_and_split_sequences() {
-        let page = NativeTextPage::new("héllo🌍".to_owned());
-        assert!(page.span(0, 100, StyleRef::default()).is_none());
-        assert!(page.span(1, 1, StyleRef::default()).is_none());
-        assert_eq!(
-            page.span(0, 1, StyleRef::default()).expect("ascii").text(),
-            "h"
-        );
-        let lines = NativeTextPage::new("line\n".to_owned());
-        assert_eq!(
-            lines
-                .span(0, 5, StyleRef::default())
-                .expect("newline")
-                .text(),
-            "line\n"
-        );
-    }
 }

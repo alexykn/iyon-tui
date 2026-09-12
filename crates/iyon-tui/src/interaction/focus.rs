@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use crate::{
     component::{ComponentId, ComponentRegistry, MountGraph},
     interaction::MountedCapabilities,
-    presentation::layout::ComponentGeometryMap,
+    presentation::direct_tree::ComponentGeometryMap,
 };
 
 /// Host-owned semantic focus state.
@@ -225,7 +225,7 @@ impl FocusState {
         target: ComponentId,
         graph: &MountGraph,
         capabilities: &MountedCapabilities,
-        geometry: Option<&crate::presentation::layout::ComponentGeometryMap>,
+        geometry: Option<&crate::presentation::direct_tree::ComponentGeometryMap>,
         registry: &mut ComponentRegistry,
     ) -> bool {
         let visible = geometry

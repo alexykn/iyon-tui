@@ -12,14 +12,37 @@ use crate::{
     scene::PreparedSceneFrame,
 };
 
+#[cfg(test)]
+fn row_from_string(text: &str, style: PhysicalStyle) -> PhysicalRow {
+    let mut cells = Vec::new();
+    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(text, true) {
+        let width = crate::physical::grapheme_cell_width(grapheme);
+        if width == 0 {
+            continue;
+        }
+        cells.push(PhysicalCell {
+            grapheme: Some(grapheme.to_owned()),
+            style,
+            painted: true,
+            continuation: false,
+        });
+        for _ in 1..width {
+            cells.push(PhysicalCell {
+                grapheme: None,
+                style,
+                painted: true,
+                continuation: true,
+            });
+        }
+    }
+    PhysicalRow::from_cells(cells)
+}
+
 pub(crate) fn desired_surface(frame: &PreparedSceneFrame) -> Surface {
     let width = frame.surface.width();
     let height = frame.surface.height();
     let mut desired = Surface::new(usize::from(width), usize::from(height));
-    desired.add_changes(surface_changes_with_overlay(
-        &frame.surface,
-        frame.history_overlay.as_ref(),
-    ));
+    desired.add_changes(surface_changes(&frame.surface));
     if width > 0 && height > 0 {
         desired.add_change(Change::CursorPosition {
             x: Position::Absolute(0),
@@ -32,31 +55,18 @@ pub(crate) fn desired_surface(frame: &PreparedSceneFrame) -> Surface {
     desired
 }
 
-fn surface_changes_with_overlay(
-    surface: &crate::physical::Surface,
-    overlay: Option<&crate::history::HistoryPhysicalOverlay>,
-) -> Vec<Change> {
+fn surface_changes(surface: &crate::physical::Surface) -> Vec<Change> {
     let mut changes = Vec::new();
     for y in 0..surface.height() {
-        changes.extend(direct_row_changes(surface, overlay, y));
+        changes.extend(direct_row_changes(surface, y));
     }
     changes
 }
 
-fn direct_row_changes(
-    surface: &crate::physical::Surface,
-    overlay: Option<&crate::history::HistoryPhysicalOverlay>,
-    y: u16,
-) -> Vec<Change> {
+fn direct_row_changes(surface: &crate::physical::Surface, y: u16) -> Vec<Change> {
     let width = usize::from(surface.width());
-    let overlay_row = overlay.and_then(|overlay| {
-        let offset = usize::from(y).checked_sub(usize::from(overlay.row))?;
-        overlay.rows.get(offset)
-    });
-    let overlay_last_written =
-        overlay_row.and_then(|row| row.cells().iter().rposition(|cell| cell.painted));
     let last_written = (0..width)
-        .filter(|&x| effective_cell(surface, overlay_row, overlay_last_written, x, y).painted)
+        .filter(|&x| surface.get(x as u16, y).painted)
         .max();
     let mut changes = vec![Change::CursorPosition {
         x: Position::Absolute(0),
@@ -69,7 +79,7 @@ fn direct_row_changes(
     let mut active_style: Option<CellAttributes> = None;
     let mut text = String::new();
     for x in 0..=last_written {
-        let cell = effective_cell(surface, overlay_row, overlay_last_written, x, y);
+        let cell = surface.get(x as u16, y).clone();
         if cell.continuation {
             continue;
         }
@@ -91,30 +101,6 @@ fn direct_row_changes(
     }
     flush_text(&mut changes, &mut text, active_style);
     changes
-}
-
-fn effective_cell(
-    surface: &crate::physical::Surface,
-    overlay_row: Option<&PhysicalRow>,
-    overlay_last_written: Option<usize>,
-    x: usize,
-    y: u16,
-) -> PhysicalCell {
-    if overlay_last_written.is_some_and(|last| x <= last)
-        && let Some(row) = overlay_row
-    {
-        return row
-            .cell(x)
-            .cloned()
-            .filter(|cell| cell.painted)
-            .unwrap_or(PhysicalCell {
-                grapheme: None,
-                style: PhysicalStyle::default(),
-                painted: true,
-                continuation: false,
-            });
-    }
-    surface.get(x as u16, y).clone()
 }
 
 pub(crate) fn row_changes(row: &PhysicalRow, y: usize, clear_tail: bool) -> Vec<Change> {
@@ -340,7 +326,7 @@ mod tests {
             "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
         ];
         for sample in samples {
-            let row = crate::presentation::paint::row_from_string(sample, PhysicalStyle::default());
+            let row = row_from_string(sample, PhysicalStyle::default());
             assert!(
                 row.validate_cell_geometry().is_ok(),
                 "{sample:?}: {:?}",

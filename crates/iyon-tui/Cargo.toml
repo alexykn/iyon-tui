@@ -17,11 +17,6 @@ native-host = []
 # seams, not supported Rust authoring APIs.
 perf-counters = []
 
-[[bin]]
-name = "tui_perf"
-path = "src/bin/tui_perf.rs"
-required-features = ["perf-counters"]
-
 [dependencies]
 anyhow.workspace = true
 crossterm.workspace = true

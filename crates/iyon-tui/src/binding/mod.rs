@@ -13,8 +13,6 @@
 
 // STRUCTURE: validated kind + immutable fields + resolved retained handles
 // → canonical retained nodes and persistent derivations.
-#[cfg(feature = "native-host")]
-pub use crate::content::diff::lower_diff_hunks;
 pub use crate::content::diff::{
     DiffHunk, DiffLine, DiffLineNumber, DiffLineOffset, DiffLineTermination, DiffRange,
 };

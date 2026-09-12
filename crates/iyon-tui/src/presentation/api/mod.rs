@@ -1,17 +1,7 @@
-//! Semantic construction facade.
-//!
-//! Consumers construct the canonical owned View IR through these types
-//! without depending on retained structural implementation details.
+//! Finite style and text value types shared by native boundaries.
 
-#[doc(hidden)]
-pub mod grid;
 pub mod style;
 pub mod text;
-#[doc(hidden)]
-pub mod view;
-
-pub(crate) use super::ir::View;
-pub(crate) use grid::{GridCellSpec, GridTrack};
 pub use style::{
     AnsiColor, BorderEdges, BorderGlyphError, BorderGlyphs, BorderSpec, BorderStyle, ColorSpec,
     Insets, OverflowIndicator, StyleRef, StyleSelector, StyleSpec, StyleStateKey, StyleStateValue,

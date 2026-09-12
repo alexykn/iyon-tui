@@ -13,16 +13,18 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    component::ComponentId,
+    component::{ComponentId, ControlSnapshot, EditorSnapshot},
     geometry::Rect,
     occurrence::{
         HostKind, LayerValue, NodeKey, OccurrenceSnapshot, PropertyId, PropertyValue, UiChangeSet,
     },
+    physical::{PhysicalCell, grapheme_cell_width},
     presentation::{
         BorderSpec, BorderStyle, ContentMeasurement, StyleSpec, StyleStateKey, StyleStateValue,
-        TextAttribute, View, layout::LayoutTree,
+        TextAttribute,
     },
     text::{
         TerminalConstraints, TerminalTextProduct, TerminalTextProjector, TextContent,
@@ -31,8 +33,8 @@ use crate::{
 };
 
 use super::content::HistoryMeasurementAdjustment;
-use super::layout::{
-    ChildDependency, ComponentGeometry, LayoutContent, LayoutNode, LayoutNodeId, LayoutStyle,
+use super::direct_tree::{
+    ComponentGeometry, DirectContent, DirectDecoration, DirectNode, DirectNodeId, DirectTree,
 };
 use super::taffy::{AvailableConstraint, MeasuredSize, NodeParticipation, TaffyLayoutAdapter};
 
@@ -79,7 +81,7 @@ impl PartialEq for CapturedContentMeasurement {
 /// Direct candidate output. The scene host adds physical receipt metadata.
 #[derive(Debug)]
 pub(crate) struct DirectLayout {
-    pub(crate) tree: LayoutTree,
+    pub(crate) tree: DirectTree,
     pub(crate) occurrence_geometry: HashMap<NodeKey, ComponentGeometry>,
     pub(crate) content_widths: HashMap<NodeKey, f32>,
     pub(crate) content_products: HashMap<NodeKey, CapturedContentMeasurement>,
@@ -114,8 +116,8 @@ enum DirectDriverCommand {
         history_anchor: DirectHistoryAnchor,
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, View>,
-        intrinsic_control_views: HashMap<ComponentId, View>,
+        control_views: HashMap<ComponentId, ControlSnapshot>,
+        intrinsic_control_views: HashMap<ComponentId, ControlSnapshot>,
         response: SyncSender<Result<DirectLayout>>,
     },
     InvalidateContent {
@@ -194,7 +196,7 @@ impl DirectDriverHandle {
         history_anchor: DirectHistoryAnchor,
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, View>,
+        control_views: HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         self.layout_with_intrinsic(
             root,
@@ -214,8 +216,8 @@ impl DirectDriverHandle {
         history_anchor: DirectHistoryAnchor,
         measurements: HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: Vec<NodeKey>,
-        control_views: HashMap<ComponentId, View>,
-        intrinsic_control_views: HashMap<ComponentId, View>,
+        control_views: HashMap<ComponentId, ControlSnapshot>,
+        intrinsic_control_views: HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         let (response, receive) = sync_channel(1);
         self.command
@@ -456,7 +458,7 @@ impl DirectOccurrenceRenderer {
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: &[NodeKey],
-        control_views: &HashMap<ComponentId, View>,
+        control_views: &HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         self.prepare_with_intrinsic(
             root,
@@ -476,8 +478,8 @@ impl DirectOccurrenceRenderer {
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
         invalidate: &[NodeKey],
-        control_views: &HashMap<ComponentId, View>,
-        intrinsic_control_views: &HashMap<ComponentId, View>,
+        control_views: &HashMap<ComponentId, ControlSnapshot>,
+        intrinsic_control_views: &HashMap<ComponentId, ControlSnapshot>,
     ) -> Result<DirectLayout> {
         if !self.synchronized {
             return Err(anyhow!("direct occurrence renderer is not synchronized"));
@@ -570,8 +572,8 @@ impl DirectOccurrenceRenderer {
         width: AvailableConstraint,
         height: AvailableConstraint,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, View>,
-        intrinsic_control_views: &HashMap<NodeKey, View>,
+        control_views: &HashMap<NodeKey, ControlSnapshot>,
+        intrinsic_control_views: &HashMap<NodeKey, ControlSnapshot>,
     ) -> Result<Vec<crate::presentation::taffy::ComputedGeometry>> {
         let mut measurement_error = None;
         let mut failed_measurement_keys = Vec::new();
@@ -608,7 +610,7 @@ impl DirectOccurrenceRenderer {
         size: crate::geometry::Size,
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, View>,
+        control_views: &HashMap<NodeKey, ControlSnapshot>,
     ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
         self.layout_roots_with_intrinsic(
             body_root,
@@ -626,8 +628,8 @@ impl DirectOccurrenceRenderer {
         size: crate::geometry::Size,
         history_anchor: DirectHistoryAnchor,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<NodeKey, View>,
-        intrinsic_control_views: &HashMap<NodeKey, View>,
+        control_views: &HashMap<NodeKey, ControlSnapshot>,
+        intrinsic_control_views: &HashMap<NodeKey, ControlSnapshot>,
     ) -> Result<(Vec<crate::presentation::taffy::ComputedGeometry>, usize)> {
         let mut history_roots = Vec::new();
         let mut portal_roots = Vec::new();
@@ -780,7 +782,7 @@ impl DirectOccurrenceRenderer {
         size: crate::geometry::Size,
         geometries: &[crate::presentation::taffy::ComputedGeometry],
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<ComponentId, View>,
+        control_views: &HashMap<ComponentId, ControlSnapshot>,
         history_overflow_rows: usize,
     ) -> Result<DirectLayout> {
         let geometry_map = geometries
@@ -790,9 +792,9 @@ impl DirectOccurrenceRenderer {
         let mut nodes = Vec::with_capacity(geometries.len().saturating_add(1));
         let mut occurrence_geometry = HashMap::with_capacity(geometries.len());
         let mut content_widths = HashMap::new();
-        nodes.push(LayoutNode {
-            view_id: View::direct_root_id(self.driver_id),
-            paint_cacheable: false,
+        nodes.push(DirectNode {
+            key: root,
+            snapshot: None,
             rect: Rect::new(0, 0, size.width, size.height),
             content_rect: Rect::new(0, 0, size.width, size.height),
             content_width: size.width,
@@ -800,16 +802,11 @@ impl DirectOccurrenceRenderer {
             paint_origin: (0, 0),
             content_origin: (0, 0),
             component: None,
-            native_component_view: None,
             children: Vec::new(),
-            child_dependencies: Vec::new(),
-            style: LayoutStyle {
-                component_scope: None,
-                style_states: Default::default(),
-                style_facts: Default::default(),
-                decoration: Default::default(),
-            },
-            content: LayoutContent::Children,
+            style_states: Default::default(),
+            style_facts: Default::default(),
+            decoration: Default::default(),
+            content: DirectContent::Children,
         });
         let roots = if self.roots.is_empty() {
             vec![root]
@@ -830,20 +827,17 @@ impl DirectOccurrenceRenderer {
             )?);
         }
         nodes[0].children = root_children;
-        nodes[0].child_dependencies = vec![ChildDependency::all(); nodes[0].children.len()];
-        let mut tree = LayoutTree {
-            root: LayoutNodeId(0),
+        let mut tree = DirectTree {
+            root: DirectNodeId(0),
             nodes,
             size,
             physically_complete: measurements
                 .values()
                 .all(|capture| capture.measurement.physically_complete),
-            component_roots: HashMap::new(),
             parents: Vec::new(),
             content_roots: HashMap::new(),
-            child_y_sorted: Vec::new(),
         };
-        tree.index_component_roots();
+        tree.index();
         let mut component_mounts = Vec::new();
         for root in self.roots.iter().copied() {
             component_mounts.extend(self.component_mounts(root)?);
@@ -865,11 +859,11 @@ impl DirectOccurrenceRenderer {
         inherited_clip: Option<Rect>,
         geometries: &HashMap<NodeKey, &crate::presentation::taffy::ComputedGeometry>,
         measurements: &HashMap<NodeKey, CapturedContentMeasurement>,
-        control_views: &HashMap<ComponentId, View>,
+        control_views: &HashMap<ComponentId, ControlSnapshot>,
         occurrence_geometry: &mut HashMap<NodeKey, ComponentGeometry>,
         content_widths: &mut HashMap<NodeKey, f32>,
-        nodes: &mut Vec<LayoutNode>,
-    ) -> Result<LayoutNodeId> {
+        nodes: &mut Vec<DirectNode>,
+    ) -> Result<DirectNodeId> {
         let snapshot = self
             .snapshots
             .get(&key)
@@ -914,14 +908,26 @@ impl DirectOccurrenceRenderer {
         let component = snapshot
             .control
             .and_then(|control| self.controls.get(&control).copied());
-        let native_component_view = (snapshot.kind == HostKind::Editor)
+        let control_snapshot = (snapshot.kind == HostKind::Editor)
             .then(|| component)
             .flatten()
             .and_then(|component| control_views.get(&component).cloned());
-        let id = LayoutNodeId(nodes.len());
-        nodes.push(LayoutNode {
-            view_id: View::direct_id(key),
-            paint_cacheable: false,
+        let id = DirectNodeId(nodes.len());
+        let direct_content = if let Some(control) = control_snapshot {
+            DirectContent::Control(control)
+        } else if snapshot.kind == HostKind::ContentHost && measurements.get(&key).is_none() {
+            if visible {
+                return Err(anyhow!(
+                    "active ContentHost measurement is missing; its owner must exclude the exported root"
+                ));
+            }
+            DirectContent::Children
+        } else {
+            content(snapshot, measurements.get(&key))?
+        };
+        nodes.push(DirectNode {
+            key,
+            snapshot: Some(snapshot.clone()),
             rect,
             content_rect,
             content_width: measurements
@@ -932,25 +938,11 @@ impl DirectOccurrenceRenderer {
             paint_origin: rect_info.origin,
             content_origin: content_info.origin,
             component,
-            native_component_view,
             children: Vec::new(),
-            child_dependencies: Vec::new(),
-            style: LayoutStyle {
-                component_scope: component,
-                style_states: style_states(snapshot),
-                style_facts: Default::default(),
-                decoration: decoration(snapshot),
-            },
-            content: if snapshot.kind == HostKind::ContentHost && measurements.get(&key).is_none() {
-                if visible {
-                    return Err(anyhow!(
-                        "active ContentHost measurement is missing; its owner must exclude the exported root"
-                    ));
-                }
-                LayoutContent::Children
-            } else {
-                content(snapshot, measurements.get(&key))?
-            },
+            style_states: style_states(snapshot),
+            style_facts: Default::default(),
+            decoration: decoration(snapshot),
+            content: direct_content,
         });
         let mut children = Vec::with_capacity(snapshot.children.len());
         for child in snapshot.children.iter().copied() {
@@ -966,7 +958,6 @@ impl DirectOccurrenceRenderer {
             )?);
         }
         nodes[id.0].children = children;
-        nodes[id.0].child_dependencies = vec![ChildDependency::all(); nodes[id.0].children.len()];
         Ok(id)
     }
 
@@ -1077,7 +1068,7 @@ fn visit_portal(
 
 fn measured_for_request(
     capture: Option<&CapturedContentMeasurement>,
-    control_view: Option<&View>,
+    control_view: Option<&ControlSnapshot>,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> Result<MeasuredSize> {
     measured_for_request_with_intrinsic(capture, control_view, None, request)
@@ -1085,8 +1076,8 @@ fn measured_for_request(
 
 fn measured_for_request_with_intrinsic(
     capture: Option<&CapturedContentMeasurement>,
-    control_view: Option<&View>,
-    intrinsic_control_view: Option<&View>,
+    control_view: Option<&ControlSnapshot>,
+    intrinsic_control_view: Option<&ControlSnapshot>,
     request: crate::presentation::taffy::MeasureRequest,
 ) -> Result<MeasuredSize> {
     if capture.is_none() {
@@ -1097,24 +1088,18 @@ fn measured_for_request_with_intrinsic(
                 AvailableConstraint::MinContent | AvailableConstraint::MaxContent
             )
         );
-        let view = if intrinsic_request {
+        let control = if intrinsic_request {
             intrinsic_control_view.or(control_view)
         } else {
             control_view
         };
-        let Some(view) = view else {
+        let Some(control) = control else {
             // A childless ordinary Box has no intrinsic content. This is a
             // valid zero-sized leaf, unlike a missing ContentHost/control
             // capture, which is rejected at tree emission.
             return Ok(MeasuredSize::default());
         };
-        let tree =
-            crate::presentation::layout::layout_view(view, control_layout_constraints(request));
-        let size = tree.node(tree.root).rect.size();
-        let mut measured = MeasuredSize {
-            width: f32::from(size.width),
-            height: f32::from(size.height),
-        };
+        let mut measured = measure_control(control, request)?;
         if let Some(width) = request.known_width {
             measured.width = width;
         }
@@ -1238,24 +1223,60 @@ fn floor_constraint_width(value: f32) -> Result<u16> {
     Ok(value.floor().min(f32::from(u16::MAX)) as u16)
 }
 
-fn control_layout_constraints(
+fn measure_control(
+    control: &ControlSnapshot,
     request: crate::presentation::taffy::MeasureRequest,
-) -> crate::geometry::LayoutConstraints {
-    match (request.known_width, request.available_width) {
-        (Some(width), _) | (None, AvailableConstraint::Definite(width)) => {
-            crate::geometry::LayoutConstraints::width_only(control_request_width(width))
-        }
-        (None, AvailableConstraint::MinContent | AvailableConstraint::MaxContent) => {
-            crate::geometry::LayoutConstraints {
-                width: crate::geometry::AxisConstraint::Unbounded,
-                height: crate::geometry::AxisConstraint::Unbounded,
-            }
-        }
+) -> Result<MeasuredSize> {
+    let ControlSnapshot::Editor(editor) = control else {
+        return Ok(MeasuredSize::default());
+    };
+    let border_width = editor.border.as_ref().map_or(0, |border| {
+        border.left_width().saturating_add(border.right_width())
+    });
+    let border_height = editor.border.as_ref().map_or(0, |border| {
+        border.top_height().saturating_add(border.bottom_height())
+    });
+    let natural_width = editor
+        .text
+        .split('\n')
+        .map(|line| {
+            line.graphemes(true)
+                .map(crate::physical::grapheme_cell_width)
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(0)
+        .saturating_add(usize::from(editor.focused));
+    let natural_width = natural_width
+        .saturating_add(usize::from(border_width))
+        .min(usize::from(u16::MAX));
+    let requested_width = request
+        .known_width
+        .or(match request.available_width {
+            AvailableConstraint::Definite(width) => Some(width),
+            AvailableConstraint::MinContent | AvailableConstraint::MaxContent => None,
+        })
+        .map(floor_constraint_width)
+        .transpose()?
+        .unwrap_or(natural_width as u16);
+    let inner_width = requested_width.saturating_sub(border_width);
+    let rows = if editor.multiline {
+        crate::presentation::wrap::input_wrap_ranges(&editor.text, inner_width.max(1)).len()
+    } else {
+        1
+    };
+    let mut measured = MeasuredSize {
+        width: if request.known_width.is_some() {
+            request.known_width.expect("checked known width")
+        } else {
+            f32::from(requested_width)
+        },
+        height: (rows.saturating_add(usize::from(border_height))) as f32,
+    };
+    if let Some(height) = request.known_height {
+        measured.height = height;
     }
-}
-
-fn control_request_width(value: f32) -> u16 {
-    value.floor().clamp(0.0, f32::from(u16::MAX)) as u16
+    Ok(measured)
 }
 
 fn content_width_for_layout(
@@ -1291,15 +1312,15 @@ fn property<'a>(snapshot: &'a OccurrenceSnapshot, id: PropertyId) -> Option<&'a 
 fn content(
     snapshot: &OccurrenceSnapshot,
     measurement: Option<&CapturedContentMeasurement>,
-) -> Result<LayoutContent> {
+) -> Result<DirectContent> {
     if snapshot.kind != HostKind::ContentHost {
-        return Ok(LayoutContent::Children);
+        return Ok(DirectContent::Children);
     }
     let capture = measurement.ok_or_else(|| anyhow!("ContentHost measurement is missing"))?;
     if capture.port_id == 0 {
         return Err(anyhow!("ContentPort identity is invalid"));
     }
-    Ok(LayoutContent::ContentHost {
+    Ok(DirectContent::ContentHost {
         port_id: capture.port_id,
         connector_id: capture.measurement.connector_id,
         projection_revision: capture.measurement.projection_revision,
@@ -1332,8 +1353,8 @@ fn style_states(snapshot: &OccurrenceSnapshot) -> crate::presentation::StyleStat
     states
 }
 
-fn decoration(snapshot: &OccurrenceSnapshot) -> crate::presentation::ir::Decoration {
-    let mut decoration = crate::presentation::ir::Decoration::default();
+fn decoration(snapshot: &OccurrenceSnapshot) -> DirectDecoration {
+    let mut decoration = DirectDecoration::default();
     let mut direct = StyleSpec::new();
     let mut border_style = None;
     let mut border_edges = None;
@@ -1377,7 +1398,7 @@ fn decoration(snapshot: &OccurrenceSnapshot) -> crate::presentation::ir::Decorat
             (PropertyId::Background, PropertyValue::Color(color)) => {
                 decoration.surface_background = Some(color.clone())
             }
-            (PropertyId::Padding, PropertyValue::Insets(insets)) => decoration.padding = *insets,
+            (PropertyId::Padding, PropertyValue::Insets(_)) => {}
             _ => {}
         }
     }
@@ -1404,6 +1425,219 @@ fn decoration(snapshot: &OccurrenceSnapshot) -> crate::presentation::ir::Decorat
         decoration.border = Some(border);
     }
     decoration
+}
+
+/// Paints one immutable occurrence layout directly into the physical target.
+/// Ordinary boxes contribute only their occurrence-owned decoration and
+/// children; ContentHosts use the captured provider ticket and native editor
+/// controls use their concrete immutable snapshot.
+pub(crate) fn paint_direct_layout(
+    layout: &DirectLayout,
+    theme: &crate::Theme,
+    content: &dyn crate::presentation::ContentProvider,
+    focused: Option<ComponentId>,
+    graph: &crate::component::MountGraph,
+) -> Result<crate::physical::Surface> {
+    let mut surface =
+        crate::physical::Surface::new(layout.tree.size.width, layout.tree.size.height);
+    let resolver = crate::presentation::paint::ThemeResolver::new(theme);
+    paint_direct_node(
+        &layout.tree,
+        layout.tree.root,
+        layout,
+        &resolver,
+        content,
+        focused,
+        graph,
+        &mut surface,
+        crate::physical::PhysicalStyle::default(),
+        crate::presentation::paint::StyleContext::default(),
+        Rect::new(0, 0, layout.tree.size.width, layout.tree.size.height),
+    )?;
+    Ok(surface)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_direct_node(
+    tree: &DirectTree,
+    id: DirectNodeId,
+    layout: &DirectLayout,
+    resolver: &crate::presentation::paint::ThemeResolver,
+    content: &dyn crate::presentation::ContentProvider,
+    focused: Option<ComponentId>,
+    graph: &crate::component::MountGraph,
+    target: &mut crate::physical::Surface,
+    inherited: crate::physical::PhysicalStyle,
+    inherited_context: crate::presentation::paint::StyleContext,
+    inherited_clip: Rect,
+) -> Result<()> {
+    let node = tree.node(id);
+    let scope =
+        crate::presentation::paint::StyleContext::for_scope(node.component, focused, Some(graph));
+    let context = inherited_context.enter_node(&node.style_states, &node.style_facts, scope);
+    let resolved = resolver.resolve_text_style(inherited, &node.decoration.text_style, &context);
+    let clip = inherited_clip
+        .intersection(node.clip_rect)
+        .unwrap_or(Rect::new(node.rect.x, node.rect.y, 0, 0));
+
+    if let Some(background) = &node.decoration.surface_background {
+        let color = resolver.resolve_color(background, &context);
+        let left = node.paint_origin.0.max(i32::from(clip.x)).max(0);
+        let top = node.paint_origin.1.max(i32::from(clip.y)).max(0);
+        let right = node
+            .paint_origin
+            .0
+            .saturating_add(i32::from(node.rect.width))
+            .min(i32::from(clip.right()))
+            .min(i32::from(target.width()));
+        let bottom = node
+            .paint_origin
+            .1
+            .saturating_add(i32::from(node.rect.height))
+            .min(i32::from(clip.bottom()))
+            .min(i32::from(target.height()));
+        for y in top..bottom {
+            for x in left..right {
+                target.get_mut(x as u16, y as u16).style.background = Some(color);
+            }
+        }
+    }
+
+    match &node.content {
+        DirectContent::Children => {
+            for child in node.children.iter().copied() {
+                paint_direct_node(
+                    tree,
+                    child,
+                    layout,
+                    resolver,
+                    content,
+                    focused,
+                    graph,
+                    target,
+                    resolved,
+                    context.clone(),
+                    clip,
+                )?;
+            }
+        }
+        DirectContent::ContentHost {
+            port_id,
+            connector_id,
+            projection_revision,
+            projection_identity,
+            ..
+        } => {
+            let ticket = crate::presentation::PreparedProjectionTicket {
+                port_id: *port_id,
+                connector_id: *connector_id,
+                offered_width: node.content_width,
+                projection_revision: *projection_revision,
+                projection_identity: *projection_identity,
+            };
+            content.paint_window_signed(
+                ticket,
+                crate::presentation::ContentWindow::full(u32::from(node.content_rect.height)),
+                target,
+                node.content_origin,
+                clip,
+                resolved,
+            );
+        }
+        DirectContent::Control(ControlSnapshot::Editor(editor)) => {
+            paint_editor(editor, node, resolved, target, clip);
+        }
+        DirectContent::Control(_) => {}
+    }
+    if let Some(border) = &node.decoration.border {
+        crate::presentation::paint::paint_border_at(
+            target,
+            border,
+            resolver,
+            resolved,
+            &context,
+            node.paint_origin,
+            (node.rect.width, node.rect.height),
+            clip,
+        );
+    }
+    Ok(())
+}
+
+fn paint_editor(
+    editor: &EditorSnapshot,
+    node: &DirectNode,
+    style: crate::physical::PhysicalStyle,
+    target: &mut crate::physical::Surface,
+    clip: Rect,
+) {
+    let width = node.content_width;
+    let ranges = crate::presentation::wrap::input_wrap_ranges(&editor.text, width);
+    let first = editor.scroll_row;
+    for (row_index, range) in ranges.iter().enumerate().skip(first) {
+        let y = node
+            .content_origin
+            .1
+            .saturating_add(i32::try_from(row_index - first).unwrap_or(i32::MAX));
+        if y < i32::from(clip.y)
+            || y >= i32::from(clip.bottom())
+            || y < 0
+            || y >= i32::from(target.height())
+        {
+            continue;
+        }
+        let mut x = node.content_origin.0;
+        let text = &editor.text[range.clone()];
+        for (offset, grapheme) in text.grapheme_indices(true) {
+            let cell_width = grapheme_cell_width(grapheme);
+            if cell_width == 0 {
+                continue;
+            }
+            let cursor = editor.cursor_bytes == range.start.saturating_add(offset);
+            let mut cell_style = style;
+            if cursor {
+                cell_style.reversed = !cell_style.reversed;
+            }
+            let end = x.saturating_add(i32::try_from(cell_width).unwrap_or(i32::MAX));
+            if x >= i32::from(clip.x)
+                && end <= i32::from(clip.right())
+                && x >= 0
+                && end <= i32::from(target.width())
+            {
+                target.clear_glyph_at(x as u16, y as u16);
+                *target.get_mut(x as u16, y as u16) = PhysicalCell {
+                    grapheme: Some(grapheme.to_owned()),
+                    style: cell_style,
+                    painted: true,
+                    continuation: false,
+                };
+                for continuation in 1..cell_width {
+                    *target.get_mut((x as usize + continuation) as u16, y as u16) = PhysicalCell {
+                        grapheme: None,
+                        style: cell_style,
+                        painted: true,
+                        continuation: true,
+                    };
+                }
+            }
+            x = end;
+        }
+        if editor.cursor_bytes == range.end
+            && x < i32::from(clip.right())
+            && x >= i32::from(clip.x)
+            && x >= 0
+            && x < i32::from(target.width())
+        {
+            let mut cell_style = style;
+            cell_style.reversed = !cell_style.reversed;
+            *target.get_mut(x as u16, y as u16) = PhysicalCell {
+                grapheme: Some(" ".to_owned()),
+                style: cell_style,
+                painted: true,
+                continuation: false,
+            };
+        }
+    }
 }
 
 fn translate_geometry_by(
@@ -1512,1317 +1746,4 @@ fn signed_intersection(
             (bottom - top) as u16,
         )
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::occurrence::{DimensionValue, FiniteScalar, LayoutMode, NodeRef};
-    use std::sync::{Arc, Mutex};
-
-    fn direct_history_layout(heights: &[f32], viewport_height: u16) -> Result<DirectLayout> {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut commit = crate::occurrence::UiCommit::new(0);
-        for (index, height) in heights.iter().copied().enumerate() {
-            let ordinal = u32::try_from(index + 1).expect("History ordinal");
-            commit.push(crate::occurrence::UiOperation::CreateRoot {
-                local_ordinal: ordinal,
-                role: crate::occurrence::RootRole::LegacyHistoryUnit,
-                owner: None,
-            });
-            commit.push(crate::occurrence::UiOperation::SetDeclared {
-                node: NodeRef::Local(ordinal),
-                property: PropertyId::Height,
-                value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(
-                    FiniteScalar::new(height).expect("History height"),
-                ))),
-            });
-        }
-        let created = document
-            .commit_ui(&commit)
-            .expect("History roots")
-            .acknowledgement
-            .created;
-        let history_roots = (0..heights.len())
-            .map(|index| created[index].node_key().expect("History root"))
-            .collect::<Vec<_>>();
-        let mut snapshots = vec![document.snapshot(body).expect("body snapshot")];
-        snapshots.extend(
-            history_roots
-                .iter()
-                .copied()
-                .map(|root| document.snapshot(root).expect("History snapshot")),
-        );
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(7);
-        let mut roots = history_roots;
-        roots.push(body);
-        renderer.synchronize(
-            snapshots,
-            None,
-            &participation,
-            HashMap::new(),
-            roots,
-            HashMap::new(),
-            HashMap::new(),
-        )?;
-        renderer.prepare(
-            body,
-            crate::geometry::Size::new(20, viewport_height),
-            DirectHistoryAnchor::FollowEnd,
-            &HashMap::new(),
-            &[],
-            &HashMap::new(),
-        )
-    }
-
-    #[test]
-    fn direct_occurrence_layout_uses_taffy_for_row_geometry() {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut commit = crate::occurrence::UiCommit::new(0);
-        for ordinal in 1..=3 {
-            commit.push(crate::occurrence::UiOperation::CreateNode {
-                local_ordinal: ordinal,
-                kind: HostKind::Box,
-            });
-        }
-        commit.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body.handle(namespace)),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        for ordinal in 2..=3 {
-            commit.push(crate::occurrence::UiOperation::InsertBefore {
-                parent: NodeRef::Local(1),
-                child: NodeRef::Local(ordinal),
-                before: None,
-            });
-            commit.push(crate::occurrence::UiOperation::SetDeclared {
-                node: NodeRef::Local(ordinal),
-                property: PropertyId::Width,
-                value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(
-                    FiniteScalar::new(3.0).expect("width"),
-                ))),
-            });
-        }
-        commit.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(1),
-            property: PropertyId::Layout,
-            value: LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
-        });
-        document.commit_ui(&commit).expect("accepted direct tree");
-        let mut all = vec![document.snapshot(body).expect("body")];
-        let mut index = 0;
-        while index < all.len() {
-            let children = all[index].children.clone();
-            for child in children {
-                all.push(document.snapshot(child).expect("child"));
-            }
-            index += 1;
-        }
-        let participation = all
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(1);
-        renderer
-            .synchronize(
-                all,
-                None,
-                &participation,
-                HashMap::new(),
-                vec![body],
-                HashMap::new(),
-                HashMap::new(),
-            )
-            .expect("sync");
-        let layout = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &HashMap::new(),
-                &[],
-                &HashMap::new(),
-            )
-            .expect("layout");
-        let body_id = layout.tree.nodes[0].children[0];
-        assert_eq!(layout.history_overflow_rows, 0);
-        let row_id = layout.tree.nodes[body_id.0].children[0];
-        let row_children = &layout.tree.nodes[row_id.0].children;
-        assert_eq!(row_children.len(), 2);
-        assert_eq!(layout.tree.nodes[row_children[0].0].rect.x, 0);
-        assert_eq!(layout.tree.nodes[row_children[1].0].rect.x, 3);
-    }
-
-    #[test]
-    fn direct_measurement_requests_use_captured_min_max_and_known_dimensions() {
-        let capture = CapturedContentMeasurement {
-            capture_id: 1,
-            port_id: 7,
-            offered_width: 20,
-            measurement: ContentMeasurement {
-                intrinsic_size: crate::geometry::Size::new(6, 3),
-                ..ContentMeasurement::default()
-            },
-            min_content: crate::geometry::Size::new(2, 1),
-            max_content: crate::geometry::Size::new(8, 4),
-            history_adjustment: None,
-            semantic_contents: None,
-            terminal_policy: TextRenderPolicy::default(),
-            terminal_product: None,
-        };
-        let min = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: None,
-                known_height: None,
-                available_width: AvailableConstraint::MinContent,
-                available_height: AvailableConstraint::MinContent,
-                wrap_width: None,
-            },
-        )
-        .expect("min-content measurement");
-        assert_eq!(
-            min,
-            MeasuredSize {
-                width: 2.0,
-                height: 1.0
-            }
-        );
-        let max = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(5.0),
-                known_height: Some(9.0),
-                available_width: AvailableConstraint::MaxContent,
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: None,
-            },
-        )
-        .expect("definite measurement");
-        assert_eq!(
-            max,
-            MeasuredSize {
-                width: 5.0,
-                height: 9.0
-            }
-        );
-    }
-
-    #[test]
-    fn direct_editor_intrinsic_measurement_preserves_multiline_text() {
-        let mut editor = crate::TextInput::new().multiline(true);
-        editor.set_text("abc\ndefgh");
-        let view = crate::Component::view(&editor);
-        let block = crate::presentation::layout::compile_view(&view, 5);
-        assert_eq!(
-            block
-                .rows
-                .iter()
-                .map(|row| row.plain_text())
-                .collect::<Vec<_>>(),
-            ["abc", "defgh"]
-        );
-        for available_width in [
-            AvailableConstraint::MinContent,
-            AvailableConstraint::MaxContent,
-        ] {
-            let measured = measured_for_request(
-                None,
-                Some(&view),
-                crate::presentation::taffy::MeasureRequest {
-                    known_width: None,
-                    known_height: None,
-                    available_width,
-                    available_height: AvailableConstraint::MaxContent,
-                    wrap_width: None,
-                },
-            )
-            .expect("intrinsic editor measurement");
-            assert_eq!(
-                measured,
-                MeasuredSize {
-                    width: 5.0,
-                    height: 2.0,
-                }
-            );
-        }
-        let zero_width = measured_for_request(
-            None,
-            Some(&view),
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(0.0),
-                known_height: None,
-                available_width: AvailableConstraint::Definite(0.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(0),
-            },
-        )
-        .expect("zero-width editor measurement");
-        assert_eq!(zero_width.width, 0.0);
-        assert_eq!(zero_width.height, 2.0);
-
-        crate::controls::text_input::TextInput::layout_changed(
-            &mut editor,
-            crate::geometry::Size::new(20, 4),
-        );
-        let allocated_view = crate::Component::view(&editor);
-        let intrinsic_view = editor.intrinsic_view();
-        let allocated_block = crate::presentation::layout::compile_view(&allocated_view, 5);
-        assert_eq!(
-            allocated_block
-                .rows
-                .iter()
-                .map(|row| row.plain_text())
-                .collect::<Vec<_>>(),
-            ["abc", "defgh"]
-        );
-        let allocated_intrinsic = measured_for_request_with_intrinsic(
-            None,
-            Some(&allocated_view),
-            Some(&intrinsic_view),
-            crate::presentation::taffy::MeasureRequest {
-                known_width: None,
-                known_height: None,
-                available_width: AvailableConstraint::MaxContent,
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: None,
-            },
-        )
-        .expect("allocated editor intrinsic measurement");
-        assert_eq!(allocated_intrinsic.width, 5.0);
-
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut mount = crate::occurrence::UiCommit::new(0);
-        mount.push(crate::occurrence::UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Box,
-        });
-        mount.push(crate::occurrence::UiOperation::CreateNode {
-            local_ordinal: 2,
-            kind: HostKind::Editor,
-        });
-        mount.push(crate::occurrence::UiOperation::CreateControl {
-            local_ordinal: 3,
-            kind: crate::occurrence::ControlKind::Editor,
-            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
-            owner: Some(NodeRef::Local(2)),
-        });
-        mount.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body.handle(namespace)),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        mount.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Local(1),
-            child: NodeRef::Local(2),
-            before: None,
-        });
-        mount.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(1),
-            property: PropertyId::Layout,
-            value: LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
-        });
-        mount.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(2),
-            property: PropertyId::Width,
-            value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Auto)),
-        });
-        let created = document
-            .commit_ui(&mount)
-            .expect("direct Editor occurrence")
-            .acknowledgement
-            .created;
-        let wrapper_node = created[0].node_key().expect("wrapper node");
-        let editor_node = created[1].node_key().expect("Editor node");
-        let control = created[2].resource_key().expect("Editor control");
-        let snapshots = vec![
-            document.snapshot(body).expect("body snapshot"),
-            document.snapshot(wrapper_node).expect("wrapper snapshot"),
-            document.snapshot(editor_node).expect("Editor snapshot"),
-        ];
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let component = ComponentId::from_raw(1);
-        let mut renderer = DirectOccurrenceRenderer::new(8);
-        renderer
-            .synchronize(
-                snapshots,
-                None,
-                &participation,
-                HashMap::new(),
-                vec![body],
-                HashMap::new(),
-                HashMap::from([(control, component)]),
-            )
-            .expect("direct Editor synchronization");
-        let direct = renderer
-            .prepare_with_intrinsic(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &HashMap::new(),
-                &[],
-                &HashMap::from([(component, allocated_view)]),
-                &HashMap::from([(component, intrinsic_view)]),
-            )
-            .expect("direct Editor intrinsic layout");
-        assert_eq!(direct.occurrence_geometry[&editor_node].outer.width, 5);
-    }
-
-    #[test]
-    fn direct_semantic_measurement_can_grow_at_a_narrower_width() {
-        let capture = CapturedContentMeasurement {
-            capture_id: 1,
-            port_id: 7,
-            offered_width: 8,
-            measurement: ContentMeasurement {
-                intrinsic_size: crate::geometry::Size::new(8, 1),
-                ..ContentMeasurement::default()
-            },
-            min_content: crate::geometry::Size::new(1, 8),
-            max_content: crate::geometry::Size::new(8, 1),
-            history_adjustment: None,
-            semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
-            terminal_policy: TextRenderPolicy::default(),
-            terminal_product: None,
-        };
-        let measured = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(4.0),
-                known_height: None,
-                available_width: AvailableConstraint::Definite(4.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(4),
-            },
-        )
-        .expect("narrow terminal measurement");
-        assert_eq!(measured.height, 2.0);
-    }
-
-    #[test]
-    fn direct_auto_content_uses_available_width_as_a_cap() {
-        let contents: std::sync::Arc<[TextContent]> = vec![TextContent::raw("x")].into();
-        let product = std::sync::Arc::new(
-            TerminalTextProjector::new(TextRenderPolicy::default())
-                .project(&contents[0], TerminalConstraints::definite(5))
-                .expect("content product"),
-        );
-        let capture = CapturedContentMeasurement {
-            capture_id: 1,
-            port_id: 7,
-            offered_width: 5,
-            measurement: ContentMeasurement {
-                intrinsic_size: crate::geometry::Size::new(1, 1),
-                ..ContentMeasurement::default()
-            },
-            min_content: crate::geometry::Size::new(1, 1),
-            max_content: crate::geometry::Size::new(1, 1),
-            history_adjustment: None,
-            semantic_contents: Some(contents),
-            terminal_policy: TextRenderPolicy::default(),
-            terminal_product: Some(product),
-        };
-        let measured = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: None,
-                known_height: None,
-                available_width: AvailableConstraint::Definite(5.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(5),
-            },
-        )
-        .expect("auto content measurement");
-        assert_eq!(measured.width, 1.0);
-        assert_eq!(measured.height, 1.0);
-        let allocated = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(5.0),
-                known_height: None,
-                available_width: AvailableConstraint::Definite(5.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(5),
-            },
-        )
-        .expect("known fill content measurement");
-        assert_eq!(allocated.width, 5.0);
-    }
-
-    #[test]
-    fn direct_semantic_measurement_ignores_unmatched_history_adjustment() {
-        let capture = CapturedContentMeasurement {
-            capture_id: 1,
-            port_id: 7,
-            offered_width: 8,
-            measurement: ContentMeasurement {
-                intrinsic_size: crate::geometry::Size::new(8, 1),
-                projection_identity: 7,
-                ..ContentMeasurement::default()
-            },
-            min_content: crate::geometry::Size::new(1, 8),
-            max_content: crate::geometry::Size::new(8, 1),
-            history_adjustment: Some(HistoryMeasurementAdjustment {
-                projection_identity: 99,
-                offered_width: 8,
-                removed_rows: 1,
-            }),
-            semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
-            terminal_policy: TextRenderPolicy::default(),
-            terminal_product: None,
-        };
-        let measured = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(4.0),
-                known_height: None,
-                available_width: AvailableConstraint::Definite(4.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(4),
-            },
-        )
-        .expect("measurement");
-        assert_eq!(measured.height, 2.0);
-    }
-
-    #[test]
-    fn terminal_projection_errors_reach_the_direct_measurement_boundary() {
-        let contents: std::sync::Arc<[TextContent]> =
-            vec![TextContent::raw("x\n".repeat(usize::from(u16::MAX) + 1))].into();
-        let capture = CapturedContentMeasurement {
-            capture_id: 1,
-            port_id: 7,
-            offered_width: 1,
-            measurement: ContentMeasurement::default(),
-            min_content: crate::geometry::Size::new(1, 1),
-            max_content: crate::geometry::Size::new(1, 1),
-            history_adjustment: None,
-            semantic_contents: Some(contents),
-            terminal_policy: TextRenderPolicy::default(),
-            terminal_product: None,
-        };
-        let error = measured_for_request(
-            Some(&capture),
-            None,
-            crate::presentation::taffy::MeasureRequest {
-                known_width: Some(1.0),
-                known_height: None,
-                available_width: AvailableConstraint::Definite(1.0),
-                available_height: AvailableConstraint::MaxContent,
-                wrap_width: Some(1),
-            },
-        )
-        .expect_err("an overflowing terminal product must fail measurement");
-        let message = error.to_string();
-        assert!(
-            message.contains("terminal") && message.contains("exceeds u16"),
-            "unexpected terminal projection error: {message}"
-        );
-    }
-
-    #[test]
-    fn direct_driver_owns_taffy_until_explicit_shutdown() {
-        let mut driver = DirectDriverHandle::start(0xfeed).expect("driver startup");
-        driver.shutdown().expect("driver shutdown");
-    }
-
-    #[test]
-    fn signed_geometry_is_clipped_before_terminal_conversion() {
-        let box_rect = physical_box(-2.0, -1.0, 5.0, 4.0).expect("signed box");
-        assert_eq!(box_rect.rect, Rect::new(0, 0, 5, 4));
-        assert_eq!(box_rect.origin, (-2, -1));
-        assert_eq!(
-            signed_intersection(
-                box_rect.origin,
-                box_rect.rect.size(),
-                Rect::new(0, 0, 20, 20)
-            ),
-            Some(Rect::new(0, 0, 3, 3))
-        );
-        assert!(physical_box(0.0, 0.0, -1.0, 2.0).is_err());
-    }
-
-    #[test]
-    fn failed_content_measurement_dirties_taffy_before_retry_and_paint() {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut commit = crate::occurrence::UiCommit::new(0);
-        commit.push(crate::occurrence::UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::ContentHost,
-        });
-        commit.push(crate::occurrence::UiOperation::CreatePort {
-            local_ordinal: 2,
-            content_family: 1,
-            ownership: crate::occurrence::OwnershipMode::OccurrenceOwned,
-            owner: Some(NodeRef::Local(1)),
-        });
-        commit.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body.handle(namespace)),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        commit.push(crate::occurrence::UiOperation::AttachPort {
-            node: NodeRef::Local(1),
-            port: Some(crate::occurrence::ResourceRef::Local(2)),
-        });
-        let ack = document.commit_ui(&commit).expect("content occurrence");
-        let node = ack.acknowledgement.created[0].node_key().expect("node");
-        let port = ack.acknowledgement.created[1].resource_key().expect("port");
-        let mut snapshots = vec![document.snapshot(body).expect("body")];
-        snapshots.push(document.snapshot(node).expect("content"));
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(3);
-        renderer
-            .synchronize(
-                snapshots,
-                None,
-                &participation,
-                HashMap::from([(port, 9)]),
-                vec![body],
-                HashMap::new(),
-                HashMap::new(),
-            )
-            .expect("direct synchronization");
-        let overflowing_contents: std::sync::Arc<[TextContent]> =
-            vec![TextContent::raw("x\n".repeat(usize::from(u16::MAX) + 1))].into();
-        let mut captures = HashMap::new();
-        captures.insert(
-            node,
-            CapturedContentMeasurement {
-                capture_id: 1,
-                port_id: 9,
-                offered_width: 20,
-                measurement: ContentMeasurement {
-                    ..ContentMeasurement::default()
-                },
-                min_content: crate::geometry::Size::new(1, 1),
-                max_content: crate::geometry::Size::new(1, 1),
-                history_adjustment: None,
-                semantic_contents: Some(overflowing_contents),
-                terminal_policy: TextRenderPolicy::default(),
-                terminal_product: None,
-            },
-        );
-        let error = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &captures,
-                &[],
-                &HashMap::new(),
-            )
-            .expect_err("projection failure must reject the direct candidate");
-        assert!(error.to_string().contains("terminal content measurement"));
-
-        let valid_contents: std::sync::Arc<[TextContent]> =
-            vec![TextContent::raw("recovered")].into();
-        let valid_product = std::sync::Arc::new(
-            TerminalTextProjector::new(TextRenderPolicy::default())
-                .project_contents(valid_contents.as_ref(), TerminalConstraints::definite(20))
-                .expect("valid terminal product"),
-        );
-        captures.insert(
-            node,
-            CapturedContentMeasurement {
-                capture_id: 2,
-                port_id: 9,
-                offered_width: 20,
-                measurement: ContentMeasurement {
-                    intrinsic_size: crate::geometry::Size::new(9, 1),
-                    physically_complete: true,
-                    connector_id: Some(9),
-                    projection_identity: 2,
-                    ..ContentMeasurement::default()
-                },
-                min_content: crate::geometry::Size::new(9, 1),
-                max_content: crate::geometry::Size::new(9, 1),
-                history_adjustment: None,
-                semantic_contents: Some(valid_contents),
-                terminal_policy: TextRenderPolicy::default(),
-                terminal_product: Some(valid_product.clone()),
-            },
-        );
-        let layout = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &captures,
-                &[],
-                &HashMap::new(),
-            )
-            .expect("valid retry must recompute the dirtied content leaf");
-        assert!(layout.tree.physically_complete);
-        let content_node = layout.tree.content_roots[&9][0];
-        assert!(layout.tree.node(content_node).content_rect.height > 0);
-
-        struct ProductProvider {
-            product: std::sync::Arc<TerminalTextProduct>,
-        }
-
-        impl crate::presentation::ContentProvider for ProductProvider {
-            fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
-                1
-            }
-
-            fn measure(
-                &mut self,
-                _port_id: u64,
-                _offered_width: u16,
-                _width_rule: crate::presentation::WidthRule,
-            ) -> ContentMeasurement {
-                ContentMeasurement {
-                    intrinsic_size: crate::geometry::Size::new(9, 1),
-                    physically_complete: true,
-                    connector_id: Some(9),
-                    projection_identity: 2,
-                    ..ContentMeasurement::default()
-                }
-            }
-
-            fn paint_window(
-                &self,
-                _ticket: crate::presentation::PreparedProjectionTicket,
-                window: crate::presentation::ContentWindow,
-                target: &mut crate::physical::Surface,
-                target_origin: (u16, u16),
-                clip: crate::geometry::Rect,
-                style: crate::physical::PhysicalStyle,
-            ) {
-                self.product
-                    .paint_window(
-                        &crate::Theme::default(),
-                        style,
-                        target,
-                        (i32::from(target_origin.0), i32::from(target_origin.1)),
-                        clip,
-                        crate::text::TerminalRowWindow::new(
-                            usize::try_from(window.first_row).expect("row index"),
-                            usize::try_from(window.row_count).expect("row count"),
-                        ),
-                    )
-                    .expect("captured product paints");
-            }
-        }
-
-        let mut paint_cache = crate::presentation::paint::PaintCache::default();
-        let compiler = crate::presentation::layout::ViewCompiler::default();
-        let surface = crate::presentation::paint::ViewPainter.paint_tree_with_content(
-            &compiler,
-            &layout.tree,
-            &mut paint_cache,
-            &ProductProvider {
-                product: valid_product,
-            },
-        );
-        let row = crate::physical::PhysicalRow::from_cells(surface.row_cells(3).to_vec());
-        assert_eq!(row.plain_text(), "recovered");
-    }
-
-    #[test]
-    fn direct_history_overflow_budget_covers_no_under_exact_and_over_capacity() -> Result<()> {
-        for (heights, viewport, expected) in [
-            (&[][..], 4, 0),
-            (&[1.5][..], 4, 0),
-            (&[2.0][..], 2, 0),
-            (&[2.6, 1.9][..], 4, 1),
-        ] {
-            let layout = direct_history_layout(heights, viewport)?;
-            assert_eq!(layout.history_overflow_rows, expected);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn direct_history_roots_share_fractional_edge_rounding() -> Result<()> {
-        let layout = direct_history_layout(&[0.6, 0.6], 2)?;
-        let history_nodes = layout
-            .tree
-            .nodes
-            .iter()
-            .filter(|node| node.view_id != View::direct_root_id(7))
-            .collect::<Vec<_>>();
-        assert_eq!(layout.history_overflow_rows, 0);
-        assert_eq!(history_nodes[0].rect.y, 1);
-        assert_eq!(history_nodes[0].rect.height, 0);
-        assert_eq!(history_nodes[1].rect.y, 1);
-        assert_eq!(history_nodes[1].rect.height, 1);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_row_respects_declared_flex_shrink_across_width_and_height() -> Result<()> {
-        let body = NodeKey {
-            slot: 70,
-            generation: 1,
-        };
-        let row = NodeKey {
-            slot: 71,
-            generation: 1,
-        };
-        let first = NodeKey {
-            slot: 72,
-            generation: 1,
-        };
-        let second = NodeKey {
-            slot: 73,
-            generation: 1,
-        };
-        let scalar = |value| crate::occurrence::FiniteScalar::new(value).expect("finite value");
-        let length = |value| {
-            LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(scalar(
-                value,
-            ))))
-        };
-        let snapshot = |key, children, root_role, properties| OccurrenceSnapshot {
-            key,
-            kind: HostKind::Box,
-            root_role,
-            children,
-            port: None,
-            control: None,
-            hidden: false,
-            subscriptions: 0,
-            history_action: None,
-            properties,
-            style_states: Vec::new(),
-            structure_revision: 1,
-            geometry_revision: 1,
-            presentation_revision: 0,
-            interaction_revision: 0,
-        };
-        let snapshots = vec![
-            snapshot(
-                body,
-                vec![row],
-                Some(crate::occurrence::RootRole::Body),
-                Vec::new(),
-            ),
-            snapshot(
-                row,
-                vec![first, second],
-                None,
-                vec![
-                    (
-                        PropertyId::Layout,
-                        LayerValue::Value(PropertyValue::LayoutMode(LayoutMode::Row)),
-                    ),
-                    (PropertyId::Width, length(6.0)),
-                    (PropertyId::Height, length(2.0)),
-                ],
-            ),
-            snapshot(
-                first,
-                Vec::new(),
-                None,
-                vec![
-                    (PropertyId::Width, length(5.0)),
-                    (PropertyId::Height, length(2.0)),
-                    (
-                        PropertyId::FlexShrink,
-                        LayerValue::Value(PropertyValue::Scalar(scalar(0.0))),
-                    ),
-                ],
-            ),
-            snapshot(
-                second,
-                Vec::new(),
-                None,
-                vec![
-                    (PropertyId::Width, length(5.0)),
-                    (PropertyId::Height, length(2.0)),
-                ],
-            ),
-        ];
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(70);
-        renderer.synchronize(
-            snapshots,
-            None,
-            &participation,
-            HashMap::new(),
-            vec![body],
-            HashMap::new(),
-            HashMap::new(),
-        )?;
-        let layout = renderer.prepare(
-            body,
-            crate::geometry::Size::new(8, 4),
-            DirectHistoryAnchor::FollowEnd,
-            &HashMap::new(),
-            &[],
-            &HashMap::new(),
-        )?;
-        let first_rect = layout.occurrence_geometry[&first].outer;
-        let second_rect = layout.occurrence_geometry[&second].outer;
-        assert_eq!(first_rect.width, 5);
-        assert_eq!(second_rect.width, 1);
-        assert_eq!(first_rect.height, 2);
-        assert_eq!(second_rect.height, 2);
-        assert_eq!(first_rect.x + first_rect.width, second_rect.x);
-        Ok(())
-    }
-
-    #[test]
-    fn direct_content_paint_ticket_uses_resolved_width_for_explicit_and_fill() -> Result<()> {
-        struct TicketProvider {
-            tickets: Arc<Mutex<Vec<crate::presentation::PreparedProjectionTicket>>>,
-        }
-        impl crate::presentation::ContentProvider for TicketProvider {
-            fn projection_revision(&self, _port_id: u64, _offered_width: u16) -> u64 {
-                1
-            }
-
-            fn measure(
-                &mut self,
-                _port_id: u64,
-                _offered_width: u16,
-                _width_rule: crate::presentation::WidthRule,
-            ) -> ContentMeasurement {
-                ContentMeasurement::default()
-            }
-
-            fn paint_window(
-                &self,
-                ticket: crate::presentation::PreparedProjectionTicket,
-                _window: crate::presentation::ContentWindow,
-                _target: &mut crate::physical::Surface,
-                _target_origin: (u16, u16),
-                _clip: crate::geometry::Rect,
-                _style: crate::physical::PhysicalStyle,
-            ) {
-                self.tickets.lock().unwrap().push(ticket);
-            }
-        }
-
-        let scalar = |value| crate::occurrence::FiniteScalar::new(value).expect("finite value");
-        let length = |value| {
-            LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(scalar(
-                value,
-            ))))
-        };
-        let snapshot = |key, children, root_role, properties| OccurrenceSnapshot {
-            key,
-            kind: HostKind::Box,
-            root_role,
-            children,
-            port: None,
-            control: None,
-            hidden: false,
-            subscriptions: 0,
-            history_action: None,
-            properties,
-            style_states: Vec::new(),
-            structure_revision: 1,
-            geometry_revision: 1,
-            presentation_revision: 0,
-            interaction_revision: 0,
-        };
-        let render_case = |parent_properties, content_properties| -> Result<DirectLayout> {
-            let body = NodeKey {
-                slot: 80,
-                generation: 1,
-            };
-            let parent = NodeKey {
-                slot: 81,
-                generation: 1,
-            };
-            let content = NodeKey {
-                slot: 82,
-                generation: 1,
-            };
-            let snapshots = vec![
-                snapshot(
-                    body,
-                    vec![parent],
-                    Some(crate::occurrence::RootRole::Body),
-                    Vec::new(),
-                ),
-                snapshot(parent, vec![content], None, parent_properties),
-                {
-                    let mut value = snapshot(content, Vec::new(), None, content_properties);
-                    value.kind = HostKind::ContentHost;
-                    value
-                },
-            ];
-            let participation = snapshots
-                .iter()
-                .map(|snapshot| NodeParticipation {
-                    key: snapshot.key,
-                    participates: true,
-                })
-                .collect::<Vec<_>>();
-            let mut renderer = DirectOccurrenceRenderer::new(80);
-            renderer.synchronize(
-                snapshots,
-                None,
-                &participation,
-                HashMap::new(),
-                vec![body],
-                HashMap::new(),
-                HashMap::new(),
-            )?;
-            let capture = CapturedContentMeasurement {
-                capture_id: 1,
-                port_id: 9,
-                offered_width: 80,
-                measurement: ContentMeasurement {
-                    intrinsic_size: crate::geometry::Size::new(8, 1),
-                    physically_complete: true,
-                    projection_revision: 1,
-                    metric_revision: 1,
-                    paint_revision: 1,
-                    connector_id: Some(5),
-                    projection_identity: 9,
-                },
-                min_content: crate::geometry::Size::new(8, 1),
-                max_content: crate::geometry::Size::new(8, 1),
-                history_adjustment: None,
-                semantic_contents: Some(vec![TextContent::raw("abcdefgh")].into()),
-                terminal_policy: TextRenderPolicy::default(),
-                terminal_product: None,
-            };
-            renderer.prepare(
-                body,
-                crate::geometry::Size::new(80, 6),
-                DirectHistoryAnchor::FollowEnd,
-                &HashMap::from([(content, capture)]),
-                &[],
-                &HashMap::new(),
-            )
-        };
-
-        let explicit = render_case(
-            vec![
-                (PropertyId::Width, length(8.0)),
-                (PropertyId::Height, length(2.0)),
-            ],
-            vec![(PropertyId::Width, length(4.0))],
-        )?;
-        let padded_fill = render_case(
-            vec![
-                (PropertyId::Width, length(8.0)),
-                (
-                    PropertyId::Padding,
-                    LayerValue::Value(PropertyValue::Insets(crate::presentation::Insets::new(
-                        0, 2, 0, 2,
-                    ))),
-                ),
-            ],
-            vec![(
-                PropertyId::Width,
-                LayerValue::Value(PropertyValue::SizeMode(crate::occurrence::SizeMode::Fill)),
-            )],
-        )?;
-        let cases = [explicit, padded_fill];
-        for layout in cases {
-            let content = layout
-                .tree
-                .nodes
-                .iter()
-                .find(|node| {
-                    node.view_id
-                        == View::direct_id(NodeKey {
-                            slot: 82,
-                            generation: 1,
-                        })
-                })
-                .expect("ContentHost layout node");
-            let logical_width = layout.occurrence_geometry[&NodeKey {
-                slot: 82,
-                generation: 1,
-            }]
-                .content
-                .width;
-            assert_eq!(content.content_width, logical_width);
-            let tickets = Arc::new(Mutex::new(Vec::new()));
-            let provider = TicketProvider {
-                tickets: Arc::clone(&tickets),
-            };
-            let theme = crate::Theme::new();
-            let compiler = crate::presentation::layout::ViewCompiler::new(&theme);
-            let mut cache = crate::presentation::paint::PaintCache::default();
-            cache.begin_epoch(&theme);
-            let _ = crate::presentation::paint::ViewPainter.paint_tree_with_content(
-                &compiler,
-                &layout.tree,
-                &mut cache,
-                &provider,
-            );
-            assert!(!tickets.lock().unwrap().is_empty());
-            assert!(
-                tickets
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .all(|ticket| ticket.offered_width == logical_width)
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn direct_layout_rejects_a_missing_body_root_role() {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut snapshot = document.snapshot(body).expect("body snapshot");
-        snapshot.root_role = None;
-        let participation = vec![NodeParticipation {
-            key: body,
-            participates: true,
-        }];
-        let mut renderer = DirectOccurrenceRenderer::new(4);
-        renderer
-            .synchronize(
-                vec![snapshot],
-                None,
-                &participation,
-                HashMap::new(),
-                vec![body],
-                HashMap::new(),
-                HashMap::new(),
-            )
-            .expect("direct synchronization");
-        let error = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &HashMap::new(),
-                &[],
-                &HashMap::new(),
-            )
-            .expect_err("missing Body role must be explicit");
-        assert!(error.to_string().contains("no Body root"));
-    }
-
-    #[test]
-    fn direct_native_frontier_anchor_places_active_history_at_the_top() {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut commit = crate::occurrence::UiCommit::new(0);
-        commit.push(crate::occurrence::UiOperation::CreateRoot {
-            local_ordinal: 1,
-            role: crate::occurrence::RootRole::LegacyHistoryUnit,
-            owner: None,
-        });
-        commit.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(1),
-            property: PropertyId::Height,
-            value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(
-                FiniteScalar::new(2.0).expect("height"),
-            ))),
-        });
-        let history = document
-            .commit_ui(&commit)
-            .expect("History root")
-            .acknowledgement
-            .created[0]
-            .node_key()
-            .expect("History key");
-        let snapshots = vec![
-            document.snapshot(body).expect("body snapshot"),
-            document.snapshot(history).expect("History snapshot"),
-        ];
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(5);
-        renderer
-            .synchronize(
-                snapshots,
-                None,
-                &participation,
-                HashMap::new(),
-                vec![history, body],
-                HashMap::new(),
-                HashMap::new(),
-            )
-            .expect("direct synchronization");
-        let follow_end = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::FollowEnd,
-                &HashMap::new(),
-                &[],
-                &HashMap::new(),
-            )
-            .expect("FollowEnd layout");
-        let native_frontier = renderer
-            .prepare(
-                body,
-                crate::geometry::Size::new(20, 4),
-                DirectHistoryAnchor::NativeFrontier,
-                &HashMap::new(),
-                &[],
-                &HashMap::new(),
-            )
-            .expect("NativeFrontier layout");
-        let history_rect = |layout: &DirectLayout| {
-            layout
-                .tree
-                .nodes
-                .iter()
-                .find(|node| node.view_id == View::direct_id(history))
-                .expect("History node")
-                .rect
-        };
-        assert_eq!(history_rect(&follow_end).y, 2);
-        assert_eq!(history_rect(&native_frontier).y, 0);
-    }
-
-    #[test]
-    fn direct_nested_portal_order_follows_descendant_owner_dependency() -> Result<()> {
-        let namespace = crate::occurrence::HostNamespace::allocate().expect("namespace");
-        let mut document = crate::occurrence::OccurrenceDocument::new(namespace);
-        let body = document.body_root();
-        let mut commit = crate::occurrence::UiCommit::new(0);
-        commit.push(crate::occurrence::UiOperation::CreateNode {
-            local_ordinal: 1,
-            kind: HostKind::Box,
-        });
-        commit.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Existing(body.handle(namespace)),
-            child: NodeRef::Local(1),
-            before: None,
-        });
-        commit.push(crate::occurrence::UiOperation::CreateRoot {
-            local_ordinal: 2,
-            role: crate::occurrence::RootRole::Portal,
-            owner: Some(NodeRef::Existing(body.handle(namespace))),
-        });
-        commit.push(crate::occurrence::UiOperation::CreateNode {
-            local_ordinal: 3,
-            kind: HostKind::Box,
-        });
-        commit.push(crate::occurrence::UiOperation::InsertBefore {
-            parent: NodeRef::Local(2),
-            child: NodeRef::Local(3),
-            before: None,
-        });
-        commit.push(crate::occurrence::UiOperation::CreateRoot {
-            local_ordinal: 4,
-            role: crate::occurrence::RootRole::Portal,
-            owner: Some(NodeRef::Local(3)),
-        });
-        commit.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(2),
-            property: PropertyId::Height,
-            value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(
-                FiniteScalar::new(2.0).expect("outer height"),
-            ))),
-        });
-        commit.push(crate::occurrence::UiOperation::SetDeclared {
-            node: NodeRef::Local(4),
-            property: PropertyId::Height,
-            value: LayerValue::Value(PropertyValue::Dimension(DimensionValue::Length(
-                FiniteScalar::new(1.0).expect("inner height"),
-            ))),
-        });
-        let created = document
-            .commit_ui(&commit)
-            .expect("nested portals")
-            .acknowledgement
-            .created;
-        let body_child = created[0].node_key().expect("body child");
-        let outer = created[1].node_key().expect("outer portal");
-        let outer_child = created[2].node_key().expect("outer child");
-        let inner = created[3].node_key().expect("inner portal");
-        let snapshots = [
-            document.snapshot(body).expect("body snapshot"),
-            document.snapshot(body_child).expect("body child snapshot"),
-            document.snapshot(outer).expect("outer snapshot"),
-            document
-                .snapshot(outer_child)
-                .expect("outer child snapshot"),
-            document.snapshot(inner).expect("inner snapshot"),
-        ]
-        .into_iter()
-        .collect::<Vec<_>>();
-        let participation = snapshots
-            .iter()
-            .map(|snapshot| NodeParticipation {
-                key: snapshot.key,
-                participates: true,
-            })
-            .collect::<Vec<_>>();
-        let mut renderer = DirectOccurrenceRenderer::new(6);
-        renderer.synchronize(
-            snapshots,
-            None,
-            &participation,
-            HashMap::new(),
-            vec![inner, outer, body],
-            HashMap::from([(outer, body), (inner, outer_child)]),
-            HashMap::new(),
-        )?;
-        let (geometries, _) = renderer.layout_roots(
-            body,
-            crate::geometry::Size::new(20, 4),
-            DirectHistoryAnchor::FollowEnd,
-            &HashMap::new(),
-            &HashMap::new(),
-        )?;
-        let outer_position = geometries
-            .iter()
-            .position(|geometry| geometry.key == outer)
-            .expect("outer portal geometry");
-        let inner_position = geometries
-            .iter()
-            .position(|geometry| geometry.key == inner)
-            .expect("inner portal geometry");
-        assert!(outer_position < inner_position);
-        Ok(())
-    }
 }

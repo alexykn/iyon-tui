@@ -26,13 +26,6 @@ pub(crate) mod output;
 pub(crate) mod perf;
 #[cfg(not(feature = "perf-counters"))]
 mod perf;
-// `tui_perf` is a separate package binary and therefore cannot access a
-// private library module. Keep this one executable-only escape hatch public
-// but hidden and feature-gated; the native binding reexports counters through
-// `binding`, never through this module path.
-#[cfg(feature = "perf-counters")]
-#[doc(hidden)]
-pub mod perf_bench;
 mod physical;
 pub(crate) mod presentation;
 // Projection, source coordinates, and semantic text stay implementation-only
@@ -40,8 +33,6 @@ pub(crate) mod presentation;
 // by in-crate unit tests. Rust callers author against the TypeScript facade.
 pub(crate) mod projection;
 pub(crate) mod scene;
-pub(crate) mod scroll;
-mod scroll_command;
 /// Source-rooted coordinates shared by semantic content projections.
 mod stream;
 mod terminal;
@@ -69,8 +60,6 @@ pub(crate) use interaction::{InteractionResult, Key, KeyStroke, Modifiers};
 pub(crate) use output::{EventCx, Output, OutputRouter, RouteConflict};
 #[cfg(test)]
 pub(crate) use projection::{Projection, Projector, ProjectorExt, Smooth, SmoothConfig};
-pub(crate) use scene::Scene;
-pub(crate) use scroll::ScrollPane;
 pub(crate) use theme::Theme;
 
 pub(crate) use presentation::api::style::Insets;
@@ -79,8 +68,6 @@ pub(crate) use presentation::api::{
     AnsiColor, BorderEdges, BorderSpec, ColorSpec, HorizontalAlign, StyleRef, StyleSelector,
     StyleSpec, StyleStateKey, StyleStateValue, TextAttribute, TextSpan, ThemeColor, WrapMode,
 };
-pub(crate) use presentation::api::{GridCellSpec, GridTrack};
-pub(crate) use presentation::ir::View;
 // Internal modules may use the short names without making implementation
 // machinery part of the external crate-root vocabulary.
 #[allow(unused_imports)]

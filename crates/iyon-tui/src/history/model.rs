@@ -1,43 +1,82 @@
-//! Ordered semantic History model.
+//! Physical History ownership and native-export frontier.
+//!
+//! History no longer stores semantic Views or resolves a layout tree. The
+//! occurrence document owns resident UI roots; this value only tracks the
+//! typed physical export units and their receipt-safe native frontier.
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::VecDeque,
-    sync::atomic::AtomicU64,
-};
+use std::{cell::Cell, collections::VecDeque, sync::atomic::AtomicU64};
 
-use crate::{
-    id::next_nonzero_id,
-    perf::{self, Counter},
-    presentation::View,
-};
+use crate::{id::next_nonzero_id, physical::PhysicalRow};
 
-use super::{
-    FlowBoundary, HistoryError, HistoryLayout, HistoryUnit, HistoryUnitContent, HistoryUnitId,
-    unit::{HistoryUnitLayout, HistoryUnitLayoutKey},
-};
+use super::{FlowBoundary, HistoryError, HistoryUnitId, native::NativeFrontier};
 
 static NEXT_HISTORY_ID: AtomicU64 = AtomicU64::new(1);
 
-/// An ordered root-level historical/live semantic flow.
-///
-/// History owns unit order, semantic lifetime, and semantic layout. Native
-/// durability remains private behind the host-owned native sink seam.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HistoryLayout {
+    pub(crate) padding: crate::Insets,
+    pub(crate) gap: u16,
+}
+
+impl HistoryLayout {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            padding: crate::Insets::ZERO,
+            gap: 0,
+        }
+    }
+    #[must_use]
+    pub const fn from_parts(padding: crate::Insets, gap: u16) -> Self {
+        Self { padding, gap }
+    }
+    #[must_use]
+    pub const fn with_padding(mut self, padding: crate::Insets) -> Self {
+        self.padding = padding;
+        self
+    }
+    #[must_use]
+    pub const fn with_gap(mut self, gap: u16) -> Self {
+        self.gap = gap;
+        self
+    }
+    #[must_use]
+    pub const fn padding(self) -> crate::Insets {
+        self.padding
+    }
+    #[must_use]
+    pub const fn gap(self) -> u16 {
+        self.gap
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum HistoryUnitContent {
+    Content {
+        port_id: u64,
+        padding: crate::Insets,
+    },
+    StaticRows(Vec<PhysicalRow>),
+    Blocked,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HistoryUnit {
+    pub(crate) id: HistoryUnitId,
+    pub(crate) boundary: FlowBoundary,
+    pub(crate) content: HistoryUnitContent,
+    pub(crate) live: bool,
+}
+
+/// Native physical export state. Resident semantic content remains owned by
+/// occurrence/content registries until a confirmed native receipt retires it.
 pub struct History {
     pub(super) units: VecDeque<HistoryUnit>,
-    /// Stable identity for detecting replacement of the History object in a
-    /// retained Scene, even when its semantic/native revisions coincide.
     identity: u64,
     layout: HistoryLayout,
-    cached_total_height: Cell<Option<usize>>,
-    stale_cached_heights: Cell<usize>,
     revision: Cell<u64>,
-    /// Display-frontier revision, separate from semantic History revision.
-    /// Native scrollback promotion mutates this frontier without changing the
-    /// ordered semantic units, so `SceneHost` can refresh its retained History
-    /// branch after a transfer without rebuilding the body branch.
     native_revision: Cell<u64>,
-    pub(super) native: super::native::NativeFrontier,
+    pub(super) native: NativeFrontier,
 }
 
 impl Default for History {
@@ -52,413 +91,169 @@ impl History {
         Self {
             units: VecDeque::new(),
             identity: next_nonzero_id(&NEXT_HISTORY_ID, "history identity exhausted").get(),
-            layout: HistoryLayout::default(),
-            cached_total_height: Cell::new(None),
-            stale_cached_heights: Cell::new(0),
+            layout: HistoryLayout::new(),
             revision: Cell::new(0),
             native_revision: Cell::new(0),
-            native: super::native::NativeFrontier::default(),
+            native: NativeFrontier::default(),
         }
     }
 
     pub fn len(&self) -> usize {
         self.units.len()
     }
-
     pub fn is_empty(&self) -> bool {
         self.units.is_empty()
     }
-
     pub(crate) fn contains_unit(&self, id: HistoryUnitId) -> bool {
         self.units.iter().any(|unit| unit.id == id)
     }
-
     pub(crate) fn native_has_physical_rows(&self) -> bool {
         self.native.has_physical_rows()
     }
-
     pub(crate) fn set_native_transfer_blocked(&mut self, id: HistoryUnitId, blocked: bool) {
         self.native.set_transfer_blocked(id, blocked);
     }
-
     pub(crate) fn native_transfer_blocked_front(&self) -> bool {
-        self.units
-            .front()
-            .is_some_and(|unit| self.native.blocked_units.contains(&unit.id))
-    }
-
-    pub(crate) fn native_transfer_semantically_blocked_front(&self) -> bool {
-        self.native_transfer_blocked_front()
-            || self.units.front().is_some_and(|unit| match &unit.content {
-                HistoryUnitContent::Live(_) => true,
-                HistoryUnitContent::Static(view) => {
-                    view.contains_component_identity()
-                        || (view.contains_content_identity()
-                            && view.content_history_transfer().is_none())
-                }
-            })
-    }
-
-    pub(crate) fn unit_is_live(&self, id: HistoryUnitId) -> Option<bool> {
-        self.units.iter().find_map(|unit| {
-            (unit.id == id).then_some(matches!(unit.content, HistoryUnitContent::Live(_)))
+        self.units.front().is_some_and(|unit| {
+            self.native.blocked_units.contains(&unit.id)
+                || matches!(unit.content, HistoryUnitContent::Blocked)
         })
     }
-
+    pub(crate) fn native_transfer_semantically_blocked_front(&self) -> bool {
+        self.native_transfer_blocked_front() || self.units.front().is_some_and(|unit| unit.live)
+    }
+    pub(crate) fn unit_is_live(&self, id: HistoryUnitId) -> Option<bool> {
+        self.units
+            .iter()
+            .find_map(|unit| (unit.id == id).then_some(unit.live))
+    }
     pub(crate) fn unit_ids(&self) -> impl Iterator<Item = HistoryUnitId> + '_ {
         self.units.iter().map(|unit| unit.id)
     }
 
-    pub fn push(&mut self, view: View) -> Result<HistoryUnitId, HistoryError> {
-        self.push_with_boundary(view, FlowBoundary::Default)
-    }
-
-    pub fn push_with_boundary(
-        &mut self,
-        view: View,
-        boundary: FlowBoundary,
-    ) -> Result<HistoryUnitId, HistoryError> {
-        let content = if view.contains_component_identity() {
-            HistoryUnitContent::Live(view)
-        } else {
-            HistoryUnitContent::Static(view)
-        };
-        let id = HistoryUnitId::allocate();
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        self.units.push_back(HistoryUnit {
-            id,
-            boundary,
-            content,
-            layout: RefCell::new(HistoryUnitLayout::default()),
-        });
-        self.bump_revision();
-        Ok(id)
-    }
-
-    pub(crate) fn push_with_identity(
+    pub(crate) fn push_content_with_identity(
         &mut self,
         id: HistoryUnitId,
-        view: View,
+        port_id: u64,
+        padding: crate::Insets,
         boundary: FlowBoundary,
-    ) -> Result<HistoryUnitId, HistoryError> {
-        if self.units.iter().any(|unit| unit.id == id) {
-            return Err(HistoryError::DuplicateUnit { unit: id });
-        }
-        let content = if view.contains_component_identity() {
-            HistoryUnitContent::Live(view)
-        } else {
-            HistoryUnitContent::Static(view)
-        };
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        self.units.push_back(HistoryUnit {
-            id,
-            boundary,
-            content,
-            layout: RefCell::new(HistoryUnitLayout::default()),
-        });
-        self.bump_revision();
-        Ok(id)
-    }
-
-    pub(crate) fn push_live_with_identity(
-        &mut self,
-        id: HistoryUnitId,
-        view: View,
-        boundary: FlowBoundary,
-    ) -> Result<HistoryUnitId, HistoryError> {
-        if self.units.iter().any(|unit| unit.id == id) {
-            return Err(HistoryError::DuplicateUnit { unit: id });
-        }
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        self.units.push_back(HistoryUnit {
-            id,
-            boundary,
-            content: HistoryUnitContent::Live(view),
-            layout: RefCell::new(HistoryUnitLayout::default()),
-        });
-        self.bump_revision();
-        Ok(id)
-    }
-
-    pub(crate) fn replace_live(
-        &mut self,
-        unit: HistoryUnitId,
-        view: View,
+        live: bool,
+        blocked: bool,
     ) -> Result<(), HistoryError> {
-        let index = self.index_of(unit)?;
-        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
+        if self.contains_unit(id) {
+            return Err(HistoryError::DuplicateUnit { unit: id });
         }
-        self.units[index].content = HistoryUnitContent::Live(view);
-        self.invalidate_unit_layout(index);
+        self.units.push_back(HistoryUnit {
+            id,
+            boundary,
+            content: if blocked {
+                HistoryUnitContent::Blocked
+            } else {
+                HistoryUnitContent::Content { port_id, padding }
+            },
+            live,
+        });
         self.bump_revision();
         Ok(())
     }
 
-    /// Discards a transient tail Live unit without creating spacing or native
-    /// history rows.
-    pub fn discard_live(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
-        let index = self.index_of(unit)?;
-        if index + 1 != self.units.len() {
-            return Err(HistoryError::LiveMustRemainTail { unit });
+    pub(crate) fn replace_content(
+        &mut self,
+        id: HistoryUnitId,
+        port_id: u64,
+        padding: crate::Insets,
+        blocked: bool,
+    ) -> Result<(), HistoryError> {
+        let index = self.index_of(id)?;
+        if !self.units[index].live {
+            return Err(HistoryError::UnitNotLive { unit: id });
         }
-        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
+        self.units[index].content = if blocked {
+            HistoryUnitContent::Blocked
+        } else {
+            HistoryUnitContent::Content { port_id, padding }
+        };
+        self.bump_revision();
+        Ok(())
+    }
+
+    pub(crate) fn freeze_content(
+        &mut self,
+        id: HistoryUnitId,
+        port_id: u64,
+        padding: crate::Insets,
+        blocked: bool,
+    ) -> Result<(), HistoryError> {
+        let index = self.index_of(id)?;
+        if !self.units[index].live {
+            return Err(HistoryError::UnitNotLive { unit: id });
         }
+        self.units[index].live = false;
+        self.units[index].content = if blocked {
+            HistoryUnitContent::Blocked
+        } else {
+            HistoryUnitContent::Content { port_id, padding }
+        };
+        self.bump_revision();
+        Ok(())
+    }
+
+    pub(crate) fn retire_unit(&mut self, id: HistoryUnitId) -> Result<(), HistoryError> {
+        let index = self.index_of(id)?;
         self.units.remove(index);
-        self.native.blocked_units.remove(&unit);
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
+        self.native.blocked_units.remove(&id);
         self.bump_revision();
         Ok(())
-    }
-
-    pub(crate) fn retire_unit(&mut self, unit: HistoryUnitId) -> Result<(), HistoryError> {
-        let index = self.index_of(unit)?;
-        self.units.remove(index);
-        self.native.blocked_units.remove(&unit);
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        self.bump_revision();
-        Ok(())
-    }
-
-    pub fn freeze(&mut self, unit: HistoryUnitId, final_view: View) -> Result<(), HistoryError> {
-        let index = self.index_of(unit)?;
-        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
-        }
-        if final_view.contains_component_identity() {
-            return Err(HistoryError::FinalViewContainsComponent { unit });
-        }
-        self.units[index].content = HistoryUnitContent::Static(final_view);
-        self.invalidate_unit_layout(index);
-        self.bump_revision();
-        Ok(())
-    }
-
-    pub(super) fn units(&self) -> impl Iterator<Item = &HistoryUnit> {
-        self.units.iter()
     }
 
     pub(crate) fn front_content_attachment_id(&self) -> Option<u64> {
         match self.units.front().map(|unit| &unit.content) {
-            Some(HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view))
-                if view.contains_content_identity() =>
-            {
-                view.content_history_transfer()
-                    .map(|transfer| transfer.port_id)
-            }
-            Some(HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_)) | None => None,
+            Some(HistoryUnitContent::Content { port_id, .. }) => Some(*port_id),
+            _ => None,
         }
-    }
-
-    /// Returns semantic History views that can carry a retained `ContentPort`.
-    pub(crate) fn content_views(&self) -> Vec<View> {
-        self.units
-            .iter()
-            .filter_map(|unit| match &unit.content {
-                HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
-                    if view.contains_content_identity() || view.contains_component_identity() =>
-                {
-                    Some(view.clone())
-                }
-                HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-            })
-            .collect()
-    }
-
-    /// Returns ContentPort-bearing History views after replacing one live
-    /// unit, allowing host attachment validation before mutation.
-    pub(crate) fn content_views_with_replacement(
-        &self,
-        unit: HistoryUnitId,
-        replacement: &View,
-    ) -> Result<Vec<View>, HistoryError> {
-        let index = self.index_of(unit)?;
-        if !matches!(self.units[index].content, HistoryUnitContent::Live(_)) {
-            return Err(HistoryError::UnitNotLive { unit });
-        }
-        Ok(self
-            .units
-            .iter()
-            .enumerate()
-            .filter_map(|(current, entry)| {
-                if current == index {
-                    (replacement.contains_content_identity()
-                        || replacement.contains_component_identity())
-                    .then(|| replacement.clone())
-                } else {
-                    match &entry.content {
-                        HistoryUnitContent::Static(view) | HistoryUnitContent::Live(view)
-                            if view.contains_content_identity()
-                                || view.contains_component_identity() =>
-                        {
-                            Some(view.clone())
-                        }
-                        HistoryUnitContent::Static(_) | HistoryUnitContent::Live(_) => None,
-                    }
-                }
-            })
-            .collect())
     }
 
     pub fn layout(&self) -> HistoryLayout {
         self.layout
     }
-
     pub(crate) fn identity(&self) -> u64 {
         self.identity
     }
-
     pub(crate) fn revision(&self) -> u64 {
         self.revision.get()
     }
-
     pub(crate) fn native_revision(&self) -> u64 {
         self.native_revision.get()
     }
-
     pub(crate) fn bump_native_revision(&self) {
         self.native_revision
             .set(self.native_revision.get().wrapping_add(1));
     }
-
     fn bump_revision(&self) {
         self.revision.set(self.revision.get().wrapping_add(1));
     }
-
     pub(crate) fn physical_rows_inserted(&self) -> u64 {
         self.native.physical_rows_inserted
     }
-
-    /// Reports whether a native sink failure may have left physical
-    /// scrollback/screen state only partially synchronized. This is a
-    /// recovery marker, never permission to replay or roll back History.
     pub(crate) fn native_synchronization_unknown(&self) -> bool {
         self.native.synchronization_unknown
     }
-
     pub(crate) fn mark_native_synchronization_unknown(&mut self) {
         self.native.mark_synchronization_unknown();
     }
-
     pub(crate) fn recover_native_synchronization(&mut self) {
         self.native.recover_synchronization();
     }
-
     pub fn set_layout(&mut self, layout: HistoryLayout) {
-        if self.layout == layout {
-            return;
+        if self.layout != layout {
+            self.layout = layout;
+            self.bump_revision();
         }
-        self.layout = layout;
-        self.invalidate_all_layout();
-        self.bump_revision();
     }
-
     #[must_use]
     pub fn with_layout(mut self, layout: HistoryLayout) -> Self {
         self.set_layout(layout);
         self
-    }
-
-    pub(super) fn prepare_unit_layout(
-        &self,
-        index: usize,
-        width: u16,
-        key: HistoryUnitLayoutKey,
-    ) -> Option<usize> {
-        let mut cached = self.units[index].layout.borrow_mut();
-        if cached.width == Some(width) && cached.key.as_ref() == Some(&key) {
-            if let Some(height) = cached.height {
-                perf::inc(Counter::HistoryCachedHeightHits);
-                return Some(height);
-            }
-            return None;
-        }
-        if cached.height.is_some() && self.cached_total_height.get().is_some() {
-            let total = self
-                .cached_total_height
-                .get()
-                .expect("checked cached total")
-                .saturating_sub(cached.height.expect("checked cached height"));
-            self.cached_total_height.set(Some(total));
-            self.stale_cached_heights
-                .set(self.stale_cached_heights.get().saturating_add(1));
-        }
-        cached.width = Some(width);
-        cached.key = Some(key);
-        cached.height = None;
-        None
-    }
-
-    pub(super) fn record_unit_height(&self, index: usize, height: usize) {
-        if let Some(cached) = self.units.get(index) {
-            let mut layout = cached.layout.borrow_mut();
-            if layout.height.is_none()
-                && let Some(total) = self.cached_total_height.get()
-            {
-                if self.stale_cached_heights.get() == 0 {
-                    self.cached_total_height.set(None);
-                } else {
-                    self.cached_total_height
-                        .set(Some(total.saturating_add(height)));
-                    self.stale_cached_heights
-                        .set(self.stale_cached_heights.get().saturating_sub(1));
-                }
-            }
-            layout.height = Some(height);
-        }
-    }
-
-    pub(super) fn unit_height(&self, index: usize) -> Option<usize> {
-        self.units
-            .get(index)
-            .and_then(|unit| unit.layout.borrow().height)
-    }
-
-    pub(super) fn cached_total_flow_height(&self) -> Option<usize> {
-        if self.stale_cached_heights.get() == 0
-            && let Some(total) = self.cached_total_height.get()
-        {
-            return Some(total);
-        }
-        let mut total = 0usize;
-        for unit in &self.units {
-            let height = unit.layout.borrow().height?;
-            total = total.saturating_add(height);
-        }
-        self.cached_total_height.set(Some(total));
-        self.stale_cached_heights.set(0);
-        Some(total)
-    }
-
-    pub(super) fn invalidate_unit_layout(&self, index: usize) {
-        if let Some(unit) = self.units.get(index) {
-            let mut layout = unit.layout.borrow_mut();
-            if layout.height.is_some() && self.cached_total_height.get().is_some() {
-                let total = self
-                    .cached_total_height
-                    .get()
-                    .expect("checked cached total")
-                    .saturating_sub(layout.height.expect("checked cached height"));
-                self.cached_total_height.set(Some(total));
-                self.stale_cached_heights
-                    .set(self.stale_cached_heights.get().saturating_add(1));
-            }
-            *layout = HistoryUnitLayout::default();
-        }
-    }
-
-    pub(super) fn invalidate_all_layout(&self) {
-        self.cached_total_height.set(None);
-        self.stale_cached_heights.set(0);
-        for unit in &self.units {
-            *unit.layout.borrow_mut() = HistoryUnitLayout::default();
-        }
     }
 
     fn index_of(&self, id: HistoryUnitId) -> Result<usize, HistoryError> {

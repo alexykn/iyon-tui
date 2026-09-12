@@ -1,3 +1,9 @@
+//! Native runtime owner for accepted occurrences and native control state.
+//!
+//! The runtime keeps interaction, scheduling, content ownership, and the
+//! physical History frontier. General UI layout is always delegated to the
+//! occurrence/Taffy route; no Scene or semantic View shell is retained.
+
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -6,22 +12,19 @@ use std::{
 
 use anyhow::Result;
 
-use crate::history::FlowBoundary;
-use crate::presentation::factory as vf;
 use crate::{
-    ComponentHandle, HistoryUnitId, InteractionResult, OutputRouter, Scene, View,
-    backend::NativeHistorySink,
+    ComponentHandle, HistoryUnitId, InteractionResult, OutputRouter,
     component::ComponentRegistry,
-    geometry::Size,
+    history::{FlowBoundary, History},
     output::OutputDispatchError,
     presentation::ContentProvider,
-    scene::{PreparedSceneFrame, SceneHost, SceneHostError},
+    scene::{PreparedSceneFrame, SceneHost},
 };
 
 use super::{
     host::RoutedOutput,
     input::{GlobalBindings, PasteInterceptors},
-    ui_resources::HistoryUnitStatus,
+    ui_resources::HistoryUnitStatus as UiHistoryUnitStatus,
 };
 
 const OUTPUT_BATCH_BUDGET: usize = 128;
@@ -41,13 +44,8 @@ pub(crate) enum PasteDispatchOutcome {
     Local,
 }
 
-/// Native retained runtime owned by `HostInner`.
-///
-/// This is intentionally concrete: the native host has one caller-defined
-/// routed-output value, and does not expose a generic Rust application loop,
-/// callback set, external ingress, or application timer queue.
 pub(crate) struct NativeRuntime {
-    scene: Scene,
+    history: History,
     theme: Arc<crate::Theme>,
     components: ComponentRegistry,
     outputs: OutputRouter<RoutedOutput>,
@@ -55,17 +53,7 @@ pub(crate) struct NativeRuntime {
     pending_outputs: VecDeque<RoutedOutput>,
     global_bindings: GlobalBindings,
     paste_interceptors: PasteInterceptors,
-    /// Correspondence for roots adapted from the occurrence document.  The
-    /// semantic History model can remove a unit after its physical prefix is
-    /// confirmed; retaining this root mapping prevents the next UI sync from
-    /// replaying that already-exported unit.  Public History units are never
-    /// entered here and therefore cannot be retired by occurrence sync.
     ui_history_units: HashMap<crate::occurrence::NodeKey, UiHistoryBinding>,
-    /// PERF-12 T13.1 R8: component ids whose language handle was disposed and
-    /// which may be physically reclaimed once the last SUCCESSFULLY reconciled
-    /// mount graph no longer contains them (deferred retirement — never
-    /// eager, because committed roots may still reference them until their
-    /// replacement publishes).
     pending_component_retirements: Vec<u64>,
     deferred_pastes: VecDeque<String>,
     routed_outputs: VecDeque<RoutedOutput>,
@@ -76,43 +64,27 @@ pub(crate) struct NativeRuntime {
 #[derive(Clone, Copy)]
 struct UiHistoryBinding {
     id: HistoryUnitId,
-    status: HistoryUnitStatus,
+    status: UiHistoryUnitStatus,
     native_transfer_allowed: bool,
 }
 
 pub(crate) struct HistoryUnitRecipe {
     pub(crate) root: crate::occurrence::NodeKey,
-    pub(crate) view: View,
+    pub(crate) port_id: u64,
+    pub(crate) padding: crate::Insets,
     pub(crate) native_transfer_allowed: bool,
     pub(crate) unit_identity: HistoryUnitId,
-    pub(crate) status: HistoryUnitStatus,
+    pub(crate) status: UiHistoryUnitStatus,
     pub(crate) flow_boundary: FlowBoundary,
 }
 
-enum UiHistoryMutation {
-    PushLive(HistoryUnitId, View, FlowBoundary),
-    PushFrozen(HistoryUnitId, View, FlowBoundary),
-    ReplaceLive(HistoryUnitId, View),
-    Freeze(HistoryUnitId, View),
-    BindContent(HistoryUnitId, View),
-    Retire(HistoryUnitId),
-}
-
-#[derive(Default)]
-struct UiHistoryDelta {
-    mutations: Vec<UiHistoryMutation>,
-    updates: Vec<(crate::occurrence::NodeKey, UiHistoryBinding)>,
-    retired_roots: Vec<crate::occurrence::NodeKey>,
-}
-
 impl NativeRuntime {
-    pub(crate) fn host_register<C>(&mut self, component: C) -> ComponentHandle<C>
-    where
-        C: crate::Component,
-    {
+    pub(crate) fn host_register<C: crate::Component>(
+        &mut self,
+        component: C,
+    ) -> ComponentHandle<C> {
         self.components.register(component)
     }
-
     pub(crate) fn host_bind_key(
         &mut self,
         key: crate::KeyStroke,
@@ -120,7 +92,6 @@ impl NativeRuntime {
     ) {
         self.global_bindings.bind(key, factory);
     }
-
     pub(crate) fn host_route<T: Send + 'static>(
         &mut self,
         output: crate::Output<T>,
@@ -128,55 +99,39 @@ impl NativeRuntime {
     ) -> Result<(), crate::RouteConflict> {
         self.outputs.route(output, map)
     }
-
-    pub(crate) fn host_intercept_paste<C>(
+    pub(crate) fn host_intercept_paste<C: crate::Component>(
         &mut self,
         component: ComponentHandle<C>,
         map: impl Fn(String) -> RoutedOutput + Send + 'static,
-    ) where
-        C: crate::Component,
-    {
+    ) {
         self.paste_interceptors.intercept(component, map);
     }
-
     pub(crate) fn host_forward_paste(&mut self, text: String) -> Result<(), OutputDispatchError> {
         self.deferred_pastes.push_back(text);
         self.drain_deferred_pastes()
     }
 
-    /// PERF-12 T13.1 R8: request deferred retirement of a host-registered
-    /// component by raw id. The registry entry survives until a successful
-    /// reconciliation proves the component unmounted — an eager remove here
-    /// would leave committed roots referencing a destroyed component when a
-    /// later publication fails.
     pub(crate) fn host_retire_component(&mut self, raw_id: u64) {
         self.pending_component_retirements.push(raw_id);
         self.reap_retired_components();
     }
-
-    /// Physically reclaim retired components that the last successfully
-    /// reconciled mount graph no longer contains. Called immediately on
-    /// retirement (covers components that never mounted) and after every
-    /// successful `prepare_frame`. Deliberately NOT called after a failed
-    /// frame — the previous authoritative graph still matters then.
     pub(crate) fn reap_retired_components(&mut self) {
         if self.pending_component_retirements.is_empty() {
             return;
         }
-        let mut still_pending = Vec::new();
+        let mut pending = Vec::new();
         for raw_id in self.pending_component_retirements.drain(..) {
             let id = crate::component::ComponentId::from_raw(raw_id);
             if self.scene_host.is_mounted(id) {
-                still_pending.push(raw_id);
-                continue;
+                pending.push(raw_id);
+            } else {
+                self.components.remove_id(id);
+                self.paste_interceptors.remove_id(id);
             }
-            self.components.remove_id(id);
-            self.paste_interceptors.remove_id(id);
         }
-        self.pending_component_retirements = still_pending;
+        self.pending_component_retirements = pending;
     }
 
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_invalidate_component(&mut self, id: u64) -> anyhow::Result<()> {
         let id = crate::component::ComponentId::from_raw(id);
         self.scene_host.invalidate_direct_control_measurement(id)?;
@@ -185,8 +140,6 @@ impl NativeRuntime {
         self.invalidate_frame();
         Ok(())
     }
-
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_invalidate_content(
         &mut self,
         dirty: crate::presentation::ContentDirty,
@@ -197,7 +150,6 @@ impl NativeRuntime {
         self.invalidate_frame();
         Ok(())
     }
-
     pub(crate) fn host_set_direct_control_component(
         &mut self,
         key: crate::occurrence::ResourceKey,
@@ -206,22 +158,18 @@ impl NativeRuntime {
         self.scene_host
             .set_direct_control_component(key, crate::component::ComponentId::from_raw(component));
     }
-
     pub(crate) fn host_set_direct_driver_id(&mut self, driver_id: u64) -> anyhow::Result<()> {
         self.scene_host.set_direct_driver_id(driver_id)
     }
-
     pub(crate) fn host_clear_direct_driver(&mut self) -> anyhow::Result<()> {
         self.scene_host.clear_direct_driver()
     }
-
     pub(crate) fn host_remove_direct_control_component(
         &mut self,
         key: crate::occurrence::ResourceKey,
     ) {
         self.scene_host.remove_direct_control_component(key);
     }
-
     pub(crate) fn host_sync_direct_occurrences(
         &mut self,
         snapshots: Vec<crate::occurrence::OccurrenceSnapshot>,
@@ -250,93 +198,51 @@ impl NativeRuntime {
         self.scene_host
             .direct_control_for_component(crate::component::ComponentId::from_raw(component))
     }
-
     pub(crate) fn host_direct_component_for_control(
         &self,
         control: crate::occurrence::ResourceKey,
     ) -> Option<crate::component::ComponentId> {
         self.scene_host.direct_component_for_control(control)
     }
-
     pub(crate) fn host_direct_body_root(&self) -> Option<crate::occurrence::NodeKey> {
         self.scene_host.direct_body_root()
     }
-
     pub(crate) fn host_has_direct_occurrences(&self) -> bool {
         self.scene_host.has_direct_occurrences()
     }
-
     pub(crate) fn host_direct_history_overflow_rows(&self) -> usize {
         self.scene_host.direct_history_overflow_rows()
     }
-
-    pub(crate) fn host_native_history_anchored(&self) -> bool {
-        self.scene
-            .history()
-            .is_some_and(crate::History::native_has_physical_rows)
-    }
-
-    pub(crate) fn host_native_history_blocked(&self) -> bool {
-        self.scene
-            .history()
-            .is_some_and(crate::History::native_transfer_semantically_blocked_front)
-    }
-
-    pub(crate) fn host_native_history_front_content_port(&self) -> Option<u64> {
-        self.scene
-            .history()
-            .and_then(crate::History::front_content_attachment_id)
-    }
-
-    pub(crate) fn host_ui_history_exported(&self, root: crate::occurrence::NodeKey) -> bool {
-        let Some(binding) = self.ui_history_units.get(&root).copied() else {
-            return false;
-        };
-        self.scene
-            .history()
-            .is_some_and(|history| !history.contains_unit(binding.id))
-    }
-
     pub(crate) fn host_direct_port_ids(&self) -> HashMap<crate::occurrence::ResourceKey, u64> {
         self.scene_host.direct_port_ids().clone()
     }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_content_candidate_epoch(&self) -> u64 {
-        self.scene_host.content_candidate_epoch()
+    pub(crate) fn host_native_history_anchored(&self) -> bool {
+        self.history.native_has_physical_rows()
     }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_commit_content_candidate(&mut self, epoch: u64) {
-        self.scene_host.commit_content_candidate(epoch);
+    pub(crate) fn host_native_history_blocked(&self) -> bool {
+        self.history.native_transfer_semantically_blocked_front()
     }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_abort_content_candidate(&mut self) {
-        self.scene_host.abort_content_candidate();
+    pub(crate) fn host_native_history_front_content_port(&self) -> Option<u64> {
+        self.history.front_content_attachment_id()
     }
-
-    /// Records that an asynchronous History receipt may have crossed the
-    /// native boundary before failing. The logical frontier remains at its
-    /// last confirmed prefix; subsequent candidates must not replay the
-    /// unacknowledged suffix.
-    #[cfg(feature = "native-host")]
+    pub(crate) fn host_ui_history_exported(&self, root: crate::occurrence::NodeKey) -> bool {
+        self.ui_history_units
+            .get(&root)
+            .is_some_and(|binding| !self.history.contains_unit(binding.id))
+    }
+    pub(crate) fn host_native_history_synchronization_unknown(&self) -> bool {
+        self.history.native_synchronization_unknown()
+    }
     pub(crate) fn host_mark_native_history_synchronization_unknown(&mut self) {
-        if let Some(history) = self.scene.history_mut() {
-            history.mark_native_synchronization_unknown();
-        }
+        self.history.mark_native_synchronization_unknown();
     }
-
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_has_invalidated_components(&self) -> bool {
         self.scene_host.has_invalidated_components()
     }
-
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_focus_component(
         &mut self,
         id: u64,
-        geometry: &crate::presentation::layout::ComponentGeometryMap,
+        geometry: &crate::presentation::direct_tree::ComponentGeometryMap,
     ) -> bool {
         let focused = self.scene_host.focus_component(
             crate::component::ComponentId::from_raw(id),
@@ -348,147 +254,25 @@ impl NativeRuntime {
         }
         focused
     }
-
-    #[cfg(feature = "native-host")]
     pub(crate) fn host_focused_component(&self) -> Option<u64> {
         self.scene_host.focused_component().map(|id| id.value())
     }
 
-    pub(crate) fn input_disabled(&self) -> bool {
-        self.exit_requested
+    pub(crate) fn host_content_candidate_epoch(&self) -> u64 {
+        self.scene_host.content_candidate_epoch().unwrap_or(0)
     }
-
-    /// Collects `ContentPort` attachments from the prospective body and current
-    /// static/live History views. Source-backed History occurrences use the
-    /// same retained `ContentPort` projection provider as body content.
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_content_attachment_targets(&self, body: &View) -> anyhow::Result<Vec<u64>> {
-        let history_views = self
-            .scene
-            .history()
-            .map_or_else(Vec::new, crate::History::content_views);
-        self.host_content_attachment_targets_from_history_views(body, history_views)
+    pub(crate) fn host_commit_content_candidate(&mut self, epoch: u64) {
+        self.scene_host.commit_content_candidate(epoch);
     }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_current_content_attachment_targets(&self) -> anyhow::Result<Vec<u64>> {
-        self.host_content_attachment_targets(self.scene.body())
+    pub(crate) fn host_abort_content_candidate(&mut self) {
+        self.scene_host.abort_content_candidate();
     }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_content_attachment_targets_for_history(
-        &self,
-        body: &View,
-        history: &crate::History,
-    ) -> anyhow::Result<Vec<u64>> {
-        self.host_content_attachment_targets_from_history_views(body, history.content_views())
-    }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_content_attachment_targets_with_history_view(
-        &self,
-        body: &View,
-        history_view: &View,
-    ) -> anyhow::Result<Vec<u64>> {
-        let mut history_views = self
-            .scene
-            .history()
-            .map_or_else(Vec::new, crate::History::content_views);
-        history_views.push(history_view.clone());
-        self.host_content_attachment_targets_from_history_views(body, history_views)
-    }
-
-    #[cfg(feature = "native-host")]
-    pub(crate) fn host_content_attachment_targets_for_history_views(
-        &self,
-        body: &View,
-        history_views: Vec<View>,
-    ) -> anyhow::Result<Vec<u64>> {
-        self.host_content_attachment_targets_from_history_views(body, history_views)
-    }
-
-    #[cfg(feature = "native-host")]
-    fn host_content_attachment_targets_from_history_views(
-        &self,
-        body: &View,
-        history_views: Vec<View>,
-    ) -> anyhow::Result<Vec<u64>> {
-        let mut session = crate::scene::ResolveSession::new(&self.components);
-        let mut targets = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let mut append_view = |view: &View| -> anyhow::Result<()> {
-            let resolved = session
-                .resolve_root(view)
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            let overlay = session.overlay().clone();
-            for id in crate::scene::content_attachment_targets(&resolved, &overlay)
-                .map_err(anyhow::Error::msg)?
-            {
-                if !seen.insert(id) {
-                    return Err(anyhow::anyhow!(
-                        "DUPLICATE_CONTENT_PORT_ATTACHMENT: ContentPort {id} occurs more than once in the candidate"
-                    ));
-                }
-                targets.push(id);
-            }
-            Ok(())
-        };
-        append_view(body)?;
-        for view in history_views {
-            append_view(&view)?;
-        }
-        Ok(targets)
-    }
-
-    /// Discards an unpresented Scene candidate after a backend failure. The
-    /// logical `HostInner` frame remains authoritative, so the next retry must
-    /// rebuild the derived scene instead of treating the rejected candidate as
-    /// committed.
     pub(crate) fn host_discard_candidate(&mut self) {
         self.scene_host.discard_candidate();
         self.invalidate_frame();
     }
-
     pub(crate) fn host_clear_retained_views(&mut self) {
         self.scene_host.clear_retained_views();
-    }
-
-    fn invalidate_interaction_components(
-        &mut self,
-        previous: Option<crate::component::ComponentId>,
-        next: Option<crate::component::ComponentId>,
-    ) {
-        if let Some(id) = previous {
-            self.scene_host.invalidate_component(id);
-        }
-        if next != previous
-            && let Some(id) = next
-        {
-            self.scene_host.invalidate_component(id);
-        }
-    }
-
-    pub(crate) fn host_set_body(&mut self, body: View) {
-        if self.scene.body() == &body {
-            return;
-        }
-        self.scene.set_body(body);
-        self.scene_host.invalidate_root();
-        self.dirty = true;
-    }
-
-    pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
-        self.theme = Arc::new(theme);
-        self.scene_host.invalidate_theme();
-        self.invalidate_frame();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn host_set_history(&mut self, history: crate::History) {
-        self.scene.set_history(history);
-        self.ui_history_units.clear();
-        self.scene_host.invalidate_root();
-        self.invalidate_frame();
     }
 
     pub(crate) fn host_sync_ui_history(
@@ -497,150 +281,72 @@ impl NativeRuntime {
         changes: Option<&crate::occurrence::UiChangeSet>,
         content: &mut crate::application::content::ContentHostRegistry,
     ) -> anyhow::Result<()> {
-        let delta = self.prepare_ui_history_delta(units, changes)?;
-        let history = self
-            .scene
-            .history_mut()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
-        for mutation in delta.mutations {
-            match mutation {
-                UiHistoryMutation::PushLive(id, view, boundary) => {
-                    history.push_live_with_identity(id, view, boundary)?;
-                }
-                UiHistoryMutation::PushFrozen(id, view, boundary) => {
-                    history.push_with_identity(id, view.clone(), boundary)?;
-                    Self::bind_ui_history_content(content, id, &view)?;
-                }
-                UiHistoryMutation::ReplaceLive(id, view) => history.replace_live(id, view)?,
-                UiHistoryMutation::Freeze(id, view) => {
-                    content.clear_history_unit(id.value());
-                    history.freeze(id, view.clone())?;
-                    Self::bind_ui_history_content(content, id, &view)?;
-                }
-                UiHistoryMutation::BindContent(id, view) => {
-                    Self::bind_ui_history_content(content, id, &view)?;
-                }
-                UiHistoryMutation::Retire(id) => {
-                    content.clear_history_unit(id.value());
-                    history.retire_unit(id)?;
-                }
-            }
-        }
-        for root in delta.retired_roots {
-            self.ui_history_units.remove(&root);
-        }
-        for (root, binding) in delta.updates {
-            history.set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed);
-            self.ui_history_units.insert(root, binding);
-        }
-        self.scene_host.invalidate_root();
-        self.dirty = true;
-        Ok(())
-    }
-
-    fn prepare_ui_history_delta(
-        &self,
-        units: Vec<HistoryUnitRecipe>,
-        changes: Option<&crate::occurrence::UiChangeSet>,
-    ) -> anyhow::Result<UiHistoryDelta> {
-        let history = self
-            .scene
-            .history()
-            .ok_or_else(|| anyhow::anyhow!("host history is unavailable"))?;
-        let mut delta = UiHistoryDelta::default();
-        delta
-            .mutations
-            .try_reserve(units.len())
-            .map_err(|_| anyhow::anyhow!("accepted History transition capacity is exhausted"))?;
         for unit in units {
             let binding = UiHistoryBinding {
                 id: unit.unit_identity,
                 status: unit.status,
                 native_transfer_allowed: unit.native_transfer_allowed,
             };
-            let present = history.unit_is_live(binding.id);
-            match (self.ui_history_units.get(&unit.root).copied(), present) {
-                (Some(previous), Some(is_live)) => {
-                    if previous.id != binding.id {
-                        return Err(anyhow::anyhow!(
-                            "accepted History root changed its native unit identity"
-                        ));
-                    }
-                    match (previous.status, binding.status, is_live) {
-                        (HistoryUnitStatus::Live, HistoryUnitStatus::Live, true) => delta
-                            .mutations
-                            .push(UiHistoryMutation::ReplaceLive(binding.id, unit.view)),
-                        (HistoryUnitStatus::Live, HistoryUnitStatus::Frozen, true) => delta
-                            .mutations
-                            .push(UiHistoryMutation::Freeze(binding.id, unit.view)),
-                        (HistoryUnitStatus::Frozen, HistoryUnitStatus::Frozen, true) => delta
-                            .mutations
-                            .push(UiHistoryMutation::BindContent(binding.id, unit.view)),
-                        (HistoryUnitStatus::Frozen, HistoryUnitStatus::Frozen, false) => {}
-                        (previous_status, next_status, actual_live) => {
-                            return Err(anyhow::anyhow!(
-                                "accepted History status diverged (previous={previous_status:?}, next={next_status:?}, live={actual_live})"
-                            ));
-                        }
-                    }
+            let previous = self.ui_history_units.get(&unit.root).copied();
+            let present = self.history.unit_is_live(binding.id);
+            match (previous, present) {
+                (None, None) => self.history.push_content_with_identity(
+                    unit.unit_identity,
+                    unit.port_id,
+                    unit.padding,
+                    unit.flow_boundary,
+                    binding.status == UiHistoryUnitStatus::Live,
+                    !binding.native_transfer_allowed,
+                )?,
+                (Some(old), Some(_))
+                    if old.status == UiHistoryUnitStatus::Live
+                        && binding.status == UiHistoryUnitStatus::Live =>
+                {
+                    self.history.replace_content(
+                        binding.id,
+                        unit.port_id,
+                        unit.padding,
+                        !binding.native_transfer_allowed,
+                    )?
                 }
-                (Some(previous), None) => {
-                    if !(previous.status == HistoryUnitStatus::Frozen
-                        && binding.status == HistoryUnitStatus::Frozen)
-                    {
-                        return Err(anyhow::anyhow!(
-                            "accepted live History unit disappeared from semantic History"
-                        ));
-                    }
+                (Some(old), Some(_))
+                    if old.status == UiHistoryUnitStatus::Live
+                        && binding.status == UiHistoryUnitStatus::Frozen =>
+                {
+                    self.history.freeze_content(
+                        binding.id,
+                        unit.port_id,
+                        unit.padding,
+                        !binding.native_transfer_allowed,
+                    )?
                 }
-                (None, Some(is_live)) => {
-                    if is_live != (binding.status == HistoryUnitStatus::Live) {
-                        return Err(anyhow::anyhow!(
-                            "existing History unit status does not match its accepted root"
-                        ));
-                    }
-                    if binding.status == HistoryUnitStatus::Live {
-                        delta
-                            .mutations
-                            .push(UiHistoryMutation::ReplaceLive(binding.id, unit.view));
-                    } else {
-                        delta
-                            .mutations
-                            .push(UiHistoryMutation::BindContent(binding.id, unit.view));
-                    }
+                (Some(_), Some(_)) => self
+                    .history
+                    .set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed),
+                (Some(old), None) if old.status == UiHistoryUnitStatus::Frozen => {}
+                (Some(_), None) => {
+                    return Err(anyhow::anyhow!("accepted live History unit disappeared"));
                 }
-                (None, None) => delta.mutations.push(match binding.status {
-                    HistoryUnitStatus::Live => {
-                        UiHistoryMutation::PushLive(binding.id, unit.view, unit.flow_boundary)
-                    }
-                    HistoryUnitStatus::Frozen => {
-                        UiHistoryMutation::PushFrozen(binding.id, unit.view, unit.flow_boundary)
-                    }
-                }),
+                (None, Some(_)) => self
+                    .history
+                    .set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed),
             }
-            delta.updates.push((unit.root, binding));
+            if binding.status == UiHistoryUnitStatus::Frozen {
+                content.set_history_unit(unit.port_id, binding.id.value(), unit.padding)?;
+            }
+            self.history
+                .set_native_transfer_blocked(binding.id, !binding.native_transfer_allowed);
+            self.ui_history_units.insert(unit.root, binding);
         }
         if let Some(changes) = changes {
-            for root in changes.retired_nodes.iter().copied() {
-                let Some(binding) = self.ui_history_units.get(&root).copied() else {
-                    continue;
-                };
-                if history.contains_unit(binding.id) {
-                    delta.mutations.push(UiHistoryMutation::Retire(binding.id));
+            for root in &changes.retired_nodes {
+                if let Some(binding) = self.ui_history_units.remove(root)
+                    && self.history.contains_unit(binding.id)
+                {
+                    content.clear_history_unit(binding.id.value());
+                    self.history.retire_unit(binding.id)?;
                 }
-                delta.retired_roots.push(root);
             }
-        }
-        Ok(delta)
-    }
-
-    fn bind_ui_history_content(
-        content: &mut crate::application::content::ContentHostRegistry,
-        id: HistoryUnitId,
-        view: &View,
-    ) -> anyhow::Result<()> {
-        if let Some(transfer) = view.content_history_transfer() {
-            content.set_history_unit(transfer.port_id, id.value(), transfer.padding)?;
         }
         Ok(())
     }
@@ -649,37 +355,39 @@ impl NativeRuntime {
         self.exit_requested
     }
 
+    pub(crate) fn input_disabled(&self) -> bool {
+        self.exit_requested
+    }
+
+    pub(crate) fn host_set_theme(&mut self, theme: crate::Theme) {
+        self.theme = Arc::new(theme);
+        self.scene_host.invalidate_theme();
+        self.invalidate_frame();
+    }
     pub(crate) fn host_exit(&mut self) {
         self.exit_requested = true;
         self.pending_outputs.clear();
         self.deferred_pastes.clear();
         self.dirty = true;
     }
-
-    pub(crate) fn scene_body(&self) -> &View {
-        self.scene.body()
+    pub(crate) fn scene_history(&self) -> Option<&History> {
+        Some(&self.history)
     }
-
-    pub(crate) fn scene_history(&self) -> Option<&crate::History> {
-        self.scene.history()
+    pub(crate) fn scene_history_mut(&mut self) -> Option<&mut History> {
+        Some(&mut self.history)
     }
-
-    pub(crate) fn scene_history_mut(&mut self) -> Option<&mut crate::History> {
-        self.scene.history_mut()
-    }
-
     pub(crate) fn new() -> Self {
         Self {
-            scene: Scene::with_history(crate::History::new(), vf::spacer(0)),
+            history: History::new(),
             theme: Arc::new(crate::Theme::new()),
             components: ComponentRegistry::new(),
             outputs: OutputRouter::new(),
             scene_host: SceneHost::default(),
-            pending_component_retirements: Vec::new(),
             pending_outputs: VecDeque::new(),
             global_bindings: GlobalBindings::default(),
             paste_interceptors: PasteInterceptors::default(),
             ui_history_units: HashMap::new(),
+            pending_component_retirements: Vec::new(),
             deferred_pastes: VecDeque::new(),
             routed_outputs: VecDeque::new(),
             dirty: true,
@@ -698,39 +406,35 @@ impl NativeRuntime {
             self.pending_outputs.push_back(output);
             return Ok(InteractionResult::Consumed);
         }
-        let previous_focus = self.scene_host.focused_component();
+        let previous = self.scene_host.focused_component();
         let result = self
             .scene_host
             .dispatch_key_local(key, &mut self.components);
-        let next_focus = self.scene_host.focused_component();
+        let next = self.scene_host.focused_component();
         self.drain_outputs_to_pending()?;
         if result == InteractionResult::Consumed {
-            self.invalidate_interaction_components(previous_focus, next_focus);
+            self.invalidate_interaction_components(previous, next);
             self.dirty = true;
         }
         Ok(result)
     }
-
     pub(crate) fn prepare_paste_route(&mut self, text: &str) -> PasteDispatchOutcome {
         if self.exit_requested {
             return PasteDispatchOutcome::Disabled;
         }
-        if let Some(output) = self.intercept_paste(text) {
-            return PasteDispatchOutcome::Intercepted(output);
-        }
-        PasteDispatchOutcome::Local
+        self.intercept_paste(text).map_or(
+            PasteDispatchOutcome::Local,
+            PasteDispatchOutcome::Intercepted,
+        )
     }
-
     pub(crate) fn intercept_paste(&mut self, text: &str) -> Option<RoutedOutput> {
-        self.scene_host.intercept_paste(text, |component, _text| {
+        self.scene_host.intercept_paste(text, |component, _| {
             self.paste_interceptors.output(component, text)
         })
     }
-
     pub(crate) fn queue_intercepted_paste(&mut self, output: RoutedOutput) {
         self.pending_outputs.push_back(output);
     }
-
     pub(crate) fn dispatch_paste_local(
         &mut self,
         text: &str,
@@ -738,18 +442,16 @@ impl NativeRuntime {
         if self.exit_requested {
             return Ok(InteractionResult::Ignored);
         }
-
-        let previous_focus = self.scene_host.focused_component();
+        let previous = self.scene_host.focused_component();
         let result = self.scene_host.dispatch_paste(text, &mut self.components);
-        let next_focus = self.scene_host.focused_component();
+        let next = self.scene_host.focused_component();
         self.drain_outputs_to_pending()?;
         if result == InteractionResult::Consumed {
-            self.invalidate_interaction_components(previous_focus, next_focus);
+            self.invalidate_interaction_components(previous, next);
             self.dirty = true;
         }
         Ok(result)
     }
-
     pub(crate) fn advance_ready(
         &mut self,
         now: Instant,
@@ -759,22 +461,16 @@ impl NativeRuntime {
             self.deferred_pastes.clear();
             return Ok(self.status(false, Vec::new()));
         }
-
         let tick = self.scene_host.tick_due(now, &mut self.components);
         self.dirty |= tick.dirty;
         self.drain_outputs_to_pending()?;
-
         for _ in 0..OUTPUT_BATCH_BUDGET {
             let Some(output) = self.pending_outputs.pop_front() else {
                 break;
             };
             self.routed_outputs.push_back(output);
-            // Keep the old host-visible scheduling contract: reducing a
-            // routed interaction produces one native dirty step even though
-            // there is no application view callback to rerun.
             self.dirty = true;
         }
-
         Ok(self.status(
             !self.pending_outputs.is_empty(),
             tick.changed_components
@@ -783,146 +479,89 @@ impl NativeRuntime {
                 .collect(),
         ))
     }
-
     pub(crate) fn has_pending_outputs(&self) -> bool {
         !self.pending_outputs.is_empty()
     }
-
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         self.scene_host.next_tick_deadline()
     }
-
-    /// Shared ownership of the active theme for frame/content contexts.
-    /// Readers share one immutable table instead of cloning its maps.
     pub(crate) fn theme_shared(&self) -> &Arc<crate::Theme> {
         &self.theme
     }
 
-    pub(crate) fn prepare_frame<S, F>(
-        &mut self,
-        now: Instant,
-        sink: &mut S,
-        mut viewport: F,
-        content: &mut dyn ContentProvider,
-    ) -> Result<PreparedSceneFrame, SceneHostError<S::Error>>
-    where
-        S: NativeHistorySink,
-        F: FnMut(&mut S) -> Result<Size>,
-    {
-        let frame = self.scene_host.render_at_with_content(
-            now,
-            &mut self.scene,
-            &mut self.components,
-            &self.theme,
-            sink,
-            &mut viewport,
-            content,
-        )?;
-        // Retirement is deferred until this successful reconciliation has
-        // replaced the committed mount graph. A retired component that was
-        // still mounted during the prior frame is now safe to reclaim.
-        self.reap_retired_components();
-        self.dirty = false;
-        Ok(frame)
-    }
-
-    /// Prepares a frame and the exact native History operation that must be
-    /// acknowledged after its rows are submitted. No sink or terminal I/O is
-    /// involved here; the caller owns submission and receipt settlement.
     pub(crate) fn prepare_frame_for_history(
         &mut self,
         now: Instant,
-        size: Size,
+        size: crate::geometry::Size,
         content: &mut dyn ContentProvider,
         direct_root: Option<crate::occurrence::NodeKey>,
-        direct_port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
-        direct_history_anchor: crate::presentation::direct::DirectHistoryAnchor,
+        _direct_port_ids: &HashMap<crate::occurrence::ResourceKey, u64>,
+        anchor: crate::presentation::direct::DirectHistoryAnchor,
     ) -> anyhow::Result<(
         PreparedSceneFrame,
         Option<crate::history::NativeTransferPlan>,
     )> {
         content.set_theme(&self.theme);
-        if let Some(root) = direct_root
-            && self.scene_host.has_direct_occurrences()
-        {
-            let frame = self.scene_host.prepare_direct_at_with_content(
-                now,
-                root,
-                size,
-                direct_history_anchor,
-                &mut self.components,
-                &self.theme,
-                content,
-                direct_port_ids,
-            )?;
-            let history_plan = (self.scene_host.direct_history_overflow_rows() > 0)
-                .then(|| {
-                    let front_content_blocked = self
-                        .scene
-                        .history()
-                        .and_then(crate::History::front_content_attachment_id)
-                        .is_some_and(|port_id| {
-                            content.history_transfer_blocked(port_id, size.width)
-                        });
-                    (!front_content_blocked)
-                        .then(|| {
-                            self.scene.history().and_then(|history| {
-                                crate::history::prepare_native_transfer_with_theme_and_content(
-                                    history,
-                                    size.width,
-                                    self.scene_host.direct_history_overflow_rows(),
-                                    &self.theme,
-                                    content,
-                                )
-                            })
-                        })
-                        .flatten()
-                })
-                .flatten();
-            return Ok((frame, history_plan));
-        }
-        let frame = self
-            .scene_host
-            .prepare_at_with_content(
-                now,
-                &mut self.scene,
-                &mut self.components,
-                size,
-                &self.theme,
-                content,
-            )
-            .map_err(|error| anyhow::anyhow!("logical render failed: {error:?}"))?;
-        self.reap_retired_components();
-        self.dirty = false;
-        Ok(frame)
+        let root = direct_root.ok_or_else(|| anyhow::anyhow!("direct Body root is unavailable"))?;
+        let frame = self.scene_host.prepare_direct_at_with_content(
+            now,
+            root,
+            size,
+            anchor,
+            &mut self.components,
+            &self.theme,
+            content,
+            &HashMap::new(),
+        )?;
+        let plan = (self.scene_host.direct_history_overflow_rows() > 0)
+            .then(|| {
+                crate::history::prepare_native_transfer_with_theme_and_content(
+                    &self.history,
+                    size.width,
+                    self.scene_host.direct_history_overflow_rows(),
+                    &self.theme,
+                    content,
+                )
+            })
+            .flatten();
+        Ok((frame, plan))
     }
-
     pub(crate) fn invalidate_frame(&mut self) {
         self.dirty = true;
     }
-
     pub(crate) fn is_dirty(&self) -> bool {
         self.dirty
     }
-
     pub(crate) fn next_output(&mut self) -> Option<RoutedOutput> {
         self.routed_outputs.pop_front()
     }
-
     pub(crate) fn drain_deferred_pastes(&mut self) -> Result<(), OutputDispatchError> {
         while let Some(text) = self.deferred_pastes.pop_front() {
-            let previous_focus = self.scene_host.focused_component();
+            let previous = self.scene_host.focused_component();
             let result = self.scene_host.dispatch_paste(&text, &mut self.components);
-            let next_focus = self.scene_host.focused_component();
+            let next = self.scene_host.focused_component();
             self.drain_outputs_to_pending()?;
             if result == InteractionResult::Consumed {
-                self.invalidate_interaction_components(previous_focus, next_focus);
+                self.invalidate_interaction_components(previous, next);
                 self.dirty = true;
             }
         }
         Ok(())
     }
-
+    fn invalidate_interaction_components(
+        &mut self,
+        previous: Option<crate::component::ComponentId>,
+        next: Option<crate::component::ComponentId>,
+    ) {
+        if let Some(id) = previous {
+            self.scene_host.invalidate_component(id);
+        }
+        if next != previous
+            && let Some(id) = next
+        {
+            self.scene_host.invalidate_component(id);
+        }
+    }
     fn status(&self, more_ready: bool, changed_components: Vec<u64>) -> ReadyStatus {
         ReadyStatus {
             dirty: self.dirty,
@@ -931,10 +570,12 @@ impl NativeRuntime {
             changed_components,
         }
     }
-
     fn drain_outputs_to_pending(&mut self) -> Result<(), OutputDispatchError> {
-        let outputs = self.scene_host.drain_outputs(&self.outputs)?;
-        self.pending_outputs.extend(outputs);
+        self.pending_outputs.extend(
+            self.scene_host
+                .drain_outputs(&self.outputs)
+                .map_err(|_| OutputDispatchError::TypeMismatch)?,
+        );
         Ok(())
     }
 }

@@ -597,14 +597,13 @@ impl EnvironmentQueue {
             environment.wake_epoch = next_wake_epoch;
         }
         environment.retry_blocked.remove(&host_id);
-        let waiting_for_presentation = environment.waiting_for_presentation.contains(&host_id);
-        if !waiting_for_presentation {
-            environment.waiting_for_presentation.remove(&host_id);
-        }
+        // A newly accepted epoch supersedes the old waiting edge. It must be
+        // queued even when the prior attempt was waiting for an async worker
+        // or physical receipt; otherwise a UI mutation accepted during that
+        // wait has no driver wake of its own.
+        environment.waiting_for_presentation.remove(&host_id);
         environment.pending_set.insert(host_id);
-        if !waiting_for_presentation {
-            Self::queue_host(&mut environment, host_id);
-        }
+        Self::queue_host(&mut environment, host_id);
         environment.wake.notify_all();
         environment.notify.notify_waiters();
         Ok(WakeDisposition {
